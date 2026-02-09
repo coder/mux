@@ -149,6 +149,8 @@ interface AgentSessionOptions {
   initStateManager: InitStateManager;
   telemetryService?: TelemetryService;
   backgroundProcessManager: BackgroundProcessManager;
+  /** When true, skip terminating background processes on dispose/compaction (for bench/CI) */
+  keepBackgroundProcesses?: boolean;
   /** Called when compaction completes (e.g., to clear idle compaction pending state) */
   onCompactionComplete?: () => void;
   /** Called when post-compaction context state may have changed (plan/file edits) */
@@ -163,6 +165,7 @@ export class AgentSession {
   private readonly aiService: AIService;
   private readonly initStateManager: InitStateManager;
   private readonly backgroundProcessManager: BackgroundProcessManager;
+  private readonly keepBackgroundProcesses: boolean;
   private readonly onCompactionComplete?: () => void;
   private readonly onPostCompactionStateChange?: () => void;
   private readonly emitter = new EventEmitter();
@@ -245,6 +248,7 @@ export class AgentSession {
       initStateManager,
       telemetryService,
       backgroundProcessManager,
+      keepBackgroundProcesses,
       onCompactionComplete,
       onPostCompactionStateChange,
     } = options;
@@ -260,6 +264,7 @@ export class AgentSession {
     this.aiService = aiService;
     this.initStateManager = initStateManager;
     this.backgroundProcessManager = backgroundProcessManager;
+    this.keepBackgroundProcesses = keepBackgroundProcesses ?? false;
     this.onCompactionComplete = onCompactionComplete;
     this.onPostCompactionStateChange = onPostCompactionStateChange;
 
@@ -285,8 +290,10 @@ export class AgentSession {
 
     // Stop any active stream (fire and forget - disposal shouldn't block)
     void this.aiService.stopStream(this.workspaceId, { abandonPartial: true });
-    // Terminate background processes for this workspace
-    void this.backgroundProcessManager.cleanup(this.workspaceId);
+    // Terminate background processes for this workspace (skip when flagged for bench/CI)
+    if (!this.keepBackgroundProcesses) {
+      void this.backgroundProcessManager.cleanup(this.workspaceId);
+    }
 
     for (const { event, handler } of this.aiListeners) {
       this.aiService.off(event, handler as never);
@@ -484,7 +491,8 @@ export class AgentSession {
 
   async sendMessage(
     message: string,
-    options?: SendMessageOptions & { fileParts?: FilePart[] }
+    options?: SendMessageOptions & { fileParts?: FilePart[] },
+    internal?: { synthetic?: boolean }
   ): Promise<Result<void, SendMessageError>> {
     this.assertNotDisposed("sendMessage");
 
@@ -693,6 +701,8 @@ export class AgentSession {
         timestamp: Date.now(),
         toolPolicy: typedToolPolicy,
         muxMetadata: typedMuxMetadata, // Pass through frontend metadata as black-box
+        // Auto-resume and other system-generated messages are synthetic + UI-visible
+        ...(internal?.synthetic && { synthetic: true, uiVisible: true }),
       },
       additionalParts
     );
@@ -767,7 +777,7 @@ export class AgentSession {
     try {
       // If this is a compaction request, terminate background processes first
       // They won't be included in the summary, so continuing with orphaned processes would be confusing
-      if (isCompactionRequest) {
+      if (isCompactionRequest && !this.keepBackgroundProcesses) {
         await this.backgroundProcessManager.cleanup(this.workspaceId);
 
         if (this.disposed) {
@@ -897,13 +907,10 @@ export class AgentSession {
       return Err(createUnknownSendMessageError(commitResult.error));
     }
 
-    const historyResult = await this.historyService.getHistory(this.workspaceId);
+    let historyResult = await this.historyService.getHistory(this.workspaceId);
     if (!historyResult.success) {
       return Err(createUnknownSendMessageError(historyResult.error));
     }
-    // Capture the current user message id so retries are stable across assistant message ids.
-    const lastUserMessage = [...historyResult.data].reverse().find((m) => m.role === "user");
-    this.activeStreamUserMessageId = lastUserMessage?.id;
 
     if (historyResult.data.length === 0) {
       return Err(
@@ -912,6 +919,32 @@ export class AgentSession {
         )
       );
     }
+
+    // Structural invariant: API requests must not end with a non-partial assistant message.
+    // Partial assistants are handled by addInterruptedSentinel at transform time.
+    // Non-partial trailing assistants indicate a missing user message upstream — inject a
+    // [CONTINUE] sentinel so the model has a valid conversation to respond to. This is
+    // defense-in-depth; callers should prefer sendMessage() which persists a real user message.
+    const lastMsg = historyResult.data[historyResult.data.length - 1];
+    if (lastMsg?.role === "assistant" && !lastMsg.metadata?.partial) {
+      log.warn("streamWithHistory: trailing non-partial assistant detected, injecting [CONTINUE]", {
+        workspaceId: this.workspaceId,
+        messageId: lastMsg.id,
+      });
+      const sentinelMessage = createMuxMessage(createUserMessageId(), "user", "[CONTINUE]", {
+        timestamp: Date.now(),
+        synthetic: true,
+      });
+      await this.historyService.appendToHistory(this.workspaceId, sentinelMessage);
+      const refreshed = await this.historyService.getHistory(this.workspaceId);
+      if (refreshed.success) {
+        historyResult = refreshed;
+      }
+    }
+
+    // Capture the current user message id so retries are stable across assistant message ids.
+    const lastUserMessage = [...historyResult.data].reverse().find((m) => m.role === "user");
+    this.activeStreamUserMessageId = lastUserMessage?.id;
 
     this.activeCompactionRequest = this.resolveCompactionRequest(
       historyResult.data,
@@ -939,27 +972,27 @@ export class AgentSession {
     // Bind recordFileState to this session for the propose_plan tool
     const recordFileState = this.fileChangeTracker.record.bind(this.fileChangeTracker);
 
-    const streamResult = await this.aiService.streamMessage(
-      historyResult.data,
-      this.workspaceId,
+    const streamResult = await this.aiService.streamMessage({
+      messages: historyResult.data,
+      workspaceId: this.workspaceId,
       modelString,
-      effectiveThinkingLevel,
-      options?.toolPolicy,
-      undefined,
-      options?.additionalSystemInstructions,
-      options?.maxOutputTokens,
-      options?.providerOptions,
-      options?.agentId,
+      thinkingLevel: effectiveThinkingLevel,
+      toolPolicy: options?.toolPolicy,
+      additionalSystemInstructions: options?.additionalSystemInstructions,
+      maxOutputTokens: options?.maxOutputTokens,
+      muxProviderOptions: options?.providerOptions,
+      agentId: options?.agentId,
       recordFileState,
-      changedFileAttachments.length > 0 ? changedFileAttachments : undefined,
+      changedFileAttachments:
+        changedFileAttachments.length > 0 ? changedFileAttachments : undefined,
       postCompactionAttachments,
-      options?.experiments,
-      options?.system1Model,
-      options?.system1ThinkingLevel,
-      options?.disableWorkspaceAgents,
-      () => !this.messageQueue.isEmpty(),
-      openaiTruncationModeOverride
-    );
+      experiments: options?.experiments,
+      system1Model: options?.system1Model,
+      system1ThinkingLevel: options?.system1ThinkingLevel,
+      disableWorkspaceAgents: options?.disableWorkspaceAgents,
+      hasQueuedMessage: () => !this.messageQueue.isEmpty(),
+      openaiTruncationModeOverride,
+    });
 
     if (!streamResult.success) {
       this.activeCompactionRequest = undefined;
@@ -1055,6 +1088,7 @@ export class AgentSession {
     options: SendMessageOptions | undefined
   ): SendMessageOptions {
     if (options) {
+      const existingModels = options.providerOptions?.anthropic?.use1MContextModels ?? [];
       return {
         ...options,
         providerOptions: {
@@ -1062,6 +1096,9 @@ export class AgentSession {
           anthropic: {
             ...options.providerOptions?.anthropic,
             use1MContext: true,
+            use1MContextModels: existingModels.includes(modelString)
+              ? existingModels
+              : [...existingModels, modelString],
           },
         },
       };
@@ -1073,6 +1110,7 @@ export class AgentSession {
       providerOptions: {
         anthropic: {
           use1MContext: true,
+          use1MContextModels: [modelString],
         },
       },
     };
@@ -1105,8 +1143,12 @@ export class AgentSession {
     }
 
     if (is1MCapable) {
-      const use1MContext = context.options?.providerOptions?.anthropic?.use1MContext ?? false;
-      if (use1MContext) {
+      // Skip retry if 1M context is already enabled (via legacy global flag or per-model list)
+      const anthropicOpts = context.options?.providerOptions?.anthropic;
+      const already1M =
+        anthropicOpts?.use1MContext === true ||
+        (anthropicOpts?.use1MContextModels?.includes(context.modelString) ?? false);
+      if (already1M) {
         return false;
       }
     }

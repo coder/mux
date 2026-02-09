@@ -188,7 +188,7 @@ async function openWorkspaceMCPModal(canvasElement: HTMLElement): Promise<void> 
   await userEvent.click(mcpButton);
 
   try {
-    await body.findByRole("dialog", {}, { timeout: 5000 });
+    await body.findByRole("dialog");
   } catch {
     const retryButton = await canvas.findByTestId("workspace-mcp-button");
     await userEvent.click(retryButton);
@@ -260,7 +260,8 @@ export const ProjectSettingsAddRemoteServerHeaders: AppStory = {
     const transportContainer = transportLabel.closest("div");
     await expect(transportContainer).not.toBeNull();
 
-    const transportSelect = within(transportContainer as HTMLElement).getByRole("combobox");
+    // Use findByRole (retry-capable) to handle transient DOM gaps between awaits.
+    const transportSelect = await within(transportContainer as HTMLElement).findByRole("combobox");
     await userEvent.click(transportSelect);
 
     const httpOption = await body.findByRole("option", { name: /HTTP \(Streamable\)/i });
@@ -273,10 +274,11 @@ export const ProjectSettingsAddRemoteServerHeaders: AppStory = {
     const addHeaderButton = await body.findByRole("button", { name: /\+ Add header/i });
     await userEvent.click(addHeaderButton);
 
-    const headerNameInputs = body.getAllByPlaceholderText("Authorization");
+    // Use findAllByRole / waitFor to handle transient DOM gaps between awaits.
+    const headerNameInputs = await body.findAllByPlaceholderText("Authorization");
     await userEvent.type(headerNameInputs[0], "Authorization");
 
-    const secretToggles = body.getAllByRole("radio", { name: "Secret" });
+    const secretToggles = await body.findAllByRole("radio", { name: "Secret" });
     await userEvent.click(secretToggles[0]);
 
     await expect(
@@ -684,18 +686,34 @@ export const ToolSelectorInteraction: AppStory = {
 
     const body = within(canvasElement.ownerDocument.body);
 
-    // Find the tool selector section
-    await body.findByText("mux", {}, { timeout: 10000 });
+    // Wait for the modal's data loading to fully settle. After loadData()
+    // completes, all tools are allowed by default, so the "All" button is
+    // disabled (allAllowed === true). Checking for this avoids interacting
+    // with DOM elements that may be stale from an earlier render.
+    await waitFor(
+      () => {
+        const allBtn = body.queryByRole("button", { name: /^All$/i });
+        if (!allBtn) throw new Error("All button not found — modal still loading");
+        return expect(allBtn).toBeDisabled();
+      },
+      { timeout: 10000 }
+    );
 
-    // Click "None" to deselect all tools
-    const noneButton = await body.findByRole("button", { name: /^None$/i }, { timeout: 10000 });
+    // Click "None" to deselect all tools.
+    // Use findByRole (retry-capable) instead of getByRole to handle transient
+    // DOM gaps — in CI the Storybook iframe can briefly unmount/remount the
+    // story component between awaits.
+    const noneButton = await body.findByRole("button", { name: /^None$/i });
     await userEvent.click(noneButton);
 
-    // Wait for selection state to update (CI can be slower than local runs).
-    await waitFor(() => expect(noneButton).toBeDisabled());
+    // Re-query for the assertion — the previous noneButton reference could
+    // be stale if React replaced the DOM node during re-render.
+    await waitFor(() => {
+      const btn = body.getByRole("button", { name: /^None$/i });
+      return expect(btn).toBeDisabled();
+    });
 
     // Should now show "0 of X tools enabled".
-    // CI can be slower than local runs, so use an explicit timeout to avoid flake.
     await body.findByText(
       (_content, element) => {
         const text = (element?.textContent ?? "").replace(/\s+/g, " ").trim();
@@ -705,11 +723,19 @@ export const ToolSelectorInteraction: AppStory = {
       { timeout: 10000 }
     );
 
-    // Click "All" to select all tools
-    const allButton = await body.findByRole("button", { name: /^All$/i }, { timeout: 10000 });
-    await waitFor(() => expect(allButton).toBeEnabled());
+    // Click "All" to select all tools.
+    // Use findByRole (retry-capable) and re-query inside waitFor to avoid
+    // stale refs if the DOM transiently unmounts between awaits.
+    const allButton = await body.findByRole("button", { name: /^All$/i });
+    await waitFor(() => {
+      const btn = body.getByRole("button", { name: /^All$/i });
+      return expect(btn).toBeEnabled();
+    });
     await userEvent.click(allButton);
-    await waitFor(() => expect(allButton).toBeDisabled());
+    await waitFor(() => {
+      const btn = body.getByRole("button", { name: /^All$/i });
+      return expect(btn).toBeDisabled();
+    });
   },
 };
 

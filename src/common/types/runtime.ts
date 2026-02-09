@@ -22,19 +22,6 @@ export const RUNTIME_MODE = {
   DEVCONTAINER: "devcontainer" as const,
 } as const;
 
-/**
- * Runtime modes that require a git repository.
- *
- * Worktree/SSH/Docker/Devcontainer all depend on git operations (worktrees, clones, bundles).
- * Local runtime can operate directly in a directory without git.
- */
-export const RUNTIME_MODES_REQUIRING_GIT: RuntimeMode[] = [
-  RUNTIME_MODE.WORKTREE,
-  RUNTIME_MODE.SSH,
-  RUNTIME_MODE.DOCKER,
-  RUNTIME_MODE.DEVCONTAINER,
-];
-
 /** Runtime string prefix for SSH mode (e.g., "ssh hostname") */
 export const SSH_RUNTIME_PREFIX = "ssh ";
 
@@ -295,13 +282,4 @@ export function getDevcontainerConfigs(
     return status.configs;
   }
   return [];
-}
-
-/**
- * Helper to check if availability has devcontainer configs.
- */
-export function hasDevcontainerConfigs(
-  status: RuntimeAvailabilityStatus
-): status is { available: true; configs: DevcontainerConfigInfo[]; cliVersion?: string } {
-  return status.available && "configs" in status;
 }

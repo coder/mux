@@ -11,21 +11,14 @@
 import { Command } from "commander";
 import { tool } from "ai";
 import { z } from "zod";
-import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
 import * as fsSync from "fs";
 import { Config } from "@/node/config";
 import { DisposableTempDir } from "@/node/services/tempDir";
-import { HistoryService } from "@/node/services/historyService";
-import { PartialService } from "@/node/services/partialService";
-import { InitStateManager } from "@/node/services/initStateManager";
-import { AIService } from "@/node/services/aiService";
-import { ProviderService } from "@/node/services/providerService";
 import { AgentSession, type AgentSessionChatEvent } from "@/node/services/agentSession";
-import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
-import { MCPConfigService } from "@/node/services/mcpConfigService";
-import { MCPServerManager } from "@/node/services/mcpServerManager";
+import { CodexOauthService } from "@/node/services/codexOauthService";
+import { createCoreServices } from "@/node/services/coreServices";
 import {
   isCaughtUpMessage,
   isReasoningDelta,
@@ -62,9 +55,10 @@ import { buildProvidersFromEnv, hasAnyConfiguredProvider } from "@/node/utils/pr
 import {
   DEFAULT_THINKING_LEVEL,
   THINKING_DISPLAY_LABELS,
-  parseThinkingDisplayLabel,
-  type ThinkingLevel,
+  parseThinkingInput,
+  type ParsedThinkingInput,
 } from "@/common/types/thinking";
+import { resolveThinkingInput } from "@/common/utils/thinking/policy";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { parseRuntimeModeAndHost, RUNTIME_MODE } from "@/common/types/runtime";
 import assert from "@/common/utils/assert";
@@ -78,7 +72,7 @@ import { execSync } from "child_process";
 import { getParseOptions } from "./argv";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
-// Display labels for CLI help (OFF, LOW, MED, HIGH, XHIGH)
+// Display labels for CLI help (OFF, LOW, MED, HIGH, MAX)
 const THINKING_LABELS_LIST = Object.values(THINKING_DISPLAY_LABELS).join(", ");
 
 type CLIMode = "plan" | "exec";
@@ -110,16 +104,15 @@ function parseRuntimeConfig(value: string | undefined, srcBaseDir: string): Runt
   }
 }
 
-function parseThinkingLevel(value: string | undefined): ThinkingLevel | undefined {
+function parseThinkingLevel(value: string | undefined): ParsedThinkingInput {
   if (!value) return DEFAULT_THINKING_LEVEL; // Default for mux run
 
-  const level = parseThinkingDisplayLabel(value);
-  if (level) {
+  // Accepts named levels (off, low, med, high, max, xhigh) and numeric (0–N)
+  const level = parseThinkingInput(value);
+  if (level != null) {
     return level;
   }
-  throw new Error(
-    `Invalid thinking level "${value}". Expected: ${THINKING_LABELS_LIST} (or legacy: medium, max)`
-  );
+  throw new Error(`Invalid thinking level "${value}". Expected: ${THINKING_LABELS_LIST}, or 0–N`);
 }
 
 function parseMode(value: string | undefined): CLIMode {
@@ -262,6 +255,10 @@ program
   .option("-e, --experiment <id>", "enable experiment (can be repeated)", collectExperiments, [])
   .option("-b, --budget <usd>", "stop when session cost exceeds budget (USD)", parseFloat)
   .option("--service-tier <tier>", "OpenAI service tier: auto, default, flex, priority", "auto")
+  .option(
+    "--keep-background-processes",
+    "do not terminate background processes on exit (for CI/bench)"
+  )
   .addHelpText(
     "after",
     `
@@ -296,9 +293,12 @@ interface CLIOptions {
   experiment: string[];
   budget?: number;
   serviceTier: "auto" | "default" | "flex" | "priority";
+  keepBackgroundProcesses?: boolean;
 }
 
 const opts = program.opts<CLIOptions>();
+const keepBackgroundProcesses =
+  opts.keepBackgroundProcesses === true || process.env.MUX_KEEP_BACKGROUND_PROCESSES === "1";
 const messageArg = program.args.join(" ");
 
 async function main(): Promise<number> {
@@ -354,7 +354,8 @@ async function main(): Promise<number> {
 
   const model: string = resolveModelAlias(opts.model);
   const runtimeConfig = parseRuntimeConfig(opts.runtime, config.srcDir);
-  const thinkingLevel = parseThinkingLevel(opts.thinking);
+  // Resolve thinking: numeric indices map to the model's allowed levels (0 = lowest)
+  const thinkingLevel = resolveThinkingInput(parseThinkingLevel(opts.thinking), model);
   const initialMode = parseMode(opts.mode);
   const emitJson = opts.json === true;
   const quiet = opts.quiet === true;
@@ -402,22 +403,49 @@ async function main(): Promise<number> {
   );
   log.info(`Mode: ${initialMode}`);
 
-  // Initialize services
-  const historyService = new HistoryService(config);
-  const partialService = new PartialService(config, historyService);
-  const initStateManager = new InitStateManager(config);
-  const providerService = new ProviderService(config);
-  const backgroundProcessManager = new BackgroundProcessManager(
-    path.join(os.tmpdir(), "mux-bashes")
-  );
-  const aiService = new AIService(
-    config,
+  // Bootstrap providers from env vars if no providers.jsonc exists
+  if (!hasAnyConfiguredProvider(existingProviders)) {
+    const providersFromEnv = buildProvidersFromEnv();
+    if (hasAnyConfiguredProvider(providersFromEnv)) {
+      config.saveProvidersConfig(providersFromEnv);
+    } else {
+      throw new Error(
+        "No provider credentials found. Configure providers.jsonc or set ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY."
+      );
+    }
+  }
+
+  // Initialize the core service graph (shared with ServiceContainer).
+  // CLI overrides: ephemeral extension metadata, persistent MCP config via
+  // realConfig, and CLI-specific MCPServerManager options for inline servers.
+  const inlineServers: Record<string, string> = {};
+  for (const entry of opts.mcp) {
+    inlineServers[entry.name] = entry.command;
+  }
+  const {
+    aiService,
     historyService,
     partialService,
     initStateManager,
+    backgroundProcessManager,
+    mcpServerManager,
     providerService,
-    backgroundProcessManager
-  );
+    workspaceService,
+  } = createCoreServices({
+    config,
+    extensionMetadataPath: path.join(tempDir.path, "extensionMetadata.json"),
+    mcpConfig: realConfig,
+    mcpServerManagerOptions: {
+      inlineServers,
+      ignoreConfigFile: !opts.mcpConfig,
+    },
+  });
+
+  // `mux run` uses createCoreServices directly (without ServiceContainer), so wire
+  // Codex OAuth explicitly to ensure Codex-routed OpenAI requests can load/refresh
+  // OAuth tokens from providers.jsonc.
+  const codexOauthService = new CodexOauthService(config, providerService);
+  aiService.setCodexOauthService(codexOauthService);
 
   // CLI-only exit code control: allows agent to set the process exit code
   // Useful for CI workflows where the agent should block merge on failure
@@ -444,30 +472,6 @@ async function main(): Promise<number> {
   });
   aiService.setExtraTools({ set_exit_code: setExitCodeTool });
 
-  // Bootstrap providers from env vars if no providers.jsonc exists
-  if (!hasAnyConfiguredProvider(existingProviders)) {
-    const providersFromEnv = buildProvidersFromEnv();
-    if (hasAnyConfiguredProvider(providersFromEnv)) {
-      config.saveProvidersConfig(providersFromEnv);
-    } else {
-      throw new Error(
-        "No provider credentials found. Configure providers.jsonc or set ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY."
-      );
-    }
-  }
-
-  // Initialize MCP support
-  const mcpConfigService = new MCPConfigService(realConfig);
-  const inlineServers: Record<string, string> = {};
-  for (const entry of opts.mcp) {
-    inlineServers[entry.name] = entry.command;
-  }
-  const mcpServerManager = new MCPServerManager(mcpConfigService, {
-    inlineServers,
-    ignoreConfigFile: !opts.mcpConfig,
-  });
-  aiService.setMCPServerManager(mcpServerManager);
-
   const session = new AgentSession({
     workspaceId,
     config,
@@ -476,7 +480,12 @@ async function main(): Promise<number> {
     aiService,
     initStateManager,
     backgroundProcessManager,
+    keepBackgroundProcesses,
   });
+  // Register with WorkspaceService so TaskService operations that target the parent
+  // workspace (e.g. resumeStream after sub-agent completion) reuse this session
+  // instead of creating a duplicate.
+  workspaceService.registerSession(workspaceId, session);
 
   // For Docker runtime, create and initialize the container first
   let workspacePath = projectDir;
@@ -547,6 +556,11 @@ async function main(): Promise<number> {
     runtimeConfig,
   });
 
+  // Note: taskService.initialize() is intentionally NOT called. It resumes tasks from a
+  // previous session, but mux run uses an ephemeral Config (temp dir) with no prior state.
+  // Calling initialize() on a fresh config is a no-op, but skipping it makes the intent
+  // clear and avoids any risk of cross-workspace side effects if config were ever shared.
+
   const experiments = buildExperimentsObject(opts.experiment);
 
   const buildSendOptions = (cliMode: CLIMode): SendMessageOptions => ({
@@ -557,7 +571,16 @@ async function main(): Promise<number> {
     providerOptions: {
       openai: { serviceTier: opts.serviceTier },
     },
-    // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)
+    // Disable UI-only tools that have no effect in CLI mode:
+    // - status_set: backend no-op, status indicator only visible in desktop UI
+    // - todo_write/todo_read: TODO list only visible in desktop UI
+    // - notify: sends OS notifications via Electron, silently swallowed in CLI
+    toolPolicy: [
+      { regex_match: "status_set", action: "disable" as const },
+      { regex_match: "todo_write", action: "disable" as const },
+      { regex_match: "todo_read", action: "disable" as const },
+      { regex_match: "notify", action: "disable" as const },
+    ],
     // Plan agent instructions are handled by the backend (has access to plan file path)
   });
 
@@ -894,6 +917,39 @@ async function main(): Promise<number> {
       return;
     }
 
+    // When a sub-agent workspace is cleaned up, its usage is rolled up into the parent
+    // and emitted as a session-usage-delta event. Add to usageHistory so budget checks
+    // and the final cost summary include sub-agent costs.
+    if (payload.type === "session-usage-delta") {
+      for (const usage of Object.values(payload.byModelDelta)) {
+        usageHistory.push(usage);
+      }
+
+      // Enforce budget after rolling up sub-agent costs (mirrors the stream-end budget check).
+      // sumUsageHistory sets hasUnknownCosts when any component has cost_usd===undefined,
+      // which catches models with unknown pricing regardless of how entries were merged.
+      if (budget !== undefined && !budgetExceeded) {
+        const totalUsage = sumUsageHistory(usageHistory);
+        const cost = getTotalCost(totalUsage);
+
+        if (totalUsage?.hasUnknownCosts) {
+          const errMsg = `Cannot enforce budget: sub-agent used a model with unknown pricing`;
+          emitJsonLine({ type: "budget-error", error: errMsg });
+          rejectStream(new Error(errMsg));
+          return;
+        }
+
+        if (cost !== undefined && cost > budget) {
+          budgetExceeded = true;
+          const msg = `Budget exceeded ($${cost.toFixed(2)} of $${budget.toFixed(2)}) - stopping`;
+          emitJsonLine({ type: "budget-exceeded", spent: cost, budget });
+          writeHumanLineClosed(`\n${chalk.yellow(msg)}`);
+          void session.interruptStream({ abandonPartial: false });
+        }
+      }
+      return;
+    }
+
     // Capture usage-delta events as fallback when stream-end lacks usage metadata
     // Also check budget limits if --budget is specified
     if (isUsageDelta(payload)) {
@@ -985,7 +1041,8 @@ async function main(): Promise<number> {
       }
     }
 
-    // Compute final usage/cost summary
+    // Compute final usage/cost summary. usageHistory includes both parent stream usage
+    // (from stream-end events) and rolled-up sub-agent costs (from session-usage-delta events).
     const totalUsage = sumUsageHistory(usageHistory);
     const totalCost = getTotalCost(totalUsage);
 
@@ -1019,6 +1076,10 @@ async function main(): Promise<number> {
     unsubscribe();
     session.dispose();
     mcpServerManager.dispose();
+    await codexOauthService.dispose();
+    if (!keepBackgroundProcesses) {
+      await backgroundProcessManager.terminateAll();
+    }
   }
 
   // Exit codes: 2 for budget exceeded, agent-specified exit code, or 0 for success
@@ -1034,7 +1095,19 @@ const keepAliveInterval = setInterval(() => {
 main()
   .then((exitCode) => {
     clearInterval(keepAliveInterval);
-    process.exit(exitCode);
+    // Flush stdout before exiting — process.exit() kills immediately and may
+    // drop buffered writes (e.g. the run-complete JSON line piped to tee in benchmarks).
+    if (process.stdout.writableNeedDrain) {
+      const exit = () => process.exit(exitCode);
+      process.stdout.once("drain", exit);
+      // Safety: if the downstream consumer closes (broken pipe) or backpressure
+      // never resolves, exit anyway after 1s to avoid hanging.
+      process.stdout.once("error", exit);
+      process.stdout.once("close", exit);
+      setTimeout(exit, 1000).unref();
+    } else {
+      process.exit(exitCode);
+    }
   })
   .catch((error) => {
     clearInterval(keepAliveInterval);

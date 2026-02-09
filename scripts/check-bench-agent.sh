@@ -83,13 +83,45 @@ if [[ ${#MISSING_FILES[@]} -gt 0 ]]; then
   exit 1
 fi
 
-# Verify the built CLI can actually run (catches missing dependencies/imports)
-if ! output=$(node "$REPO_ROOT/dist/cli/index.js" run --help 2>&1); then
-  if echo "$output" | grep -qE "Cannot find module|MODULE_NOT_FOUND"; then
-    echo "❌ Error: Built CLI has missing module dependencies:"
-    echo "$output"
-    exit 1
-  fi
+# Verify that CLI subcommands boot WITHOUT a lockfile using bun's resolver.
+# npm and bun resolve pre-release caret ranges differently — bun includes the
+# stable release (e.g. ^0.1.0-main.28 → 0.1.0) while npm does not. Since users
+# run `bun x mux@latest`, we must test with bun to catch resolution mismatches.
+echo ""
+echo "Checking CLI subcommand imports (bun, lockfile-free)..."
+
+CHECK_DIR=$(mktemp -d)
+trap 'rm -rf "$CHECK_DIR"' EXIT
+
+# Copy built dist and package.json — but NO lockfile, shrinkwrap, or node_modules.
+cp -r "$REPO_ROOT/dist" "$CHECK_DIR/dist"
+cp "$REPO_ROOT/package.json" "$CHECK_DIR/package.json"
+
+# Strip devDependencies so bun only resolves production deps (matching published package).
+node -e "
+  const pkg = JSON.parse(require('fs').readFileSync('$CHECK_DIR/package.json', 'utf8'));
+  delete pkg.devDependencies;
+  require('fs').writeFileSync('$CHECK_DIR/package.json', JSON.stringify(pkg, null, 2) + '\n');
+"
+
+if ! install_output=$(cd "$CHECK_DIR" && bun install --ignore-scripts 2>&1); then
+  echo "❌ Error: bun install (lockfile-free) failed:"
+  echo "$install_output"
+  exit 1
 fi
 
-echo "✅ npm package CLI is complete (all required files present)"
+CLI_SUBCMDS=(run server)
+for subcmd in "${CLI_SUBCMDS[@]}"; do
+  if ! output=$(node "$CHECK_DIR/dist/cli/index.js" "$subcmd" --help 2>&1); then
+    if echo "$output" | grep -qE "Cannot find module|MODULE_NOT_FOUND|not defined by \"exports\""; then
+      echo "❌ Error: 'mux $subcmd --help' failed (bun lockfile-free resolution):"
+      echo "$output"
+      echo ""
+      echo "A dependency likely resolved to a version missing a required export."
+      echo "Pin the dep to an exact version or lazy-load the import."
+      exit 1
+    fi
+  fi
+done
+
+echo "✅ npm package CLI is complete (all subcommands boot under bun lockfile-free resolution)"

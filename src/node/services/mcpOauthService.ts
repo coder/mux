@@ -418,17 +418,15 @@ export class McpOauthService {
 
   private readonly desktopFlows = new Map<string, DesktopFlow>();
   private readonly serverFlows = new Map<string, ServerFlow>();
-  private telemetryService?: TelemetryService;
-
-  setTelemetryService(telemetryService: TelemetryService): void {
-    this.telemetryService = telemetryService;
-  }
+  private readonly telemetryService?: TelemetryService;
 
   constructor(
     private readonly config: Config,
     private readonly mcpConfigService: MCPConfigService,
-    private readonly windowService?: WindowService
+    private readonly windowService?: WindowService,
+    telemetryService?: TelemetryService
   ) {
+    this.telemetryService = telemetryService;
     this.storeFilePath = path.join(config.rootDir, STORE_FILE_NAME);
   }
 

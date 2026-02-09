@@ -88,6 +88,8 @@ export async function createTestEnvironment(): Promise<TestEnvironment> {
     workspaceService: services.workspaceService,
     muxGatewayOauthService: services.muxGatewayOauthService,
     muxGovernorOauthService: services.muxGovernorOauthService,
+    codexOauthService: services.codexOauthService,
+    copilotOauthService: services.copilotOauthService,
     taskService: services.taskService,
     providerService: services.providerService,
     terminalService: services.terminalService,
@@ -187,7 +189,7 @@ export { shouldRunIntegrationTests, validateApiKeys, getApiKey };
 export async function preloadTestModules(): Promise<void> {
   const [{ loadTokenizerModules }, { preloadAISDKProviders }] = await Promise.all([
     import("../../src/node/utils/main/tokenizer"),
-    import("../../src/node/services/aiService"),
+    import("../../src/node/services/providerModelFactory"),
   ]);
   await Promise.all([loadTokenizerModules(), preloadAISDKProviders()]);
 }

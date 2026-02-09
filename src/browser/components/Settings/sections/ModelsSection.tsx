@@ -1,5 +1,6 @@
-import React, { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Loader2, Plus, ShieldCheck } from "lucide-react";
+import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { Button } from "@/browser/components/ui/button";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import {
@@ -17,6 +18,7 @@ import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { SearchableModelSelect } from "../components/SearchableModelSelect";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
+import { supports1MContext } from "@/common/utils/ai/models";
 import { getAllowedProvidersForUi, isModelAllowedByPolicy } from "@/browser/utils/policyUi";
 import {
   LAST_CUSTOM_MODEL_PROVIDER_KEY,
@@ -72,6 +74,7 @@ export function ModelsSection() {
   const { defaultModel, setDefaultModel, hiddenModels, hideModel, unhideModel } =
     useModelsFromSettings();
   const gateway = useGateway();
+  const { has1MContext, toggle1MContext } = useProviderOptions();
 
   // Compaction model preference
   const [compactionModel, setCompactionModel] = usePersistedState<string>(
@@ -355,6 +358,7 @@ export function ModelsSection() {
                       saving={false}
                       hasActiveEdit={editing !== null}
                       isGatewayEnabled={gateway.modelUsesGateway(model.fullId)}
+                      is1MContextEnabled={has1MContext(model.fullId)}
                       onSetDefault={() => setDefaultModel(model.fullId)}
                       onStartEdit={() => handleStartEdit(model.provider, model.modelId)}
                       onSaveEdit={handleSaveEdit}
@@ -372,6 +376,11 @@ export function ModelsSection() {
                       onToggleGateway={
                         gateway.canToggleModel(model.fullId)
                           ? () => gateway.toggleModelGateway(model.fullId)
+                          : undefined
+                      }
+                      onToggle1MContext={
+                        supports1MContext(model.fullId)
+                          ? () => toggle1MContext(model.fullId)
                           : undefined
                       }
                     />
@@ -403,6 +412,7 @@ export function ModelsSection() {
                   isDefault={defaultModel === model.fullId}
                   isEditing={false}
                   isGatewayEnabled={gateway.modelUsesGateway(model.fullId)}
+                  is1MContextEnabled={has1MContext(model.fullId)}
                   onSetDefault={() => setDefaultModel(model.fullId)}
                   isHiddenFromSelector={hiddenModels.includes(model.fullId)}
                   onToggleVisibility={() =>
@@ -415,10 +425,49 @@ export function ModelsSection() {
                       ? () => gateway.toggleModelGateway(model.fullId)
                       : undefined
                   }
+                  onToggle1MContext={
+                    supports1MContext(model.fullId)
+                      ? () => toggle1MContext(model.fullId)
+                      : undefined
+                  }
                 />
               ))}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* Oneshot Tips */}
+      <div className="space-y-2">
+        <div className="text-muted text-xs font-medium tracking-wide uppercase">
+          Quick Shortcuts
+        </div>
+        <div className="border-border-medium bg-background-secondary/50 rounded-md border px-3 py-2.5 text-xs leading-relaxed">
+          <p className="text-foreground mb-1.5 font-medium">
+            Use model aliases as slash commands for one-shot overrides:
+          </p>
+          <div className="text-muted space-y-0.5 font-mono">
+            <div>
+              <span className="text-accent">/sonnet</span> explain this code
+              <span className="text-muted/60 ml-2">— send one message with Sonnet</span>
+            </div>
+            <div>
+              <span className="text-accent">/opus+high</span> deep review
+              <span className="text-muted/60 ml-2">— Opus with high thinking</span>
+            </div>
+            <div>
+              <span className="text-accent">/haiku+0</span> quick answer
+              <span className="text-muted/60 ml-2">— Haiku with thinking off</span>
+            </div>
+            <div>
+              <span className="text-accent">/+2</span> analyze this
+              <span className="text-muted/60 ml-2">— current model, thinking level 2</span>
+            </div>
+          </div>
+          <p className="text-muted mt-1.5">
+            Numeric levels are relative to each model (0=lowest allowed, 1=next, etc.). Named
+            levels: off, low, med, high, max.
+          </p>
         </div>
       </div>
     </div>

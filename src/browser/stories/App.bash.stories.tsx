@@ -40,16 +40,13 @@ async function expandAllBashTools(canvasElement: HTMLElement) {
   }
 
   // Wait for at least one expand icon to appear in the message window
-  await waitFor(
-    () => {
-      const allSpans = messageWindow.querySelectorAll("span");
-      const expandIcons = Array.from(allSpans).filter((span) => span.textContent?.trim() === "▶");
-      if (expandIcons.length === 0) {
-        throw new Error("No expand icons found");
-      }
-    },
-    { timeout: 5000 }
-  );
+  await waitFor(() => {
+    const allSpans = messageWindow.querySelectorAll("span");
+    const expandIcons = Array.from(allSpans).filter((span) => span.textContent?.trim() === "▶");
+    if (expandIcons.length === 0) {
+      throw new Error("No expand icons found");
+    }
+  });
 
   const allSpans = messageWindow.querySelectorAll("span");
   const expandIcons = Array.from(allSpans).filter((span) => span.textContent?.trim() === "▶");

@@ -76,8 +76,8 @@ describe("buildProviderOptions - Anthropic", () => {
       expect(anthropic.effort).toBe("medium");
     });
 
-    test("should map max to max effort for Opus 4.6", () => {
-      const result = buildProviderOptions("anthropic:claude-opus-4-6", "max");
+    test("should map xhigh to max effort for Opus 4.6", () => {
+      const result = buildProviderOptions("anthropic:claude-opus-4-6", "xhigh");
       const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
 
       expect(anthropic.thinking).toEqual({ type: "adaptive" });

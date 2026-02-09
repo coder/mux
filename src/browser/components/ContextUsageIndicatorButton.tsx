@@ -9,6 +9,7 @@ import {
 import { Switch } from "./ui/switch";
 import { formatTokens, type TokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 import { cn } from "@/common/lib/utils";
+import { Toggle1MContext } from "./Toggle1MContext";
 
 // Selector for Radix portal wrappers - used to detect when clicks/interactions
 // originate from nested Radix components (like Tooltip inside the slider)
@@ -57,6 +58,8 @@ interface ContextUsageIndicatorButtonProps {
   data: TokenMeterData;
   autoCompaction?: AutoCompactionConfig;
   idleCompaction?: IdleCompactionConfig;
+  /** Current model ID — used to show 1M context toggle for supported models */
+  model?: string;
 }
 
 /** Tick marks with vertical lines attached to the meter */
@@ -87,7 +90,8 @@ const AutoCompactSettings: React.FC<{
   data: TokenMeterData;
   usageConfig?: AutoCompactionConfig;
   idleConfig?: IdleCompactionConfig;
-}> = ({ data, usageConfig, idleConfig }) => {
+  model?: string;
+}> = ({ data, usageConfig, idleConfig, model }) => {
   const [idleInputValue, setIdleInputValue] = React.useState(idleConfig?.hours?.toString() ?? "24");
 
   // Sync idle input when external hours change
@@ -146,6 +150,9 @@ const AutoCompactSettings: React.FC<{
         {showUsageSlider && <PercentTickMarks />}
       </div>
 
+      {/* 1M context toggle for supported Anthropic models */}
+      {model && <Toggle1MContext model={model} />}
+
       {/* Idle-based auto-compact */}
       {idleConfig && (
         <div className="border-separator-light border-t pt-2">
@@ -202,6 +209,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
   data,
   autoCompaction,
   idleCompaction,
+  model,
 }) => {
   const isAutoCompactionEnabled = autoCompaction && autoCompaction.threshold < 100;
   const idleHours = idleCompaction?.hours;
@@ -224,7 +232,12 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
   return (
     <HoverClickPopover
       content={
-        <AutoCompactSettings data={data} usageConfig={autoCompaction} idleConfig={idleCompaction} />
+        <AutoCompactSettings
+          data={data}
+          usageConfig={autoCompaction}
+          idleConfig={idleCompaction}
+          model={model}
+        />
       }
       side="bottom"
       align="end"

@@ -77,6 +77,7 @@ import type { SessionTimingService } from "@/node/services/sessionTimingService"
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
+import type { TaskService } from "@/node/services/taskService";
 
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { createBashTool } from "@/node/services/tools/bash";
@@ -669,25 +670,30 @@ export class WorkspaceService extends EventEmitter {
     private readonly initStateManager: InitStateManager,
     private readonly extensionMetadata: ExtensionMetadataService,
     private readonly backgroundProcessManager: BackgroundProcessManager,
-    private readonly sessionUsageService?: SessionUsageService
+    private readonly sessionUsageService?: SessionUsageService,
+    policyService?: PolicyService,
+    telemetryService?: TelemetryService,
+    experimentsService?: ExperimentsService,
+    sessionTimingService?: SessionTimingService
   ) {
     super();
+    this.policyService = policyService;
+    this.telemetryService = telemetryService;
+    this.experimentsService = experimentsService;
+    this.sessionTimingService = sessionTimingService;
     this.setupMetadataListeners();
     this.setupInitMetadataListeners();
   }
 
-  private telemetryService?: TelemetryService;
-  private policyService?: PolicyService;
-  private experimentsService?: ExperimentsService;
+  private readonly policyService?: PolicyService;
+  private readonly telemetryService?: TelemetryService;
+  private readonly experimentsService?: ExperimentsService;
   private mcpServerManager?: MCPServerManager;
   // Optional terminal service for cleanup on workspace removal
   private terminalService?: TerminalService;
-  private sessionTimingService?: SessionTimingService;
+  private readonly sessionTimingService?: SessionTimingService;
   private workspaceLifecycleHooks?: WorkspaceLifecycleHooks;
-
-  setPolicyService(service: PolicyService): void {
-    this.policyService = service;
-  }
+  private taskService?: TaskService;
 
   /**
    * Set the MCP server manager for tool access.
@@ -697,14 +703,6 @@ export class WorkspaceService extends EventEmitter {
     this.mcpServerManager = manager;
   }
 
-  setTelemetryService(telemetryService: TelemetryService): void {
-    this.telemetryService = telemetryService;
-  }
-
-  setExperimentsService(experimentsService: ExperimentsService): void {
-    this.experimentsService = experimentsService;
-  }
-
   /**
    * Set the terminal service for cleanup on workspace removal.
    */
@@ -712,16 +710,16 @@ export class WorkspaceService extends EventEmitter {
     this.terminalService = terminalService;
   }
 
-  /**
-   * Set session timing service for roll-up during workspace removal.
-   * Called after construction due to initialization ordering.
-   */
-  setSessionTimingService(sessionTimingService: SessionTimingService): void {
-    this.sessionTimingService = sessionTimingService;
-  }
-
   setWorkspaceLifecycleHooks(hooks: WorkspaceLifecycleHooks): void {
     this.workspaceLifecycleHooks = hooks;
+  }
+
+  /**
+   * Set the task service for auto-resume counter resets.
+   * Called after construction due to circular dependency.
+   */
+  setTaskService(taskService: TaskService): void {
+    this.taskService = taskService;
   }
 
   /**
@@ -976,6 +974,36 @@ export class WorkspaceService extends EventEmitter {
     });
 
     return session;
+  }
+
+  /**
+   * Register an externally-created AgentSession so that WorkspaceService
+   * operations (sendMessage, resumeStream, remove, etc.) reuse it instead of
+   * creating a duplicate. Used by `mux run` CLI to keep a single session
+   * instance for the parent workspace.
+   */
+  public registerSession(workspaceId: string, session: AgentSession): void {
+    workspaceId = workspaceId.trim();
+    assert(workspaceId.length > 0, "workspaceId must not be empty");
+    assert(!this.sessions.has(workspaceId), `session already registered for ${workspaceId}`);
+
+    this.sessions.set(workspaceId, session);
+
+    const chatUnsubscribe = session.onChatEvent((event) => {
+      this.emit("chat", { workspaceId: event.workspaceId, message: event.message });
+    });
+
+    const metadataUnsubscribe = session.onMetadataEvent((event) => {
+      this.emit("metadata", {
+        workspaceId: event.workspaceId,
+        metadata: event.metadata!,
+      });
+    });
+
+    this.sessionSubscriptions.set(workspaceId, {
+      chat: chatUnsubscribe,
+      metadata: metadataUnsubscribe,
+    });
   }
 
   public disposeSession(workspaceId: string): void {
@@ -2575,7 +2603,11 @@ export class WorkspaceService extends EventEmitter {
     options: SendMessageOptions & {
       fileParts?: FilePart[];
     },
-    internal?: { allowQueuedAgentTask?: boolean }
+    internal?: {
+      allowQueuedAgentTask?: boolean;
+      skipAutoResumeReset?: boolean;
+      synthetic?: boolean;
+    }
   ): Promise<Result<void, SendMessageError>> {
     log.debug("sendMessage handler: Received", {
       workspaceId,
@@ -2716,7 +2748,12 @@ export class WorkspaceService extends EventEmitter {
         return Ok(undefined);
       }
 
-      const result = await session.sendMessage(message, normalizedOptions);
+      if (!internal?.skipAutoResumeReset) {
+        this.taskService?.resetAutoResumeCount(workspaceId);
+      }
+      const result = await session.sendMessage(message, normalizedOptions, {
+        synthetic: internal?.synthetic,
+      });
       if (!result.success) {
         log.error("sendMessage handler: session returned error", {
           workspaceId,
@@ -2844,6 +2881,7 @@ export class WorkspaceService extends EventEmitter {
     options?: { soft?: boolean; abandonPartial?: boolean; sendQueuedImmediately?: boolean }
   ): Promise<Result<void>> {
     try {
+      this.taskService?.resetAutoResumeCount(workspaceId);
       const session = this.getOrCreateSession(workspaceId);
       const stopResult = await session.interruptStream(options);
       if (!stopResult.success) {

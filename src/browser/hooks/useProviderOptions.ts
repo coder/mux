@@ -6,5 +6,7 @@ export function useProviderOptions() {
     options: context.options,
     setAnthropicOptions: context.setAnthropicOptions,
     setGoogleOptions: context.setGoogleOptions,
+    has1MContext: context.has1MContext,
+    toggle1MContext: context.toggle1MContext,
   };
 }

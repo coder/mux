@@ -23,8 +23,6 @@ export class MapStore<K, V> {
   private cache = new Map<string, V>();
   private global = new Set<Listener>();
   private perKey = new Map<K, Set<Listener>>();
-  private snapshotCache: Map<K, V> | null = null;
-
   // DEV-mode guard: track render depth to catch bump() during render
   private renderDepth = 0;
 
@@ -124,8 +122,6 @@ export class MapStore<K, V> {
 
     const current = this.versions.get(key) ?? 0;
     this.versions.set(key, current + 1);
-    this.snapshotCache = null;
-
     // Notify subscribers
     for (const l of this.global) l();
     const ks = this.perKey.get(key);
@@ -149,7 +145,6 @@ export class MapStore<K, V> {
     }
 
     this.versions.delete(key);
-    this.snapshotCache = null;
 
     // Notify
     for (const l of this.global) l();
@@ -165,7 +160,6 @@ export class MapStore<K, V> {
   clear(): void {
     this.versions.clear();
     this.cache.clear();
-    this.snapshotCache = null;
     for (const l of this.global) l();
   }
 

@@ -1148,6 +1148,28 @@ export const router = (authToken?: string) => {
           await context.muxGatewayOauthService.cancelDesktopFlow(input.flowId);
         }),
     },
+    copilotOauth: {
+      startDeviceFlow: t
+        .input(schemas.copilotOauth.startDeviceFlow.input)
+        .output(schemas.copilotOauth.startDeviceFlow.output)
+        .handler(({ context }) => {
+          return context.copilotOauthService.startDeviceFlow();
+        }),
+      waitForDeviceFlow: t
+        .input(schemas.copilotOauth.waitForDeviceFlow.input)
+        .output(schemas.copilotOauth.waitForDeviceFlow.output)
+        .handler(({ context, input }) => {
+          return context.copilotOauthService.waitForDeviceFlow(input.flowId, {
+            timeoutMs: input.timeoutMs,
+          });
+        }),
+      cancelDeviceFlow: t
+        .input(schemas.copilotOauth.cancelDeviceFlow.input)
+        .output(schemas.copilotOauth.cancelDeviceFlow.output)
+        .handler(({ context, input }) => {
+          context.copilotOauthService.cancelDeviceFlow(input.flowId);
+        }),
+    },
     muxGovernorOauth: {
       startDesktopFlow: t
         .input(schemas.muxGovernorOauth.startDesktopFlow.input)
@@ -1170,6 +1192,54 @@ export const router = (authToken?: string) => {
         .output(schemas.muxGovernorOauth.cancelDesktopFlow.output)
         .handler(async ({ context, input }) => {
           await context.muxGovernorOauthService.cancelDesktopFlow(input.flowId);
+        }),
+    },
+    codexOauth: {
+      startDesktopFlow: t
+        .input(schemas.codexOauth.startDesktopFlow.input)
+        .output(schemas.codexOauth.startDesktopFlow.output)
+        .handler(({ context }) => {
+          return context.codexOauthService.startDesktopFlow();
+        }),
+      waitForDesktopFlow: t
+        .input(schemas.codexOauth.waitForDesktopFlow.input)
+        .output(schemas.codexOauth.waitForDesktopFlow.output)
+        .handler(({ context, input }) => {
+          return context.codexOauthService.waitForDesktopFlow(input.flowId, {
+            timeoutMs: input.timeoutMs,
+          });
+        }),
+      cancelDesktopFlow: t
+        .input(schemas.codexOauth.cancelDesktopFlow.input)
+        .output(schemas.codexOauth.cancelDesktopFlow.output)
+        .handler(async ({ context, input }) => {
+          await context.codexOauthService.cancelDesktopFlow(input.flowId);
+        }),
+      startDeviceFlow: t
+        .input(schemas.codexOauth.startDeviceFlow.input)
+        .output(schemas.codexOauth.startDeviceFlow.output)
+        .handler(({ context }) => {
+          return context.codexOauthService.startDeviceFlow();
+        }),
+      waitForDeviceFlow: t
+        .input(schemas.codexOauth.waitForDeviceFlow.input)
+        .output(schemas.codexOauth.waitForDeviceFlow.output)
+        .handler(({ context, input }) => {
+          return context.codexOauthService.waitForDeviceFlow(input.flowId, {
+            timeoutMs: input.timeoutMs,
+          });
+        }),
+      cancelDeviceFlow: t
+        .input(schemas.codexOauth.cancelDeviceFlow.input)
+        .output(schemas.codexOauth.cancelDeviceFlow.output)
+        .handler(async ({ context, input }) => {
+          await context.codexOauthService.cancelDeviceFlow(input.flowId);
+        }),
+      disconnect: t
+        .input(schemas.codexOauth.disconnect.input)
+        .output(schemas.codexOauth.disconnect.output)
+        .handler(({ context }) => {
+          return context.codexOauthService.disconnect();
         }),
     },
     general: {

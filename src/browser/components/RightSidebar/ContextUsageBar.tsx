@@ -3,11 +3,14 @@ import { AlertTriangle } from "lucide-react";
 import { TokenMeter } from "./TokenMeter";
 import { HorizontalThresholdSlider, type AutoCompactionConfig } from "./ThresholdSlider";
 import { formatTokens, type TokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
+import { Toggle1MContext } from "@/browser/components/Toggle1MContext";
 
 interface ContextUsageBarProps {
   data: TokenMeterData;
   /** Auto-compaction settings for threshold slider */
   autoCompaction?: AutoCompactionConfig;
+  /** Current model ID — used to show 1M context toggle for supported models */
+  model?: string;
   showTitle?: boolean;
   testId?: string;
 }
@@ -15,6 +18,7 @@ interface ContextUsageBarProps {
 const ContextUsageBarComponent: React.FC<ContextUsageBarProps> = ({
   data,
   autoCompaction,
+  model,
   showTitle = true,
   testId,
 }) => {
@@ -49,6 +53,8 @@ const ContextUsageBarComponent: React.FC<ContextUsageBarProps> = ({
           <HorizontalThresholdSlider config={autoCompaction} />
         )}
       </div>
+
+      {model && <Toggle1MContext model={model} />}
 
       {showWarning && (
         <div className="text-subtle mt-2 text-[11px] italic">

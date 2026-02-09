@@ -3,7 +3,6 @@ import { Menu } from "lucide-react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { cn } from "@/common/lib/utils";
 import { AgentProvider } from "@/browser/contexts/AgentContext";
-import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsContext";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
 import { ChatInput } from "./ChatInput/index";
 import type { ChatInputAPI, WorkspaceCreatedOptions } from "./ChatInput/types";
@@ -262,113 +261,111 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
 
   return (
     <AgentProvider projectPath={projectPath}>
-      <ProviderOptionsProvider>
-        <ThinkingProvider projectPath={projectPath}>
-          {/* Flex container to fill parent space */}
-          <div className="bg-dark flex flex-1 flex-col overflow-hidden">
-            {/* Draggable header bar - matches WorkspaceHeader for consistency */}
-            <div
-              className={cn(
-                "bg-sidebar border-border-light mobile-sticky-header flex shrink-0 items-center border-b px-2 [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:py-2",
-                isDesktopMode() ? "h-10 titlebar-drag" : "h-8"
-              )}
-            >
-              {leftSidebarCollapsed && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={onToggleLeftSidebarCollapsed}
-                  title="Open sidebar"
-                  aria-label="Open sidebar menu"
-                  className={cn(
-                    "hidden mobile-menu-btn h-6 w-6 shrink-0 text-muted hover:text-foreground",
-                    isDesktopMode() && "titlebar-no-drag"
-                  )}
-                >
-                  <Menu className="h-4 w-4" />
-                </Button>
-              )}
-            </div>
-            {/* Scrollable content area */}
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {/* Main content - vertically centered with reduced gaps */}
-              <div className="flex min-h-[50vh] flex-col items-center justify-center px-4 py-6">
-                <div className="flex w-full max-w-3xl flex-col gap-4">
-                  {/* Git init banner - shown above ChatInput when not a git repo */}
-                  {isNonGitRepo && (
-                    <GitInitBanner projectPath={projectPath} onSuccess={handleGitInitSuccess} />
-                  )}
-                  {/* Show configure prompt when no providers, otherwise show ChatInput */}
-                  {!providersLoading && !hasProviders ? (
-                    <ConfigureProvidersPrompt />
-                  ) : (
-                    <>
-                      {shouldShowAgentsInitBanner && (
-                        <AgentsInitBanner
-                          onRunInit={handleRunAgentsInit}
-                          onDismiss={handleDismissAgentsInit}
-                        />
-                      )}
-                      {/* Configured providers bar - compact icon carousel */}
-                      {providersLoading ? (
-                        // Skeleton placeholder matching ConfiguredProvidersBar height
-                        <div className="flex items-center justify-center gap-2 py-1.5">
-                          <Skeleton className="h-7 w-32" />
-                        </div>
-                      ) : (
-                        hasProviders &&
-                        providersConfig && (
-                          <ConfiguredProvidersBar providersConfig={providersConfig} />
-                        )
-                      )}
-                      {/* ChatInput for workspace creation - includes section selector */}
-                      <ChatInput
-                        // Key by draft so switching drafts fully resets ephemeral UI state (and avoids
-                        // draft A's "creating workspace" overlay leaking into draft B).
-                        key={pendingDraftId ?? "__pending__"}
-                        variant="creation"
-                        projectPath={projectPath}
-                        projectName={projectName}
-                        pendingSectionId={pendingSectionId}
-                        pendingDraftId={pendingDraftId}
-                        onReady={handleChatReady}
-                        onWorkspaceCreated={onWorkspaceCreated}
+      <ThinkingProvider projectPath={projectPath}>
+        {/* Flex container to fill parent space */}
+        <div className="bg-dark flex flex-1 flex-col overflow-hidden">
+          {/* Draggable header bar - matches WorkspaceHeader for consistency */}
+          <div
+            className={cn(
+              "bg-sidebar border-border-light mobile-sticky-header flex shrink-0 items-center border-b px-2 [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:py-2",
+              isDesktopMode() ? "h-10 titlebar-drag" : "h-8"
+            )}
+          >
+            {leftSidebarCollapsed && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onToggleLeftSidebarCollapsed}
+                title="Open sidebar"
+                aria-label="Open sidebar menu"
+                className={cn(
+                  "hidden mobile-menu-btn h-6 w-6 shrink-0 text-muted hover:text-foreground",
+                  isDesktopMode() && "titlebar-no-drag"
+                )}
+              >
+                <Menu className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+          {/* Scrollable content area */}
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {/* Main content - vertically centered with reduced gaps */}
+            <div className="flex min-h-[50vh] flex-col items-center justify-center px-4 py-6">
+              <div className="flex w-full max-w-3xl flex-col gap-4">
+                {/* Git init banner - shown above ChatInput when not a git repo */}
+                {isNonGitRepo && (
+                  <GitInitBanner projectPath={projectPath} onSuccess={handleGitInitSuccess} />
+                )}
+                {/* Show configure prompt when no providers, otherwise show ChatInput */}
+                {!providersLoading && !hasProviders ? (
+                  <ConfigureProvidersPrompt />
+                ) : (
+                  <>
+                    {shouldShowAgentsInitBanner && (
+                      <AgentsInitBanner
+                        onRunInit={handleRunAgentsInit}
+                        onDismiss={handleDismissAgentsInit}
                       />
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* MCP servers: overview between creation and archived workspaces */}
-              <div className="flex justify-center px-4 pb-4">
-                <div className="w-full max-w-3xl">
-                  <ProjectMCPOverview projectPath={projectPath} />
-                </div>
-              </div>
-
-              {/* Archived workspaces: separate section below centered area */}
-              {archivedWorkspaces.length > 0 && (
-                <div className="flex justify-center px-4 pb-4">
-                  <div className="w-full max-w-3xl">
-                    <ArchivedWorkspaces
+                    )}
+                    {/* Configured providers bar - compact icon carousel */}
+                    {providersLoading ? (
+                      // Skeleton placeholder matching ConfiguredProvidersBar height
+                      <div className="flex items-center justify-center gap-2 py-1.5">
+                        <Skeleton className="h-7 w-32" />
+                      </div>
+                    ) : (
+                      hasProviders &&
+                      providersConfig && (
+                        <ConfiguredProvidersBar providersConfig={providersConfig} />
+                      )
+                    )}
+                    {/* ChatInput for workspace creation - includes section selector */}
+                    <ChatInput
+                      // Key by draft so switching drafts fully resets ephemeral UI state (and avoids
+                      // draft A's "creating workspace" overlay leaking into draft B).
+                      key={pendingDraftId ?? "__pending__"}
+                      variant="creation"
                       projectPath={projectPath}
                       projectName={projectName}
-                      workspaces={archivedWorkspaces}
-                      onWorkspacesChanged={() => {
-                        // Refresh archived list after unarchive/delete
-                        if (!api) return;
-                        void api.workspace.list({ archived: true }).then((all) => {
-                          setArchivedWorkspaces(all.filter((w) => w.projectPath === projectPath));
-                        });
-                      }}
+                      pendingSectionId={pendingSectionId}
+                      pendingDraftId={pendingDraftId}
+                      onReady={handleChatReady}
+                      onWorkspaceCreated={onWorkspaceCreated}
                     />
-                  </div>
-                </div>
-              )}
+                  </>
+                )}
+              </div>
             </div>
+
+            {/* MCP servers: overview between creation and archived workspaces */}
+            <div className="flex justify-center px-4 pb-4">
+              <div className="w-full max-w-3xl">
+                <ProjectMCPOverview projectPath={projectPath} />
+              </div>
+            </div>
+
+            {/* Archived workspaces: separate section below centered area */}
+            {archivedWorkspaces.length > 0 && (
+              <div className="flex justify-center px-4 pb-4">
+                <div className="w-full max-w-3xl">
+                  <ArchivedWorkspaces
+                    projectPath={projectPath}
+                    projectName={projectName}
+                    workspaces={archivedWorkspaces}
+                    onWorkspacesChanged={() => {
+                      // Refresh archived list after unarchive/delete
+                      if (!api) return;
+                      void api.workspace.list({ archived: true }).then((all) => {
+                        setArchivedWorkspaces(all.filter((w) => w.projectPath === projectPath));
+                      });
+                    }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
-        </ThinkingProvider>
-      </ProviderOptionsProvider>
+        </div>
+      </ThinkingProvider>
     </AgentProvider>
   );
 };

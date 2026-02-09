@@ -49,10 +49,13 @@ const THEME_FAVICON_STYLE = `<style>
 </style>`;
 
 type RasterTargetConfig = {
-  size: number;
+  /** Square side length, or [width, height] for non-square (e.g. wide tray icons). */
+  size: number | [number, number];
   source: string;
   bg: boolean;
   format?: "png" | "webp";
+  /** Override the SVG viewBox before rendering to crop tightly around content. */
+  cropViewBox?: string;
 };
 
 type SvgTargetConfig = {
@@ -65,6 +68,13 @@ type LogoTargetConfig = RasterTargetConfig | SvgTargetConfig;
 // Keep the source + background pairing centralized so targets stay DRY.
 const MONO_ICON = { source: SOURCE_BLACK, bg: false } as const;
 const APP_ICON = { source: SOURCE_WHITE, bg: true } as const;
+
+// The source SVGs use viewBox="0 0 72 72" with a translate transform, leaving
+// ~68% internal padding around the actual "m" + cursor mark.  This cropped
+// viewBox eliminates that padding so the mark fills the rendered image.
+// Content bounds (after transform): x 8.85…63.15, y 24.5…47.5 → 54.3×23 units.
+// Tight crop with ~0.5u breathing room: "8 24 56 24" → aspect ratio ≈ 2.33:1.
+const TRAY_MARK_CROP = "8 24 56 24";
 
 // Targets to update (path -> config)
 const LOGO_TARGETS = {
@@ -82,35 +92,79 @@ const LOGO_TARGETS = {
   "public/icon-192.png": { size: 192, ...APP_ICON },
   "public/icon-512.png": { size: 512, ...APP_ICON },
 
-  // Electron Tray Icons (Monochrome on Transparent)
+  // Electron Tray Icons – Wide Canvas with "m" Mark (Monochrome on Transparent)
   //
-  // Rationale: Runtime will pick the correct variant based on OS theme
-  // (light/dark) and macOS treats these as template images.
+  // The source SVGs have heavy internal padding (mark uses ~32% of canvas).
+  // We crop to TRAY_MARK_CROP before rendering so the mark fills the output.
   //
-  // Naming convention: macOS expects "@2x" suffix for Retina assets. The 1x
-  // icon is 16x16 (menu bar point size) and 2x is 32x32 pixels.
-  "public/tray-icon-black.png": { size: 16, ...MONO_ICON },
-  "public/tray-icon-black@2x.png": { size: 32, ...MONO_ICON },
-  "public/tray-icon-white.png": { size: 16, source: SOURCE_WHITE, bg: false },
-  "public/tray-icon-white@2x.png": { size: 32, source: SOURCE_WHITE, bg: false },
+  // Pixel dimensions: 24×24 @1x → 48×48 @2x → 72×72 @3x.
+  // Square canvas; the mark (aspect ≈ 2.33:1) is height-constrained and
+  // centered horizontally with transparent side padding.
+  //
+  // macOS treats the black variant as a template image (adapts to light/dark
+  // menu bar automatically). Windows/Linux switch between black/white at
+  // runtime based on the OS theme.
+  "public/tray-icon-black.png": { size: 24, ...MONO_ICON, cropViewBox: TRAY_MARK_CROP },
+  "public/tray-icon-black@2x.png": { size: 48, ...MONO_ICON, cropViewBox: TRAY_MARK_CROP },
+  "public/tray-icon-black@3x.png": { size: 72, ...MONO_ICON, cropViewBox: TRAY_MARK_CROP },
+  "public/tray-icon-white.png": {
+    size: 24,
+    source: SOURCE_WHITE,
+    bg: false,
+    cropViewBox: TRAY_MARK_CROP,
+  },
+  "public/tray-icon-white@2x.png": {
+    size: 48,
+    source: SOURCE_WHITE,
+    bg: false,
+    cropViewBox: TRAY_MARK_CROP,
+  },
+  "public/tray-icon-white@3x.png": {
+    size: 72,
+    source: SOURCE_WHITE,
+    bg: false,
+    cropViewBox: TRAY_MARK_CROP,
+  },
 } satisfies Record<string, LogoTargetConfig>;
 
 const APP_ICON_PADDING_RATIO = 0.2;
 
-async function generateRasterIcon({ source, size, bg, format = "png" }: RasterTargetConfig) {
+async function generateRasterIcon({
+  source,
+  size,
+  bg,
+  format = "png",
+  cropViewBox,
+}: RasterTargetConfig) {
+  const [w, h] = Array.isArray(size) ? size : [size, size];
+
+  // If cropViewBox is set, read the SVG and override its viewBox so the
+  // content fills the render canvas instead of being letter-boxed inside
+  // the original (padded) viewBox.
+  let input: string | Buffer = source;
+  if (cropViewBox) {
+    const svg = await readFile(source, "utf8");
+    input = Buffer.from(svg.replace(/viewBox="[^"]*"/, `viewBox="${cropViewBox}"`));
+  }
+
   let pipeline;
 
   if (!bg) {
-    pipeline = sharp(source).resize(size, size);
+    // Monochrome on transparent – fit the SVG content within the target
+    // dimensions, preserving aspect ratio and centering with alpha padding.
+    pipeline = sharp(input).resize(w, h, {
+      fit: "contain",
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    });
   } else {
-    // White on Black composite
-    const padding = Math.round(size * APP_ICON_PADDING_RATIO);
-    const logoSize = size - padding * 2;
+    // White on Black composite (app icons only – always square)
+    const padding = Math.round(w * APP_ICON_PADDING_RATIO);
+    const logoSize = w - padding * 2;
 
     pipeline = sharp({
       create: {
-        width: size,
-        height: size,
+        width: w,
+        height: h,
         channels: 4,
         background: { r: 0, g: 0, b: 0, alpha: 1 },
       },

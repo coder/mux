@@ -1,7 +1,6 @@
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { ModelDisplay } from "@/browser/components/Messages/ModelDisplay";
 import { EmojiIcon } from "@/browser/components/icons/EmojiIcon";
-import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { CircleHelp, ExternalLinkIcon, Loader2 } from "lucide-react";
 import { memo } from "react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
@@ -10,13 +9,12 @@ import { Button } from "./ui/button";
 export const WorkspaceStatusIndicator = memo<{
   workspaceId: string;
   fallbackModel: string;
-}>(({ workspaceId, fallbackModel }) => {
+  /** When true the workspace is still being provisioned (show "starting…"). Passed as
+   *  a prop so this component doesn't need to subscribe to the full WorkspaceContext. */
+  isCreating?: boolean;
+}>(({ workspaceId, fallbackModel, isCreating }) => {
   const { canInterrupt, isStarting, awaitingUserQuestion, currentModel, agentStatus } =
     useWorkspaceSidebarState(workspaceId);
-  const { workspaceMetadata } = useWorkspaceContext();
-
-  const metadata = workspaceMetadata.get(workspaceId);
-  const isInitializing = metadata?.isInitializing === true;
 
   // Show prompt when ask_user_question is pending - make it prominent
   if (awaitingUserQuestion) {
@@ -55,7 +53,7 @@ export const WorkspaceStatusIndicator = memo<{
 
   const phase: "starting" | "streaming" | null = canInterrupt
     ? "streaming"
-    : isStarting || isInitializing
+    : isStarting || isCreating
       ? "starting"
       : null;
 

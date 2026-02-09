@@ -1,4 +1,3 @@
-import React from "react";
 import { Copy, Check } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import type { RuntimeConfig } from "@/common/types/runtime";

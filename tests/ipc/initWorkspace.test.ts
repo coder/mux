@@ -5,7 +5,6 @@ import {
   validateApiKeys,
   getApiKey,
   setupProviders,
-  type TestEnvironment,
 } from "./setup";
 import {
   generateBranchName,
@@ -13,11 +12,10 @@ import {
   waitForInitComplete,
   waitForInitEnd,
   collectInitEvents,
-  waitFor,
   resolveOrpcClient,
 } from "./helpers";
-import { createStreamCollector, type TimestampedEvent } from "./streamCollector";
-import type { WorkspaceChatMessage, WorkspaceInitEvent } from "@/common/orpc/types";
+import { createStreamCollector } from "./streamCollector";
+import type { WorkspaceInitEvent } from "@/common/orpc/types";
 import { isInitOutput, isInitEnd, isInitStart } from "@/common/orpc/types";
 import * as path from "path";
 import * as os from "os";
@@ -499,8 +497,6 @@ describeIntegration("Init Queue - Runtime Matrix", () => {
       // Timeouts vary by runtime type
       const testTimeout = type === "ssh" ? 90000 : 30000;
       const streamTimeout = type === "ssh" ? 30000 : 15000;
-      // initWaitBuffer is the expected additional time for init hook
-      const _initWaitBuffer = type === "ssh" ? 10000 : 2000;
 
       // Skip SSH tests if Docker is not available
       const shouldRunSSH = () => type === "local" || sshConfig !== undefined;

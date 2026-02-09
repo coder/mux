@@ -456,20 +456,19 @@ export class MCPServerManager {
   private readonly workspaceLeases = new Map<string, number>();
   private readonly idleCheckInterval: ReturnType<typeof setInterval>;
   private inlineServers: Record<string, string> = {};
-  private policyService: PolicyService | null = null;
+  private readonly policyService: PolicyService | null;
   private mcpOauthService: McpOauthService | null = null;
   private ignoreConfigFile = false;
 
-  setPolicyService(service: PolicyService): void {
-    this.policyService = service;
-  }
   setMcpOauthService(service: McpOauthService): void {
     this.mcpOauthService = service;
   }
   constructor(
     private readonly configService: MCPConfigService,
-    options?: MCPServerManagerOptions
+    options?: MCPServerManagerOptions,
+    policyService?: PolicyService
   ) {
+    this.policyService = policyService ?? null;
     this.idleCheckInterval = setInterval(() => this.cleanupIdleServers(), IDLE_CHECK_INTERVAL_MS);
     this.idleCheckInterval.unref?.();
     if (options?.inlineServers) {
@@ -1174,7 +1173,7 @@ export class MCPServerManager {
     name: string,
     info: MCPServerInfo,
     runtime: Runtime,
-    projectPath: string,
+    _projectPath: string,
     workspacePath: string,
     projectSecrets: Record<string, string> | undefined,
     onActivity: () => void

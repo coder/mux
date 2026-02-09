@@ -154,7 +154,7 @@ export const WorkspaceNameInRuntimeTooltip: AppStory = {
         tooltipWithin.getByText("Name");
         tooltipWithin.getByText("bugfix/agent-report-rendering");
       },
-      { timeout: 2000, interval: 50 }
+      { interval: 50 }
     );
   },
   parameters: {

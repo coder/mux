@@ -148,12 +148,12 @@ export const Tasks: AppStory = {
     await dialogCanvas.findByText(/^Explore$/i);
     await dialogCanvas.findByText(/^Compact$/i);
 
-    const inputs = await dialogCanvas.findAllByRole("spinbutton");
-    if (inputs.length !== 2) {
-      throw new Error(`Expected 2 task settings inputs, got ${inputs.length}`);
-    }
-
+    // Re-query spinbuttons inside waitFor to avoid stale DOM refs after React re-renders.
     await waitFor(() => {
+      const inputs = dialogCanvas.queryAllByRole("spinbutton");
+      if (inputs.length !== 2) {
+        throw new Error(`Expected 2 task settings inputs, got ${inputs.length}`);
+      }
       const maxParallelAgentTasks = (inputs[0] as HTMLInputElement).value;
       const maxTaskNestingDepth = (inputs[1] as HTMLInputElement).value;
       if (maxParallelAgentTasks !== "2") {
@@ -373,14 +373,19 @@ export const ModelsEmpty: AppStory = {
 export const ModelsConfigured: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() =>
-        setupSettingsStory({
+      setup={() => {
+        // Pre-set 1M context enabled for Opus 4.6 so the story shows the toggle active
+        window.localStorage.setItem(
+          "provider_options_anthropic",
+          JSON.stringify({ use1MContextModels: ["anthropic:claude-opus-4-6"] })
+        );
+        return setupSettingsStory({
           providersConfig: {
             anthropic: {
               apiKeySet: true,
               isConfigured: true,
               baseUrl: "",
-              models: ["claude-sonnet-4-20250514", "claude-opus-4-20250514"],
+              models: ["claude-sonnet-4-20250514", "claude-opus-4-6"],
             },
             openai: {
               apiKeySet: true,
@@ -395,8 +400,8 @@ export const ModelsConfigured: AppStory = {
               models: ["grok-beta"],
             },
           },
-        })
-      }
+        });
+      }}
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
@@ -446,12 +451,12 @@ export const System1: AppStory = {
     await dialogCanvas.findByText(/System 1 Reasoning/i);
     await dialogCanvas.findByRole("heading", { name: /bash output compaction/i });
 
-    const inputs = await dialogCanvas.findAllByRole("spinbutton");
-    if (inputs.length !== 4) {
-      throw new Error(`Expected 4 System 1 inputs, got ${inputs.length}`);
-    }
-
+    // Re-query spinbuttons inside waitFor to avoid stale DOM refs after React re-renders.
     await waitFor(() => {
+      const inputs = dialogCanvas.queryAllByRole("spinbutton");
+      if (inputs.length !== 4) {
+        throw new Error(`Expected 4 System 1 inputs, got ${inputs.length}`);
+      }
       const minLines = (inputs[0] as HTMLInputElement).value;
       const minTotalKb = (inputs[1] as HTMLInputElement).value;
       const maxKeptLines = (inputs[2] as HTMLInputElement).value;

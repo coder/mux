@@ -20,7 +20,14 @@ export BUN_INSTALL="${BUN_INSTALL:-/root/.bun}"
 export PATH="${BUN_INSTALL}/bin:${PATH}"
 
 MUX_APP_ROOT="${MUX_APP_ROOT:-/opt/mux-app}"
-MUX_CONFIG_ROOT="${MUX_CONFIG_ROOT:-/root/.mux}"
+
+# Prefer an explicit MUX_CONFIG_ROOT, but fall back to MUX_ROOT for callers that
+# only override the mux home via MUX_ROOT.
+MUX_CONFIG_ROOT="${MUX_CONFIG_ROOT:-${MUX_ROOT:-/root/.mux}}"
+
+# Export MUX_ROOT so mux's getMuxHome() finds providers.jsonc and other config.
+# Don't clobber caller-provided MUX_ROOT (e.g. local runs/tests with a custom root).
+export MUX_ROOT="${MUX_ROOT:-${MUX_CONFIG_ROOT}}"
 MUX_PROJECT_PATH="${MUX_PROJECT_PATH:-}"
 MUX_PROJECT_CANDIDATES="${MUX_PROJECT_CANDIDATES:-/workspace:/app:/workspaces:/root/project}"
 MUX_MODEL="${MUX_MODEL:-anthropic:claude-sonnet-4-5}"
@@ -62,6 +69,7 @@ cmd=(bun src/cli/run.ts
   --model "${MUX_MODEL}"
   --mode "${MUX_MODE}"
   --thinking "${MUX_THINKING_LEVEL}"
+  --keep-background-processes
   --json)
 
 if [[ -n "${MUX_RUNTIME}" ]]; then
@@ -81,7 +89,13 @@ if [[ -n "${MUX_EXPERIMENTS}" ]]; then
   done
 fi
 
-MUX_OUTPUT_FILE="/tmp/mux-output.jsonl"
+# NOTE: Harbor only automatically collects /logs/agent on timeouts.
+# Persist stdout/stderr there so we can inspect partial agent output even when
+# the trial hits AgentTimeoutError and the exec call is cancelled.
+MUX_LOG_DIR="/logs/agent/command-0"
+mkdir -p "${MUX_LOG_DIR}"
+MUX_OUTPUT_FILE="${MUX_LOG_DIR}/stdout.txt"
+MUX_STDERR_FILE="${MUX_LOG_DIR}/stderr.txt"
 MUX_TOKEN_FILE="/tmp/mux-tokens.json"
 
 # Wrap command with timeout if MUX_TIMEOUT_MS is set (converts ms to seconds)
@@ -90,16 +104,31 @@ if [[ -n "${MUX_TIMEOUT_MS}" ]]; then
   cmd=(timeout "${timeout_sec}s" "${cmd[@]}")
 fi
 
-# Terminal-bench enforces timeouts via --global-agent-timeout-sec
-# Capture output to file while streaming to terminal for token extraction
-if ! printf '%s' "${instruction}" | "${cmd[@]}" | tee "${MUX_OUTPUT_FILE}"; then
+# Capture output to file while streaming to terminal for token extraction.
+# Keep stderr separate so the stdout log stays valid JSONL.
+if ! printf '%s' "${instruction}" \
+  | "${cmd[@]}" \
+    2> >(tee "${MUX_STDERR_FILE}" >&2) \
+  | tee "${MUX_OUTPUT_FILE}"; then
   fatal "mux agent session failed"
 fi
 
-# Extract usage and cost from run-complete event (emitted at end of --json run)
+# Extract usage and cost from the JSONL output.
+# Prefer the run-complete event (emitted at end of --json run) which has aggregated
+# totals. Fall back to summing usage-delta + session-usage-delta events when
+# run-complete is missing (e.g. process killed by timeout, stdout not flushed).
 python3 -c '
 import json, sys
 result = {"input": 0, "output": 0, "cost_usd": None}
+# Track cumulative usage from usage-delta events (keyed by messageId).
+# Each usage-delta contains cumulative totals for its message, so we keep the
+# latest per message and sum across messages at the end.
+cumulative_by_msg = {}
+# Track sub-agent usage from session-usage-delta events. These carry per-model
+# byModelDelta dicts with {input: {tokens, cost_usd}, output: {tokens, cost_usd}, ...}.
+# Each event is an incremental delta, so we sum them all.
+subagent_input = 0
+subagent_output = 0
 for line in open(sys.argv[1]):
     try:
         obj = json.loads(line)
@@ -108,7 +137,28 @@ for line in open(sys.argv[1]):
             result["input"] = usage.get("inputTokens", 0) or 0
             result["output"] = usage.get("outputTokens", 0) or 0
             result["cost_usd"] = obj.get("cost_usd")
-            break
-    except: pass
+            print(json.dumps(result))
+            sys.exit(0)
+        # Nested event wrapper: {"type":"event","payload":{"type":"usage-delta",...}}
+        payload = obj.get("payload") or obj
+        if payload.get("type") == "usage-delta":
+            msg_id = payload.get("messageId", "")
+            # Prefer cumulativeUsage (running total across all steps in a message)
+            # over usage (per-step delta). Keeping the latest cumulative per message
+            # gives the correct total when summed across messages.
+            usage = payload.get("cumulativeUsage") or payload.get("usage") or {}
+            cumulative_by_msg[msg_id] = usage
+        elif payload.get("type") == "session-usage-delta":
+            for model_usage in (payload.get("byModelDelta") or {}).values():
+                subagent_input += (model_usage.get("input") or {}).get("tokens", 0)
+                subagent_output += (model_usage.get("output") or {}).get("tokens", 0)
+    except Exception:
+        pass
+# No run-complete found — aggregate the last usage-delta per message + sub-agent totals
+for usage in cumulative_by_msg.values():
+    result["input"] += (usage.get("inputTokens", 0) or 0)
+    result["output"] += (usage.get("outputTokens", 0) or 0)
+result["input"] += subagent_input
+result["output"] += subagent_output
 print(json.dumps(result))
 ' "${MUX_OUTPUT_FILE}" > "${MUX_TOKEN_FILE}" 2>/dev/null || true

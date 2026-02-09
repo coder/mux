@@ -42,7 +42,7 @@ import { ValidationError } from "@orpc/server";
 
 // Test constants - centralized for consistency across all tests
 export const INIT_HOOK_WAIT_MS = 1500; // Wait for async init hook completion (local runtime)
-export const SSH_INIT_WAIT_MS = 7000; // SSH init includes sync + checkout + hook, takes longer
+export const SSH_INIT_WAIT_MS = 15000; // SSH init includes bundle sync + base repo setup + worktree add + hook
 export const HAIKU_MODEL = "anthropic:claude-haiku-4-5"; // Fast model for tests
 export const GPT_5_MINI_MODEL = "openai:gpt-5-mini"; // Fastest model for performance-critical tests
 export const TEST_TIMEOUT_LOCAL_MS = 25000; // Recommended timeout for local runtime tests

@@ -1,4 +1,5 @@
 import React from "react";
+import { cn } from "@/common/lib/utils";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { ButtonConfig } from "./MessageWindow";
 import { MessageWindow } from "./MessageWindow";
@@ -131,16 +132,17 @@ export const UserMessage: React.FC<UserMessageProps> = ({
 
   const label = isSynthetic ? (
     <span className="bg-muted/20 text-muted rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
-      synthetic
+      auto
     </span>
   ) : null;
+  const syntheticClassName = cn(className, isSynthetic && "opacity-70");
   if (isLocalCommandOutput) {
     return (
       <MessageWindow
         label={label}
         message={message}
         buttons={buttons}
-        className={className}
+        className={syntheticClassName}
         variant="user"
       >
         <TerminalOutput output={extractedOutput} isError={false} />
@@ -153,7 +155,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       label={label}
       message={message}
       buttons={buttons}
-      className={className}
+      className={syntheticClassName}
       variant="user"
     >
       <UserMessageContent

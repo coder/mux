@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Server, Loader2 } from "lucide-react";
 import { Button } from "@/browser/components/ui/button";
 import { Switch } from "@/browser/components/ui/switch";
@@ -37,12 +37,18 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
   // Use shared cache for tool test results
   const { getTools, setResult, reload: reloadCache } = useMCPTestCache(projectPath);
 
+  // Ref so the effect can call reloadCache without depending on its identity.
+  // We only want to re-fire the effect when the modal opens (open/api/ids change),
+  // not when the cache hook recreates the reload callback.
+  const reloadCacheRef = useRef(reloadCache);
+  reloadCacheRef.current = reloadCache;
+
   // Load project servers and workspace overrides when modal opens
   useEffect(() => {
     if (!open || !api) return;
 
     // Reload cache when modal opens
-    reloadCache();
+    reloadCacheRef.current();
 
     const loadData = async () => {
       setLoading(true);
@@ -62,7 +68,7 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
     };
 
     void loadData();
-  }, [open, api, projectPath, workspaceId, reloadCache]);
+  }, [open, api, projectPath, workspaceId]);
 
   // Fetch/refresh tools for a server
   const fetchTools = useCallback(

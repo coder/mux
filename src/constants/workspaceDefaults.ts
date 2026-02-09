@@ -32,7 +32,7 @@ Object.freeze(STORAGE_KEYS);
  * Do not modify these values at runtime - they serve as the single source of truth.
  */
 
-import type { ThinkingLevel } from "@/common/types/thinking";
+import { THINKING_LEVEL_OFF } from "@/common/types/thinking";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 
 /**
@@ -44,7 +44,7 @@ export const WORKSPACE_DEFAULTS = {
   agentId: "exec" as const,
 
   /** Default thinking/reasoning level for new workspaces */
-  thinkingLevel: "off" as ThinkingLevel,
+  thinkingLevel: THINKING_LEVEL_OFF,
 
   /**
    * Default AI model for new workspaces.

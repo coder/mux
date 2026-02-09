@@ -22,7 +22,6 @@ import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useAgent } from "@/browser/contexts/AgentContext";
 import { ThinkingSliderComponent } from "../ThinkingSlider";
-import { ModelSettings } from "../ModelSettings";
 import {
   getAllowedRuntimeModesForUi,
   isParsedRuntimeAllowedByPolicy,
@@ -96,6 +95,7 @@ import type { PendingUserMessage } from "@/browser/utils/chatEditing";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import { resolveThinkingInput } from "@/common/utils/thinking/policy";
 import {
   type MuxFrontendMetadata,
   type ReviewNoteDataForDisplay,
@@ -354,18 +354,26 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       if (powerMode.enabled) {
         const prev = latestInputValueRef.current;
         const delta = next.length - prev.length;
-        const el = inputRef.current;
 
-        if (el && next !== prev) {
-          // Power Mode should feel responsive on backspace/delete too.
-          if (delta > 0) {
-            powerMode.burstFromTextarea(el, Math.min(6, delta));
-          } else if (delta < 0) {
-            powerMode.burstFromTextarea(el, Math.min(6, -delta), "delete");
-          } else {
-            // Selection replace / overwrite with no net length change.
-            powerMode.burstFromTextarea(el, 1);
-          }
+        if (next !== prev) {
+          // Power Mode positioning depends on the textarea's post-layout size/position.
+          // On backspace/delete the textarea can shrink (auto-resize) which shifts the caret
+          // downward; if we measure immediately we can get a stale bounding rect and the
+          // fireworks appear out-of-sync with the cursor.
+          const intensity = delta > 0 ? Math.min(6, delta) : delta < 0 ? Math.min(6, -delta) : 1;
+          const kind = delta < 0 ? "delete" : "insert";
+          // Capture the caret index now (before rAF) so bursts queued within the same frame
+          // don't all measure the latest caret position and appear "ahead" during fast typing.
+          const caretIndex = inputRef.current?.selectionStart ?? next.length;
+
+          requestAnimationFrame(() => {
+            const el = inputRef.current;
+            if (!el) {
+              return;
+            }
+
+            powerMode.burstFromTextarea(el, intensity, kind, caretIndex);
+          });
         }
       }
 
@@ -463,10 +471,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Context usage indicator data (workspace variant only)
   const workspaceIdForUsage = variant === "workspace" ? props.workspaceId : "";
   const usage = useWorkspaceUsage(workspaceIdForUsage);
-  const { options: providerOptions } = useProviderOptions();
-  const use1M = providerOptions.anthropic?.use1MContext ?? false;
+  const { has1MContext } = useProviderOptions();
   const lastUsage = usage?.liveUsage ?? usage?.lastContextUsage;
   const usageModel = lastUsage?.model ?? null;
+  const use1M = has1MContext(usageModel ?? "");
   const contextUsageData = useMemo(() => {
     return lastUsage
       ? calculateTokenMeterData(lastUsage, usageModel ?? "unknown", use1M, false)
@@ -1333,7 +1341,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         low: "Low — adds light reasoning",
         medium: "Medium — balanced reasoning",
         high: "High — maximum reasoning depth",
-        xhigh: "Max — highest reasoning depth",
+        xhigh: "Max — deepest possible reasoning",
         max: "Max — deepest possible reasoning",
       };
 
@@ -1990,11 +1998,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           inputRef.current.style.height = "";
         }
 
-        // One-shot models shouldn't update the persisted session defaults.
+        // One-shot models/thinking shouldn't update the persisted session defaults.
+        // Resolve thinking level: numeric indices are model-relative (0 = model's lowest allowed level)
+        const rawThinkingOverride = modelOneShot?.thinkingLevel;
+        const thinkingOverride =
+          rawThinkingOverride != null
+            ? resolveThinkingInput(rawThinkingOverride, policyModel)
+            : undefined;
         const sendOptions = {
           ...sendMessageOptions,
           ...compactionOptions,
           ...(modelOverride ? { model: modelOverride } : {}),
+          ...(thinkingOverride ? { thinkingLevel: thinkingOverride } : {}),
           ...(modelOneShot ? { skipAiSettingsPersistence: true } : {}),
           additionalSystemInstructions,
           editMessageId: editingMessage?.id,
@@ -2425,12 +2440,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   </div>
                 </div>
 
-                <div className="flex shrink-0 items-center" data-component="ThinkingSliderGroup">
+                {/* On narrow layouts, hide the thinking paddles to prevent control overlap. */}
+                <div
+                  className="flex shrink-0 items-center [@container(max-width:420px)]:[&_[data-thinking-paddle]]:hidden"
+                  data-component="ThinkingSliderGroup"
+                >
                   <ThinkingSliderComponent modelString={baseModel} />
-                </div>
-
-                <div className="flex items-center" data-component="ModelSettingsGroup">
-                  <ModelSettings model={baseModel || ""} />
                 </div>
               </div>
 
@@ -2444,6 +2459,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     data={contextUsageData}
                     autoCompaction={autoCompactionProps}
                     idleCompaction={idleCompactionProps}
+                    model={usageModel ?? undefined}
                   />
                 )}
 

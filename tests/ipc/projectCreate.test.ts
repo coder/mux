@@ -13,7 +13,6 @@ import * as path from "path";
 import { getMuxHome, getMuxProjectsDir } from "../../src/common/constants/paths";
 import * as os from "os";
 import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "./setup";
-import type { TestEnvironment } from "./setup";
 import { resolveOrpcClient } from "./helpers";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;

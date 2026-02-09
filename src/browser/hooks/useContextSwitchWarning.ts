@@ -346,7 +346,7 @@ export function useContextSwitchWarning(
 
   // Sync with 1M toggle changes from ProviderOptionsContext.
   // Effect is appropriate here: we're syncing with an external context (not our own state),
-  // and the toggle change happens in ModelSettings which can't directly call our handlers.
+  // and the toggle change happens in Settings which can't directly call our handlers.
   useEffect(() => {
     const wasEnabled = prevUse1MRef.current;
     prevUse1MRef.current = use1M;

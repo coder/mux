@@ -12,9 +12,10 @@ import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils
 import { cn } from "@/common/lib/utils";
 
 // Uses CSS variable --color-thinking-mode for theme compatibility
-const BASE_THINKING_LEVELS: ThinkingLevel[] = THINKING_LEVELS.filter((level) => level !== "xhigh");
+// All levels are shown; policy determines which are available per model
+const BASE_THINKING_LEVELS: ThinkingLevel[] = [...THINKING_LEVELS];
 
-// Text styling based on level (n: 0-4, mapping off/low/medium/high/max)
+// Text styling based on level (n: 0-5, mapping off/low/medium/high/xhigh/max)
 // Uses CSS variables for theme compatibility
 const getTextStyle = (n: number): React.CSSProperties => {
   if (n === 0) {

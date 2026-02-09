@@ -168,16 +168,13 @@ export const SingleLineCodeBlocks: AppStory = {
     await waitForChatMessagesLoaded(canvasElement);
 
     // Wait for code blocks to render with highlighting
-    const codeWrappers = await waitFor(
-      () => {
-        const candidates = Array.from(canvasElement.querySelectorAll(".code-block-wrapper"));
-        if (candidates.length < 2) {
-          throw new Error("Not all code blocks rendered yet");
-        }
-        return candidates as HTMLElement[];
-      },
-      { timeout: 5000 }
-    );
+    const codeWrappers = await waitFor(() => {
+      const candidates = Array.from(canvasElement.querySelectorAll(".code-block-wrapper"));
+      if (candidates.length < 2) {
+        throw new Error("Not all code blocks rendered yet");
+      }
+      return candidates as HTMLElement[];
+    });
 
     // Verify the first code block wrapper has only one line
     const lineNumbers = codeWrappers[0].querySelectorAll(".line-number");
@@ -274,32 +271,24 @@ export const CodeBlocks: AppStory = {
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
     const url = "https://github.com/coder/mux/pull/new/chat-autocomplete-b24r";
-    const container = await waitFor(
-      () => {
-        const found = Array.from(canvasElement.querySelectorAll(".code-block-container")).find(
-          (c) => c.textContent?.includes(url)
-        );
-        if (!found) throw new Error("URL code block not found");
-        return found;
-      },
-      { timeout: 5000 }
-    );
+    const container = await waitFor(() => {
+      const found = Array.from(canvasElement.querySelectorAll(".code-block-container")).find((c) =>
+        c.textContent?.includes(url)
+      );
+      if (!found) throw new Error("URL code block not found");
+      return found;
+    });
 
     const noLangLine = "65d02772b 🤖 feat: Settings-driven model selector with visibility controls";
 
-    const codeEl = await waitFor(
-      () => {
-        const candidates = Array.from(
-          canvasElement.querySelectorAll(".markdown-content pre > code")
-        );
-        const found = candidates.find((el) => el.textContent?.includes(noLangLine));
-        if (!found) {
-          throw new Error("No-language code block not found");
-        }
-        return found;
-      },
-      { timeout: 5000 }
-    );
+    const codeEl = await waitFor(() => {
+      const candidates = Array.from(canvasElement.querySelectorAll(".markdown-content pre > code"));
+      const found = candidates.find((el) => el.textContent?.includes(noLangLine));
+      if (!found) {
+        throw new Error("No-language code block not found");
+      }
+      return found;
+    });
 
     const style = window.getComputedStyle(codeEl);
     await expect(style.marginTop).toBe("0px");
@@ -404,14 +393,11 @@ export const UserMessageListSpacing: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await waitForChatMessagesLoaded(canvasElement);
 
-    const orderedList = await waitFor(
-      () => {
-        const list = canvasElement.querySelector(".user-message-markdown ol");
-        if (!list) throw new Error("User list not found");
-        return list as HTMLOListElement;
-      },
-      { timeout: 5000 }
-    );
+    const orderedList = await waitFor(() => {
+      const list = canvasElement.querySelector(".user-message-markdown ol");
+      if (!list) throw new Error("User list not found");
+      return list as HTMLOListElement;
+    });
 
     const listStyle = window.getComputedStyle(orderedList);
     await expect(listStyle.marginTop).toBe("0px");

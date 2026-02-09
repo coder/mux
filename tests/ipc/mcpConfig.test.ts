@@ -311,10 +311,12 @@ describeIntegration("MCP server integration with model", () => {
   test.each(imageFormatCases)(
     "MCP $name image content is correctly transformed to AI SDK format",
     async ({ name, prompt, mediaTypePattern }) => {
-      const { env, workspaceId, tempGitRepo, cleanup } = await setupWorkspace(
-        "anthropic",
-        `mcp-chrome-${name.toLowerCase()}`
-      );
+      const {
+        env,
+        workspaceId,
+        tempGitRepo: _tempGitRepo,
+        cleanup,
+      } = await setupWorkspace("anthropic", `mcp-chrome-${name.toLowerCase()}`);
       const client = resolveOrpcClient(env);
       const collector = createStreamCollector(env.orpc, workspaceId);
       collector.start();

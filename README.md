@@ -1,8 +1,12 @@
 <div align="center">
 
-<img src="docs/img/logo.webp" alt="mux logo" width="15%" />
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/white-mux.svg" />
+  <source media="(prefers-color-scheme: light)" srcset="docs/img/black-mux.svg" />
+  <img src="docs/img/black-mux.svg" alt="mux logo" width="18%" />
+</picture>
 
-# mux - coding agent multiplexer
+# Mux - Coding Agent Multiplexer
 
 [![Download](https://img.shields.io/badge/Download-Releases-purple)](https://github.com/coder/mux/releases)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL%203.0-blue.svg)](LICENSE)
@@ -10,9 +14,9 @@
 
 </div>
 
-A desktop & browser application for parallel agentic development.
+Mux is a desktop & browser application for parallel agentic development. It enables developers to plan and execute tasks with multiple AI agents on local or remote compute.
 
-![mux product screenshot](docs/img/product-hero.webp)
+<p><img src="./docs/img/mux-demo.gif" alt="mux product demo" width="100%" /></p>
 
 ## Features
 
@@ -23,11 +27,11 @@ A desktop & browser application for parallel agentic development.
 - **Multi-model** (`sonnet-4-*`, `grok-*`, `gpt-5-*`, `opus-4-*`)
   - Ollama supported for local LLMs ([docs](https://mux.coder.com/config/models#ollama-local))
   - OpenRouter supported for long-tail of LLMs ([docs](https://mux.coder.com/config/models#openrouter-cloud))
-- **VS Code Extension**: Jump into mux workspaces directly from VS Code ([docs](https://mux.coder.com/integrations/vscode-extension))
+- **VS Code Extension**: Jump into Mux workspaces directly from VS Code ([docs](https://mux.coder.com/integrations/vscode-extension))
 - Supporting UI and keybinds for efficiently managing a suite of agents
 - Rich markdown outputs (mermaid diagrams, LaTeX, etc.)
 
-mux has a custom agent loop but much of the core UX is inspired by Claude Code. You'll find familiar features like Plan/Exec mode, vim inputs, `/compact` and new ones
+Mux has a custom agent loop but much of the core UX is inspired by Claude Code. You'll find familiar features like Plan/Exec mode, vim inputs, `/compact` and new ones
 like [opportunistic compaction](https://mux.coder.com/workspaces/compaction) and [mode prompts](https://mux.coder.com/agents/instruction-files#mode-prompts).
 
 **[Read the full documentation →](https://mux.coder.com)**
@@ -41,40 +45,45 @@ macOS and Linux.
 
 ## Screenshots
 
-<div align="center">
-  <p><em>Integrated code-review for faster iteration:</p>
-  <img src="./docs/img/code-review.webp" alt="Screenshot of code review" />
-</div>
-
-<div align="center">
-  <p><em>Agents report their status through the sidebar:</em></p>
-  <img src="./docs/img/agent-status.webp" alt="Screenshot of agent status" />
-</div>
-
-<div align="center">
-  <p><em>Git divergence UI keeps you looped in on changes and potential conflicts:</em></p>
-  <img src="./docs/img/git-status.webp" alt="Screenshot of git status" />
-</div>
-
-<div align="center">
-  <p><em>Mermaid diagrams make it easier to review complex proposals from the Agent:</em></p>
-  <img src="./docs/img/plan-mermaid.webp" alt="Screenshot of mermaid diagram" />
-</div>
-
-<div align="center">
-  <p><em>Project secrets help split your Human and Agent identities:</em></p>
-  <img src="./docs/img/project-secrets.webp" alt="Screenshot of project secrets" />
-</div>
-
-<div align="center">
-  <p><em>Stay looped in on costs and token consumption:</em></p>
-  <img src="./docs/img/costs-tab.webp" alt="Screenshot of costs table" />
-</div>
-
-<div align="center">
-  <p><em>Opportunistic compaction helps keep context small:</em></p>
-  <img src="./docs/img/opportunistic-compaction.webp" alt="Screenshot of opportunistic compaction" />
-</div>
+<table>
+<tr>
+<td align="center" width="50%">
+<img src="./docs/img/code-review.webp" alt="Screenshot of code review" width="100%" /><br>
+<sub>Integrated code-review for faster iteration</sub>
+</td>
+<td align="center" width="50%">
+<img src="./docs/img/agent-status.webp" alt="Screenshot of agent status" width="100%" /><br>
+<sub>Agents report their status through the sidebar</sub>
+</td>
+</tr>
+<tr>
+<td align="center" width="50%">
+<img src="./docs/img/git-status.webp" alt="Screenshot of git status" width="100%" /><br>
+<sub>Git divergence UI keeps you looped in on changes and potential conflicts</sub>
+</td>
+<td align="center" width="50%">
+<img src="./docs/img/plan-mermaid.webp" alt="Screenshot of mermaid diagram" width="100%" /><br>
+<sub>Mermaid diagrams make it easier to review complex proposals from the Agent</sub>
+</td>
+</tr>
+<tr>
+<td align="center" width="50%">
+<img src="./docs/img/project-secrets.webp" alt="Screenshot of project secrets" width="100%" /><br>
+<sub>Project secrets help split your Human and Agent identities</sub>
+</td>
+<td align="center" width="50%">
+<img src="./docs/img/costs-tab.webp" alt="Screenshot of costs table" width="100%" /><br>
+<sub>Stay looped in on costs and token consumption</sub>
+</td>
+</tr>
+<tr>
+<td align="center" width="50%">
+<img src="./docs/img/opportunistic-compaction.webp" alt="Screenshot of opportunistic compaction" width="100%" /><br>
+<sub>Opportunistic compaction helps keep context small</sub>
+</td>
+<td></td>
+</tr>
+</table>
 
 ## More reading
 

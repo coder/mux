@@ -91,7 +91,7 @@ ${muxTypes}
         .number()
         .int()
         .positive()
-        .optional()
+        .nullish()
         .describe(
           "Execution timeout in seconds (default: 300, max: 3600). " +
             "Increase when spawning subagents that may take 5-15+ minutes."

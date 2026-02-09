@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import React, { createContext, useContext, useEffect, useMemo, useCallback } from "react";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
 import {
   readPersistedState,
   updatePersistedState,
@@ -56,7 +56,7 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
   // Workspace-scoped thinking. (No longer per-model.)
   const [thinkingLevel, setThinkingLevelInternal] = usePersistedState<ThinkingLevel>(
     thinkingKey,
-    "off",
+    THINKING_LEVEL_OFF,
     { listener: true }
   );
 

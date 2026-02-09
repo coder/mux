@@ -3,6 +3,27 @@
  *
  * Single source of truth for all tool definitions.
  * Zod schemas are defined here and JSON schemas are auto-generated.
+ *
+ * ## Schema convention: `.nullish()` for optional tool parameters
+ *
+ * All optional fields in **tool input schemas** (i.e. parameters the model
+ * provides) MUST use `.nullish()` instead of `.optional()`.
+ *
+ * Why: OpenAI's Responses API normalizes tool schemas into strict mode, which
+ * forces every field into `required` and expects optional fields to accept
+ * `null` (via `"type": ["string", "null"]`).  Using `.optional()` alone
+ * produces a schema without a null type, so the model is forced to hallucinate
+ * values for fields it would normally skip.  `.nullish()` (= `.optional().nullable()`)
+ * emits both `null` in the type union AND keeps the field out of `required`,
+ * which satisfies strict-mode providers (OpenAI) while remaining compatible
+ * with non-strict providers (Anthropic, Google).
+ *
+ * Implementation handlers that consume these values should use `!= null`
+ * (loose equality) instead of `!== undefined` to correctly treat both
+ * `null` and `undefined` as "not provided".
+ *
+ * This does NOT apply to tool **output/result** schemas — those are constructed
+ * by our own backend code and always use `undefined` for absent fields.
  */
 
 import { z } from "zod";
@@ -87,7 +108,7 @@ export const AskUserQuestionToolArgsSchema = z
   .object({
     questions: z.array(AskUserQuestionQuestionSchema).min(1).max(4),
     // Optional prefilled answers (Claude Code supports this, though Mux typically won't use it)
-    answers: z.record(z.string(), z.string()).optional(),
+    answers: z.record(z.string(), z.string()).nullish(),
   })
   .strict()
   .superRefine((args, ctx) => {
@@ -137,8 +158,8 @@ const TaskAgentIdSchema = z.preprocess(
 const TaskToolAgentArgsSchema = z
   .object({
     // Prefer agentId. subagent_type is a deprecated alias for backwards compatibility.
-    agentId: TaskAgentIdSchema.optional(),
-    subagent_type: SubagentTypeSchema.optional(),
+    agentId: TaskAgentIdSchema.nullish(),
+    subagent_type: SubagentTypeSchema.nullish(),
     prompt: z.string().min(1),
     title: z.string().min(1),
     run_in_background: z.boolean().default(false),
@@ -157,10 +178,12 @@ const TaskToolAgentArgsSchema = z
       return;
     }
 
-    if (hasAgentId && hasSubagentType) {
+    // GPT models often send both fields with identical values — allow that.
+    // Only reject when they conflict, since the handler silently prefers agentId.
+    if (hasAgentId && hasSubagentType && args.agentId !== args.subagent_type) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Provide only one of agentId or subagent_type (not both)",
+        message: "agentId and subagent_type must match when both are provided",
         path: ["agentId"],
       });
       return;
@@ -204,13 +227,13 @@ export const TaskAwaitToolArgsSchema = z
   .object({
     task_ids: z
       .array(z.string().min(1))
-      .optional()
+      .nullish()
       .describe(
         "List of task IDs to await. When omitted, waits for all active descendant tasks of the current workspace."
       ),
     filter: z
       .string()
-      .optional()
+      .nullish()
       .describe(
         "Optional regex to filter bash task output lines. By default, only matching lines are returned. " +
           "When filter_exclude is true, matching lines are excluded instead. " +
@@ -218,7 +241,7 @@ export const TaskAwaitToolArgsSchema = z
       ),
     filter_exclude: z
       .boolean()
-      .optional()
+      .nullish()
       .describe(
         "When true, lines matching 'filter' are excluded instead of kept. " +
           "Requires 'filter' to be set."
@@ -226,7 +249,7 @@ export const TaskAwaitToolArgsSchema = z
     timeout_secs: z
       .number()
       .min(0)
-      .optional()
+      .nullish()
       .default(600)
       .describe(
         "Maximum time to wait in seconds for each task. " +
@@ -347,14 +370,14 @@ export const TaskApplyGitPatchToolArgsSchema = z
     task_id: z.string().min(1).describe("Child task ID whose patch artifact should be applied"),
     dry_run: z
       .boolean()
-      .optional()
+      .nullish()
       .describe(
         "When true, attempt to apply the patch in a temporary git worktree and then discard it (does not modify the current workspace)."
       ),
-    three_way: z.boolean().optional().default(true).describe("When true, run git am with --3way"),
+    three_way: z.boolean().nullish().default(true).describe("When true, run git am with --3way"),
     force: z
       .boolean()
-      .optional()
+      .nullish()
       .describe(
         "When true, allow apply even if the patch was previously applied (and skip clean-tree checks)."
       ),
@@ -464,7 +487,7 @@ export const TaskListToolArgsSchema = z
   .object({
     statuses: z
       .array(TaskListStatusSchema)
-      .optional()
+      .nullish()
       .describe(
         "Task statuses to include. Defaults to active tasks: queued, running, awaiting_report."
       ),
@@ -499,7 +522,7 @@ export const TaskListToolResultSchema = z
 export const AgentReportToolArgsSchema = z
   .object({
     reportMarkdown: z.string().min(1),
-    title: z.string().optional(),
+    title: z.string().nullish(),
   })
   .strict();
 
@@ -517,6 +540,30 @@ interface ToolSchema {
     required: string[];
   };
 }
+
+/**
+ * Schema for a single keep-range item in the system1_keep_ranges tool.
+ * Extracted as a named export so internal code can derive the type via z.infer<>
+ * instead of maintaining a hand-written interface.
+ *
+ * Note: the tool schema applies .passthrough() on top of this to tolerate extra
+ * keys from models, but the inferred type is the strict shape.
+ */
+export const System1KeepRangeSchema = z.object({
+  start: z.coerce
+    .number()
+    .finite()
+    .min(1)
+    .describe("1-based start line (inclusive) in the numbered output"),
+  end: z.coerce
+    .number()
+    .finite()
+    .min(1)
+    .describe("1-based end line (inclusive) in the numbered output"),
+  // .nullish() accepts both null and undefined, so the preprocess
+  // hack that mapped null→undefined is no longer needed.
+  reason: z.string().nullish().describe("Optional short reason for keeping this range"),
+});
 
 /**
  * Tool definitions: single source of truth
@@ -592,13 +639,13 @@ export const TOOL_DEFINITIONS = {
         .number()
         .int()
         .positive()
-        .optional()
+        .nullish()
         .describe("1-based starting line number (optional, defaults to 1)"),
       limit: z
         .number()
         .int()
         .positive()
-        .optional()
+        .nullish()
         .describe("Number of lines to return from offset (optional, returns all if not specified)"),
     }),
   },
@@ -648,13 +695,13 @@ export const TOOL_DEFINITIONS = {
           .number()
           .int()
           .positive()
-          .optional()
+          .nullish()
           .describe("1-based starting line number (optional, defaults to 1)"),
         limit: z
           .number()
           .int()
           .positive()
-          .optional()
+          .nullish()
           .describe(
             "Number of lines to return from offset (optional, returns all if not specified)"
           ),
@@ -677,7 +724,7 @@ export const TOOL_DEFINITIONS = {
       replace_count: z
         .number()
         .int()
-        .optional()
+        .nullish()
         .describe(
           "Number of occurrences to replace (default: 1). Use -1 to replace all occurrences. If 1, old_string must be unique in the file."
         ),
@@ -696,7 +743,7 @@ export const TOOL_DEFINITIONS = {
         .describe("Replacement lines. Provide an empty array to delete the specified range."),
       expected_lines: z
         .array(z.string())
-        .optional()
+        .nullish()
         .describe(
           "Optional safety check. When provided, the current lines in the specified range must match exactly."
         ),
@@ -713,23 +760,23 @@ export const TOOL_DEFINITIONS = {
     schema: z
       .object({
         file_path: FILE_EDIT_FILE_PATH,
-        content: z.string().describe("The content to insert"),
         insert_before: z
           .string()
           .min(1)
-          .optional()
+          .nullish()
           .describe(
             "Anchor text to insert before. Content will be placed immediately before this substring."
           ),
         insert_after: z
           .string()
           .min(1)
-          .optional()
+          .nullish()
           .describe(
             "Anchor text to insert after. Content will be placed immediately after this substring."
           ),
+        content: z.string().describe("The content to insert"),
       })
-      .refine((data) => !(data.insert_before !== undefined && data.insert_after !== undefined), {
+      .refine((data) => !(data.insert_before != null && data.insert_after != null), {
         message: "Provide only one of insert_before or insert_after (not both).",
         path: ["insert_before"],
       }),
@@ -812,25 +859,7 @@ export const TOOL_DEFINITIONS = {
       .object({
         keep_ranges: z
           .array(
-            z
-              .object({
-                start: z.coerce
-                  .number()
-                  .finite()
-                  .min(1)
-                  .describe("1-based start line (inclusive) in the numbered output"),
-                end: z.coerce
-                  .number()
-                  .finite()
-                  .min(1)
-                  .describe("1-based end line (inclusive) in the numbered output"),
-                reason: z
-                  .preprocess(
-                    (value) => (value === null ? undefined : value),
-                    z.string().optional()
-                  )
-                  .describe("Optional short reason for keeping this range"),
-              })
+            System1KeepRangeSchema
               // Providers/models sometimes include extra keys in tool arguments; be permissive and
               // ignore them rather than failing the whole compaction call.
               .passthrough()
@@ -907,7 +936,7 @@ export const TOOL_DEFINITIONS = {
         url: z
           .string()
           .url()
-          .optional()
+          .nullish()
           .describe(
             "Optional URL to external resource with more details (e.g., Pull Request URL). The URL persists and is displayed to the user for easy access."
           ),
@@ -928,7 +957,7 @@ export const TOOL_DEFINITIONS = {
       process_id: z.string().describe("The ID of the background process to retrieve output from"),
       filter: z
         .string()
-        .optional()
+        .nullish()
         .describe(
           "Optional regex to filter output lines. By default, only matching lines are returned. " +
             "When filter_exclude is true, matching lines are excluded instead. " +
@@ -936,7 +965,7 @@ export const TOOL_DEFINITIONS = {
         ),
       filter_exclude: z
         .boolean()
-        .optional()
+        .nullish()
         .describe(
           "When true, lines matching 'filter' are excluded instead of kept. " +
             "Key behavior: excluded lines do NOT cause early return from timeout - " +
@@ -1009,7 +1038,7 @@ export const TOOL_DEFINITIONS = {
         message: z
           .string()
           .max(200)
-          .optional()
+          .nullish()
           .describe(
             "Optional notification body with more details (max 200 chars). " +
               "Keep it brief - users may only see a preview."

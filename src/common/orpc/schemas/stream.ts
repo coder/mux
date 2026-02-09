@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AgentIdSchema } from "./agentDefinition";
 import { AgentModeSchema } from "../../types/mode";
+import { THINKING_LEVELS } from "../../types/thinking";
 import { ChatUsageDisplaySchema } from "./chatStats";
 import { StreamErrorTypeSchema } from "./errors";
 import {
@@ -54,6 +55,8 @@ export const DeleteMessageSchema = z.object({
   historySequences: z.array(z.number()),
 });
 
+const ThinkingLevelSchema = z.enum(THINKING_LEVELS);
+
 export const StreamStartEventSchema = z.object({
   type: z.literal("stream-start"),
   workspaceId: z.string(),
@@ -75,6 +78,9 @@ export const StreamStartEventSchema = z.object({
   }),
   agentId: AgentIdSchema.optional().catch(undefined).meta({
     description: "Agent id for this stream",
+  }),
+  thinkingLevel: ThinkingLevelSchema.optional().meta({
+    description: "Effective thinking level after model policy clamping",
   }),
 });
 
@@ -132,6 +138,7 @@ export const StreamEndEventSchema = z.object({
   metadata: z
     .object({
       model: z.string(),
+      thinkingLevel: ThinkingLevelSchema.optional(),
       routedThroughGateway: z.boolean().optional(),
       // Total usage across all steps (for cost calculation)
       usage: LanguageModelV2UsageSchema.optional(),

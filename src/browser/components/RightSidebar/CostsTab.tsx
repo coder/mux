@@ -59,8 +59,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   const [preferredCompactionModel] = usePersistedState<string>(PREFERRED_COMPACTION_MODEL_KEY, "", {
     listener: true,
   });
-  const { options } = useProviderOptions();
-  const use1M = options.anthropic?.use1MContext ?? false;
+  const { has1MContext } = useProviderOptions();
 
   // Post-compaction context state for UI display
   const postCompactionState = usePostCompactionState(workspaceId);
@@ -125,7 +124,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
               const model = contextUsage?.model ?? "unknown";
 
               const contextUsageData = contextUsage
-                ? calculateTokenMeterData(contextUsage, model, use1M, false)
+                ? calculateTokenMeterData(contextUsage, model, has1MContext(model), false)
                 : { segments: [], totalTokens: 0, totalPercentage: 0 };
 
               // Warn when the compaction model can't fit the auto-compact threshold to avoid failures.
@@ -137,7 +136,8 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                 const thresholdTokens = Math.round((autoCompactThreshold / 100) * maxTokens);
                 const compactionStats = getModelStats(effectiveCompactionModel);
                 const compactionMaxTokens =
-                  use1M && supports1MContext(effectiveCompactionModel)
+                  has1MContext(effectiveCompactionModel) &&
+                  supports1MContext(effectiveCompactionModel)
                     ? 1_000_000
                     : compactionStats?.max_input_tokens;
 
@@ -151,6 +151,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                 <ContextUsageBar
                   testId="context-usage"
                   data={contextUsageData}
+                  model={model}
                   autoCompaction={{
                     threshold: autoCompactThreshold,
                     setThreshold: setAutoCompactThreshold,
@@ -179,7 +180,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
               // Get model from the displayUsage (which could be last request or session sum)
               const model = displayUsage?.model ?? lastRequestUsage?.model ?? "unknown";
               const modelStats = getModelStats(model);
-              const is1MActive = use1M && supports1MContext(model);
+              const is1MActive = has1MContext(model) && supports1MContext(model);
 
               // Helper to calculate cost percentage
               const getCostPercentage = (cost: number | undefined, total: number | undefined) =>

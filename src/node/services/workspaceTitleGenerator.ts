@@ -1,4 +1,4 @@
-import { generateText, Output } from "ai";
+import { NoObjectGeneratedError, streamText, Output } from "ai";
 import { z } from "zod";
 import type { AIService } from "./aiService";
 import { log } from "./log";
@@ -87,7 +87,11 @@ export async function generateWorkspaceIdentity(
     }
 
     try {
-      const result = await generateText({
+      // Use streamText instead of generateText: the Codex OAuth endpoint
+      // (chatgpt.com/backend-api/codex/responses) requires stream:true in the
+      // request body and rejects non-streaming requests with 400.  streamText
+      // sets stream:true automatically, while generateText does not.
+      const stream = streamText({
         model: modelResult.data,
         output: Output.object({ schema: workspaceIdentitySchema }),
         prompt: `Generate a workspace name and title for this development task:
@@ -99,16 +103,42 @@ Requirements:
 - title: A 2-5 word description in verb-noun format. Examples: "Fix plan mode", "Add user authentication", "Refactor sidebar layout"`,
       });
 
+      // Awaiting .output triggers full stream consumption and JSON parsing.
+      // If the model returned conversational text instead of JSON, this throws
+      // NoObjectGeneratedError — caught below with a text fallback parser.
+      const output = await stream.output;
+
       const suffix = generateNameSuffix();
-      const sanitizedName = sanitizeBranchName(result.output.name, 20);
+      const sanitizedName = sanitizeBranchName(output.name, 20);
       const nameWithSuffix = `${sanitizedName}-${suffix}`;
 
       return Ok({
         name: nameWithSuffix,
-        title: result.output.title.trim(),
+        title: output.title.trim(),
         modelUsed: modelString,
       });
     } catch (error) {
+      // Some models ignore the structured output instruction and return
+      // conversational text (e.g. "**name:** `testing`\n**title:** `Improve test coverage`").
+      // NoObjectGeneratedError carries the raw .text — try to extract name/title
+      // from it before giving up on this candidate.
+      if (NoObjectGeneratedError.isInstance(error) && error.text) {
+        const textFallback = extractIdentityFromText(error.text);
+        if (textFallback) {
+          log.info(
+            `Name generation: structured output failed for ${modelString}, recovered from text fallback`
+          );
+          const suffix = generateNameSuffix();
+          const sanitizedName = sanitizeBranchName(textFallback.name, 20);
+          const nameWithSuffix = `${sanitizedName}-${suffix}`;
+          return Ok({
+            name: nameWithSuffix,
+            title: textFallback.title,
+            modelUsed: modelString,
+          });
+        }
+      }
+
       // API error (invalid key, quota, network, etc.) - try next candidate
       lastApiError = error instanceof Error ? error.message : String(error);
       log.warn(`Name generation failed with ${modelString}, trying next candidate`, {
@@ -123,6 +153,60 @@ Requirements:
     ? `Name generation failed: ${lastApiError}`
     : "Name generation failed - no working model found";
   return Err({ type: "unknown", raw: errorMessage });
+}
+
+/**
+ * Fallback: extract name/title from conversational model text when structured
+ * JSON output parsing fails. Handles common patterns like:
+ *   **name:** `testing`          or  "name": "testing"
+ *   **title:** `Improve tests`   or  "title": "Improve tests"
+ *
+ * Returns null if either field cannot be reliably extracted.
+ */
+export function extractIdentityFromText(text: string): { name: string; title: string } | null {
+  // Try JSON extraction first (model may have embedded JSON in prose)
+  const jsonMatch = /\{[^}]*"name"\s*:\s*"([^"]+)"[^}]*"title"\s*:\s*"([^"]+)"[^}]*\}/.exec(text);
+  if (jsonMatch) {
+    return validateExtracted(jsonMatch[1], jsonMatch[2]);
+  }
+  // Also try reverse field order in JSON
+  const jsonMatchReverse = /\{[^}]*"title"\s*:\s*"([^"]+)"[^}]*"name"\s*:\s*"([^"]+)"[^}]*\}/.exec(
+    text
+  );
+  if (jsonMatchReverse) {
+    return validateExtracted(jsonMatchReverse[2], jsonMatchReverse[1]);
+  }
+
+  // Try markdown/prose patterns: **name:** `value` or name: "value"
+  // In bold markdown the colon sits inside the stars: **name:**
+  const nameMatch =
+    /\*?\*?name:\*?\*?\s*`([^`]+)`/i.exec(text) ?? /\bname:\s*"([^"]+)"/i.exec(text);
+  const titleMatch =
+    /\*?\*?title:\*?\*?\s*`([^`]+)`/i.exec(text) ?? /\btitle:\s*"([^"]+)"/i.exec(text);
+
+  if (nameMatch && titleMatch) {
+    return validateExtracted(nameMatch[1], titleMatch[1]);
+  }
+
+  return null;
+}
+
+/** Validate extracted values against the same constraints as the schema. */
+function validateExtracted(
+  rawName: string,
+  rawTitle: string
+): { name: string; title: string } | null {
+  const name = rawName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-+/g, "-");
+  const title = rawTitle.trim();
+
+  if (name.length < 2 || name.length > 20) return null;
+  if (title.length < 5 || title.length > 60) return null;
+
+  return { name, title };
 }
 
 /**

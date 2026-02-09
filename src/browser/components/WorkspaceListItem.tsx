@@ -4,10 +4,7 @@ import { cn } from "@/common/lib/utils";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
-import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
-import { DEFAULT_MODEL_KEY, getModelKey } from "@/common/constants/storage";
+import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import React, { useState, useEffect } from "react";
@@ -19,11 +16,14 @@ import { WorkspaceHoverPreview } from "./WorkspaceHoverPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
-import { Pencil, Trash2, Ellipsis, Loader2 } from "lucide-react";
+import { Pencil, Trash2, Ellipsis, Loader2, Link2 } from "lucide-react";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
 import { WORKSPACE_DRAG_TYPE, type WorkspaceDragItem } from "./WorkspaceSectionDropZone";
+import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
+import { formatKeybind, matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import { ShareTranscriptDialog } from "./ShareTranscriptDialog";
 
 const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
 
@@ -257,6 +257,9 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   const displayTitle = metadata.title ?? metadata.name;
   const isEditing = editingWorkspaceId === workspaceId;
 
+  const linkSharingEnabled = useLinkSharingEnabled();
+  const [shareTranscriptOpen, setShareTranscriptOpen] = useState(false);
+
   // Hover hamburger menu for discoverable title editing (requested to replace the double-click hint).
   const [isTitleMenuOpen, setIsTitleMenuOpen] = useState(false);
   const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(
@@ -269,6 +272,21 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
       setContextMenuPosition(null);
     }
   }, [isEditing]);
+
+  // Keybind for opening transcript share popover (only for the selected workspace)
+  useEffect(() => {
+    if (!isSelected || linkSharingEnabled !== true) return;
+
+    const handler = (e: KeyboardEvent) => {
+      if (matchesKeybind(e, KEYBINDS.SHARE_TRANSCRIPT)) {
+        e.preventDefault();
+        setShareTranscriptOpen(true);
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [isSelected, linkSharingEnabled]);
 
   const startEditing = () => {
     if (requestRename(workspaceId, displayTitle)) {
@@ -312,26 +330,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   const { canInterrupt, awaitingUserQuestion, isStarting, agentStatus } =
     useWorkspaceSidebarState(workspaceId);
 
-  // Subscribe to the global default model preference so backend-seeded values apply immediately
-  // on fresh origins (e.g., when switching ports).
-  const [defaultModelPref] = usePersistedState<string>(
-    DEFAULT_MODEL_KEY,
-    WORKSPACE_DEFAULTS.model,
-    { listener: true }
-  );
-  const defaultModel = migrateGatewayModel(defaultModelPref).trim() || WORKSPACE_DEFAULTS.model;
-
-  // Workspace-scoped model preference. If unset, fall back to the global default model.
-  // Note: we intentionally *don't* pass defaultModel as the usePersistedState initialValue;
-  // initialValue is sticky and would lock in the fallback before startup seeding.
-  const [preferredModel] = usePersistedState<string | null>(getModelKey(workspaceId), null, {
-    listener: true,
-  });
-
-  const fallbackModel =
-    typeof preferredModel === "string" && preferredModel.trim().length > 0
-      ? migrateGatewayModel(preferredModel.trim())
-      : defaultModel;
+  const fallbackModel = useWorkspaceFallbackModel(workspaceId);
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
   const hasStatusText =
     Boolean(agentStatus) || awaitingUserQuestion || isWorking || isInitializing || isRemoving;
@@ -518,11 +517,11 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   align={contextMenuPosition ? "start" : "end"}
                   side={contextMenuPosition ? "right" : "bottom"}
                   sideOffset={contextMenuPosition ? 0 : 6}
-                  className="w-[150px] !min-w-0 p-1"
+                  className="w-[250px] !min-w-0 p-1"
                   onClick={(e) => e.stopPropagation()}
                 >
                   <button
-                    className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs"
+                    className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
                     onClick={(e) => {
                       e.stopPropagation();
                       setIsTitleMenuOpen(false);
@@ -530,14 +529,33 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                     }}
                   >
                     <span className="flex items-center gap-2">
-                      <Pencil className="h-3 w-3" />
+                      <Pencil className="h-3 w-3 shrink-0" />
                       Edit chat title
                     </span>
                   </button>
+                  {/* Share transcript link (gated on telemetry/link-sharing being enabled). */}
+                  {linkSharingEnabled === true && !isMuxHelpChat && (
+                    <button
+                      className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsTitleMenuOpen(false);
+                        setShareTranscriptOpen(true);
+                      }}
+                    >
+                      <span className="flex items-center gap-2">
+                        <Link2 className="h-3 w-3 shrink-0" />
+                        Share transcript{" "}
+                        <span className="text-muted text-[10px]">
+                          ({formatKeybind(KEYBINDS.SHARE_TRANSCRIPT)})
+                        </span>
+                      </span>
+                    </button>
+                  )}
                   {/* Archive stays in the overflow menu to keep the sidebar row uncluttered. */}
                   {!isMuxHelpChat && (
                     <button
-                      className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs"
+                      className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
                       onClick={(e) => {
                         e.stopPropagation();
                         setIsTitleMenuOpen(false);
@@ -545,13 +563,28 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                       }}
                     >
                       <span className="flex items-center gap-2">
-                        <ArchiveIcon className="h-3 w-3" />
-                        Archive chat
+                        <ArchiveIcon className="h-3 w-3 shrink-0" />
+                        Archive chat{" "}
+                        <span className="text-muted text-[10px]">
+                          ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
+                        </span>
                       </span>
                     </button>
                   )}
                 </PopoverContent>
               </Popover>
+              {/* Share transcript dialog – rendered as a sibling to the overflow menu.
+                  Triggered by the menu item above or the Ctrl+Shift+L keybind.
+                  Uses a Dialog (modal) so it stays visible regardless of popover dismissal. */}
+              {linkSharingEnabled === true && (
+                <ShareTranscriptDialog
+                  workspaceId={workspaceId}
+                  workspaceName={metadata.name}
+                  workspaceTitle={displayTitle}
+                  open={shareTranscriptOpen}
+                  onOpenChange={setShareTranscriptOpen}
+                />
+              )}
             </ActionButtonWrapper>
           )
         )}
@@ -649,7 +682,11 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   <span className="min-w-0 truncate">Archiving...</span>
                 </div>
               ) : (
-                <WorkspaceStatusIndicator workspaceId={workspaceId} fallbackModel={fallbackModel} />
+                <WorkspaceStatusIndicator
+                  workspaceId={workspaceId}
+                  fallbackModel={fallbackModel}
+                  isCreating={isInitializing}
+                />
               )}
             </div>
           )}

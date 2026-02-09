@@ -1,4 +1,3 @@
-import React from "react";
 import { render, type RenderResult, waitFor } from "@testing-library/react";
 
 import { AppLoader } from "@/browser/components/AppLoader";

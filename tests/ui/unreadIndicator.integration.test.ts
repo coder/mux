@@ -85,7 +85,9 @@ describe("Unread indicator (mock AI router)", () => {
     test("workspace is not unread when first opened", async () => {
       // When a workspace is first selected, it should not show as unread
       const lastRead = getLastReadTimestamp(app.workspaceId);
-      const { recencyTimestamp, isUnread } = getWorkspaceUnreadState(app.workspaceId);
+      const { recencyTimestamp: _recencyTimestamp, isUnread } = getWorkspaceUnreadState(
+        app.workspaceId
+      );
 
       // A fresh workspace may have recencyTimestamp from createdAt
       // but lastReadTimestamp should be set when we selected it

@@ -7,6 +7,7 @@ import type { SendMessageOptions } from "@/common/orpc/types";
 import type { z } from "zod";
 import type { AgentMode } from "./mode";
 import type { AgentSkillScope } from "./agentSkill";
+import type { ThinkingLevel } from "./thinking";
 import { type ReviewNoteData, formatReviewForModel } from "./review";
 
 /**
@@ -167,9 +168,6 @@ export function isDefaultSourceContent(content?: Partial<UserMessageContent>): b
   const hasReviews = (content.reviews?.length ?? 0) > 0;
   return text === "Continue" && !hasFiles && !hasReviews;
 }
-
-/** @deprecated Use isDefaultSourceContent. Legacy alias for backward compatibility. */
-export const isDefaultContinueMessage = isDefaultSourceContent;
 
 /**
  * Rebuild a ContinueMessage from persisted data.
@@ -354,8 +352,15 @@ export interface MuxMetadata {
   mode?: AgentMode;
   timestamp?: number;
   model?: string;
+  /** Effective thinking/reasoning level used for this response (after model policy clamping). */
+  thinkingLevel?: ThinkingLevel;
   /** True when this response was routed through Mux Gateway (model stays canonical). */
   routedThroughGateway?: boolean;
+  /**
+   * True when usage costs are included in a subscription (e.g., ChatGPT subscription routing).
+   * Token counts are still tracked, but the UI should display costs as $0.
+   */
+  costsIncluded?: boolean;
   // Total usage across all steps (for cost calculation)
   usage?: LanguageModelV2Usage;
   // Last step's usage only (for context window display - inputTokens = current context size)
@@ -521,7 +526,7 @@ export type DisplayedMessage =
       toolName: string;
       args: unknown;
       result?: unknown;
-      status: "pending" | "executing" | "completed" | "failed" | "interrupted";
+      status: "pending" | "executing" | "completed" | "failed" | "interrupted" | "redacted";
       isPartial: boolean; // Whether the parent message was interrupted
       historySequence: number; // Global ordering across all messages
       streamSequence?: number; // Local ordering within this assistant message
@@ -533,7 +538,7 @@ export type DisplayedMessage =
         toolName: string;
         input: unknown;
         output?: unknown;
-        state: "input-available" | "output-available";
+        state: "input-available" | "output-available" | "output-redacted";
         timestamp?: number;
       }>;
     }

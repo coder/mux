@@ -55,7 +55,6 @@ export interface DevcontainerRuntimeOptions {
  */
 export class DevcontainerRuntime extends LocalBaseRuntime {
   private readonly worktreeManager: WorktreeManager;
-  private readonly srcBaseDir: string;
   private readonly configPath: string;
 
   // Cached env used for credential forwarding
@@ -338,7 +337,8 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
   }
 
   private async statViaExec(filePath: string, abortSignal?: AbortSignal): Promise<FileStat> {
-    const stream = await this.exec(`stat -c '%s %Y %F' ${this.quoteForContainer(filePath)}`, {
+    // -L follows symlinks so symlinked paths report the target's type
+    const stream = await this.exec(`stat -L -c '%s %Y %F' ${this.quoteForContainer(filePath)}`, {
       cwd: this.getContainerBasePath(),
       timeout: 10,
       abortSignal,
@@ -409,7 +409,6 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
 
   constructor(options: DevcontainerRuntimeOptions) {
     super();
-    this.srcBaseDir = options.srcBaseDir;
     this.worktreeManager = new WorktreeManager(options.srcBaseDir);
     this.configPath = options.configPath;
     this.shareCredentials = options.shareCredentials ?? false;

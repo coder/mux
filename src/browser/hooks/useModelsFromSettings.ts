@@ -1,6 +1,10 @@
 import { useCallback, useMemo } from "react";
 import { readPersistedString, usePersistedState } from "./usePersistedState";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import {
+  isCodexOauthAllowedModelId,
+  isCodexOauthRequiredModelId,
+} from "@/common/constants/codexOAuth";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useProvidersConfig } from "./useProvidersConfig";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
@@ -122,7 +126,32 @@ export function useModelsFromSettings() {
   }, [config, hiddenModels, effectivePolicy]);
 
   const models = useMemo(() => {
-    const next = filterHiddenModels(getSuggestedModels(config), hiddenModels);
+    const suggested = filterHiddenModels(getSuggestedModels(config), hiddenModels);
+
+    const openaiApiKeySet = config?.openai?.apiKeySet === true;
+    const codexOauthSet = config?.openai?.codexOauthSet === true;
+
+    // OpenAI model gating:
+    // - API key + OAuth: allow everything.
+    // - API key only: hide models that require OAuth.
+    // - OAuth only: show only models routable via OAuth.
+    // - Neither: hide models that require OAuth (status quo).
+    const next = suggested.filter((modelId) => {
+      if (!modelId.startsWith("openai:")) {
+        return true;
+      }
+
+      if (openaiApiKeySet && codexOauthSet) {
+        return true;
+      }
+
+      if (!openaiApiKeySet && codexOauthSet) {
+        return isCodexOauthAllowedModelId(modelId);
+      }
+
+      return !isCodexOauthRequiredModelId(modelId);
+    });
+
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
   }, [config, hiddenModels, effectivePolicy]);
 

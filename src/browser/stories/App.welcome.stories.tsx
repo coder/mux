@@ -204,14 +204,11 @@ export const NonGitRepositorySuccess: AppStory = {
     await userEvent.click(button);
 
     // Wait for success message to appear
-    await waitFor(
-      () => {
-        if (!canvas.queryByTestId("git-init-success")) {
-          throw new Error("Success message not visible");
-        }
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      if (!canvas.queryByTestId("git-init-success")) {
+        throw new Error("Success message not visible");
+      }
+    });
   },
 };
 
@@ -257,14 +254,11 @@ export const NonGitRepositoryInProgress: AppStory = {
     await userEvent.click(button);
 
     // Verify loading state is shown
-    await waitFor(
-      () => {
-        if (!canvas.queryByText("Running...")) {
-          throw new Error("Loading state not visible");
-        }
-      },
-      { timeout: 2000 }
-    );
+    await waitFor(() => {
+      if (!canvas.queryByText("Running...")) {
+        throw new Error("Loading state not visible");
+      }
+    });
   },
 };
 
@@ -313,14 +307,11 @@ export const NonGitRepositoryError: AppStory = {
     await userEvent.click(button);
 
     // Verify error message is shown
-    await waitFor(
-      () => {
-        if (!canvas.queryByTestId("git-init-error")) {
-          throw new Error("Error message not visible");
-        }
-      },
-      { timeout: 2000 }
-    );
+    await waitFor(() => {
+      if (!canvas.queryByTestId("git-init-error")) {
+        throw new Error("Error message not visible");
+      }
+    });
   },
 };
 
@@ -358,13 +349,10 @@ export const DockerUnavailable: AppStory = {
     await canvas.findByText("Workspace Type", {}, { timeout: 10000 });
 
     // Wait for Docker button to become disabled (runtimeAvailability loads async)
-    await waitFor(
-      async () => {
-        const dockerButton = canvas.getByRole("button", { name: /Docker/i });
-        await expect(dockerButton).toBeDisabled();
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(async () => {
+      const dockerButton = canvas.getByRole("button", { name: /Docker/i });
+      await expect(dockerButton).toBeDisabled();
+    });
   },
 };
 

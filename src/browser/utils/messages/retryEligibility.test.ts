@@ -676,6 +676,14 @@ describe("isNonRetryableSendError", () => {
     expect(isNonRetryableSendError(error)).toBe(true);
   });
 
+  it("returns true for oauth_not_connected error", () => {
+    const error: SendMessageError = {
+      type: "oauth_not_connected",
+      provider: "codex",
+    };
+    expect(isNonRetryableSendError(error)).toBe(true);
+  });
+
   it("returns true for provider_not_supported error", () => {
     const error: SendMessageError = {
       type: "provider_not_supported",

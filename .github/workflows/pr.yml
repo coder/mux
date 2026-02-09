@@ -107,6 +107,15 @@ jobs:
           set -euo pipefail
           curl --retry 5 --retry-all-errors --retry-delay 2 -LsSf https://astral.sh/uv/install.sh | sh
       - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Cache lint/format state
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            .eslintcache
+            node_modules/.cache/prettier
+          key: ${{ runner.os }}-lint-fmt-${{ hashFiles('eslint.config.mjs', '.prettierrc', '.prettierignore') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-lint-fmt-${{ hashFiles('eslint.config.mjs', '.prettierrc', '.prettierignore') }}-
       - run: make -j static-check
 
   lint-actions:

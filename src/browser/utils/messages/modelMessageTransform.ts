@@ -1191,12 +1191,6 @@ export function transformModelMessages(
   provider: string,
   options?: {
     anthropicThinkingEnabled?: boolean;
-    /**
-     * Append [CONTINUE] user message if conversation ends with an assistant message.
-     * Required for models that don't support prefill (e.g., Opus 4.6).
-     * Uses a sentinel instead of stripping to avoid silent context loss.
-     */
-    noPrefill?: boolean;
   }
 ): ModelMessage[] {
   // Pass 0: Coalesce consecutive parts to reduce JSON overhead from streaming (applies to all providers)
@@ -1234,16 +1228,6 @@ export function transformModelMessages(
 
   // Pass 5: Merge consecutive user messages (applies to all providers)
   const merged = mergeConsecutiveUserMessages(reasoningHandled);
-
-  // Pass 6: Ensure conversation doesn't end with an assistant message (prefill).
-  // Some models (e.g., Opus 4.6) reject prefilled assistant messages with a 400 error.
-  // Earlier transforms (stripOrphanedToolCalls, filterReasoningOnlyMessages, etc.) can
-  // remove messages and re-expose a trailing assistant after addInterruptedSentinel ran.
-  // Appending a [CONTINUE] user sentinel preserves the assistant context while ensuring
-  // the conversation ends with a user message.
-  if (options?.noPrefill && merged.length > 0 && merged[merged.length - 1].role === "assistant") {
-    merged.push({ role: "user", content: [{ type: "text", text: "[CONTINUE]" }] });
-  }
 
   return merged;
 }
