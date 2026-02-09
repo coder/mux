@@ -125,8 +125,8 @@ export function useModelsFromSettings() {
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
   }, [config, hiddenModels, effectivePolicy]);
 
-  const openaiApiKeySet = config?.openai?.apiKeySet ?? null;
-  const codexOauthSet = config?.openai?.codexOauthSet ?? null;
+  const openaiApiKeySet = config === null ? null : config.openai?.apiKeySet === true;
+  const codexOauthSet = config === null ? null : config.openai?.codexOauthSet === true;
 
   const models = useMemo(() => {
     const suggested = filterHiddenModels(getSuggestedModels(config), hiddenModels);

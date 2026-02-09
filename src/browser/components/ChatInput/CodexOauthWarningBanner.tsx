@@ -14,7 +14,7 @@ const CODEX_OAUTH_WARNING_MODEL = KNOWN_MODELS.GPT_53_CODEX.id;
 
 export function CodexOauthWarningBanner(props: Props) {
   const shouldShowWarning =
-    props.activeModel === CODEX_OAUTH_WARNING_MODEL && props.codexOauthSet !== true;
+    props.activeModel === CODEX_OAUTH_WARNING_MODEL && props.codexOauthSet === false;
 
   if (!shouldShowWarning) {
     return null;
@@ -28,8 +28,8 @@ export function CodexOauthWarningBanner(props: Props) {
       <div className="flex min-w-0 items-start gap-2">
         <AlertTriangle aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         <p className="leading-relaxed">
-          <span className="font-medium">GPT-5.3 Codex requires ChatGPT (Codex) OAuth.</span> Open
-          Settings → Providers to connect OpenAI before sending.
+          <span className="font-medium">GPT-5.3 Codex OAuth is not connected.</span> Open Settings →
+          Providers to connect OpenAI before sending.
         </p>
       </div>
       <Button

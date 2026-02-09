@@ -27,6 +27,7 @@ describe("CodexOauthWarningBanner", () => {
     );
 
     expect(view.getByTestId("codex-oauth-warning-banner")).toBeTruthy();
+    expect(view.getByText("GPT-5.3 Codex OAuth is not connected.")).toBeTruthy();
     expect(view.getByText("Providers")).toBeTruthy();
 
     fireEvent.click(view.getByText("Providers"));
@@ -38,6 +39,18 @@ describe("CodexOauthWarningBanner", () => {
       <CodexOauthWarningBanner
         activeModel="openai:gpt-5.3-codex"
         codexOauthSet={true}
+        onOpenProviders={() => undefined}
+      />
+    );
+
+    expect(view.queryByTestId("codex-oauth-warning-banner")).toBeNull();
+  });
+
+  test("does not render when Codex OAuth status is still unknown", () => {
+    const view = render(
+      <CodexOauthWarningBanner
+        activeModel="openai:gpt-5.3-codex"
+        codexOauthSet={null}
         onOpenProviders={() => undefined}
       />
     );
