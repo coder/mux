@@ -70,7 +70,10 @@ describe("AgentSession continue-message agentId fallback", () => {
     } satisfies MuxMessage;
 
     const historyService: HistoryService = {
-      getHistory: mock(() =>
+      getHistoryFromLatestBoundary: mock(() =>
+        Promise.resolve({ success: true as const, data: [mockSummaryMessage] })
+      ),
+      getLastMessages: mock(() =>
         Promise.resolve({ success: true as const, data: [mockSummaryMessage] })
       ),
       appendToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),

@@ -59,9 +59,12 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
         void _messageId;
         return Promise.resolve(Ok(undefined));
       }),
-      getHistory: mock((_workspaceId: string): Promise<Result<MuxMessage[], string>> => {
-        return Promise.resolve(Ok([...messages]));
-      }),
+      getHistoryFromLatestBoundary: mock(
+        (_workspaceId: string): Promise<Result<MuxMessage[], string>> => {
+          return Promise.resolve(Ok([...messages]));
+        }
+      ),
+      getLastMessages: mock((_: string, n: number) => Promise.resolve(Ok([...messages].slice(-n)))),
     } as unknown as HistoryService;
 
     const partialService = {
@@ -177,9 +180,12 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
         void _messageId;
         return Promise.resolve(Ok(undefined));
       }),
-      getHistory: mock((_workspaceId: string): Promise<Result<MuxMessage[], string>> => {
-        return Promise.resolve(Ok([...messages]));
-      }),
+      getHistoryFromLatestBoundary: mock(
+        (_workspaceId: string): Promise<Result<MuxMessage[], string>> => {
+          return Promise.resolve(Ok([...messages]));
+        }
+      ),
+      getLastMessages: mock((_: string, n: number) => Promise.resolve(Ok([...messages].slice(-n)))),
     } as unknown as HistoryService;
 
     const partialService = {
@@ -278,9 +284,12 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
         void _messageId;
         return Promise.resolve(Ok(undefined));
       }),
-      getHistory: mock((_workspaceId: string): Promise<Result<MuxMessage[], string>> => {
-        return Promise.resolve(Ok([...messages]));
-      }),
+      getHistoryFromLatestBoundary: mock(
+        (_workspaceId: string): Promise<Result<MuxMessage[], string>> => {
+          return Promise.resolve(Ok([...messages]));
+        }
+      ),
+      getLastMessages: mock((_: string, n: number) => Promise.resolve(Ok([...messages].slice(-n)))),
     } as unknown as HistoryService;
 
     const partialService = {
@@ -394,9 +403,12 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
         void _messageId;
         return Promise.resolve(Ok(undefined));
       }),
-      getHistory: mock((_workspaceId: string): Promise<Result<MuxMessage[], string>> => {
-        return Promise.resolve(Ok([...messages]));
-      }),
+      getHistoryFromLatestBoundary: mock(
+        (_workspaceId: string): Promise<Result<MuxMessage[], string>> => {
+          return Promise.resolve(Ok([...messages]));
+        }
+      ),
+      getLastMessages: mock((_: string, n: number) => Promise.resolve(Ok([...messages].slice(-n)))),
     } as unknown as HistoryService;
 
     const partialService = {
@@ -549,9 +561,14 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       appendToHistory: mock((_workspaceId: string, _message: MuxMessage) => {
         return Promise.resolve(Ok(undefined));
       }),
-      getHistory: mock((_workspaceId: string): Promise<Result<MuxMessage[], string>> => {
-        return Promise.resolve(Ok([...historyMessages]));
-      }),
+      getHistoryFromLatestBoundary: mock(
+        (_workspaceId: string): Promise<Result<MuxMessage[], string>> => {
+          return Promise.resolve(Ok([...historyMessages]));
+        }
+      ),
+      getLastMessages: mock((_: string, n: number) =>
+        Promise.resolve(Ok([...historyMessages].slice(-n)))
+      ),
     } as unknown as HistoryService;
 
     const partialService = {

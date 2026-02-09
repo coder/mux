@@ -23,7 +23,8 @@ describe("AgentSession.resumeStream", () => {
     } as unknown as AIService;
 
     const historyService: HistoryService = {
-      getHistory: mock(() => Promise.resolve(Ok([]))),
+      getHistoryFromLatestBoundary: mock(() => Promise.resolve(Ok([]))),
+    getLastMessages: mock(() => Promise.resolve({ success: true as const, data: [] })),
     } as unknown as HistoryService;
 
     const partialService: PartialService = {

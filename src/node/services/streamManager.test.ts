@@ -23,7 +23,8 @@ if (shouldRunIntegrationTests()) {
 const createMockHistoryService = (): HistoryService => {
   return {
     appendToHistory: mock(() => Promise.resolve({ success: true })),
-    getHistory: mock(() => Promise.resolve({ success: true, data: [] })),
+    getHistoryFromLatestBoundary: mock(() => Promise.resolve({ success: true, data: [] })),
+    getLastMessages: mock(() => Promise.resolve({ success: true as const, data: [] })),
     updateHistory: mock(() => Promise.resolve({ success: true })),
     truncateAfterMessage: mock(() => Promise.resolve({ success: true })),
     clearHistory: mock(() => Promise.resolve({ success: true })),

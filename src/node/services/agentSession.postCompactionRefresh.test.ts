@@ -26,7 +26,8 @@ describe("AgentSession post-compaction refresh trigger", () => {
     } as unknown as AIService;
 
     const historyService: HistoryService = {
-      getHistory: mock(() => Promise.resolve({ success: true as const, data: [] })),
+      getHistoryFromLatestBoundary: mock(() => Promise.resolve({ success: true as const, data: [] })),
+    getLastMessages: mock(() => Promise.resolve({ success: true as const, data: [] })),
     } as unknown as HistoryService;
 
     const initStateManager: InitStateManager = {

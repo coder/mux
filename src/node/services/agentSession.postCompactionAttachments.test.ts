@@ -46,8 +46,27 @@ function getEditedFilePaths(attachments: PostCompactionAttachment[]): string[] {
 }
 
 function createSessionForHistory(history: MuxMessage[], sessionDir: string): AgentSession {
+  // Simulate getHistoryFromLatestBoundary: return only messages from the last
+  // durable compaction boundary onward (matching real HistoryService behavior).
+  const fromBoundary = (): MuxMessage[] => {
+    let lastBoundaryIdx = -1;
+    for (let i = history.length - 1; i >= 0; i--) {
+      const meta = history[i].metadata;
+      if (meta?.compactionBoundary === true && meta?.compacted && meta?.compactionEpoch) {
+        lastBoundaryIdx = i;
+        break;
+      }
+    }
+    return lastBoundaryIdx >= 0 ? history.slice(lastBoundaryIdx) : history;
+  };
+
   const historyService: HistoryService = {
-    getHistory: mock(() => Promise.resolve({ success: true as const, data: history })),
+    getHistoryFromLatestBoundary: mock(() =>
+      Promise.resolve({ success: true as const, data: fromBoundary() })
+    ),
+    getLastMessages: mock((_: string, n: number) =>
+      Promise.resolve({ success: true as const, data: history.slice(-n) })
+    ),
   } as unknown as HistoryService;
 
   const partialService: PartialService = {} as unknown as PartialService;

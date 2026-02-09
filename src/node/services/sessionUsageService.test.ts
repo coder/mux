@@ -13,7 +13,13 @@ function createMockHistoryService(
   messages: Array<ReturnType<typeof createMuxMessage>> = []
 ): HistoryService {
   return {
-    getHistory: mock(() => Promise.resolve(Ok(messages))),
+    // sessionUsageService calls iterateFullHistory to collect all messages for rebuild
+    iterateFullHistory: mock(
+      (_workspaceId: string, _direction: string, visitor: (chunk: unknown[]) => void) => {
+        if (messages.length > 0) visitor(messages);
+        return Promise.resolve(Ok(undefined));
+      }
+    ),
     appendToHistory: mock(() => Promise.resolve(Ok(undefined))),
     updateHistory: mock(() => Promise.resolve(Ok(undefined))),
     truncateAfterMessage: mock(() => Promise.resolve(Ok(undefined))),

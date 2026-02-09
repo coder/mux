@@ -46,7 +46,12 @@ const createMockHistoryService = () => {
     }, 0);
   };
 
-  const getHistory = mock((_) => Promise.resolve(getHistoryResult));
+  // CompactionHandler calls getLastMessages(10), so return the tail of the mock data
+  const getLastMessages = mock((_: string, n: number) => {
+    if (!getHistoryResult.success) return Promise.resolve(getHistoryResult);
+    const msgs = getHistoryResult.data;
+    return Promise.resolve(Ok(msgs.slice(Math.max(0, msgs.length - n))));
+  });
   const clearHistory = mock((_) => Promise.resolve(clearHistoryResult));
   const appendToHistory = mock((_, message: MuxMessage) => {
     if (appendToHistoryResult.success) {
@@ -67,7 +72,7 @@ const createMockHistoryService = () => {
   const truncateAfterMessage = mock(() => Promise.resolve(Ok(undefined)));
 
   return {
-    getHistory,
+    getLastMessages,
     clearHistory,
     appendToHistory,
     updateHistory,

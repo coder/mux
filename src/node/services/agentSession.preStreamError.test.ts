@@ -31,13 +31,16 @@ describe("AgentSession pre-stream errors", () => {
       return Promise.resolve(Ok(undefined));
     });
 
-    const getHistory = mock((_workspaceId: string): Promise<Result<MuxMessage[], string>> => {
-      return Promise.resolve(Ok([...messages]));
-    });
+    const getHistoryFromLatestBoundary = mock(
+      (_workspaceId: string): Promise<Result<MuxMessage[], string>> => {
+        return Promise.resolve(Ok([...messages]));
+      }
+    );
 
     const historyService = {
       appendToHistory,
-      getHistory,
+      getHistoryFromLatestBoundary,
+      getLastMessages: mock(() => Promise.resolve(Ok([]))),
     } as unknown as HistoryService;
 
     const partialService = {
