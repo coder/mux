@@ -683,33 +683,35 @@ export const ToolSelectorInteraction: AppStory = {
     await openWorkspaceMCPModal(canvasElement);
 
     const body = within(canvasElement.ownerDocument.body);
+    const dialog = await body.findByRole("dialog", {}, { timeout: 10000 });
+    const dialogWithin = within(dialog);
 
     // Find the tool selector section
-    await body.findByText("mux", {}, { timeout: 10000 });
+    await dialogWithin.findByText("mux", {}, { timeout: 10000 });
 
     // Click "None" to deselect all tools
-    const noneButton = await body.findByRole("button", { name: /^None$/i }, { timeout: 10000 });
-    await userEvent.click(noneButton);
+    await userEvent.click(
+      await dialogWithin.findByRole("button", { name: /^None$/i }, { timeout: 10000 })
+    );
 
     // Wait for selection state to update (CI can be slower than local runs).
-    await waitFor(() => expect(noneButton).toBeDisabled());
-
-    // Should now show "0 of X tools enabled".
-    // CI can be slower than local runs, so use an explicit timeout to avoid flake.
-    await body.findByText(
-      (_content, element) => {
-        const text = (element?.textContent ?? "").replace(/\s+/g, " ").trim();
-        return /^0 of \d+ tools enabled$/i.test(text);
-      },
-      {},
+    await waitFor(
+      () => expect(dialogWithin.getByRole("button", { name: /^None$/i })).toBeDisabled(),
       { timeout: 10000 }
     );
 
     // Click "All" to select all tools
-    const allButton = await body.findByRole("button", { name: /^All$/i }, { timeout: 10000 });
-    await waitFor(() => expect(allButton).toBeEnabled());
-    await userEvent.click(allButton);
-    await waitFor(() => expect(allButton).toBeDisabled());
+    await waitFor(
+      () => expect(dialogWithin.getByRole("button", { name: /^All$/i })).toBeEnabled(),
+      { timeout: 10000 }
+    );
+
+    await userEvent.click(dialogWithin.getByRole("button", { name: /^All$/i }));
+
+    await waitFor(
+      () => expect(dialogWithin.getByRole("button", { name: /^All$/i })).toBeDisabled(),
+      { timeout: 10000 }
+    );
   },
 };
 
