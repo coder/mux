@@ -28,7 +28,7 @@ export const Toggle1MContext: React.FC<Toggle1MContextProps> = (props) => {
       type="button"
       onClick={() => toggle1MContext(props.model)}
       className={cn(
-        "flex items-center gap-1.5 text-[11px] transition-colors",
+        "flex cursor-pointer items-center gap-1.5 text-[11px] transition-colors",
         enabled ? "text-accent" : "text-muted hover:text-foreground"
       )}
       aria-label={enabled ? `Disable ${label}` : `Enable ${label}`}
