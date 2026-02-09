@@ -6,10 +6,9 @@
  * inference instead of multiple round-trips.
  */
 
-import { tool } from "ai";
+import { tool, type Tool } from "ai";
 import { z } from "zod";
-import type { Tool } from "ai";
-import { ToolBridge } from "@/node/services/ptc/toolBridge";
+import type { ToolBridge } from "@/node/services/ptc/toolBridge";
 import type { IJSRuntimeFactory } from "@/node/services/ptc/runtime";
 import type { PTCEvent, PTCExecutionResult } from "@/node/services/ptc/types";
 
