@@ -146,6 +146,69 @@ function stripEncryptedContent(output: unknown): unknown {
   return output;
 }
 
+const MAX_ORPHAN_TOOL_RESULT_WARNINGS_PER_STREAM = 3;
+const ORPHAN_TOOL_RESULT_PREVIEW_CHARS = 160;
+const ORPHAN_TOOL_RESULT_MAX_KEYS = 8;
+
+function summarizeToolResultForLog(output: unknown): Record<string, unknown> {
+  if (output === null) {
+    return { outputType: "null" };
+  }
+
+  if (typeof output === "string") {
+    return {
+      outputType: "string",
+      outputLength: output.length,
+      outputPreview: output.slice(0, ORPHAN_TOOL_RESULT_PREVIEW_CHARS),
+    };
+  }
+
+  if (typeof output === "number" || typeof output === "boolean") {
+    return {
+      outputType: typeof output,
+      outputPreview: String(output),
+    };
+  }
+
+  if (Array.isArray(output)) {
+    return {
+      outputType: "array",
+      outputLength: output.length,
+      firstItemType:
+        output.length > 0 && output[0] !== null
+          ? typeof output[0]
+          : output.length > 0
+            ? "null"
+            : undefined,
+    };
+  }
+
+  if (typeof output === "object") {
+    const outputRecord = output as Record<string, unknown>;
+    const keys = Object.keys(outputRecord);
+    const summary: Record<string, unknown> = {
+      outputType: "object",
+      outputKeyCount: keys.length,
+      outputKeys: keys.slice(0, ORPHAN_TOOL_RESULT_MAX_KEYS),
+    };
+
+    if (typeof outputRecord.type === "string") {
+      summary.outputFormat = outputRecord.type;
+    }
+
+    if (Array.isArray(outputRecord.value)) {
+      summary.outputValueLength = outputRecord.value.length;
+    }
+
+    return summary;
+  }
+
+  return {
+    outputType: typeof output,
+    outputPreview: String(output),
+  };
+}
+
 function markProviderMetadataCostsIncluded(
   providerMetadata: Record<string, unknown> | undefined,
   costsIncluded: boolean | undefined
@@ -1105,19 +1168,18 @@ export class StreamManager extends EventEmitter {
         };
       }
     } else {
-      // Fallback: part not found (shouldn't happen for errors, but can happen for results)
-      // This case exists in tool-result but we'll keep it for robustness
+      // Fallback: if the matching tool-call part is missing, still persist output so the UI
+      // does not stay stuck in input-available. Input may be missing for provider-native tools.
       const toolCall = toolCalls.get(toolCallId);
-      if (toolCall) {
-        streamInfo.parts.push({
-          type: "dynamic-tool" as const,
-          toolCallId,
-          toolName,
-          state: "output-available" as const,
-          input: toolCall.input,
-          output,
-        });
-      }
+      streamInfo.parts.push({
+        type: "dynamic-tool" as const,
+        toolCallId,
+        toolName,
+        state: "output-available" as const,
+        input: toolCall?.input ?? null,
+        output,
+        timestamp: nextPartTimestamp(streamInfo),
+      });
     }
 
     // CRITICAL: Flush partial to disk BEFORE emitting event
@@ -1148,6 +1210,44 @@ export class StreamManager extends EventEmitter {
   ): Promise<void> {
     await this.completeToolCall(workspaceId, streamInfo, toolCalls, toolCallId, toolName, output);
     await this.checkSoftCancelStream(workspaceId, streamInfo);
+  }
+
+  private logOrphanToolResult(
+    workspaceLog: Logger,
+    streamInfo: WorkspaceStreamInfo,
+    part: { toolCallId: string; toolName: string },
+    output: unknown,
+    orphanCount: number,
+    trackedToolCallCount: number
+  ): void {
+    if (orphanCount > MAX_ORPHAN_TOOL_RESULT_WARNINGS_PER_STREAM) {
+      return;
+    }
+
+    workspaceLog.warn(
+      "[streamManager] Received tool-result without matching tool-call map entry; persisting fallback output",
+      {
+        messageId: streamInfo.messageId,
+        model: streamInfo.model,
+        toolCallId: part.toolCallId,
+        toolName: part.toolName,
+        orphanCount,
+        trackedToolCallCount,
+        isWebSearch: part.toolName === "web_search",
+        ...summarizeToolResultForLog(output),
+      }
+    );
+
+    if (orphanCount === MAX_ORPHAN_TOOL_RESULT_WARNINGS_PER_STREAM) {
+      workspaceLog.warn(
+        "[streamManager] Suppressing additional orphan tool-result warnings for this stream",
+        {
+          messageId: streamInfo.messageId,
+          model: streamInfo.model,
+          suppressedAfter: orphanCount,
+        }
+      );
+    }
   }
 
   /**
@@ -1310,6 +1410,8 @@ export class StreamManager extends EventEmitter {
       await this.tokenTracker.setModel(streamInfo.model);
 
       let didRetryPreviousResponseId = false;
+      const workspaceLog = this.getWorkspaceLogger(workspaceId, streamInfo);
+      let orphanToolResultCount = 0;
 
       while (true) {
         // Use fullStream to capture all events including tool calls
@@ -1480,25 +1582,45 @@ export class StreamManager extends EventEmitter {
               }
 
               case "tool-result": {
-                // Tool call completed successfully
-                const toolCall = toolCalls.get(part.toolCallId);
-                if (toolCall) {
-                  // Strip encrypted content from web search results before storing
-                  const strippedOutput = stripInternalToolResultFields(
-                    stripEncryptedContent(part.output)
-                  );
-                  toolCall.output = strippedOutput;
+                const toolResultPart = part as {
+                  toolCallId: string;
+                  toolName: string;
+                  output: unknown;
+                };
 
-                  // Use shared completion logic (await to ensure partial is flushed before event)
-                  await this.finishToolCall(
-                    workspaceId,
+                // Strip encrypted content from web search results before storing
+                const strippedOutput = stripInternalToolResultFields(
+                  stripEncryptedContent(toolResultPart.output)
+                );
+
+                // Tool call completed successfully
+                const toolCall = toolCalls.get(toolResultPart.toolCallId);
+                if (toolCall) {
+                  toolCall.output = strippedOutput;
+                } else {
+                  orphanToolResultCount += 1;
+                  this.logOrphanToolResult(
+                    workspaceLog,
                     streamInfo,
-                    toolCalls,
-                    part.toolCallId,
-                    part.toolName,
-                    strippedOutput
+                    {
+                      toolCallId: toolResultPart.toolCallId,
+                      toolName: toolResultPart.toolName,
+                    },
+                    strippedOutput,
+                    orphanToolResultCount,
+                    toolCalls.size
                   );
                 }
+
+                // Use shared completion logic (await to ensure partial is flushed before event)
+                await this.finishToolCall(
+                  workspaceId,
+                  streamInfo,
+                  toolCalls,
+                  toolResultPart.toolCallId,
+                  toolResultPart.toolName,
+                  strippedOutput
+                );
                 break;
               }
 
