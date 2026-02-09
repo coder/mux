@@ -130,6 +130,11 @@ def extract_task_timestamps(trial_result: dict) -> tuple[str | None, str | None]
     if not started or not finished:
         return None, None
 
+    # Normalize RFC3339 'Z' suffix to '+00:00' for fromisoformat compatibility
+    # (Python < 3.11 rejects trailing 'Z', common in JS/Harbor output)
+    started = started.replace("Z", "+00:00") if isinstance(started, str) else started
+    finished = finished.replace("Z", "+00:00") if isinstance(finished, str) else finished
+
     # Validate timestamps parse correctly before sending to BQ
     try:
         datetime.fromisoformat(started)
