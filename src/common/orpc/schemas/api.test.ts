@@ -36,6 +36,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
   it("preserves all ProviderConfigInfo fields (base case)", () => {
     const full: ProviderConfigInfo = {
       apiKeySet: true,
+      isEnabled: true,
       isConfigured: true,
       baseUrl: "https://api.example.com",
       models: ["model-a", "model-b"],
@@ -50,6 +51,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
   it("preserves all ProviderConfigInfo fields (with AWS/Bedrock)", () => {
     const full: ProviderConfigInfo = {
       apiKeySet: false,
+      isEnabled: true,
       isConfigured: false,
       baseUrl: undefined,
       models: [],
@@ -72,6 +74,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
   it("preserves all ProviderConfigInfo fields (with couponCodeSet)", () => {
     const full: ProviderConfigInfo = {
       apiKeySet: true,
+      isEnabled: true,
       isConfigured: true,
       couponCodeSet: true,
     };
@@ -86,6 +89,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
     // This is the most comprehensive test - includes ALL possible fields
     const full: ProviderConfigInfo = {
       apiKeySet: true,
+      isEnabled: true,
       isConfigured: true,
       baseUrl: "https://custom.endpoint.com",
       models: ["claude-3-opus", "claude-3-sonnet"],
@@ -109,6 +113,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
 
     // Explicit field-by-field verification for clarity
     expect(parsed.apiKeySet).toBe(full.apiKeySet);
+    expect(parsed.isEnabled).toBe(full.isEnabled);
     expect(parsed.baseUrl).toBe(full.baseUrl);
     expect(parsed.models).toEqual(full.models);
     expect(parsed.serviceTier).toBe(full.serviceTier);
@@ -122,11 +127,13 @@ describe("ProviderConfigInfoSchema conformance", () => {
     const full: ProvidersConfigMap = {
       anthropic: {
         apiKeySet: true,
+        isEnabled: true,
         isConfigured: true,
         models: ["claude-3-opus"],
       },
       openai: {
         apiKeySet: true,
+        isEnabled: true,
         isConfigured: true,
         serviceTier: "auto",
         codexOauthSet: true,
@@ -134,6 +141,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
       },
       bedrock: {
         apiKeySet: false,
+        isEnabled: true,
         isConfigured: false,
         aws: {
           region: "us-west-2",
@@ -145,6 +153,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
       },
       "mux-gateway": {
         apiKeySet: false,
+        isEnabled: true,
         isConfigured: false,
         couponCodeSet: true,
         models: ["anthropic/claude-sonnet-4-5"],

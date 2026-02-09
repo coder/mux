@@ -20,7 +20,7 @@ void mock.module("@/browser/contexts/API", () => ({
 // Mock useProvidersConfig to return a configured provider so ChatInput renders
 void mock.module("@/browser/hooks/useProvidersConfig", () => ({
   useProvidersConfig: () => ({
-    config: { anthropic: { apiKeySet: true, isConfigured: true } },
+    config: { anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true } },
     loading: false,
     error: null,
   }),

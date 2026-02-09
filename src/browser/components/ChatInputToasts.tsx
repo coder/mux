@@ -166,6 +166,24 @@ export const createErrorToast = (error: SendMessageErrorType): Toast => {
       };
     }
 
+    case "provider_disabled": {
+      const formatted = formatSendMessageError(error);
+      return {
+        id: Date.now().toString(),
+        type: "error",
+        title: "Provider Disabled",
+        message: formatted.message,
+        solution: (
+          <>
+            <SolutionLabel>Fix:</SolutionLabel>
+            {formatted.resolutionHint ?? "Open Settings → Providers and enable this provider."}
+            <br />
+            <DocsLink path="/config/providers">mux.coder.com/providers</DocsLink>
+          </>
+        ),
+      };
+    }
+
     case "provider_not_supported": {
       const formatted = formatSendMessageError(error);
       return {

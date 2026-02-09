@@ -43,7 +43,13 @@ function setupSettingsStory(options: {
   layoutPresets?: LayoutPresetsConfig;
   providersConfig?: Record<
     string,
-    { apiKeySet: boolean; isConfigured: boolean; baseUrl?: string; models?: string[] }
+    {
+      apiKeySet: boolean;
+      isEnabled: boolean;
+      isConfigured: boolean;
+      baseUrl?: string;
+      models?: string[];
+    }
   >;
   providersList?: string[];
   agentAiDefaults?: AgentAiDefaults;
@@ -185,13 +191,14 @@ export const ProvidersConfigured: AppStory = {
       setup={() =>
         setupSettingsStory({
           providersConfig: {
-            anthropic: { apiKeySet: true, isConfigured: true, baseUrl: "" },
+            anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true, baseUrl: "" },
             openai: {
               apiKeySet: true,
+              isEnabled: true,
               isConfigured: true,
               baseUrl: "https://custom.openai.com/v1",
             },
-            xai: { apiKeySet: false, isConfigured: false, baseUrl: "" },
+            xai: { apiKeySet: false, isEnabled: true, isConfigured: false, baseUrl: "" },
           },
         })
       }
@@ -326,9 +333,9 @@ export const ProvidersExpanded: AppStory = {
       setup={() =>
         setupSettingsStory({
           providersConfig: {
-            anthropic: { apiKeySet: true, isConfigured: true, baseUrl: "" },
-            openai: { apiKeySet: false, isConfigured: false, baseUrl: "" },
-            xai: { apiKeySet: false, isConfigured: false, baseUrl: "" },
+            anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true, baseUrl: "" },
+            openai: { apiKeySet: false, isEnabled: true, isConfigured: false, baseUrl: "" },
+            xai: { apiKeySet: false, isEnabled: true, isConfigured: false, baseUrl: "" },
           },
         })
       }
@@ -357,8 +364,20 @@ export const ModelsEmpty: AppStory = {
       setup={() =>
         setupSettingsStory({
           providersConfig: {
-            anthropic: { apiKeySet: true, isConfigured: true, baseUrl: "", models: [] },
-            openai: { apiKeySet: true, isConfigured: true, baseUrl: "", models: [] },
+            anthropic: {
+              apiKeySet: true,
+              isEnabled: true,
+              isConfigured: true,
+              baseUrl: "",
+              models: [],
+            },
+            openai: {
+              apiKeySet: true,
+              isEnabled: true,
+              isConfigured: true,
+              baseUrl: "",
+              models: [],
+            },
           },
         })
       }
@@ -383,18 +402,21 @@ export const ModelsConfigured: AppStory = {
           providersConfig: {
             anthropic: {
               apiKeySet: true,
+              isEnabled: true,
               isConfigured: true,
               baseUrl: "",
               models: ["claude-sonnet-4-20250514", "claude-opus-4-6"],
             },
             openai: {
               apiKeySet: true,
+              isEnabled: true,
               isConfigured: true,
               baseUrl: "",
               models: ["gpt-4o", "gpt-4o-mini", "o1-preview"],
             },
             xai: {
               apiKeySet: false,
+              isEnabled: true,
               isConfigured: false,
               baseUrl: "",
               models: ["grok-beta"],
@@ -425,12 +447,14 @@ export const System1: AppStory = {
           providersConfig: {
             anthropic: {
               apiKeySet: true,
+              isEnabled: true,
               isConfigured: true,
               baseUrl: "",
               models: ["claude-sonnet-4-20250514", "claude-opus-4-20250514"],
             },
             openai: {
               apiKeySet: true,
+              isEnabled: true,
               isConfigured: true,
               baseUrl: "",
               models: ["gpt-4o", "gpt-4o-mini", "o1-preview"],

@@ -88,6 +88,17 @@ describe("formatSendMessageError", () => {
     expect(result.message).toContain("not supported");
   });
 
+  test("formats provider_disabled as authentication", () => {
+    const result = formatSendMessageError({
+      type: "provider_disabled",
+      provider: "openai",
+    });
+
+    expect(result.errorType).toBe("authentication");
+    expect(result.message).toContain("openai");
+    expect(result.message).toContain("disabled");
+  });
+
   test("formats invalid_model_string with model_not_found errorType", () => {
     const result = formatSendMessageError({
       type: "invalid_model_string",

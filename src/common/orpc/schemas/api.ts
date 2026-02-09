@@ -123,6 +123,8 @@ export const AWSCredentialStatusSchema = z.object({
 
 export const ProviderConfigInfoSchema = z.object({
   apiKeySet: z.boolean(),
+  /** Whether this provider is enabled for model requests */
+  isEnabled: z.boolean(),
   /** Whether this provider is configured and ready to use */
   isConfigured: z.boolean(),
   baseUrl: z.string().optional(),

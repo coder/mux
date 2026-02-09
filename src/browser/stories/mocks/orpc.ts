@@ -258,7 +258,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     workspaces: inputWorkspaces = [],
     onChat,
     executeBash,
-    providersConfig = { anthropic: { apiKeySet: true, isConfigured: true } },
+    providersConfig = { anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true } },
     providersList = [],
     onProjectRemove,
     backgroundProcesses = new Map<string, MockBackgroundProcess[]>(),

@@ -421,7 +421,7 @@ export const VoiceInputNoApiKey: AppStory = {
           messages: [],
           // No OpenAI key configured - voice button should be disabled with tooltip
           providersConfig: {
-            anthropic: { apiKeySet: true, isConfigured: true },
+            anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true },
             // openai deliberately missing
           },
         })
@@ -958,7 +958,12 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
           workspaceId,
           messages: [],
           providersConfig: {
-            "mux-gateway": { apiKeySet: false, couponCodeSet: true, isConfigured: true },
+            "mux-gateway": {
+              apiKeySet: false,
+              isEnabled: true,
+              couponCodeSet: true,
+              isConfigured: true,
+            },
           },
         });
       }}
@@ -1032,8 +1037,13 @@ export const ModelSelectorDropdownOpen: AppStory = {
           workspaceId,
           messages: [],
           providersConfig: {
-            openai: { apiKeySet: true, couponCodeSet: false, isConfigured: true },
-            anthropic: { apiKeySet: true, couponCodeSet: false, isConfigured: true },
+            openai: { apiKeySet: true, isEnabled: true, couponCodeSet: false, isConfigured: true },
+            anthropic: {
+              apiKeySet: true,
+              isEnabled: true,
+              couponCodeSet: false,
+              isConfigured: true,
+            },
           },
         });
       }}

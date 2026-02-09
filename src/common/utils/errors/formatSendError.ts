@@ -28,6 +28,12 @@ export function formatSendMessageError(error: SendMessageError): FormattedError 
         resolutionHint: `Open Settings → Providers and connect your ${error.provider} account.`,
       };
 
+    case "provider_disabled":
+      return {
+        message: `Provider ${error.provider} is disabled.`,
+        resolutionHint: `Open Settings → Providers and enable ${error.provider}.`,
+      };
+
     case "provider_not_supported":
       return {
         message: `Provider ${error.provider} is not supported yet.`,

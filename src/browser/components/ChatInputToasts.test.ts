@@ -32,6 +32,20 @@ describe("ChatInputToasts", () => {
       expect(toast.message).toContain("OAuth");
     });
 
+    test("should create toast for provider_disabled error", () => {
+      const error: SendMessageError = {
+        type: "provider_disabled",
+        provider: "openai",
+      };
+
+      const toast = createErrorToast(error);
+
+      expect(toast.type).toBe("error");
+      expect(toast.title).toBe("Provider Disabled");
+      expect(toast.message).toContain("openai");
+      expect(toast.message).toContain("disabled");
+    });
+
     test("should create toast for provider_not_supported error", () => {
       const error: SendMessageError = {
         type: "provider_not_supported",

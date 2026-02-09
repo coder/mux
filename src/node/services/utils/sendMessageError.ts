@@ -55,6 +55,13 @@ export const formatSendMessageError = (
           `Please connect your account in Settings → Providers.`,
         errorType: "authentication",
       };
+    case "provider_disabled":
+      return {
+        message:
+          `Provider ${error.provider} is disabled. ` +
+          `Enable it in Settings → Providers to send messages with this provider.`,
+        errorType: "authentication",
+      };
     case "provider_not_supported":
       return {
         message: `Provider "${error.provider}" is not supported.`,

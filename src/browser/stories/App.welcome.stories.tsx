@@ -493,7 +493,7 @@ export const SingleProviderConfigured: AppStory = {
           projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
           workspaces: [],
           providersConfig: {
-            anthropic: { apiKeySet: true, isConfigured: true },
+            anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true },
           },
         });
       }}
@@ -528,10 +528,10 @@ export const MultipleProvidersConfigured: AppStory = {
           projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
           workspaces: [],
           providersConfig: {
-            anthropic: { apiKeySet: true, isConfigured: true },
-            openai: { apiKeySet: true, isConfigured: true },
-            google: { apiKeySet: true, isConfigured: true },
-            xai: { apiKeySet: true, isConfigured: true },
+            anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true },
+            openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+            google: { apiKeySet: true, isEnabled: true, isConfigured: true },
+            xai: { apiKeySet: true, isEnabled: true, isConfigured: true },
           },
         });
       }}

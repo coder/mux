@@ -48,10 +48,16 @@ describe("getSuggestedModels", () => {
     }
 
     const config: ProvidersConfigMap = {
-      openai: { apiKeySet: true, isConfigured: true, models: ["my-team-model"] },
-      [builtInProvider]: { apiKeySet: true, isConfigured: true, models: [builtInModelId] },
+      openai: { apiKeySet: true, isEnabled: true, isConfigured: true, models: ["my-team-model"] },
+      [builtInProvider]: {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        models: [builtInModelId],
+      },
       "mux-gateway": {
         apiKeySet: true,
+        isEnabled: true,
         isConfigured: true,
         couponCodeSet: true,
         models: ["ignored"],
@@ -94,7 +100,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
 
   test("codex oauth only: hides API-key-only OpenAI models", () => {
     providersConfig = {
-      openai: { apiKeySet: false, isConfigured: true, codexOauthSet: true },
+      openai: { apiKeySet: false, isEnabled: true, isConfigured: true, codexOauthSet: true },
     };
 
     const { result } = renderHook(() => useModelsFromSettings());
@@ -106,7 +112,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
 
   test("api key only: hides Codex OAuth required OpenAI models", () => {
     providersConfig = {
-      openai: { apiKeySet: true, isConfigured: true, codexOauthSet: false },
+      openai: { apiKeySet: true, isEnabled: true, isConfigured: true, codexOauthSet: false },
     };
 
     const { result } = renderHook(() => useModelsFromSettings());
@@ -117,7 +123,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
 
   test("api key + codex oauth: allows all OpenAI models", () => {
     providersConfig = {
-      openai: { apiKeySet: true, isConfigured: true, codexOauthSet: true },
+      openai: { apiKeySet: true, isEnabled: true, isConfigured: true, codexOauthSet: true },
     };
 
     const { result } = renderHook(() => useModelsFromSettings());
@@ -128,7 +134,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
 
   test("neither: hides Codex OAuth required OpenAI models (status quo)", () => {
     providersConfig = {
-      openai: { apiKeySet: false, isConfigured: false, codexOauthSet: false },
+      openai: { apiKeySet: false, isEnabled: true, isConfigured: false, codexOauthSet: false },
     };
 
     const { result } = renderHook(() => useModelsFromSettings());

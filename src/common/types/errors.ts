@@ -10,8 +10,8 @@ import type { SendMessageErrorSchema, StreamErrorTypeSchema } from "../orpc/sche
  * Discriminated union for all possible sendMessage errors.
  *
  * The frontend is responsible for language and messaging for api_key_not_found,
- * oauth_not_connected, and provider_not_supported errors. Other error types include
- * details needed for display.
+ * oauth_not_connected, provider_disabled, and provider_not_supported errors.
+ * Other error types include details needed for display.
  */
 export type SendMessageError = z.infer<typeof SendMessageErrorSchema>;
 

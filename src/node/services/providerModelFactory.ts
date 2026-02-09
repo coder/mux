@@ -436,6 +436,14 @@ export class ProviderModelFactory {
       const providersConfig = this.config.loadProvidersConfig();
       let providerConfig = providersConfig?.[providerName] ?? {};
 
+      // Providers can be disabled in providers.jsonc without deleting credentials.
+      if (
+        providerName !== "mux-gateway" &&
+        (providerConfig as { enabled?: unknown }).enabled === false
+      ) {
+        return Err({ type: "provider_disabled", provider: providerName });
+      }
+
       // Map baseUrl to baseURL if present (SDK expects baseURL)
       const { baseUrl, ...configWithoutBaseUrl } = providerConfig;
       providerConfig = baseUrl
