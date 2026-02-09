@@ -4,7 +4,7 @@ import type { ReviewNoteDataForDisplay } from "@/common/types/message";
 import type { FilePart } from "@/common/orpc/schemas";
 import { cn } from "@/common/lib/utils";
 import { ReviewBlockFromData } from "../shared/ReviewBlock";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "../ui/hover-card";
+import { HoverCard, HoverCardContent, HoverCardPortal, HoverCardTrigger } from "../ui/hover-card";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 
@@ -176,13 +176,16 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
         <HoverCardTrigger asChild>
           <CommandPrefixBadge prefix={shouldHighlightPrefix} className="cursor-help" />
         </HoverCardTrigger>
-        <HoverCardContent
-          align="start"
-          side="top"
-          className="border-border-medium max-h-[360px] w-[520px] max-w-[80vw] overflow-auto border-2 p-3"
-        >
-          <MarkdownRenderer content={snapshotMarkdown} preserveLineBreaks />
-        </HoverCardContent>
+        {/* Keep skill preview above chat chrome and fully opaque while hovering. */}
+        <HoverCardPortal>
+          <HoverCardContent
+            align="start"
+            side="top"
+            className="border-border-medium bg-modal-bg z-[1600] max-h-[360px] w-[520px] max-w-[80vw] overflow-auto border-2 p-3"
+          >
+            <MarkdownRenderer content={snapshotMarkdown} preserveLineBreaks />
+          </HoverCardContent>
+        </HoverCardPortal>
       </HoverCard>
     ) : (
       <CommandPrefixBadge prefix={shouldHighlightPrefix} />
