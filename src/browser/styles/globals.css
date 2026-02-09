@@ -764,12 +764,12 @@
   --color-code-type: #24837b;
   --color-code-keyword: #205ea6;
 
-  --color-toast-success-bg: hsl(from var(--color-accent) h s l / 0.18);
+  --color-toast-success-bg: color-mix(in srgb, var(--color-accent) 18%, var(--color-background) 82%);
   --color-toast-success-text: color-mix(in srgb, var(--color-accent), black 28%);
-  --color-toast-error-bg: hsl(from var(--color-danger) h s l / 0.18);
+  --color-toast-error-bg: color-mix(in srgb, var(--color-danger) 18%, var(--color-background) 82%);
   --color-toast-error-text: color-mix(in srgb, var(--color-danger), black 22%);
   --color-toast-error-border: var(--color-danger);
-  --color-toast-fatal-bg: hsl(from var(--color-danger) h s l / 0.12);
+  --color-toast-fatal-bg: color-mix(in srgb, var(--color-danger) 12%, var(--color-background) 88%);
   --color-toast-fatal-border: color-mix(in srgb, var(--color-danger), white 45%);
 
   --color-danger-overlay: hsl(from var(--color-danger) h s l / 0.12);
@@ -973,12 +973,12 @@
   --color-terminal-bg: #100f0f;
   --color-terminal-fg: #cecdc3;
 
-  --color-toast-success-bg: hsl(from var(--color-accent) h s l / 0.13);
+  --color-toast-success-bg: color-mix(in srgb, var(--color-accent) 13%, var(--color-background) 87%);
   --color-toast-success-text: color-mix(in srgb, var(--color-accent), white 22%);
-  --color-toast-error-bg: hsl(from var(--color-danger) h s l / 0.15);
+  --color-toast-error-bg: color-mix(in srgb, var(--color-danger) 15%, var(--color-background) 85%);
   --color-toast-error-text: var(--color-danger);
   --color-toast-error-border: var(--color-danger);
-  --color-toast-fatal-bg: hsl(from var(--color-danger) h s l / 0.12);
+  --color-toast-fatal-bg: color-mix(in srgb, var(--color-danger) 12%, var(--color-background) 88%);
   --color-toast-fatal-border: color-mix(in srgb, var(--color-danger), black 22%);
 
   --color-danger-overlay: hsl(from var(--color-danger) h s l / 0.1);
