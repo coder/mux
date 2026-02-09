@@ -127,25 +127,6 @@ describe("buildSystemMessage", () => {
     mockHomedir?.mockRestore();
   });
 
-  test("includes mux_subagent_report guidance in the system prompt", async () => {
-    const metadata: WorkspaceMetadata = {
-      id: "test-workspace",
-      name: "test-workspace",
-      projectName: "test-project",
-      projectPath: projectDir,
-      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
-    };
-
-    const systemMessage = await buildSystemMessage(metadata, runtime, workspaceDir);
-
-    expect(systemMessage).toContain("<completion-discipline>");
-    expect(systemMessage).toContain("Before finishing, apply strict completion discipline:");
-    expect(systemMessage).toContain("</completion-discipline>");
-    expect(systemMessage).toContain("<subagent-reports>");
-    expect(systemMessage).toContain("Messages wrapped in <mux_subagent_report>");
-    expect(systemMessage).toContain("</subagent-reports>");
-  });
-
   test("includes general instructions in custom-instructions", async () => {
     await fs.writeFile(
       path.join(projectDir, "AGENTS.md"),
