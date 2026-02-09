@@ -81,19 +81,18 @@ function buildTaskExecutionGuidelines(): string {
   return `<task-execution>
 General guidelines for effective task execution:
 
-- Work in short plan-execute-verify cycles. After a brief plan, execute a tool call, then verify the result before proceeding. Avoid extended reasoning without tool execution — if your thinking exceeds roughly 20 lines without acting, write a script or run a command instead. Computation, data processing, and complex logic belong in executable code, not in your reasoning.
-- Explore the environment before committing to an approach. Check available languages, runtimes, package managers, and system utilities before writing code that depends on them. Discover constraints early — redesigning after implementation wastes time.
-- Read acceptance criteria before implementing. Understand exactly what will be checked: file paths, output formats, performance thresholds, API contracts, calling conventions.
-- When two approaches give different results, investigate instead of guessing. Construct a minimal test case to determine which is correct. Resolve discrepancies explicitly.
-- Fail fast on polling and retry loops, then diagnose. Use short initial timeouts (5-10 attempts, not 60). If early attempts fail, stop and investigate the root cause before retrying.
-- Pivot strategy after 2 failed attempts, not 5. If an approach fails twice with the same symptom, reconsider the fundamental approach instead of making incremental tweaks.
-- Set strict time budgets for computational experiments. Use short timeouts (30-120s) for code that might be slow. A solution that does not complete quickly is a signal to reconsider the algorithm, not to add parallelism or longer timeouts.
-- Preserve working state before iterating. Once a solution produces correct output, back it up before attempting improvements. Never overwrite a validated result with an unvalidated alternative.
-- Treat provided data as read-only. Never modify input files, databases, or configuration artifacts in-place. Work on copies when experimenting.
-- Deliver self-contained artifacts. Scripts and outputs must work without your session's state. Prefer standard library solutions; if an external library is needed, include a fallback.
-- Prefer simple, direct implementations when testing is limited. Complex abstractions increase bug surface when you cannot verify each piece incrementally.
-- When configuring multi-step systems, verify each step individually with observable output before proceeding to the next.
-- Install and experiment with domain-specific tools early. When a task involves a specialized domain, identify and install relevant tools at the start and test them before building your solution around assumptions.
+- Start by identifying the goal, constraints, and unknowns. If a missing detail blocks progress, ask a focused clarifying question or make a reasonable assumption and state it explicitly.
+- Keep a tight loop: plan a small step, execute it, observe the result, then plan the next step. If you find yourself doing lots of computation or manual data manipulation in your reasoning, stop and write/run a script instead.
+- Validate early with small checks. If tests/specs exist, read them early so you optimize for the evaluator's actual expectations (file paths, formats, API shapes, performance thresholds).
+- Treat provided inputs as read-only. When experimenting (indexes, config tweaks, refactors), work on copies so you can revert cleanly.
+- Preserve working state. Once something works, avoid “cleanup” that resets or recreates deliverables; only remove clearly separate test artifacts.
+- Fail fast on polling and retries, then diagnose. Use short timeouts and stop looping once you have a stable error signal.
+- After two attempts with the same symptom, change strategy. Avoid sunk-cost iteration on a dead-end approach.
+- Timebox expensive computations. If something is unexpectedly slow, treat that as a signal to improve the algorithm or reduce scope.
+- Deliver self-contained artifacts. Don’t rely on your interactive session state (installed packages, env vars, background processes) unless the task explicitly guarantees it.
+- Prefer simple, direct implementations when you can’t test incrementally. Complexity multiplies bug surface.
+- For multi-step system setup, verify each step with observable output before moving on. Avoid large, opaque “do everything” scripts that hide which step failed.
+- Install and try domain-specific tools early. Validate assumptions by running small experiments rather than relying on memory.
 </task-execution>`;
 }
 
