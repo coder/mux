@@ -2163,7 +2163,7 @@ export class TaskService {
       }
 
       const cfg = this.config.loadConfigOrDefault();
-      const entry = this.findWorkspaceEntry(cfg, workspaceId);
+      const entry = findWorkspaceEntry(cfg, workspaceId);
       if (!entry?.workspace.parentWorkspaceId) {
         return;
       }
