@@ -1600,14 +1600,17 @@ export class StreamingMessageAggregator {
   }
 
   private trackSkillLoadError(name: string, error: string): void {
-    // Don't record an error if the skill already loaded successfully in this session
-    if (this.loadedSkills.has(name)) return;
-
     const existing = this.skillLoadErrors.get(name);
     if (existing?.error === error) return;
 
     this.skillLoadErrors.set(name, { name, error });
     this.skillLoadErrorsCache = Array.from(this.skillLoadErrors.values());
+
+    // A failed load supersedes any earlier success (skill may have been
+    // edited/deleted since the previous successful read)
+    if (this.loadedSkills.delete(name)) {
+      this.loadedSkillsCache = Array.from(this.loadedSkills.values());
+    }
   }
 
   private maybeTrackLoadedSkillFromAgentSkillSnapshot(snapshot: unknown): void {

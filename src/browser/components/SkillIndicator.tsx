@@ -238,8 +238,11 @@ export const SkillIndicator: React.FC<SkillIndicatorProps> = (props) => {
           <span
             className={cn(
               "absolute -bottom-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center",
-              "rounded-full border border-border bg-sidebar px-0.5 text-[9px] font-medium",
-              loadedCount > 0 ? "text-foreground" : "text-muted"
+              "rounded-full border px-0.5 text-[9px] font-medium",
+              errorCount > 0
+                ? "border-danger bg-danger text-on-danger"
+                : "border-border bg-sidebar",
+              errorCount === 0 && (loadedCount > 0 ? "text-foreground" : "text-muted")
             )}
           >
             {loadedCount}

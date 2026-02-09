@@ -508,15 +508,22 @@ describe("Skill load error tracking", () => {
     expect(agg.getLoadedSkills()).toHaveLength(1);
   });
 
-  it("does not record error for already-loaded skill", () => {
+  it("replaces loaded skill with error on later failure", () => {
     const agg = createAggregator();
     startStream(agg, "msg-1");
-    emitSuccessfulSkillRead(agg, "msg-1", "tc-1", "good-skill");
-    emitFailedSkillRead(agg, "msg-1", "tc-2", "good-skill", "Some error");
+    emitSuccessfulSkillRead(agg, "msg-1", "tc-1", "flaky-skill");
 
-    // The skill loaded successfully first, so the later error is ignored
-    expect(agg.getSkillLoadErrors()).toEqual([]);
     expect(agg.getLoadedSkills()).toHaveLength(1);
+    expect(agg.getSkillLoadErrors()).toEqual([]);
+
+    // Skill was edited/deleted and the agent retries — now it fails
+    emitFailedSkillRead(agg, "msg-1", "tc-2", "flaky-skill", "SKILL.md is missing");
+
+    // Error replaces the loaded state so the UI reflects current reality
+    expect(agg.getSkillLoadErrors()).toEqual([
+      { name: "flaky-skill", error: "SKILL.md is missing" },
+    ]);
+    expect(agg.getLoadedSkills()).toEqual([]);
   });
 
   it("clears errors on loadHistoricalMessages replay", () => {
