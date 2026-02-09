@@ -1,7 +1,6 @@
 import assert from "@/common/utils/assert";
 import { EventEmitter } from "events";
 import * as path from "path";
-import { readFile } from "fs/promises";
 import { PlatformPaths } from "@/common/utils/paths";
 import { log } from "@/node/services/log";
 import type { Config } from "@/node/config";
@@ -43,7 +42,6 @@ import {
   type MuxMessage,
 } from "@/common/types/message";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
-import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import {
   materializeFileAtMentionsSnapshot,
   materializeAgentSkillSnapshot,
@@ -54,11 +52,7 @@ import { CompactionHandler } from "./compactionHandler";
 import type { TelemetryService } from "./telemetryService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 
-import { AttachmentService } from "./attachmentService";
-import type { TodoItem } from "@/common/types/tools";
-import type { PostCompactionAttachment, PostCompactionExclusions } from "@/common/types/attachment";
-import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
-import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
+import { PostCompactionAttachmentBuilder } from "./postCompactionAttachments";
 import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
 import { normalizeGatewayModel, isValidModelFormat } from "@/common/utils/ai/models";
 
@@ -141,24 +135,8 @@ export class AgentSession {
   /** Tracks file state for detecting external edits. */
   private readonly fileChangeTracker = new FileChangeTracker();
 
-  /**
-   * Track turns since last post-compaction attachment injection.
-   * Start at max to trigger immediate injection on first turn after compaction.
-   */
-  private turnsSinceLastAttachment = TURNS_BETWEEN_ATTACHMENTS;
-
-  /**
-   * Flag indicating compaction has occurred in this session.
-   * Used to enable the cooldown-based attachment injection.
-   */
-  private compactionOccurred = false;
-
-  /**
-   * When true, clear any persisted post-compaction state after the next successful non-compaction stream.
-   *
-   * This is intentionally delayed until stream-end so a crash mid-stream doesn't lose the diffs.
-   */
-  private ackPendingPostCompactionStateOnStreamEnd = false;
+  /** Builds post-compaction context (plan refs, TODOs, edited-file diffs) for prompt injection. */
+  private readonly attachmentBuilder: PostCompactionAttachmentBuilder;
 
   /** Handles all context-exceeded retry strategies (compaction, post-compaction, hard restart). */
   private readonly retryHandler: ContextExceededRetryHandler;
@@ -203,6 +181,15 @@ export class AgentSession {
       emitter: this.emitter,
       onCompactionComplete,
     });
+
+    this.attachmentBuilder = new PostCompactionAttachmentBuilder(
+      this.workspaceId,
+      this.config,
+      this.aiService,
+      this.historyService,
+      this.compactionHandler,
+      this.fileChangeTracker
+    );
 
     this.retryHandler = new ContextExceededRetryHandler(
       {
@@ -844,7 +831,7 @@ export class AgentSession {
     }
 
     // Reset per-stream flags (used for retries / crash-safe bookkeeping).
-    this.ackPendingPostCompactionStateOnStreamEnd = false;
+    this.attachmentBuilder.ackPendingOnStreamEnd = false;
     this.retryHandler.initStreamState({ modelString, options, openaiTruncationModeOverride });
 
     const commitResult = await this.partialService.commitToHistory(this.workspaceId);
@@ -900,7 +887,7 @@ export class AgentSession {
     const postCompactionAttachments =
       disablePostCompactionAttachments === true
         ? null
-        : await this.getPostCompactionAttachmentsIfNeeded();
+        : await this.attachmentBuilder.getAttachmentsIfNeeded();
     this.retryHandler.setPostCompactionInjection(
       postCompactionAttachments !== null && postCompactionAttachments.length > 0
     );
@@ -1014,7 +1001,7 @@ export class AgentSession {
       const hadCompactionRequest = this.retryHandler.hasActiveCompactionRequest();
       this.retryHandler.clearActiveCompactionRequest();
       this.retryHandler.resetActiveStreamState();
-      this.ackPendingPostCompactionStateOnStreamEnd = false;
+      this.attachmentBuilder.ackPendingOnStreamEnd = false;
       if (hadCompactionRequest && !this.disposed) {
         this.clearQueue();
       }
@@ -1029,8 +1016,8 @@ export class AgentSession {
       if (!handled) {
         this.emitChatEvent(payload);
 
-        if (this.ackPendingPostCompactionStateOnStreamEnd) {
-          this.ackPendingPostCompactionStateOnStreamEnd = false;
+        if (this.attachmentBuilder.ackPendingOnStreamEnd) {
+          this.attachmentBuilder.ackPendingOnStreamEnd = false;
           try {
             await this.compactionHandler.ackPendingDiffsConsumed();
           } catch (error) {
@@ -1059,7 +1046,7 @@ export class AgentSession {
       }
 
       this.retryHandler.resetActiveStreamState();
-      this.ackPendingPostCompactionStateOnStreamEnd = false;
+      this.attachmentBuilder.ackPendingOnStreamEnd = false;
 
       // Stream end: auto-send queued messages (for user messages typed during streaming)
       this.sendQueuedMessages();
@@ -1315,197 +1302,6 @@ export class AgentSession {
   /** Clear all tracked file state (e.g., on /clear). */
   clearFileState(): void {
     this.fileChangeTracker.clear();
-  }
-
-  /**
-   * Get post-compaction attachments if they should be injected this turn.
-   *
-   * Logic:
-   * - On first turn after compaction: inject immediately, clear file state cache
-   * - Subsequent turns: inject every TURNS_BETWEEN_ATTACHMENTS turns
-   *
-   * @returns Attachments to inject, or null if none needed
-   */
-  private async getPostCompactionAttachmentsIfNeeded(): Promise<PostCompactionAttachment[] | null> {
-    // Check if compaction just occurred (immediate injection with cached diffs)
-    const pendingDiffs = await this.compactionHandler.peekPendingDiffs();
-    if (pendingDiffs !== null) {
-      this.ackPendingPostCompactionStateOnStreamEnd = true;
-      this.compactionOccurred = true;
-      this.turnsSinceLastAttachment = 0;
-      // Clear file state cache since history context is gone
-      this.fileChangeTracker.clear();
-
-      // Load exclusions and persistent TODO state (local workspace session data)
-      const excludedItems = await this.loadExcludedItems();
-      const todoAttachment = await this.loadTodoListAttachment(excludedItems);
-
-      // Get runtime for reading plan file
-      const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
-      if (!metadataResult.success) {
-        // Can't get metadata, skip plan reference but still include other attachments
-        const attachments: PostCompactionAttachment[] = [];
-
-        if (todoAttachment) {
-          attachments.push(todoAttachment);
-        }
-
-        const editedFilesRef = AttachmentService.generateEditedFilesAttachment(pendingDiffs);
-        if (editedFilesRef) {
-          attachments.push(editedFilesRef);
-        }
-
-        return attachments;
-      }
-      const runtime = createRuntimeForWorkspace(metadataResult.data);
-
-      const attachments = await AttachmentService.generatePostCompactionAttachments(
-        metadataResult.data.name,
-        metadataResult.data.projectName,
-        this.workspaceId,
-        pendingDiffs,
-        runtime,
-        excludedItems
-      );
-
-      if (todoAttachment) {
-        // Insert TODO after plan (if present), otherwise first.
-        const planIndex = attachments.findIndex((att) => att.type === "plan_file_reference");
-        const insertIndex = planIndex === -1 ? 0 : planIndex + 1;
-        attachments.splice(insertIndex, 0, todoAttachment);
-      }
-
-      return attachments;
-    }
-
-    // Increment turn counter
-    this.turnsSinceLastAttachment++;
-
-    // Check cooldown for subsequent injections (re-read from current history)
-    if (this.compactionOccurred && this.turnsSinceLastAttachment >= TURNS_BETWEEN_ATTACHMENTS) {
-      this.turnsSinceLastAttachment = 0;
-      return this.generatePostCompactionAttachments();
-    }
-
-    return null;
-  }
-
-  /**
-   * Generate post-compaction attachments by extracting diffs from message history.
-   */
-  private async generatePostCompactionAttachments(): Promise<PostCompactionAttachment[]> {
-    const historyResult = await this.historyService.getHistory(this.workspaceId);
-    if (!historyResult.success) {
-      return [];
-    }
-    const fileDiffs = extractEditedFileDiffs(historyResult.data);
-
-    // Load exclusions and persistent TODO state (local workspace session data)
-    const excludedItems = await this.loadExcludedItems();
-    const todoAttachment = await this.loadTodoListAttachment(excludedItems);
-
-    // Get runtime for reading plan file
-    const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
-    if (!metadataResult.success) {
-      // Can't get metadata, skip plan reference but still include other attachments
-      const attachments: PostCompactionAttachment[] = [];
-
-      if (todoAttachment) {
-        attachments.push(todoAttachment);
-      }
-
-      const editedFilesRef = AttachmentService.generateEditedFilesAttachment(fileDiffs);
-      if (editedFilesRef) {
-        attachments.push(editedFilesRef);
-      }
-
-      return attachments;
-    }
-    const runtime = createRuntimeForWorkspace(metadataResult.data);
-
-    const attachments = await AttachmentService.generatePostCompactionAttachments(
-      metadataResult.data.name,
-      metadataResult.data.projectName,
-      this.workspaceId,
-      fileDiffs,
-      runtime,
-      excludedItems
-    );
-
-    if (todoAttachment) {
-      // Insert TODO after plan (if present), otherwise first.
-      const planIndex = attachments.findIndex((att) => att.type === "plan_file_reference");
-      const insertIndex = planIndex === -1 ? 0 : planIndex + 1;
-      attachments.splice(insertIndex, 0, todoAttachment);
-    }
-
-    return attachments;
-  }
-
-  /**
-   * Load excluded items from the exclusions file.
-   * Returns empty set if file doesn't exist or can't be read.
-   */
-  private async loadExcludedItems(): Promise<Set<string>> {
-    const exclusionsPath = path.join(
-      this.config.getSessionDir(this.workspaceId),
-      "exclusions.json"
-    );
-    try {
-      const data = await readFile(exclusionsPath, "utf-8");
-      const exclusions = JSON.parse(data) as PostCompactionExclusions;
-      return new Set(exclusions.excludedItems);
-    } catch {
-      return new Set();
-    }
-  }
-
-  private coerceTodoItems(value: unknown): TodoItem[] {
-    if (!Array.isArray(value)) {
-      return [];
-    }
-
-    const result: TodoItem[] = [];
-    for (const item of value) {
-      if (!item || typeof item !== "object") continue;
-
-      const content = (item as { content?: unknown }).content;
-      const status = (item as { status?: unknown }).status;
-
-      if (typeof content !== "string") continue;
-      if (status !== "pending" && status !== "in_progress" && status !== "completed") continue;
-
-      result.push({ content, status });
-    }
-
-    return result;
-  }
-
-  private async loadTodoListAttachment(
-    excludedItems: Set<string>
-  ): Promise<PostCompactionAttachment | null> {
-    if (excludedItems.has("todo")) {
-      return null;
-    }
-
-    const todoPath = path.join(this.config.getSessionDir(this.workspaceId), "todos.json");
-
-    try {
-      const data = await readFile(todoPath, "utf-8");
-      const parsed: unknown = JSON.parse(data);
-      const todos = this.coerceTodoItems(parsed);
-      if (todos.length === 0) {
-        return null;
-      }
-
-      return {
-        type: "todo_list",
-        todos,
-      };
-    } catch {
-      // File missing or unreadable
-      return null;
-    }
   }
 
   /** Delegate to FileChangeTracker for external file change detection. */
