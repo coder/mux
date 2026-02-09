@@ -1,9 +1,7 @@
 import assert from "@/common/utils/assert";
 import { EventEmitter } from "events";
 import * as path from "path";
-import { createHash } from "crypto";
 import { readFile } from "fs/promises";
-import YAML from "yaml";
 import { PlatformPaths } from "@/common/utils/paths";
 import { log } from "@/node/services/log";
 import type { Config } from "@/node/config";
@@ -18,7 +16,6 @@ import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 import type { WorkspaceChatMessage, SendMessageOptions, FilePart } from "@/common/orpc/types";
 import type { SendMessageError } from "@/common/types/errors";
-import { SkillNameSchema } from "@/common/orpc/schemas";
 import {
   buildStreamErrorEventData,
   createUnknownSendMessageError,
@@ -28,11 +25,7 @@ import {
   isCompactionRequestMetadata,
   type StreamErrorPayload,
 } from "./contextExceededRetry";
-import {
-  createUserMessageId,
-  createFileSnapshotMessageId,
-  createAgentSkillSnapshotMessageId,
-} from "@/node/services/utils/messageIds";
+import { createUserMessageId } from "@/node/services/utils/messageIds";
 import {
   FileChangeTracker,
   type FileState,
@@ -51,6 +44,10 @@ import {
 } from "@/common/types/message";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
+import {
+  materializeFileAtMentionsSnapshot,
+  materializeAgentSkillSnapshot,
+} from "@/node/services/snapshotMaterializer";
 import { MessageQueue } from "./messageQueue";
 import type { StreamEndEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
@@ -64,8 +61,7 @@ import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
 import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
 import { normalizeGatewayModel, isValidModelFormat } from "@/common/utils/ai/models";
-import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
-import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
+
 import { getErrorMessage } from "@/common/utils/errors";
 
 /**
@@ -94,8 +90,6 @@ function estimateBase64DataUrlBytes(dataUrl: string): number | null {
   const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
   return Math.floor((base64.length * 3) / 4) - padding;
 }
-const MAX_AGENT_SKILL_SNAPSHOT_CHARS = 50_000;
-
 export interface AgentSessionChatEvent {
   workspaceId: string;
   message: WorkspaceChatMessage;
@@ -663,12 +657,20 @@ export class AgentSession {
     // This ensures prompt-cache stability: we read files once and persist the content,
     // so subsequent turns don't re-read (which would change the prompt prefix if files changed).
     // File changes after this point are surfaced via <system-file-update> diffs instead.
-    const snapshotResult = await this.materializeFileAtMentionsSnapshot(trimmedMessage);
+    const snapshotResult = await materializeFileAtMentionsSnapshot(
+      trimmedMessage,
+      this.workspaceId,
+      this.aiService,
+      this.fileChangeTracker.record.bind(this.fileChangeTracker)
+    );
     let skillSnapshotResult: { snapshotMessage: MuxMessage } | null = null;
     try {
-      skillSnapshotResult = await this.materializeAgentSkillSnapshot(
+      skillSnapshotResult = await materializeAgentSkillSnapshot(
         typedMuxMetadata,
-        options?.disableWorkspaceAgents
+        options?.disableWorkspaceAgents,
+        this.workspaceId,
+        this.aiService,
+        this.historyService
       );
     } catch (error) {
       return Err(createUnknownSendMessageError(getErrorMessage(error)));
@@ -1438,161 +1440,6 @@ export class AgentSession {
     }
 
     return attachments;
-  }
-
-  /**
-   * Materialize @file mentions from a user message into a persisted snapshot message.
-   *
-   * This reads the referenced files once and creates a synthetic message containing
-   * their content. The snapshot is persisted to history so subsequent sends don't
-   * re-read the files (which would bust prompt cache if files changed).
-   *
-   * Also registers file state for change detection via <system-file-update> diffs.
-   *
-   * @returns The snapshot message and list of materialized mentions, or null if no mentions found
-   */
-  private async materializeFileAtMentionsSnapshot(
-    messageText: string
-  ): Promise<{ snapshotMessage: MuxMessage; materializedTokens: string[] } | null> {
-    // Guard for test mocks that may not implement getWorkspaceMetadata
-    if (typeof this.aiService.getWorkspaceMetadata !== "function") {
-      return null;
-    }
-
-    const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
-    if (!metadataResult.success) {
-      log.debug("Cannot materialize @file mentions: workspace metadata not found", {
-        workspaceId: this.workspaceId,
-      });
-      return null;
-    }
-
-    const metadata = metadataResult.data;
-    const runtime = createRuntimeForWorkspace(metadata);
-    const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
-
-    const materialized = await materializeFileAtMentions(messageText, {
-      runtime,
-      workspacePath,
-    });
-
-    if (materialized.length === 0) {
-      return null;
-    }
-
-    // Register file state for each successfully read file (for change detection)
-    for (const mention of materialized) {
-      if (
-        mention.content !== undefined &&
-        mention.modifiedTimeMs !== undefined &&
-        mention.resolvedPath
-      ) {
-        this.recordFileState(mention.resolvedPath, {
-          content: mention.content,
-          timestamp: mention.modifiedTimeMs,
-        });
-      }
-    }
-
-    // Create a synthetic snapshot message (not persisted here - caller handles persistence)
-    const tokens = materialized.map((m) => m.token);
-    const blocks = materialized.map((m) => m.block).join("\n\n");
-
-    const snapshotId = createFileSnapshotMessageId();
-    const snapshotMessage = createMuxMessage(snapshotId, "user", blocks, {
-      timestamp: Date.now(),
-      synthetic: true,
-      fileAtMentionSnapshot: tokens,
-    });
-
-    return { snapshotMessage, materializedTokens: tokens };
-  }
-
-  private async materializeAgentSkillSnapshot(
-    muxMetadata: MuxFrontendMetadata | undefined,
-    disableWorkspaceAgents: boolean | undefined
-  ): Promise<{ snapshotMessage: MuxMessage } | null> {
-    if (!muxMetadata || muxMetadata.type !== "agent-skill") {
-      return null;
-    }
-
-    // Guard for test mocks that may not implement getWorkspaceMetadata.
-    if (typeof this.aiService.getWorkspaceMetadata !== "function") {
-      return null;
-    }
-
-    const parsedName = SkillNameSchema.safeParse(muxMetadata.skillName);
-    if (!parsedName.success) {
-      throw new Error(`Invalid agent skill name: ${muxMetadata.skillName}`);
-    }
-
-    const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
-    if (!metadataResult.success) {
-      throw new Error("Cannot materialize agent skill: workspace metadata not found");
-    }
-
-    const metadata = metadataResult.data;
-    const runtime = createRuntime(metadata.runtimeConfig, {
-      projectPath: metadata.projectPath,
-      workspaceName: metadata.name,
-    });
-
-    // In-place workspaces (CLI/benchmarks) have projectPath === name.
-    // Use the path directly instead of reconstructing via getWorkspacePath.
-    const isInPlace = metadata.projectPath === metadata.name;
-    const workspacePath = isInPlace
-      ? metadata.projectPath
-      : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
-
-    // When workspace agents are disabled, resolve skills from the project path instead of
-    // the worktree so skill invocation uses the same precedence/discovery root as the UI.
-    const skillDiscoveryPath = disableWorkspaceAgents ? metadata.projectPath : workspacePath;
-
-    const resolved = await readAgentSkill(runtime, skillDiscoveryPath, parsedName.data);
-    const skill = resolved.package;
-
-    const frontmatterYaml = YAML.stringify(skill.frontmatter).trimEnd();
-
-    const body =
-      skill.body.length > MAX_AGENT_SKILL_SNAPSHOT_CHARS
-        ? `${skill.body.slice(0, MAX_AGENT_SKILL_SNAPSHOT_CHARS)}\n\n[Skill body truncated to ${MAX_AGENT_SKILL_SNAPSHOT_CHARS} characters]`
-        : skill.body;
-
-    const snapshotText = `<agent-skill name="${skill.frontmatter.name}" scope="${skill.scope}">\n${body}\n</agent-skill>`;
-
-    // Include the parsed YAML frontmatter in the hash so frontmatter-only edits (e.g. description)
-    // generate a new snapshot and keep the UI hover preview in sync.
-    const sha256 = createHash("sha256")
-      .update(JSON.stringify({ snapshotText, frontmatterYaml }))
-      .digest("hex");
-
-    // Dedupe: if we recently persisted the same snapshot, avoid inserting again.
-    const historyResult = await this.historyService.getHistory(this.workspaceId);
-    if (historyResult.success) {
-      const recentMessages = historyResult.data.slice(Math.max(0, historyResult.data.length - 5));
-      const recentSnapshot = [...recentMessages]
-        .reverse()
-        .find((msg) => msg.metadata?.synthetic && msg.metadata?.agentSkillSnapshot);
-      const recentMeta = recentSnapshot?.metadata?.agentSkillSnapshot;
-
-      if (recentMeta?.skillName === skill.frontmatter.name && recentMeta.sha256 === sha256) {
-        return null;
-      }
-    }
-
-    const snapshotId = createAgentSkillSnapshotMessageId();
-    const snapshotMessage = createMuxMessage(snapshotId, "user", snapshotText, {
-      timestamp: Date.now(),
-      synthetic: true,
-      agentSkillSnapshot: {
-        skillName: skill.frontmatter.name,
-        scope: skill.scope,
-        sha256,
-        frontmatterYaml,
-      },
-    });
-
-    return { snapshotMessage };
   }
 
   /**
