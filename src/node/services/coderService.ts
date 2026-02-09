@@ -1417,6 +1417,10 @@ export class CoderService {
       const interpreted = interpretCoderResult(deleteAttempt);
       if (!interpreted.ok) {
         lastError = interpreted.error;
+      } else {
+        // Successful delete is terminal; status polling is best-effort.
+        lastError = undefined;
+        return Ok(undefined);
       }
 
       attempt++;

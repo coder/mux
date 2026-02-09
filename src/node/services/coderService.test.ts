@@ -1487,6 +1487,78 @@ describe("deleteWorkspaceEventually", () => {
       nowSpy.mockRestore();
     }
   });
+
+  it("treats a successful delete as terminal even if status polling errors", async () => {
+    const service = new CoderService();
+
+    spyOn(service, "getWorkspaceStatus").mockResolvedValue({
+      kind: "error" as const,
+      error: "auth failed",
+    });
+
+    const serviceHack = service as unknown as {
+      runCoderCommand: (
+        args: string[],
+        options: { timeoutMs: number; signal?: AbortSignal }
+      ) => Promise<{
+        exitCode: number | null;
+        stdout: string;
+        stderr: string;
+        error?: string;
+      }>;
+      sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+    };
+
+    serviceHack.runCoderCommand = vi.fn(() =>
+      Promise.resolve({ exitCode: 0, stdout: "", stderr: "" })
+    );
+    serviceHack.sleep = vi.fn(() => Promise.resolve());
+
+    const result = await service.deleteWorkspaceEventually("mux-my-workspace", {
+      timeoutMs: 60_000,
+      waitForExistence: false,
+    });
+
+    expect(result.success).toBe(true);
+    expect(serviceHack.runCoderCommand).toHaveBeenCalledTimes(1);
+    expect(serviceHack.sleep).not.toHaveBeenCalled();
+  });
+
+  it("treats a successful delete as terminal even when waitForExistence=true", async () => {
+    const service = new CoderService();
+
+    spyOn(service, "getWorkspaceStatus").mockResolvedValue({
+      kind: "error" as const,
+      error: "auth failed",
+    });
+
+    const serviceHack = service as unknown as {
+      runCoderCommand: (
+        args: string[],
+        options: { timeoutMs: number; signal?: AbortSignal }
+      ) => Promise<{
+        exitCode: number | null;
+        stdout: string;
+        stderr: string;
+        error?: string;
+      }>;
+      sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+    };
+
+    serviceHack.runCoderCommand = vi.fn(() =>
+      Promise.resolve({ exitCode: 0, stdout: "", stderr: "" })
+    );
+    serviceHack.sleep = vi.fn(() => Promise.resolve());
+
+    const result = await service.deleteWorkspaceEventually("mux-my-workspace", {
+      timeoutMs: 60_000,
+      waitForExistence: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(serviceHack.runCoderCommand).toHaveBeenCalledTimes(1);
+    expect(serviceHack.sleep).not.toHaveBeenCalled();
+  });
 });
 
 describe("compareVersions", () => {

@@ -1437,11 +1437,6 @@ export class WorkspaceService extends EventEmitter {
       this.initAbortControllers.delete(workspaceId);
     }
 
-    // Avoid leaking init waiters/logs after workspace deletion.
-    // This must happen before deleting the session directory so queued init-status writes
-    // don't recreate ~/.mux/sessions/<workspaceId>/ after removal.
-    this.initStateManager.clearInMemoryState(workspaceId);
-
     // Try to remove from runtime (filesystem)
     try {
       // Stop any active stream before deleting metadata/config to avoid tool calls racing with removal.
@@ -1604,6 +1599,13 @@ export class WorkspaceService extends EventEmitter {
         log.error(`Could not find metadata for workspace ${workspaceId}, creating phantom cleanup`);
       }
 
+      // Avoid leaking init waiters/logs after workspace deletion.
+      // Must happen before deleting the session directory so queued init-status writes don't
+      // recreate ~/.mux/sessions/<workspaceId>/ after removal.
+      //
+      // Intentionally deferred until we're committed to removal: if runtime deletion fails with
+      // force=false we return early and keep init state intact so init-end can refresh metadata.
+      this.initStateManager.clearInMemoryState(workspaceId);
       // Remove session data
       try {
         const sessionDir = this.config.getSessionDir(workspaceId);

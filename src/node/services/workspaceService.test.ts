@@ -1515,6 +1515,92 @@ describe("WorkspaceService init cancellation", () => {
     }
   });
 
+  test("remove() does not clear init state when runtime deletion fails with force=false", async () => {
+    const workspaceId = "ws-remove-runtime-delete-fails";
+    const projectPath = "/tmp/proj";
+
+    const abortController = new AbortController();
+    const clearInMemoryStateMock = mock((_workspaceId: string) => undefined);
+    const removeWorkspaceMock = mock(() => Promise.resolve());
+
+    const deleteWorkspaceMock = mock(() =>
+      Promise.resolve({ success: false as const, error: "dirty" })
+    );
+
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue({
+      deleteWorkspace: deleteWorkspaceMock,
+    } as unknown as ReturnType<typeof runtimeFactory.createRuntime>);
+
+    const tempRoot = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-ws-remove-fail-"));
+    try {
+      const mockAIService = {
+        isStreaming: mock(() => false),
+        stopStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
+        getWorkspaceMetadata: mock(() =>
+          Promise.resolve(
+            Ok({
+              id: workspaceId,
+              name: "ws",
+              projectPath,
+              projectName: "proj",
+              runtimeConfig: { type: "local" },
+            })
+          )
+        ),
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        on: mock(() => {}),
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        off: mock(() => {}),
+      } as unknown as AIService;
+
+      const mockConfig: Partial<Config> = {
+        srcDir: "/tmp/src",
+        getSessionDir: mock((id: string) => path.join(tempRoot, id)),
+        removeWorkspace: removeWorkspaceMock,
+        findWorkspace: mock(() => null),
+      };
+
+      const mockHistoryService: Partial<HistoryService> = {};
+      const mockPartialService: Partial<PartialService> = {};
+      const mockInitStateManager: Partial<InitStateManager> = {
+        on: mock(() => undefined as unknown as InitStateManager),
+        getInitState: mock(() => undefined),
+        clearInMemoryState: clearInMemoryStateMock,
+      };
+      const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
+      const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
+        cleanup: mock(() => Promise.resolve()),
+      };
+
+      const workspaceService = new WorkspaceService(
+        mockConfig as Config,
+        mockHistoryService as HistoryService,
+        mockPartialService as PartialService,
+        mockAIService,
+        mockInitStateManager as InitStateManager,
+        mockExtensionMetadataService as ExtensionMetadataService,
+        mockBackgroundProcessManager as BackgroundProcessManager
+      );
+
+      // Inject an in-progress init AbortController.
+      const initAbortControllers = (
+        workspaceService as unknown as { initAbortControllers: Map<string, AbortController> }
+      ).initAbortControllers;
+      initAbortControllers.set(workspaceId, abortController);
+
+      const result = await workspaceService.remove(workspaceId, false);
+      expect(result.success).toBe(false);
+      expect(abortController.signal.aborted).toBe(true);
+
+      // If runtime deletion fails with force=false, removal returns early and the workspace remains.
+      // Keep init state intact so init-end can refresh metadata and clear isInitializing.
+      expect(clearInMemoryStateMock).not.toHaveBeenCalled();
+      expect(removeWorkspaceMock).not.toHaveBeenCalled();
+    } finally {
+      createRuntimeSpy.mockRestore();
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
   test("remove() calls runtime.deleteWorkspace when force=true", async () => {
     const workspaceId = "ws-remove-runtime-delete";
     const projectPath = "/tmp/proj";
