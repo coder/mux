@@ -422,6 +422,140 @@ export class AgentSession {
     this.emitMetadata(metadata);
   }
 
+  /**
+   * Handle edit-specific logic: preserve file parts from the original message,
+   * interrupt any active stream, walk back over preceding snapshots, and
+   * truncate history at the edit target.
+   *
+   * @returns preserved file parts (if the frontend omitted them), or an error
+   */
+  private async handleEditTruncation(
+    editMessageId: string,
+    fileParts: FilePart[] | undefined
+  ): Promise<Result<{ preservedFileParts?: MuxFilePart[] }, SendMessageError>> {
+    let preservedFileParts: MuxFilePart[] | undefined;
+
+    // If the frontend omits fileParts, preserve the original message's attachments.
+    if (fileParts === undefined) {
+      const historyResult = await this.historyService.getHistory(this.workspaceId);
+      if (historyResult.success) {
+        const targetMessage = historyResult.data.find((msg) => msg.id === editMessageId);
+        const parts = targetMessage?.parts.filter(
+          (part): part is MuxFilePart => part.type === "file"
+        );
+        if (parts && parts.length > 0) {
+          preservedFileParts = parts;
+        }
+      }
+    }
+
+    // Interrupt an existing stream or compaction, if active
+    if (this.aiService.isStreaming(this.workspaceId)) {
+      // MUST use abandonPartial=true to prevent handleAbort from performing partial compaction
+      // with mismatched history (since we're about to truncate it)
+      const stopResult = await this.interruptStream({ abandonPartial: true });
+      if (!stopResult.success) {
+        return Err(createUnknownSendMessageError(stopResult.error));
+      }
+    }
+
+    // Find the truncation target: the edited message or any immediately-preceding snapshots.
+    // (snapshots are persisted immediately before their corresponding user message)
+    let truncateTargetId = editMessageId;
+    const historyResult = await this.historyService.getHistory(this.workspaceId);
+    if (historyResult.success) {
+      const messages = historyResult.data;
+      const editIndex = messages.findIndex((m) => m.id === editMessageId);
+      if (editIndex > 0) {
+        // Walk backwards over contiguous synthetic snapshots so we don't orphan them.
+        for (let i = editIndex - 1; i >= 0; i--) {
+          const msg = messages[i];
+          const isSnapshot =
+            msg.metadata?.synthetic &&
+            (msg.metadata?.fileAtMentionSnapshot ?? msg.metadata?.agentSkillSnapshot);
+          if (!isSnapshot) break;
+          truncateTargetId = msg.id;
+        }
+      }
+    }
+
+    const truncateResult = await this.historyService.truncateAfterMessage(
+      this.workspaceId,
+      truncateTargetId
+    );
+    if (!truncateResult.success) {
+      const isMissingEditTarget =
+        truncateResult.error.includes("Message with ID") &&
+        truncateResult.error.includes("not found in history");
+      if (isMissingEditTarget) {
+        // This can happen if the frontend is briefly out-of-sync with persisted history
+        // (e.g., compaction/truncation completed and removed the message while the UI still
+        // shows it as editable). Treat as a no-op truncation so the user can recover.
+        log.warn("editMessageId not found in history; proceeding without truncation", {
+          workspaceId: this.workspaceId,
+          editMessageId,
+          error: truncateResult.error,
+        });
+      } else {
+        return Err(createUnknownSendMessageError(truncateResult.error));
+      }
+    }
+
+    return Ok({ preservedFileParts });
+  }
+
+  /**
+   * Validate model string and file parts against model capabilities.
+   * Returns normalized options or an error.
+   */
+  private validateModelAndFiles(
+    options: SendMessageOptions,
+    effectiveFileParts: Array<{ url: string; mediaType: string; filename?: string }> | undefined
+  ): Result<void, SendMessageError> {
+    // Defense-in-depth: reject PDFs for models we know don't support them.
+    if (effectiveFileParts && effectiveFileParts.length > 0) {
+      const pdfParts = effectiveFileParts.filter(
+        (part) => normalizeMediaType(part.mediaType) === PDF_MEDIA_TYPE
+      );
+
+      if (pdfParts.length > 0) {
+        const caps = getModelCapabilities(options.model);
+
+        if (caps && !caps.supportsPdfInput) {
+          return Err(
+            createUnknownSendMessageError(`Model ${options.model} does not support PDF input.`)
+          );
+        }
+
+        if (caps?.maxPdfSizeMb !== undefined) {
+          const maxBytes = caps.maxPdfSizeMb * 1024 * 1024;
+          for (const part of pdfParts) {
+            const bytes = estimateBase64DataUrlBytes(part.url);
+            if (bytes !== null && bytes > maxBytes) {
+              const actualMb = (bytes / (1024 * 1024)).toFixed(1);
+              const label = part.filename ?? "PDF";
+              return Err(
+                createUnknownSendMessageError(
+                  `${label} is ${actualMb}MB, but ${options.model} allows up to ${caps.maxPdfSizeMb}MB per PDF.`
+                )
+              );
+            }
+          }
+        }
+      }
+    }
+
+    // Validate model string format (must be "provider:model-id")
+    if (!isValidModelFormat(options.model)) {
+      return Err({
+        type: "invalid_model_string",
+        message: `Invalid model string format: "${options.model}". Expected "provider:model-id"`,
+      });
+    }
+
+    return Ok(undefined);
+  }
+
   async sendMessage(
     message: string,
     options?: SendMessageOptions & { fileParts?: FilePart[] },
@@ -434,22 +568,12 @@ export class AgentSession {
     const fileParts = options?.fileParts;
     const editMessageId = options?.editMessageId;
 
-    // Edits are implemented as truncate+replace. If the frontend omits fileParts,
-    // preserve the original message's attachments.
+    // Handle edit: preserve file parts, interrupt stream, truncate history at edit target.
     let preservedEditFileParts: MuxFilePart[] | undefined;
-    if (editMessageId && fileParts === undefined) {
-      const historyResult = await this.historyService.getHistory(this.workspaceId);
-      if (historyResult.success) {
-        const targetMessage: MuxMessage | undefined = historyResult.data.find(
-          (msg) => msg.id === editMessageId
-        );
-        const fileParts = targetMessage?.parts.filter(
-          (part): part is MuxFilePart => part.type === "file"
-        );
-        if (fileParts && fileParts.length > 0) {
-          preservedEditFileParts = fileParts;
-        }
-      }
+    if (editMessageId) {
+      const editResult = await this.handleEditTruncation(editMessageId, fileParts);
+      if (!editResult.success) return Err(editResult.error);
+      preservedEditFileParts = editResult.data.preservedFileParts;
     }
 
     const hasFiles = (fileParts?.length ?? 0) > 0 || (preservedEditFileParts?.length ?? 0) > 0;
@@ -460,60 +584,6 @@ export class AgentSession {
           "Empty message not allowed. Use interruptStream() to interrupt active streams."
         )
       );
-    }
-
-    if (editMessageId) {
-      // Interrupt an existing stream or compaction, if active
-      if (this.aiService.isStreaming(this.workspaceId)) {
-        // MUST use abandonPartial=true to prevent handleAbort from performing partial compaction
-        // with mismatched history (since we're about to truncate it)
-        const stopResult = await this.interruptStream({ abandonPartial: true });
-        if (!stopResult.success) {
-          return Err(createUnknownSendMessageError(stopResult.error));
-        }
-      }
-
-      // Find the truncation target: the edited message or any immediately-preceding snapshots.
-      // (snapshots are persisted immediately before their corresponding user message)
-      let truncateTargetId = editMessageId;
-      const historyResult = await this.historyService.getHistory(this.workspaceId);
-      if (historyResult.success) {
-        const messages = historyResult.data;
-        const editIndex = messages.findIndex((m) => m.id === editMessageId);
-        if (editIndex > 0) {
-          // Walk backwards over contiguous synthetic snapshots so we don't orphan them.
-          for (let i = editIndex - 1; i >= 0; i--) {
-            const msg = messages[i];
-            const isSnapshot =
-              msg.metadata?.synthetic &&
-              (msg.metadata?.fileAtMentionSnapshot ?? msg.metadata?.agentSkillSnapshot);
-            if (!isSnapshot) break;
-            truncateTargetId = msg.id;
-          }
-        }
-      }
-
-      const truncateResult = await this.historyService.truncateAfterMessage(
-        this.workspaceId,
-        truncateTargetId
-      );
-      if (!truncateResult.success) {
-        const isMissingEditTarget =
-          truncateResult.error.includes("Message with ID") &&
-          truncateResult.error.includes("not found in history");
-        if (isMissingEditTarget) {
-          // This can happen if the frontend is briefly out-of-sync with persisted history
-          // (e.g., compaction/truncation completed and removed the message while the UI still
-          // shows it as editable). Treat as a no-op truncation so the user can recover.
-          log.warn("editMessageId not found in history; proceeding without truncation", {
-            workspaceId: this.workspaceId,
-            editMessageId,
-            error: truncateResult.error,
-          });
-        } else {
-          return Err(createUnknownSendMessageError(truncateResult.error));
-        }
-      }
     }
 
     const messageId = createUserMessageId();
@@ -576,8 +646,7 @@ export class AgentSession {
       ? { ...options, system1Model: rawSystem1Model }
       : options;
 
-    // Defense-in-depth: reject PDFs for models we know don't support them.
-    // (Frontend should also block this, but it's easy to bypass via IPC / older clients.)
+    // Validate model capabilities (PDF support, size limits) and model string format.
     const effectiveFileParts =
       preservedEditFileParts && preservedEditFileParts.length > 0
         ? preservedEditFileParts.map((part) => ({
@@ -587,44 +656,8 @@ export class AgentSession {
           }))
         : fileParts;
 
-    if (effectiveFileParts && effectiveFileParts.length > 0) {
-      const pdfParts = effectiveFileParts.filter(
-        (part) => normalizeMediaType(part.mediaType) === PDF_MEDIA_TYPE
-      );
-
-      if (pdfParts.length > 0) {
-        const caps = getModelCapabilities(options.model);
-
-        if (caps && !caps.supportsPdfInput) {
-          return Err(
-            createUnknownSendMessageError(`Model ${options.model} does not support PDF input.`)
-          );
-        }
-
-        if (caps?.maxPdfSizeMb !== undefined) {
-          const maxBytes = caps.maxPdfSizeMb * 1024 * 1024;
-          for (const part of pdfParts) {
-            const bytes = estimateBase64DataUrlBytes(part.url);
-            if (bytes !== null && bytes > maxBytes) {
-              const actualMb = (bytes / (1024 * 1024)).toFixed(1);
-              const label = part.filename ?? "PDF";
-              return Err(
-                createUnknownSendMessageError(
-                  `${label} is ${actualMb}MB, but ${options.model} allows up to ${caps.maxPdfSizeMb}MB per PDF.`
-                )
-              );
-            }
-          }
-        }
-      }
-    }
-    // Validate model string format (must be "provider:model-id")
-    if (!isValidModelFormat(options.model)) {
-      return Err({
-        type: "invalid_model_string",
-        message: `Invalid model string format: "${options.model}". Expected "provider:model-id"`,
-      });
-    }
+    const validationResult = this.validateModelAndFiles(options, effectiveFileParts);
+    if (!validationResult.success) return Err(validationResult.error);
 
     const userMessage = createMuxMessage(
       messageId,
