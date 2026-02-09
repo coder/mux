@@ -77,8 +77,6 @@ Before finishing, apply strict completion discipline:
  */
 function buildTaskExecutionGuidelines(): string {
   // Temporary toggle for A/B benchmarking. Remove once experimentation is complete.
-  // TEMP: hardcoded off for baseline measurement
-  return "";
   if (process.env.MUX_DISABLE_TASK_EXECUTION_GUIDELINES === "1") return "";
   return `<task-execution>
 General guidelines for effective task execution:
