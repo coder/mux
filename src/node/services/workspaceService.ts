@@ -1408,6 +1408,11 @@ export class WorkspaceService extends EventEmitter {
       } else {
         initAbortController.abort();
         this.initAbortControllers.delete(workspaceId);
+
+        // Background init will never run, so init-end won’t fire.
+        // Clear init state + re-emit metadata so the sidebar doesn’t stay stuck on isInitializing.
+        this.initStateManager.clearInMemoryState(workspaceId);
+        session.emitMetadata(this.enrichFrontendMetadata(completeMetadata));
       }
 
       return Ok({ metadata: this.enrichFrontendMetadata(completeMetadata) });

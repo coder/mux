@@ -1,5 +1,6 @@
 import { describe, expect, test, mock, beforeEach, spyOn } from "bun:test";
 import { WorkspaceService } from "./workspaceService";
+import type { AgentSession } from "./agentSession";
 import { WorkspaceLifecycleHooks } from "./workspaceLifecycleHooks";
 import { EventEmitter } from "events";
 import * as fsPromises from "fs/promises";
@@ -1450,6 +1451,149 @@ describe("WorkspaceService init cancellation", () => {
     const list = await workspaceService.list();
     expect(list).toHaveLength(1);
     expect(list[0]?.isInitializing).toBe(true);
+  });
+
+  test("create() clears init state + emits updated metadata when skipping background init", async () => {
+    const workspaceId = "ws-skip-init";
+    const projectPath = "/tmp/proj";
+    const branchName = "ws_branch";
+    const workspacePath = "/tmp/proj/ws_branch";
+
+    const initStates = new Map<string, InitStatus>();
+    const clearInMemoryStateMock = mock((id: string) => {
+      initStates.delete(id);
+    });
+
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      startInit: mock((id: string) => {
+        initStates.set(id, {
+          status: "running",
+          hookPath: projectPath,
+          startTime: 0,
+          lines: [],
+          exitCode: null,
+          endTime: null,
+        });
+      }),
+      getInitState: mock((id: string) => initStates.get(id)),
+      clearInMemoryState: clearInMemoryStateMock,
+    };
+
+    const configState: ProjectsConfig = { projects: new Map() };
+
+    const mockMetadata: FrontendWorkspaceMetadata = {
+      id: workspaceId,
+      name: branchName,
+      title: "title",
+      projectName: "proj",
+      projectPath,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      namedWorkspacePath: workspacePath,
+      runtimeConfig: { type: "local" },
+    };
+
+    const mockConfig: Partial<Config> = {
+      rootDir: "/tmp/mux-root",
+      srcDir: "/tmp/src",
+      generateStableId: mock(() => workspaceId),
+      editConfig: mock((editFn: (config: ProjectsConfig) => ProjectsConfig) => {
+        editFn(configState);
+        return Promise.resolve();
+      }),
+      getAllWorkspaceMetadata: mock(() => Promise.resolve([mockMetadata])),
+      getEffectiveSecrets: mock(() => []),
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      findWorkspace: mock(() => null),
+    };
+
+    const mockAIService = {
+      isStreaming: mock(() => false),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    const mockHistoryService: Partial<HistoryService> = {};
+    const mockPartialService: Partial<PartialService> = {};
+    const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
+    const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
+      cleanup: mock(() => Promise.resolve()),
+    };
+
+    const createWorkspaceMock = mock(() =>
+      Promise.resolve({ success: true as const, workspacePath })
+    );
+
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue({
+      createWorkspace: createWorkspaceMock,
+    } as unknown as ReturnType<typeof runtimeFactory.createRuntime>);
+
+    const sessionEmitter = new EventEmitter();
+    const fakeSession = {
+      onChatEvent: (listener: (event: unknown) => void) => {
+        sessionEmitter.on("chat-event", listener);
+        return () => sessionEmitter.off("chat-event", listener);
+      },
+      onMetadataEvent: (listener: (event: unknown) => void) => {
+        sessionEmitter.on("metadata-event", listener);
+        return () => sessionEmitter.off("metadata-event", listener);
+      },
+      emitMetadata: (metadata: FrontendWorkspaceMetadata | null) => {
+        sessionEmitter.emit("metadata-event", { workspaceId, metadata });
+      },
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      dispose: () => {},
+    } as unknown as AgentSession;
+
+    try {
+      const workspaceService = new WorkspaceService(
+        mockConfig as Config,
+        mockHistoryService as HistoryService,
+        mockPartialService as PartialService,
+        mockAIService,
+        mockInitStateManager as InitStateManager,
+        mockExtensionMetadataService as ExtensionMetadataService,
+        mockBackgroundProcessManager as BackgroundProcessManager
+      );
+
+      const metadataEvents: Array<FrontendWorkspaceMetadata | null> = [];
+      workspaceService.on("metadata", (event: unknown) => {
+        if (!event || typeof event !== "object") {
+          return;
+        }
+        const parsed = event as { workspaceId: string; metadata: FrontendWorkspaceMetadata | null };
+        if (parsed.workspaceId === workspaceId) {
+          metadataEvents.push(parsed.metadata);
+        }
+      });
+
+      workspaceService.registerSession(workspaceId, fakeSession);
+
+      const removingWorkspaces = (
+        workspaceService as unknown as { removingWorkspaces: Set<string> }
+      ).removingWorkspaces;
+      removingWorkspaces.add(workspaceId);
+
+      const result = await workspaceService.create(projectPath, branchName, undefined, "title", {
+        type: "local",
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      expect(result.data.metadata.isInitializing).toBe(undefined);
+      expect(clearInMemoryStateMock).toHaveBeenCalledWith(workspaceId);
+
+      expect(metadataEvents).toHaveLength(2);
+      expect(metadataEvents[0]?.isInitializing).toBe(true);
+      expect(metadataEvents[1]?.isInitializing).toBe(undefined);
+    } finally {
+      createRuntimeSpy.mockRestore();
+    }
   });
   test("remove() aborts init and clears state before teardown", async () => {
     const workspaceId = "ws-remove-aborts";
