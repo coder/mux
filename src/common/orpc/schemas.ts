@@ -138,6 +138,7 @@ export {
   ErrorEventSchema,
   LanguageModelV2UsageSchema,
   QueuedMessageChangedEventSchema,
+  FollowUpDispatchFailedEventSchema,
   ReasoningDeltaEventSchema,
   ReasoningEndEventSchema,
   RestoreToInputEventSchema,

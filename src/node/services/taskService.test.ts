@@ -3,6 +3,7 @@ import * as fsPromises from "fs/promises";
 import * as path from "path";
 import * as os from "os";
 import { execSync } from "node:child_process";
+import { EventEmitter } from "events";
 
 import { Config } from "@/node/config";
 import { HistoryService } from "@/node/services/historyService";
@@ -144,17 +145,29 @@ function createWorkspaceServiceMocks(
     overrides?.resumeStream ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
   const remove =
     overrides?.remove ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
-  const emit = overrides?.emit ?? mock(() => true);
+
+  const emitter = new EventEmitter();
+
+  // Wrap EventEmitter.emit so we can assert on metadata emissions while still dispatching
+  // chat events to TaskService listeners.
+  const realEmit = emitter.emit.bind(emitter);
+  const emit =
+    overrides?.emit ?? mock((event: string, ...args: unknown[]) => realEmit(event, ...args));
+  (emitter as unknown as { emit: typeof emit }).emit = emit;
+
+  const workspaceService = emitter as unknown as WorkspaceService;
+  (workspaceService as unknown as { sendMessage: typeof sendMessage }).sendMessage = sendMessage;
+  (workspaceService as unknown as { resumeStream: typeof resumeStream }).resumeStream =
+    resumeStream;
+  (workspaceService as unknown as { remove: typeof remove }).remove = remove;
+  (
+    workspaceService as unknown as { hasQueuedMessages: ReturnType<typeof mock> }
+  ).hasQueuedMessages = mock(() => false);
+  (workspaceService as unknown as { isStreamStarting: ReturnType<typeof mock> }).isStreamStarting =
+    mock(() => false);
 
   return {
-    workspaceService: {
-      sendMessage,
-      resumeStream,
-      remove,
-      emit,
-      hasQueuedMessages: mock(() => false),
-      isStreamStarting: mock(() => false),
-    } as unknown as WorkspaceService,
+    workspaceService,
     sendMessage,
     resumeStream,
     remove,
@@ -2934,10 +2947,6 @@ describe("TaskService", () => {
       () => hasQueuedMessages
     );
 
-    (workspaceService as unknown as { isStreamStarting: () => boolean }).isStreamStarting = mock(
-      () => false
-    );
-
     const internal = taskService as unknown as {
       handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
     };
@@ -2956,7 +2965,17 @@ describe("TaskService", () => {
     // Simulate AgentSession draining the queue but failing to start a follow-up stream.
     hasQueuedMessages = false;
 
-    // Wait for deferred verification to run.
+    // Simulate AgentSession reporting the follow-up dispatch failure.
+    workspaceService.emit("chat", {
+      workspaceId: childId,
+      message: {
+        type: "follow-up-dispatch-failed",
+        workspaceId: childId,
+        reason: "queued-message",
+        error: "dispatch failed",
+      },
+    });
+
     const sendCalls = (sendMessage as unknown as { mock: { calls: unknown[][] } }).mock.calls;
     for (let i = 0; i < 25 && sendCalls.length === 0; i++) {
       await new Promise((r) => setTimeout(r, 0));
@@ -2971,6 +2990,98 @@ describe("TaskService", () => {
     expect(ws?.taskStatus).toBe("awaiting_report");
   });
 
+  test("compaction follow-up dispatch failure triggers agent_report reminder", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child"),
+                id: childId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "running",
+                taskModelString: "openai:gpt-4o-mini",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { historyService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    const pendingFollowUp = {
+      text: "follow up",
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    };
+
+    const summary = createMuxMessage("summary-1", "assistant", "Compaction summary", {
+      timestamp: Date.now(),
+      muxMetadata: {
+        type: "compaction-summary",
+        pendingFollowUp,
+      },
+    });
+
+    expect((await historyService.appendToHistory(childId, summary)).success).toBe(true);
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-output",
+      metadata: { model: "openai:gpt-4o-mini" },
+      parts: [],
+    });
+
+    // Reminder is suppressed immediately because a follow-up dispatch is expected.
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    // Simulate AgentSession reporting the follow-up dispatch failure.
+    workspaceService.emit("chat", {
+      workspaceId: childId,
+      message: {
+        type: "follow-up-dispatch-failed",
+        workspaceId: childId,
+        reason: "compaction-follow-up",
+        error: "dispatch failed",
+      },
+    });
+
+    const sendCalls = (sendMessage as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    for (let i = 0; i < 25 && sendCalls.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 0));
+    }
+
+    expect(sendMessage).toHaveBeenCalled();
+
+    const postCfg = config.loadConfigOrDefault();
+    const ws = Array.from(postCfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === childId);
+    expect(ws?.taskStatus).toBe("awaiting_report");
+  });
   test("queued dispatch starting keeps agent_report reminder suppressed", async () => {
     const config = await createTestConfig(rootDir);
 
@@ -3009,14 +3120,9 @@ describe("TaskService", () => {
     });
 
     let hasQueuedMessages = true;
-    let streamStarting = false;
 
     (workspaceService as unknown as { hasQueuedMessages: () => boolean }).hasQueuedMessages = mock(
       () => hasQueuedMessages
-    );
-
-    (workspaceService as unknown as { isStreamStarting: () => boolean }).isStreamStarting = mock(
-      () => streamStarting
     );
 
     const internal = taskService as unknown as {
@@ -3031,11 +3137,13 @@ describe("TaskService", () => {
       parts: [],
     });
 
+    // Reminder is suppressed immediately because there was a queued message.
+    expect(sendMessage).not.toHaveBeenCalled();
+
     // Simulate AgentSession draining the queue and starting a follow-up stream.
     hasQueuedMessages = false;
-    streamStarting = true;
 
-    // Wait for deferred verification to run.
+    // Give any deferred work a tick — we should not schedule any verifier.
     await new Promise((r) => setTimeout(r, 0));
 
     expect(sendMessage).not.toHaveBeenCalled();

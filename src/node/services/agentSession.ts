@@ -24,6 +24,7 @@ import type {
 } from "@/common/orpc/types";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { SendMessageError } from "@/common/types/errors";
+import { formatSendMessageError } from "@/common/utils/errors/formatSendError";
 import { AgentIdSchema, SkillNameSchema } from "@/common/orpc/schemas";
 import {
   buildStreamErrorEventData,
@@ -501,27 +502,20 @@ export class AgentSession {
     const fileParts = options?.fileParts;
     const editMessageId = options?.editMessageId;
 
-    // Edits are implemented as truncate+replace. If the frontend omits fileParts,
-    // preserve the original message's attachments.
-    let preservedEditFileParts: MuxFilePart[] | undefined;
-    if (editMessageId && fileParts === undefined) {
-      const historyResult = await this.historyService.getHistory(this.workspaceId);
-      if (historyResult.success) {
-        const targetMessage: MuxMessage | undefined = historyResult.data.find(
-          (msg) => msg.id === editMessageId
-        );
-        const fileParts = targetMessage?.parts.filter(
-          (part): part is MuxFilePart => part.type === "file"
-        );
-        if (fileParts && fileParts.length > 0) {
-          preservedEditFileParts = fileParts;
-        }
-      }
+    // Validate model BEFORE persisting any history to prevent orphaned messages.
+    if (!options?.model || options.model.trim().length === 0) {
+      return Err(
+        createUnknownSendMessageError("No model specified. Please select a model using /model.")
+      );
     }
 
-    const hasFiles = (fileParts?.length ?? 0) > 0 || (preservedEditFileParts?.length ?? 0) > 0;
-
-    if (trimmedMessage.length === 0 && !hasFiles) {
+    // Quick check for empty messages before any async work.
+    //
+    // Edits may preserve file attachments from history, so only reject empty messages when
+    // we KNOW there are no file parts to keep.
+    const canPreserveEditFileParts = Boolean(editMessageId && fileParts === undefined);
+    const hasExplicitFiles = (fileParts?.length ?? 0) > 0;
+    if (trimmedMessage.length === 0 && !hasExplicitFiles && !canPreserveEditFileParts) {
       return Err(
         createUnknownSendMessageError(
           "Empty message not allowed. Use interruptStream() to interrupt active streams."
@@ -529,252 +523,275 @@ export class AgentSession {
       );
     }
 
-    if (editMessageId) {
-      // Interrupt an existing stream or compaction, if active
-      if (this.aiService.isStreaming(this.workspaceId)) {
-        // MUST use abandonPartial=true to prevent handleAbort from performing partial compaction
-        // with mismatched history (since we're about to truncate it)
-        const stopResult = await this.interruptStream({ abandonPartial: true });
-        if (!stopResult.success) {
-          return Err(createUnknownSendMessageError(stopResult.error));
-        }
-      }
+    // Treat as "starting" immediately so queued-dispatch follow-ups don't enter a transient
+    // gap state (queue drained, no streamStarting yet).
+    this.streamStarting = true;
 
-      // Find the truncation target: the edited message or any immediately-preceding snapshots.
-      // (snapshots are persisted immediately before their corresponding user message)
-      let truncateTargetId = editMessageId;
-      const historyResult = await this.historyService.getHistory(this.workspaceId);
-      if (historyResult.success) {
-        const messages = historyResult.data;
-        const editIndex = messages.findIndex((m) => m.id === editMessageId);
-        if (editIndex > 0) {
-          // Walk backwards over contiguous synthetic snapshots so we don't orphan them.
-          for (let i = editIndex - 1; i >= 0; i--) {
-            const msg = messages[i];
-            const isSnapshot =
-              msg.metadata?.synthetic &&
-              (msg.metadata?.fileAtMentionSnapshot ?? msg.metadata?.agentSkillSnapshot);
-            if (!isSnapshot) break;
-            truncateTargetId = msg.id;
+    try {
+      // Edits are implemented as truncate+replace. If the frontend omits fileParts,
+      // preserve the original message's attachments.
+      let preservedEditFileParts: MuxFilePart[] | undefined;
+      if (editMessageId && fileParts === undefined) {
+        const historyResult = await this.historyService.getHistory(this.workspaceId);
+        if (historyResult.success) {
+          const targetMessage: MuxMessage | undefined = historyResult.data.find(
+            (msg) => msg.id === editMessageId
+          );
+          const fileParts = targetMessage?.parts.filter(
+            (part): part is MuxFilePart => part.type === "file"
+          );
+          if (fileParts && fileParts.length > 0) {
+            preservedEditFileParts = fileParts;
           }
         }
       }
 
-      const truncateResult = await this.historyService.truncateAfterMessage(
-        this.workspaceId,
-        truncateTargetId
-      );
-      if (!truncateResult.success) {
-        const isMissingEditTarget =
-          truncateResult.error.includes("Message with ID") &&
-          truncateResult.error.includes("not found in history");
-        if (isMissingEditTarget) {
-          // This can happen if the frontend is briefly out-of-sync with persisted history
-          // (e.g., compaction/truncation completed and removed the message while the UI still
-          // shows it as editable). Treat as a no-op truncation so the user can recover.
-          log.warn("editMessageId not found in history; proceeding without truncation", {
-            workspaceId: this.workspaceId,
-            editMessageId,
-            error: truncateResult.error,
-          });
-        } else {
-          return Err(createUnknownSendMessageError(truncateResult.error));
+      const hasFiles = (fileParts?.length ?? 0) > 0 || (preservedEditFileParts?.length ?? 0) > 0;
+
+      if (trimmedMessage.length === 0 && !hasFiles) {
+        return Err(
+          createUnknownSendMessageError(
+            "Empty message not allowed. Use interruptStream() to interrupt active streams."
+          )
+        );
+      }
+
+      if (editMessageId) {
+        // Interrupt an existing stream or compaction, if active
+        if (this.aiService.isStreaming(this.workspaceId)) {
+          // MUST use abandonPartial=true to prevent handleAbort from performing partial compaction
+          // with mismatched history (since we're about to truncate it)
+          const stopResult = await this.interruptStream({ abandonPartial: true });
+          if (!stopResult.success) {
+            return Err(createUnknownSendMessageError(stopResult.error));
+          }
+        }
+
+        // Find the truncation target: the edited message or any immediately-preceding snapshots.
+        // (snapshots are persisted immediately before their corresponding user message)
+        let truncateTargetId = editMessageId;
+        const historyResult = await this.historyService.getHistory(this.workspaceId);
+        if (historyResult.success) {
+          const messages = historyResult.data;
+          const editIndex = messages.findIndex((m) => m.id === editMessageId);
+          if (editIndex > 0) {
+            // Walk backwards over contiguous synthetic snapshots so we don't orphan them.
+            for (let i = editIndex - 1; i >= 0; i--) {
+              const msg = messages[i];
+              const isSnapshot =
+                msg.metadata?.synthetic &&
+                (msg.metadata?.fileAtMentionSnapshot ?? msg.metadata?.agentSkillSnapshot);
+              if (!isSnapshot) break;
+              truncateTargetId = msg.id;
+            }
+          }
+        }
+
+        const truncateResult = await this.historyService.truncateAfterMessage(
+          this.workspaceId,
+          truncateTargetId
+        );
+        if (!truncateResult.success) {
+          const isMissingEditTarget =
+            truncateResult.error.includes("Message with ID") &&
+            truncateResult.error.includes("not found in history");
+          if (isMissingEditTarget) {
+            // This can happen if the frontend is briefly out-of-sync with persisted history
+            // (e.g., compaction/truncation completed and removed the message while the UI still
+            // shows it as editable). Treat as a no-op truncation so the user can recover.
+            log.warn("editMessageId not found in history; proceeding without truncation", {
+              workspaceId: this.workspaceId,
+              editMessageId,
+              error: truncateResult.error,
+            });
+          } else {
+            return Err(createUnknownSendMessageError(truncateResult.error));
+          }
         }
       }
-    }
 
-    const messageId = createUserMessageId();
-    const additionalParts =
-      preservedEditFileParts && preservedEditFileParts.length > 0
-        ? preservedEditFileParts
-        : fileParts && fileParts.length > 0
-          ? fileParts.map((part, index) => {
-              assert(
-                typeof part.url === "string",
-                `file part [${index}] must include url string content (got ${typeof part.url}): ${JSON.stringify(part).slice(0, 200)}`
-              );
-              assert(
-                part.url.startsWith("data:"),
-                `file part [${index}] url must be a data URL (got: ${part.url.slice(0, 50)}...)`
-              );
-              assert(
-                typeof part.mediaType === "string" && part.mediaType.trim().length > 0,
-                `file part [${index}] must include a mediaType (got ${typeof part.mediaType}): ${JSON.stringify(part).slice(0, 200)}`
-              );
-              if (part.filename !== undefined) {
+      const messageId = createUserMessageId();
+      const additionalParts =
+        preservedEditFileParts && preservedEditFileParts.length > 0
+          ? preservedEditFileParts
+          : fileParts && fileParts.length > 0
+            ? fileParts.map((part, index) => {
                 assert(
-                  typeof part.filename === "string",
-                  `file part [${index}] filename must be a string if present (got ${typeof part.filename}): ${JSON.stringify(part).slice(0, 200)}`
+                  typeof part.url === "string",
+                  `file part [${index}] must include url string content (got ${typeof part.url}): ${JSON.stringify(part).slice(0, 200)}`
+                );
+                assert(
+                  part.url.startsWith("data:"),
+                  `file part [${index}] url must be a data URL (got: ${part.url.slice(0, 50)}...)`
+                );
+                assert(
+                  typeof part.mediaType === "string" && part.mediaType.trim().length > 0,
+                  `file part [${index}] must include a mediaType (got ${typeof part.mediaType}): ${JSON.stringify(part).slice(0, 200)}`
+                );
+                if (part.filename !== undefined) {
+                  assert(
+                    typeof part.filename === "string",
+                    `file part [${index}] filename must be a string if present (got ${typeof part.filename}): ${JSON.stringify(part).slice(0, 200)}`
+                  );
+                }
+                return {
+                  type: "file" as const,
+                  url: part.url,
+                  mediaType: part.mediaType,
+                  filename: part.filename,
+                };
+              })
+            : undefined;
+
+      // toolPolicy is properly typed via Zod schema inference
+      const typedToolPolicy = options?.toolPolicy;
+      // muxMetadata is z.any() in schema - cast to proper type
+      const typedMuxMetadata = options?.muxMetadata as MuxFrontendMetadata | undefined;
+      const isCompactionRequest = isCompactionRequestMetadata(typedMuxMetadata);
+
+      const rawModelString = options.model.trim();
+      const rawSystem1Model = options.system1Model?.trim();
+
+      options = this.normalizeGatewaySendOptions(options);
+
+      // Preserve explicit mux-gateway prefixes from legacy clients so backend routing can
+      // honor the opt-in even before muxGatewayModels has synchronized.
+      const modelForStream = rawModelString.startsWith("mux-gateway:")
+        ? rawModelString
+        : options.model;
+      const optionsForStream = rawSystem1Model?.startsWith("mux-gateway:")
+        ? { ...options, system1Model: rawSystem1Model }
+        : options;
+
+      // Defense-in-depth: reject PDFs for models we know don't support them.
+      // (Frontend should also block this, but it's easy to bypass via IPC / older clients.)
+      const effectiveFileParts =
+        preservedEditFileParts && preservedEditFileParts.length > 0
+          ? preservedEditFileParts.map((part) => ({
+              url: part.url,
+              mediaType: part.mediaType,
+              filename: part.filename,
+            }))
+          : fileParts;
+
+      if (effectiveFileParts && effectiveFileParts.length > 0) {
+        const pdfParts = effectiveFileParts.filter(
+          (part) => normalizeMediaType(part.mediaType) === PDF_MEDIA_TYPE
+        );
+
+        if (pdfParts.length > 0) {
+          const caps = getModelCapabilities(options.model);
+
+          if (caps && !caps.supportsPdfInput) {
+            return Err(
+              createUnknownSendMessageError(`Model ${options.model} does not support PDF input.`)
+            );
+          }
+
+          if (caps?.maxPdfSizeMb !== undefined) {
+            const maxBytes = caps.maxPdfSizeMb * 1024 * 1024;
+            for (const part of pdfParts) {
+              const bytes = estimateBase64DataUrlBytes(part.url);
+              if (bytes !== null && bytes > maxBytes) {
+                const actualMb = (bytes / (1024 * 1024)).toFixed(1);
+                const label = part.filename ?? "PDF";
+                return Err(
+                  createUnknownSendMessageError(
+                    `${label} is ${actualMb}MB, but ${options.model} allows up to ${caps.maxPdfSizeMb}MB per PDF.`
+                  )
                 );
               }
-              return {
-                type: "file" as const,
-                url: part.url,
-                mediaType: part.mediaType,
-                filename: part.filename,
-              };
-            })
-          : undefined;
-
-    // toolPolicy is properly typed via Zod schema inference
-    const typedToolPolicy = options?.toolPolicy;
-    // muxMetadata is z.any() in schema - cast to proper type
-    const typedMuxMetadata = options?.muxMetadata as MuxFrontendMetadata | undefined;
-    const isCompactionRequest = isCompactionRequestMetadata(typedMuxMetadata);
-
-    // Validate model BEFORE persisting message to prevent orphaned messages on invalid model
-    if (!options?.model || options.model.trim().length === 0) {
-      return Err(
-        createUnknownSendMessageError("No model specified. Please select a model using /model.")
-      );
-    }
-
-    const rawModelString = options.model.trim();
-    const rawSystem1Model = options.system1Model?.trim();
-
-    options = this.normalizeGatewaySendOptions(options);
-
-    // Preserve explicit mux-gateway prefixes from legacy clients so backend routing can
-    // honor the opt-in even before muxGatewayModels has synchronized.
-    const modelForStream = rawModelString.startsWith("mux-gateway:")
-      ? rawModelString
-      : options.model;
-    const optionsForStream = rawSystem1Model?.startsWith("mux-gateway:")
-      ? { ...options, system1Model: rawSystem1Model }
-      : options;
-
-    // Defense-in-depth: reject PDFs for models we know don't support them.
-    // (Frontend should also block this, but it's easy to bypass via IPC / older clients.)
-    const effectiveFileParts =
-      preservedEditFileParts && preservedEditFileParts.length > 0
-        ? preservedEditFileParts.map((part) => ({
-            url: part.url,
-            mediaType: part.mediaType,
-            filename: part.filename,
-          }))
-        : fileParts;
-
-    if (effectiveFileParts && effectiveFileParts.length > 0) {
-      const pdfParts = effectiveFileParts.filter(
-        (part) => normalizeMediaType(part.mediaType) === PDF_MEDIA_TYPE
-      );
-
-      if (pdfParts.length > 0) {
-        const caps = getModelCapabilities(options.model);
-
-        if (caps && !caps.supportsPdfInput) {
-          return Err(
-            createUnknownSendMessageError(`Model ${options.model} does not support PDF input.`)
-          );
-        }
-
-        if (caps?.maxPdfSizeMb !== undefined) {
-          const maxBytes = caps.maxPdfSizeMb * 1024 * 1024;
-          for (const part of pdfParts) {
-            const bytes = estimateBase64DataUrlBytes(part.url);
-            if (bytes !== null && bytes > maxBytes) {
-              const actualMb = (bytes / (1024 * 1024)).toFixed(1);
-              const label = part.filename ?? "PDF";
-              return Err(
-                createUnknownSendMessageError(
-                  `${label} is ${actualMb}MB, but ${options.model} allows up to ${caps.maxPdfSizeMb}MB per PDF.`
-                )
-              );
             }
           }
         }
       }
-    }
-    // Validate model string format (must be "provider:model-id")
-    if (!isValidModelFormat(options.model)) {
-      return Err({
-        type: "invalid_model_string",
-        message: `Invalid model string format: "${options.model}". Expected "provider:model-id"`,
-      });
-    }
-
-    const userMessage = createMuxMessage(
-      messageId,
-      "user",
-      message,
-      {
-        timestamp: Date.now(),
-        toolPolicy: typedToolPolicy,
-        muxMetadata: typedMuxMetadata, // Pass through frontend metadata as black-box
-        // Auto-resume and other system-generated messages are synthetic + UI-visible
-        ...(internal?.synthetic && { synthetic: true, uiVisible: true }),
-      },
-      additionalParts
-    );
-
-    // Materialize @file mentions from the user message into a snapshot.
-    // This ensures prompt-cache stability: we read files once and persist the content,
-    // so subsequent turns don't re-read (which would change the prompt prefix if files changed).
-    // File changes after this point are surfaced via <system-file-update> diffs instead.
-    const snapshotResult = await this.materializeFileAtMentionsSnapshot(trimmedMessage);
-    let skillSnapshotResult: { snapshotMessage: MuxMessage } | null = null;
-    try {
-      skillSnapshotResult = await this.materializeAgentSkillSnapshot(
-        typedMuxMetadata,
-        options?.disableWorkspaceAgents
-      );
-    } catch (error) {
-      return Err(
-        createUnknownSendMessageError(error instanceof Error ? error.message : String(error))
-      );
-    }
-
-    // Persist snapshots (if any) BEFORE the user message so they precede it in the prompt.
-    // Order matters: @file snapshot first, then agent-skill snapshot.
-    if (snapshotResult?.snapshotMessage) {
-      const snapshotAppendResult = await this.historyService.appendToHistory(
-        this.workspaceId,
-        snapshotResult.snapshotMessage
-      );
-      if (!snapshotAppendResult.success) {
-        return Err(createUnknownSendMessageError(snapshotAppendResult.error));
+      // Validate model string format (must be "provider:model-id")
+      if (!isValidModelFormat(options.model)) {
+        return Err({
+          type: "invalid_model_string",
+          message: `Invalid model string format: "${options.model}". Expected "provider:model-id"`,
+        });
       }
-    }
 
-    if (skillSnapshotResult?.snapshotMessage) {
-      const skillSnapshotAppendResult = await this.historyService.appendToHistory(
-        this.workspaceId,
-        skillSnapshotResult.snapshotMessage
+      const userMessage = createMuxMessage(
+        messageId,
+        "user",
+        message,
+        {
+          timestamp: Date.now(),
+          toolPolicy: typedToolPolicy,
+          muxMetadata: typedMuxMetadata, // Pass through frontend metadata as black-box
+          // Auto-resume and other system-generated messages are synthetic + UI-visible
+          ...(internal?.synthetic && { synthetic: true, uiVisible: true }),
+        },
+        additionalParts
       );
-      if (!skillSnapshotAppendResult.success) {
-        return Err(createUnknownSendMessageError(skillSnapshotAppendResult.error));
+
+      // Materialize @file mentions from the user message into a snapshot.
+      // This ensures prompt-cache stability: we read files once and persist the content,
+      // so subsequent turns don't re-read (which would change the prompt prefix if files changed).
+      // File changes after this point are surfaced via <system-file-update> diffs instead.
+      const snapshotResult = await this.materializeFileAtMentionsSnapshot(trimmedMessage);
+      let skillSnapshotResult: { snapshotMessage: MuxMessage } | null = null;
+      try {
+        skillSnapshotResult = await this.materializeAgentSkillSnapshot(
+          typedMuxMetadata,
+          options?.disableWorkspaceAgents
+        );
+      } catch (error) {
+        return Err(
+          createUnknownSendMessageError(error instanceof Error ? error.message : String(error))
+        );
       }
-    }
 
-    const appendResult = await this.historyService.appendToHistory(this.workspaceId, userMessage);
-    if (!appendResult.success) {
-      // Note: If we get here with snapshots, one or more snapshots may already be persisted but user message
-      // failed. This is a rare edge case (disk full mid-operation). The next edit will clean up
-      // the orphan via the truncation logic that removes preceding snapshots.
-      return Err(createUnknownSendMessageError(appendResult.error));
-    }
+      // Persist snapshots (if any) BEFORE the user message so they precede it in the prompt.
+      // Order matters: @file snapshot first, then agent-skill snapshot.
+      if (snapshotResult?.snapshotMessage) {
+        const snapshotAppendResult = await this.historyService.appendToHistory(
+          this.workspaceId,
+          snapshotResult.snapshotMessage
+        );
+        if (!snapshotAppendResult.success) {
+          return Err(createUnknownSendMessageError(snapshotAppendResult.error));
+        }
+      }
 
-    // Workspace may be tearing down while we await filesystem IO.
-    // If so, skip event emission + streaming to avoid races with dispose().
-    if (this.disposed) {
-      return Ok(undefined);
-    }
+      if (skillSnapshotResult?.snapshotMessage) {
+        const skillSnapshotAppendResult = await this.historyService.appendToHistory(
+          this.workspaceId,
+          skillSnapshotResult.snapshotMessage
+        );
+        if (!skillSnapshotAppendResult.success) {
+          return Err(createUnknownSendMessageError(skillSnapshotAppendResult.error));
+        }
+      }
 
-    // Emit snapshots first (if any), then user message - maintains prompt ordering in UI
-    if (snapshotResult?.snapshotMessage) {
-      this.emitChatEvent({ ...snapshotResult.snapshotMessage, type: "message" });
-    }
+      const appendResult = await this.historyService.appendToHistory(this.workspaceId, userMessage);
+      if (!appendResult.success) {
+        // Note: If we get here with snapshots, one or more snapshots may already be persisted but user message
+        // failed. This is a rare edge case (disk full mid-operation). The next edit will clean up
+        // the orphan via the truncation logic that removes preceding snapshots.
+        return Err(createUnknownSendMessageError(appendResult.error));
+      }
 
-    if (skillSnapshotResult?.snapshotMessage) {
-      this.emitChatEvent({ ...skillSnapshotResult.snapshotMessage, type: "message" });
-    }
+      // Workspace may be tearing down while we await filesystem IO.
+      // If so, skip event emission + streaming to avoid races with dispose().
+      if (this.disposed) {
+        return Ok(undefined);
+      }
 
-    // Add type: "message" for discriminated union (createMuxMessage doesn't add it)
-    this.emitChatEvent({ ...userMessage, type: "message" });
+      // Emit snapshots first (if any), then user message - maintains prompt ordering in UI
+      if (snapshotResult?.snapshotMessage) {
+        this.emitChatEvent({ ...snapshotResult.snapshotMessage, type: "message" });
+      }
 
-    this.streamStarting = true;
+      if (skillSnapshotResult?.snapshotMessage) {
+        this.emitChatEvent({ ...skillSnapshotResult.snapshotMessage, type: "message" });
+      }
 
-    try {
+      // Add type: "message" for discriminated union (createMuxMessage doesn't add it)
+      this.emitChatEvent({ ...userMessage, type: "message" });
+
       // If this is a compaction request, terminate background processes first
       // They won't be included in the summary, so continuing with orphaned processes would be confusing
       if (isCompactionRequest && !this.keepBackgroundProcesses) {
@@ -793,9 +810,6 @@ export class AgentSession {
         return Ok(undefined);
       }
 
-      // Must await here so the finally block runs after streaming completes,
-      // not immediately when the Promise is returned. This keeps streamStarting=true
-      // for the entire duration of streaming, allowing follow-up messages to be queued.
       const result = await this.streamWithHistory(modelForStream, optionsForStream);
       return result;
     } finally {
@@ -1860,7 +1874,30 @@ export class AgentSession {
       this.messageQueue.clear();
       this.emitQueuedMessageChanged();
 
-      void this.sendMessage(message, options);
+      // Fire-and-forget queued dispatch, but still surface failures explicitly so downstream
+      // services (e.g. TaskService) don't have to guess whether a follow-up stream will start.
+      void this.sendMessage(message, options)
+        .then((result) => {
+          if (result.success) {
+            return;
+          }
+
+          const formatted = formatSendMessageError(result.error);
+          this.emitChatEvent({
+            type: "follow-up-dispatch-failed",
+            workspaceId: this.workspaceId,
+            reason: "queued-message",
+            error: formatted.message,
+          });
+        })
+        .catch((error: unknown) => {
+          this.emitChatEvent({
+            type: "follow-up-dispatch-failed",
+            workspaceId: this.workspaceId,
+            reason: "queued-message",
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
     }
   }
 
@@ -1949,7 +1986,16 @@ export class AgentSession {
     // Await sendMessage to ensure the follow-up is persisted before returning.
     // This guarantees ordering: the follow-up message is written to history
     // before sendQueuedMessages() runs, preventing race conditions.
-    await this.sendMessage(finalText, options);
+    const followUpResult = await this.sendMessage(finalText, options);
+    if (!followUpResult.success) {
+      const formatted = formatSendMessageError(followUpResult.error);
+      this.emitChatEvent({
+        type: "follow-up-dispatch-failed",
+        workspaceId: this.workspaceId,
+        reason: "compaction-follow-up",
+        error: formatted.message,
+      });
+    }
   }
 
   /**

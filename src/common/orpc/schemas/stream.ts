@@ -397,6 +397,12 @@ export const RestoreToInputEventSchema = z.object({
   reviews: z.array(ReviewNoteDataSchema).optional(),
 });
 
+export const FollowUpDispatchFailedEventSchema = z.object({
+  type: z.literal("follow-up-dispatch-failed"),
+  workspaceId: z.string(),
+  reason: z.enum(["queued-message", "compaction-follow-up"]),
+  error: z.string(),
+});
 // All streaming events now have a `type` field for O(1) discriminated union lookup.
 // MuxMessages (user/assistant chat messages) are emitted with type: "message"
 // when loading from history or sending new messages.
@@ -426,6 +432,7 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   SessionUsageDeltaEventSchema,
   QueuedMessageChangedEventSchema,
   RestoreToInputEventSchema,
+  FollowUpDispatchFailedEventSchema,
   // Idle compaction notification
   IdleCompactionNeededEventSchema,
   // Runtime status events
