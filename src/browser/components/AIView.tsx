@@ -5,7 +5,6 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
 import { WorkspaceModeAISync } from "@/browser/components/WorkspaceModeAISync";
 import { AgentProvider } from "@/browser/contexts/AgentContext";
-import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsContext";
 import { BackgroundBashProvider } from "@/browser/contexts/BackgroundBashContext";
 import { WorkspaceShell } from "./WorkspaceShell";
 
@@ -21,8 +20,8 @@ interface AIViewProps {
   className?: string;
   /** If set, workspace is incompatible (from newer mux version) and this error should be displayed */
   incompatibleRuntime?: string;
-  /** If 'creating', workspace is still being set up (git operations in progress) */
-  status?: "creating";
+  /** True if workspace is still being initialized (postCreateSetup or initWorkspace running) */
+  isInitializing?: boolean;
 }
 
 /**
@@ -61,13 +60,11 @@ export const AIView: React.FC<AIViewProps> = (props) => {
   return (
     <AgentProvider workspaceId={props.workspaceId} projectPath={props.projectPath}>
       <WorkspaceModeAISync workspaceId={props.workspaceId} />
-      <ProviderOptionsProvider>
-        <ThinkingProvider workspaceId={props.workspaceId}>
-          <BackgroundBashProvider workspaceId={props.workspaceId}>
-            <WorkspaceShell {...props} />
-          </BackgroundBashProvider>
-        </ThinkingProvider>
-      </ProviderOptionsProvider>
+      <ThinkingProvider workspaceId={props.workspaceId}>
+        <BackgroundBashProvider workspaceId={props.workspaceId}>
+          <WorkspaceShell {...props} />
+        </BackgroundBashProvider>
+      </ThinkingProvider>
     </AgentProvider>
   );
 };

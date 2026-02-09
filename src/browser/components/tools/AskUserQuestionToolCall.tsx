@@ -131,7 +131,7 @@ function parsePrefilledAnswer(question: AskUserQuestionQuestion, answer: string)
   return { selected, otherText: otherParts.join(", ") };
 }
 
-function isQuestionAnswered(question: AskUserQuestionQuestion, draft: DraftAnswer): boolean {
+function isQuestionAnswered(_question: AskUserQuestionQuestion, draft: DraftAnswer): boolean {
   if (draft.selected.length === 0) {
     return false;
   }

@@ -19,7 +19,7 @@ describe("buildAutoSelectedTemplateConfig", () => {
       preset: "my-preset",
       existingWorkspace: false,
       template: "template-a",
-      templateOrg: undefined,
+      templateOrg: "default-org",
     });
   });
 

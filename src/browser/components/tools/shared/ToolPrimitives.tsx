@@ -88,6 +88,8 @@ const getStatusColor = (status: string) => {
       return "text-interrupted";
     case "backgrounded":
       return "text-backgrounded";
+    case "redacted":
+      return "text-foreground-secondary";
     default:
       return "text-foreground-secondary";
   }

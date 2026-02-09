@@ -1,6 +1,6 @@
 import { type Tool } from "ai";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
-import assert from "@/common/utils/assert";
+import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createFileReadTool } from "@/node/services/tools/file_read";
 import { createBashTool } from "@/node/services/tools/bash";
 import { createBashOutputTool } from "@/node/services/tools/bash_output";
@@ -117,21 +117,6 @@ function augmentToolDescription(baseTool: Tool, additionalInstructions: string):
   baseToolRecord.description = augmentedDescription;
 
   return baseTool;
-}
-
-function cloneToolPreservingDescriptors(tool: unknown): Tool {
-  assert(tool && typeof tool === "object", "tool must be an object");
-
-  // Clone the tool without invoking getters (important for some dynamic tools).
-  const prototype = Object.getPrototypeOf(tool) as unknown;
-  assert(
-    prototype === null || typeof prototype === "object",
-    "tool prototype must be an object or null"
-  );
-
-  const clone = Object.create(prototype) as object;
-  Object.defineProperties(clone, Object.getOwnPropertyDescriptors(tool));
-  return clone as Tool;
 }
 
 function wrapToolExecuteWithModelOnlyNotifications(

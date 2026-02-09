@@ -4,6 +4,7 @@ import { useRouter } from "./contexts/RouterContext";
 import { useNavigate } from "react-router-dom";
 import "./styles/globals.css";
 import { useWorkspaceContext, toWorkspaceSelection } from "./contexts/WorkspaceContext";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useProjectContext } from "./contexts/ProjectContext";
 import type { WorkspaceSelection } from "./components/ProjectSidebar";
 import { LeftSidebar } from "./components/LeftSidebar";
@@ -72,6 +73,7 @@ import { useFeatureFlags } from "./contexts/FeatureFlagsContext";
 import { UILayoutsProvider, useUILayouts } from "@/browser/contexts/UILayoutsContext";
 import { FeatureFlagsProvider } from "./contexts/FeatureFlagsContext";
 import { ExperimentsProvider } from "./contexts/ExperimentsContext";
+import { ProviderOptionsProvider } from "./contexts/ProviderOptionsContext";
 import { getWorkspaceSidebarKey } from "./utils/workspace";
 import { WindowsToolchainBanner } from "./components/WindowsToolchainBanner";
 import { RosettaBanner } from "./components/RosettaBanner";
@@ -286,6 +288,9 @@ function AppInner() {
       }),
     [projects, workspaceMetadata, workspaceRecency]
   );
+
+  // Pre-compute for the sidebar so it doesn't need WorkspaceMetadataContext
+  const muxChatProjectPath = workspaceMetadata.get(MUX_HELP_CHAT_WORKSPACE_ID)?.projectPath ?? null;
 
   const handleNavigateWorkspace = useCallback(
     (direction: "next" | "prev") => {
@@ -883,6 +888,7 @@ function AppInner() {
           onStartResize={leftSidebar.startResize}
           sortedWorkspacesByProject={sortedWorkspacesByProject}
           workspaceRecency={workspaceRecency}
+          muxChatProjectPath={muxChatProjectPath}
         />
         <div className="mobile-main-content flex min-w-0 flex-1 flex-col overflow-hidden">
           <WindowsToolchainBanner />
@@ -921,7 +927,7 @@ function AppInner() {
                       namedWorkspacePath={workspacePath}
                       runtimeConfig={currentMetadata.runtimeConfig}
                       incompatibleRuntime={currentMetadata.incompatibleRuntime}
-                      status={currentMetadata.status}
+                      isInitializing={currentMetadata.isInitializing === true}
                     />
                   </ErrorBoundary>
                 );
@@ -1050,15 +1056,17 @@ function App() {
         <UILayoutsProvider>
           <TooltipProvider delayDuration={200}>
             <SettingsProvider>
-              <SplashScreenProvider>
-                <TutorialProvider>
-                  <CommandRegistryProvider>
-                    <PowerModeProvider>
-                      <AppInner />
-                    </PowerModeProvider>
-                  </CommandRegistryProvider>
-                </TutorialProvider>
-              </SplashScreenProvider>
+              <ProviderOptionsProvider>
+                <SplashScreenProvider>
+                  <TutorialProvider>
+                    <CommandRegistryProvider>
+                      <PowerModeProvider>
+                        <AppInner />
+                      </PowerModeProvider>
+                    </CommandRegistryProvider>
+                  </TutorialProvider>
+                </SplashScreenProvider>
+              </ProviderOptionsProvider>
             </SettingsProvider>
           </TooltipProvider>
         </UILayoutsProvider>

@@ -115,6 +115,29 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      # Run a second smoke test without npm-shrinkwrap.json to catch dependency
+      # resolution issues that affect `bun x mux@latest` and other tools that
+      # don't respect shrinkwrap. Uses a different port to avoid conflicts.
+      - name: Run smoke test (without shrinkwrap)
+        env:
+          PACKAGE_TARBALL: ${{ steps.find-tarball.outputs.tarball }}
+          SERVER_PORT: 3001
+          SERVER_HOST: localhost
+          STARTUP_TIMEOUT: 30
+          SKIP_SHRINKWRAP: "1"
+        run: |
+          ./scripts/smoke-test.sh
+
+      - name: Upload server logs on no-shrinkwrap smoke test failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: smoke-test-no-shrinkwrap-logs
+          path: |
+            /tmp/mux-smoke-test-*/server.log
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Clean up tarball
         if: always()
         run: rm -f mux-*.tgz

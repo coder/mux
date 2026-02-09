@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { getThinkingPolicyForModel, enforceThinkingPolicy } from "./policy";
+import { getThinkingPolicyForModel, enforceThinkingPolicy, resolveThinkingInput } from "./policy";
 
 describe("getThinkingPolicyForModel", () => {
   test("returns 5 levels including xhigh for gpt-5.1-codex-max", () => {
@@ -169,20 +169,20 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
-  test("returns 5 levels including max for Opus 4.6", () => {
+  test("returns 5 levels including xhigh for Opus 4.6", () => {
     expect(getThinkingPolicyForModel("anthropic:claude-opus-4-6")).toEqual([
       "off",
       "low",
       "medium",
       "high",
-      "max",
+      "xhigh",
     ]);
     expect(getThinkingPolicyForModel("anthropic:claude-opus-4-6-20260201")).toEqual([
       "off",
       "low",
       "medium",
       "high",
-      "max",
+      "xhigh",
     ]);
     // Behind gateway
     expect(getThinkingPolicyForModel("mux-gateway:anthropic/claude-opus-4-6")).toEqual([
@@ -190,7 +190,7 @@ describe("getThinkingPolicyForModel", () => {
       "low",
       "medium",
       "high",
-      "max",
+      "xhigh",
     ]);
   });
 
@@ -293,50 +293,70 @@ describe("enforceThinkingPolicy", () => {
     });
   });
 
-  describe("Opus 4.6 (5 levels including max)", () => {
-    test("allows all 5 levels including max", () => {
+  describe("Opus 4.6 (5 levels including xhigh)", () => {
+    test("allows all 5 levels including xhigh", () => {
       expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "off")).toBe("off");
       expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "low")).toBe("low");
       expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "medium")).toBe("medium");
       expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "high")).toBe("high");
-      expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "max")).toBe("max");
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "xhigh")).toBe("xhigh");
     });
   });
 
-  describe("xhigh fallback for non-codex-max models", () => {
+  describe("xhigh fallback for models without xhigh support", () => {
     test("clamps to highest allowed when xhigh requested on standard model", () => {
-      // Standard models don't support xhigh, so clamp to the highest allowed level.
       expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "xhigh")).toBe("high");
     });
 
     test("falls back to high when xhigh requested on gpt-5-pro", () => {
-      // gpt-5-pro only supports high, so xhigh falls back to high
       expect(enforceThinkingPolicy("openai:gpt-5-pro", "xhigh")).toBe("high");
     });
-  });
 
-  describe("max level enforcement", () => {
-    test("preserves max for Opus 4.6", () => {
-      expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "max")).toBe("max");
-    });
-
-    test("preserves max for gateway Opus 4.6", () => {
-      expect(enforceThinkingPolicy("mux-gateway:anthropic/claude-opus-4-6", "max")).toBe("max");
-    });
-
-    test("clamps max to high for Opus 4.5 (does not support max)", () => {
-      expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "max")).toBe("high");
-    });
-
-    test("clamps max to xhigh for OpenAI models with xhigh support", () => {
-      expect(enforceThinkingPolicy("openai:gpt-5.2", "max")).toBe("xhigh");
-    });
-
-    test("clamps max to high for standard Anthropic models", () => {
-      expect(enforceThinkingPolicy("anthropic:claude-sonnet-4-5", "max")).toBe("high");
+    test("clamps xhigh to high for standard Anthropic models", () => {
+      expect(enforceThinkingPolicy("anthropic:claude-sonnet-4-5", "xhigh")).toBe("high");
     });
   });
 });
 
 // Note: Tests for invalid levels removed - TypeScript type system prevents invalid
 // ThinkingLevel values at compile time, making runtime invalid-level tests unnecessary.
+describe("resolveThinkingInput", () => {
+  test("passes through named levels directly", () => {
+    expect(resolveThinkingInput("off", "anthropic:claude-opus-4-1")).toBe("off");
+    expect(resolveThinkingInput("high", "anthropic:claude-opus-4-1")).toBe("high");
+    expect(resolveThinkingInput("medium", "openai:gpt-5.2-pro")).toBe("medium");
+  });
+
+  test("numeric 0 maps to model's lowest allowed level", () => {
+    // Default models: lowest = "off"
+    expect(resolveThinkingInput(0, "anthropic:claude-opus-4-1")).toBe("off");
+    // gpt-5.2-pro: lowest = "medium"
+    expect(resolveThinkingInput(0, "openai:gpt-5.2-pro")).toBe("medium");
+    // gpt-5-pro: only "high"
+    expect(resolveThinkingInput(0, "openai:gpt-5-pro")).toBe("high");
+    // gemini-3: lowest = "low"
+    expect(resolveThinkingInput(0, "google:gemini-3")).toBe("low");
+  });
+
+  test("numeric indices map through model's sorted allowed levels", () => {
+    // Default: [off, low, medium, high] → 0=off, 1=low, 2=medium, 3=high
+    expect(resolveThinkingInput(0, "anthropic:claude-sonnet-4-5")).toBe("off");
+    expect(resolveThinkingInput(1, "anthropic:claude-sonnet-4-5")).toBe("low");
+    expect(resolveThinkingInput(2, "anthropic:claude-sonnet-4-5")).toBe("medium");
+    expect(resolveThinkingInput(3, "anthropic:claude-sonnet-4-5")).toBe("high");
+
+    // gpt-5.2-pro: [medium, high, xhigh] → 0=medium, 1=high, 2=xhigh
+    expect(resolveThinkingInput(0, "openai:gpt-5.2-pro")).toBe("medium");
+    expect(resolveThinkingInput(1, "openai:gpt-5.2-pro")).toBe("high");
+    expect(resolveThinkingInput(2, "openai:gpt-5.2-pro")).toBe("xhigh");
+  });
+
+  test("out-of-range numeric index clamps to model's highest level", () => {
+    // Default has 4 levels, index 9 clamps to "high"
+    expect(resolveThinkingInput(9, "anthropic:claude-sonnet-4-5")).toBe("high");
+    // gpt-5-pro only has "high", any index clamps to "high"
+    expect(resolveThinkingInput(5, "openai:gpt-5-pro")).toBe("high");
+    // gpt-5.2-pro has 3 levels, index 4 clamps to "xhigh"
+    expect(resolveThinkingInput(4, "openai:gpt-5.2-pro")).toBe("xhigh");
+  });
+});

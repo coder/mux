@@ -1,4 +1,3 @@
-import * as os from "os";
 import * as path from "path";
 import * as fsPromises from "fs/promises";
 import {
@@ -11,18 +10,14 @@ import { getMuxHelpChatProjectPath } from "@/node/constants/muxChat";
 import { createMuxMessage } from "@/common/types/message";
 import { log } from "@/node/services/log";
 import type { Config } from "@/node/config";
-import { AIService } from "@/node/services/aiService";
-import { HistoryService } from "@/node/services/historyService";
-import { PartialService } from "@/node/services/partialService";
-import { InitStateManager } from "@/node/services/initStateManager";
+import { createCoreServices, type CoreServices } from "@/node/services/coreServices";
 import { PTYService } from "@/node/services/ptyService";
 import type { TerminalWindowManager } from "@/desktop/terminalWindowManager";
 import { ProjectService } from "@/node/services/projectService";
-import { WorkspaceService } from "@/node/services/workspaceService";
 import { MuxGatewayOauthService } from "@/node/services/muxGatewayOauthService";
 import { MuxGovernorOauthService } from "@/node/services/muxGovernorOauthService";
-import { ProviderService } from "@/node/services/providerService";
-import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
+import { CodexOauthService } from "@/node/services/codexOauthService";
+import { CopilotOauthService } from "@/node/services/copilotOauthService";
 import { TerminalService } from "@/node/services/terminalService";
 import { EditorService } from "@/node/services/editorService";
 import { WindowService } from "@/node/services/windowService";
@@ -45,14 +40,9 @@ import type {
 import { FeatureFlagService } from "@/node/services/featureFlagService";
 import { SessionTimingService } from "@/node/services/sessionTimingService";
 import { ExperimentsService } from "@/node/services/experimentsService";
-import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
-import { MCPConfigService } from "@/node/services/mcpConfigService";
 import { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
-import { MCPServerManager } from "@/node/services/mcpServerManager";
 import { McpOauthService } from "@/node/services/mcpOauthService";
-import { SessionUsageService } from "@/node/services/sessionUsageService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
-import { TaskService } from "@/node/services/taskService";
 import { getSigningService, type SigningService } from "@/node/services/signingService";
 import { coderService, type CoderService } from "@/node/services/coderService";
 import { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
@@ -62,6 +52,7 @@ import {
 } from "@/node/runtime/coderLifecycleHooks";
 import { setGlobalCoderService } from "@/node/runtime/runtimeFactory";
 import { PolicyService } from "@/node/services/policyService";
+import type { ORPCContext } from "@/node/orpc/context";
 
 const MUX_HELP_CHAT_WELCOME_MESSAGE_ID = "mux-chat-welcome";
 const MUX_HELP_CHAT_WELCOME_MESSAGE = `Hi, I'm Mux.
@@ -87,15 +78,23 @@ Try asking:
  */
 export class ServiceContainer {
   public readonly config: Config;
-  private readonly historyService: HistoryService;
-  private readonly partialService: PartialService;
-  public readonly aiService: AIService;
+  // Core services — instantiated by createCoreServices (shared with `mux run` CLI)
+  private readonly historyService: CoreServices["historyService"];
+  public readonly aiService: CoreServices["aiService"];
+  public readonly workspaceService: CoreServices["workspaceService"];
+  public readonly taskService: CoreServices["taskService"];
+  public readonly providerService: CoreServices["providerService"];
+  public readonly mcpConfigService: CoreServices["mcpConfigService"];
+  public readonly mcpServerManager: CoreServices["mcpServerManager"];
+  public readonly sessionUsageService: CoreServices["sessionUsageService"];
+  private readonly extensionMetadata: CoreServices["extensionMetadata"];
+  private readonly backgroundProcessManager: CoreServices["backgroundProcessManager"];
+  // Desktop-only services
   public readonly projectService: ProjectService;
-  public readonly workspaceService: WorkspaceService;
-  public readonly taskService: TaskService;
-  public readonly providerService: ProviderService;
   public readonly muxGatewayOauthService: MuxGatewayOauthService;
   public readonly muxGovernorOauthService: MuxGovernorOauthService;
+  public readonly codexOauthService: CodexOauthService;
+  public readonly copilotOauthService: CopilotOauthService;
   public readonly terminalService: TerminalService;
   public readonly editorService: EditorService;
   public readonly windowService: WindowService;
@@ -104,72 +103,59 @@ export class ServiceContainer {
   public readonly serverService: ServerService;
   public readonly menuEventService: MenuEventService;
   public readonly voiceService: VoiceService;
-  public readonly mcpConfigService: MCPConfigService;
   public readonly mcpOauthService: McpOauthService;
   public readonly workspaceMcpOverridesService: WorkspaceMcpOverridesService;
-  public readonly mcpServerManager: MCPServerManager;
   public readonly telemetryService: TelemetryService;
   public readonly featureFlagService: FeatureFlagService;
   public readonly sessionTimingService: SessionTimingService;
   public readonly experimentsService: ExperimentsService;
-  public readonly sessionUsageService: SessionUsageService;
   public readonly signingService: SigningService;
   public readonly policyService: PolicyService;
   public readonly coderService: CoderService;
-  private readonly initStateManager: InitStateManager;
-  private readonly extensionMetadata: ExtensionMetadataService;
   private readonly ptyService: PTYService;
-  private readonly backgroundProcessManager: BackgroundProcessManager;
   public readonly idleCompactionService: IdleCompactionService;
 
   constructor(config: Config) {
     this.config = config;
-    this.historyService = new HistoryService(config);
-    this.partialService = new PartialService(config, this.historyService);
-    this.projectService = new ProjectService(config);
-    this.initStateManager = new InitStateManager(config);
+
+    // Cross-cutting services: created first so they can be passed to core
+    // services via constructor params (no setter injection needed).
+    this.policyService = new PolicyService(config);
+    this.telemetryService = new TelemetryService(config.rootDir);
+    this.experimentsService = new ExperimentsService({
+      telemetryService: this.telemetryService,
+      muxHome: config.rootDir,
+    });
+    this.sessionTimingService = new SessionTimingService(config, this.telemetryService);
+
+    // Desktop passes WorkspaceMcpOverridesService explicitly so AIService uses
+    // the persistent config rather than creating a default with an ephemeral one.
     this.workspaceMcpOverridesService = new WorkspaceMcpOverridesService(config);
-    this.mcpConfigService = new MCPConfigService(config);
-    this.extensionMetadata = new ExtensionMetadataService(
-      path.join(config.rootDir, "extensionMetadata.json")
-    );
-    this.backgroundProcessManager = new BackgroundProcessManager(
-      path.join(os.tmpdir(), "mux-bashes")
-    );
-    this.mcpServerManager = new MCPServerManager(this.mcpConfigService);
-    this.sessionUsageService = new SessionUsageService(config, this.historyService);
-    this.providerService = new ProviderService(config);
-    this.aiService = new AIService(
+
+    const core = createCoreServices({
       config,
-      this.historyService,
-      this.partialService,
-      this.initStateManager,
-      this.providerService,
-      this.backgroundProcessManager,
-      this.sessionUsageService,
-      this.workspaceMcpOverridesService
-    );
-    this.aiService.setMCPServerManager(this.mcpServerManager);
-    this.workspaceService = new WorkspaceService(
-      config,
-      this.historyService,
-      this.partialService,
-      this.aiService,
-      this.initStateManager,
-      this.extensionMetadata,
-      this.backgroundProcessManager,
-      this.sessionUsageService
-    );
-    this.workspaceService.setMCPServerManager(this.mcpServerManager);
-    this.taskService = new TaskService(
-      config,
-      this.historyService,
-      this.partialService,
-      this.aiService,
-      this.workspaceService,
-      this.initStateManager
-    );
-    this.aiService.setTaskService(this.taskService);
+      extensionMetadataPath: path.join(config.rootDir, "extensionMetadata.json"),
+      workspaceMcpOverridesService: this.workspaceMcpOverridesService,
+      policyService: this.policyService,
+      telemetryService: this.telemetryService,
+      experimentsService: this.experimentsService,
+      sessionTimingService: this.sessionTimingService,
+    });
+
+    // Spread core services into class fields
+    this.historyService = core.historyService;
+    this.aiService = core.aiService;
+    this.workspaceService = core.workspaceService;
+    this.taskService = core.taskService;
+    this.providerService = core.providerService;
+    this.mcpConfigService = core.mcpConfigService;
+    this.mcpServerManager = core.mcpServerManager;
+    this.sessionUsageService = core.sessionUsageService;
+    this.extensionMetadata = core.extensionMetadata;
+    this.backgroundProcessManager = core.backgroundProcessManager;
+
+    this.projectService = new ProjectService(config);
+
     // Idle compaction service - auto-compacts workspaces after configured idle period
     this.idleCompactionService = new IdleCompactionService(
       config,
@@ -178,10 +164,14 @@ export class ServiceContainer {
       (workspaceId) => this.workspaceService.emitIdleCompactionNeeded(workspaceId)
     );
     this.windowService = new WindowService();
-    this.mcpOauthService = new McpOauthService(config, this.mcpConfigService, this.windowService);
+    this.mcpOauthService = new McpOauthService(
+      config,
+      this.mcpConfigService,
+      this.windowService,
+      this.telemetryService
+    );
     this.mcpServerManager.setMcpOauthService(this.mcpOauthService);
 
-    this.policyService = new PolicyService(config);
     this.muxGatewayOauthService = new MuxGatewayOauthService(
       this.providerService,
       this.windowService
@@ -191,6 +181,13 @@ export class ServiceContainer {
       this.windowService,
       this.policyService
     );
+    this.codexOauthService = new CodexOauthService(
+      config,
+      this.providerService,
+      this.windowService
+    );
+    this.aiService.setCodexOauthService(this.codexOauthService);
+    this.copilotOauthService = new CopilotOauthService(this.providerService, this.windowService);
     // Terminal services - PTYService is cross-platform
     this.ptyService = new PTYService();
     this.terminalService = new TerminalService(config, this.ptyService);
@@ -203,17 +200,7 @@ export class ServiceContainer {
     this.serverService = new ServerService();
     this.menuEventService = new MenuEventService();
     this.voiceService = new VoiceService(config);
-    this.telemetryService = new TelemetryService(config.rootDir);
-    this.mcpOauthService.setTelemetryService(this.telemetryService);
-    this.aiService.setTelemetryService(this.telemetryService);
-    this.workspaceService.setTelemetryService(this.telemetryService);
-    this.experimentsService = new ExperimentsService({
-      telemetryService: this.telemetryService,
-      muxHome: config.rootDir,
-    });
     this.featureFlagService = new FeatureFlagService(config, this.telemetryService);
-    this.sessionTimingService = new SessionTimingService(config, this.telemetryService);
-    this.workspaceService.setSessionTimingService(this.sessionTimingService);
     this.signingService = getSigningService();
     this.coderService = coderService;
 
@@ -233,13 +220,6 @@ export class ServiceContainer {
       })
     );
     this.workspaceService.setWorkspaceLifecycleHooks(workspaceLifecycleHooks);
-
-    // PolicyService is a cross-cutting dependency; use setter injection to avoid
-    // constructor cycles between services.
-    this.providerService.setPolicyService(this.policyService);
-    this.mcpServerManager.setPolicyService(this.policyService);
-    this.aiService.setPolicyService(this.policyService);
-    this.workspaceService.setPolicyService(this.policyService);
 
     // Register globally so all createRuntime calls can create CoderSSHRuntime
     setGlobalCoderService(this.coderService);
@@ -269,7 +249,6 @@ export class ServiceContainer {
     this.aiService.on("stream-abort", (data: StreamAbortEvent) =>
       this.sessionTimingService.handleStreamAbort(data)
     );
-    this.workspaceService.setExperimentsService(this.experimentsService);
   }
 
   async initialize(): Promise<void> {
@@ -382,6 +361,46 @@ export class ServiceContainer {
   }
 
   /**
+   * Build the ORPCContext from this container's services.
+   * Centralizes the ServiceContainer → ORPCContext mapping so callers
+   * (desktop/main.ts, cli/server.ts) don't duplicate a 30-field spread.
+   */
+  toORPCContext(): Omit<ORPCContext, "headers"> {
+    return {
+      config: this.config,
+      aiService: this.aiService,
+      projectService: this.projectService,
+      workspaceService: this.workspaceService,
+      taskService: this.taskService,
+      providerService: this.providerService,
+      muxGatewayOauthService: this.muxGatewayOauthService,
+      muxGovernorOauthService: this.muxGovernorOauthService,
+      codexOauthService: this.codexOauthService,
+      copilotOauthService: this.copilotOauthService,
+      terminalService: this.terminalService,
+      editorService: this.editorService,
+      windowService: this.windowService,
+      updateService: this.updateService,
+      tokenizerService: this.tokenizerService,
+      serverService: this.serverService,
+      menuEventService: this.menuEventService,
+      voiceService: this.voiceService,
+      mcpConfigService: this.mcpConfigService,
+      mcpOauthService: this.mcpOauthService,
+      workspaceMcpOverridesService: this.workspaceMcpOverridesService,
+      mcpServerManager: this.mcpServerManager,
+      featureFlagService: this.featureFlagService,
+      sessionTimingService: this.sessionTimingService,
+      telemetryService: this.telemetryService,
+      experimentsService: this.experimentsService,
+      sessionUsageService: this.sessionUsageService,
+      policyService: this.policyService,
+      signingService: this.signingService,
+      coderService: this.coderService,
+    };
+  }
+
+  /**
    * Shutdown services that need cleanup
    */
   async shutdown(): Promise<void> {
@@ -407,6 +426,9 @@ export class ServiceContainer {
     await this.mcpOauthService.dispose();
     await this.muxGatewayOauthService.dispose();
     await this.muxGovernorOauthService.dispose();
+    await this.codexOauthService.dispose();
+
+    this.copilotOauthService.dispose();
     await this.backgroundProcessManager.terminateAll();
   }
 }

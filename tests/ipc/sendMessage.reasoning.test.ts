@@ -8,7 +8,7 @@
  */
 
 import { shouldRunIntegrationTests, validateApiKeys } from "./setup";
-import { sendMessage, createStreamCollector } from "./helpers";
+import { sendMessage } from "./helpers";
 import {
   createSharedRepo,
   cleanupSharedRepo,

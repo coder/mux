@@ -6,7 +6,7 @@
  * except for the optional final assistant message"
  */
 import { setupWorkspace, shouldRunIntegrationTests, validateApiKeys } from "./setup";
-import { sendMessageWithModel, createStreamCollector, modelString, HAIKU_MODEL } from "./helpers";
+import { sendMessageWithModel, createStreamCollector, HAIKU_MODEL } from "./helpers";
 import { HistoryService } from "../../src/node/services/historyService";
 import { createMuxMessage } from "../../src/common/types/message";
 

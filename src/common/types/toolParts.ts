@@ -6,11 +6,13 @@ import type { z } from "zod";
 import type {
   DynamicToolPartAvailableSchema,
   DynamicToolPartPendingSchema,
+  DynamicToolPartRedactedSchema,
   DynamicToolPartSchema,
 } from "../orpc/schemas";
 
 export type DynamicToolPartAvailable = z.infer<typeof DynamicToolPartAvailableSchema>;
 export type DynamicToolPartPending = z.infer<typeof DynamicToolPartPendingSchema>;
+export type DynamicToolPartRedacted = z.infer<typeof DynamicToolPartRedactedSchema>;
 export type DynamicToolPart = z.infer<typeof DynamicToolPartSchema>;
 
 export function isDynamicToolPart(part: unknown): part is DynamicToolPart {

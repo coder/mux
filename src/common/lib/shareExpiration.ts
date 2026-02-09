@@ -1,7 +1,7 @@
 /**
  * Shared expiration utilities for mux.md share links.
  *
- * Used by both ShareMessagePopover and ShareTranscriptPopover to provide
+ * Used by both ShareMessagePopover and ShareTranscriptDialog to provide
  * consistent expiration controls.
  */
 

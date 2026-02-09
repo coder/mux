@@ -25,7 +25,7 @@ if (shouldRunIntegrationTests()) {
   validateApiKeys(["OPENAI_API_KEY"]);
 }
 
-const OPENAI_MODEL = modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId);
+const OPENAI_MODEL = modelString("openai", KNOWN_MODELS.GPT.providerModelId);
 const DISABLE_TOOLS: ToolPolicy = [{ regex_match: ".*", action: "disable" }];
 
 function createInvalidResponseId(): string {

@@ -14,19 +14,25 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ELECTRON_PATH="$PROJECT_ROOT/node_modules/electron"
 NODE_PTY_PATH="$PROJECT_ROOT/node_modules/node-pty"
 
-# 1) Skip if this is not the mux repo root (installed as a dependency)
+# 1) Skip in headless/benchmark mode (no Electron UI needed)
+if [ "${MUX_HEADLESS:-}" = "1" ]; then
+  echo "🖥️  Headless mode – skipping native rebuild"
+  exit 0
+fi
+
+# 2) Skip if this is not the mux repo root (installed as a dependency)
 if [ "${INIT_CWD:-$PROJECT_ROOT}" != "$PROJECT_ROOT" ]; then
   echo "📦 mux installed as a dependency – skipping native rebuild"
   exit 0
 fi
 
-# 2) Skip if Electron or node-pty aren't installed
+# 3) Skip if Electron or node-pty aren't installed
 if [ ! -d "$ELECTRON_PATH" ] || [ ! -d "$NODE_PTY_PATH" ]; then
   echo "🌐 Server mode detected or Electron/node-pty missing – skipping native rebuild"
   exit 0
 fi
 
-# 3) Build a cache key (Electron version + node-pty version + platform + arch)
+# 4) Build a cache key (Electron version + node-pty version + platform + arch)
 ELECTRON_VERSION="$(
   node -p "require('${ELECTRON_PATH}/package.json').version" 2>/dev/null || echo "unknown"
 )"
@@ -42,7 +48,7 @@ STAMP_FILE="$STAMP_DIR/node-pty-${ELECTRON_VERSION}-${NODE_PTY_VERSION}-${PLATFO
 
 mkdir -p "$STAMP_DIR"
 
-# 4) Skip if we've already rebuilt for this combo
+# 5) Skip if we've already rebuilt for this combo
 if [ -f "$STAMP_FILE" ]; then
   echo "✅ node-pty already rebuilt for Electron ${ELECTRON_VERSION} on ${PLATFORM}/${ARCH} – skipping"
   exit 0
@@ -50,7 +56,7 @@ fi
 
 echo "🔧 Rebuilding node-pty for Electron ${ELECTRON_VERSION} on ${PLATFORM}/${ARCH}..."
 
-# 5) Run rebuild
+# 6) Run rebuild
 if command -v npx >/dev/null 2>&1; then
   npx @electron/rebuild -f -m node_modules/node-pty || {
     echo "⚠️  Failed to rebuild native modules"
@@ -72,6 +78,6 @@ else
   exit 0
 fi
 
-# 6) Mark this combo as done
+# 7) Mark this combo as done
 touch "$STAMP_FILE"
 echo "✅ Native modules rebuilt successfully (cached at $STAMP_FILE)"

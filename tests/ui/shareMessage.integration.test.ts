@@ -10,7 +10,7 @@
 
 import "./dom";
 import { shouldRunIntegrationTests } from "../testUtils";
-import { uploadToMuxMd, deleteFromMuxMd } from "../../src/common/lib/muxMd";
+import { uploadToMuxMd, deleteFromMuxMd, getMuxMdBaseUrl } from "../../src/common/lib/muxMd";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
@@ -113,8 +113,15 @@ HTML entities: &amp; &lt; &gt;
     // Delete should complete without throwing
     await expect(deleteFromMuxMd(result.id, result.mutateKey)).resolves.not.toThrow();
 
-    // Verify the content is no longer accessible (fetch returns 404)
-    const response = await fetch(`https://mux.md/${result.id}`);
+    // Verify the content is no longer accessible (fetch returns 404).
+    // Use getMuxMdBaseUrl() to respect the MUX_MD_URL_OVERRIDE env var,
+    // and consume the response body to avoid leaking the TCP connection
+    // (which causes "worker process has failed to exit gracefully" warnings).
+    const response = await fetch(`${getMuxMdBaseUrl()}/${result.id}`);
+    await response.body?.cancel();
     expect(response.status).toBe(404);
-  }, 30_000);
+    // Higher timeout: this test makes 3 sequential HTTP calls to an external
+    // service (upload → delete → verification fetch). 30s is tight when the
+    // service is slow.
+  }, 60_000);
 });

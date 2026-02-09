@@ -28,10 +28,7 @@ interface InsertOperationFailure {
   note?: string;
 }
 
-interface InsertContentOptions {
-  insert_before?: string;
-  insert_after?: string;
-}
+type InsertContentOptions = Pick<FileEditInsertToolArgs, "insert_before" | "insert_after">;
 
 interface GuardResolutionSuccess {
   success: true;
@@ -147,11 +144,11 @@ function insertContent(
 ): InsertOperationSuccess | InsertOperationFailure {
   const { insert_before, insert_after } = options;
 
-  if (insert_before !== undefined && insert_after !== undefined) {
+  if (insert_before != null && insert_after != null) {
     return guardFailure("Provide only one of insert_before or insert_after (not both).");
   }
 
-  if (insert_before === undefined && insert_after === undefined) {
+  if (insert_before == null && insert_after == null) {
     return guardFailure(
       "Provide either insert_before or insert_after guard when editing existing files."
     );
@@ -215,7 +212,7 @@ function resolveGuardAnchor(
   const fileEol = detectFileEol(originalContent);
 
   // insert_after: content goes after this anchor, so insertion point is at end of anchor
-  if (insert_after !== undefined) {
+  if (insert_after != null) {
     const exactResult = findUniqueSubstringIndex(originalContent, insert_after, "insert_after");
     if (exactResult.success) {
       return { success: true, index: exactResult.index + insert_after.length };
@@ -241,7 +238,7 @@ function resolveGuardAnchor(
   }
 
   // insert_before: content goes before this anchor, so insertion point is at start of anchor
-  if (insert_before !== undefined) {
+  if (insert_before != null) {
     const exactResult = findUniqueSubstringIndex(originalContent, insert_before, "insert_before");
     if (exactResult.success) {
       return { success: true, index: exactResult.index };

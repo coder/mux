@@ -28,7 +28,7 @@ describeIfIntegration("Name generation with real LLM", () => {
   it("generates workspace name and title from user message", async () => {
     const result = await env.orpc.nameGeneration.generate({
       message: "Fix the sidebar layout bug where items overflow on mobile",
-      candidates: ["anthropic:claude-haiku-4-5", "openai:gpt-5.1-codex-mini"],
+      candidates: ["anthropic:claude-haiku-4-5", "openai:gpt-5.2"],
     });
 
     expect(result.success).toBe(true);
@@ -53,7 +53,7 @@ describeIfIntegration("Name generation with real LLM", () => {
   it("handles empty message gracefully", async () => {
     const result = await env.orpc.nameGeneration.generate({
       message: "",
-      candidates: ["anthropic:claude-haiku-4-5", "openai:gpt-5.1-codex-mini"],
+      candidates: ["anthropic:claude-haiku-4-5", "openai:gpt-5.2"],
     });
 
     // Empty message should fail or return minimal result
@@ -66,7 +66,7 @@ describeIfIntegration("Name generation with real LLM", () => {
   }, 30_000);
 
   it("generates different names for different messages", async () => {
-    const candidates = ["anthropic:claude-haiku-4-5", "openai:gpt-5.1-codex-mini"];
+    const candidates = ["anthropic:claude-haiku-4-5", "openai:gpt-5.2"];
     const [result1, result2] = await Promise.all([
       env.orpc.nameGeneration.generate({
         message: "Add user authentication with OAuth",

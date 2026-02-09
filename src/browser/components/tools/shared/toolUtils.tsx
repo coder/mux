@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { AlertTriangle, Check, CircleDot, X } from "lucide-react";
+import { AlertTriangle, Check, CircleDot, EyeOff, X } from "lucide-react";
 import type { ToolErrorResult } from "@/common/types/tools";
 import { LoadingDots } from "./ToolPrimitives";
 
@@ -13,7 +13,8 @@ export type ToolStatus =
   | "completed"
   | "failed"
   | "interrupted"
-  | "backgrounded";
+  | "backgrounded"
+  | "redacted";
 
 /**
  * Hook for managing tool expansion state
@@ -54,6 +55,13 @@ export function getStatusDisplay(status: ToolStatus): React.ReactNode {
         <>
           <AlertTriangle aria-hidden="true" className="mr-1 inline-block h-3 w-3 align-[-2px]" />
           <span className="status-text">interrupted</span>
+        </>
+      );
+    case "redacted":
+      return (
+        <>
+          <EyeOff aria-hidden="true" className="mr-1 inline-block h-3 w-3 align-[-2px]" />
+          <span className="status-text">redacted</span>
         </>
       );
     case "backgrounded":
@@ -123,12 +131,13 @@ export function isFailedToolOutput(output: unknown): boolean {
  * - input-available + running → "executing"
  */
 export function getNestedToolStatus(
-  state: "input-available" | "output-available",
+  state: "input-available" | "output-available" | "output-redacted",
   output: unknown,
   parentInterrupted: boolean
 ): ToolStatus {
   if (state === "output-available") {
     return isFailedToolOutput(output) ? "failed" : "completed";
   }
+  if (state === "output-redacted") return "redacted";
   return parentInterrupted ? "interrupted" : "executing";
 }

@@ -51,6 +51,12 @@ const BASE_SECTIONS: SettingsSection[] = [
     component: ProvidersSection,
   },
   {
+    id: "models",
+    label: "Models",
+    icon: <Cpu className="h-4 w-4" />,
+    component: ModelsSection,
+  },
+  {
     id: "mcp",
     label: "MCP",
     icon: <Server className="h-4 w-4" />,
@@ -61,12 +67,6 @@ const BASE_SECTIONS: SettingsSection[] = [
     label: "Secrets",
     icon: <Lock className="h-4 w-4" />,
     component: SecretsSection,
-  },
-  {
-    id: "models",
-    label: "Models",
-    icon: <Cpu className="h-4 w-4" />,
-    component: ModelsSection,
   },
   {
     id: "layouts",

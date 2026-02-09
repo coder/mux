@@ -13,7 +13,6 @@ const dom = new GlobalWindow();
 import { afterEach, describe, expect, mock, test, beforeEach } from "bun:test";
 
 import { render, cleanup } from "@testing-library/react";
-import React from "react";
 import { ThemeProvider, useTheme } from "./ThemeContext";
 import { UI_THEME_KEY } from "@/common/constants/storage";
 

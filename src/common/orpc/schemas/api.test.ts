@@ -90,6 +90,8 @@ describe("ProviderConfigInfoSchema conformance", () => {
       baseUrl: "https://custom.endpoint.com",
       models: ["claude-3-opus", "claude-3-sonnet"],
       serviceTier: "flex",
+      codexOauthSet: true,
+      codexOauthDefaultAuth: "apiKey",
       aws: {
         region: "ap-northeast-1",
         profile: "my-sso-profile",
@@ -110,6 +112,8 @@ describe("ProviderConfigInfoSchema conformance", () => {
     expect(parsed.baseUrl).toBe(full.baseUrl);
     expect(parsed.models).toEqual(full.models);
     expect(parsed.serviceTier).toBe(full.serviceTier);
+    expect(parsed.codexOauthSet).toBe(full.codexOauthSet);
+    expect(parsed.codexOauthDefaultAuth).toBe(full.codexOauthDefaultAuth);
     expect(parsed.aws).toEqual(full.aws);
     expect(parsed.couponCodeSet).toBe(full.couponCodeSet);
   });
@@ -125,6 +129,8 @@ describe("ProviderConfigInfoSchema conformance", () => {
         apiKeySet: true,
         isConfigured: true,
         serviceTier: "auto",
+        codexOauthSet: true,
+        codexOauthDefaultAuth: "oauth",
       },
       bedrock: {
         apiKeySet: false,

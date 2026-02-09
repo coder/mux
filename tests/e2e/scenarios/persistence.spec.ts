@@ -1,4 +1,4 @@
-import { electronTest as test, electronExpect as expect } from "../electronTest";
+import { electronTest as test } from "../electronTest";
 import { MOCK_LIST_PROGRAMMING_LANGUAGES } from "../mockAiPrompts";
 
 test.skip(

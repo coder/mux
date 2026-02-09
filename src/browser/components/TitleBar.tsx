@@ -254,7 +254,7 @@ export function TitleBar() {
     >
       <div
         className={cn(
-          "mr-4 flex min-w-0",
+          "mr-4 flex min-w-0 flex-1",
           leftInset > 0 ? "flex-col" : "items-center gap-2",
           isDesktop && "titlebar-no-drag"
         )}
@@ -263,7 +263,9 @@ export function TitleBar() {
           <TooltipTrigger asChild>
             <div
               className={cn(
-                "flex items-center gap-1.5",
+                // Keep the version row shrinkable so long git-describe values ellipsize
+                // instead of overlapping the gateway/settings controls.
+                "flex min-w-0 max-w-full items-center gap-1.5",
                 isUpdateActionable ? "cursor-pointer hover:opacity-70" : "cursor-default"
               )}
               onClick={handleUpdateClick}
@@ -271,7 +273,7 @@ export function TitleBar() {
             >
               <div
                 className={cn(
-                  "min-w-0 cursor-text truncate font-normal tracking-wider select-text",
+                  "min-w-0 flex-1 cursor-text truncate font-normal tracking-wider select-text",
                   leftInset > 0 ? "text-[10px]" : "text-xs"
                 )}
               >
@@ -289,7 +291,7 @@ export function TitleBar() {
           </TooltipContent>
         </Tooltip>
       </div>
-      <div className={cn("flex items-center gap-1.5", isDesktop && "titlebar-no-drag")}>
+      <div className={cn("flex shrink-0 items-center gap-1.5", isDesktop && "titlebar-no-drag")}>
         {gateway.isActive && (
           <Tooltip>
             <TooltipTrigger asChild>

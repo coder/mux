@@ -23,7 +23,6 @@ import * as os from "os";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "./setup";
-import type { TestEnvironment } from "./setup";
 import { generateBranchName, cleanupTempGitRepo, waitForInitComplete } from "./helpers";
 import { detectDefaultTrunkBranch } from "../../src/node/git";
 import {

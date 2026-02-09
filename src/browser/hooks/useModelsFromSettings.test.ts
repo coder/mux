@@ -1,11 +1,39 @@
-import { describe, expect, test } from "bun:test";
-import { filterHiddenModels, getSuggestedModels } from "./useModelsFromSettings";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { cleanup, renderHook } from "@testing-library/react";
+import { GlobalWindow } from "happy-dom";
+import {
+  filterHiddenModels,
+  getSuggestedModels,
+  useModelsFromSettings,
+} from "./useModelsFromSettings";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 
 function countOccurrences(haystack: string[], needle: string): number {
   return haystack.filter((v) => v === needle).length;
 }
+
+let providersConfig: ProvidersConfigMap | null = null;
+
+const useProvidersConfigMock = mock(() => ({
+  config: providersConfig,
+  refresh: () => Promise.resolve(),
+}));
+
+void mock.module("@/browser/hooks/useProvidersConfig", () => ({
+  useProvidersConfig: useProvidersConfigMock,
+}));
+
+void mock.module("@/browser/contexts/API", () => ({
+  useAPI: () => ({ api: null }),
+}));
+
+void mock.module("@/browser/contexts/PolicyContext", () => ({
+  usePolicy: () => ({
+    status: { state: "disabled" as const },
+    policy: null,
+  }),
+}));
 
 describe("getSuggestedModels", () => {
   test("returns custom models first, then built-ins (deduped)", () => {
@@ -47,5 +75,65 @@ describe("getSuggestedModels", () => {
 describe("filterHiddenModels", () => {
   test("filters out hidden models", () => {
     expect(filterHiddenModels(["a", "b", "c"], ["b"])).toEqual(["a", "c"]);
+  });
+});
+
+describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
+  beforeEach(() => {
+    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
+    globalThis.document = globalThis.window.document;
+    globalThis.window.localStorage.clear();
+    providersConfig = null;
+  });
+
+  afterEach(() => {
+    cleanup();
+    globalThis.window = undefined as unknown as Window & typeof globalThis;
+    globalThis.document = undefined as unknown as Document;
+  });
+
+  test("codex oauth only: hides API-key-only OpenAI models", () => {
+    providersConfig = {
+      openai: { apiKeySet: false, isConfigured: true, codexOauthSet: true },
+    };
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.models).toContain("openai:gpt-5.2");
+    expect(result.current.models).toContain("openai:gpt-5.1-codex");
+    expect(result.current.models).not.toContain("openai:gpt-5.2-pro");
+  });
+
+  test("api key only: hides Codex OAuth required OpenAI models", () => {
+    providersConfig = {
+      openai: { apiKeySet: true, isConfigured: true, codexOauthSet: false },
+    };
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.models).toContain("openai:gpt-5.2-pro");
+    expect(result.current.models).not.toContain("openai:gpt-5.1-codex");
+  });
+
+  test("api key + codex oauth: allows all OpenAI models", () => {
+    providersConfig = {
+      openai: { apiKeySet: true, isConfigured: true, codexOauthSet: true },
+    };
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.models).toContain("openai:gpt-5.2-pro");
+    expect(result.current.models).toContain("openai:gpt-5.1-codex");
+  });
+
+  test("neither: hides Codex OAuth required OpenAI models (status quo)", () => {
+    providersConfig = {
+      openai: { apiKeySet: false, isConfigured: false, codexOauthSet: false },
+    };
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.models).toContain("openai:gpt-5.2-pro");
+    expect(result.current.models).not.toContain("openai:gpt-5.1-codex");
   });
 });

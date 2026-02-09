@@ -164,6 +164,108 @@ describe("commandParser", () => {
     });
   });
 });
+
+describe("thinking oneshot (/model+level syntax)", () => {
+  it("parses /opus+2 as model + numeric thinking index", () => {
+    expectParse("/opus+2 deep review", {
+      type: "model-oneshot",
+      modelString: KNOWN_MODELS.OPUS.id,
+      thinkingLevel: 2, // Numeric: resolved against model policy at send time
+      message: "deep review",
+    });
+  });
+
+  it("parses /haiku+0 as model with thinking at lowest level", () => {
+    expectParse("/haiku+0 quick answer", {
+      type: "model-oneshot",
+      modelString: KNOWN_MODELS.HAIKU.id,
+      thinkingLevel: 0, // Numeric: resolved to model's lowest allowed level at send time
+      message: "quick answer",
+    });
+  });
+
+  it("parses /sonnet+high with named thinking level", () => {
+    expectParse("/sonnet+high analyze this", {
+      type: "model-oneshot",
+      modelString: KNOWN_MODELS.SONNET.id,
+      thinkingLevel: "high",
+      message: "analyze this",
+    });
+  });
+
+  it("parses /haiku+med with shorthand thinking level", () => {
+    expectParse("/haiku+med fast check", {
+      type: "model-oneshot",
+      modelString: KNOWN_MODELS.HAIKU.id,
+      thinkingLevel: "medium",
+      message: "fast check",
+    });
+  });
+
+  it("parses /+0 as thinking-only override (no model)", () => {
+    expectParse("/+0 quick question", {
+      type: "model-oneshot",
+      thinkingLevel: 0, // Numeric: resolved at send time
+      message: "quick question",
+    });
+  });
+
+  it("parses /+high as thinking-only override with named level", () => {
+    expectParse("/+high deep thought", {
+      type: "model-oneshot",
+      thinkingLevel: "high",
+      message: "deep thought",
+    });
+  });
+
+  it("parses /+4 as thinking-only override (numeric)", () => {
+    expectParse("/+4 analyze deeply", {
+      type: "model-oneshot",
+      thinkingLevel: 4, // Numeric: resolved at send time
+      message: "analyze deeply",
+    });
+  });
+
+  it("returns model-help for /opus+2 without message", () => {
+    expectParse("/opus+2", { type: "model-help" });
+    expectParse("/+0", { type: "model-help" });
+    expectParse("/+high  ", { type: "model-help" });
+  });
+
+  it("returns unknown-command for invalid thinking level", () => {
+    expectParse("/opus+99 do something", {
+      type: "unknown-command",
+      command: "opus+99",
+      subcommand: "do",
+    });
+  });
+
+  it("returns unknown-command for unknown model with +level", () => {
+    expectParse("/xyz+2 do something", {
+      type: "unknown-command",
+      command: "xyz+2",
+      subcommand: "do",
+    });
+  });
+
+  it("returns unknown-command for bare + with no level", () => {
+    expectParse("/haiku+ do something", {
+      type: "unknown-command",
+      command: "haiku+",
+      subcommand: "do",
+    });
+  });
+
+  it("preserves multiline messages with thinking oneshot", () => {
+    expectParse("/opus+high first line\nsecond line", {
+      type: "model-oneshot",
+      modelString: KNOWN_MODELS.OPUS.id,
+      thinkingLevel: "high",
+      message: "first line\nsecond line",
+    });
+  });
+});
+
 it("should preserve start message when no workspace name provided", () => {
   expectParse("/new\nBuild authentication system", {
     type: "new",

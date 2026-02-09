@@ -1,4 +1,3 @@
-import React from "react";
 import type { Toast } from "./ChatInputToast";
 import { SolutionLabel } from "./ChatInputToast";
 import { DocsLink } from "./DocsLink";
@@ -52,6 +51,14 @@ export const createCommandToast = (parsed: ParsedCommand): Toast | null => {
             /haiku explain this code
             <br />
             /opus review my changes
+            <br />
+            <br />
+            <SolutionLabel>With thinking override:</SolutionLabel>
+            /opus+high deep review
+            <br />
+            /haiku+0 quick answer (0=lowest for model)
+            <br />
+            /+2 use current model, thinking level 2
           </>
         ),
       };
@@ -134,6 +141,24 @@ export const createErrorToast = (error: SendMessageErrorType): Toast => {
           <>
             <SolutionLabel>Fix:</SolutionLabel>
             {formatted.resolutionHint ?? "Open Settings → Providers and add an API key."}
+            <br />
+            <DocsLink path="/config/providers">mux.coder.com/providers</DocsLink>
+          </>
+        ),
+      };
+    }
+
+    case "oauth_not_connected": {
+      const formatted = formatSendMessageError(error);
+      return {
+        id: Date.now().toString(),
+        type: "error",
+        title: "OAuth Not Connected",
+        message: `The ${error.provider} provider requires an OAuth connection to function.`,
+        solution: (
+          <>
+            <SolutionLabel>Fix:</SolutionLabel>
+            {formatted.resolutionHint ?? "Open Settings → Providers and connect your account."}
             <br />
             <DocsLink path="/config/providers">mux.coder.com/providers</DocsLink>
           </>

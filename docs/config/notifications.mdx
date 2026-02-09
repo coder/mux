@@ -105,7 +105,7 @@ notify: {
         message: z
           .string()
           .max(200)
-          .optional()
+          .nullish()
           .describe(
             "Optional notification body with more details (max 200 chars). " +
               "Keep it brief - users may only see a preview."

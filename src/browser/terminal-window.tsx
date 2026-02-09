@@ -5,7 +5,6 @@
  * Each window connects to a terminal session via WebSocket.
  */
 
-import React from "react";
 import ReactDOM from "react-dom/client";
 import { TerminalView } from "@/browser/components/TerminalView";
 import { APIProvider, useAPI } from "@/browser/contexts/API";

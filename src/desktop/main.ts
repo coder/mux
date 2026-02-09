@@ -358,11 +358,11 @@ function getTrayIconPath(): string {
 
 function loadTrayIconImage() {
   const iconPath = getTrayIconPath();
-  const icon2xPath = iconPath.replace(/\.png$/, "@2x.png");
 
-  // Try to create an image with both 1x and 2x representations for Retina support.
-  // Electron's nativeImage.createFromPath handles @2x naming conventions on macOS
-  // but only if both files exist. Fall back to single-resolution if 2x is missing.
+  // Tray icons are 24×24 PNGs with cropped viewBox. We manually add @2x and
+  // @3x representations so macOS picks the sharpest variant for the display's
+  // scale factor. Electron auto-detects @2x from the path naming convention
+  // but only when both files exist – and it doesn't look for @3x at all.
   const image = nativeImage.createFromPath(iconPath);
 
   if (image.isEmpty()) {
@@ -370,13 +370,12 @@ function loadTrayIconImage() {
     return null;
   }
 
-  // Add @2x representation if available (for Retina displays)
-  const image2x = nativeImage.createFromPath(icon2xPath);
-  if (!image2x.isEmpty()) {
-    image.addRepresentation({
-      scaleFactor: 2,
-      buffer: image2x.toPNG(),
-    });
+  for (const scaleFactor of [2, 3] as const) {
+    const hqPath = iconPath.replace(/\.png$/, `@${scaleFactor}x.png`);
+    const hqImage = nativeImage.createFromPath(hqPath);
+    if (!hqImage.isEmpty()) {
+      image.addRepresentation({ scaleFactor, buffer: hqImage.toPNG() });
+    }
   }
 
   if (process.platform === "darwin") {
@@ -565,37 +564,7 @@ async function loadServices(): Promise<void> {
     ],
   });
 
-  // Build the oRPC context with all services
-  const orpcContext = {
-    config: services.config,
-    aiService: services.aiService,
-    projectService: services.projectService,
-    workspaceService: services.workspaceService,
-    taskService: services.taskService,
-    muxGatewayOauthService: services.muxGatewayOauthService,
-    muxGovernorOauthService: services.muxGovernorOauthService,
-    providerService: services.providerService,
-    terminalService: services.terminalService,
-    editorService: services.editorService,
-    windowService: services.windowService,
-    updateService: services.updateService,
-    tokenizerService: services.tokenizerService,
-    serverService: services.serverService,
-    featureFlagService: services.featureFlagService,
-    sessionTimingService: services.sessionTimingService,
-    workspaceMcpOverridesService: services.workspaceMcpOverridesService,
-    mcpConfigService: services.mcpConfigService,
-    mcpOauthService: services.mcpOauthService,
-    mcpServerManager: services.mcpServerManager,
-    menuEventService: services.menuEventService,
-    voiceService: services.voiceService,
-    telemetryService: services.telemetryService,
-    experimentsService: services.experimentsService,
-    sessionUsageService: services.sessionUsageService,
-    policyService: services.policyService,
-    signingService: services.signingService,
-    coderService: services.coderService,
-  };
+  const orpcContext = services.toORPCContext();
 
   electronIpcMain.handle("mux:get-is-rosetta", async () => {
     if (process.platform !== "darwin") {

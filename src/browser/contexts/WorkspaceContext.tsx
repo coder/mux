@@ -361,11 +361,22 @@ function findExistingEmptyDraft(
   return null;
 }
 
-export interface WorkspaceContext {
-  // Workspace data
+// ─── Metadata context (changes on every workspace create/archive/rename) ─────
+// Separated so components that only need actions/selection don't re-render on
+// metadata map changes.
+
+export interface WorkspaceMetadataContextValue {
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
   loading: boolean;
+}
 
+const WorkspaceMetadataContext = createContext<WorkspaceMetadataContextValue | undefined>(
+  undefined
+);
+
+// ─── Actions context (stable unless selection/drafts change) ─────────────────
+
+export interface WorkspaceContext extends WorkspaceMetadataContextValue {
   // UI-only draft workspace promotions (draftId -> created workspace).
   // This is intentionally ephemeral: it makes the sidebar feel like the draft
   // "turns into" the created workspace, but doesn't pin ordering permanently.
@@ -431,7 +442,9 @@ export interface WorkspaceContext {
   getWorkspaceInfo: (workspaceId: string) => Promise<FrontendWorkspaceMetadata | null>;
 }
 
-const WorkspaceContext = createContext<WorkspaceContext | undefined>(undefined);
+const WorkspaceActionsContext = createContext<
+  Omit<WorkspaceContext, "workspaceMetadata" | "loading"> | undefined
+>(undefined);
 
 interface WorkspaceProviderProps {
   children: ReactNode;
@@ -997,8 +1010,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
             const updated = new Map(prev);
             const isNewWorkspace = !prev.has(event.workspaceId) && meta !== null;
             const existingMeta = prev.get(event.workspaceId);
-            const wasCreating = existingMeta?.status === "creating";
-            const isNowReady = meta !== null && meta.status !== "creating";
+            const wasInitializing = existingMeta?.isInitializing === true;
+            const isNowReady = meta !== null && meta.isInitializing !== true;
 
             if (meta === null || isNowArchived) {
               // Remove deleted or newly-archived workspaces from active map
@@ -1010,8 +1023,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
             // Reload projects when:
             // 1. New workspace appears (e.g., from fork)
-            // 2. Workspace transitions from "creating" to ready (now saved to config)
-            if (isNewWorkspace || (wasCreating && isNowReady)) {
+            // 2. Workspace transitions from initializing to ready (init completed)
+            if (isNewWorkspace || (wasInitializing && isNowReady)) {
               void refreshProjects();
             }
 
@@ -1144,6 +1157,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           // Clean up workspace-specific localStorage keys
           deleteWorkspaceStorage(workspaceId);
 
+          // Optimistically remove from the local metadata map so the sidebar updates immediately.
+          // Relying on the metadata subscription can leave the item visible until the next refresh.
+          setWorkspaceMetadata((prev) => {
+            const updated = new Map(prev);
+            updated.delete(workspaceId);
+            return updated;
+          });
+
           // Backend has already updated the config - reload projects to get updated state
           await refreshProjects();
 
@@ -1168,7 +1189,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         return { success: false, error: errorMessage };
       }
     },
-    [currentWorkspaceId, navigateToProject, refreshProjects, selectedWorkspace, api]
+    [
+      currentWorkspaceId,
+      navigateToProject,
+      refreshProjects,
+      selectedWorkspace,
+      api,
+      setWorkspaceMetadata,
+    ]
   );
 
   /**
@@ -1450,10 +1478,15 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     [setWorkspaceDraftPromotionsByProject, setWorkspaceDraftsByProjectState]
   );
 
-  const value = useMemo<WorkspaceContext>(
+  // Split into two context values so metadata-Map churn doesn't re-render
+  // components that only need actions/selection/drafts.
+  const metadataValue = useMemo<WorkspaceMetadataContextValue>(
+    () => ({ workspaceMetadata, loading }),
+    [workspaceMetadata, loading]
+  );
+
+  const actionsValue = useMemo(
     () => ({
-      workspaceMetadata,
-      loading,
       createWorkspace,
       removeWorkspace,
       renameWorkspace,
@@ -1477,8 +1510,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       getWorkspaceInfo,
     }),
     [
-      workspaceMetadata,
-      loading,
       createWorkspace,
       removeWorkspace,
       renameWorkspace,
@@ -1503,7 +1534,50 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     ]
   );
 
-  return <WorkspaceContext.Provider value={value}>{props.children}</WorkspaceContext.Provider>;
+  return (
+    <WorkspaceMetadataContext.Provider value={metadataValue}>
+      <WorkspaceActionsContext.Provider value={actionsValue}>
+        {props.children}
+      </WorkspaceActionsContext.Provider>
+    </WorkspaceMetadataContext.Provider>
+  );
+}
+
+/**
+ * Subscribe to workspace metadata only. Use this in components that need the
+ * metadata Map but don't need actions/selection (avoids re-rendering on
+ * selection or draft changes).
+ */
+export function useWorkspaceMetadata(): WorkspaceMetadataContextValue {
+  const context = useContext(WorkspaceMetadataContext);
+  if (!context) {
+    throw new Error("useWorkspaceMetadata must be used within WorkspaceProvider");
+  }
+  return context;
+}
+
+/**
+ * Subscribe to workspace actions/selection/drafts only. This context value is
+ * stable across metadata-Map changes, so sidebar-like components that don't
+ * need the full Map can avoid re-renders.
+ */
+export function useWorkspaceActions(): Omit<WorkspaceContext, "workspaceMetadata" | "loading"> {
+  const context = useContext(WorkspaceActionsContext);
+  if (!context) {
+    throw new Error("useWorkspaceActions must be used within WorkspaceProvider");
+  }
+  return context;
+}
+
+/**
+ * Backward-compatible hook that merges both contexts into the full
+ * WorkspaceContext shape. Subscribes to BOTH metadata and actions contexts,
+ * so it re-renders on any change. Prefer the narrower hooks above when possible.
+ */
+export function useWorkspaceContext(): WorkspaceContext {
+  const metadata = useWorkspaceMetadata();
+  const actions = useWorkspaceActions();
+  return useMemo(() => ({ ...metadata, ...actions }), [metadata, actions]);
 }
 
 /**
@@ -1513,12 +1587,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
  * workspace shell (e.g. VS Code webviews).
  */
 export function useOptionalWorkspaceContext(): WorkspaceContext | null {
-  return useContext(WorkspaceContext) ?? null;
-}
-export function useWorkspaceContext(): WorkspaceContext {
-  const context = useContext(WorkspaceContext);
-  if (!context) {
-    throw new Error("useWorkspaceContext must be used within WorkspaceProvider");
-  }
-  return context;
+  const metadataCtx = useContext(WorkspaceMetadataContext);
+  const actionsCtx = useContext(WorkspaceActionsContext);
+  if (!metadataCtx || !actionsCtx) return null;
+  // eslint-disable-next-line react-hooks/rules-of-hooks -- both arms are stable across renders
+  return useMemo(() => ({ ...metadataCtx, ...actionsCtx }), [metadataCtx, actionsCtx]);
 }

@@ -1,4 +1,3 @@
-import React from "react";
 import { Check, Eye, Info, Pencil, Star, Trash2, X } from "lucide-react";
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { GatewayToggleButton } from "@/browser/components/GatewayToggleButton";
@@ -104,6 +103,55 @@ function ModelTooltipContent(props: {
   );
 }
 
+/**
+ * Inline toggle that slides between the model's base context window and 1M.
+ * Renders as a compact pill: clicking toggles the state, with the active
+ * end highlighted in accent.
+ */
+function ContextWindowSlider(props: {
+  baseTokens: number;
+  enabled: boolean;
+  onToggle: () => void;
+}) {
+  const baseLabel = formatTokenCount(props.baseTokens);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            props.onToggle();
+          }}
+          className="border-border-medium bg-background-tertiary flex items-center gap-px rounded-full border px-0.5 py-px"
+          aria-label={props.enabled ? "Disable 1M context (beta)" : "Enable 1M context (beta)"}
+        >
+          <span
+            className={cn(
+              "rounded-full px-1.5 py-0.5 text-[10px] leading-none font-medium transition-colors",
+              !props.enabled ? "bg-background-secondary text-foreground" : "text-muted"
+            )}
+          >
+            {baseLabel}
+          </span>
+          <span
+            className={cn(
+              "rounded-full px-1.5 py-0.5 font-mono text-[10px] leading-none font-bold transition-colors",
+              props.enabled ? "bg-accent/20 text-accent" : "text-muted"
+            )}
+          >
+            1M
+          </span>
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top">
+        {props.enabled ? "1M context enabled (beta)" : "Enable 1M context (beta)"}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 export interface ModelRowProps {
   provider: string;
   modelId: string;
@@ -118,6 +166,8 @@ export interface ModelRowProps {
   hasActiveEdit?: boolean;
   /** Whether gateway mode is enabled for this model */
   isGatewayEnabled?: boolean;
+  /** Whether 1M context is enabled for this model */
+  is1MContextEnabled?: boolean;
   /** Whether this model is hidden from the selector */
   isHiddenFromSelector?: boolean;
   onSetDefault: () => void;
@@ -128,6 +178,8 @@ export interface ModelRowProps {
   onRemove?: () => void;
   /** Toggle gateway mode for this model */
   onToggleGateway?: () => void;
+  /** Toggle 1M context for this model (only shown when defined, i.e. model supports it) */
+  onToggle1MContext?: () => void;
   /** Toggle visibility in model selector */
   onToggleVisibility?: () => void;
 }
@@ -212,11 +264,19 @@ export function ModelRow(props: ModelRowProps) {
         </div>
       </td>
 
-      {/* Context Window */}
-      <td className="w-16 py-1.5 pr-2 text-right md:w-20">
-        <span className="text-muted text-xs">
-          {stats ? formatTokenCount(stats.max_input_tokens) : "—"}
-        </span>
+      {/* Context Window — inline slider for models that support 1M context */}
+      <td className="w-16 py-1.5 pr-2 md:w-20">
+        {props.onToggle1MContext && stats ? (
+          <ContextWindowSlider
+            baseTokens={stats.max_input_tokens}
+            enabled={props.is1MContextEnabled ?? false}
+            onToggle={props.onToggle1MContext}
+          />
+        ) : (
+          <span className="text-muted block text-right text-xs">
+            {stats ? formatTokenCount(stats.max_input_tokens) : "—"}
+          </span>
+        )}
       </td>
 
       {/* Actions */}

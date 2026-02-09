@@ -188,7 +188,7 @@ async function openWorkspaceMCPModal(canvasElement: HTMLElement): Promise<void> 
   await userEvent.click(mcpButton);
 
   try {
-    await body.findByRole("dialog", {}, { timeout: 5000 });
+    await body.findByRole("dialog");
   } catch {
     const retryButton = await canvas.findByTestId("workspace-mcp-button");
     await userEvent.click(retryButton);
@@ -260,7 +260,8 @@ export const ProjectSettingsAddRemoteServerHeaders: AppStory = {
     const transportContainer = transportLabel.closest("div");
     await expect(transportContainer).not.toBeNull();
 
-    const transportSelect = within(transportContainer as HTMLElement).getByRole("combobox");
+    // Use findByRole (retry-capable) to handle transient DOM gaps between awaits.
+    const transportSelect = await within(transportContainer as HTMLElement).findByRole("combobox");
     await userEvent.click(transportSelect);
 
     const httpOption = await body.findByRole("option", { name: /HTTP \(Streamable\)/i });
@@ -273,10 +274,11 @@ export const ProjectSettingsAddRemoteServerHeaders: AppStory = {
     const addHeaderButton = await body.findByRole("button", { name: /\+ Add header/i });
     await userEvent.click(addHeaderButton);
 
-    const headerNameInputs = body.getAllByPlaceholderText("Authorization");
+    // Use findAllByRole / waitFor to handle transient DOM gaps between awaits.
+    const headerNameInputs = await body.findAllByPlaceholderText("Authorization");
     await userEvent.type(headerNameInputs[0], "Authorization");
 
-    const secretToggles = body.getAllByRole("radio", { name: "Secret" });
+    const secretToggles = await body.findAllByRole("radio", { name: "Secret" });
     await userEvent.click(secretToggles[0]);
 
     await expect(
@@ -688,6 +690,19 @@ export const ToolSelectorInteraction: AppStory = {
 
     // Find the tool selector section
     await dialogWithin.findByText("mux", {}, { timeout: 10000 });
+
+    // Wait for the modal's data loading to fully settle. After loadData()
+    // completes, all tools are allowed by default, so the "All" button is
+    // disabled (allAllowed === true). Checking for this avoids interacting
+    // with DOM elements that may be stale from an earlier render.
+    await waitFor(
+      () => {
+        const allBtn = dialogWithin.queryByRole("button", { name: /^All$/i });
+        if (!allBtn) throw new Error("All button not found — modal still loading");
+        return expect(allBtn).toBeDisabled();
+      },
+      { timeout: 10000 }
+    );
 
     // Click "None" to deselect all tools
     await userEvent.click(

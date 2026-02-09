@@ -217,7 +217,7 @@ export default defineConfig([
     files: ["src/**/*.{ts,tsx}"],
     languageOptions: {
       parserOptions: {
-        project: ["./tsconfig.json"],
+        projectService: true,
         tsconfigRootDir: import.meta.dirname,
       },
       globals: {

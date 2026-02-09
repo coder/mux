@@ -786,12 +786,12 @@ describe("TaskService", () => {
     const { aiService } = createAIServiceMocks(config, {
       isStreaming: mock((workspaceId: string) => workspaceId === reportedTaskId),
     });
-    const { workspaceService, resumeStream } = createWorkspaceServiceMocks();
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
     await taskService.initialize();
 
-    expect(resumeStream).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
 
     const cfg = config.loadConfigOrDefault();
     const queued = Array.from(cfg.projects.values())
@@ -1166,7 +1166,7 @@ describe("TaskService", () => {
     });
 
     const { aiService } = createAIServiceMocks(config);
-    const { workspaceService, resumeStream } = createWorkspaceServiceMocks();
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
     const internal = taskService as unknown as {
@@ -1181,25 +1181,17 @@ describe("TaskService", () => {
       parts: [],
     });
 
-    expect(resumeStream).toHaveBeenCalledTimes(1);
-    expect(resumeStream).toHaveBeenCalledWith(
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
       rootWorkspaceId,
+      expect.stringContaining(childTaskId),
       expect.objectContaining({
         model: "openai:gpt-5.2",
         thinkingLevel: "medium",
-      })
+      }),
+      // Auto-resume skips counter reset
+      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
     );
-
-    const resumeCalls = (resumeStream as unknown as { mock: { calls: unknown[][] } }).mock.calls;
-    const options = resumeCalls[0]?.[1];
-    if (!options || typeof options !== "object") {
-      throw new Error("Expected resumeStream to be called with an options object");
-    }
-
-    const additionalSystemInstructions = (options as { additionalSystemInstructions?: unknown })
-      .additionalSystemInstructions;
-    expect(typeof additionalSystemInstructions).toBe("string");
-    expect(additionalSystemInstructions).toContain(childTaskId);
   });
 
   test("terminateDescendantAgentTask stops stream, removes workspace, and rejects waiters", async () => {
@@ -1341,16 +1333,18 @@ describe("TaskService", () => {
     });
 
     const { aiService } = createAIServiceMocks(config);
-    const { workspaceService, resumeStream } = createWorkspaceServiceMocks();
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
     await taskService.initialize();
 
-    expect(resumeStream).toHaveBeenCalledWith(
+    expect(sendMessage).toHaveBeenCalledWith(
       childId,
+      expect.stringContaining("awaiting its final agent_report"),
       expect.objectContaining({
         toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
-      })
+      }),
+      expect.objectContaining({ synthetic: true })
     );
   });
 
@@ -1834,7 +1828,7 @@ describe("TaskService", () => {
     });
 
     const { aiService, stopStream } = createAIServiceMocks(config);
-    const { workspaceService, resumeStream, remove, emit } = createWorkspaceServiceMocks();
+    const { workspaceService, sendMessage, remove, emit } = createWorkspaceServiceMocks();
     const { historyService, partialService, taskService } = createTaskServiceHarness(config, {
       aiService,
       workspaceService,
@@ -1999,7 +1993,12 @@ describe("TaskService", () => {
     );
 
     expect(remove).toHaveBeenCalled();
-    expect(resumeStream).toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith(
+      parentId,
+      expect.stringContaining("sub-agent task(s) have completed"),
+      expect.any(Object),
+      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
+    );
     expect(emit).toHaveBeenCalled();
   });
 
@@ -2391,7 +2390,11 @@ describe("TaskService", () => {
     });
 
     const { aiService } = createAIServiceMocks(config);
-    const { workspaceService, resumeStream, remove } = createWorkspaceServiceMocks();
+    const {
+      workspaceService,
+      sendMessage: sendMessageMock,
+      remove,
+    } = createWorkspaceServiceMocks();
     const { historyService, partialService, taskService } = createTaskServiceHarness(config, {
       aiService,
       workspaceService,
@@ -2494,7 +2497,12 @@ describe("TaskService", () => {
     }
 
     expect(remove).toHaveBeenCalled();
-    expect(resumeStream).toHaveBeenCalled();
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      parentId,
+      expect.stringContaining("sub-agent task(s) have completed"),
+      expect.any(Object),
+      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
+    );
   });
 
   test("uses agent_report from stream-end parts instead of fallback", async () => {
@@ -2528,7 +2536,7 @@ describe("TaskService", () => {
     });
 
     const { aiService } = createAIServiceMocks(config);
-    const { workspaceService, sendMessage, resumeStream, remove } = createWorkspaceServiceMocks();
+    const { workspaceService, sendMessage, remove } = createWorkspaceServiceMocks();
     const { partialService, taskService } = createTaskServiceHarness(config, {
       aiService,
       workspaceService,
@@ -2578,7 +2586,13 @@ describe("TaskService", () => {
       ],
     });
 
-    expect(sendMessage).not.toHaveBeenCalled();
+    // No "agent_report reminder" sendMessage should fire (the report was in stream-end parts).
+    // The only sendMessage call should be the parent auto-resume after the child reports.
+    const sendCalls = (sendMessage as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    for (const call of sendCalls) {
+      const msg = call[1] as string;
+      expect(msg).not.toContain("agent_report");
+    }
 
     const updatedParentPartial = await partialService.readPartial(parentId);
     expect(updatedParentPartial).not.toBeNull();
@@ -2611,7 +2625,10 @@ describe("TaskService", () => {
     expect(ws?.taskStatus).toBe("reported");
 
     expect(remove).toHaveBeenCalled();
-    expect(resumeStream).toHaveBeenCalled();
+    // sendMessage is called once for the "ended without agent_report" reminder
+    // and NOT for resumeStream (since "second attempt" was already simulated).
+    // The parent auto-resume sendMessage also fires since no active descendants remain.
+    expect(sendMessage).toHaveBeenCalled();
   });
 
   test("does not suppress agent_report reminder due to historical compaction summary", async () => {
@@ -3061,8 +3078,7 @@ describe("TaskService", () => {
     });
 
     const { aiService } = createAIServiceMocks(config);
-    const { workspaceService, sendMessage, resumeStream, remove, emit } =
-      createWorkspaceServiceMocks();
+    const { workspaceService, sendMessage, remove, emit } = createWorkspaceServiceMocks();
     const { historyService, partialService, taskService } = createTaskServiceHarness(config, {
       aiService,
       workspaceService,
@@ -3164,7 +3180,13 @@ describe("TaskService", () => {
     expect(ws?.taskStatus).toBe("reported");
 
     expect(remove).toHaveBeenCalled();
-    expect(resumeStream).toHaveBeenCalled();
+    // Parent auto-resume now uses sendMessage instead of resumeStream
+    expect(sendMessage).toHaveBeenCalledWith(
+      parentId,
+      expect.stringContaining("sub-agent task(s) have completed"),
+      expect.any(Object),
+      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
+    );
   });
 
   test("falls back to default trunk when parent branch does not exist locally", async () => {
@@ -3237,4 +3259,205 @@ describe("TaskService", () => {
     expect(childEntry).toBeTruthy();
     expect(childEntry?.runtimeConfig?.type).toBe("worktree");
   }, 20_000);
+
+  describe("parent auto-resume flood protection", () => {
+    async function setupParentWithActiveChild(rootDirPath: string) {
+      const config = await createTestConfig(rootDirPath);
+      const projectPath = path.join(rootDirPath, "repo");
+      await fsPromises.mkdir(projectPath, { recursive: true });
+
+      const rootWorkspaceId = "root-resume-111";
+      const childTaskId = "child-resume-222";
+
+      await config.saveConfig({
+        projects: new Map([
+          [
+            projectPath,
+            {
+              workspaces: [
+                {
+                  path: path.join(projectPath, "root"),
+                  id: rootWorkspaceId,
+                  name: "root",
+                  aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" as const },
+                },
+                {
+                  path: path.join(projectPath, "child-task"),
+                  id: childTaskId,
+                  name: "child-task",
+                  parentWorkspaceId: rootWorkspaceId,
+                  agentType: "explore",
+                  taskStatus: "running" as const,
+                  taskModelString: "openai:gpt-5.2",
+                },
+              ],
+            },
+          ],
+        ]),
+        taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+      });
+
+      const { aiService } = createAIServiceMocks(config);
+      const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+      const { taskService } = createTaskServiceHarness(config, {
+        aiService,
+        workspaceService,
+      });
+
+      const internal = taskService as unknown as {
+        handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+      };
+
+      const makeStreamEndEvent = (): StreamEndEvent => ({
+        type: "stream-end",
+        workspaceId: rootWorkspaceId,
+        messageId: `assistant-${Date.now()}`,
+        metadata: { model: "openai:gpt-5.2" },
+        parts: [],
+      });
+
+      return {
+        config,
+        taskService,
+        internal,
+        sendMessage,
+        rootWorkspaceId,
+        childTaskId,
+        projectPath,
+        makeStreamEndEvent,
+      };
+    }
+
+    test("stops auto-resuming after MAX_CONSECUTIVE_PARENT_AUTO_RESUMES (3)", async () => {
+      const { internal, sendMessage, makeStreamEndEvent } =
+        await setupParentWithActiveChild(rootDir);
+
+      // First 3 calls should trigger sendMessage (limit is 3)
+      for (let i = 0; i < 3; i++) {
+        await internal.handleStreamEnd(makeStreamEndEvent());
+      }
+      expect(sendMessage).toHaveBeenCalledTimes(3);
+
+      // 4th call should NOT trigger sendMessage (limit exceeded)
+      await internal.handleStreamEnd(makeStreamEndEvent());
+      expect(sendMessage).toHaveBeenCalledTimes(3); // still 3
+    });
+
+    test("resetAutoResumeCount allows more resumes after limit", async () => {
+      const { internal, sendMessage, taskService, rootWorkspaceId, makeStreamEndEvent } =
+        await setupParentWithActiveChild(rootDir);
+
+      // Exhaust the auto-resume limit
+      for (let i = 0; i < 3; i++) {
+        await internal.handleStreamEnd(makeStreamEndEvent());
+      }
+      expect(sendMessage).toHaveBeenCalledTimes(3);
+
+      // Blocked (limit reached)
+      await internal.handleStreamEnd(makeStreamEndEvent());
+      expect(sendMessage).toHaveBeenCalledTimes(3);
+
+      // User sends a message → resets the counter
+      taskService.resetAutoResumeCount(rootWorkspaceId);
+
+      // Now auto-resume should work again
+      await internal.handleStreamEnd(makeStreamEndEvent());
+      expect(sendMessage).toHaveBeenCalledTimes(4);
+    });
+
+    test("counter is per-workspace (different workspaces are independent)", async () => {
+      const config = await createTestConfig(rootDir);
+      const projectPath = path.join(rootDir, "repo");
+      await fsPromises.mkdir(projectPath, { recursive: true });
+
+      const rootA = "root-A";
+      const rootB = "root-B";
+      const childA = "child-A";
+      const childB = "child-B";
+
+      await config.saveConfig({
+        projects: new Map([
+          [
+            projectPath,
+            {
+              workspaces: [
+                {
+                  path: path.join(projectPath, "root-a"),
+                  id: rootA,
+                  name: "root-a",
+                  aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" as const },
+                },
+                {
+                  path: path.join(projectPath, "child-a"),
+                  id: childA,
+                  name: "child-a",
+                  parentWorkspaceId: rootA,
+                  taskStatus: "running" as const,
+                  taskModelString: "openai:gpt-5.2",
+                },
+                {
+                  path: path.join(projectPath, "root-b"),
+                  id: rootB,
+                  name: "root-b",
+                  aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" as const },
+                },
+                {
+                  path: path.join(projectPath, "child-b"),
+                  id: childB,
+                  name: "child-b",
+                  parentWorkspaceId: rootB,
+                  taskStatus: "running" as const,
+                  taskModelString: "openai:gpt-5.2",
+                },
+              ],
+            },
+          ],
+        ]),
+        taskSettings: { maxParallelAgentTasks: 5, maxTaskNestingDepth: 3 },
+      });
+
+      const { aiService } = createAIServiceMocks(config);
+      const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+      const { taskService } = createTaskServiceHarness(config, {
+        aiService,
+        workspaceService,
+      });
+
+      const internal = taskService as unknown as {
+        handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+      };
+
+      // Exhaust limit on workspace A
+      for (let i = 0; i < 3; i++) {
+        await internal.handleStreamEnd({
+          type: "stream-end",
+          workspaceId: rootA,
+          messageId: `a-${i}`,
+          metadata: { model: "openai:gpt-5.2" },
+          parts: [],
+        });
+      }
+      expect(sendMessage).toHaveBeenCalledTimes(3);
+
+      // Workspace A is now blocked
+      await internal.handleStreamEnd({
+        type: "stream-end",
+        workspaceId: rootA,
+        messageId: "a-blocked",
+        metadata: { model: "openai:gpt-5.2" },
+        parts: [],
+      });
+      expect(sendMessage).toHaveBeenCalledTimes(3); // still 3
+
+      // Workspace B should still work (independent counter)
+      await internal.handleStreamEnd({
+        type: "stream-end",
+        workspaceId: rootB,
+        messageId: "b-0",
+        metadata: { model: "openai:gpt-5.2" },
+        parts: [],
+      });
+      expect(sendMessage).toHaveBeenCalledTimes(4); // B worked
+    });
+  });
 });

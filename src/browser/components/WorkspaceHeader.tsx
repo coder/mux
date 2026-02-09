@@ -21,7 +21,7 @@ import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { Button } from "@/browser/components/ui/button";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
-import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
+
 import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
@@ -33,7 +33,7 @@ import {
 } from "@/browser/hooks/useDesktopTitlebar";
 import { DebugLlmRequestModal } from "./DebugLlmRequestModal";
 import { WorkspaceLinks } from "./WorkspaceLinks";
-import { ShareTranscriptPopover } from "./ShareTranscriptPopover";
+
 import { SkillIndicator } from "./SkillIndicator";
 import { useAPI } from "@/browser/contexts/API";
 import { useAgent } from "@/browser/contexts/AgentContext";
@@ -68,7 +68,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const openTerminalPopout = useOpenTerminal();
   const openInEditor = useOpenInEditor();
   const gitStatus = useGitStatus(workspaceId);
-  const { canInterrupt, isStarting, awaitingUserQuestion, loadedSkills } =
+  const { canInterrupt, isStarting, awaitingUserQuestion, loadedSkills, skillLoadErrors } =
     useWorkspaceSidebarState(workspaceId);
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
   const { startSequence: startTutorial } = useTutorial();
@@ -97,9 +97,6 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
 
   // Popover state for notification settings (interactive on click)
   const [notificationPopoverOpen, setNotificationPopoverOpen] = useState(false);
-
-  const linkSharingEnabled = useLinkSharingEnabled();
-  const [shareTranscriptPopoverOpen, setShareTranscriptPopoverOpen] = useState(false);
 
   const handleOpenTerminal = useCallback(() => {
     // On mobile touch devices, always use popout since the right sidebar is hidden
@@ -149,23 +146,6 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [setNotifyOnResponse]);
-
-  // Keybind for opening transcript share popover
-  useEffect(() => {
-    if (linkSharingEnabled !== true) {
-      return;
-    }
-
-    const handler = (e: KeyboardEvent) => {
-      if (matchesKeybind(e, KEYBINDS.SHARE_TRANSCRIPT)) {
-        e.preventDefault();
-        setShareTranscriptPopoverOpen(true);
-      }
-    };
-
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [linkSharingEnabled]);
 
   // Fetch available skills + diagnostics for this workspace
   useEffect(() => {
@@ -262,14 +242,6 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
       </div>
       <div className={cn("flex items-center gap-2", isDesktop && "titlebar-no-drag")}>
         <WorkspaceLinks workspaceId={workspaceId} />
-        {linkSharingEnabled === true && (
-          <ShareTranscriptPopover
-            workspaceId={workspaceId}
-            workspaceName={workspaceName}
-            open={shareTranscriptPopoverOpen}
-            onOpenChange={setShareTranscriptPopoverOpen}
-          />
-        )}
         <Popover open={notificationPopoverOpen} onOpenChange={setNotificationPopoverOpen}>
           <Tooltip {...(notificationPopoverOpen ? { open: false } : {})}>
             <TooltipTrigger asChild>
@@ -377,6 +349,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           loadedSkills={loadedSkills}
           availableSkills={availableSkills}
           invalidSkills={invalidSkills}
+          skillLoadErrors={skillLoadErrors}
         />
         {editorError && <span className="text-danger-soft text-xs">{editorError}</span>}
         <Tooltip>

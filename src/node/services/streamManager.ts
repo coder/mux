@@ -26,6 +26,7 @@ import type {
 
 import type { SendMessageError, StreamErrorType } from "@/common/types/errors";
 import type { MuxMetadata, MuxMessage } from "@/common/types/message";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import type { NestedToolCall } from "@/common/orpc/schemas/message";
 import {
   coerceStreamErrorTypeForMessage,
@@ -145,6 +146,26 @@ function stripEncryptedContent(output: unknown): unknown {
   return output;
 }
 
+function markProviderMetadataCostsIncluded(
+  providerMetadata: Record<string, unknown> | undefined,
+  costsIncluded: boolean | undefined
+): Record<string, unknown> | undefined {
+  if (!costsIncluded) return providerMetadata;
+
+  const muxMetadata = providerMetadata?.mux;
+  const existingMux =
+    muxMetadata && typeof muxMetadata === "object"
+      ? (muxMetadata as Record<string, unknown>)
+      : undefined;
+
+  return {
+    ...(providerMetadata ?? {}),
+    mux: {
+      ...(existingMux ?? {}),
+      costsIncluded: true,
+    },
+  };
+}
 // Comprehensive stream info
 interface WorkspaceStreamInfo {
   state: StreamState;
@@ -162,6 +183,8 @@ interface WorkspaceStreamInfo {
   lastPartTimestamp: number;
 
   model: string;
+  /** Effective thinking level after model policy clamping */
+  thinkingLevel?: string;
   initialMetadata?: Partial<MuxMetadata>;
   request: StreamRequestConfig;
   // Track last prepared step messages for safe retries after tool steps
@@ -327,6 +350,9 @@ export class StreamManager extends EventEmitter {
             ...streamInfo.initialMetadata,
             model: canonicalModel,
             routedThroughGateway,
+            ...(streamInfo.thinkingLevel && {
+              thinkingLevel: streamInfo.thinkingLevel as ThinkingLevel,
+            }),
             partial: true, // Always true - this method only writes partial messages
           },
           parts: streamInfo.parts, // Parts array includes reasoning, text, and tools
@@ -774,7 +800,10 @@ export class StreamManager extends EventEmitter {
     const contextProviderMetadata = streamInfo.lastStepProviderMetadata;
 
     // Include provider metadata for accurate cost calculation
-    const providerMetadata = streamInfo.cumulativeProviderMetadata;
+    const providerMetadata = markProviderMetadataCostsIncluded(
+      streamInfo.cumulativeProviderMetadata,
+      streamInfo.initialMetadata?.costsIncluded
+    );
 
     // Record session usage for aborted streams (mirrors stream-end path)
     // This ensures tokens consumed before abort are tracked for cost display
@@ -975,7 +1004,8 @@ export class StreamManager extends EventEmitter {
     maxOutputTokens?: number,
     toolPolicy?: ToolPolicy,
     hasQueuedMessage?: () => boolean,
-    workspaceName?: string
+    workspaceName?: string,
+    thinkingLevel?: string
   ): WorkspaceStreamInfo {
     // abortController is created and linked to the caller-provided abortSignal in startStream().
 
@@ -1014,6 +1044,7 @@ export class StreamManager extends EventEmitter {
       startTime,
       lastPartTimestamp: startTime,
       model: modelString,
+      thinkingLevel,
       initialMetadata,
       didRetryPreviousResponseIdAtStep: false,
       stepTracker,
@@ -1229,6 +1260,7 @@ export class StreamManager extends EventEmitter {
       startTime: streamInfo.startTime,
       ...(streamStartAgentId && { agentId: streamStartAgentId }),
       ...(streamStartMode && { mode: streamStartMode }),
+      ...(streamInfo.thinkingLevel && { thinkingLevel: streamInfo.thinkingLevel }),
     } as StreamStartEvent);
   }
 
@@ -1622,7 +1654,10 @@ export class StreamManager extends EventEmitter {
               streamMeta.contextProviderMetadata ?? streamInfo.lastStepProviderMetadata;
             const duration = streamMeta.duration;
             // Aggregated provider metadata across all steps (for cost calculation with cache tokens)
-            const providerMetadata = await this.getAggregatedProviderMetadata(streamInfo);
+            const providerMetadata = markProviderMetadataCostsIncluded(
+              await this.getAggregatedProviderMetadata(streamInfo),
+              streamInfo.initialMetadata?.costsIncluded
+            );
             const canonicalModel = normalizeGatewayModel(streamInfo.model);
             const routedThroughGateway =
               streamInfo.initialMetadata?.routedThroughGateway ??
@@ -1637,6 +1672,9 @@ export class StreamManager extends EventEmitter {
                 ...streamInfo.initialMetadata, // AIService-provided metadata (systemMessageTokens, etc)
                 model: canonicalModel,
                 routedThroughGateway,
+                ...(streamInfo.thinkingLevel && {
+                  thinkingLevel: streamInfo.thinkingLevel as ThinkingLevel,
+                }),
                 usage: totalUsage, // Total across all steps (for cost calculation)
                 contextUsage, // Last step only (for context window display)
                 providerMetadata, // Aggregated (for cost calculation)
@@ -1879,6 +1917,9 @@ export class StreamManager extends EventEmitter {
         ...streamInfo.initialMetadata,
         model: canonicalModel,
         routedThroughGateway,
+        ...(streamInfo.thinkingLevel && {
+          thinkingLevel: streamInfo.thinkingLevel as ThinkingLevel,
+        }),
         partial: true,
         error: payload.error,
         errorType: payload.errorType,
@@ -2265,7 +2306,8 @@ export class StreamManager extends EventEmitter {
     toolPolicy?: ToolPolicy,
     providedStreamToken?: StreamToken,
     hasQueuedMessage?: () => boolean,
-    workspaceName?: string
+    workspaceName?: string,
+    thinkingLevel?: string
   ): Promise<Result<StreamToken, SendMessageError>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
@@ -2339,7 +2381,8 @@ export class StreamManager extends EventEmitter {
           maxOutputTokens,
           toolPolicy,
           hasQueuedMessage,
-          workspaceName
+          workspaceName,
+          thinkingLevel
         );
 
         // Guard against a narrow race:

@@ -1,4 +1,3 @@
-import React from "react";
 import { cn } from "@/common/lib/utils";
 import { GatewayIcon } from "./icons/GatewayIcon";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";

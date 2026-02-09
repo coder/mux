@@ -19,7 +19,7 @@ export interface AutoCompactionSettings {
  * @returns Settings object with getters and setters
  */
 export function useAutoCompactionSettings(
-  workspaceId: string,
+  _workspaceId: string,
   model: string | null
 ): AutoCompactionSettings {
   // Use model for threshold key, fall back to "default" if no model

@@ -501,18 +501,15 @@ return results;`,
     await waitForChatMessagesLoaded(canvasElement);
 
     // Find and click the "Show Code" button (CodeIcon)
-    await waitFor(
-      () => {
-        const buttons = canvasElement.querySelectorAll('button[type="button"]');
-        const showCodeBtn = Array.from(buttons).find((btn) => {
-          const svg = btn.querySelector("svg");
-          return svg?.classList.contains("lucide-code");
-        });
-        if (!showCodeBtn) throw new Error("Show Code button not found");
-        return showCodeBtn;
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      const buttons = canvasElement.querySelectorAll('button[type="button"]');
+      const showCodeBtn = Array.from(buttons).find((btn) => {
+        const svg = btn.querySelector("svg");
+        return svg?.classList.contains("lucide-code");
+      });
+      if (!showCodeBtn) throw new Error("Show Code button not found");
+      return showCodeBtn;
+    });
 
     const buttons = canvasElement.querySelectorAll('button[type="button"]');
     const showCodeBtn = Array.from(buttons).find((btn) => {
@@ -523,12 +520,9 @@ return results;`,
     await userEvent.click(showCodeBtn);
 
     // Wait for code view to be displayed (font-mono class should be present)
-    await waitFor(
-      () => {
-        const codeContainer = canvasElement.querySelector(".font-mono");
-        if (!codeContainer) throw new Error("Code view not displayed");
-      },
-      { timeout: 3000 }
-    );
+    await waitFor(() => {
+      const codeContainer = canvasElement.querySelector(".font-mono");
+      if (!codeContainer) throw new Error("Code view not displayed");
+    });
   },
 };

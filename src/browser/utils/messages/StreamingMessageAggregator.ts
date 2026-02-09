@@ -63,6 +63,14 @@ const AgentSkillSnapshotMetadataSchema = z.object({
 /** Re-export for consumers that need the loaded skill type */
 export type LoadedSkill = AgentSkillDescriptor;
 
+/** A runtime skill load failure (agent_skill_read returned { success: false }) */
+export interface SkillLoadError {
+  /** Skill name that was requested */
+  name: string;
+  /** Error message from the backend */
+  error: string;
+}
+
 type AgentStatus = z.infer<typeof AgentStatusSchema>;
 
 /**
@@ -111,6 +119,9 @@ interface StreamingContext {
 
   /** Mode (plan/exec) */
   mode?: string;
+
+  /** Effective thinking level after model policy clamping */
+  thinkingLevel?: string;
 }
 
 /**
@@ -278,6 +289,11 @@ export class StreamingMessageAggregator {
   private loadedSkills = new Map<string, LoadedSkill>();
   // Cached array for getLoadedSkills() to preserve reference identity for memoization
   private loadedSkillsCache: LoadedSkill[] = [];
+
+  // Runtime skill load errors (updated when agent_skill_read fails)
+  // Keyed by skill name; cleared when the skill is later loaded successfully
+  private skillLoadErrors = new Map<string, SkillLoadError>();
+  private skillLoadErrorsCache: SkillLoadError[] = [];
 
   // Last URL set via status_set - kept in memory to reuse when later calls omit url
   private lastStatusUrl: string | undefined = undefined;
@@ -565,6 +581,15 @@ export class StreamingMessageAggregator {
   }
 
   /**
+   * Get runtime skill load errors (agent_skill_read failures).
+   * Errors are cleared for a skill when it later loads successfully.
+   * Returns a stable array reference for memoization.
+   */
+  getSkillLoadErrors(): SkillLoadError[] {
+    return this.skillLoadErrorsCache;
+  }
+
+  /**
    * Check if there's an executing ask_user_question tool awaiting user input.
    * Used to show "Awaiting your input" instead of "streaming..." in the UI.
    */
@@ -789,6 +814,8 @@ export class StreamingMessageAggregator {
     this.activeStreamUsage.clear();
     this.loadedSkills.clear();
     this.loadedSkillsCache = [];
+    this.skillLoadErrors.clear();
+    this.skillLoadErrorsCache = [];
 
     // Add all messages to the map
     for (const message of messages) {
@@ -1155,6 +1182,32 @@ export class StreamingMessageAggregator {
     return undefined;
   }
 
+  /**
+   * Returns the effective thinking level for the current or most recent stream.
+   * This reflects the actual level used after model policy clamping, not the
+   * user-configured level.
+   */
+  getCurrentThinkingLevel(): string | undefined {
+    // If there's an active stream, return its thinking level
+    for (const context of this.activeStreams.values()) {
+      return context.thinkingLevel;
+    }
+
+    // Only check the most recent assistant message to avoid returning
+    // stale values from older turns where settings may have differed.
+    // If it lacks thinkingLevel (e.g. error/abort), return undefined so
+    // callers fall back to localStorage.
+    const messages = this.getAllMessages();
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i];
+      if (message.role === "assistant") {
+        return message.metadata?.thinkingLevel;
+      }
+    }
+
+    return undefined;
+  }
+
   clearActiveStreams(): void {
     const activeMessageIds = Array.from(this.activeStreams.keys());
     this.activeStreams.clear();
@@ -1234,6 +1287,7 @@ export class StreamingMessageAggregator {
       toolExecutionMs: 0,
       pendingToolStarts: new Map(),
       mode: data.mode,
+      thinkingLevel: data.thinkingLevel,
     };
 
     // Use messageId as key - ensures only ONE stream per message
@@ -1247,6 +1301,7 @@ export class StreamingMessageAggregator {
       model: data.model,
       routedThroughGateway: data.routedThroughGateway,
       mode: data.mode,
+      thinkingLevel: data.thinkingLevel,
     });
 
     this.messages.set(data.messageId, streamingMessage);
@@ -1537,6 +1592,25 @@ export class StreamingMessageAggregator {
     this.loadedSkills.set(skill.name, skill);
     // Preserve a stable array reference for getLoadedSkills(): only replace when it changes.
     this.loadedSkillsCache = Array.from(this.loadedSkills.values());
+
+    // A successful load supersedes any previous error for this skill
+    if (this.skillLoadErrors.delete(skill.name)) {
+      this.skillLoadErrorsCache = Array.from(this.skillLoadErrors.values());
+    }
+  }
+
+  private trackSkillLoadError(name: string, error: string): void {
+    const existing = this.skillLoadErrors.get(name);
+    if (existing?.error === error) return;
+
+    this.skillLoadErrors.set(name, { name, error });
+    this.skillLoadErrorsCache = Array.from(this.skillLoadErrors.values());
+
+    // A failed load supersedes any earlier success (skill may have been
+    // edited/deleted since the previous successful read)
+    if (this.loadedSkills.delete(name)) {
+      this.loadedSkillsCache = Array.from(this.loadedSkills.values());
+    }
   }
 
   private maybeTrackLoadedSkillFromAgentSkillSnapshot(snapshot: unknown): void {
@@ -1637,6 +1711,15 @@ export class StreamingMessageAggregator {
         description: skill.frontmatter.description,
         scope: skill.scope,
       });
+    }
+
+    // Track runtime skill load errors when agent_skill_read fails
+    if (toolName === "agent_skill_read" && hasFailureResult(output)) {
+      const args = input as { name?: string } | undefined;
+      const errorResult = output as { error?: string };
+      if (args?.name) {
+        this.trackSkillLoadError(args.name, errorResult.error ?? "Unknown error");
+      }
     }
 
     // Link extraction is derived from message history (see computeLinksFromMessages()).
@@ -2082,10 +2165,12 @@ export class StreamingMessageAggregator {
           });
         } else if (isDynamicToolPart(part)) {
           // Determine status based on part state and result
-          let status: "pending" | "executing" | "completed" | "failed" | "interrupted";
+          let status: "pending" | "executing" | "completed" | "failed" | "interrupted" | "redacted";
           if (part.state === "output-available") {
             // Check if result indicates failure (for tools that return { success: boolean })
             status = hasFailureResult(part.output) ? "failed" : "completed";
+          } else if (part.state === "output-redacted") {
+            status = "redacted";
           } else if (part.state === "input-available") {
             // Most unfinished tool calls in partial messages represent an interruption.
             // ask_user_question is different: it's intentionally waiting on user input,

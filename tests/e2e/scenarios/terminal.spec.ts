@@ -19,7 +19,7 @@ test("terminal tab opens without error", async ({ ui }) => {
   await ui.metaSidebar.expectTerminalFocused();
 });
 
-test("terminal tab handles workspace switching", async ({ ui, page }) => {
+test("terminal tab handles workspace switching", async ({ ui, page: _page }) => {
   await ui.projects.openFirstWorkspace();
 
   // Terminal is not a default tab - click "+" to add one
