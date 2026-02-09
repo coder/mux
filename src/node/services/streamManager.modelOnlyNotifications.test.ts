@@ -206,6 +206,7 @@ describe("StreamManager - model-only tool notifications", () => {
     expect(outputRecord?.type).toBe("json");
 
     expect(Array.isArray(outputRecord?.value)).toBe(true);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- test assertion on dynamic tool output shape
     const firstResult = Array.isArray(outputRecord?.value) ? outputRecord.value[0] : undefined;
     expect(firstResult && typeof firstResult === "object").toBe(true);
     if (!firstResult || typeof firstResult !== "object") {

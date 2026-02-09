@@ -211,7 +211,7 @@ function summarizeToolResultForLog(output: unknown): Record<string, unknown> {
 
   return {
     outputType: typeof output,
-    outputPreview: String(output),
+    outputPreview: JSON.stringify(output),
   };
 }
 
