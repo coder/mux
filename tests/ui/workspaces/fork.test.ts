@@ -1,7 +1,7 @@
 /**
  * Integration tests for workspace forking UX.
  *
- * Regression test: after running `/fork <name>` from a workspace, the newly-created
+ * Regression test: after running `/fork` from a workspace, the newly-created
  * workspace should appear in the sidebar immediately (i.e. without being hidden
  * under an "older" age tier).
  */
@@ -11,7 +11,6 @@ import { waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests } from "../../testUtils";
 import { preloadTestModules } from "../../ipc/setup";
-import { generateBranchName } from "../../ipc/helpers";
 
 import { createAppHarness } from "../harness";
 
@@ -33,8 +32,8 @@ describeIntegration("Workspace Fork (UI)", () => {
       await app.chat.send("Hello from source workspace");
       await app.chat.expectTranscriptContains("Mock response: Hello from source workspace");
 
-      const forkBranch = generateBranchName("ui-fork-child");
-      await app.chat.send(`/fork ${forkBranch}`);
+      // Seamless fork: no name argument needed; backend auto-generates branch name
+      await app.chat.send("/fork");
 
       // Wait for navigation to the forked workspace.
       await waitFor(

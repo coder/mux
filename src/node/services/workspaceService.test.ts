@@ -1881,3 +1881,37 @@ describe("WorkspaceService init cancellation", () => {
     }
   });
 });
+
+// --- Pure helper tests (no mocks needed) ---
+
+import { generateForkBranchName } from "./workspaceService";
+
+describe("generateForkBranchName", () => {
+  test("returns -fork-1 when no existing forks", () => {
+    expect(generateForkBranchName("sidebar-a1b2", [])).toBe("sidebar-a1b2-fork-1");
+  });
+
+  test("increments past the highest existing fork number", () => {
+    expect(
+      generateForkBranchName("sidebar-a1b2", [
+        "sidebar-a1b2-fork-1",
+        "sidebar-a1b2-fork-3",
+        "other-workspace",
+      ])
+    ).toBe("sidebar-a1b2-fork-4");
+  });
+
+  test("ignores non-matching workspace names", () => {
+    expect(
+      generateForkBranchName("feature", ["feature-branch", "feature-impl", "other-fork-1"])
+    ).toBe("feature-fork-1");
+  });
+
+  test("handles gaps in numbering", () => {
+    expect(generateForkBranchName("ws", ["ws-fork-1", "ws-fork-5"])).toBe("ws-fork-6");
+  });
+
+  test("ignores non-numeric suffixes", () => {
+    expect(generateForkBranchName("ws", ["ws-fork-abc", "ws-fork-"])).toBe("ws-fork-1");
+  });
+});

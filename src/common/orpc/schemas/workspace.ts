@@ -78,6 +78,10 @@ export const WorkspaceMetadataSchema = z.object({
   sectionId: z.string().optional().meta({
     description: "ID of the section this workspace belongs to (optional, unsectioned if absent)",
   }),
+  autoName: z.boolean().optional().meta({
+    description:
+      "When true, workspace title is a placeholder and will be auto-generated from the first user message.",
+  }),
 });
 
 export const FrontendWorkspaceMetadataSchema = WorkspaceMetadataSchema.extend({
