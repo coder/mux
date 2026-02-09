@@ -137,14 +137,17 @@ export class HistoryService {
   private static readonly BOUNDARY_NEEDLE = '"compactionBoundary":true';
 
   /**
-   * Scan chat.jsonl in reverse to find the byte offset of the last durable compaction boundary.
-   * Returns `null` when no boundary exists (new/uncompacted workspace or file missing).
+   * Scan chat.jsonl in reverse to find the byte offset of a durable compaction boundary.
+   * Returns `null` when no (matching) boundary exists.
+   *
+   * @param skip How many boundaries to skip before returning. 0 = last boundary,
+   *             1 = second-to-last (penultimate), etc.
    *
    * Byte offsets are computed from raw \n positions in the buffer (not from decoded string
    * lengths) so that chunk boundaries splitting multi-byte UTF-8 sequences don't corrupt
    * the returned offset.
    */
-  private async findLastBoundaryByteOffset(workspaceId: string): Promise<number | null> {
+  private async findLastBoundaryByteOffset(workspaceId: string, skip = 0): Promise<number | null> {
     const filePath = this.getChatHistoryPath(workspaceId);
 
     let fileSize: number;
@@ -163,6 +166,7 @@ export class HistoryService {
       // Kept as Buffer (not string) so multi-byte chars split at chunk boundaries
       // don't corrupt byte offsets via UTF-8 replacement characters.
       let carryoverBytes = Buffer.alloc(0);
+      let skipped = 0;
 
       while (readEnd > 0) {
         const readStart = Math.max(0, readEnd - HistoryService.REVERSE_READ_CHUNK_SIZE);
@@ -208,7 +212,11 @@ export class HistoryService {
             try {
               const msg = JSON.parse(line) as MuxMessage;
               if (isDurableCompactionBoundaryMarker(msg)) {
-                return readStart + lineStart;
+                if (skipped < skip) {
+                  skipped++;
+                } else {
+                  return readStart + lineStart;
+                }
               }
             } catch {
               // Malformed line — not a real boundary, skip
@@ -225,7 +233,13 @@ export class HistoryService {
         if (line.includes(HistoryService.BOUNDARY_NEEDLE)) {
           try {
             const msg = JSON.parse(line) as MuxMessage;
-            if (isDurableCompactionBoundaryMarker(msg)) return 0;
+            if (isDurableCompactionBoundaryMarker(msg)) {
+              if (skipped < skip) {
+                // Not enough boundaries in the file to satisfy skip
+                return null;
+              }
+              return 0;
+            }
           } catch {
             // skip
           }
@@ -629,21 +643,30 @@ export class HistoryService {
   }
 
   /**
-   * Read only messages from the latest compaction boundary onward.
+   * Read messages from a compaction boundary onward.
    * Falls back to full history if no boundary exists (new/uncompacted workspace).
+   *
+   * @param skip How many boundaries to skip (counting from the latest). 0 = read
+   *             from the latest boundary, 1 = from the penultimate, etc. When the
+   *             requested boundary doesn't exist, falls back to the next-available
+   *             boundary, then to full history.
    *
    * Prefer this over iterateFullHistory() for provider-request assembly and any path
    * that only needs the active compaction epoch.
    */
-  async getHistoryFromLatestBoundary(workspaceId: string): Promise<Result<MuxMessage[]>> {
+  async getHistoryFromLatestBoundary(workspaceId: string, skip = 0): Promise<Result<MuxMessage[]>> {
     try {
-      const offset = await this.findLastBoundaryByteOffset(workspaceId);
-      if (offset === null) {
-        // No boundary — workspace is uncompacted, full read is the only option
-        const messages = await this.readChatHistory(workspaceId);
-        return Ok(messages);
+      // Try the requested boundary, falling back to less-skipped boundaries
+      for (let s = skip; s >= 0; s--) {
+        const offset = await this.findLastBoundaryByteOffset(workspaceId, s);
+        if (offset !== null) {
+          const messages = await this.readHistoryFromOffset(workspaceId, offset);
+          return Ok(messages);
+        }
       }
-      const messages = await this.readHistoryFromOffset(workspaceId, offset);
+
+      // No boundaries at all — workspace is uncompacted, full read is the only option
+      const messages = await this.readChatHistory(workspaceId);
       return Ok(messages);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

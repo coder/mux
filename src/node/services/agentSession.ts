@@ -365,12 +365,13 @@ export class AgentSession {
       const partial = await this.partialService.readPartial(this.workspaceId);
       const partialHistorySequence = partial?.metadata?.historySequence;
 
-      // Load chat history from the latest compaction boundary onward.
-      // Pre-boundary messages are not shown to the user — they've been summarized
-      // into the compaction summary message at the boundary.
-      // TODO: allow users to opt in to viewing full pre-boundary history.
+      // Load chat history from the penultimate compaction boundary onward
+      // (skip=1) so the user sees the previous epoch plus the current epoch.
+      // This provides context for what was summarized in the latest compaction.
+      // TODO: support paginated history loading so users can view older epochs on demand.
       const historyResult = await this.historyService.getHistoryFromLatestBoundary(
-        this.workspaceId
+        this.workspaceId,
+        1
       );
       if (historyResult.success) {
         for (const message of historyResult.data) {

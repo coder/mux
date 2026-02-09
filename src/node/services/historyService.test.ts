@@ -897,12 +897,24 @@ describe("HistoryService", () => {
 
       await fs.writeFile(path.join(workspaceDir, "chat.jsonl"), lines.join("\n") + "\n");
 
+      // Default skip=0: reads from the latest boundary
       const result = await service.getHistoryFromLatestBoundary(workspaceId);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data).toHaveLength(2); // epoch-2 boundary + post message
         expect(result.data[0].id).toBe("e2-boundary");
         expect(result.data[1].id).toBe("post-e2");
+      }
+
+      // skip=1: reads from the penultimate boundary
+      const penultimate = await service.getHistoryFromLatestBoundary(workspaceId, 1);
+      expect(penultimate.success).toBe(true);
+      if (penultimate.success) {
+        expect(penultimate.data).toHaveLength(4);
+        expect(penultimate.data[0].id).toBe("e1-boundary");
+        expect(penultimate.data[1].id).toBe("e2-user");
+        expect(penultimate.data[2].id).toBe("e2-boundary");
+        expect(penultimate.data[3].id).toBe("post-e2");
       }
     });
 

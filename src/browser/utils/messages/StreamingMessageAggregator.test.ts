@@ -772,10 +772,10 @@ describe("StreamingMessageAggregator", () => {
       type: "message" as const,
     });
 
-    test("prunes pre-boundary messages when compaction boundary arrives live", () => {
+    test("does not prune on first compaction (no penultimate boundary exists)", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
-      // Simulate messages accumulated during a live session
+      // Simulate messages accumulated during a live session (no prior compaction)
       const msg1 = asChatMessage(
         createMuxMessage("user-1", "user", "First message", {
           historySequence: 0,
@@ -788,24 +788,14 @@ describe("StreamingMessageAggregator", () => {
           timestamp: 2,
         })
       );
-      const msg3 = asChatMessage(
-        createMuxMessage("user-2", "user", "Another message", {
-          historySequence: 2,
-          timestamp: 3,
-        })
-      );
 
       aggregator.handleMessage(msg1);
       aggregator.handleMessage(msg2);
-      aggregator.handleMessage(msg3);
 
-      // All 3 messages visible before compaction completes
-      expect(aggregator.getAllMessages()).toHaveLength(3);
-
-      // Compaction boundary arrives live (backend emits after compaction stream finishes)
+      // First compaction boundary arrives — no penultimate boundary to prune to
       const summary = asChatMessage(
         createMuxMessage("summary-1", "assistant", "Compacted summary", {
-          historySequence: 3,
+          historySequence: 2,
           compacted: "user",
           compactionBoundary: true,
           compactionEpoch: 1,
@@ -814,10 +804,64 @@ describe("StreamingMessageAggregator", () => {
       );
       aggregator.handleMessage(summary);
 
-      // Pre-boundary messages pruned, only boundary message remains
+      // All messages retained (first compaction, no penultimate boundary)
       const remaining = aggregator.getAllMessages();
-      expect(remaining).toHaveLength(1);
-      expect(remaining[0].id).toBe("summary-1");
+      expect(remaining).toHaveLength(3);
+    });
+
+    test("prunes pre-penultimate messages on second compaction", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      // Epoch 0 messages (before any compaction)
+      const epoch0Msg = asChatMessage(
+        createMuxMessage("epoch0-user", "user", "Old message", {
+          historySequence: 0,
+          timestamp: 1,
+        })
+      );
+      aggregator.handleMessage(epoch0Msg);
+
+      // First compaction boundary (epoch 1)
+      const boundary1 = asChatMessage(
+        createMuxMessage("boundary-1", "assistant", "Summary epoch 1", {
+          historySequence: 1,
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 1,
+          muxMetadata: { type: "compaction-summary" },
+        })
+      );
+      aggregator.handleMessage(boundary1);
+
+      // Epoch 1 messages
+      const epoch1Msg = asChatMessage(
+        createMuxMessage("epoch1-user", "user", "Message in epoch 1", {
+          historySequence: 2,
+          timestamp: 3,
+        })
+      );
+      aggregator.handleMessage(epoch1Msg);
+
+      // All 3 messages visible before second compaction
+      expect(aggregator.getAllMessages()).toHaveLength(3);
+
+      // Second compaction boundary (epoch 2) — should prune everything before boundary-1
+      const boundary2 = asChatMessage(
+        createMuxMessage("boundary-2", "assistant", "Summary epoch 2", {
+          historySequence: 3,
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 2,
+          muxMetadata: { type: "compaction-summary" },
+        })
+      );
+      aggregator.handleMessage(boundary2);
+
+      // epoch0-user (seq 0) is before penultimate boundary (seq 1), so it's pruned.
+      // Remaining: boundary-1 (seq 1), epoch1-user (seq 2), boundary-2 (seq 3)
+      const remaining = aggregator.getAllMessages();
+      expect(remaining).toHaveLength(3);
+      expect(remaining.map((m) => m.id)).toEqual(["boundary-1", "epoch1-user", "boundary-2"]);
     });
 
     test("does not prune messages when a non-boundary message arrives", () => {
