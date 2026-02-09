@@ -5,9 +5,8 @@ import type { WorkspaceStore } from "@/browser/stores/WorkspaceStore";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { APIProvider } from "@/browser/contexts/API";
 import { TooltipProvider } from "@/browser/components/ui/tooltip";
+import { addEphemeralMessage } from "@/browser/stores/WorkspaceStore";
 import * as muxMd from "@/common/lib/muxMd";
-import * as transcriptShare from "@/common/utils/messages/transcriptShare";
-import * as ReactDOM from "react-dom";
 import { GlobalWindow } from "happy-dom";
 import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 
@@ -74,15 +73,7 @@ describe("ShareTranscriptDialog", () => {
     originalGetComputedStyle = globalThis.getComputedStyle;
     globalThis.getComputedStyle = globalThis.window.getComputedStyle.bind(globalThis.window);
 
-    spyOn(ReactDOM, "createPortal").mockImplementation(
-      (node) => node as unknown as ReturnType<typeof ReactDOM.createPortal>
-    );
-
     spyOn(console, "error").mockImplementation(() => undefined);
-
-    spyOn(transcriptShare, "buildChatJsonlForSharing").mockReturnValue(
-      '{"role":"user","parts":[]}'
-    );
 
     spyOn(muxMd, "uploadToMuxMd").mockResolvedValue({
       url: "https://mux.md/s/share-1",
@@ -101,6 +92,11 @@ describe("ShareTranscriptDialog", () => {
       namedWorkspacePath: "/tmp/project/workspace-1",
       runtimeConfig: { type: "local" },
       createdAt: new Date().toISOString(),
+    });
+    addEphemeralMessage(TEST_WORKSPACE_ID, {
+      id: "user-message-1",
+      role: "user",
+      parts: [{ type: "text", text: "hello" }],
     });
   });
 
