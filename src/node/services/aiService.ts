@@ -618,6 +618,7 @@ export class AIService extends EventEmitter {
         providerForMessages: canonicalProviderName,
         effectiveThinkingLevel,
         modelString,
+        anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
         workspaceId,
       });
 

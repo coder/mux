@@ -46,6 +46,7 @@ import type { Runtime } from "@/node/runtime/Runtime";
 import {
   createCachedSystemMessage,
   applyCacheControlToTools,
+  type AnthropicCacheTtl,
 } from "@/common/utils/ai/cacheStrategy";
 import type { SessionUsageService } from "./sessionUsageService";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
@@ -101,6 +102,35 @@ interface StreamRequestConfig {
   headers?: Record<string, string | undefined>;
   maxOutputTokens?: number;
   hasQueuedMessage?: () => boolean;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isAnthropicCacheTtl(value: unknown): value is AnthropicCacheTtl {
+  return value === "5m" || value === "1h";
+}
+
+function getAnthropicCacheTtl(
+  providerOptions?: Record<string, unknown>
+): AnthropicCacheTtl | undefined {
+  if (!providerOptions) {
+    return undefined;
+  }
+
+  const anthropicOptions = providerOptions.anthropic;
+  if (!isRecord(anthropicOptions)) {
+    return undefined;
+  }
+
+  const cacheControl = anthropicOptions.cacheControl;
+  if (!isRecord(cacheControl)) {
+    return undefined;
+  }
+
+  const ttl = cacheControl.ttl;
+  return isAnthropicCacheTtl(ttl) ? ttl : undefined;
 }
 
 // Stream state enum for exhaustive checking
@@ -977,9 +1007,10 @@ export class StreamManager extends EventEmitter {
     let finalMessages = messages;
     let finalTools = tools;
     let finalSystem: string | undefined = system;
+    const anthropicCacheTtl = getAnthropicCacheTtl(finalProviderOptions);
 
     // For Anthropic models, convert system message to a cached message at the start
-    const cachedSystemMessage = createCachedSystemMessage(system, modelString);
+    const cachedSystemMessage = createCachedSystemMessage(system, modelString, anthropicCacheTtl);
     if (cachedSystemMessage) {
       // Prepend cached system message and set system parameter to undefined
       // Note: Must be undefined, not empty string, to avoid Anthropic API error
@@ -989,7 +1020,7 @@ export class StreamManager extends EventEmitter {
 
     // Apply cache control to tools for Anthropic models
     if (tools) {
-      finalTools = applyCacheControlToTools(tools, modelString);
+      finalTools = applyCacheControlToTools(tools, modelString, anthropicCacheTtl);
     }
 
     // Use model's max_output_tokens if available and caller didn't specify.
