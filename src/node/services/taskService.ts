@@ -2112,8 +2112,33 @@ export class TaskService {
     }
     // 2. Queued user message: will be sent after stream-end processing.
     if (hadQueuedMessages) {
+      // sendQueuedMessages() clears the queue and fire-and-forgets sendMessage(), so a
+      // validation/persistence failure can drop the queued message with no follow-up stream-end.
+      // In that case, we must still transition the task to awaiting_report.
+      setTimeout(() => {
+        this.verifyQueuedDispatchAfterStreamEnd(workspaceId, event.messageId).catch(
+          (error: unknown) => {
+            log.error("TaskService.verifyQueuedDispatchAfterStreamEnd failed", {
+              workspaceId,
+              error,
+            });
+          }
+        );
+      }, 0);
       return;
     }
+
+    await this.handleMissingAgentReportForStreamEnd(workspaceId, entry);
+  }
+
+  private async handleMissingAgentReportForStreamEnd(
+    workspaceId: string,
+    entry: {
+      projectPath: string;
+      workspace: WorkspaceConfigEntry;
+    }
+  ): Promise<void> {
+    const status = entry.workspace.taskStatus;
 
     // If a task stream ends without agent_report, request it once.
     if (status === "awaiting_report" && this.remindedAwaitingReport.has(workspaceId)) {
@@ -2136,6 +2161,55 @@ export class TaskService {
         toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
       }
     );
+  }
+
+  private async verifyQueuedDispatchAfterStreamEnd(
+    workspaceId: string,
+    streamEndMessageId: string
+  ): Promise<void> {
+    await this.workspaceEventLocks.withLock(workspaceId, async () => {
+      // If a follow-up stream started (or is starting), suppression was correct.
+      if (
+        this.aiService.isStreaming(workspaceId) ||
+        this.workspaceService.isStreamStarting(workspaceId)
+      ) {
+        return;
+      }
+
+      // If the queue is still non-empty, the queued message wasn't drained (user can retry).
+      if (this.workspaceService.hasQueuedMessages(workspaceId)) {
+        return;
+      }
+
+      const cfg = this.config.loadConfigOrDefault();
+      const entry = this.findWorkspaceEntry(cfg, workspaceId);
+      if (!entry?.workspace.parentWorkspaceId) {
+        return;
+      }
+
+      const status = entry.workspace.taskStatus;
+      if (status === "reported") {
+        return;
+      }
+
+      const hasActiveDescendants = this.hasActiveDescendantAgentTasks(cfg, workspaceId);
+      if (hasActiveDescendants) {
+        if (status === "awaiting_report") {
+          await this.setTaskStatus(workspaceId, "running");
+        }
+        return;
+      }
+
+      log.warn(
+        "Queued message dispatch did not start a follow-up stream; requesting agent_report",
+        {
+          workspaceId,
+          streamEndMessageId,
+        }
+      );
+
+      await this.handleMissingAgentReportForStreamEnd(workspaceId, entry);
+    });
   }
 
   /**

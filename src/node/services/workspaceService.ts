@@ -892,6 +892,11 @@ export class WorkspaceService extends EventEmitter {
     return session?.hasQueuedMessages() ?? false;
   }
 
+  public isStreamStarting(workspaceId: string): boolean {
+    const session = this.sessions.get(workspaceId);
+    return session?.isStreamStarting() ?? false;
+  }
+
   public getOrCreateSession(workspaceId: string): AgentSession {
     assert(typeof workspaceId === "string", "workspaceId must be a string");
     const trimmed = workspaceId.trim();

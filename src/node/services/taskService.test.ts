@@ -153,6 +153,7 @@ function createWorkspaceServiceMocks(
       remove,
       emit,
       hasQueuedMessages: mock(() => false),
+      isStreamStarting: mock(() => false),
     } as unknown as WorkspaceService,
     sendMessage,
     resumeStream,
@@ -2872,6 +2873,161 @@ describe("TaskService", () => {
       .flatMap((p) => p.workspaces)
       .find((w) => w.id === childId);
     expect(ws?.taskStatus).toBe("awaiting_report");
+  });
+
+  test("queued dispatch drop triggers agent_report reminder", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child"),
+                id: childId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "running",
+                taskModelString: "openai:gpt-4o-mini",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    let hasQueuedMessages = true;
+    (workspaceService as unknown as { hasQueuedMessages: () => boolean }).hasQueuedMessages = mock(
+      () => hasQueuedMessages
+    );
+
+    (workspaceService as unknown as { isStreamStarting: () => boolean }).isStreamStarting = mock(
+      () => false
+    );
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-output",
+      metadata: { model: "openai:gpt-4o-mini" },
+      parts: [],
+    });
+
+    // Reminder is suppressed immediately because there was a queued message.
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    // Simulate AgentSession draining the queue but failing to start a follow-up stream.
+    hasQueuedMessages = false;
+
+    // Wait for deferred verification to run.
+    const sendCalls = (sendMessage as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    for (let i = 0; i < 25 && sendCalls.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 0));
+    }
+
+    expect(sendMessage).toHaveBeenCalled();
+
+    const postCfg = config.loadConfigOrDefault();
+    const ws = Array.from(postCfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === childId);
+    expect(ws?.taskStatus).toBe("awaiting_report");
+  });
+
+  test("queued dispatch starting keeps agent_report reminder suppressed", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child"),
+                id: childId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "running",
+                taskModelString: "openai:gpt-4o-mini",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    let hasQueuedMessages = true;
+    let streamStarting = false;
+
+    (workspaceService as unknown as { hasQueuedMessages: () => boolean }).hasQueuedMessages = mock(
+      () => hasQueuedMessages
+    );
+
+    (workspaceService as unknown as { isStreamStarting: () => boolean }).isStreamStarting = mock(
+      () => streamStarting
+    );
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-output",
+      metadata: { model: "openai:gpt-4o-mini" },
+      parts: [],
+    });
+
+    // Simulate AgentSession draining the queue and starting a follow-up stream.
+    hasQueuedMessages = false;
+    streamStarting = true;
+
+    // Wait for deferred verification to run.
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    const postCfg = config.loadConfigOrDefault();
+    const ws = Array.from(postCfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === childId);
+    expect(ws?.taskStatus).toBe("running");
   });
 
   test("missing agent_report triggers one reminder, then posts fallback output and cleans up", async () => {
