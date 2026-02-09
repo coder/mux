@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, ExternalLink, Loader2 } from "lucide-react";
+import { Check, ExternalLink, Loader2, Trash2 } from "lucide-react";
 
 import { CopyIcon } from "@/browser/components/icons/CopyIcon";
 import { Button } from "@/browser/components/ui/button";
@@ -25,6 +25,7 @@ import {
 } from "@/browser/hooks/usePersistedState";
 import { SHARE_EXPIRATION_KEY, SHARE_SIGNING_KEY } from "@/common/constants/storage";
 import {
+  deleteFromMuxMd,
   uploadToMuxMd,
   updateMuxMdExpiration,
   type FileInfo,
@@ -39,6 +40,7 @@ import {
 import type { MuxMessage } from "@/common/types/message";
 import { buildChatJsonlForSharing } from "@/common/utils/messages/transcriptShare";
 import type { SigningCapabilities } from "@/common/orpc/schemas";
+import assert from "@/common/utils/assert";
 import { EncryptionBadge, SigningBadge } from "./ShareSigningBadges";
 
 interface ShareTranscriptDialogProps {
@@ -91,6 +93,7 @@ export function ShareTranscriptDialog(props: ShareTranscriptDialogProps) {
   const [shareMutateKey, setShareMutateKey] = useState<string | null>(null);
   const [shareExpiresAt, setShareExpiresAt] = useState<number | undefined>();
   const [isUpdatingExpiration, setIsUpdatingExpiration] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [copied, setCopied] = useState(false);
 
   // Signing capabilities and enabled state (matching per-message sharing)
@@ -104,18 +107,25 @@ export function ShareTranscriptDialog(props: ShareTranscriptDialogProps) {
   // Guards against cross-workspace leakage when users switch workspaces mid-upload.
   const uploadSeqRef = useRef(0);
 
-  useEffect(() => {
-    uploadSeqRef.current += 1;
+  const clearSharedTranscriptState = useCallback(() => {
     setShareUrl(null);
     setShareId(null);
     setShareMutateKey(null);
     setShareExpiresAt(undefined);
-    setError(null);
+    setSigned(false);
     setCopied(false);
+  }, []);
+
+  const isBusy = isUploading || isUpdatingExpiration || isDeleting;
+
+  useEffect(() => {
+    uploadSeqRef.current += 1;
+    clearSharedTranscriptState();
+    setError(null);
     setIsUploading(false);
     setIsUpdatingExpiration(false);
-    setSigned(false);
-  }, [props.workspaceId]);
+    setIsDeleting(false);
+  }, [clearSharedTranscriptState, props.workspaceId]);
 
   // Load signing capabilities when the dialog first opens
   useEffect(() => {
@@ -154,7 +164,7 @@ export function ShareTranscriptDialog(props: ShareTranscriptDialogProps) {
   };
 
   const handleGenerateLink = useCallback(async () => {
-    if (isUploading) {
+    if (isBusy) {
       return;
     }
 
@@ -247,7 +257,7 @@ export function ShareTranscriptDialog(props: ShareTranscriptDialogProps) {
   }, [
     api,
     includeToolOutput,
-    isUploading,
+    isBusy,
     props.workspaceId,
     props.workspaceName,
     signingCapabilities,
@@ -257,7 +267,7 @@ export function ShareTranscriptDialog(props: ShareTranscriptDialogProps) {
   ]);
 
   const handleUpdateExpiration = async (value: ExpirationValue) => {
-    if (!shareId || !shareMutateKey) return;
+    if (!shareId || !shareMutateKey || isBusy) return;
 
     // Capture the current upload sequence so we can discard the result if a new
     // link is generated (workspace switch or re-upload) before this resolves.
@@ -280,6 +290,34 @@ export function ShareTranscriptDialog(props: ShareTranscriptDialogProps) {
       }
     }
   };
+
+  const handleDelete = useCallback(async () => {
+    if (!shareId || !shareMutateKey || isDeleting) {
+      return;
+    }
+
+    const seq = uploadSeqRef.current;
+    assert(shareUrl, "Deleting a shared transcript requires a visible shareUrl");
+
+    setIsDeleting(true);
+    setError(null);
+
+    try {
+      await deleteFromMuxMd(shareId, shareMutateKey);
+      if (uploadSeqRef.current === seq) {
+        clearSharedTranscriptState();
+      }
+    } catch (err) {
+      console.error("Delete transcript share failed:", err);
+      if (uploadSeqRef.current === seq) {
+        setError(err instanceof Error ? err.message : "Failed to delete shared transcript");
+      }
+    } finally {
+      if (uploadSeqRef.current === seq) {
+        setIsDeleting(false);
+      }
+    }
+  }, [clearSharedTranscriptState, isDeleting, shareId, shareMutateKey, shareUrl]);
 
   const handleCopy = useCallback(() => {
     if (!shareUrl) {
@@ -342,7 +380,7 @@ export function ShareTranscriptDialog(props: ShareTranscriptDialogProps) {
 
           <Button
             onClick={() => void handleGenerateLink()}
-            disabled={isUploading}
+            disabled={isBusy}
             className="h-7 w-full text-xs"
           >
             {isUploading ? (
@@ -375,6 +413,7 @@ export function ShareTranscriptDialog(props: ShareTranscriptDialogProps) {
                       className="text-muted hover:bg-muted/50 hover:text-foreground shrink-0 rounded p-1 transition-colors"
                       aria-label="Copy to clipboard"
                       data-testid="copy-share-transcript-url"
+                      disabled={isBusy}
                     >
                       {copied ? (
                         <Check className="h-3.5 w-3.5 text-green-500" />
@@ -392,12 +431,33 @@ export function ShareTranscriptDialog(props: ShareTranscriptDialogProps) {
                       className="text-muted hover:bg-muted/50 hover:text-foreground shrink-0 rounded p-1 transition-colors"
                       aria-label="Open in browser"
                       data-testid="open-share-transcript-url"
+                      disabled={isBusy}
                     >
                       <ExternalLink className="h-3.5 w-3.5" />
                     </button>
                   </TooltipTrigger>
                   <TooltipContent>Open</TooltipContent>
                 </Tooltip>
+                {shareMutateKey && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => void handleDelete()}
+                        className="text-muted hover:bg-destructive/10 hover:text-destructive rounded p-1 transition-colors"
+                        aria-label="Delete shared transcript link"
+                        data-testid="delete-share-transcript-url"
+                        disabled={isBusy}
+                      >
+                        {isDeleting ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>Delete</TooltipContent>
+                  </Tooltip>
+                )}
               </div>
 
               {/* Expiration control */}
@@ -406,7 +466,7 @@ export function ShareTranscriptDialog(props: ShareTranscriptDialogProps) {
                 <Select
                   value={timestampToExpiration(shareExpiresAt)}
                   onValueChange={(v) => void handleUpdateExpiration(v as ExpirationValue)}
-                  disabled={isUploading || isUpdatingExpiration}
+                  disabled={isBusy}
                 >
                   <SelectTrigger className="h-6 flex-1 text-[10px]">
                     <SelectValue />
