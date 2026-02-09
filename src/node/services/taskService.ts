@@ -2165,10 +2165,16 @@ export class TaskService {
     // until the follow-up stream ends and StreamManager updates history with final parts.
     //
     // Only treat the follow-up as "incoming" until we see an assistant message *after*
-    // the summary with output parts.
+    // the summary that represents a completed stream.
+    //
+    // StreamManager updates chat.jsonl on stream completion even when `parts` is empty,
+    // so `metadata.duration` is a reliable completion marker for empty-output follow-ups.
     for (let i = summaryIndex + 1; i < historyResult.data.length; i++) {
       const msg = historyResult.data[i];
-      if (msg.role === "assistant" && msg.parts.length > 0) {
+      if (
+        msg.role === "assistant" &&
+        (msg.parts.length > 0 || msg.metadata?.duration !== undefined)
+      ) {
         return false;
       }
     }

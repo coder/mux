@@ -1650,36 +1650,40 @@ export class StreamManager extends EventEmitter {
             // This prevents a race condition where compaction (triggered by stream-end)
             // clears history while updateHistory is still running, causing old messages
             // to be written back after compaction completes.
-            if (streamInfo.parts && streamInfo.parts.length > 0) {
-              const finalAssistantMessage: MuxMessage = {
-                id: streamInfo.messageId,
-                role: "assistant",
-                metadata: {
-                  ...streamEndEvent.metadata,
-                  historySequence: streamInfo.historySequence,
-                },
-                parts: streamInfo.parts,
-              };
+            //
+            // IMPORTANT: This must happen even if the stream produced no output parts.
+            // Otherwise, an empty assistant placeholder in chat.jsonl is ambiguous:
+            // it could be an in-progress stream, a successfully completed empty response,
+            // or a crash. Persisting stream-end metadata + deleting partial.json makes
+            // completion durable and restart-safe.
+            const finalAssistantMessage: MuxMessage = {
+              id: streamInfo.messageId,
+              role: "assistant",
+              metadata: {
+                ...streamEndEvent.metadata,
+                historySequence: streamInfo.historySequence,
+              },
+              parts: streamInfo.parts,
+            };
 
-              // CRITICAL: Delete partial.json before updating chat.jsonl
-              // On successful completion, partial.json becomes stale and must be removed
-              await this.partialService.deletePartial(workspaceId as string);
+            // CRITICAL: Delete partial.json before updating chat.jsonl
+            // On successful completion, partial.json becomes stale and must be removed
+            await this.partialService.deletePartial(workspaceId as string);
 
-              // Update the placeholder message in chat.jsonl with final content
-              await this.historyService.updateHistory(workspaceId as string, finalAssistantMessage);
+            // Update the placeholder message in chat.jsonl with final content / metadata
+            await this.historyService.updateHistory(workspaceId as string, finalAssistantMessage);
 
-              // Update cumulative session usage (if service is available)
-              // Wrapped in try-catch: usage recording is non-critical and shouldn't block stream completion
-              await this.recordSessionUsage(
-                workspaceId,
-                streamInfo.model,
-                totalUsage,
-                providerMetadata,
-                "Failed to record session usage (stream completion unaffected)",
-                "warn",
-                streamInfo
-              );
-            }
+            // Update cumulative session usage (if service is available)
+            // Wrapped in try-catch: usage recording is non-critical and shouldn't block stream completion
+            await this.recordSessionUsage(
+              workspaceId,
+              streamInfo.model,
+              totalUsage,
+              providerMetadata,
+              "Failed to record session usage (stream completion unaffected)",
+              "warn",
+              streamInfo
+            );
 
             // Mark as completed right before emitting stream-end.
             // This must happen AFTER async I/O (deletePartial, updateHistory) completes.
