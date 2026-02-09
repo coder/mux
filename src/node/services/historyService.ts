@@ -376,6 +376,7 @@ export class HistoryService {
       return Err(`Failed to read history: ${message}`);
     }
   }
+
   /**
    * Read only messages from the latest compaction boundary onward.
    * Falls back to full history if no boundary exists (new/uncompacted workspace).

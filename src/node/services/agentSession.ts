@@ -2050,7 +2050,7 @@ export class AgentSession {
    */
   private async generatePostCompactionAttachments(): Promise<PostCompactionAttachment[]> {
     // getHistoryFromLatestBoundary already returns only the active compaction epoch,
-    // so the downstream sliceMessagesFromLatestCompactionBoundary is a no-op identity.
+    // so no further boundary slicing is needed.
     const historyResult = await this.historyService.getHistoryFromLatestBoundary(this.workspaceId);
     if (!historyResult.success) {
       return [];

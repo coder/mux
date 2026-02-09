@@ -2132,7 +2132,7 @@ export class TaskService {
     }
 
     // Only need recent messages to find last assistant text — avoid full-file read.
-    // readLastMessages already returns messages in chronological order.
+    // getLastMessages returns messages in chronological order.
     const historyResult = await this.historyService.getLastMessages(workspaceId, 20);
     if (!historyResult.success) {
       log.error("Failed to read history for fallback report", {
@@ -2452,7 +2452,7 @@ export class TaskService {
     }
 
     // Only need recent messages to find agent_report — avoid full-file read.
-    // readLastMessages returns chronological order; scan in reverse for newest-first.
+    // getLastMessages returns chronological order; scan in reverse for newest-first.
     const historyResult = await this.historyService.getLastMessages(workspaceId, 20);
     if (!historyResult.success) {
       log.error("Failed to read history for agent_report args", {
