@@ -1976,11 +1976,28 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         muxMetadata = reviewMetadata;
 
         const effectiveModel = modelOverride ?? compactionOptions.model ?? sendMessageOptions.model;
+        // For one-shot overrides, store the original input as rawCommand so the
+        // command prefix (e.g., "/opus+high") stays visible in the user message.
+        const oneshotCommandPrefix = modelOneShot
+          ? messageText
+              .trim()
+              .slice(0, messageText.trim().length - modelOneShot.message.length)
+              .trimEnd()
+          : undefined;
         muxMetadata = muxMetadata
-          ? { ...muxMetadata, requestedModel: effectiveModel }
+          ? {
+              ...muxMetadata,
+              requestedModel: effectiveModel,
+              ...(oneshotCommandPrefix
+                ? { rawCommand: messageText.trim(), commandPrefix: oneshotCommandPrefix }
+                : {}),
+            }
           : {
               type: "normal",
               requestedModel: effectiveModel,
+              ...(oneshotCommandPrefix
+                ? { rawCommand: messageText.trim(), commandPrefix: oneshotCommandPrefix }
+                : {}),
             };
 
         // Capture review IDs before clearing (for marking as checked on success)
