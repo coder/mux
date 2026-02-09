@@ -7,19 +7,16 @@ interface CompactionBoundaryMessageProps {
   className?: string;
 }
 
-export const CompactionBoundaryMessage: React.FC<CompactionBoundaryMessageProps> = ({
-  message,
-  className,
-}) => {
+export const CompactionBoundaryMessage: React.FC<CompactionBoundaryMessageProps> = (props) => {
   const epochLabel =
-    typeof message.compactionEpoch === "number" ? ` #${message.compactionEpoch}` : "";
+    typeof props.message.compactionEpoch === "number" ? ` #${props.message.compactionEpoch}` : "";
   const label = `Compaction boundary${epochLabel}`;
 
   return (
     <div
       className={cn(
         "my-4 flex items-center gap-3 text-[11px] uppercase tracking-[0.08em]",
-        className
+        props.className
       )}
       data-testid="compaction-boundary"
       role="separator"
