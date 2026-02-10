@@ -255,8 +255,7 @@ export function TitleBar() {
       <div
         className={cn(
           "mr-4 flex min-w-0 flex-1",
-          leftInset > 0 ? "flex-col" : "items-center gap-2",
-          isDesktop && "titlebar-no-drag"
+          leftInset > 0 ? "flex-col" : "items-center gap-2"
         )}
       >
         <Tooltip>
@@ -266,7 +265,8 @@ export function TitleBar() {
                 // Keep the version row shrinkable so long git-describe values ellipsize
                 // instead of overlapping the gateway/settings controls.
                 "flex min-w-0 max-w-full items-center gap-1.5",
-                isUpdateActionable ? "cursor-pointer hover:opacity-70" : "cursor-default"
+                isUpdateActionable ? "cursor-pointer hover:opacity-70" : "cursor-default",
+                isDesktop && "titlebar-no-drag"
               )}
               onClick={handleUpdateClick}
               onMouseEnter={handleIndicatorHover}
