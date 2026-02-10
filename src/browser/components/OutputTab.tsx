@@ -1,4 +1,4 @@
-import React from "react";
+import { type UIEvent, useEffect, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { useAPI } from "@/browser/contexts/API";
 import { isAbortError } from "@/browser/utils/isAbortError";
@@ -27,13 +27,13 @@ interface OutputTabProps {
 export function OutputTab(_props: OutputTabProps) {
   const { api } = useAPI();
 
-  const [entries, setEntries] = React.useState<LogEntry[]>([]);
-  const [levelFilter, setLevelFilter] = React.useState<LogLevel>("info");
-  const [autoScroll, setAutoScroll] = React.useState(true);
+  const [entries, setEntries] = useState<LogEntry[]>([]);
+  const [levelFilter, setLevelFilter] = useState<LogLevel>("info");
+  const [autoScroll, setAutoScroll] = useState(true);
 
-  const scrollRef = React.useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (!api) return;
 
     const controller = new AbortController();
@@ -73,13 +73,13 @@ export function OutputTab(_props: OutputTabProps) {
   }, [api, levelFilter]);
 
   // Auto-scroll on new entries when the user is at the bottom.
-  React.useEffect(() => {
+  useEffect(() => {
     if (!autoScroll) return;
     if (!scrollRef.current) return;
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [entries, autoScroll]);
 
-  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+  const handleScroll = (e: UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 20;
     setAutoScroll(isAtBottom);
