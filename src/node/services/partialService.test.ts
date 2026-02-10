@@ -2,7 +2,7 @@
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { PartialService } from "./partialService";
 import type { HistoryService } from "./historyService";
-import { Config } from "@/node/config";
+import type { Config } from "@/node/config";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import { Ok } from "@/common/types/result";
 import { createTestHistoryService } from "./testHistoryService";
@@ -60,7 +60,7 @@ describe("PartialService - Error Recovery", () => {
 
     // Should have called appendToHistory with cleaned metadata (no error/errorType)
     expect(appendSpy).toHaveBeenCalledTimes(1);
-    const appendedMessage = appendSpy.mock.calls[0][1] as MuxMessage;
+    const appendedMessage = appendSpy.mock.calls[0][1];
 
     expect(appendedMessage.id).toBe("msg-1");
     expect(appendedMessage.parts).toEqual(erroredPartial.parts);
@@ -133,7 +133,7 @@ describe("PartialService - Error Recovery", () => {
     expect(updateSpy).toHaveBeenCalledTimes(1);
     expect(appendSpy).not.toHaveBeenCalled();
 
-    const updatedMessage = updateSpy.mock.calls[0][1] as MuxMessage;
+    const updatedMessage = updateSpy.mock.calls[0][1];
 
     expect(updatedMessage.parts).toEqual(erroredPartial.parts);
     expect(updatedMessage.metadata?.error).toBeUndefined();

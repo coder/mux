@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { SessionUsageService, type SessionUsageTokenStatsCacheV1 } from "./sessionUsageService";
 import type { HistoryService } from "./historyService";
-import { Config } from "@/node/config";
+import type { Config } from "@/node/config";
 import { createMuxMessage } from "@/common/types/message";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { createTestHistoryService } from "./testHistoryService";

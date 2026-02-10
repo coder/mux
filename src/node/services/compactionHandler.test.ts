@@ -398,7 +398,7 @@ describe("CompactionHandler", () => {
       };
       await handler.handleCompletion(event);
 
-      const appendedMsg = appendSpy.mock.calls[0][1] as MuxMessage;
+      const appendedMsg = appendSpy.mock.calls[0][1];
       expect((appendedMsg.parts[0] as { type: "text"; text: string }).text).toBe(
         "Part 1 Part 2 Part 3"
       );
@@ -411,7 +411,7 @@ describe("CompactionHandler", () => {
       const event = createStreamEndEvent("This is the summary");
       await handler.handleCompletion(event);
 
-      const appendedMsg = appendSpy.mock.calls[0][1] as MuxMessage;
+      const appendedMsg = appendSpy.mock.calls[0][1];
       expect((appendedMsg.parts[0] as { type: "text"; text: string }).text).toBe(
         "This is the summary"
       );
@@ -442,7 +442,7 @@ describe("CompactionHandler", () => {
       expect(clearSpy.mock.calls).toHaveLength(0);
       expect(appendSpy.mock.calls).toHaveLength(1);
       expect(appendSpy.mock.calls[0][0]).toBe(workspaceId);
-      const appendedMsg = appendSpy.mock.calls[0][1] as MuxMessage;
+      const appendedMsg = appendSpy.mock.calls[0][1];
       expect(appendedMsg.role).toBe("assistant");
       expect((appendedMsg.parts[0] as { type: "text"; text: string }).text).toBe("Summary");
     });
@@ -519,7 +519,7 @@ describe("CompactionHandler", () => {
       const event = createStreamEndEvent("Summary");
       await handler.handleCompletion(event);
 
-      const appendedMsg = appendSpy.mock.calls[0][1] as MuxMessage;
+      const appendedMsg = appendSpy.mock.calls[0][1];
       expect(appendedMsg.metadata?.compacted).toBe("user");
       expect(appendedMsg.metadata?.compactionBoundary).toBe(true);
       expect(appendedMsg.metadata?.compactionEpoch).toBe(1);
@@ -567,7 +567,7 @@ describe("CompactionHandler", () => {
       expect(result).toBe(true);
       expect(appendSpy.mock.calls).toHaveLength(1);
 
-      const appendedMsg = appendSpy.mock.calls[0][1] as MuxMessage;
+      const appendedMsg = appendSpy.mock.calls[0][1];
       expect(appendedMsg.metadata?.historySequence).toBe(6);
       expect(appendedMsg.metadata?.compactionBoundary).toBe(true);
       expect(appendedMsg.metadata?.compactionEpoch).toBe(1);
@@ -588,7 +588,7 @@ describe("CompactionHandler", () => {
       const event = createStreamEndEvent("Summary");
       await handler.handleCompletion(event);
 
-      const appendedMsg = appendSpy.mock.calls[0][1] as MuxMessage;
+      const appendedMsg = appendSpy.mock.calls[0][1];
       expect(appendedMsg.metadata?.compactionEpoch).toBe(2);
       expect(appendedMsg.metadata?.compactionBoundary).toBe(true);
       expect(appendedMsg.metadata?.historySequence).toBe(4);
@@ -616,7 +616,7 @@ describe("CompactionHandler", () => {
       expect(updateSpy.mock.calls).toHaveLength(1);
       expect(appendSpy.mock.calls).toHaveLength(0);
 
-      const updatedSummary = updateSpy.mock.calls[0][1] as MuxMessage;
+      const updatedSummary = updateSpy.mock.calls[0][1];
       expect(updatedSummary.id).toBe("msg-id");
       expect(updatedSummary.metadata?.historySequence).toBe(6);
       expect(updatedSummary.metadata?.compactionBoundary).toBe(true);
@@ -733,7 +733,7 @@ describe("CompactionHandler", () => {
 
       expect(result).toBe(true);
       expect(appendSpy.mock.calls).toHaveLength(1);
-      const appendedMsg = appendSpy.mock.calls[0][1] as MuxMessage;
+      const appendedMsg = appendSpy.mock.calls[0][1];
       expect(appendedMsg.metadata?.compactionEpoch).toBe(4);
       expect(appendedMsg.metadata?.compactionBoundary).toBe(true);
     });

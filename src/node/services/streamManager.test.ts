@@ -53,10 +53,7 @@ describe("StreamManager - createTempDirForStream", () => {
     process.env.USERPROFILE = home.path;
 
     try {
-      const streamManager = new StreamManager(
-        historyService,
-        createMockPartialService()
-      );
+      const streamManager = new StreamManager(historyService, createMockPartialService());
       const runtime = createRuntime({ type: "local", srcBaseDir: "/tmp" });
 
       const token = streamManager.generateStreamToken();
