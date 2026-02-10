@@ -1,10 +1,9 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { StreamManager } from "./streamManager";
 
 import type { HistoryService } from "./historyService";
 import { createTestHistoryService } from "./testHistoryService";
-import type { PartialService } from "./partialService";
 
 describe("StreamManager - model-only tool notifications", () => {
   let historyService: HistoryService;
@@ -19,14 +18,7 @@ describe("StreamManager - model-only tool notifications", () => {
   });
 
   test("strips __mux_notifications before emitting tool-call-end", async () => {
-    const partialService: PartialService = {
-      writePartial: mock(() => Promise.resolve({ success: true })),
-      readPartial: mock(() => Promise.resolve(null)),
-      deletePartial: mock(() => Promise.resolve({ success: true })),
-      commitToHistory: mock(() => Promise.resolve({ success: true })),
-    } as unknown as PartialService;
-
-    const streamManager = new StreamManager(historyService, partialService);
+    const streamManager = new StreamManager(historyService);
 
     // Avoid tokenizer worker usage in unit tests.
     (streamManager as unknown as { tokenTracker: unknown }).tokenTracker = {
@@ -105,14 +97,7 @@ describe("StreamManager - model-only tool notifications", () => {
   });
 
   test("persists orphan web_search tool-result when tool-call mapping is missing", async () => {
-    const partialService: PartialService = {
-      writePartial: mock(() => Promise.resolve({ success: true })),
-      readPartial: mock(() => Promise.resolve(null)),
-      deletePartial: mock(() => Promise.resolve({ success: true })),
-      commitToHistory: mock(() => Promise.resolve({ success: true })),
-    } as unknown as PartialService;
-
-    const streamManager = new StreamManager(historyService, partialService);
+    const streamManager = new StreamManager(historyService);
 
     // Avoid tokenizer worker usage in unit tests.
     (streamManager as unknown as { tokenTracker: unknown }).tokenTracker = {

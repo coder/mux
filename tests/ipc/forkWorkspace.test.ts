@@ -26,7 +26,6 @@ import {
 } from "../runtime/test-fixtures/ssh-fixture";
 import type { RuntimeConfig } from "../../src/common/types/runtime";
 import { HistoryService } from "../../src/node/services/historyService";
-import { PartialService } from "../../src/node/services/partialService";
 import { createMuxMessage, type MuxMessage } from "../../src/common/types/message";
 import assert from "node:assert";
 
@@ -378,14 +377,13 @@ describeIntegration("Workspace fork", () => {
 
             // Wait for partial.json to be written so the fork can commit in-flight output.
             const historyService = new HistoryService(env.config);
-            const partialService = new PartialService(env.config, historyService);
             let partialText = "";
             const partialReady = await waitFor(async () => {
-              const partial = await partialService.readPartial(sourceWorkspaceId);
+              const partial = await historyService.readPartial(sourceWorkspaceId);
               if (!partial) return false;
               partialText = (partial.parts ?? [])
-                .filter((part) => part.type === "text")
-                .map((part) => (part as { text: string }).text)
+                .filter((part: MuxMessage["parts"][number]) => part.type === "text")
+                .map((part: MuxMessage["parts"][number]) => (part.type === "text" ? part.text : ""))
                 .join(" ")
                 .trim();
               return partialText.length > 0;

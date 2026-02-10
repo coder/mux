@@ -181,7 +181,7 @@ export class EventStore<TState, TEvent> {
  * Future refactoring could extract:
  * - WorkspaceStreamInfo state management (workspaceStreams Map)
  * - Replay logic (replayStream method at line 1244)
- * - Partial persistence (currently using PartialService)
+ * - Partial persistence (currently on HistoryService partial methods)
  *
  * Key differences to handle:
  * - StreamManager has complex throttling (partialWriteTimer, PARTIAL_WRITE_THROTTLE_MS)

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { extractIdentityFromText } from "./workspaceTitleGenerator";
+import { extractIdentityFromText, extractTextFromContentParts } from "./workspaceTitleGenerator";
 
 describe("extractIdentityFromText", () => {
   test("extracts from markdown bold + backtick format", () => {
@@ -89,5 +89,55 @@ describe("extractIdentityFromText", () => {
 
     const result = extractIdentityFromText(text);
     expect(result).toEqual({ name: "testing", title: "Improve test coverage" });
+  });
+});
+
+describe("extractTextFromContentParts", () => {
+  test("joins top-level text parts", () => {
+    const content = [
+      { type: "text", text: "First chunk" },
+      { type: "reasoning", text: "Second chunk" },
+    ];
+
+    expect(extractTextFromContentParts(content)).toBe("First chunk\n\nSecond chunk");
+  });
+
+  test("extracts nested text parts", () => {
+    const content = [
+      {
+        type: "wrapper",
+        content: [
+          { type: "text", text: "Nested one" },
+          { type: "text", text: "Nested two" },
+        ],
+      },
+    ];
+
+    expect(extractTextFromContentParts(content)).toBe("Nested one\n\nNested two");
+  });
+
+  test("supports provider content payloads that wrap name/title in text", () => {
+    const content = [
+      {
+        type: "text",
+        text: [
+          'Based on the development task "testing", here are my recommendations:',
+          "",
+          "**name:** `testing`",
+          "**title:** `Improve test coverage`",
+        ].join("\n"),
+      },
+    ];
+
+    const flattened = extractTextFromContentParts(content);
+    expect(flattened).not.toBeNull();
+    expect(extractIdentityFromText(flattened ?? "")).toEqual({
+      name: "testing",
+      title: "Improve test coverage",
+    });
+  });
+
+  test("returns null for non-array input", () => {
+    expect(extractTextFromContentParts({ type: "text", text: "nope" })).toBeNull();
   });
 });

@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { PartialService } from "./partialService";
 import type { HistoryService } from "./historyService";
 import type { Config } from "@/node/config";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
@@ -9,22 +8,19 @@ import { createTestHistoryService } from "./testHistoryService";
 import * as fs from "fs/promises";
 import * as path from "path";
 
-describe("PartialService - Error Recovery", () => {
-  let partialService: PartialService;
-  let config: Config;
-  let historyService: HistoryService;
+describe("HistoryService partial persistence - Error Recovery", () => {
+  let partialService: HistoryService;
   let cleanup: () => Promise<void>;
 
   beforeEach(async () => {
-    ({ config, historyService, cleanup } = await createTestHistoryService());
-    partialService = new PartialService(config, historyService);
+    ({ historyService: partialService, cleanup } = await createTestHistoryService());
   });
 
   afterEach(async () => {
     await cleanup();
   });
 
-  test("commitToHistory should strip error metadata and commit parts from errored partial", async () => {
+  test("commitPartial should strip error metadata and commit parts from errored partial", async () => {
     const workspaceId = "test-workspace";
     const erroredPartial: MuxMessage = {
       id: "msg-1",
@@ -49,11 +45,11 @@ describe("PartialService - Error Recovery", () => {
     // Mock deletePartial
     partialService.deletePartial = mock(() => Promise.resolve(Ok(undefined)));
 
-    // Spy on historyService methods to verify calls
-    const appendSpy = spyOn(historyService, "appendToHistory");
+    // Spy on partialService methods to verify calls
+    const appendSpy = spyOn(partialService, "appendToHistory");
 
-    // Call commitToHistory
-    const result = await partialService.commitToHistory(workspaceId);
+    // Call commitPartial
+    const result = await partialService.commitPartial(workspaceId);
 
     // Should succeed
     expect(result.success).toBe(true);
@@ -73,7 +69,7 @@ describe("PartialService - Error Recovery", () => {
     expect(deletePartial).toHaveBeenCalledWith(workspaceId);
   });
 
-  test("commitToHistory should update existing placeholder when errored partial has more parts", async () => {
+  test("commitPartial should update existing placeholder when errored partial has more parts", async () => {
     const workspaceId = "test-workspace";
     const erroredPartial: MuxMessage = {
       id: "msg-1",
@@ -117,14 +113,14 @@ describe("PartialService - Error Recovery", () => {
     partialService.deletePartial = mock(() => Promise.resolve(Ok(undefined)));
 
     // Seed existing placeholder into history so getHistoryFromLatestBoundary finds it
-    await historyService.appendToHistory(workspaceId, existingPlaceholder);
+    await partialService.appendToHistory(workspaceId, existingPlaceholder);
 
-    // Spy on historyService methods AFTER seeding to verify only commitToHistory calls
-    const appendSpy = spyOn(historyService, "appendToHistory");
-    const updateSpy = spyOn(historyService, "updateHistory");
+    // Spy on partialService methods AFTER seeding to verify only commitPartial calls
+    const appendSpy = spyOn(partialService, "appendToHistory");
+    const updateSpy = spyOn(partialService, "updateHistory");
 
-    // Call commitToHistory
-    const result = await partialService.commitToHistory(workspaceId);
+    // Call commitPartial
+    const result = await partialService.commitPartial(workspaceId);
 
     // Should succeed
     expect(result.success).toBe(true);
@@ -144,7 +140,7 @@ describe("PartialService - Error Recovery", () => {
     expect(deletePartial).toHaveBeenCalledWith(workspaceId);
   });
 
-  test("commitToHistory should skip tool-only incomplete partials", async () => {
+  test("commitPartial should skip tool-only incomplete partials", async () => {
     const workspaceId = "test-workspace";
     const toolOnlyPartial: MuxMessage = {
       id: "msg-1",
@@ -171,11 +167,11 @@ describe("PartialService - Error Recovery", () => {
     partialService.readPartial = mock(() => Promise.resolve(toolOnlyPartial));
     partialService.deletePartial = mock(() => Promise.resolve(Ok(undefined)));
 
-    // Spy on historyService methods to verify calls
-    const appendSpy = spyOn(historyService, "appendToHistory");
-    const updateSpy = spyOn(historyService, "updateHistory");
+    // Spy on partialService methods to verify calls
+    const appendSpy = spyOn(partialService, "appendToHistory");
+    const updateSpy = spyOn(partialService, "updateHistory");
 
-    const result = await partialService.commitToHistory(workspaceId);
+    const result = await partialService.commitPartial(workspaceId);
     expect(result.success).toBe(true);
 
     expect(appendSpy).not.toHaveBeenCalled();
@@ -184,7 +180,7 @@ describe("PartialService - Error Recovery", () => {
     const deletePartial = partialService.deletePartial as ReturnType<typeof mock>;
     expect(deletePartial).toHaveBeenCalledWith(workspaceId);
   });
-  test("commitToHistory should skip empty errored partial", async () => {
+  test("commitPartial should skip empty errored partial", async () => {
     const workspaceId = "test-workspace";
     const emptyErrorPartial: MuxMessage = {
       id: "msg-1",
@@ -206,11 +202,11 @@ describe("PartialService - Error Recovery", () => {
     // Mock deletePartial
     partialService.deletePartial = mock(() => Promise.resolve(Ok(undefined)));
 
-    // Spy on historyService methods to verify calls
-    const appendSpy = spyOn(historyService, "appendToHistory");
+    // Spy on partialService methods to verify calls
+    const appendSpy = spyOn(partialService, "appendToHistory");
 
-    // Call commitToHistory
-    const result = await partialService.commitToHistory(workspaceId);
+    // Call commitPartial
+    const result = await partialService.commitPartial(workspaceId);
 
     // Should succeed
     expect(result.success).toBe(true);
@@ -224,15 +220,13 @@ describe("PartialService - Error Recovery", () => {
   });
 });
 
-describe("PartialService - Legacy compatibility", () => {
+describe("HistoryService partial persistence - Legacy compatibility", () => {
   let config: Config;
-  let partialService: PartialService;
+  let partialService: HistoryService;
   let cleanup: () => Promise<void>;
 
   beforeEach(async () => {
-    let historyService: HistoryService;
-    ({ config, historyService, cleanup } = await createTestHistoryService());
-    partialService = new PartialService(config, historyService);
+    ({ config, historyService: partialService, cleanup } = await createTestHistoryService());
   });
 
   afterEach(async () => {

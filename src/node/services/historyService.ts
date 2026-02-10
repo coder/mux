@@ -105,15 +105,17 @@ function getCompactionMetadataToPreserve(
  *
  * Responsibilities:
  * - Read/write chat history to disk (JSONL format)
+ * - Read/write partial message staging state (partial.json)
  * - Assign sequence numbers to messages (single source of truth)
  * - Track next sequence number per workspace
  */
 export class HistoryService {
   private readonly CHAT_FILE = "chat.jsonl";
+  private readonly PARTIAL_FILE = "partial.json";
   // Track next sequence number per workspace in memory
   private sequenceCounters = new Map<string, number>();
   // Shared file operation lock across all workspace file services
-  // This prevents deadlocks when services call each other (e.g., PartialService → HistoryService)
+  // This prevents deadlocks when operations compose while touching the same workspace files.
   private readonly fileLocks = workspaceFileLocks;
   private readonly config: Pick<Config, "getSessionDir">;
 
@@ -123,6 +125,10 @@ export class HistoryService {
 
   private getChatHistoryPath(workspaceId: string): string {
     return path.join(this.config.getSessionDir(workspaceId), this.CHAT_FILE);
+  }
+
+  private getPartialPath(workspaceId: string): string {
+    return path.join(this.config.getSessionDir(workspaceId), this.PARTIAL_FILE);
   }
 
   // ── Reverse-read infrastructure ─────────────────────────────────────────────
@@ -703,6 +709,151 @@ export class HistoryService {
   }
 
   /**
+   * Read the partial message for a workspace, if it exists.
+   */
+  async readPartial(workspaceId: string): Promise<MuxMessage | null> {
+    try {
+      const partialPath = this.getPartialPath(workspaceId);
+      const data = await fs.readFile(partialPath, "utf-8");
+      const message = JSON.parse(data) as MuxMessage;
+      return normalizeLegacyMuxMetadata(message);
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        return null;
+      }
+
+      log.error("Error reading partial:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Write a partial message to disk.
+   */
+  async writePartial(workspaceId: string, message: MuxMessage): Promise<Result<void>> {
+    return this.fileLocks.withLock(workspaceId, async () => {
+      try {
+        const workspaceDir = this.config.getSessionDir(workspaceId);
+        await fs.mkdir(workspaceDir, { recursive: true });
+        const partialPath = this.getPartialPath(workspaceId);
+
+        const partialMessage: MuxMessage = {
+          ...message,
+          metadata: {
+            ...message.metadata,
+            partial: true,
+          },
+        };
+
+        // Atomic write: writes to temp file then renames, preventing corruption
+        // if app crashes mid-write (prevents "Unexpected end of JSON input" on read)
+        await writeFileAtomic(partialPath, JSON.stringify(partialMessage, null, 2));
+        return Ok(undefined);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return Err(`Failed to write partial: ${errorMessage}`);
+      }
+    });
+  }
+
+  /**
+   * Delete the partial message file for a workspace.
+   */
+  async deletePartial(workspaceId: string): Promise<Result<void>> {
+    return this.fileLocks.withLock(workspaceId, async () => {
+      try {
+        const partialPath = this.getPartialPath(workspaceId);
+        await fs.unlink(partialPath);
+        return Ok(undefined);
+      } catch (error) {
+        if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+          return Ok(undefined);
+        }
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return Err(`Failed to delete partial: ${errorMessage}`);
+      }
+    });
+  }
+
+  /**
+   * Commit any existing partial message to chat history and delete partial.json.
+   *
+   * This is idempotent:
+   * - If the partial has already been finalized in history, it is not committed again.
+   * - After committing (or if already finalized), partial.json is deleted.
+   */
+  async commitPartial(workspaceId: string): Promise<Result<void>> {
+    try {
+      let partial = await this.readPartial(workspaceId);
+      if (!partial) {
+        return Ok(undefined);
+      }
+
+      // Strip transient error metadata, but persist accumulated content.
+      if (partial.metadata?.error) {
+        const { error, errorType, ...cleanMetadata } = partial.metadata;
+        partial = { ...partial, metadata: cleanMetadata };
+      }
+
+      const partialSeq = partial.metadata?.historySequence;
+      if (partialSeq === undefined) {
+        return Err("Partial message has no historySequence");
+      }
+
+      const historyResult = await this.getHistoryFromLatestBoundary(workspaceId);
+      if (!historyResult.success) {
+        return Err(`Failed to read history: ${historyResult.error}`);
+      }
+
+      const existingMessages = historyResult.data;
+      const hasCommitWorthyParts = (partial.parts ?? []).some((part) => {
+        if (part.type === "text" || part.type === "reasoning") {
+          return part.text.trim().length > 0;
+        }
+
+        if (part.type === "file") {
+          return true;
+        }
+
+        if (part.type === "dynamic-tool") {
+          // Incomplete tool calls (input-available) are dropped during provider request
+          // conversion. Persisting tool-only incomplete partials can brick future requests.
+          return part.state === "output-available";
+        }
+
+        return false;
+      });
+
+      const existingMessage = existingMessages.find(
+        (message) => message.metadata?.historySequence === partialSeq
+      );
+
+      const shouldCommit =
+        (!existingMessage || (partial.parts?.length ?? 0) > (existingMessage.parts?.length ?? 0)) &&
+        hasCommitWorthyParts;
+
+      if (shouldCommit) {
+        if (existingMessage) {
+          const updateResult = await this.updateHistory(workspaceId, partial);
+          if (!updateResult.success) {
+            return updateResult;
+          }
+        } else {
+          const appendResult = await this.appendToHistory(workspaceId, partial);
+          if (!appendResult.success) {
+            return appendResult;
+          }
+        }
+      }
+
+      return this.deletePartial(workspaceId);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to commit partial: ${errorMessage}`);
+    }
+  }
+
+  /**
    * Get or initialize the next history sequence number for a workspace
    */
   private async getNextHistorySequence(workspaceId: string): Promise<number> {
@@ -753,8 +904,7 @@ export class HistoryService {
   }
 
   /**
-   * Internal helper for appending to history without acquiring lock
-   * Used by both appendToHistory and commitPartial to avoid deadlock
+   * Internal helper for appending to history without acquiring lock.
    */
   private async _appendToHistoryUnlocked(
     workspaceId: string,
