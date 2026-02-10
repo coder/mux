@@ -1,7 +1,11 @@
 import assert from "@/common/utils/assert";
 import type { MuxMessage, DisplayedMessage, QueuedMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { WorkspaceChatMessage, WorkspaceStatsSnapshot } from "@/common/orpc/types";
+import type {
+  WorkspaceChatMessage,
+  WorkspaceStatsSnapshot,
+  WorkspaceActivitySnapshot,
+} from "@/common/orpc/types";
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { TodoItem } from "@/common/types/tools";
@@ -154,6 +158,12 @@ export interface SessionTimingStats {
 
   byModel: Record<string, ModelTimingStats>;
 }
+
+/**
+ * Shared empty array for suspended workspace sidebar state.
+ * Using a stable reference prevents useSyncExternalStore from detecting false changes.
+ */
+const EMPTY_SKILLS: LoadedSkill[] = [];
 
 /**
  * Subset of WorkspaceState needed for sidebar display.
@@ -370,6 +380,18 @@ export class WorkspaceStore {
   // Cumulative session usage (from session-usage.json)
 
   private sessionUsage = new Map<string, z.infer<typeof SessionUsageFileSchema>>();
+
+  // --- Single-subscription architecture ---
+  // Only the selected workspace gets an onChat subscription (full chat replay).
+  // Non-selected workspaces use cached sidebar state + activity stream updates.
+  private selectedWorkspaceId: string | null = null;
+
+  // Sidebar state snapshot for suspended (non-selected) workspaces.
+  // Populated when a workspace is suspended, updated by the activity stream.
+  private cachedSidebarState = new Map<string, WorkspaceSidebarState>();
+
+  // Cleanup function for the activity stream subscription
+  private activityUnsubscribe: (() => void) | null = null;
 
   // Idle compaction notification callbacks (called when backend signals idle compaction needed)
   private idleCompactionCallbacks = new Set<(workspaceId: string) => void>();
@@ -718,6 +740,224 @@ export class WorkspaceStore {
         this.subscribeToStats(workspaceId);
       }
     }
+
+    // Restart activity stream subscription for sidebar updates on non-selected workspaces
+    this.subscribeToActivityStream();
+  }
+
+  /**
+   * Set the currently selected workspace. Only the selected workspace gets
+   * a full onChat subscription (chat history replay). Non-selected workspaces
+   * are suspended: their aggregator is freed and sidebar state is served from
+   * a cached snapshot updated by the activity stream.
+   */
+  setSelectedWorkspaceId(workspaceId: string | null): void {
+    if (this.selectedWorkspaceId === workspaceId) return;
+
+    const previousId = this.selectedWorkspaceId;
+    this.selectedWorkspaceId = workspaceId;
+
+    // Suspend the previously-selected workspace (free aggregator + onChat sub)
+    if (previousId && previousId !== workspaceId) {
+      this.suspendWorkspace(previousId);
+    }
+
+    // Subscribe to the newly-selected workspace (if not already subscribed)
+    if (workspaceId && !this.ipcUnsubscribers.has(workspaceId)) {
+      const metadata = this.workspaceMetadata.get(workspaceId);
+      if (metadata) {
+        this.addWorkspace(metadata);
+      }
+    }
+  }
+
+  /**
+   * Suspend a workspace: cache its sidebar state, then tear down the
+   * onChat subscription and aggregator. Lighter than removeWorkspace —
+   * preserves metadata, recencyCache, sessionUsage, and cachedSidebarState.
+   */
+  private suspendWorkspace(workspaceId: string): void {
+    // Cache sidebar state BEFORE freeing the aggregator
+    this.cacheSidebarStateFromAggregator(workspaceId);
+
+    // Abort onChat subscription
+    const unsubscribe = this.ipcUnsubscribers.get(workspaceId);
+    if (unsubscribe) {
+      unsubscribe();
+      this.ipcUnsubscribers.delete(workspaceId);
+    }
+
+    // Cancel any pending idle bump for this workspace
+    this.cancelPendingIdleBump(workspaceId);
+
+    // Free aggregator + transient state
+    this.aggregators.delete(workspaceId);
+    this.chatTransientState.delete(workspaceId);
+    this.pendingReplayReset.delete(workspaceId);
+    this.consumerManager.removeWorkspace(workspaceId);
+
+    // Clean up MapStore entries that depend on the aggregator
+    this.states.delete(workspaceId);
+    this.usageStore.delete(workspaceId);
+    this.consumersStore.delete(workspaceId);
+    this.sidebarStateSourceState.delete(workspaceId);
+
+    // Clean up stats subscription
+    const statsUnsub = this.statsUnsubscribers.get(workspaceId);
+    if (statsUnsub) {
+      statsUnsub();
+      this.statsUnsubscribers.delete(workspaceId);
+    }
+    this.workspaceStats.delete(workspaceId);
+    this.statsStore.delete(workspaceId);
+
+    // NOTE: Keep workspaceMetadata, cachedSidebarState, recencyCache,
+    // sessionUsage, previousSidebarValues, workspaceCreatedAt, sidebarStateCache
+  }
+
+  /**
+   * Snapshot the current sidebar state from a live aggregator into the cache.
+   * Called just before suspending so the sidebar can continue to display
+   * meaningful state without the aggregator.
+   */
+  private cacheSidebarStateFromAggregator(workspaceId: string): void {
+    if (!this.aggregators.has(workspaceId)) return;
+    try {
+      const state = this.getWorkspaceSidebarState(workspaceId);
+      this.cachedSidebarState.set(workspaceId, state);
+    } catch {
+      // Aggregator might be in a bad state; use whatever is already cached
+    }
+  }
+
+  /**
+   * Subscribe to the backend activity stream for real-time sidebar updates
+   * on non-selected (suspended) workspaces. Updates cached sidebar state when
+   * streaming/model status changes.
+   */
+  private subscribeToActivityStream(): void {
+    // Tear down any previous subscription
+    this.activityUnsubscribe?.();
+    this.activityUnsubscribe = null;
+
+    // Guard: client must expose the activity endpoints
+    if (!this.client?.workspace?.activity) return;
+
+    const controller = new AbortController();
+    this.activityUnsubscribe = () => controller.abort();
+
+    const activity = this.client.workspace.activity;
+    void (async () => {
+      let retryMs = 1000;
+      const maxRetryMs = 30_000;
+
+      while (!controller.signal.aborted) {
+        try {
+          // Subscribe FIRST so no events are missed, then seed initial state.
+          // Events arriving between subscribe and list are deduplicated by
+          // updateCachedSidebarFromActivity's change detection.
+          const stream = await activity.subscribe(undefined, {
+            signal: controller.signal,
+          });
+
+          // Seed cached sidebar state from the current snapshot
+          const initial = await activity.list();
+          if (controller.signal.aborted) return;
+          for (const [workspaceId, snapshot] of Object.entries(initial)) {
+            this.updateCachedSidebarFromActivity(workspaceId, snapshot);
+          }
+
+          // Reset backoff on successful connection
+          retryMs = 1000;
+
+          // Stream ongoing activity updates
+          for await (const event of stream) {
+            if (event.activity) {
+              this.updateCachedSidebarFromActivity(event.workspaceId, event.activity);
+            }
+          }
+
+          // Stream ended normally — reconnect
+        } catch (error: unknown) {
+          if (controller.signal.aborted) return;
+          console.warn("[WorkspaceStore] Activity stream error, retrying:", error);
+        }
+
+        // Exponential backoff before retrying
+        if (!controller.signal.aborted) {
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, retryMs);
+            controller.signal.addEventListener(
+              "abort",
+              () => {
+                clearTimeout(timer);
+                resolve();
+              },
+              { once: true }
+            );
+          });
+          retryMs = Math.min(retryMs * 2, maxRetryMs);
+        }
+      }
+    })();
+  }
+
+  /**
+   * Apply an activity snapshot to the cached sidebar state for a workspace.
+   * Only updates non-selected (suspended) workspaces — workspaces with an
+   * active onChat subscription get their state from the aggregator.
+   */
+  private updateCachedSidebarFromActivity(
+    workspaceId: string,
+    activity: WorkspaceActivitySnapshot
+  ): void {
+    // Active subscriptions get live state from the aggregator; skip them.
+    if (this.ipcUnsubscribers.has(workspaceId)) return;
+
+    const existing = this.cachedSidebarState.get(workspaceId);
+    const canInterrupt = activity.streaming;
+
+    if (existing) {
+      // Only update + notify if something actually changed
+      if (
+        existing.canInterrupt === canInterrupt &&
+        existing.currentModel === activity.lastModel &&
+        existing.recencyTimestamp === activity.recency
+      ) {
+        return;
+      }
+      this.cachedSidebarState.set(workspaceId, {
+        ...existing,
+        canInterrupt,
+        currentModel: activity.lastModel,
+        recencyTimestamp: activity.recency,
+        // When streaming stops, clear the starting state
+        ...(canInterrupt ? {} : { isStarting: false }),
+      });
+    } else {
+      // No cached state yet — create a minimal one from the activity snapshot
+      this.cachedSidebarState.set(workspaceId, {
+        canInterrupt,
+        isStarting: false,
+        awaitingUserQuestion: false,
+        currentModel: activity.lastModel,
+        recencyTimestamp: activity.recency,
+        loadedSkills: EMPTY_SKILLS,
+        agentStatus: undefined,
+      });
+    }
+
+    // Update recency cache so getWorkspaceRecency() reflects activity
+    const oldRecency = this.recencyCache.get(workspaceId);
+    if (activity.recency !== oldRecency) {
+      this.recencyCache.set(workspaceId, activity.recency);
+      this.derived.bump("recency");
+    }
+
+    // Invalidate sidebar caches so consumers re-render
+    this.sidebarStateCache.delete(workspaceId);
+    this.sidebarStateSourceState.delete(workspaceId);
+    this.states.bump(workspaceId);
   }
 
   /**
@@ -1000,6 +1240,17 @@ export class WorkspaceStore {
    * REQUIRES: Workspace must have been added via addWorkspace() first.
    */
   getWorkspaceState(workspaceId: string): WorkspaceState {
+    // Ensure aggregator exists before accessing state. This handles race conditions
+    // during workspace switching (effect hasn't fired yet) and Storybook story
+    // transitions (singleton store outlives React tree remounts). The addWorkspace
+    // call is idempotent — returns immediately if already subscribed.
+    if (!this.aggregators.has(workspaceId)) {
+      const metadata = this.workspaceMetadata.get(workspaceId);
+      if (metadata) {
+        this.addWorkspace(metadata);
+      }
+    }
+
     return this.states.get(workspaceId, () => {
       const aggregator = this.assertGet(workspaceId);
 
@@ -1060,8 +1311,32 @@ export class WorkspaceStore {
    * Get sidebar state for a workspace (subset of full state).
    * Returns cached reference if values haven't changed.
    * This is critical for useSyncExternalStore - must return stable references.
+   *
+   * For suspended workspaces (no aggregator), returns the cached sidebar state
+   * snapshot, or a default if no cache exists. The activity stream keeps the
+   * cache up to date.
    */
   getWorkspaceSidebarState(workspaceId: string): WorkspaceSidebarState {
+    // Suspended workspace — no aggregator, return cached state.
+    // IMPORTANT: Must return a referentially stable object for useSyncExternalStore.
+    // If no cache exists yet, seed it now so subsequent calls return the same reference.
+    if (!this.aggregators.has(workspaceId)) {
+      let cached = this.cachedSidebarState.get(workspaceId);
+      if (!cached) {
+        cached = {
+          canInterrupt: false,
+          isStarting: false,
+          awaitingUserQuestion: false,
+          currentModel: null,
+          recencyTimestamp: this.recencyCache.get(workspaceId) ?? null,
+          loadedSkills: EMPTY_SKILLS,
+          agentStatus: undefined,
+        };
+        this.cachedSidebarState.set(workspaceId, cached);
+      }
+      return cached;
+    }
+
     const fullState = this.getWorkspaceState(workspaceId);
     const isStarting = fullState.pendingStreamStartTime !== null && !fullState.canInterrupt;
 
@@ -1153,16 +1428,30 @@ export class WorkspaceStore {
   /**
    * Get recency timestamps for all workspaces (for sorting in command palette).
    * Derived on-demand from individual workspace states.
+   *
+   * Includes both active (subscribed) and suspended workspaces. Active
+   * workspaces get recency from their aggregator; suspended workspaces
+   * use the recencyCache (maintained by the activity stream).
    */
   getWorkspaceRecency(): Record<string, number> {
     return this.derived.get("recency", () => {
       const timestamps: Record<string, number> = {};
+
+      // Active workspaces: recency from aggregator via getWorkspaceState
       for (const workspaceId of this.aggregators.keys()) {
         const state = this.getWorkspaceState(workspaceId);
         if (state.recencyTimestamp !== null) {
           timestamps[workspaceId] = state.recencyTimestamp;
         }
       }
+
+      // Suspended workspaces: recency from cache
+      for (const [workspaceId, recency] of this.recencyCache) {
+        if (!this.aggregators.has(workspaceId) && recency !== null) {
+          timestamps[workspaceId] = recency;
+        }
+      }
+
       return timestamps;
     }) as Record<string, number>;
   }
@@ -1853,26 +2142,59 @@ export class WorkspaceStore {
     this.workspaceStats.delete(workspaceId);
     this.statsStore.delete(workspaceId);
     this.sessionUsage.delete(workspaceId);
+    this.cachedSidebarState.delete(workspaceId);
   }
 
   /**
-   * Sync workspaces with metadata - add new, remove deleted.
+   * Sync workspaces with metadata.
+   *
+   * Only the selected workspace (set via setSelectedWorkspaceId) gets a full
+   * onChat subscription. All other workspaces have their metadata stored but
+   * are kept in a suspended state — sidebar data comes from the cached
+   * sidebar snapshot + the activity stream.
    */
   syncWorkspaces(workspaceMetadata: Map<string, FrontendWorkspaceMetadata>): void {
     const metadataIds = new Set(Array.from(workspaceMetadata.values()).map((m) => m.id));
-    const currentIds = new Set(this.ipcUnsubscribers.keys());
+    const subscribedIds = new Set(this.ipcUnsubscribers.keys());
 
-    // Add new workspaces
-    for (const metadata of workspaceMetadata.values()) {
-      if (!currentIds.has(metadata.id)) {
-        this.addWorkspace(metadata);
+    // Update metadata for ALL workspaces (needed for name lookup, recency, etc.)
+    for (const [id, metadata] of workspaceMetadata) {
+      this.workspaceMetadata.set(id, metadata);
+    }
+
+    // Only subscribe to onChat for the selected workspace
+    if (
+      this.selectedWorkspaceId &&
+      metadataIds.has(this.selectedWorkspaceId) &&
+      !subscribedIds.has(this.selectedWorkspaceId)
+    ) {
+      const metadata = workspaceMetadata.get(this.selectedWorkspaceId);
+      assert(metadata, `Selected workspace ${this.selectedWorkspaceId} missing from metadata`);
+      this.addWorkspace(metadata);
+    }
+
+    // Suspend any subscribed workspace that is no longer selected
+    for (const id of subscribedIds) {
+      if (id !== this.selectedWorkspaceId && metadataIds.has(id)) {
+        this.suspendWorkspace(id);
       }
     }
 
-    // Remove deleted workspaces
-    for (const workspaceId of currentIds) {
-      if (!metadataIds.has(workspaceId)) {
-        this.removeWorkspace(workspaceId);
+    // Fully remove workspaces that no longer exist at all
+    for (const id of subscribedIds) {
+      if (!metadataIds.has(id)) {
+        this.removeWorkspace(id);
+      }
+    }
+
+    // Clean up metadata + cached state for workspaces that were removed
+    for (const id of this.workspaceMetadata.keys()) {
+      if (!metadataIds.has(id)) {
+        this.workspaceMetadata.delete(id);
+        this.cachedSidebarState.delete(id);
+        this.recencyCache.delete(id);
+        this.previousSidebarValues.delete(id);
+        this.sidebarStateCache.delete(id);
       }
     }
   }
@@ -1907,6 +2229,11 @@ export class WorkspaceStore {
     this.previousSidebarValues.clear();
     this.sidebarStateCache.clear();
     this.workspaceCreatedAt.clear();
+    this.cachedSidebarState.clear();
+
+    // Clean up activity stream subscription
+    this.activityUnsubscribe?.();
+    this.activityUnsubscribe = null;
   }
 
   /**

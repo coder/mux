@@ -32,7 +32,7 @@ export const ConnectionStatusToast: React.FC<ConnectionStatusToastProps> = ({ wr
     return null;
   }
 
-  if (apiState.status === "degraded" || apiState.status === "reconnecting") {
+  if (apiState.status === "reconnecting") {
     const content = (
       <div
         role="status"
@@ -41,14 +41,8 @@ export const ConnectionStatusToast: React.FC<ConnectionStatusToastProps> = ({ wr
       >
         <span className="bg-warning inline-block h-2 w-2 animate-pulse rounded-full" />
         <span>
-          {apiState.status === "degraded" ? (
-            "Connection unstable — messages may be delayed"
-          ) : (
-            <>
-              Reconnecting to server
-              {apiState.attempt > 1 && ` (attempt ${apiState.attempt})`}…
-            </>
-          )}
+          Reconnecting to server
+          {apiState.attempt > 1 && ` (attempt ${apiState.attempt})`}…
         </span>
       </div>
     );

@@ -529,6 +529,13 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   } = useRouter();
 
   const workspaceStore = useWorkspaceStoreRaw();
+
+  // Ref tracking the current workspace ID from the URL so the setWorkspaceMetadata
+  // callback can read it without adding currentWorkspaceId to its dependency array
+  // (which would destabilize the callback reference on every navigation).
+  const currentWorkspaceIdRef = useRef(currentWorkspaceId);
+  currentWorkspaceIdRef.current = currentWorkspaceId;
+
   const [workspaceMetadata, setWorkspaceMetadataState] = useState<
     Map<string, FrontendWorkspaceMetadata>
   >(new Map());
@@ -536,11 +543,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     (update: SetStateAction<Map<string, FrontendWorkspaceMetadata>>) => {
       setWorkspaceMetadataState((prev) => {
         const next = typeof update === "function" ? update(prev) : update;
-        // IMPORTANT: Sync the imperative WorkspaceStore first so hooks (AIView,
-        // LeftSidebar, etc.) never render with a selected workspace ID before
-        // the store has subscribed and created its aggregator. Otherwise the
-        // render path hits WorkspaceStore.assertGet() and throws the
-        // "Workspace <id> not found - must call addWorkspace() first" assert.
+        // IMPORTANT: Tell the store which workspace is selected BEFORE syncing
+        // so it only subscribes to onChat for that one workspace. Reading from
+        // the ref ensures we always have the latest URL-derived selection.
+        workspaceStore.setSelectedWorkspaceId(currentWorkspaceIdRef.current ?? null);
         workspaceStore.syncWorkspaces(next);
         return next;
       });
@@ -811,6 +817,20 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   // any async creation callbacks decide whether to auto-navigate.
   const selectedWorkspaceRef = useRef(selectedWorkspace);
   selectedWorkspaceRef.current = selectedWorkspace;
+
+  // Keep the WorkspaceStore in sync with the selected workspace. Must run
+  // synchronously during render (not in a useEffect) because child components
+  // call useWorkspaceState() which requires the aggregator to exist.
+  // If deferred to useEffect, there's a render gap where WorkspaceShell tries
+  // to access the aggregator before it's created → assertion failure.
+  // This follows the same pattern as setWorkspaceMetadata (line 531) which
+  // also calls store methods synchronously inside a React state updater.
+  const prevSelectedIdRef = useRef<string | null>(null);
+  const currentSelectedId = selectedWorkspace?.workspaceId ?? null;
+  if (prevSelectedIdRef.current !== currentSelectedId) {
+    prevSelectedIdRef.current = currentSelectedId;
+    workspaceStore.setSelectedWorkspaceId(currentSelectedId);
+  }
 
   // setSelectedWorkspace navigates to the workspace URL (or clears if null)
   const setSelectedWorkspace = useCallback(

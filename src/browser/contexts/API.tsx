@@ -1,14 +1,14 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
-  useState,
-  useCallback,
-  useRef,
   useMemo,
+  useRef,
+  useState,
 } from "react";
 import { createClient } from "@/common/orpc/client";
-import { RPCLink as WebSocketLink } from "@orpc/client/websocket";
+import { RPCLink } from "@orpc/client/fetch";
 import { RPCLink as MessagePortLink } from "@orpc/client/message-port";
 import {
   getStoredAuthToken,
@@ -25,7 +25,6 @@ export type { APIClient };
 export type APIState =
   | { status: "connecting"; api: null; error: null }
   | { status: "connected"; api: APIClient; error: null }
-  | { status: "degraded"; api: APIClient; error: null } // Connected but pings failing
   | { status: "reconnecting"; api: null; error: null; attempt: number }
   | { status: "auth_required"; api: null; error: string | null }
   | { status: "error"; api: null; error: string };
@@ -42,7 +41,6 @@ export type UseAPIResult = APIState & APIStateMethods;
 type ConnectionState =
   | { status: "connecting" }
   | { status: "connected"; client: APIClient; cleanup: () => void }
-  | { status: "degraded"; client: APIClient; cleanup: () => void } // Pings failing
   | { status: "reconnecting"; attempt: number }
   | { status: "auth_required"; error?: string }
   | { status: "error"; error: string };
@@ -55,8 +53,7 @@ const MAX_DELAY_MS = 10000;
 // Liveness check constants
 const LIVENESS_INTERVAL_MS = 5000; // Check every 5 seconds
 const LIVENESS_TIMEOUT_MS = 3000; // Ping must respond within 3 seconds
-const CONSECUTIVE_FAILURES_FOR_DEGRADED = 2; // Mark degraded after N failures
-const CONSECUTIVE_FAILURES_FOR_RECONNECT = 3; // Force reconnect after N failures (WS may be half-open)
+const CONSECUTIVE_FAILURES_FOR_RECONNECT = 3; // Force reconnect after N consecutive failures
 
 const APIContext = createContext<UseAPIResult | null>(null);
 
@@ -64,19 +61,6 @@ interface APIProviderProps {
   children: React.ReactNode;
   /** Optional pre-created client. If provided, skips internal connection setup. */
   client?: APIClient;
-  /** WebSocket factory for testing. Defaults to native WebSocket constructor. */
-  createWebSocket?: (url: string) => WebSocket;
-}
-
-function closeWebSocketSafely(ws: WebSocket) {
-  try {
-    // readyState: 0 = CONNECTING, 1 = OPEN, 2 = CLOSING, 3 = CLOSED
-    if (ws.readyState === 2 || ws.readyState === 3) return;
-    ws.close();
-  } catch {
-    // Some browsers throw if close() is called while already closing/closed.
-    // Since our cleanup can be invoked from multiple code paths, treat close as idempotent.
-  }
 }
 
 function createElectronClient(): { client: APIClient; cleanup: () => void } {
@@ -92,29 +76,22 @@ function createElectronClient(): { client: APIClient; cleanup: () => void } {
   };
 }
 
-function createBrowserClient(
-  authToken: string | null,
-  createWebSocket: (url: string) => WebSocket
-): {
+function createBrowserClient(authToken: string | null): {
   client: APIClient;
   cleanup: () => void;
-  ws: WebSocket;
 } {
   const apiBaseUrl = getBrowserBackendBaseUrl();
 
-  const wsUrl = new URL(`${apiBaseUrl}/orpc/ws`);
-  wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
-  if (authToken) {
-    wsUrl.searchParams.set("token", authToken);
-  }
-
-  const ws = createWebSocket(wsUrl.toString());
-  const link = new WebSocketLink({ websocket: ws });
+  const link = new RPCLink({
+    url: `${apiBaseUrl}/orpc`,
+    headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+  });
 
   return {
     client: createClient(link),
-    cleanup: () => closeWebSocketSafely(ws),
-    ws,
+    // HTTP/fetch transport has no persistent connection to close.
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    cleanup: () => {},
   };
 }
 
@@ -145,12 +122,6 @@ export const APIProvider = (props: APIProviderProps) => {
   const scheduleReconnectRef = useRef<(() => void) | null>(null);
   const consecutivePingFailuresRef = useRef(0);
   const connectionIdRef = useRef(0);
-  const forceReconnectInProgressRef = useRef(false);
-
-  const wsFactory = useMemo(
-    () => props.createWebSocket ?? ((url: string) => new WebSocket(url)),
-    [props.createWebSocket]
-  );
 
   const connect = useCallback(
     (token: string | null) => {
@@ -172,8 +143,7 @@ export const APIProvider = (props: APIProviderProps) => {
         return;
       }
 
-      // Skip Electron detection if custom WebSocket factory provided (for testing)
-      if (!props.createWebSocket && window.api) {
+      if (window.api) {
         const { client, cleanup } = createElectronClient();
         window.__ORPC_CLIENT__ = client;
         cleanupRef.current = cleanup;
@@ -181,96 +151,51 @@ export const APIProvider = (props: APIProviderProps) => {
         return;
       }
 
+      // HTTP/fetch transport — verify reachability via auth-check ping.
       setState({ status: "connecting" });
-      const { client, cleanup, ws } = createBrowserClient(token, wsFactory);
+      const { client, cleanup } = createBrowserClient(token);
 
-      ws.addEventListener("open", () => {
-        // Ignore stale connections (can happen if we force reconnect while the old socket is mid-flight).
-        if (connectionId !== connectionIdRef.current) {
-          cleanup();
-          return;
-        }
-
-        client.general
-          .ping("auth-check")
-          .then(() => {
-            // Ignore stale connections (e.g., auth-check returned after a new connect()).
-            if (connectionId !== connectionIdRef.current) {
-              cleanup();
-              return;
-            }
-
-            hasConnectedRef.current = true;
-            reconnectAttemptRef.current = 0;
-            consecutivePingFailuresRef.current = 0;
-            forceReconnectInProgressRef.current = false;
-            window.__ORPC_CLIENT__ = client;
-            cleanupRef.current = cleanup;
-            setState({ status: "connected", client, cleanup });
-          })
-          .catch((err: unknown) => {
-            if (connectionId !== connectionIdRef.current) {
-              cleanup();
-              return;
-            }
-
+      client.general
+        .ping("auth-check")
+        .then(() => {
+          // Ignore stale connections (e.g., auth-check returned after a new connect()).
+          if (connectionId !== connectionIdRef.current) {
             cleanup();
-            forceReconnectInProgressRef.current = false;
-            const errMsg = err instanceof Error ? err.message : String(err);
-            const errMsgLower = errMsg.toLowerCase();
-            const isAuthError =
-              errMsgLower.includes("unauthorized") ||
-              errMsgLower.includes("401") ||
-              errMsgLower.includes("auth token") ||
-              errMsgLower.includes("authentication");
-            if (isAuthError) {
-              clearStoredAuthToken();
-              setState({ status: "auth_required", error: token ? "Invalid token" : undefined });
-            } else {
-              setState({ status: "error", error: errMsg });
-            }
-          });
-      });
+            return;
+          }
 
-      // Note: Browser fires 'error' before 'close', so we handle reconnection
-      // only in 'close' to avoid double-scheduling. The 'error' event just
-      // signals that something went wrong; 'close' provides the final state.
-      ws.addEventListener("error", () => {
-        // Error occurred - close event will follow and handle reconnection
-        // We don't call cleanup() here since close handler will do it
-      });
+          hasConnectedRef.current = true;
+          reconnectAttemptRef.current = 0;
+          consecutivePingFailuresRef.current = 0;
+          window.__ORPC_CLIENT__ = client;
+          cleanupRef.current = cleanup;
+          setState({ status: "connected", client, cleanup });
+        })
+        .catch((err: unknown) => {
+          if (connectionId !== connectionIdRef.current) {
+            cleanup();
+            return;
+          }
 
-      ws.addEventListener("close", (event) => {
-        cleanup();
+          cleanup();
+          const errMsg = err instanceof Error ? err.message : String(err);
+          const errMsgLower = errMsg.toLowerCase();
+          const isAuthError =
+            errMsgLower.includes("unauthorized") ||
+            errMsgLower.includes("401") ||
+            errMsgLower.includes("auth token") ||
+            errMsgLower.includes("authentication");
 
-        // Ignore stale connections (can happen if we force reconnect while the old socket is mid-flight).
-        if (connectionId !== connectionIdRef.current) {
-          return;
-        }
-
-        forceReconnectInProgressRef.current = false;
-
-        // Auth-specific close codes
-        if (event.code === 1008 || event.code === 4401) {
-          clearStoredAuthToken();
-          hasConnectedRef.current = false; // Reset - need fresh auth
-          setState({ status: "auth_required", error: "Authentication required" });
-          return;
-        }
-
-        // If we were previously connected, try to reconnect
-        if (hasConnectedRef.current) {
-          scheduleReconnectRef.current?.();
-          return;
-        }
-
-        // First connection failed.
-        // This can happen in dev-server mode if the UI boots before the backend is ready.
-        // Prefer retry/backoff over forcing the auth modal (auth will be detected via ping/close codes).
-        scheduleReconnectRef.current?.();
-      });
+          if (isAuthError) {
+            clearStoredAuthToken();
+            setState({ status: "auth_required", error: token ? "Invalid token" : undefined });
+          } else {
+            // Network error or backend not ready — retry with backoff.
+            scheduleReconnectRef.current?.();
+          }
+        });
     },
-    [props.client, props.createWebSocket, wsFactory]
+    [props.client]
   );
 
   // Schedule reconnection with exponential backoff
@@ -308,55 +233,33 @@ export const APIProvider = (props: APIProviderProps) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Liveness check: periodic ping to detect degraded connections
-  // Only runs for browser WebSocket connections (not Electron or test clients)
+  // Liveness check: periodic ping to detect backend unavailability.
+  // Only runs for browser HTTP connections (not Electron or test clients).
   useEffect(() => {
-    // Only check liveness for connected/degraded browser connections
-    if (state.status !== "connected" && state.status !== "degraded") return;
+    if (state.status !== "connected") return;
     // Skip for Electron (MessagePort) and test clients (externally provided)
-    if (props.client || (!props.createWebSocket && window.api)) return;
+    if (props.client || window.api) return;
 
     const client = state.client;
-    const cleanup = state.cleanup;
 
     const checkLiveness = async () => {
       try {
-        // Race ping against timeout
         const pingPromise = client.general.ping("liveness");
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("Ping timeout")), LIVENESS_TIMEOUT_MS)
         );
 
         await Promise.race([pingPromise, timeoutPromise]);
-
-        // Ping succeeded - reset failure count and restore connected state if degraded
         consecutivePingFailuresRef.current = 0;
-        forceReconnectInProgressRef.current = false;
-        if (state.status === "degraded") {
-          setState({ status: "connected", client, cleanup });
-        }
       } catch {
-        // Ping failed
         consecutivePingFailuresRef.current++;
 
-        if (
-          consecutivePingFailuresRef.current >= CONSECUTIVE_FAILURES_FOR_RECONNECT &&
-          !forceReconnectInProgressRef.current
-        ) {
-          forceReconnectInProgressRef.current = true;
+        if (consecutivePingFailuresRef.current >= CONSECUTIVE_FAILURES_FOR_RECONNECT) {
           console.warn(
             `[APIProvider] Liveness ping failed ${consecutivePingFailuresRef.current} times; reconnecting...`
           );
-          cleanup();
           connect(authToken);
           return;
-        }
-
-        if (
-          consecutivePingFailuresRef.current >= CONSECUTIVE_FAILURES_FOR_DEGRADED &&
-          state.status === "connected"
-        ) {
-          setState({ status: "degraded", client, cleanup });
         }
       }
     };
@@ -365,7 +268,7 @@ export const APIProvider = (props: APIProviderProps) => {
       void checkLiveness();
     }, LIVENESS_INTERVAL_MS);
     return () => clearInterval(intervalId);
-  }, [state, props.client, props.createWebSocket, connect, authToken]);
+  }, [state, props.client, connect, authToken]);
 
   const authenticate = useCallback(
     (token: string) => {
@@ -388,8 +291,6 @@ export const APIProvider = (props: APIProviderProps) => {
         return { status: "connecting", api: null, error: null, ...base };
       case "connected":
         return { status: "connected", api: state.client, error: null, ...base };
-      case "degraded":
-        return { status: "degraded", api: state.client, error: null, ...base };
       case "reconnecting":
         return { status: "reconnecting", api: null, error: null, attempt: state.attempt, ...base };
       case "auth_required":

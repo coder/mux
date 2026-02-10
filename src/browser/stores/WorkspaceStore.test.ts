@@ -232,10 +232,29 @@ describe("WorkspaceStore", () => {
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
       };
 
+      // Only the selected workspace gets an onChat subscription
+      store.setSelectedWorkspaceId("workspace-1");
       const workspaceMap = new Map([[metadata1.id, metadata1]]);
       store.syncWorkspaces(workspaceMap);
 
       expect(mockOnChat).toHaveBeenCalledWith({ workspaceId: "workspace-1" }, expect.anything());
+    });
+
+    it("should not subscribe to non-selected workspaces", () => {
+      const metadata1: FrontendWorkspaceMetadata = {
+        id: "workspace-1",
+        name: "workspace-1",
+        projectName: "project-1",
+        projectPath: "/project-1",
+        namedWorkspacePath: "/path/1",
+        createdAt: new Date().toISOString(),
+        runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+      };
+
+      // No workspace selected — syncWorkspaces should store metadata but not subscribe
+      store.syncWorkspaces(new Map([[metadata1.id, metadata1]]));
+
+      expect(mockOnChat).not.toHaveBeenCalled();
     });
 
     it("should remove deleted workspaces", () => {

@@ -92,6 +92,11 @@ function AppLoaderInner() {
     getPRStatusStoreInstance().setClient(api ?? null);
 
     if (!workspaceContext.loading) {
+      // Tell the store which workspace is selected before syncing, so it only
+      // subscribes to onChat for that workspace (not all of them).
+      workspaceStoreInstance.setSelectedWorkspaceId(
+        workspaceContext.selectedWorkspace?.workspaceId ?? null
+      );
       workspaceStoreInstance.syncWorkspaces(workspaceContext.workspaceMetadata);
       gitStatusStore.syncWorkspaces(workspaceContext.workspaceMetadata);
 
@@ -107,6 +112,7 @@ function AppLoaderInner() {
   }, [
     workspaceContext.loading,
     workspaceContext.workspaceMetadata,
+    workspaceContext.selectedWorkspace?.workspaceId,
     workspaceStoreInstance,
     gitStatusStore,
     backgroundBashStore,
