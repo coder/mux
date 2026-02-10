@@ -39,6 +39,9 @@ describe("AgentSession disposal race conditions", () => {
       streamMessage,
     } as unknown as AIService;
 
+    // Justified mock: deferred promise is essential for testing the dispose-during-write race.
+    // A real HistoryService completes appendToHistory synchronously (sub-ms), so we can't
+    // reproduce the race window without controlling when the promise resolves.
     const appendDeferred = createDeferred<Result<void>>();
     const historyService: HistoryService = {
       appendToHistory: mock(() => appendDeferred.promise),

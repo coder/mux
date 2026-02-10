@@ -1,14 +1,14 @@
-import { describe, expect, test, mock } from "bun:test";
+import { describe, expect, test, mock, afterEach } from "bun:test";
 import { buildContinueMessage } from "@/common/types/message";
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 import { AgentSession } from "./agentSession";
 import type { Config } from "@/node/config";
 import type { AIService } from "./aiService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
-import type { HistoryService } from "./historyService";
 import type { InitStateManager } from "./initStateManager";
 import type { PartialService } from "./partialService";
 import type { MuxMessage } from "@/common/types/message";
+import { createTestHistoryService } from "./testHistoryService";
 
 // NOTE: This test validates that legacy `mode` field in follow-up content is correctly
 // converted to `agentId` during dispatch. With the crash-safe follow-up architecture,
@@ -22,6 +22,11 @@ interface SessionInternals {
 }
 
 describe("AgentSession continue-message agentId fallback", () => {
+  let historyCleanup: (() => Promise<void>) | undefined;
+  afterEach(async () => {
+    await historyCleanup?.();
+  });
+
   test("legacy continueMessage.mode does not fall back to compact agent", async () => {
     // Track the follow-up message that gets dispatched
     let dispatchedMessage: string | undefined;
@@ -69,15 +74,9 @@ describe("AgentSession continue-message agentId fallback", () => {
       },
     } satisfies MuxMessage;
 
-    const historyService: HistoryService = {
-      getHistoryFromLatestBoundary: mock(() =>
-        Promise.resolve({ success: true as const, data: [mockSummaryMessage] })
-      ),
-      getLastMessages: mock(() =>
-        Promise.resolve({ success: true as const, data: [mockSummaryMessage] })
-      ),
-      appendToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
-    } as unknown as HistoryService;
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+    await historyService.appendToHistory("ws", mockSummaryMessage);
 
     const initStateManager: InitStateManager = {
       on() {

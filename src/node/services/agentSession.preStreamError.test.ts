@@ -1,9 +1,8 @@
-import { describe, expect, it, mock } from "bun:test";
+import { describe, expect, it, mock, afterEach } from "bun:test";
 import { EventEmitter } from "events";
 import type { Config } from "@/node/config";
 import type { AIService } from "@/node/services/aiService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
-import type { HistoryService } from "@/node/services/historyService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { PartialService } from "@/node/services/partialService";
 import type { SendMessageError } from "@/common/types/errors";
@@ -12,8 +11,14 @@ import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
 import type { StreamErrorMessage, WorkspaceChatMessage } from "@/common/orpc/types";
 import { AgentSession } from "./agentSession";
+import { createTestHistoryService } from "./testHistoryService";
 
 describe("AgentSession pre-stream errors", () => {
+  let historyCleanup: (() => Promise<void>) | undefined;
+  afterEach(async () => {
+    await historyCleanup?.();
+  });
+
   it("emits stream-error when stream startup fails", async () => {
     const workspaceId = "ws-test";
 
@@ -22,26 +27,8 @@ describe("AgentSession pre-stream errors", () => {
       getSessionDir: (_workspaceId: string) => "/tmp",
     } as unknown as Config;
 
-    const messages: MuxMessage[] = [];
-    let nextSeq = 0;
-
-    const appendToHistory = mock((_workspaceId: string, message: MuxMessage) => {
-      message.metadata = { ...(message.metadata ?? {}), historySequence: nextSeq++ };
-      messages.push(message);
-      return Promise.resolve(Ok(undefined));
-    });
-
-    const getHistoryFromLatestBoundary = mock(
-      (_workspaceId: string): Promise<Result<MuxMessage[], string>> => {
-        return Promise.resolve(Ok([...messages]));
-      }
-    );
-
-    const historyService = {
-      appendToHistory,
-      getHistoryFromLatestBoundary,
-      getLastMessages: mock(() => Promise.resolve(Ok([]))),
-    } as unknown as HistoryService;
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
 
     const partialService = {
       commitToHistory: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),

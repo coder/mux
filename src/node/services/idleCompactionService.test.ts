@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, mock, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, mock, afterEach, spyOn } from "bun:test";
 import { IdleCompactionService } from "./idleCompactionService";
 import type { Config } from "@/node/config";
 import type { HistoryService } from "./historyService";
@@ -6,14 +6,16 @@ import type { ExtensionMetadataService } from "./ExtensionMetadataService";
 import type { ProjectConfig, ProjectsConfig } from "@/common/types/project";
 import { createMuxMessage } from "@/common/types/message";
 import { Ok } from "@/common/types/result";
+import { createTestHistoryService } from "./testHistoryService";
 
 describe("IdleCompactionService", () => {
   // Mock services
   let mockConfig: Config;
-  let mockHistoryService: HistoryService;
+  let historyService: HistoryService;
   let mockExtensionMetadata: ExtensionMetadataService;
   let emitIdleCompactionNeededMock: ReturnType<typeof mock<(workspaceId: string) => void>>;
   let service: IdleCompactionService;
+  let cleanup: () => Promise<void>;
 
   // Test data
   const testWorkspaceId = "test-workspace-id";
@@ -21,7 +23,7 @@ describe("IdleCompactionService", () => {
   const now = Date.now();
   const oneHourMs = 60 * 60 * 1000;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // Create mock config
     mockConfig = {
       loadConfigOrDefault: mock(() => ({
@@ -37,18 +39,17 @@ describe("IdleCompactionService", () => {
       })),
     } as unknown as Config;
 
-    // Create mock history service - messages with timestamps 25 hours ago (idle)
+    // Create real history service and seed default idle messages (25 hours ago)
+    ({ historyService, cleanup } = await createTestHistoryService());
     const idleTimestamp = now - 25 * oneHourMs;
-    mockHistoryService = {
-      getLastMessages: mock(() =>
-        Promise.resolve(
-          Ok([
-            createMuxMessage("1", "user", "Hello", { timestamp: idleTimestamp }),
-            createMuxMessage("2", "assistant", "Hi there!", { timestamp: idleTimestamp }),
-          ])
-        )
-      ),
-    } as unknown as HistoryService;
+    await historyService.appendToHistory(
+      testWorkspaceId,
+      createMuxMessage("1", "user", "Hello", { timestamp: idleTimestamp })
+    );
+    await historyService.appendToHistory(
+      testWorkspaceId,
+      createMuxMessage("2", "assistant", "Hi there!", { timestamp: idleTimestamp })
+    );
 
     // Create mock extension metadata service
     mockExtensionMetadata = {
@@ -72,14 +73,15 @@ describe("IdleCompactionService", () => {
     // Create service with callback
     service = new IdleCompactionService(
       mockConfig,
-      mockHistoryService,
+      historyService,
       mockExtensionMetadata,
       emitIdleCompactionNeededMock
     );
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     service.stop();
+    await cleanup();
   });
 
   describe("checkEligibility", () => {
@@ -91,14 +93,8 @@ describe("IdleCompactionService", () => {
     });
 
     test("returns ineligible when workspace is currently streaming", async () => {
-      // Idle messages but workspace is streaming
+      // Idle messages already seeded in beforeEach; workspace is streaming
       const idleTimestamp = now - 25 * oneHourMs;
-      (mockHistoryService.getLastMessages as ReturnType<typeof mock>).mockResolvedValueOnce(
-        Ok([
-          createMuxMessage("1", "user", "Hello", { timestamp: idleTimestamp }),
-          createMuxMessage("2", "assistant", "Hi!", { timestamp: idleTimestamp }),
-        ])
-      );
       (mockExtensionMetadata.getMetadata as ReturnType<typeof mock>).mockResolvedValueOnce({
         workspaceId: testWorkspaceId,
         recency: idleTimestamp,
@@ -114,7 +110,7 @@ describe("IdleCompactionService", () => {
     });
 
     test("returns ineligible when workspace has no messages", async () => {
-      (mockHistoryService.getLastMessages as ReturnType<typeof mock>).mockResolvedValueOnce(Ok([]));
+      spyOn(historyService, "getLastMessages").mockResolvedValueOnce(Ok([]));
 
       const result = await service.checkEligibility(testWorkspaceId, threshold24h, now);
       expect(result.eligible).toBe(false);
@@ -123,7 +119,7 @@ describe("IdleCompactionService", () => {
 
     test("returns ineligible when last message is already compacted", async () => {
       const idleTimestamp = now - 25 * oneHourMs;
-      (mockHistoryService.getLastMessages as ReturnType<typeof mock>).mockResolvedValueOnce(
+      spyOn(historyService, "getLastMessages").mockResolvedValueOnce(
         Ok([
           createMuxMessage("1", "assistant", "Summary", {
             compacted: true,
@@ -140,7 +136,7 @@ describe("IdleCompactionService", () => {
     test("returns ineligible when not idle long enough", async () => {
       // Messages with recent timestamps (only 1 hour ago)
       const recentTimestamp = now - 1 * oneHourMs;
-      (mockHistoryService.getLastMessages as ReturnType<typeof mock>).mockResolvedValueOnce(
+      spyOn(historyService, "getLastMessages").mockResolvedValueOnce(
         Ok([
           createMuxMessage("1", "user", "Hello", { timestamp: recentTimestamp }),
           createMuxMessage("2", "assistant", "Hi!", { timestamp: recentTimestamp }),
@@ -154,7 +150,7 @@ describe("IdleCompactionService", () => {
 
     test("returns ineligible when last message is from user (awaiting response)", async () => {
       const idleTimestamp = now - 25 * oneHourMs;
-      (mockHistoryService.getLastMessages as ReturnType<typeof mock>).mockResolvedValueOnce(
+      spyOn(historyService, "getLastMessages").mockResolvedValueOnce(
         Ok([
           createMuxMessage("1", "user", "Hello", { timestamp: idleTimestamp }),
           createMuxMessage("2", "assistant", "Hi!", { timestamp: idleTimestamp }),
@@ -169,7 +165,7 @@ describe("IdleCompactionService", () => {
 
     test("returns ineligible when messages have no timestamps", async () => {
       // Messages without timestamps - can't determine recency
-      (mockHistoryService.getLastMessages as ReturnType<typeof mock>).mockResolvedValueOnce(
+      spyOn(historyService, "getLastMessages").mockResolvedValueOnce(
         Ok([createMuxMessage("1", "user", "Hello"), createMuxMessage("2", "assistant", "Hi!")])
       );
 
@@ -232,7 +228,7 @@ describe("IdleCompactionService", () => {
 
       // Make first workspace fail eligibility check (history throws)
       let callCount = 0;
-      (mockHistoryService.getLastMessages as ReturnType<typeof mock>).mockImplementation(() => {
+      spyOn(historyService, "getLastMessages").mockImplementation(() => {
         callCount++;
         if (callCount === 1) {
           throw new Error("History fetch failed");
@@ -268,8 +264,8 @@ describe("IdleCompactionService", () => {
         ]),
       });
 
-      // Update history mock to return idle messages for the name-based ID
-      (mockHistoryService.getLastMessages as ReturnType<typeof mock>).mockResolvedValueOnce(
+      // Spy on history to return idle messages for the name-based ID
+      spyOn(historyService, "getLastMessages").mockResolvedValueOnce(
         Ok([
           createMuxMessage("1", "user", "Hello", { timestamp: idleTimestamp }),
           createMuxMessage("2", "assistant", "Hi!", { timestamp: idleTimestamp }),

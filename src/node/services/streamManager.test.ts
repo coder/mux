@@ -1,10 +1,11 @@
-import { describe, test, expect, beforeEach, mock } from "bun:test";
+import { describe, test, expect, afterEach, beforeEach, mock } from "bun:test";
 import * as fs from "node:fs/promises";
 
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { StreamManager, stripEncryptedContent } from "./streamManager";
 import { APICallError, RetryError, type ModelMessage } from "ai";
 import type { HistoryService } from "./historyService";
+import { createTestHistoryService } from "./testHistoryService";
 import type { PartialService } from "./partialService";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { shouldRunIntegrationTests, validateApiKeys } from "../../../tests/testUtils";
@@ -19,17 +20,17 @@ if (shouldRunIntegrationTests()) {
   validateApiKeys(["ANTHROPIC_API_KEY"]);
 }
 
-// Mock HistoryService
-const createMockHistoryService = (): HistoryService => {
-  return {
-    appendToHistory: mock(() => Promise.resolve({ success: true })),
-    getHistoryFromLatestBoundary: mock(() => Promise.resolve({ success: true, data: [] })),
-    getLastMessages: mock(() => Promise.resolve({ success: true as const, data: [] })),
-    updateHistory: mock(() => Promise.resolve({ success: true })),
-    truncateAfterMessage: mock(() => Promise.resolve({ success: true })),
-    clearHistory: mock(() => Promise.resolve({ success: true })),
-  } as unknown as HistoryService;
-};
+// Real HistoryService backed by a temp directory (created fresh per test)
+let historyService: HistoryService;
+let historyCleanup: () => Promise<void>;
+
+beforeEach(async () => {
+  ({ historyService, cleanup: historyCleanup } = await createTestHistoryService());
+});
+
+afterEach(async () => {
+  await historyCleanup();
+});
 
 // Mock PartialService
 const createMockPartialService = (): PartialService => {
@@ -52,10 +53,7 @@ describe("StreamManager - createTempDirForStream", () => {
     process.env.USERPROFILE = home.path;
 
     try {
-      const streamManager = new StreamManager(
-        createMockHistoryService(),
-        createMockPartialService()
-      );
+      const streamManager = new StreamManager(historyService, createMockPartialService());
       const runtime = createRuntime({ type: "local", srcBaseDir: "/tmp" });
 
       const token = streamManager.generateStreamToken();
@@ -92,7 +90,7 @@ describe("StreamManager - stopWhen configuration", () => {
   }) => StopWhenCondition | StopWhenCondition[];
 
   test("uses single-step stopWhen when a tool is required", () => {
-    const streamManager = new StreamManager(createMockHistoryService(), createMockPartialService());
+    const streamManager = new StreamManager(historyService, createMockPartialService());
     const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
       | BuildStopWhenCondition
       | undefined;
@@ -109,7 +107,7 @@ describe("StreamManager - stopWhen configuration", () => {
   });
 
   test("uses autonomous step cap and queued-message interrupt conditions", () => {
-    const streamManager = new StreamManager(createMockHistoryService(), createMockPartialService());
+    const streamManager = new StreamManager(historyService, createMockPartialService());
     const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
       | BuildStopWhenCondition
       | undefined;
@@ -132,7 +130,7 @@ describe("StreamManager - stopWhen configuration", () => {
   });
 
   test("treats missing queued-message callback as not queued", () => {
-    const streamManager = new StreamManager(createMockHistoryService(), createMockPartialService());
+    const streamManager = new StreamManager(historyService, createMockPartialService());
     const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
       | BuildStopWhenCondition
       | undefined;
@@ -216,14 +214,12 @@ describe("StreamManager - stripEncryptedContent", () => {
 
 describe("StreamManager - Concurrent Stream Prevention", () => {
   let streamManager: StreamManager;
-  let mockHistoryService: HistoryService;
   let mockPartialService: PartialService;
   const runtime = createRuntime({ type: "local", srcBaseDir: "/tmp" });
 
   beforeEach(() => {
-    mockHistoryService = createMockHistoryService();
     mockPartialService = createMockPartialService();
-    streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    streamManager = new StreamManager(historyService, mockPartialService);
     // Suppress error events from bubbling up as uncaught exceptions during tests
     streamManager.on("error", () => undefined);
   });
@@ -606,13 +602,11 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
 
 describe("StreamManager - Unavailable Tool Handling", () => {
   let streamManager: StreamManager;
-  let mockHistoryService: HistoryService;
   let mockPartialService: PartialService;
 
   beforeEach(() => {
-    mockHistoryService = createMockHistoryService();
     mockPartialService = createMockPartialService();
-    streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    streamManager = new StreamManager(historyService, mockPartialService);
     // Suppress error events - processStreamWithCleanup may throw due to tokenizer worker issues in test env
     streamManager.on("error", () => undefined);
   });
@@ -697,9 +691,8 @@ describe("StreamManager - Unavailable Tool Handling", () => {
 
 describe("StreamManager - previousResponseId recovery", () => {
   test("isResponseIdLost returns false for unknown IDs", () => {
-    const mockHistoryService = createMockHistoryService();
     const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService, mockPartialService);
 
     // Verify the ID is not lost initially
     expect(streamManager.isResponseIdLost("resp_123abc")).toBe(false);
@@ -707,9 +700,8 @@ describe("StreamManager - previousResponseId recovery", () => {
   });
 
   test("extractPreviousResponseIdFromError extracts ID from various error formats", () => {
-    const mockHistoryService = createMockHistoryService();
     const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService, mockPartialService);
 
     // Get the private method via reflection
     const extractMethod = Reflect.get(streamManager, "extractPreviousResponseIdFromError") as (
@@ -741,9 +733,8 @@ describe("StreamManager - previousResponseId recovery", () => {
   });
 
   test("recordLostResponseIdIfApplicable records IDs for explicit OpenAI errors", () => {
-    const mockHistoryService = createMockHistoryService();
     const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService, mockPartialService);
 
     const recordMethod = Reflect.get(streamManager, "recordLostResponseIdIfApplicable") as (
       workspaceId: string,
@@ -772,9 +763,8 @@ describe("StreamManager - previousResponseId recovery", () => {
   });
 
   test("recordLostResponseIdIfApplicable records IDs for 500 errors referencing previous responses", () => {
-    const mockHistoryService = createMockHistoryService();
     const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService, mockPartialService);
 
     const recordMethod = Reflect.get(streamManager, "recordLostResponseIdIfApplicable") as (
       workspaceId: string,
@@ -803,9 +793,8 @@ describe("StreamManager - previousResponseId recovery", () => {
   });
 
   test("retryStreamWithoutPreviousResponseId retries at step boundary with existing parts", async () => {
-    const mockHistoryService = createMockHistoryService();
     const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService, mockPartialService);
 
     const retryMethod = Reflect.get(streamManager, "retryStreamWithoutPreviousResponseId") as (
       workspaceId: string,
@@ -891,9 +880,8 @@ describe("StreamManager - previousResponseId recovery", () => {
   });
 
   test("resolveTotalUsageForStreamEnd prefers cumulative usage after step retry", () => {
-    const mockHistoryService = createMockHistoryService();
     const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService, mockPartialService);
 
     const resolveMethod = Reflect.get(streamManager, "resolveTotalUsageForStreamEnd") as (
       streamInfo: unknown,
@@ -914,9 +902,8 @@ describe("StreamManager - previousResponseId recovery", () => {
   });
 
   test("resolveTotalUsageForStreamEnd treats non-zero fields as valid usage", () => {
-    const mockHistoryService = createMockHistoryService();
     const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService, mockPartialService);
 
     const resolveMethod = Reflect.get(streamManager, "resolveTotalUsageForStreamEnd") as (
       streamInfo: unknown,
@@ -937,9 +924,8 @@ describe("StreamManager - previousResponseId recovery", () => {
   });
 
   test("resolveTotalUsageForStreamEnd keeps stream total without step retry", () => {
-    const mockHistoryService = createMockHistoryService();
     const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService, mockPartialService);
 
     const resolveMethod = Reflect.get(streamManager, "resolveTotalUsageForStreamEnd") as (
       streamInfo: unknown,
@@ -962,9 +948,8 @@ describe("StreamManager - previousResponseId recovery", () => {
 
 describe("StreamManager - replayStream", () => {
   test("replayStream snapshots parts so reconnect doesn't block until stream ends", async () => {
-    const mockHistoryService = createMockHistoryService();
     const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService, mockPartialService);
 
     // Suppress error events from bubbling up as uncaught exceptions during tests
     streamManager.on("error", () => undefined);
@@ -1036,9 +1021,8 @@ describe("StreamManager - replayStream", () => {
 
 describe("StreamManager - categorizeError", () => {
   test("unwraps RetryError.lastError to classify model_not_found", () => {
-    const mockHistoryService = createMockHistoryService();
     const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService, mockPartialService);
 
     const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
       error: unknown
@@ -1067,9 +1051,8 @@ describe("StreamManager - categorizeError", () => {
   });
 
   test("classifies model_not_found via message fallback", () => {
-    const mockHistoryService = createMockHistoryService();
     const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService, mockPartialService);
 
     const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
       error: unknown
@@ -1084,9 +1067,8 @@ describe("StreamManager - categorizeError", () => {
   });
 
   test("classifies 402 payment required as quota (avoid auto-retry)", () => {
-    const mockHistoryService = createMockHistoryService();
     const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService, mockPartialService);
 
     const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
       error: unknown
@@ -1125,9 +1107,8 @@ describe("StreamManager - ask_user_question Partial Persistence", () => {
   // Instead, we verify the StreamManager has the expected method signature.
 
   test("flushPartialWrite is a callable method", () => {
-    const mockHistoryService = createMockHistoryService();
     const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService, mockPartialService);
 
     // Verify the private method exists and is callable
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -1138,9 +1119,8 @@ describe("StreamManager - ask_user_question Partial Persistence", () => {
 
 describe("StreamManager - stopStream", () => {
   test("emits stream-abort when stopping non-existent stream", async () => {
-    const mockHistoryService = createMockHistoryService();
     const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService, mockPartialService);
 
     // Track emitted events
     const abortEvents: Array<{ workspaceId: string; messageId: string }> = [];

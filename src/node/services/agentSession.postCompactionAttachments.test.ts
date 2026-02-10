@@ -1,4 +1,4 @@
-import { describe, expect, test, mock } from "bun:test";
+import { describe, expect, test, mock, afterEach } from "bun:test";
 import { EventEmitter } from "events";
 
 import type { PostCompactionAttachment } from "@/common/types/attachment";
@@ -13,6 +13,7 @@ import type { HistoryService } from "./historyService";
 import type { InitStateManager } from "./initStateManager";
 import type { PartialService } from "./partialService";
 import { DisposableTempDir } from "./tempDir";
+import { createTestHistoryService } from "./testHistoryService";
 
 function createSuccessfulFileEditMessage(id: string, filePath: string, diff: string): MuxMessage {
   return {
@@ -45,30 +46,7 @@ function getEditedFilePaths(attachments: PostCompactionAttachment[]): string[] {
   return editedFilesAttachment?.files.map((file) => file.path) ?? [];
 }
 
-function createSessionForHistory(history: MuxMessage[], sessionDir: string): AgentSession {
-  // Simulate getHistoryFromLatestBoundary: return only messages from the last
-  // durable compaction boundary onward (matching real HistoryService behavior).
-  const fromBoundary = (): MuxMessage[] => {
-    let lastBoundaryIdx = -1;
-    for (let i = history.length - 1; i >= 0; i--) {
-      const meta = history[i].metadata;
-      if (meta?.compactionBoundary === true && meta?.compacted && meta?.compactionEpoch) {
-        lastBoundaryIdx = i;
-        break;
-      }
-    }
-    return lastBoundaryIdx >= 0 ? history.slice(lastBoundaryIdx) : history;
-  };
-
-  const historyService: HistoryService = {
-    getHistoryFromLatestBoundary: mock(() =>
-      Promise.resolve({ success: true as const, data: fromBoundary() })
-    ),
-    getLastMessages: mock((_: string, n: number) =>
-      Promise.resolve({ success: true as const, data: history.slice(-n) })
-    ),
-  } as unknown as HistoryService;
-
+function createSessionForHistory(historyService: HistoryService, sessionDir: string): AgentSession {
   const partialService: PartialService = {} as unknown as PartialService;
 
   const aiEmitter = new EventEmitter();
@@ -136,6 +114,11 @@ async function generatePeriodicPostCompactionAttachments(
 }
 
 describe("AgentSession periodic post-compaction attachments", () => {
+  let historyCleanup: (() => Promise<void>) | undefined;
+  afterEach(async () => {
+    await historyCleanup?.();
+  });
+
   test("extracts edited file diffs from the latest durable compaction boundary slice", async () => {
     using sessionDir = new DisposableTempDir("agent-session-latest-boundary");
 
@@ -167,7 +150,14 @@ describe("AgentSession periodic post-compaction attachments", () => {
       ),
     ];
 
-    const session = createSessionForHistory(history, sessionDir.path);
+    const workspaceId = "workspace-post-compaction-test";
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+    for (const msg of history) {
+      await historyService.appendToHistory(workspaceId, msg);
+    }
+
+    const session = createSessionForHistory(historyService, sessionDir.path);
 
     try {
       const attachments = await generatePeriodicPostCompactionAttachments(session);
@@ -194,7 +184,14 @@ describe("AgentSession periodic post-compaction attachments", () => {
       ),
     ];
 
-    const session = createSessionForHistory(history, sessionDir.path);
+    const workspaceId = "workspace-post-compaction-test";
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+    for (const msg of history) {
+      await historyService.appendToHistory(workspaceId, msg);
+    }
+
+    const session = createSessionForHistory(historyService, sessionDir.path);
 
     try {
       const attachments = await generatePeriodicPostCompactionAttachments(session);
