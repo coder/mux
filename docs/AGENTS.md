@@ -94,8 +94,7 @@ HistoryService is pure local disk I/O with a single dependency (`getSessionDir`)
 - Never repeat constant values (like keybinds) in comments—they become stale when the constant changes.
 - **Avoid `void asyncFn()`** - fire-and-forget async calls hide race conditions. When state is observable by other code (in-memory cache, event emitters), ensure visibility order matches invariants. If memory and disk must stay in sync, persist before updating memory so observers see consistent state.
 - **Avoid `setTimeout` for component coordination** - racy and fragile; use callbacks or effects.
-- **Keyboard event propagation** - React's `e.stopPropagation()` only stops synthetic event bubbling; native `window` listeners still fire. Use `stopKeyboardPropagation(e)` from `@/browser/utils/events` to stop both React and native propagation when blocking global handlers (like stream interrupt on Escape).
-
+- **Keyboard event propagation** - React's `e.stopPropagation()` only stops synthetic event bubbling; native `window` listeners still fire. Escape-to-interrupt is **safe-by-default** in editable elements (`<input>`, `<textarea>`, `contentEditable`) — the stream interrupt handler ignores Escape unless the element opts in via `data-escape-interrupts-stream`. Use `stopKeyboardPropagation(e)` from `@/browser/utils/events` when you need to block other global handlers (or non-editable UI) from seeing the event.
 
 ## Tool Schema Conventions
 
