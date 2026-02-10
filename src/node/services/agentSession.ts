@@ -9,7 +9,6 @@ import { log } from "@/node/services/log";
 import type { Config } from "@/node/config";
 import type { AIService } from "@/node/services/aiService";
 import type { HistoryService } from "@/node/services/historyService";
-import type { PartialService } from "@/node/services/partialService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -145,7 +144,6 @@ interface AgentSessionOptions {
   workspaceId: string;
   config: Config;
   historyService: HistoryService;
-  partialService: PartialService;
   aiService: AIService;
   initStateManager: InitStateManager;
   telemetryService?: TelemetryService;
@@ -162,7 +160,6 @@ export class AgentSession {
   private readonly workspaceId: string;
   private readonly config: Config;
   private readonly historyService: HistoryService;
-  private readonly partialService: PartialService;
   private readonly aiService: AIService;
   private readonly initStateManager: InitStateManager;
   private readonly backgroundProcessManager: BackgroundProcessManager;
@@ -244,7 +241,6 @@ export class AgentSession {
       workspaceId,
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       telemetryService,
@@ -261,7 +257,6 @@ export class AgentSession {
     this.workspaceId = trimmedWorkspaceId;
     this.config = config;
     this.historyService = historyService;
-    this.partialService = partialService;
     this.aiService = aiService;
     this.initStateManager = initStateManager;
     this.backgroundProcessManager = backgroundProcessManager;
@@ -272,7 +267,6 @@ export class AgentSession {
     this.compactionHandler = new CompactionHandler({
       workspaceId: this.workspaceId,
       historyService: this.historyService,
-      partialService: this.partialService,
       sessionDir: this.config.getSessionDir(this.workspaceId),
       telemetryService,
       emitter: this.emitter,
@@ -362,7 +356,7 @@ export class AgentSession {
       // Read partial BEFORE iterating history so we can skip the corresponding
       // placeholder message (which has empty parts). The partial has the real content.
       const streamInfo = this.aiService.getStreamInfo(this.workspaceId);
-      const partial = await this.partialService.readPartial(this.workspaceId);
+      const partial = await this.historyService.readPartial(this.workspaceId);
       const partialHistorySequence = partial?.metadata?.historySequence;
 
       // Load chat history from the penultimate compaction boundary onward
@@ -879,7 +873,7 @@ export class AgentSession {
     // from committing it. For soft interrupts, defer to stream-abort handler since
     // the stream continues running and would recreate the partial.
     if (options?.abandonPartial && !options?.soft) {
-      const deleteResult = await this.partialService.deletePartial(this.workspaceId);
+      const deleteResult = await this.historyService.deletePartial(this.workspaceId);
       if (!deleteResult.success) {
         return Err(deleteResult.error);
       }
@@ -917,7 +911,7 @@ export class AgentSession {
     };
     this.activeStreamUserMessageId = undefined;
 
-    const commitResult = await this.partialService.commitToHistory(this.workspaceId);
+    const commitResult = await this.historyService.commitPartial(this.workspaceId);
     if (!commitResult.success) {
       return Err(createUnknownSendMessageError(commitResult.error));
     }
@@ -1050,7 +1044,7 @@ export class AgentSession {
 
   private async clearFailedAssistantMessage(messageId: string, reason: string): Promise<void> {
     const [partialResult, deleteMessageResult] = await Promise.all([
-      this.partialService.deletePartial(this.workspaceId),
+      this.historyService.deletePartial(this.workspaceId),
       this.historyService.deleteMessage(this.workspaceId, messageId),
     ]);
 
@@ -1466,7 +1460,7 @@ export class AgentSession {
       messageId: data.messageId,
     });
 
-    const partialDeleteResult = await this.partialService.deletePartial(this.workspaceId);
+    const partialDeleteResult = await this.historyService.deletePartial(this.workspaceId);
     if (!partialDeleteResult.success) {
       log.warn("Failed to delete partial before exec subagent hard restart", {
         workspaceId: this.workspaceId,

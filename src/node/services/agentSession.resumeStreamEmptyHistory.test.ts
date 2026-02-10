@@ -2,11 +2,9 @@ import { describe, expect, test, mock, afterEach } from "bun:test";
 
 import { AgentSession } from "./agentSession";
 import type { Config } from "@/node/config";
-import type { PartialService } from "./partialService";
 import type { AIService } from "./aiService";
 import type { InitStateManager } from "./initStateManager";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
-import type { Result } from "@/common/types/result";
 import { Ok } from "@/common/types/result";
 import { createTestHistoryService } from "./testHistoryService";
 
@@ -30,10 +28,6 @@ describe("AgentSession.resumeStream", () => {
     const { historyService, cleanup } = await createTestHistoryService();
     historyCleanup = cleanup;
 
-    const partialService: PartialService = {
-      commitToHistory: mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined))),
-    } as unknown as PartialService;
-
     const initStateManager: InitStateManager = {
       on: mock(() => initStateManager),
       off: mock(() => initStateManager),
@@ -53,7 +47,6 @@ describe("AgentSession.resumeStream", () => {
       workspaceId: "ws",
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,

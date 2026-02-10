@@ -17,7 +17,6 @@ import {
   type ProviderModelFactory,
 } from "./providerModelFactory";
 import { HistoryService } from "./historyService";
-import { PartialService } from "./partialService";
 import { InitStateManager } from "./initStateManager";
 import { ProviderService } from "./providerService";
 import { Config } from "@/node/config";
@@ -49,16 +48,9 @@ describe("AIService", () => {
   beforeEach(() => {
     const config = new Config();
     const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
     const initStateManager = new InitStateManager(config);
     const providerService = new ProviderService(config);
-    service = new AIService(
-      config,
-      historyService,
-      partialService,
-      initStateManager,
-      providerService
-    );
+    service = new AIService(config, historyService, initStateManager, providerService);
   });
 
   // Note: These tests are placeholders as Bun doesn't support Jest mocking
@@ -108,10 +100,9 @@ describe("AIService.resolveGatewayModelString", () => {
   function createService(root: string): AIService {
     const config = new Config(root);
     const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
     const initStateManager = new InitStateManager(config);
     const providerService = new ProviderService(config);
-    return new AIService(config, historyService, partialService, initStateManager, providerService);
+    return new AIService(config, historyService, initStateManager, providerService);
   }
 
   it("routes allowlisted models when gateway is enabled + configured", async () => {
@@ -247,10 +238,9 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
   function createService(root: string): AIService {
     const config = new Config(root);
     const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
     const initStateManager = new InitStateManager(config);
     const providerService = new ProviderService(config);
-    return new AIService(config, historyService, partialService, initStateManager, providerService);
+    return new AIService(config, historyService, initStateManager, providerService);
   }
 
   function getFetchUrl(input: Parameters<typeof fetch>[0]): string {
@@ -334,17 +324,10 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
 
     const config = new Config(muxHome.path);
     const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
     const initStateManager = new InitStateManager(config);
     const providerService = new ProviderService(config);
 
-    const service = new AIService(
-      config,
-      historyService,
-      partialService,
-      initStateManager,
-      providerService
-    );
+    const service = new AIService(config, historyService, initStateManager, providerService);
 
     const requests: Array<{
       input: Parameters<typeof fetch>[0];
@@ -441,17 +424,10 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
 
     const config = new Config(muxHome.path);
     const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
     const initStateManager = new InitStateManager(config);
     const providerService = new ProviderService(config);
 
-    const service = new AIService(
-      config,
-      historyService,
-      partialService,
-      initStateManager,
-      providerService
-    );
+    const service = new AIService(config, historyService, initStateManager, providerService);
 
     const requests: Array<{
       input: Parameters<typeof fetch>[0];
@@ -534,17 +510,10 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
 
     const config = new Config(muxHome.path);
     const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
     const initStateManager = new InitStateManager(config);
     const providerService = new ProviderService(config);
 
-    const service = new AIService(
-      config,
-      historyService,
-      partialService,
-      initStateManager,
-      providerService
-    );
+    const service = new AIService(config, historyService, initStateManager, providerService);
 
     const requests: Array<{
       input: Parameters<typeof fetch>[0];
@@ -691,17 +660,10 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
 
     const config = new Config(muxHome.path);
     const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
     const initStateManager = new InitStateManager(config);
     const providerService = new ProviderService(config);
 
-    const service = new AIService(
-      config,
-      historyService,
-      partialService,
-      initStateManager,
-      providerService
-    );
+    const service = new AIService(config, historyService, initStateManager, providerService);
 
     const requests: Array<{
       input: Parameters<typeof fetch>[0];
@@ -898,16 +860,9 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   function createHarness(muxHomePath: string, metadata: WorkspaceMetadata): StreamMessageHarness {
     const config = new Config(muxHomePath);
     const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
     const initStateManager = new InitStateManager(config);
     const providerService = new ProviderService(config);
-    const service = new AIService(
-      config,
-      historyService,
-      partialService,
-      initStateManager,
-      providerService
-    );
+    const service = new AIService(config, historyService, initStateManager, providerService);
 
     const planPayloadMessageIds: string[][] = [];
     const preparedPayloadMessageIds: string[][] = [];
@@ -1008,7 +963,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       projectPath: metadata.projectPath,
     });
 
-    spyOn(partialService, "commitToHistory").mockResolvedValue({
+    spyOn(historyService, "commitPartial").mockResolvedValue({
       success: true,
       data: undefined,
     });

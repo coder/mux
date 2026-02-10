@@ -2,7 +2,6 @@ import { describe, expect, test, mock } from "bun:test";
 import { AgentSession } from "./agentSession";
 import type { Config } from "@/node/config";
 import type { HistoryService } from "./historyService";
-import type { PartialService } from "./partialService";
 import type { AIService } from "./aiService";
 import type { InitStateManager } from "./initStateManager";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
@@ -65,13 +64,11 @@ describe("AgentSession disposal race conditions", () => {
       srcDir: "/tmp",
       getSessionDir: mock(() => "/tmp"),
     } as unknown as Config;
-    const partialService: PartialService = {} as unknown as PartialService;
 
     const session = new AgentSession({
       workspaceId: "ws",
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,

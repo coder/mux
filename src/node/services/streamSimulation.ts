@@ -15,7 +15,6 @@ import type { ThinkingLevel } from "@/common/types/thinking";
 import type { StreamDeltaEvent, StreamEndEvent, StreamStartEvent } from "@/common/types/stream";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { HistoryService } from "./historyService";
-import type { PartialService } from "./partialService";
 import { createErrorEvent } from "./utils/sendMessageError";
 
 // ---------------------------------------------------------------------------
@@ -65,7 +64,7 @@ function createSimulatedStreamStart(ctx: SimulationContext): StreamStartEvent {
  */
 export async function simulateContextLimitError(
   ctx: SimulationContext,
-  partialService: PartialService
+  historyService: HistoryService
 ): Promise<void> {
   const errorMessage =
     "Context length exceeded: the conversation is too long to send to this OpenAI model. Please shorten the history and try again.";
@@ -88,7 +87,7 @@ export async function simulateContextLimitError(
     parts: [],
   };
 
-  await partialService.writePartial(ctx.workspaceId, errorPartialMessage);
+  await historyService.writePartial(ctx.workspaceId, errorPartialMessage);
 
   ctx.emit("stream-start", createSimulatedStreamStart(ctx));
   ctx.emit(
@@ -114,8 +113,7 @@ export async function simulateContextLimitError(
 export async function simulateToolPolicyNoop(
   ctx: SimulationContext,
   effectiveToolPolicy: ToolPolicy | undefined,
-  historyService: HistoryService,
-  partialService: PartialService
+  historyService: HistoryService
 ): Promise<void> {
   const noopMessage = createMuxMessage(ctx.assistantMessageId, "assistant", "", {
     timestamp: Date.now(),
@@ -180,6 +178,6 @@ export async function simulateToolPolicyNoop(
     parts,
   };
 
-  await partialService.deletePartial(ctx.workspaceId);
+  await historyService.deletePartial(ctx.workspaceId);
   await historyService.updateHistory(ctx.workspaceId, finalAssistantMessage);
 }

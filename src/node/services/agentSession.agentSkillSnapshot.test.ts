@@ -5,7 +5,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import type { AIService } from "@/node/services/aiService";
-import type { PartialService } from "@/node/services/partialService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { Config } from "@/node/config";
@@ -61,10 +60,6 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       }
     );
 
-    const partialService = {
-      commitToHistory: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-    } as unknown as PartialService;
-
     const aiEmitter = new EventEmitter();
 
     const workspaceMeta: FrontendWorkspaceMetadata = {
@@ -102,7 +97,6 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       workspaceId,
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,
@@ -171,10 +165,6 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       }
     );
 
-    const partialService = {
-      commitToHistory: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-    } as unknown as PartialService;
-
     const aiEmitter = new EventEmitter();
 
     const workspaceMeta: FrontendWorkspaceMetadata = {
@@ -212,7 +202,6 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       workspaceId,
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,
@@ -264,10 +253,6 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       }
     );
 
-    const partialService = {
-      commitToHistory: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-    } as unknown as PartialService;
-
     const aiEmitter = new EventEmitter();
 
     const workspaceMeta: FrontendWorkspaceMetadata = {
@@ -305,7 +290,6 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       workspaceId,
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,
@@ -372,10 +356,6 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       }
     );
 
-    const partialService = {
-      commitToHistory: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-    } as unknown as PartialService;
-
     const aiEmitter = new EventEmitter();
 
     const workspaceMeta: FrontendWorkspaceMetadata = {
@@ -411,7 +391,6 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       workspaceId,
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,
@@ -522,10 +501,6 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     const truncateAfterMessage = spyOn(historyService, "truncateAfterMessage");
     spyOn(historyService, "appendToHistory");
 
-    const partialService = {
-      commitToHistory: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-    } as unknown as PartialService;
-
     const aiEmitter = new EventEmitter();
     const aiService = Object.assign(aiEmitter, {
       isStreaming: mock((_workspaceId: string) => false),
@@ -550,7 +525,6 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       workspaceId,
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,

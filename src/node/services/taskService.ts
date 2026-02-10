@@ -7,7 +7,6 @@ import type { Config, Workspace as WorkspaceConfigEntry } from "@/node/config";
 import type { AIService } from "@/node/services/aiService";
 import type { WorkspaceService } from "@/node/services/workspaceService";
 import type { HistoryService } from "@/node/services/historyService";
-import type { PartialService } from "@/node/services/partialService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import { log } from "@/node/services/log";
 import { detectDefaultTrunkBranch, listLocalBranches } from "@/node/git";
@@ -230,7 +229,6 @@ export class TaskService {
   constructor(
     private readonly config: Config,
     private readonly historyService: HistoryService,
-    private readonly partialService: PartialService,
     private readonly aiService: AIService,
     private readonly workspaceService: WorkspaceService,
     private readonly initStateManager: InitStateManager
@@ -2125,7 +2123,7 @@ export class TaskService {
   }
 
   private async readLatestAssistantText(workspaceId: string): Promise<string | null> {
-    const partial = await this.partialService.readPartial(workspaceId);
+    const partial = await this.historyService.readPartial(workspaceId);
     if (partial && partial.role === "assistant") {
       const text = this.concatTextParts(partial).trim();
       if (text.length > 0) return text;
@@ -2259,7 +2257,7 @@ export class TaskService {
       // may archive/delete session files immediately after this method returns, so commit the partial
       // synchronously here (best-effort) to ensure tool calls are present in the archived transcript.
       try {
-        const commitResult = await this.partialService.commitToHistory(childWorkspaceId);
+        const commitResult = await this.historyService.commitPartial(childWorkspaceId);
         if (!commitResult.success) {
           log.error("Failed to commit final partial to history after agent_report", {
             workspaceId: childWorkspaceId,
@@ -2445,7 +2443,7 @@ export class TaskService {
   private async readLatestAgentReportArgs(
     workspaceId: string
   ): Promise<{ reportMarkdown: string; title?: string } | null> {
-    const partial = await this.partialService.readPartial(workspaceId);
+    const partial = await this.historyService.readPartial(workspaceId);
     if (partial) {
       const args = this.findAgentReportArgsInMessage(partial);
       if (args) return args;
@@ -2585,7 +2583,7 @@ export class TaskService {
       return false;
     }
 
-    const partial = await this.partialService.readPartial(workspaceId);
+    const partial = await this.historyService.readPartial(workspaceId);
     if (!partial) {
       return false;
     }
@@ -2628,7 +2626,7 @@ export class TaskService {
       }),
     };
 
-    const writeResult = await this.partialService.writePartial(workspaceId, updated);
+    const writeResult = await this.historyService.writePartial(workspaceId, updated);
     if (!writeResult.success) {
       log.error("Failed to write finalized task tool output to partial", {
         workspaceId,
