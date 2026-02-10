@@ -12,9 +12,10 @@ module.exports = {
   ],
   setupFilesAfterEnv: ["<rootDir>/tests/setup.ts"],
   moduleNameMapper: {
-    // Vite query suffixes must be matched BEFORE the @/ alias
+    // Vite query suffixes and binary assets must be matched BEFORE the @/ alias
     "^@/(.+)\\.svg\\?react$": "<rootDir>/tests/__mocks__/svgReactMock.js",
     "^@/(.+)\\.txt\\?raw$": "<rootDir>/tests/__mocks__/textMock.js",
+    "^@/(.+)\\.webm$": "<rootDir>/tests/__mocks__/textMock.js",
     "^@/(.*)$": "<rootDir>/src/$1",
     "^chalk$": "<rootDir>/tests/__mocks__/chalk.js",
     "^jsdom$": "<rootDir>/tests/__mocks__/jsdom.js",
