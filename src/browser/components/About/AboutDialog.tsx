@@ -97,31 +97,53 @@ export function AboutDialog() {
     };
   }, [api, isDesktop, isOpen]);
 
-  const isChecking = updateStatus.type === "checking" || updateStatus.type === "downloading";
+  useEffect(() => {
+    if (!isOpen || !api || !isDesktop) {
+      return;
+    }
+
+    api.update.check(undefined).catch(console.error);
+  }, [api, isDesktop, isOpen]);
+
+  const canUseUpdateApi = isDesktop && Boolean(api);
+  const isChecking =
+    canUseUpdateApi && (updateStatus.type === "checking" || updateStatus.type === "downloading");
 
   const handleCheckForUpdates = () => {
-    api?.update.check(undefined).catch(console.error);
+    if (!api) {
+      return;
+    }
+
+    api.update.check(undefined).catch(console.error);
   };
 
   const handleDownload = () => {
-    api?.update.download(undefined).catch(console.error);
+    if (!api) {
+      return;
+    }
+
+    api.update.download(undefined).catch(console.error);
   };
 
   const handleInstall = () => {
-    api?.update.install(undefined).catch(console.error);
+    if (!api) {
+      return;
+    }
+
+    api.update.install(undefined).catch(console.error);
   };
 
   return (
     <Dialog open={isOpen} onOpenChange={(nextOpen) => !nextOpen && close()}>
-      <DialogContent maxWidth="520px" aria-describedby={undefined} className="space-y-4">
-        <DialogTitle>About Mux</DialogTitle>
+      <DialogContent
+        maxWidth="520px"
+        aria-describedby={undefined}
+        className="titlebar-no-drag space-y-4"
+      >
+        <DialogTitle>About</DialogTitle>
 
-        <div className="border-border-medium bg-modal-bg flex items-center gap-3 rounded-md border p-3">
-          <MuxLogo className="h-7 w-7" />
-          <div>
-            <div className="text-foreground text-sm font-semibold">Mux</div>
-            <div className="text-muted text-xs">Parallel agent workflows</div>
-          </div>
+        <div className="border-border-medium bg-modal-bg flex justify-center rounded-md border py-6">
+          <MuxLogo className="h-14 w-auto" aria-hidden="true" />
         </div>
 
         <div className="space-y-1 text-sm">
@@ -142,6 +164,8 @@ export function AboutDialog() {
             <div className="text-muted text-xs">
               Desktop updates are available in the Electron app only.
             </div>
+          ) : !canUseUpdateApi ? (
+            <div className="text-muted text-xs">Connecting to desktop update service…</div>
           ) : (
             <>
               <Button
@@ -213,7 +237,7 @@ export function AboutDialog() {
             href="https://github.com/coder/mux/releases"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-accent inline-block text-xs hover:underline"
+            className="titlebar-no-drag text-accent inline-block text-xs hover:underline"
           >
             View all releases
           </a>

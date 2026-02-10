@@ -136,7 +136,7 @@ describe("About dialog (UI)", () => {
     }
 
     const dialog = await openAboutDialog(view);
-    expect(dialog.getByRole("heading", { name: "About Mux" })).toBeTruthy();
+    expect(dialog.getByRole("heading", { name: "About" })).toBeTruthy();
   });
 
   test("Check for Updates button calls api.update.check", async () => {
@@ -153,10 +153,11 @@ describe("About dialog (UI)", () => {
       setDesktopApiEnabled();
 
       const dialog = await openAboutDialog(view);
+      const callsBeforeClick = checkSpy.mock.calls.length;
       fireEvent.click(dialog.getByRole("button", { name: "Check for Updates" }));
 
       await waitFor(() => {
-        expect(checkSpy).toHaveBeenCalledTimes(1);
+        expect(checkSpy).toHaveBeenCalledTimes(callsBeforeClick + 1);
       });
     } finally {
       updateService.check = originalCheck;

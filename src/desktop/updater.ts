@@ -64,6 +64,16 @@ export class UpdaterService {
 
       if (this.fakeVersion) {
         log.debug(`DEBUG_UPDATER fake version enabled: ${this.fakeVersion}`);
+
+        // Surface a pending update immediately in debug mode so the UI can
+        // reliably exercise the "update available" state without waiting for
+        // an explicit check action.
+        const version = this.fakeVersion;
+        const fakeInfo = { version } satisfies Partial<UpdateInfo> as UpdateInfo;
+        this.updateStatus = {
+          type: "available",
+          info: fakeInfo,
+        };
       }
     }
 
