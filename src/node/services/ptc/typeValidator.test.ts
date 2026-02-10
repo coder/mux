@@ -316,6 +316,35 @@ mux.file_read({ path: "wrong" });`,
     expect(result.valid).toBe(true);
   });
 
+  test("does not suppress bag reads in nested function due to outer writes", () => {
+    const result = validateTypes(
+      `
+      const r = {};
+      r["a"] = 1;
+      function f() { return r.typo; }
+    `,
+      muxTypes
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("typo"))).toBe(true);
+  });
+
+  test("allows bag reads inside nested function after in-scope bracket write", () => {
+    const result = validateTypes(
+      `
+      const r = {};
+      function f() {
+        r["a"] = 1;
+        return r.a;
+      }
+      return f();
+    `,
+      muxTypes
+    );
+
+    expect(result.valid).toBe(true);
+  });
   test("catches bag reads before first bracket write", () => {
     const result = validateTypes(
       `
