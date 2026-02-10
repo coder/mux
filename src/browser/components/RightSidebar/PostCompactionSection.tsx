@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { ChevronRight, FileText, ExternalLink, Check, Eye, EyeOff } from "lucide-react";
+import { ChevronRight, FileText, ExternalLink, Check, Eye, EyeOff, Info } from "lucide-react";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
@@ -84,7 +84,20 @@ export const PostCompactionSection: React.FC<PostCompactionSectionProps> = (prop
         className="flex w-full items-center justify-between text-left"
         type="button"
       >
-        <span className="text-muted text-xs font-medium">Post-Compaction Context</span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-muted text-xs font-medium">Artifacts</span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="text-muted hover:text-foreground inline-flex items-center">
+                <Info className="h-3 w-3" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="top" showArrow={false}>
+              After compaction, included artifacts in this list (plan + selected file diffs) are
+              attached to your next message so the agent keeps important earlier context.
+            </TooltipContent>
+          </Tooltip>
+        </div>
         <ChevronRight
           className={`text-muted h-3.5 w-3.5 transition-transform duration-200 ${
             collapsed ? "" : "rotate-90"
