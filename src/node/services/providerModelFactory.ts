@@ -17,6 +17,14 @@ import {
   isCodexOauthRequiredModelId,
 } from "@/common/constants/codexOAuth";
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
+import { parseAnthropicOauthAuth } from "@/node/utils/anthropicOauthAuth";
+import type { AnthropicOauthService } from "@/node/services/anthropicOauthService";
+import {
+  ANTHROPIC_OAUTH_BETA_HEADER,
+  ANTHROPIC_OAUTH_THINKING_BETA,
+  ANTHROPIC_OAUTH_USER_AGENT,
+  ANTHROPIC_OAUTH_TOOL_PREFIX,
+} from "@/common/constants/anthropicOAuth";
 import type { Config, ProviderConfig } from "@/node/config";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { PolicyService } from "@/node/services/policyService";
@@ -84,6 +92,45 @@ if (typeof globalFetchWithExtras.preconnect === "function") {
 if (typeof globalFetchWithExtras.certificate === "function") {
   defaultFetchWithExtras.certificate =
     globalFetchWithExtras.certificate.bind(globalFetchWithExtras);
+}
+
+// ---------------------------------------------------------------------------
+// Anthropic OAuth tool prefix stripping
+// ---------------------------------------------------------------------------
+
+/**
+ * Strip the mcp_ prefix from tool names in Anthropic streaming responses.
+ * Anthropic's OAuth API requires tool names to be prefixed with "mcp_" in
+ * requests; we strip them from responses so the SDK sees the original names.
+ */
+function stripAnthropicOauthToolPrefix(response: Response): Response {
+  const body = response.body;
+  if (!body) return response;
+
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) {
+        controller.close();
+        return;
+      }
+
+      let text = decoder.decode(value, { stream: true });
+      // Strip mcp_ prefix from tool name fields in SSE JSON payloads.
+      text = text.replace(/"name"\s*:\s*"mcp_([^"]+)"/g, '"name":"$1"');
+      controller.enqueue(encoder.encode(text));
+    },
+  });
+
+  return new Response(stream, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -366,6 +413,7 @@ export class ProviderModelFactory {
   private readonly providerService: ProviderService;
   private readonly policyService?: PolicyService;
   codexOauthService?: CodexOauthService;
+  anthropicOauthService?: AnthropicOauthService;
 
   constructor(
     config: Config,
@@ -459,16 +507,33 @@ export class ProviderModelFactory {
 
       // Handle Anthropic provider
       if (providerName === "anthropic") {
-        // Resolve credentials from config + env (single source of truth)
         const creds = resolveProviderCredentials("anthropic", providerConfig);
-        if (!creds.isConfigured) {
+
+        // Check for stored Anthropic OAuth tokens (Claude Max/Pro subscription).
+        const storedAnthropicOauth = parseAnthropicOauthAuth(
+          (providerConfig as { anthropicOauth?: unknown }).anthropicOauth
+        );
+
+        // Route through OAuth when connected and no API key is set.
+        // When both are available, prefer the API key (user explicitly configured it).
+        const shouldRouteThroughAnthropicOauth = (() => {
+          if (!storedAnthropicOauth) return false;
+          if (!creds.isConfigured) return true;
+          return false;
+        })();
+
+        if (!shouldRouteThroughAnthropicOauth && !creds.isConfigured) {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
 
-        // Build config with resolved credentials
-        const configWithApiKey = creds.apiKey
-          ? { ...providerConfig, apiKey: creds.apiKey }
-          : providerConfig;
+        // Build config with resolved credentials.
+        // When using OAuth, pass a placeholder API key so the SDK never reads env vars.
+        const configWithApiKey = {
+          ...providerConfig,
+          apiKey: shouldRouteThroughAnthropicOauth
+            ? (creds.apiKey ?? "anthropic-oauth")
+            : creds.apiKey,
+        };
 
         // Normalize base URL to ensure /v1 suffix (SDK expects it)
         const effectiveBaseURL = configWithApiKey.baseURL ?? creds.baseUrl?.trim();
@@ -477,7 +542,6 @@ export class ProviderModelFactory {
           : configWithApiKey;
 
         // Add 1M context beta header if requested and model supports it.
-        // Check both per-model list (use1MContextModels) and legacy global flag (use1MContext).
         const fullModelId = `anthropic:${modelId}`;
         const is1MEnabled =
           ((muxProviderOptions?.anthropic?.use1MContextModels?.includes(fullModelId) ?? false) ||
@@ -485,19 +549,144 @@ export class ProviderModelFactory {
           supports1MContext(fullModelId);
         const headers = buildAnthropicHeaders(normalizedConfig.headers, is1MEnabled);
 
-        // Lazy-load Anthropic provider to reduce startup time
         const { createAnthropic } = await PROVIDER_REGISTRY.anthropic();
-        // Wrap fetch to inject cache_control on tools and messages
-        // (SDK doesn't translate providerOptions to cache_control for these)
-        // Use getProviderFetch to preserve any user-configured custom fetch (e.g., proxies)
         const baseFetch = getProviderFetch(providerConfig);
-        const fetchWithCacheControl = wrapFetchWithAnthropicCacheControl(baseFetch);
+        const anthropicOauthService = this.anthropicOauthService;
+
+        let effectiveFetch: typeof fetch;
+
+        if (shouldRouteThroughAnthropicOauth) {
+          // Wrap fetch for OAuth: inject Bearer token, beta headers, tool prefixing.
+          effectiveFetch = Object.assign(
+            async (
+              input: Parameters<typeof fetch>[0],
+              init?: Parameters<typeof fetch>[1]
+            ): Promise<Response> => {
+              if (!anthropicOauthService) {
+                throw new Error("Anthropic OAuth service not initialized");
+              }
+
+              const authResult = await anthropicOauthService.getValidAuth();
+              if (!authResult.success) {
+                throw new Error(authResult.error);
+              }
+
+              const urlString = (() => {
+                if (typeof input === "string") return input;
+                if (input instanceof URL) return input.toString();
+                if (typeof input === "object" && input !== null && "url" in input) {
+                  const possibleUrl = (input as { url?: unknown }).url;
+                  if (typeof possibleUrl === "string") return possibleUrl;
+                }
+                return "";
+              })();
+
+              const method = (init?.method ?? "GET").toUpperCase();
+              const isMessagesEndpoint = /\/v1\/messages(\?|$)/.test(urlString);
+
+              let nextInput: Parameters<typeof fetch>[0] = input;
+              let nextInit: Parameters<typeof fetch>[1] | undefined = init;
+
+              // Prefix tool names with mcp_ in request bodies (required by Anthropic OAuth API).
+              if (isMessagesEndpoint && method === "POST" && typeof init?.body === "string") {
+                try {
+                  const json = JSON.parse(init.body) as Record<string, unknown>;
+
+                  // Prefix tool definitions
+                  if (Array.isArray(json.tools)) {
+                    for (const tool of json.tools as Array<Record<string, unknown>>) {
+                      if (typeof tool.name === "string" && !tool.name.startsWith(ANTHROPIC_OAUTH_TOOL_PREFIX)) {
+                        tool.name = `${ANTHROPIC_OAUTH_TOOL_PREFIX}${tool.name}`;
+                      }
+                    }
+                  }
+
+                  // Prefix tool_use blocks in messages
+                  if (Array.isArray(json.messages)) {
+                    for (const msg of json.messages as Array<Record<string, unknown>>) {
+                      if (Array.isArray(msg.content)) {
+                        for (const block of msg.content as Array<Record<string, unknown>>) {
+                          if (
+                            block.type === "tool_use" &&
+                            typeof block.name === "string" &&
+                            !block.name.startsWith(ANTHROPIC_OAUTH_TOOL_PREFIX)
+                          ) {
+                            block.name = `${ANTHROPIC_OAUTH_TOOL_PREFIX}${block.name}`;
+                          }
+                        }
+                      }
+                    }
+                  }
+
+                  const newBody = JSON.stringify(json);
+                  const newHeaders = new Headers(init?.headers);
+                  newHeaders.delete("content-length");
+                  nextInit = { ...init, headers: newHeaders, body: newBody };
+                } catch {
+                  // If body parsing fails, proceed without modification.
+                }
+              }
+
+              // Rewrite URL: add ?beta=true for OAuth-authed messages requests.
+              if (isMessagesEndpoint) {
+                try {
+                  const url = new URL(urlString);
+                  if (!url.searchParams.has("beta")) {
+                    url.searchParams.set("beta", "true");
+                  }
+                  nextInput = url.toString();
+                } catch {
+                  // If URL parsing fails, proceed with original.
+                }
+              }
+
+              // Set auth headers.
+              const reqHeaders = new Headers(nextInit?.headers);
+              reqHeaders.set("Authorization", `Bearer ${authResult.data.access}`);
+              reqHeaders.delete("x-api-key");
+
+              // Merge anthropic-beta header (preserve existing beta values like 1M context).
+              const existingBeta = reqHeaders.get("anthropic-beta") ?? "";
+              const existingValues = existingBeta.split(",").map((v) => v.trim()).filter(Boolean);
+              const oauthBetas = [ANTHROPIC_OAUTH_BETA_HEADER, ANTHROPIC_OAUTH_THINKING_BETA];
+              const merged = [...new Set([...oauthBetas, ...existingValues])].join(",");
+              reqHeaders.set("anthropic-beta", merged);
+
+              reqHeaders.set("user-agent", ANTHROPIC_OAUTH_USER_AGENT);
+
+              nextInit = { ...(nextInit ?? {}), headers: reqHeaders };
+
+              const response = await baseFetch(nextInput, nextInit);
+
+              // Strip mcp_ prefix from tool names in the streaming response.
+              if (isMessagesEndpoint && response.body) {
+                return stripAnthropicOauthToolPrefix(response);
+              }
+
+              return response;
+            },
+            "preconnect" in baseFetch && typeof baseFetch.preconnect === "function"
+              ? { preconnect: baseFetch.preconnect.bind(baseFetch) }
+              : {}
+          ) as typeof fetch;
+
+          // Apply cache control wrapping on top of the OAuth fetch.
+          effectiveFetch = wrapFetchWithAnthropicCacheControl(effectiveFetch);
+        } else {
+          effectiveFetch = wrapFetchWithAnthropicCacheControl(baseFetch);
+        }
+
         const provider = createAnthropic({
           ...normalizedConfig,
           headers,
-          fetch: fetchWithCacheControl,
+          fetch: effectiveFetch,
         });
-        return Ok(provider(modelId));
+
+        const model = provider(modelId);
+        if (shouldRouteThroughAnthropicOauth) {
+          markModelCostsIncluded(model);
+        }
+        return Ok(model);
       }
 
       // Handle OpenAI provider (using Responses API)

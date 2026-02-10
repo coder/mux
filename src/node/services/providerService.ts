@@ -10,6 +10,7 @@ import type {
 import { log } from "@/node/services/log";
 import { checkProviderConfigured } from "@/node/utils/providerRequirements";
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
+import { parseAnthropicOauthAuth } from "@/node/utils/anthropicOauthAuth";
 import type { PolicyService } from "@/node/services/policyService";
 
 // Re-export types for backward compatibility
@@ -80,6 +81,8 @@ export class ProviderService {
         secretAccessKey?: string;
         /** OpenAI-only: stored Codex OAuth tokens (never sent to frontend). */
         codexOauth?: unknown;
+        /** Anthropic-only: stored Anthropic OAuth tokens (never sent to frontend). */
+        anthropicOauth?: unknown;
       };
 
       const forcedBaseUrl = this.policyService?.isEnforced()
@@ -98,6 +101,9 @@ export class ProviderService {
 
       const codexOauthSet =
         provider === "openai" && parseCodexOauthAuth(config.codexOauth) !== null;
+
+      const anthropicOauthSet =
+        provider === "anthropic" && parseAnthropicOauthAuth(config.anthropicOauth) !== null;
 
       const providerInfo: ProviderConfigInfo = {
         apiKeySet: !!config.apiKey,
@@ -126,6 +132,11 @@ export class ProviderService {
           providerInfo.codexOauthDefaultAuth = codexOauthDefaultAuth;
         }
       }
+      // Anthropic-specific fields
+      if (provider === "anthropic") {
+        providerInfo.anthropicOauthSet = anthropicOauthSet;
+      }
+
       // AWS/Bedrock-specific fields
       if (provider === "bedrock") {
         providerInfo.aws = {
@@ -147,6 +158,10 @@ export class ProviderService {
       providerInfo.isConfigured = checkProviderConfigured(provider, config).isConfigured;
 
       if (provider === "openai" && codexOauthSet) {
+        providerInfo.isConfigured = true;
+      }
+
+      if (provider === "anthropic" && anthropicOauthSet) {
         providerInfo.isConfigured = true;
       }
 

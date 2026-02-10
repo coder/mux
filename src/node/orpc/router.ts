@@ -1242,6 +1242,32 @@ export const router = (authToken?: string) => {
           return context.codexOauthService.disconnect();
         }),
     },
+    anthropicOauth: {
+      startFlow: t
+        .input(schemas.anthropicOauth.startFlow.input)
+        .output(schemas.anthropicOauth.startFlow.output)
+        .handler(({ context }) => {
+          return context.anthropicOauthService.startFlow();
+        }),
+      submitCode: t
+        .input(schemas.anthropicOauth.submitCode.input)
+        .output(schemas.anthropicOauth.submitCode.output)
+        .handler(({ context, input }) => {
+          return context.anthropicOauthService.submitCode(input);
+        }),
+      cancelFlow: t
+        .input(schemas.anthropicOauth.cancelFlow.input)
+        .output(schemas.anthropicOauth.cancelFlow.output)
+        .handler(({ context, input }) => {
+          context.anthropicOauthService.cancelFlow(input.flowId);
+        }),
+      disconnect: t
+        .input(schemas.anthropicOauth.disconnect.input)
+        .output(schemas.anthropicOauth.disconnect.output)
+        .handler(({ context }) => {
+          return context.anthropicOauthService.disconnect();
+        }),
+    },
     general: {
       listDirectory: t
         .input(schemas.general.listDirectory.input)

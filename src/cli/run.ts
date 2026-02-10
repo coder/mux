@@ -18,6 +18,7 @@ import { Config } from "@/node/config";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { AgentSession, type AgentSessionChatEvent } from "@/node/services/agentSession";
 import { CodexOauthService } from "@/node/services/codexOauthService";
+import { AnthropicOauthService } from "@/node/services/anthropicOauthService";
 import { createCoreServices } from "@/node/services/coreServices";
 import {
   isCaughtUpMessage,
@@ -447,6 +448,9 @@ async function main(): Promise<number> {
   // OAuth tokens from providers.jsonc.
   const codexOauthService = new CodexOauthService(config, providerService);
   aiService.setCodexOauthService(codexOauthService);
+
+  const anthropicOauthService = new AnthropicOauthService(config, providerService);
+  aiService.setAnthropicOauthService(anthropicOauthService);
 
   // CLI-only exit code control: allows agent to set the process exit code
   // Useful for CI workflows where the agent should block merge on failure

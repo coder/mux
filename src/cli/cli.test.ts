@@ -64,6 +64,7 @@ async function createTestServer(authToken?: string): Promise<TestServerHandle> {
     muxGatewayOauthService: services.muxGatewayOauthService,
     muxGovernorOauthService: services.muxGovernorOauthService,
     codexOauthService: services.codexOauthService,
+    anthropicOauthService: services.anthropicOauthService,
     copilotOauthService: services.copilotOauthService,
     taskService: services.taskService,
     providerService: services.providerService,
