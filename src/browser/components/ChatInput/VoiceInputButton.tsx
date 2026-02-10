@@ -32,10 +32,13 @@ const STATE_COLORS: Record<Exclude<VoiceInputState, "recording">, string> = {
 export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
   if (!props.shouldShowUI) return null;
 
+  // Allow stop/cancel controls while actively recording or transcribing,
+  // even if the provider was disabled mid-session (e.g. from another window).
+  const isActiveSession = props.state === "recording" || props.state === "transcribing";
   const needsHttps = props.requiresSecureContext;
   const providerDisabled = !needsHttps && !props.isProviderEnabled;
   const needsApiKey = !needsHttps && !providerDisabled && !props.isApiKeySet;
-  const isDisabled = needsHttps || providerDisabled || needsApiKey;
+  const isDisabled = !isActiveSession && (needsHttps || providerDisabled || needsApiKey);
 
   const label = isDisabled
     ? needsHttps
