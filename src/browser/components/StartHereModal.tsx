@@ -51,7 +51,7 @@ export const StartHereModal: React.FC<StartHereModalProps> = ({ isOpen, onClose,
         <DialogHeader>
           <DialogTitle>Start Here</DialogTitle>
           <DialogDescription>
-            This will replace all chat history with this message
+            This will start a new context from this message and preserve earlier chat history.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter className="justify-center">
