@@ -1049,7 +1049,11 @@ export class AgentSession {
       system1Model: options?.system1Model,
       system1ThinkingLevel: options?.system1ThinkingLevel,
       disableWorkspaceAgents: options?.disableWorkspaceAgents,
-      hasQueuedMessage: () => !this.messageQueue.isEmpty(),
+      // Edit turns suppress the queued-message stop condition. The defer path may intentionally
+      // leave messageQueue populated so the edit can truncate first; we must not let that stale
+      // queue cut the edit's stream short at a step boundary. The edit's own stream-end will
+      // drain the queue via sendQueuedMessages().
+      hasQueuedMessage: options?.editMessageId ? undefined : () => !this.messageQueue.isEmpty(),
       openaiTruncationModeOverride,
     });
 
