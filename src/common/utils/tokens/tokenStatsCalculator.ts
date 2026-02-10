@@ -119,7 +119,7 @@ async function countToolOutputTokens(
   return countTokensForData(outputData, tokenizer);
 }
 
-/** Tools that operate on files - all use file_path property */
+/** Tools that operate on files - canonical input uses `file_path` (with legacy `path` fallback). */
 const FILE_PATH_TOOLS = new Set([
   "file_read",
   "file_edit_insert",
@@ -127,13 +127,17 @@ const FILE_PATH_TOOLS = new Set([
   "file_edit_replace_lines",
 ]);
 
-function hasFilePath(input: unknown): input is { file_path: string } {
-  return (
-    typeof input === "object" &&
-    input !== null &&
-    "file_path" in input &&
-    typeof (input as { file_path: unknown }).file_path === "string"
-  );
+function extractFilePathValue(input: unknown): string | undefined {
+  if (typeof input !== "object" || input === null) {
+    return undefined;
+  }
+
+  const record = input as Record<string, unknown>;
+  if (typeof record.file_path === "string") {
+    return record.file_path;
+  }
+
+  return typeof record.path === "string" ? record.path : undefined;
 }
 
 /**
@@ -143,7 +147,8 @@ function extractFilePathFromToolInput(toolName: string, input: unknown): string 
   if (!FILE_PATH_TOOLS.has(toolName)) {
     return undefined;
   }
-  return hasFilePath(input) ? input.file_path : undefined;
+
+  return extractFilePathValue(input);
 }
 
 /**

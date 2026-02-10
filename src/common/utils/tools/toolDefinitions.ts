@@ -529,7 +529,26 @@ export const AgentReportToolArgsSchema = z
 export const AgentReportToolResultSchema = z.object({ success: z.literal(true) }).strict();
 const FILE_EDIT_FILE_PATH = z
   .string()
-  .describe("Path to the file to edit (absolute or relative to the current workspace)");
+  .describe(
+    "Path to the file to edit (absolute or relative to the current workspace). Use `file_path` (not `path`)."
+  );
+
+function normalizeFilePathAlias(value: unknown): unknown {
+  // Compatibility: some models emit { path: "..." } for file tools.
+  // Normalize to `file_path` so handlers and stored transcripts stay canonical.
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+
+  const obj = value as Record<string, unknown>;
+
+  // Prefer canonical `file_path` whenever it is present.
+  // If it's invalid, let schema validation fail instead of silently replacing it.
+  if ("file_path" in obj || typeof obj.path !== "string") {
+    return value;
+  }
+
+  const { path, ...rest } = obj;
+  return { ...rest, file_path: path };
+}
 
 interface ToolSchema {
   name: string;
@@ -633,21 +652,30 @@ export const TOOL_DEFINITIONS = {
   file_read: {
     description:
       "Read the contents of a file from the file system. Read as little as possible to complete the task.",
-    schema: z.object({
-      file_path: z.string().describe("The path to the file to read (absolute or relative)"),
-      offset: z
-        .number()
-        .int()
-        .positive()
-        .nullish()
-        .describe("1-based starting line number (optional, defaults to 1)"),
-      limit: z
-        .number()
-        .int()
-        .positive()
-        .nullish()
-        .describe("Number of lines to return from offset (optional, returns all if not specified)"),
-    }),
+    schema: z.preprocess(
+      normalizeFilePathAlias,
+      z.object({
+        file_path: z
+          .string()
+          .describe(
+            "The path to the file to read (absolute or relative). Use `file_path` (not `path`)."
+          ),
+        offset: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe("1-based starting line number (optional, defaults to 1)"),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe(
+            "Number of lines to return from offset (optional, returns all if not specified)"
+          ),
+      })
+    ),
   },
   mux_global_agents_read: {
     description:
@@ -713,41 +741,47 @@ export const TOOL_DEFINITIONS = {
     description:
       "⚠️ CRITICAL: Always check tool results - edits WILL fail if old_string is not found or unique. Do not proceed with dependent operations (commits, pushes, builds) until confirming success.\n\n" +
       "Apply one or more edits to a file by replacing exact text matches. All edits are applied sequentially. Each old_string must be unique in the file unless replace_count > 1 or replace_count is -1.",
-    schema: z.object({
-      file_path: FILE_EDIT_FILE_PATH,
-      old_string: z
-        .string()
-        .describe(
-          "The exact text to replace (must be unique in file if replace_count is 1). Include enough context (indentation, surrounding lines) to make it unique."
-        ),
-      new_string: z.string().describe("The replacement text"),
-      replace_count: z
-        .number()
-        .int()
-        .nullish()
-        .describe(
-          "Number of occurrences to replace (default: 1). Use -1 to replace all occurrences. If 1, old_string must be unique in the file."
-        ),
-    }),
+    schema: z.preprocess(
+      normalizeFilePathAlias,
+      z.object({
+        file_path: FILE_EDIT_FILE_PATH,
+        old_string: z
+          .string()
+          .describe(
+            "The exact text to replace (must be unique in file if replace_count is 1). Include enough context (indentation, surrounding lines) to make it unique."
+          ),
+        new_string: z.string().describe("The replacement text"),
+        replace_count: z
+          .number()
+          .int()
+          .nullish()
+          .describe(
+            "Number of occurrences to replace (default: 1). Use -1 to replace all occurrences. If 1, old_string must be unique in the file."
+          ),
+      })
+    ),
   },
   file_edit_replace_lines: {
     description:
       "⚠️ CRITICAL: Always check tool results - edits WILL fail if line numbers are invalid or file content has changed. Do not proceed with dependent operations (commits, pushes, builds) until confirming success.\n\n" +
       "Replace a range of lines in a file. Use this for line-based edits when you know the exact line numbers to modify.",
-    schema: z.object({
-      file_path: FILE_EDIT_FILE_PATH,
-      start_line: z.number().int().min(1).describe("1-indexed start line (inclusive) to replace"),
-      end_line: z.number().int().min(1).describe("1-indexed end line (inclusive) to replace"),
-      new_lines: z
-        .array(z.string())
-        .describe("Replacement lines. Provide an empty array to delete the specified range."),
-      expected_lines: z
-        .array(z.string())
-        .nullish()
-        .describe(
-          "Optional safety check. When provided, the current lines in the specified range must match exactly."
-        ),
-    }),
+    schema: z.preprocess(
+      normalizeFilePathAlias,
+      z.object({
+        file_path: FILE_EDIT_FILE_PATH,
+        start_line: z.number().int().min(1).describe("1-indexed start line (inclusive) to replace"),
+        end_line: z.number().int().min(1).describe("1-indexed end line (inclusive) to replace"),
+        new_lines: z
+          .array(z.string())
+          .describe("Replacement lines. Provide an empty array to delete the specified range."),
+        expected_lines: z
+          .array(z.string())
+          .nullish()
+          .describe(
+            "Optional safety check. When provided, the current lines in the specified range must match exactly."
+          ),
+      })
+    ),
   },
   file_edit_insert: {
     description:
@@ -757,29 +791,32 @@ export const TOOL_DEFINITIONS = {
       "Optional before/after substrings must uniquely match surrounding content. " +
       "Avoid short guards like `}` or `}\\n` that match multiple locations — " +
       `use longer patterns like full function signatures or unique comments. ${TOOL_EDIT_WARNING}`,
-    schema: z
-      .object({
-        file_path: FILE_EDIT_FILE_PATH,
-        insert_before: z
-          .string()
-          .min(1)
-          .nullish()
-          .describe(
-            "Anchor text to insert before. Content will be placed immediately before this substring."
-          ),
-        insert_after: z
-          .string()
-          .min(1)
-          .nullish()
-          .describe(
-            "Anchor text to insert after. Content will be placed immediately after this substring."
-          ),
-        content: z.string().describe("The content to insert"),
-      })
-      .refine((data) => !(data.insert_before != null && data.insert_after != null), {
-        message: "Provide only one of insert_before or insert_after (not both).",
-        path: ["insert_before"],
-      }),
+    schema: z.preprocess(
+      normalizeFilePathAlias,
+      z
+        .object({
+          file_path: FILE_EDIT_FILE_PATH,
+          insert_before: z
+            .string()
+            .min(1)
+            .nullish()
+            .describe(
+              "Anchor text to insert before. Content will be placed immediately before this substring."
+            ),
+          insert_after: z
+            .string()
+            .min(1)
+            .nullish()
+            .describe(
+              "Anchor text to insert after. Content will be placed immediately after this substring."
+            ),
+          content: z.string().describe("The content to insert"),
+        })
+        .refine((data) => !(data.insert_before != null && data.insert_after != null), {
+          message: "Provide only one of insert_before or insert_after (not both).",
+          path: ["insert_before"],
+        })
+    ),
   },
   ask_user_question: {
     description:

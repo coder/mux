@@ -14,6 +14,7 @@ function createAssistantMessage(
     diff: string;
     uiOnlyDiff?: string;
     success?: boolean;
+    inputPathKey?: "file_path" | "path";
   }>
 ): MuxMessage {
   return {
@@ -24,7 +25,7 @@ function createAssistantMessage(
       toolCallId: `tc-${Math.random().toString(36).slice(2)}`,
       toolName: tc.toolName,
       state: "output-available" as const,
-      input: { file_path: tc.filePath },
+      input: tc.inputPathKey === "path" ? { path: tc.filePath } : { file_path: tc.filePath },
       output: {
         success: tc.success ?? true,
         diff: tc.diff,
@@ -70,6 +71,22 @@ describe("extractEditedFilePaths", () => {
 
     const paths = extractEditedFilePaths(messages);
     expect(paths).toEqual(["/path/to/file2.ts", "/path/to/file1.ts"]);
+  });
+
+  it("should extract file paths from legacy path alias inputs", () => {
+    const messages: MuxMessage[] = [
+      createAssistantMessage([
+        {
+          toolName: "file_edit_replace_string",
+          filePath: "/path/to/legacy.ts",
+          diff: makeDiff("/path/to/legacy.ts", "old", "new"),
+          inputPathKey: "path",
+        },
+      ]),
+    ];
+
+    const paths = extractEditedFilePaths(messages);
+    expect(paths).toEqual(["/path/to/legacy.ts"]);
   });
 
   it("should ignore failed edits", () => {
@@ -140,6 +157,28 @@ describe("extractEditedFileDiffs", () => {
     expect(result[0].path).toBe("/path/to/file.ts");
     expect(result[0].truncated).toBe(false);
     // Single diff should be returned as-is
+    expect(result[0].diff).toBe(diff);
+  });
+
+  it("should extract diffs when input uses legacy path alias", () => {
+    const originalContent = "line1\nline2\nline3";
+    const newContent = "line1\nupdated\nline3";
+    const diff = makeDiff("/path/to/legacy.ts", originalContent, newContent);
+
+    const messages: MuxMessage[] = [
+      createAssistantMessage([
+        {
+          toolName: "file_edit_replace_string",
+          filePath: "/path/to/legacy.ts",
+          diff,
+          inputPathKey: "path",
+        },
+      ]),
+    ];
+
+    const result = extractEditedFileDiffs(messages);
+    expect(result).toHaveLength(1);
+    expect(result[0].path).toBe("/path/to/legacy.ts");
     expect(result[0].diff).toBe(diff);
   });
 

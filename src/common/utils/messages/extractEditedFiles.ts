@@ -6,10 +6,19 @@ import { applyPatch, createPatch, parsePatch } from "diff";
 
 /**
  * Input shape for file edit tools.
- * All file edit tools have a file_path field.
+ * Current calls use `file_path`; older transcripts may still contain `path`.
  */
 interface FileEditToolInput {
   file_path?: string;
+  path?: string;
+}
+
+function extractFilePath(input: FileEditToolInput | undefined): string | undefined {
+  if (typeof input?.file_path === "string") {
+    return input.file_path;
+  }
+
+  return typeof input?.path === "string" ? input.path : undefined;
 }
 
 /**
@@ -61,8 +70,8 @@ export function extractEditedFilePaths(messages: MuxMessage[]): string[] {
 
       // Extract file path from input
       const input = part.input as FileEditToolInput | undefined;
-      const filePath = input?.file_path;
-      if (filePath && typeof filePath === "string" && !seen.has(filePath)) {
+      const filePath = extractFilePath(input);
+      if (filePath && !seen.has(filePath)) {
         seen.add(filePath);
         editedFiles.push(filePath);
       }
@@ -206,8 +215,8 @@ export function extractEditedFileDiffs(messages: MuxMessage[]): FileEditDiff[] {
       if (!diff) continue;
 
       const input = part.input as FileEditToolInput | undefined;
-      const filePath = input?.file_path;
-      if (!filePath || typeof filePath !== "string") continue;
+      const filePath = extractFilePath(input);
+      if (!filePath) continue;
 
       // Add diff to this file's list
       if (!diffsByPath.has(filePath)) {
