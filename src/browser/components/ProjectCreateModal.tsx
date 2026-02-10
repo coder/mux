@@ -295,6 +295,9 @@ function ProjectCloneForm(props: ProjectCloneFormProps) {
   const [error, setError] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [isDirPickerOpen, setIsDirPickerOpen] = useState(false);
+  const [progressLines, setProgressLines] = useState<string[]>([]);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const progressEndRef = useRef<HTMLDivElement | null>(null);
   const isDesktop = !!window.api;
   const hasWebFsPicker = !isDesktop;
 
@@ -311,10 +314,15 @@ function ProjectCloneForm(props: ProjectCloneFormProps) {
     setCloneParentDir(props.defaultCloneDir);
     setHasEditedCloneParentDir(false);
     setError("");
+    setProgressLines([]);
   }, [props.defaultCloneDir]);
 
   useEffect(() => {
     if (!props.isOpen) {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
       reset();
     }
   }, [props.isOpen, reset]);
@@ -327,9 +335,18 @@ function ProjectCloneForm(props: ProjectCloneFormProps) {
     setCloneParentDir(props.defaultCloneDir);
   }, [props.defaultCloneDir, props.isOpen, hasEditedCloneParentDir]);
 
+  useEffect(() => {
+    progressEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [progressLines]);
+
   const trimmedCloneParentDir = cloneParentDir.trim();
 
   const handleCancel = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+
     reset();
     props.onClose();
   }, [props, reset]);
@@ -381,18 +398,29 @@ function ProjectCloneForm(props: ProjectCloneFormProps) {
     }
 
     setError("");
+    setProgressLines([]);
     setCreating(true);
 
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
-      const cloneEvents = await api.projects.clone({
-        repoUrl: trimmedRepoUrl,
-        cloneParentDir: trimmedCloneParentDir || undefined,
-      });
+      const cloneEvents = await api.projects.clone(
+        {
+          repoUrl: trimmedRepoUrl,
+          cloneParentDir: trimmedCloneParentDir || undefined,
+        },
+        { signal: controller.signal }
+      );
 
       for await (const event of cloneEvents) {
+        if (controller.signal.aborted) {
+          break;
+        }
+
         if (event.type === "progress") {
-          // Keep current UX unchanged for now: the button still shows "Cloning...".
-          // A dedicated follow-up task will surface progress lines in the modal.
+          // Show the raw git stderr stream so users can confirm clone progress and diagnose hangs.
+          setProgressLines((previousLines) => [...previousLines, event.line]);
           continue;
         }
 
@@ -408,13 +436,24 @@ function ProjectCloneForm(props: ProjectCloneFormProps) {
         return false;
       }
 
+      if (controller.signal.aborted) {
+        setError("Clone cancelled");
+        return false;
+      }
+
       setError("Clone did not return a completion event");
       return false;
     } catch (err) {
+      if (controller.signal.aborted) {
+        setError("Clone cancelled");
+        return false;
+      }
+
       const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred";
       setError(`Failed to clone project: ${errorMessage}`);
       return false;
     } finally {
+      abortControllerRef.current = null;
       setCreating(false);
     }
   }, [api, isCreating, props, repoUrl, reset, setCreating, trimmedCloneParentDir]);
@@ -434,74 +473,92 @@ function ProjectCloneForm(props: ProjectCloneFormProps) {
 
   return (
     <>
-      <div className="mb-3 space-y-3">
-        <div className="space-y-1">
-          <label className="text-muted text-xs">Repo URL</label>
-          <input
-            type="text"
-            value={repoUrl}
-            onChange={(e) => {
-              setRepoUrl(e.target.value);
-              setError("");
-            }}
-            onKeyDown={handleKeyDown}
-            placeholder="owner/repo or https://github.com/..."
-            autoFocus={true}
-            disabled={isCreating}
-            className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent w-full rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
-          />
-        </div>
+      {isCreating ? (
+        <div className="mb-3 space-y-3">
+          <div className="space-y-1">
+            <label className="text-muted text-xs">Cloning repository…</label>
+            <div className="bg-modal-bg border-border-medium max-h-40 overflow-y-auto rounded border p-3">
+              <pre className="text-muted text-xs whitespace-pre-wrap break-all font-mono">
+                {progressLines.length > 0 ? progressLines.join("") : "Starting clone…"}
+              </pre>
+              <div ref={progressEndRef} />
+            </div>
+          </div>
 
-        <div className="space-y-1">
-          <label className="text-muted text-xs">Location</label>
-          <div className="flex gap-2">
+          {destinationPreview && (
+            <p className="text-muted text-xs">
+              Cloning to <span className="text-foreground font-mono">{destinationPreview}</span>
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="mb-3 space-y-3">
+          <div className="space-y-1">
+            <label className="text-muted text-xs">Repo URL</label>
             <input
               type="text"
-              value={cloneParentDir}
+              value={repoUrl}
               onChange={(e) => {
-                const nextCloneParentDir = e.target.value;
-                setCloneParentDir(nextCloneParentDir);
-                setHasEditedCloneParentDir(true);
+                setRepoUrl(e.target.value);
                 setError("");
               }}
               onKeyDown={handleKeyDown}
-              placeholder={props.defaultCloneDir || "Select clone location"}
+              placeholder="owner/repo or https://github.com/..."
+              autoFocus={true}
               disabled={isCreating}
-              className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
+              className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent w-full rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
             />
-            {(isDesktop || hasWebFsPicker) && (
-              <Button
-                variant="outline"
-                onClick={handleBrowseClick}
-                disabled={isCreating}
-                className="shrink-0"
-              >
-                Browse…
-              </Button>
-            )}
           </div>
-        </div>
 
-        {repoName && destinationPreview && (
+          <div className="space-y-1">
+            <label className="text-muted text-xs">Location</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={cloneParentDir}
+                onChange={(e) => {
+                  const nextCloneParentDir = e.target.value;
+                  setCloneParentDir(nextCloneParentDir);
+                  setHasEditedCloneParentDir(true);
+                  setError("");
+                }}
+                onKeyDown={handleKeyDown}
+                placeholder={props.defaultCloneDir || "Select clone location"}
+                disabled={isCreating}
+                className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
+              />
+              {(isDesktop || hasWebFsPicker) && (
+                <Button
+                  variant="outline"
+                  onClick={handleBrowseClick}
+                  disabled={isCreating}
+                  className="shrink-0"
+                >
+                  Browse…
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {repoName && destinationPreview && (
+            <p className="text-muted text-xs">
+              Will clone to <span className="text-foreground font-mono">{destinationPreview}</span>
+            </p>
+          )}
+
           <p className="text-muted text-xs">
-            Will clone to <span className="text-foreground font-mono">{destinationPreview}</span>
+            Default location can be changed in <span className="text-foreground">Settings</span>.
           </p>
-        )}
-
-        <p className="text-muted text-xs">
-          Default location can be changed in <span className="text-foreground">Settings</span>.
-        </p>
-      </div>
+        </div>
+      )}
 
       {error && <p className="text-error text-xs">{error}</p>}
 
       <DialogFooter>
-        <Button variant="secondary" onClick={handleCancel} disabled={isCreating}>
+        <Button variant="secondary" onClick={handleCancel}>
           Cancel
         </Button>
-        <Button onClick={() => void handleClone()} disabled={isCreating}>
-          {isCreating ? "Cloning..." : "Clone Project"}
-        </Button>
+        {!isCreating && <Button onClick={() => void handleClone()}>Clone Project</Button>}
       </DialogFooter>
 
       <DirectoryPickerModal
@@ -620,7 +677,7 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
           value={mode}
           onValueChange={handleModeChange}
           disabled={isCreating}
-          className="mb-3 h-9"
+          className="mb-3 h-9 bg-transparent"
         >
           <ToggleGroupItem value="pick-folder" size="sm" className="h-7 px-3 text-[13px]">
             <FolderOpen className="h-3.5 w-3.5" />
