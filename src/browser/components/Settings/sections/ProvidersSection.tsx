@@ -1023,6 +1023,11 @@ export function ProvidersSection() {
     return config?.[provider]?.isConfigured ?? false;
   };
 
+  const hasAnyConfiguredProvider = useMemo(
+    () => Object.values(config ?? {}).some((providerConfig) => providerConfig.isConfigured),
+    [config]
+  );
+
   const handleProviderEnabledChange = useCallback(
     (provider: string, nextEnabled: boolean) => {
       if (!api || provider === "mux-gateway") {
@@ -1103,9 +1108,9 @@ export function ProvidersSection() {
         const configured = isConfigured(provider);
         const fields = getProviderFields(provider);
         const statusDotColor = !enabled
-          ? "bg-yellow-500"
+          ? "bg-warning"
           : configured
-            ? "bg-green-500"
+            ? "bg-success"
             : "bg-border-medium";
         const statusDotTitle = !enabled ? "Disabled" : configured ? "Configured" : "Not configured";
 
@@ -1755,6 +1760,13 @@ export function ProvidersSection() {
           </div>
         );
       })}
+
+      {config && !hasAnyConfiguredProvider && (
+        <div className="border-warning/40 bg-warning/10 text-warning rounded-md border px-3 py-2 text-xs">
+          No providers are currently enabled. You won't be able to send messages until you enable a
+          provider.
+        </div>
+      )}
     </div>
   );
 }

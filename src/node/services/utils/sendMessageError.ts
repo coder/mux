@@ -2,7 +2,11 @@ import assert from "@/common/utils/assert";
 import type { ErrorEvent } from "@/common/types/stream";
 import type { SendMessageError, StreamErrorType } from "@/common/types/errors";
 import type { StreamErrorMessage } from "@/common/orpc/types";
+import { PROVIDER_DISPLAY_NAMES, type ProviderName } from "@/common/constants/providers";
 import { createAssistantMessageId } from "./messageIds";
+
+const getProviderDisplayName = (provider: string): string =>
+  PROVIDER_DISPLAY_NAMES[provider as ProviderName] ?? provider;
 
 /**
  * Strip noisy error prefixes from provider error messages.
@@ -43,30 +47,38 @@ export const formatSendMessageError = (
   error: SendMessageError
 ): { message: string; errorType: StreamErrorType } => {
   switch (error.type) {
-    case "api_key_not_found":
+    case "api_key_not_found": {
+      const displayName = getProviderDisplayName(error.provider);
       return {
-        message: `API key not configured for ${error.provider}. Please add your API key in settings.`,
+        message: `API key not configured for ${displayName}. Please add your API key in settings.`,
         errorType: "authentication",
       };
-    case "oauth_not_connected":
+    }
+    case "oauth_not_connected": {
+      const displayName = getProviderDisplayName(error.provider);
       return {
         message:
-          `OAuth not connected for ${error.provider}. ` +
+          `OAuth not connected for ${displayName}. ` +
           `Please connect your account in Settings → Providers.`,
         errorType: "authentication",
       };
-    case "provider_disabled":
+    }
+    case "provider_disabled": {
+      const displayName = getProviderDisplayName(error.provider);
       return {
         message:
-          `Provider ${error.provider} is disabled. ` +
+          `Provider ${displayName} is disabled. ` +
           `Enable it in Settings → Providers to send messages with this provider.`,
         errorType: "authentication",
       };
-    case "provider_not_supported":
+    }
+    case "provider_not_supported": {
+      const displayName = getProviderDisplayName(error.provider);
       return {
-        message: `Provider "${error.provider}" is not supported.`,
+        message: `Provider "${displayName}" is not supported.`,
         errorType: "unknown",
       };
+    }
     case "invalid_model_string":
       return {
         message: error.message,

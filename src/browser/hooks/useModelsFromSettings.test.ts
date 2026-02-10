@@ -76,6 +76,28 @@ describe("getSuggestedModels", () => {
     // Built-ins should be present, but deduped against any custom entry
     expect(countOccurrences(suggested, builtIn)).toBe(1);
   });
+
+  test("skips custom models from disabled providers", () => {
+    const config: ProvidersConfigMap = {
+      openai: {
+        apiKeySet: true,
+        isEnabled: false,
+        isConfigured: false,
+        models: ["disabled-custom"],
+      },
+      anthropic: {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        models: ["enabled-custom"],
+      },
+    };
+
+    const suggested = getSuggestedModels(config);
+
+    expect(suggested).toContain("anthropic:enabled-custom");
+    expect(suggested).not.toContain("openai:disabled-custom");
+  });
 });
 
 describe("filterHiddenModels", () => {

@@ -3,7 +3,11 @@
  * Used by both RetryBarrier and ChatInputToasts
  */
 
+import { PROVIDER_DISPLAY_NAMES, type ProviderName } from "@/common/constants/providers";
 import type { SendMessageError } from "@/common/types/errors";
+
+const getProviderDisplayName = (provider: string): string =>
+  PROVIDER_DISPLAY_NAMES[provider as ProviderName] ?? provider;
 
 export interface FormattedError {
   message: string;
@@ -16,28 +20,36 @@ export interface FormattedError {
  */
 export function formatSendMessageError(error: SendMessageError): FormattedError {
   switch (error.type) {
-    case "api_key_not_found":
+    case "api_key_not_found": {
+      const displayName = getProviderDisplayName(error.provider);
       return {
-        message: `API key not found for ${error.provider}.`,
-        resolutionHint: `Open Settings → Providers and add an API key for ${error.provider}.`,
+        message: `API key not found for ${displayName}.`,
+        resolutionHint: `Open Settings → Providers and add an API key for ${displayName}.`,
       };
+    }
 
-    case "oauth_not_connected":
+    case "oauth_not_connected": {
+      const displayName = getProviderDisplayName(error.provider);
       return {
-        message: `OAuth not connected for ${error.provider}.`,
-        resolutionHint: `Open Settings → Providers and connect your ${error.provider} account.`,
+        message: `OAuth not connected for ${displayName}.`,
+        resolutionHint: `Open Settings → Providers and connect your ${displayName} account.`,
       };
+    }
 
-    case "provider_disabled":
+    case "provider_disabled": {
+      const displayName = getProviderDisplayName(error.provider);
       return {
-        message: `Provider ${error.provider} is disabled.`,
-        resolutionHint: `Open Settings → Providers and enable ${error.provider}.`,
+        message: `Provider ${displayName} is disabled.`,
+        resolutionHint: `Open Settings → Providers and enable ${displayName}.`,
       };
+    }
 
-    case "provider_not_supported":
+    case "provider_not_supported": {
+      const displayName = getProviderDisplayName(error.provider);
       return {
-        message: `Provider ${error.provider} is not supported yet.`,
+        message: `Provider ${displayName} is not supported yet.`,
       };
+    }
 
     case "invalid_model_string":
       return {

@@ -48,6 +48,15 @@ describe("ProviderConfigInfoSchema conformance", () => {
     expect(Object.keys(parsed).sort()).toEqual(Object.keys(full).sort());
   });
 
+  it("defaults isEnabled to true when omitted", () => {
+    const parsed = ProviderConfigInfoSchema.parse({
+      apiKeySet: true,
+      isConfigured: true,
+    });
+
+    expect(parsed.isEnabled).toBe(true);
+  });
+
   it("preserves all ProviderConfigInfo fields (with AWS/Bedrock)", () => {
     const full: ProviderConfigInfo = {
       apiKeySet: false,

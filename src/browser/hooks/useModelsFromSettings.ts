@@ -24,6 +24,8 @@ function getCustomModels(config: ProvidersConfigMap | null): string[] {
   for (const [provider, info] of Object.entries(config)) {
     // Skip mux-gateway - those models are accessed via the cloud toggle, not listed separately
     if (provider === "mux-gateway") continue;
+    // Only surface custom models from enabled providers
+    if (!info.isEnabled) continue;
     if (!info.models) continue;
     for (const modelId of info.models) {
       models.push(`${provider}:${modelId}`);

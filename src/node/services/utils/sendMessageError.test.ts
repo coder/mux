@@ -16,7 +16,7 @@ describe("buildStreamErrorEventData", () => {
     });
 
     expect(result.errorType).toBe("authentication");
-    expect(result.error).toContain("openai");
+    expect(result.error).toContain("OpenAI");
     expect(result.messageId).toMatch(/^assistant-/);
   });
 });
@@ -73,7 +73,7 @@ describe("formatSendMessageError", () => {
     });
 
     expect(result.errorType).toBe("authentication");
-    expect(result.message).toContain("anthropic");
+    expect(result.message).toContain("Anthropic");
     expect(result.message).toContain("API key");
   });
 
@@ -95,7 +95,7 @@ describe("formatSendMessageError", () => {
     });
 
     expect(result.errorType).toBe("authentication");
-    expect(result.message).toContain("openai");
+    expect(result.message).toContain("OpenAI");
     expect(result.message).toContain("disabled");
   });
 

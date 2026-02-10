@@ -42,7 +42,7 @@ describe("ChatInputToasts", () => {
 
       expect(toast.type).toBe("error");
       expect(toast.title).toBe("Provider Disabled");
-      expect(toast.message).toContain("openai");
+      expect(toast.message).toContain("OpenAI");
       expect(toast.message).toContain("disabled");
     });
 
