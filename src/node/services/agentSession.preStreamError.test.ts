@@ -1,5 +1,6 @@
 import { describe, expect, it, mock, afterEach } from "bun:test";
 import { EventEmitter } from "events";
+import { PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import type { Config } from "@/node/config";
 import type { AIService } from "@/node/services/aiService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
@@ -89,7 +90,7 @@ describe("AgentSession pre-stream errors", () => {
 
     expect(streamError).toBeDefined();
     expect(streamError?.errorType).toBe("authentication");
-    expect(streamError?.error).toContain("anthropic");
+    expect(streamError?.error).toContain(PROVIDER_DISPLAY_NAMES.anthropic);
     expect(streamError?.messageId).toMatch(/^assistant-/);
   });
 });

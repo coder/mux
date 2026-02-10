@@ -165,8 +165,8 @@ test.describe("Settings Modal", () => {
     // The API key should still show as set
     await expect(page.getByText("••••••••")).toBeVisible();
 
-    // The provider should show as configured (green indicator dot)
-    const configuredIndicator = openaiButton.locator(".bg-green-500");
+    // The provider should show as configured (status indicator dot)
+    const configuredIndicator = openaiButton.locator('[title="Configured"]');
     await expect(configuredIndicator).toBeVisible();
   });
 });
