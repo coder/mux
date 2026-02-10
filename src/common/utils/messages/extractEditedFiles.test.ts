@@ -14,7 +14,7 @@ function createAssistantMessage(
     diff: string;
     uiOnlyDiff?: string;
     success?: boolean;
-    inputPathKey?: "file_path" | "path";
+    inputPathKey?: "path" | "file_path";
   }>
 ): MuxMessage {
   return {
@@ -25,7 +25,7 @@ function createAssistantMessage(
       toolCallId: `tc-${Math.random().toString(36).slice(2)}`,
       toolName: tc.toolName,
       state: "output-available" as const,
-      input: tc.inputPathKey === "path" ? { path: tc.filePath } : { file_path: tc.filePath },
+      input: tc.inputPathKey === "file_path" ? { file_path: tc.filePath } : { path: tc.filePath },
       output: {
         success: tc.success ?? true,
         diff: tc.diff,

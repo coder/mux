@@ -4,7 +4,7 @@ import { handleStringReplace, handleLineReplace } from "./file_edit_replace_shar
 test("file_edit_replace_string error includes agent note field", () => {
   const result = handleStringReplace(
     {
-      file_path: "test.ts",
+      path: "test.ts",
       old_string: "nonexistent",
       new_string: "replacement",
     },
@@ -23,7 +23,7 @@ test("file_edit_replace_string error includes agent note field", () => {
 test("file_edit_replace_string ambiguous match error includes note", () => {
   const result = handleStringReplace(
     {
-      file_path: "test.ts",
+      path: "test.ts",
       old_string: "duplicate",
       new_string: "replacement",
     },
@@ -42,7 +42,7 @@ test("file_edit_replace_string ambiguous match error includes note", () => {
 test("file_edit_replace_lines validation error includes note", () => {
   const result = handleLineReplace(
     {
-      file_path: "test.ts",
+      path: "test.ts",
       start_line: 10,
       end_line: 9,
       new_lines: ["new content"],

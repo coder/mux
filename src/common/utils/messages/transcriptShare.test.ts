@@ -112,7 +112,7 @@ describe("buildChatJsonlForSharing", () => {
               {
                 toolCallId: "nested-1",
                 toolName: "file_read",
-                input: { file_path: "/tmp/demo.txt" },
+                input: { path: "/tmp/demo.txt" },
                 output: { success: true, content: "hello" },
                 state: "output-available",
               },

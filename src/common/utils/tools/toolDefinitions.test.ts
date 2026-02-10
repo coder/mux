@@ -88,45 +88,45 @@ describe("TOOL_DEFINITIONS", () => {
   ] as const;
 
   it.each(filePathAliasCases)(
-    "accepts path alias for $toolName and normalizes to file_path",
+    "accepts file_path alias for $toolName and normalizes to path",
     ({ toolName, args }) => {
       const parsed = TOOL_DEFINITIONS[toolName].schema.safeParse({
         ...args,
-        path: "src/example.ts",
+        file_path: "src/example.ts",
       });
 
       expect(parsed.success).toBe(true);
       if (parsed.success) {
-        expect(parsed.data.file_path).toBe("src/example.ts");
-        expect("path" in parsed.data).toBe(false);
+        expect(parsed.data.path).toBe("src/example.ts");
+        expect("file_path" in parsed.data).toBe(false);
       }
     }
   );
 
   it.each(filePathAliasCases)(
-    "prefers canonical file_path over path for $toolName",
+    "prefers canonical path over file_path for $toolName",
     ({ toolName, args }) => {
       const parsed = TOOL_DEFINITIONS[toolName].schema.safeParse({
         ...args,
-        file_path: "src/canonical.ts",
-        path: "src/legacy.ts",
+        path: "src/canonical.ts",
+        file_path: "src/legacy.ts",
       });
 
       expect(parsed.success).toBe(true);
       if (parsed.success) {
-        expect(parsed.data.file_path).toBe("src/canonical.ts");
-        expect("path" in parsed.data).toBe(false);
+        expect(parsed.data.path).toBe("src/canonical.ts");
+        expect("file_path" in parsed.data).toBe(false);
       }
     }
   );
 
   it.each(filePathAliasCases)(
-    "rejects $toolName when file_path is present but invalid, even if path is provided",
+    "rejects $toolName when path is present but invalid, even if file_path is provided",
     ({ toolName, args }) => {
       const parsed = TOOL_DEFINITIONS[toolName].schema.safeParse({
         ...args,
-        file_path: 123,
-        path: "src/fallback.ts",
+        path: 123,
+        file_path: "src/fallback.ts",
       });
 
       expect(parsed.success).toBe(false);
@@ -134,7 +134,7 @@ describe("TOOL_DEFINITIONS", () => {
   );
 
   it.each(filePathAliasCases)(
-    "rejects $toolName calls missing both file_path and path",
+    "rejects $toolName calls missing both path and file_path",
     ({ toolName, args }) => {
       const parsed = TOOL_DEFINITIONS[toolName].schema.safeParse(args);
       expect(parsed.success).toBe(false);

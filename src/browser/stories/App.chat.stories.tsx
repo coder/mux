@@ -456,7 +456,7 @@ export const Streaming: AppStory = {
           pendingTool: {
             toolCallId: "call-1",
             toolName: "file_read",
-            args: { file_path: "src/db/connection.ts" },
+            args: { path: "src/db/connection.ts" },
           },
           gitStatus: { dirty: 1 },
         })

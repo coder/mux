@@ -141,7 +141,7 @@ describe("generateMuxTypes", () => {
   test("converts snake_case tool names to PascalCase for types", async () => {
     const tool = createMockTool(
       z.object({
-        file_path: z.string(),
+        path: z.string(),
         old_string: z.string(),
         new_string: z.string(),
       })
@@ -179,8 +179,8 @@ describe("generateMuxTypes", () => {
       bash_background_list: createMockTool(z.object({})),
       bash_background_terminate: createMockTool(z.object({ process_id: z.string() })),
       file_read: createMockTool(z.object({ filePath: z.string() })),
-      file_edit_insert: createMockTool(z.object({ file_path: z.string() })),
-      file_edit_replace_string: createMockTool(z.object({ file_path: z.string() })),
+      file_edit_insert: createMockTool(z.object({ path: z.string() })),
+      file_edit_replace_string: createMockTool(z.object({ path: z.string() })),
       web_fetch: createMockTool(z.object({ url: z.string() })),
     };
 

@@ -24,7 +24,7 @@ function createSuccessfulFileEditMessage(id: string, filePath: string, diff: str
         toolCallId: `tool-${id}`,
         toolName: "file_edit_replace_string",
         state: "output-available",
-        input: { file_path: filePath },
+        input: { path: filePath },
         output: { success: true, diff },
       },
     ],

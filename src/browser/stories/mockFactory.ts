@@ -278,7 +278,7 @@ export function createFileReadTool(toolCallId: string, filePath: string, content
     toolCallId,
     toolName: "file_read",
     state: "output-available",
-    input: { file_path: filePath },
+    input: { path: filePath },
     output: { success: true, content },
   };
 }
@@ -289,7 +289,7 @@ export function createFileEditTool(toolCallId: string, filePath: string, diff: s
     toolCallId,
     toolName: "file_edit_replace_string",
     state: "output-available",
-    input: { file_path: filePath, old_string: "...", new_string: "..." },
+    input: { path: filePath, old_string: "...", new_string: "..." },
     output: { success: true, diff, edits_applied: 1 },
   };
 }

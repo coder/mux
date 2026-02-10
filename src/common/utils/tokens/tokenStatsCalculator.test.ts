@@ -341,9 +341,7 @@ describe("getConsumerInfoForToolCall", () => {
   });
 
   test("defaults to tool name for other tools", () => {
-    expect(
-      getConsumerInfoForToolCall("file_edit_insert", { file_path: "x", content: "y" })
-    ).toEqual({
+    expect(getConsumerInfoForToolCall("file_edit_insert", { path: "x", content: "y" })).toEqual({
       consumer: "file_edit_insert",
       toolNameForDefinition: "file_edit_insert",
     });
