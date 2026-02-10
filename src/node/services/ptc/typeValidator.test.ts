@@ -332,6 +332,22 @@ mux.file_read({ path: "wrong" });`,
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.message.includes("typo"))).toBe(true);
   });
+
+  test("does not treat let {} + bracket writes as a dynamic bag (reassignment hazard)", () => {
+    const result = validateTypes(
+      `
+      let results = {};
+      results["a"] = 1;
+      results = { ok: true };
+      return results.typo;
+    `,
+      muxTypes
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("typo"))).toBe(true);
+  });
+
   test("still catches mux shadowing with {}", () => {
     // const mux = {} must NOT be treated as a dynamic bag — shadowing mux is a real bug
     const result = validateTypes(

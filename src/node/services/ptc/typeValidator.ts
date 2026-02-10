@@ -264,7 +264,15 @@ function findDynamicEmptyObjectBagSymbols(
       ts.isObjectLiteralExpression(node.initializer) &&
       node.initializer.properties.length === 0
     ) {
-      maybeAdd(emptyLiteralSymbols, node.name);
+      // Only treat immutable bindings as bags — `let` / `var` can be reassigned, which
+      // would make dot-notation reads unsafe to suppress.
+      const declList = node.parent;
+      const isConst =
+        ts.isVariableDeclarationList(declList) && (declList.flags & ts.NodeFlags.Const) !== 0;
+
+      if (isConst) {
+        maybeAdd(emptyLiteralSymbols, node.name);
+      }
     }
 
     // Detect `x[key] = val`
