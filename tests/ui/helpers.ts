@@ -445,6 +445,24 @@ export function waitForAheadStatus(
 }
 
 /**
+ * Wait for git status to report a specific branch name.
+ */
+export function waitForBranchStatus(
+  container: HTMLElement,
+  workspaceId: string,
+  expectedBranch: string,
+  timeoutMs: number = 60_000
+): Promise<GitStatus> {
+  return waitForGitStatus(
+    container,
+    workspaceId,
+    (s) => s.branch === expectedBranch,
+    `branch === "${expectedBranch}"`,
+    timeoutMs
+  );
+}
+
+/**
  * Wait for git status to be idle (no fetch in-flight) AND match a predicate.
  * Use this to ensure no background fetch can race with subsequent operations.
  */

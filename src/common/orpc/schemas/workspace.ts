@@ -113,6 +113,8 @@ export const PostCompactionStateSchema = z.object({
 });
 
 export const GitStatusSchema = z.object({
+  /** Current HEAD branch name (empty string if detached HEAD or not a git repo) */
+  branch: z.string(),
   /** Commit divergence relative to origin's primary branch */
   ahead: z.number(),
   behind: z.number(),

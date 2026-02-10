@@ -15,6 +15,7 @@ import {
   getGitStatusFromElement,
   setupWorkspaceView,
   waitForAheadStatus,
+  waitForBranchStatus,
   waitForIdleGitStatus,
   waitForGitStatusElement,
   waitForDirtyStatus,
@@ -164,6 +165,76 @@ describeIntegration("GitStatus (UI + ORPC)", () => {
         // This bypasses RefreshController rate-limiting and jsdom event quirks.
         invalidateGitStatus(workspaceId);
         await waitForAheadStatus(view.container, workspaceId, 2, 30_000);
+      } finally {
+        await cleanupView(view, cleanupDom);
+      }
+    });
+  }, 45_000);
+
+  test("git status includes current branch name", async () => {
+    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      const cleanupDom = installDom();
+
+      const view = renderReviewPanel({
+        apiClient: env.orpc,
+        metadata,
+      });
+
+      try {
+        await setupWorkspaceView(view, metadata, workspaceId);
+
+        const statusElement = await waitForGitStatusElement(view.container, workspaceId, 30_000);
+        const status = getGitStatusFromElement(statusElement);
+
+        expect(status).not.toBeNull();
+        // Workspace branch should be a non-empty string (the worktree's branch name)
+        expect(typeof status?.branch).toBe("string");
+        expect(status?.branch?.length).toBeGreaterThan(0);
+      } finally {
+        await cleanupView(view, cleanupDom);
+      }
+    });
+  }, 45_000);
+
+  test("git status detects branch change after external checkout", async () => {
+    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      const cleanupDom = installDom();
+
+      const view = renderReviewPanel({
+        apiClient: env.orpc,
+        metadata,
+      });
+
+      try {
+        await setupWorkspaceView(view, metadata, workspaceId);
+
+        // Wait for initial status to stabilize
+        const statusElement = await waitForGitStatusElement(view.container, workspaceId, 30_000);
+        const initialStatus = getGitStatusFromElement(statusElement);
+        expect(initialStatus?.branch).toBeTruthy();
+        const originalBranch = initialStatus!.branch!;
+
+        // Create and checkout a new branch (simulates external git operation)
+        const newBranch = `test-branch-switch-${Date.now()}`;
+        const bashRes = await env.orpc.workspace.executeBash({
+          workspaceId,
+          script: `git checkout -b "${newBranch}" 2>&1`,
+          options: { timeout_secs: 10 },
+        });
+        expect(bashRes.success).toBe(true);
+
+        // Trigger refresh (simulates focus event or file-modify trigger)
+        triggerGitStatusRefresh(workspaceId);
+
+        // Wait for git status to reflect the new branch
+        await waitForBranchStatus(view.container, workspaceId, newBranch, 30_000);
+
+        // Switch back to original branch to clean up
+        await env.orpc.workspace.executeBash({
+          workspaceId,
+          script: `git checkout "${originalBranch}" && git branch -D "${newBranch}"`,
+          options: { timeout_secs: 10 },
+        });
       } finally {
         await cleanupView(view, cleanupDom);
       }
