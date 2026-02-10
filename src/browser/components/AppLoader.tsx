@@ -3,6 +3,7 @@ import App from "../App";
 import { AuthTokenModal } from "./AuthTokenModal";
 import { ThemeProvider } from "../contexts/ThemeContext";
 import { LoadingScreen } from "./LoadingScreen";
+import { StartupConnectionError } from "./StartupConnectionError";
 import { useWorkspaceStoreRaw, workspaceStore } from "../stores/WorkspaceStore";
 import { useGitStatusStoreRaw } from "../stores/GitStatusStore";
 import { useBackgroundBashStoreRaw } from "../stores/BackgroundBashStore";
@@ -135,7 +136,16 @@ function AppLoaderInner() {
   // Only block the UI during the very first load. After that, keep rendering the
   // last-known UI during reconnects so we don't flash the LoadingScreen again.
   if (!initialLoadComplete) {
-    return <LoadingScreen />;
+    if (apiState.status === "error") {
+      return <StartupConnectionError error={apiState.error} onRetry={apiState.retry} />;
+    }
+
+    const statusText =
+      apiState.status === "reconnecting"
+        ? `Reconnecting to backend (attempt ${apiState.attempt})...`
+        : "Loading workspaces...";
+
+    return <LoadingScreen statusText={statusText} />;
   }
 
   // Render App - all state available via contexts

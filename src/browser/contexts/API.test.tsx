@@ -48,11 +48,20 @@ class MockWebSocket {
   }
 }
 
+const originalFetch = globalThis.fetch;
+let fetchImpl: (input: RequestInfo | URL) => Promise<Response> = () =>
+  Promise.resolve({
+    ok: false,
+    json: () => Promise.resolve({}),
+  } as unknown as Response);
+
 // Mock orpc client
+let pingImpl: () => Promise<string> = () => Promise.resolve("pong");
+
 void mock.module("@/common/orpc/client", () => ({
   createClient: () => ({
     general: {
-      ping: () => Promise.resolve("pong"),
+      ping: () => pingImpl(),
     },
   }),
 }));
@@ -110,12 +119,21 @@ describe("API reconnection", () => {
     const happyWindow = new GlobalWindow({ url: "https://mux.example.com/" });
     globalThis.window = happyWindow as unknown as Window & typeof globalThis;
     globalThis.document = happyWindow.document as unknown as Document;
+    fetchImpl = () =>
+      Promise.resolve({
+        ok: false,
+        json: () => Promise.resolve({}),
+      } as unknown as Response);
+
+    globalThis.fetch = ((input: RequestInfo | URL) => fetchImpl(input)) as typeof globalThis.fetch;
     MockWebSocket.reset();
+    pingImpl = () => Promise.resolve("pong");
   });
 
   afterEach(() => {
     cleanup();
     MockWebSocket.reset();
+    globalThis.fetch = originalFetch;
     globalThis.window = undefined as unknown as Window & typeof globalThis;
     globalThis.document = undefined as unknown as Document;
   });
@@ -259,6 +277,34 @@ describe("API reconnection", () => {
     });
   });
 
+  test("shows auth_required when the WS handshake fails but /api/spec.json requires auth", async () => {
+    const states: string[] = [];
+    fetchImpl = async () =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ security: [{ bearerAuth: [] }] }),
+      } as unknown as Response);
+
+    render(
+      <APIProvider createWebSocket={createMockWebSocket}>
+        <APIStateObserver onState={(s) => states.push(s.status)} />
+      </APIProvider>
+    );
+
+    const ws1 = MockWebSocket.lastInstance();
+    expect(ws1).toBeDefined();
+
+    act(() => {
+      ws1!.simulateError();
+      ws1!.simulateClose(1006);
+    });
+
+    await waitFor(() => {
+      expect(states).toContain("auth_required");
+    });
+
+    expect(MockWebSocket.instances).toHaveLength(1);
+  });
   test("reconnects on connection loss when previously connected", async () => {
     const states: string[] = [];
 
@@ -290,5 +336,39 @@ describe("API reconnection", () => {
 
     const authRequiredAfterConnected = states.slice(states.indexOf("connected") + 1);
     expect(authRequiredAfterConnected.filter((s) => s === "auth_required")).toHaveLength(0);
+  });
+
+  test("does not flicker into reconnecting when auth is rejected by ping", async () => {
+    const states: string[] = [];
+    pingImpl = () => Promise.reject(new Error("401 Unauthorized"));
+
+    render(
+      <APIProvider createWebSocket={createMockWebSocket}>
+        <APIStateObserver onState={(s) => states.push(s.status)} />
+      </APIProvider>
+    );
+
+    const ws1 = MockWebSocket.lastInstance();
+    expect(ws1).toBeDefined();
+
+    await act(async () => {
+      ws1!.simulateOpen();
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    await waitFor(() => {
+      expect(states).toContain("auth_required");
+    });
+
+    // Simulate a close after we decided auth is required (cleanup closes the socket in real life).
+    act(() => {
+      ws1!.simulateClose(1000);
+    });
+
+    // Give state a chance to update if a reconnect was scheduled.
+    await new Promise((r) => setTimeout(r, 25));
+
+    expect(states.filter((s) => s === "reconnecting")).toHaveLength(0);
+    expect(MockWebSocket.instances).toHaveLength(1);
   });
 });

@@ -23,4 +23,10 @@ describe("LoadingScreen", () => {
     expect(getByText("Loading workspaces...")).toBeTruthy();
     expect(container.querySelector(".boot-loader__spinner")).toBeTruthy();
   });
+
+  test("renders custom statusText", () => {
+    const { getByText } = render(<LoadingScreen statusText="Reconnecting..." />);
+
+    expect(getByText("Reconnecting...")).toBeTruthy();
+  });
 });
