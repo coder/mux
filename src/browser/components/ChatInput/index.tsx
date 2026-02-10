@@ -2348,6 +2348,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               <>
                 <VimTextArea
                   ref={inputRef}
+                  data-escape-interrupts-stream="true"
                   value={input}
                   isEditing={!!editingMessage}
                   focusBorderColor={focusBorderColor}

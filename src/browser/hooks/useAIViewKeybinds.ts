@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import type { ChatInputAPI } from "@/browser/components/ChatInput";
 import {
+  allowsEscapeToInterruptStream,
   matchesKeybind,
   KEYBINDS,
   isEditableElement,
@@ -27,7 +28,7 @@ interface UseAIViewKeybindsParams {
 
 /**
  * Manages keyboard shortcuts for AIView:
- * - Esc (non-vim) or Ctrl+C (vim): Interrupt stream (always, regardless of selection)
+ * - Esc (non-vim) or Ctrl+C (vim): Interrupt stream (Escape skips text inputs by default)
  * - Ctrl+I: Focus chat input
  * - Ctrl+G: Jump to bottom
  * - Ctrl+T: Open terminal
@@ -63,6 +64,20 @@ export function useAIViewKeybinds({
       // IMPORTANT: This handler runs in **bubble phase** so dialogs/popovers can stopPropagation()
       // on Escape without accidentally interrupting a stream.
       if (matchesKeybind(e, interruptKeybind) && !isTerminalFocused(e.target)) {
+        // If something else already claimed this key event, skip.
+        if (e.defaultPrevented) {
+          return;
+        }
+
+        // Normal mode uses Escape; skip when typing in inputs unless explicitly opted in.
+        if (
+          interruptKeybind === KEYBINDS.INTERRUPT_STREAM_NORMAL &&
+          isEditableElement(e.target) &&
+          !allowsEscapeToInterruptStream(e.target)
+        ) {
+          return;
+        }
+
         // ask_user_question is a special waiting state: don't interrupt it with Esc/Ctrl+C.
         // Users can still respond via the questions UI, or type in chat to cancel.
         if (aggregator?.hasAwaitingUserQuestion()) {
@@ -82,7 +97,7 @@ export function useAIViewKeybinds({
 
         // Normal stream interrupt (non-compaction)
         // Vim mode: Ctrl+C always interrupts (vim uses yank for copy, not Ctrl+C)
-        // Non-vim mode: Esc always interrupts
+        // Non-vim mode: Esc interrupts (except when typing in inputs, unless explicitly opted in)
         if (canInterrupt || showRetryBarrier) {
           e.preventDefault();
           disableAutoRetryPreference(workspaceId); // User explicitly stopped - don't auto-retry

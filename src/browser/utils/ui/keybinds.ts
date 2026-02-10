@@ -151,6 +151,25 @@ export function isEditableElement(target: EventTarget | null): boolean {
 export const TERMINAL_CONTAINER_ATTR = "data-terminal-container";
 
 /**
+ * Data attribute used to opt an element (or one of its ancestors) into allowing Escape
+ * to interrupt streams, even when the event target is editable (input/textarea/etc).
+ *
+ * This is intentionally opt-in to keep Escape safe-by-default in text inputs.
+ */
+export const ESCAPE_INTERRUPTS_STREAM_ATTR = "data-escape-interrupts-stream";
+
+export function allowsEscapeToInterruptStream(target: EventTarget | null): boolean {
+  if (!target) {
+    return false;
+  }
+  // Check if HTMLElement exists (not available in non-DOM test environments)
+  if (typeof HTMLElement === "undefined" || !(target instanceof HTMLElement)) {
+    return false;
+  }
+  return target.closest(`[${ESCAPE_INTERRUPTS_STREAM_ATTR}]`) !== null;
+}
+
+/**
  * Check if the event target is inside a terminal container.
  * Used to let terminal components handle their own keyboard shortcuts
  * (like Ctrl+C for SIGINT) instead of intercepting them globally.
