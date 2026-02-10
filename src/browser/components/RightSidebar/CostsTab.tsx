@@ -1,11 +1,7 @@
 import React from "react";
 import { useWorkspaceUsage, useWorkspaceConsumers } from "@/browser/stores/WorkspaceStore";
 import { getModelStats } from "@/common/utils/tokens/modelStats";
-import {
-  sumUsageHistory,
-  formatCostWithDollar,
-  type ChatUsageDisplay,
-} from "@/common/utils/tokens/usageAggregator";
+import { getSessionCostTotal, formatCostWithDollar } from "@/common/utils/tokens/usageAggregator";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
 import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
@@ -70,7 +66,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
 
   // Get model from context usage for per-model threshold storage
   // Use lastContextUsage for context window display (last step's usage)
-  const contextUsageForModel = usage.liveUsage ?? usage.lastContextUsage;
+  const contextUsageForModel = usage.currentContextUsage;
   const currentModel = contextUsageForModel?.model ?? null;
   // Align warning with /compact model resolution so it matches actual compaction behavior.
   const effectiveCompactionModel = resolveCompactionModel(preferredCompactionModel) ?? currentModel;
@@ -81,12 +77,10 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
 
   // Session usage for cost calculation
   // Uses sessionTotal (pre-computed) + liveCostUsage (cumulative during streaming)
-  const sessionUsage = React.useMemo(() => {
-    const parts: ChatUsageDisplay[] = [];
-    if (usage.sessionTotal) parts.push(usage.sessionTotal);
-    if (usage.liveCostUsage) parts.push(usage.liveCostUsage);
-    return parts.length > 0 ? sumUsageHistory(parts) : undefined;
-  }, [usage.sessionTotal, usage.liveCostUsage]);
+  const sessionUsage = React.useMemo(
+    () => getSessionCostTotal(usage.sessionTotal, usage.liveCostUsage),
+    [usage.sessionTotal, usage.liveCostUsage]
+  );
 
   const hasUsageData =
     usage &&
@@ -120,7 +114,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
         <div data-testid="context-usage-section" className="mt-2 mb-5">
           <div data-testid="context-usage-list" className="flex flex-col gap-3">
             {(() => {
-              const contextUsage = usage.liveUsage ?? usage.lastContextUsage;
+              const contextUsage = usage.currentContextUsage;
               const model = contextUsage?.model ?? "unknown";
 
               const contextUsageData = contextUsage

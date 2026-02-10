@@ -16,23 +16,12 @@
  */
 
 import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
-import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
+import { getContextTokens } from "@/common/utils/tokens/usageAggregator";
 import {
   DEFAULT_AUTO_COMPACTION_THRESHOLD,
   FORCE_COMPACTION_BUFFER_PERCENT,
 } from "@/common/constants/ui";
-import { getEffectiveContextLimit } from "./contextLimit";
-
-/**
- * Get context window tokens (input only).
- * Output and reasoning tokens are excluded because they represent the model's
- * response, not the context window size. This prevents compaction loops with
- * Extended Thinking models where high reasoning token counts (50k+) would
- * incorrectly inflate context usage calculations.
- */
-function getContextTokens(usage: ChatUsageDisplay): number {
-  return usage.input.tokens + usage.cached.tokens + usage.cacheCreate.tokens;
-}
+import { getEffectiveContextLimit } from "@/common/utils/tokens/contextLimit";
 
 export interface AutoCompactionCheckResult {
   shouldShowWarning: boolean;
@@ -94,8 +83,8 @@ export function checkAutoCompaction(
   }
 
   // Current usage: live when streaming, else last completed
+  const currentUsage = usage.currentContextUsage;
   const lastUsage = usage.lastContextUsage;
-  const currentUsage = usage.liveUsage ?? lastUsage;
 
   // Usage percentage from current context (live when streaming, otherwise last completed)
   const usagePercentage = currentUsage ? (getContextTokens(currentUsage) / maxTokens) * 100 : 0;

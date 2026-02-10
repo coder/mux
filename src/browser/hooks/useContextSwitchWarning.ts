@@ -11,6 +11,7 @@ import type { AppRouter } from "@/node/orpc/router";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
+import { getContextTokens } from "@/common/utils/tokens/usageAggregator";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import {
@@ -20,7 +21,7 @@ import {
   type ContextSwitchWarning,
 } from "@/browser/utils/compaction/contextSwitchCheck";
 import { getHigherContextCompactionSuggestion } from "@/browser/utils/compaction/suggestion";
-import { getEffectiveContextLimit } from "@/browser/utils/compaction/contextLimit";
+import { getEffectiveContextLimit } from "@/common/utils/tokens/contextLimit";
 import {
   consumeWorkspaceModelChange,
   setWorkspaceModelWithOrigin,
@@ -158,8 +159,8 @@ export function useContextSwitchWarning(
   }, [workspaceId, pendingModel, use1M, checkOptions]);
 
   const getCurrentTokens = useCallback(() => {
-    const usage = workspaceUsage?.liveUsage ?? workspaceUsage?.lastContextUsage;
-    return usage ? usage.input.tokens + usage.cached.tokens + usage.cacheCreate.tokens : 0;
+    const usage = workspaceUsage?.currentContextUsage;
+    return usage ? getContextTokens(usage) : 0;
   }, [workspaceUsage]);
 
   const tokens = getCurrentTokens();

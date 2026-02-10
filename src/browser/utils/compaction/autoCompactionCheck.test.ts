@@ -35,7 +35,8 @@ const createMockUsage = (
   // Create lastContextUsage representing the most recent context window state
   const lastContextUsage = createUsageEntry(lastEntryTokens, model);
 
-  return { lastContextUsage, totalTokens: 0, liveUsage };
+  const currentContextUsage = liveUsage ?? lastContextUsage;
+  return { lastContextUsage, totalTokens: 0, liveUsage, currentContextUsage };
 };
 
 describe("checkAutoCompaction", () => {
@@ -140,6 +141,7 @@ describe("checkAutoCompaction", () => {
       };
       const usage: WorkspaceUsageState = {
         lastContextUsage: usageEntry,
+        currentContextUsage: usageEntry,
         totalTokens: 0,
       };
 
@@ -163,6 +165,7 @@ describe("checkAutoCompaction", () => {
       };
       const usage: WorkspaceUsageState = {
         lastContextUsage: usageEntry,
+        currentContextUsage: usageEntry,
         totalTokens: 0,
       };
 
@@ -261,6 +264,7 @@ describe("checkAutoCompaction", () => {
       };
       const usage: WorkspaceUsageState = {
         lastContextUsage: zeroEntry,
+        currentContextUsage: zeroEntry,
         totalTokens: 0,
       };
 
@@ -378,6 +382,7 @@ describe("checkAutoCompaction", () => {
       const usage: WorkspaceUsageState = {
         totalTokens: 0,
         liveUsage,
+        currentContextUsage: liveUsage,
       };
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
 
@@ -391,6 +396,7 @@ describe("checkAutoCompaction", () => {
       const usage: WorkspaceUsageState = {
         totalTokens: 0,
         liveUsage,
+        currentContextUsage: liveUsage,
       };
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
 

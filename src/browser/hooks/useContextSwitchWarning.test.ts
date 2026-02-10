@@ -8,7 +8,7 @@ import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import { useContextSwitchWarning } from "./useContextSwitchWarning";
-import { getEffectiveContextLimit } from "@/browser/utils/compaction/contextLimit";
+import { getEffectiveContextLimit } from "@/common/utils/tokens/contextLimit";
 import {
   recordWorkspaceModelChange,
   setWorkspaceModelWithOrigin,
@@ -81,17 +81,21 @@ const createPolicyChurnClient = () => {
   return { client, triggerPolicyEvent };
 };
 
-const buildUsage = (tokens: number, model?: string): WorkspaceUsageState => ({
-  totalTokens: tokens,
-  lastContextUsage: {
+const buildUsage = (tokens: number, model?: string): WorkspaceUsageState => {
+  const contextUsage = {
     input: { tokens },
     cached: { tokens: 0 },
     cacheCreate: { tokens: 0 },
     output: { tokens: 0 },
     reasoning: { tokens: 0 },
     model,
-  },
-});
+  };
+  return {
+    totalTokens: tokens,
+    lastContextUsage: contextUsage,
+    currentContextUsage: contextUsage,
+  };
+};
 
 const buildAssistantMessage = (model: string): DisplayedMessage => ({
   type: "assistant",

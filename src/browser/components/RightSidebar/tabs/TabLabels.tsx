@@ -15,7 +15,7 @@ import { formatTabDuration, type ReviewStats } from "./registry";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
 import { useWorkspaceUsage, useWorkspaceStatsSnapshot } from "@/browser/stores/WorkspaceStore";
-import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
+import { getSessionCostTotal, getTotalCost } from "@/common/utils/tokens/usageAggregator";
 
 interface CostsTabLabelProps {
   workspaceId: string;
@@ -29,21 +29,9 @@ export const CostsTabLabel: React.FC<CostsTabLabelProps> = ({ workspaceId }) => 
   const usage = useWorkspaceUsage(workspaceId);
 
   const sessionCost = React.useMemo(() => {
-    const parts: ChatUsageDisplay[] = [];
-    if (usage.sessionTotal) parts.push(usage.sessionTotal);
-    if (usage.liveCostUsage) parts.push(usage.liveCostUsage);
-    if (parts.length === 0) return null;
-
-    const aggregated = sumUsageHistory(parts);
-    if (!aggregated) return null;
-
-    const total =
-      (aggregated.input.cost_usd ?? 0) +
-      (aggregated.cached.cost_usd ?? 0) +
-      (aggregated.cacheCreate.cost_usd ?? 0) +
-      (aggregated.output.cost_usd ?? 0) +
-      (aggregated.reasoning.cost_usd ?? 0);
-    return total > 0 ? total : null;
+    const aggregated = getSessionCostTotal(usage.sessionTotal, usage.liveCostUsage);
+    const total = getTotalCost(aggregated);
+    return total && total > 0 ? total : null;
   }, [usage.sessionTotal, usage.liveCostUsage]);
 
   return (

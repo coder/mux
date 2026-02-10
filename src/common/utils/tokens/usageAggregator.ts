@@ -35,6 +35,28 @@ export interface ChatUsageDisplay {
 }
 
 /**
+ * Context window tokens: input + cached + cacheCreate (excludes output/reasoning).
+ * Output and reasoning tokens represent the model's response, not context window size.
+ * This prevents compaction loops with Extended Thinking models where high reasoning
+ * token counts (50k+) would incorrectly inflate context usage calculations.
+ */
+export function getContextTokens(usage: ChatUsageDisplay): number {
+  return usage.input.tokens + usage.cached.tokens + usage.cacheCreate.tokens;
+}
+
+/**
+ * Combine session total with live streaming cost into a single display-ready total.
+ * Used by CostsTab and CostsTabLabel to avoid duplicating the aggregation pattern.
+ */
+export function getSessionCostTotal(
+  sessionTotal: ChatUsageDisplay | undefined,
+  liveCostUsage: ChatUsageDisplay | undefined
+): ChatUsageDisplay | undefined {
+  const parts = [sessionTotal, liveCostUsage].filter(Boolean) as ChatUsageDisplay[];
+  return parts.length > 0 ? sumUsageHistory(parts) : undefined;
+}
+
+/**
  * Sum multiple ChatUsageDisplay objects into a single cumulative display
  * Used for showing total costs across multiple API responses
  */

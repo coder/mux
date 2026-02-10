@@ -204,6 +204,9 @@ export interface WorkspaceUsageState {
   liveUsage?: ChatUsageDisplay;
   /** Live cost usage during streaming (cumulative across all steps) */
   liveCostUsage?: ChatUsageDisplay;
+  /** Best-available context usage: live when streaming, else last completed.
+   *  Consumers should prefer this over manually deriving liveUsage ?? lastContextUsage. */
+  currentContextUsage?: ChatUsageDisplay;
 }
 
 /**
@@ -1303,7 +1306,18 @@ export class WorkspaceStore {
           ? createDisplayUsage(rawCumulativeUsage, model, rawCumulativeProviderMetadata)
           : undefined;
 
-      return { sessionTotal, lastRequest, lastContextUsage, totalTokens, liveUsage, liveCostUsage };
+      // Derived: best-available context usage (live when streaming, else last completed)
+      const currentContextUsage = liveUsage ?? lastContextUsage;
+
+      return {
+        sessionTotal,
+        lastRequest,
+        lastContextUsage,
+        totalTokens,
+        liveUsage,
+        liveCostUsage,
+        currentContextUsage,
+      };
     });
   }
 

@@ -472,7 +472,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const workspaceIdForUsage = variant === "workspace" ? props.workspaceId : "";
   const usage = useWorkspaceUsage(workspaceIdForUsage);
   const { has1MContext } = useProviderOptions();
-  const lastUsage = usage?.liveUsage ?? usage?.lastContextUsage;
+  const lastUsage = usage?.currentContextUsage;
   const usageModel = lastUsage?.model ?? null;
   const use1M = has1MContext(usageModel ?? "");
   const contextUsageData = useMemo(() => {

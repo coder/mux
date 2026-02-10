@@ -1,12 +1,12 @@
 /**
- * Shared context limit utilities for compaction logic.
+ * Shared context limit utilities.
  *
- * Used by autoCompactionCheck and contextSwitchCheck to calculate
- * effective context limits accounting for 1M context toggle.
+ * Used by token meter display, auto-compaction, and context-switch checks
+ * to calculate effective context limits accounting for the 1M context toggle.
  */
 
-import { getModelStats } from "@/common/utils/tokens/modelStats";
-import { supports1MContext } from "@/common/utils/ai/models";
+import { getModelStats } from "./modelStats";
+import { supports1MContext } from "../ai/models";
 
 /**
  * Get effective context limit for a model, accounting for 1M toggle.
