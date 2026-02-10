@@ -164,16 +164,14 @@ for line in open(sys.argv[1]):
         elif payload.get("type") == "session-usage-delta":
             # session-usage-delta carries ChatUsageDisplay objects per model with
             # cost_usd per component (input, output, cached, cacheCreate, reasoning).
-            # Sum both tokens and cost for sub-agent usage.
+            # Only count input/output tokens to match run-complete semantics
+            # (which reports inputTokens/outputTokens excluding cache/reasoning).
+            # Sum cost from ALL components since cost_usd accounts for all billing.
             for model_usage in (payload.get("byModelDelta") or {}).values():
+                subagent_input += (model_usage.get("input") or {}).get("tokens", 0) or 0
+                subagent_output += (model_usage.get("output") or {}).get("tokens", 0) or 0
                 for component in ("input", "output", "cached", "cacheCreate", "reasoning"):
-                    comp = model_usage.get(component) or {}
-                    tokens = comp.get("tokens", 0) or 0
-                    cost = comp.get("cost_usd")
-                    if component in ("input", "cached", "cacheCreate"):
-                        subagent_input += tokens
-                    else:
-                        subagent_output += tokens
+                    cost = (model_usage.get(component) or {}).get("cost_usd")
                     if cost is not None:
                         subagent_cost += cost
     except Exception:
