@@ -18,6 +18,9 @@ import type {
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { createAuthMiddleware } from "./authMiddleware";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
+import { getLogFilePath } from "@/node/services/log";
+import type { LogEntry } from "@/node/services/logBuffer";
+import { getRecentLogs, onLogEntry } from "@/node/services/logBuffer";
 import { createReplayBufferedStreamMessageRelay } from "./replayBufferedStreamMessageRelay";
 
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
@@ -1270,6 +1273,64 @@ export const router = (authToken?: string) => {
             if (i < input.count) {
               await new Promise((r) => setTimeout(r, input.intervalMs));
             }
+          }
+        }),
+      getLogPath: t
+        .input(schemas.general.getLogPath.input)
+        .output(schemas.general.getLogPath.output)
+        .handler(() => {
+          return { path: getLogFilePath() };
+        }),
+      subscribeLogs: t
+        .input(schemas.general.subscribeLogs.input)
+        .output(schemas.general.subscribeLogs.output)
+        .handler(async function* ({ input, signal }) {
+          const LOG_LEVEL_PRIORITY: Record<LogEntry["level"], number> = {
+            error: 0,
+            warn: 1,
+            info: 2,
+            debug: 3,
+          };
+
+          function shouldInclude(
+            entryLevel: LogEntry["level"],
+            minLevel: LogEntry["level"]
+          ): boolean {
+            return (
+              (LOG_LEVEL_PRIORITY[entryLevel] ?? LOG_LEVEL_PRIORITY.debug) <=
+              (LOG_LEVEL_PRIORITY[minLevel] ?? LOG_LEVEL_PRIORITY.info)
+            );
+          }
+
+          const minLevel = input.level ?? "info";
+
+          const queue = createAsyncMessageQueue<{ entries: LogEntry[]; isInitial: boolean }>();
+
+          // Send recent history as initial batch.
+          const recent = getRecentLogs().filter((e) => shouldInclude(e.level, minLevel));
+          queue.push({ entries: recent, isInitial: true });
+
+          // Subscribe to new entries.
+          const unsubscribe = onLogEntry((entry) => {
+            if (signal?.aborted) {
+              return;
+            }
+            if (shouldInclude(entry.level, minLevel)) {
+              queue.push({ entries: [entry], isInitial: false });
+            }
+          });
+
+          const onAbort = () => {
+            queue.end();
+          };
+          signal?.addEventListener("abort", onAbort);
+
+          try {
+            yield* queue.iterate();
+          } finally {
+            signal?.removeEventListener("abort", onAbort);
+            unsubscribe();
+            queue.end();
           }
         }),
       openInEditor: t

@@ -20,7 +20,12 @@ import * as fs from "fs";
 import * as path from "path";
 import chalk from "chalk";
 import { parseBoolEnv } from "@/common/utils/env";
-import { getMuxHome } from "@/common/constants/paths";
+import { getMuxHome, getMuxLogsDir } from "@/common/constants/paths";
+import { pushLogEntry } from "./logBuffer";
+
+process.once("exit", () => {
+  closeLogFile();
+});
 
 // Lazy-initialized to avoid circular dependency with config.ts
 let _debugObjDir: string | null = null;
@@ -72,6 +77,103 @@ function getDefaultLogLevel(): LogLevel {
   // Desktop mode defaults to info
   const isElectron = "electron" in process.versions;
   return isElectron ? "info" : "error";
+}
+
+let logFileStream: fs.WriteStream | null = null;
+let logFilePath: string | null = null;
+let logFileSize = 0;
+
+const MAX_LOG_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_LOG_FILES = 3;
+
+function stripAnsi(text: string): string {
+  // Matches standard ANSI escape codes for colors/styles.
+  return text.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+function initLogFile(): void {
+  if (logFileStream) {
+    return;
+  }
+
+  try {
+    const logsDir = getMuxLogsDir();
+    fs.mkdirSync(logsDir, { recursive: true });
+
+    logFilePath = path.join(logsDir, "mux.log");
+
+    try {
+      logFileSize = fs.statSync(logFilePath).size;
+    } catch {
+      logFileSize = 0;
+    }
+
+    logFileStream = fs.createWriteStream(logFilePath, { flags: "a" });
+  } catch {
+    // Silent failure — never crash the app for logging.
+  }
+}
+
+function rotateLogFile(): void {
+  if (!logFilePath) {
+    return;
+  }
+
+  try {
+    logFileStream?.end();
+    logFileStream = null;
+
+    const logsDir = path.dirname(logFilePath);
+
+    // Shift: mux.3.log → deleted, mux.2.log → mux.3.log, etc.
+    for (let i = MAX_LOG_FILES; i >= 1; i--) {
+      const from = path.join(logsDir, i === 1 ? "mux.log" : `mux.${i - 1}.log`);
+      const to = path.join(logsDir, `mux.${i}.log`);
+      try {
+        fs.renameSync(from, to);
+      } catch {
+        // file may not exist
+      }
+    }
+
+    logFileSize = 0;
+    logFileStream = fs.createWriteStream(logFilePath, { flags: "a" });
+  } catch {
+    // Silent failure.
+  }
+}
+
+function writeToFile(cleanLineWithNewline: string): void {
+  initLogFile();
+  if (!logFileStream) {
+    return;
+  }
+
+  try {
+    const bytes = Buffer.byteLength(cleanLineWithNewline, "utf-8");
+    logFileStream.write(cleanLineWithNewline);
+    logFileSize += bytes;
+
+    if (logFileSize >= MAX_LOG_FILE_SIZE) {
+      rotateLogFile();
+    }
+  } catch {
+    // Silent failure.
+  }
+}
+
+export function getLogFilePath(): string {
+  return path.join(getMuxLogsDir(), "mux.log");
+}
+
+export function closeLogFile(): void {
+  try {
+    logFileStream?.end();
+  } catch {
+    // ignore
+  } finally {
+    logFileStream = null;
+  }
 }
 
 let currentLogLevel: LogLevel = getDefaultLogLevel();
@@ -178,12 +280,12 @@ function getCallerLocation(): string {
  * @param level - Log level
  * @param args - Arguments to log
  */
-function safePipeLog(level: LogLevel, ...args: unknown[]): void {
-  // Check if this level should be logged
-  if (!shouldLog(level)) {
-    return;
-  }
-
+function formatLogLine(level: LogLevel): {
+  timestamp: string;
+  location: string;
+  useColor: boolean;
+  prefix: string;
+} {
   const timestamp = getTimestamp();
   const location = getCallerLocation();
   const useColor = supportsColor();
@@ -209,30 +311,40 @@ function safePipeLog(level: LogLevel, ...args: unknown[]): void {
     prefix = `${timestamp} ${location}`;
   }
 
+  return { timestamp, location, useColor, prefix };
+}
+
+function safePipeLog(level: LogLevel, ...args: unknown[]): void {
+  const shouldConsoleLog = shouldLog(level);
+
+  const { timestamp, location, useColor, prefix } = formatLogLine(level);
+
   try {
-    if (level === "error") {
-      // Color the entire error message red if supported
-      if (useColor) {
-        console.error(
-          prefix,
-          ...args.map((arg) => (typeof arg === "string" ? chalkRed(arg) : arg))
-        );
+    if (shouldConsoleLog) {
+      if (level === "error") {
+        // Color the entire error message red if supported
+        if (useColor) {
+          console.error(
+            prefix,
+            ...args.map((arg) => (typeof arg === "string" ? chalkRed(arg) : arg))
+          );
+        } else {
+          console.error(prefix, ...args);
+        }
+      } else if (level === "warn") {
+        // Color the entire warning message yellow if supported
+        if (useColor) {
+          console.error(
+            prefix,
+            ...args.map((arg) => (typeof arg === "string" ? chalkYellow(arg) : arg))
+          );
+        } else {
+          console.error(prefix, ...args);
+        }
       } else {
-        console.error(prefix, ...args);
+        // info and debug go to stdout
+        console.log(prefix, ...args);
       }
-    } else if (level === "warn") {
-      // Color the entire warning message yellow if supported
-      if (useColor) {
-        console.error(
-          prefix,
-          ...args.map((arg) => (typeof arg === "string" ? chalkYellow(arg) : arg))
-        );
-      } else {
-        console.error(prefix, ...args);
-      }
-    } else {
-      // info and debug go to stdout
-      console.log(prefix, ...args);
     }
   } catch (error) {
     // Silently ignore EPIPE and other console errors
@@ -252,6 +364,41 @@ function safePipeLog(level: LogLevel, ...args: unknown[]): void {
       }
     }
   }
+
+  const shouldPersist = level === "error" || level === "warn" || shouldConsoleLog;
+  if (!shouldPersist) {
+    return;
+  }
+
+  // Build a best-effort, pre-formatted single-line message for file/buffer.
+  // Note: console output behavior is intentionally unchanged.
+  const message = args
+    .map((arg) => {
+      if (typeof arg === "string") {
+        return arg;
+      }
+      if (arg instanceof Error) {
+        return arg.stack ?? arg.message;
+      }
+      try {
+        return JSON.stringify(arg);
+      } catch {
+        return String(arg);
+      }
+    })
+    .join(" ");
+
+  const formattedLine = `${prefix} ${message}`;
+  const cleanLine = stripAnsi(formattedLine);
+
+  writeToFile(`${cleanLine}\n`);
+
+  pushLogEntry({
+    timestamp: Date.now(),
+    level,
+    message: cleanLine,
+    location,
+  });
 }
 
 /**

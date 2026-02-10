@@ -83,6 +83,17 @@ export function getMuxSessionsDir(rootDir?: string): string {
  *
  * @param rootDir - Optional root directory (defaults to getMuxHome())
  */
+/**
+ * Get the directory where mux backend logs are stored.
+ * Example: ~/.mux/logs/mux.log
+ *
+ * @param rootDir - Optional root directory (defaults to getMuxHome())
+ */
+export function getMuxLogsDir(rootDir?: string): string {
+  const root = rootDir ?? getMuxHome();
+  return join(root, "logs");
+}
+
 export function getMuxPlansDir(rootDir?: string): string {
   const root = rootDir ?? getMuxHome();
   return join(root, "plans");

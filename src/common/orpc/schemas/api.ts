@@ -1583,6 +1583,28 @@ export const general = {
     }),
     output: ResultSchema(z.void(), z.string()),
   },
+  getLogPath: {
+    input: z.void(),
+    output: z.object({ path: z.string() }),
+  },
+  subscribeLogs: {
+    input: z.object({
+      level: z.enum(["error", "warn", "info", "debug"]).nullish(),
+    }),
+    output: eventIterator(
+      z.object({
+        entries: z.array(
+          z.object({
+            timestamp: z.number(),
+            level: z.enum(["error", "warn", "info", "debug"]),
+            message: z.string(),
+            location: z.string(),
+          })
+        ),
+        isInitial: z.boolean(),
+      })
+    ),
+  },
 };
 
 // Menu events (main→renderer notifications)
