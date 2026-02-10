@@ -592,16 +592,34 @@ export class ProviderModelFactory {
                 try {
                   const json = JSON.parse(init.body) as Record<string, unknown>;
 
-                  // Prefix tool definitions
+                  // Prefix custom tool definitions only. Anthropic's built-in
+                  // server-side tools (web_search, code_execution, text_editor, etc.)
+                  // have a versioned type like "web_search_20250305" and their names
+                  // must remain unchanged. Custom tools have type "custom" or no type.
                   if (Array.isArray(json.tools)) {
                     for (const tool of json.tools as Array<Record<string, unknown>>) {
-                      if (typeof tool.name === "string" && !tool.name.startsWith(ANTHROPIC_OAUTH_TOOL_PREFIX)) {
+                      const isCustomTool = !tool.type || tool.type === "custom";
+                      if (
+                        isCustomTool &&
+                        typeof tool.name === "string" &&
+                        !tool.name.startsWith(ANTHROPIC_OAUTH_TOOL_PREFIX)
+                      ) {
                         tool.name = `${ANTHROPIC_OAUTH_TOOL_PREFIX}${tool.name}`;
                       }
                     }
                   }
 
-                  // Prefix tool_use blocks in messages
+                  // Collect built-in tool names so we skip them in messages too.
+                  const builtInToolNames = new Set<string>();
+                  if (Array.isArray(json.tools)) {
+                    for (const tool of json.tools as Array<Record<string, unknown>>) {
+                      if (tool.type && tool.type !== "custom" && typeof tool.name === "string") {
+                        builtInToolNames.add(tool.name);
+                      }
+                    }
+                  }
+
+                  // Prefix tool_use blocks in messages (skip built-in tools).
                   if (Array.isArray(json.messages)) {
                     for (const msg of json.messages as Array<Record<string, unknown>>) {
                       if (Array.isArray(msg.content)) {
@@ -609,7 +627,8 @@ export class ProviderModelFactory {
                           if (
                             block.type === "tool_use" &&
                             typeof block.name === "string" &&
-                            !block.name.startsWith(ANTHROPIC_OAUTH_TOOL_PREFIX)
+                            !block.name.startsWith(ANTHROPIC_OAUTH_TOOL_PREFIX) &&
+                            !builtInToolNames.has(block.name)
                           ) {
                             block.name = `${ANTHROPIC_OAUTH_TOOL_PREFIX}${block.name}`;
                           }
