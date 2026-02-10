@@ -24,13 +24,29 @@ import { createMuxMessage } from "@/common/types/message";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { cn } from "@/common/lib/utils";
 import { useAPI } from "@/browser/contexts/API";
+import { useAgent } from "@/browser/contexts/AgentContext";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "../PopoverError";
-import { getAgentIdKey, getPlanContentKey } from "@/common/constants/storage";
+import {
+  AGENT_AI_DEFAULTS_KEY,
+  getAgentIdKey,
+  getModelKey,
+  getPlanContentKey,
+  getThinkingLevelKey,
+  getWorkspaceAISettingsByAgentKey,
+} from "@/common/constants/storage";
+import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
+import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
+import {
+  resolveWorkspaceAiSettingsForAgent,
+  type WorkspaceAISettingsCache,
+} from "@/browser/utils/workspaceModeAi";
+import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import {
   Clipboard,
   ClipboardCheck,
@@ -148,6 +164,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const isImplementingRef = useRef(false);
   const isMountedRef = useRef(true);
   const { api } = useAPI();
+  const { agents } = useAgent();
   const openInEditor = useOpenInEditor();
   const workspaceContext = useOptionalWorkspaceContext();
   const editorError = usePopoverError();
@@ -358,6 +375,47 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     }
   };
 
+  // User request: propose_plan primary actions send immediately after agent switch.
+  // Resolve and persist model/thinking synchronously here so the follow-up message
+  // uses the target agent defaults instead of stale planning-mode preferences.
+  const resolveAndPersistTargetAgentSettings = (args: {
+    workspaceId: string;
+    targetAgentId: "exec" | "orchestrator";
+  }): { resolvedModel: string; resolvedThinking: ThinkingLevel } => {
+    const modelKey = getModelKey(args.workspaceId);
+    const thinkingKey = getThinkingLevelKey(args.workspaceId);
+    const fallbackModel = getDefaultModel();
+
+    const existingModel = readPersistedState<string>(modelKey, fallbackModel);
+    const existingThinking = readPersistedState<ThinkingLevel>(thinkingKey, "off");
+    const agentAiDefaults = readPersistedState<AgentAiDefaults>(AGENT_AI_DEFAULTS_KEY, {});
+    const workspaceByAgent = readPersistedState<WorkspaceAISettingsCache>(
+      getWorkspaceAISettingsByAgentKey(args.workspaceId),
+      {}
+    );
+
+    const { resolvedModel, resolvedThinking } = resolveWorkspaceAiSettingsForAgent({
+      agentId: args.targetAgentId,
+      agents,
+      agentAiDefaults,
+      workspaceByAgent,
+      fallbackModel,
+      existingModel,
+      existingThinking,
+    });
+
+    updatePersistedState(getAgentIdKey(args.workspaceId), args.targetAgentId);
+
+    if (existingModel !== resolvedModel) {
+      setWorkspaceModelWithOrigin(args.workspaceId, resolvedModel, "agent");
+    }
+    if (existingThinking !== resolvedThinking) {
+      updatePersistedState(thinkingKey, resolvedThinking);
+    }
+
+    return { resolvedModel, resolvedThinking };
+  };
+
   const handleStartOrchestrator = async () => {
     if (!workspaceId || !api) return;
     if (isStartingOrchestratorRef.current) return;
@@ -385,15 +443,23 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
         });
       }
 
-      // Switch to orchestrator before sending so send options (agentId/mode) match.
-      updatePersistedState(getAgentIdKey(workspaceId), "orchestrator");
+      const targetAgentId = "orchestrator";
+      const { resolvedModel, resolvedThinking } = resolveAndPersistTargetAgentSettings({
+        workspaceId,
+        targetAgentId,
+      });
 
       const sendMessageOptions = getSendOptionsFromStorage(workspaceId);
 
       await api.workspace.sendMessage({
         workspaceId,
         message: "Start orchestrating the implementation of this plan.",
-        options: { ...sendMessageOptions, agentId: "orchestrator" },
+        options: {
+          ...sendMessageOptions,
+          agentId: targetAgentId,
+          model: resolvedModel,
+          thinkingLevel: resolvedThinking,
+        },
       });
     } catch (err) {
       console.error("Failed to start orchestrator:", err);
@@ -432,13 +498,22 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
         });
       }
 
-      // Switch to exec before sending so send options (agentId/mode) match.
-      updatePersistedState(getAgentIdKey(workspaceId), "exec");
+      const targetAgentId = "exec";
+      const { resolvedModel, resolvedThinking } = resolveAndPersistTargetAgentSettings({
+        workspaceId,
+        targetAgentId,
+      });
+      const sendMessageOptions = getSendOptionsFromStorage(workspaceId);
 
       await api.workspace.sendMessage({
         workspaceId,
         message: "Implement the plan",
-        options: getSendOptionsFromStorage(workspaceId),
+        options: {
+          ...sendMessageOptions,
+          agentId: targetAgentId,
+          model: resolvedModel,
+          thinkingLevel: resolvedThinking,
+        },
       });
     } catch {
       // Best-effort: user can retry manually if sending fails.
