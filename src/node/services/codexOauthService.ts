@@ -204,7 +204,9 @@ export class CodexOauthService {
   }
 
   async cancelDesktopFlow(flowId: string): Promise<void> {
-    log.debug(`[Codex OAuth] Desktop flow cancelled (flowId=${flowId})`);
+    if (this.desktopFlows.has(flowId)) {
+      log.debug(`[Codex OAuth] Desktop flow cancelled (flowId=${flowId})`);
+    }
     await this.desktopFlows.cancel(flowId);
   }
 

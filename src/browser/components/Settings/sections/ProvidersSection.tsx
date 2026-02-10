@@ -881,7 +881,12 @@ export function ProvidersSection() {
 
       const startResult = await api.copilotOauth.startDeviceFlow();
 
-      if (attempt !== copilotLoginAttemptRef.current) return;
+      if (attempt !== copilotLoginAttemptRef.current) {
+        if (startResult.success) {
+          void api.copilotOauth.cancelDeviceFlow({ flowId: startResult.data.flowId });
+        }
+        return;
+      }
 
       if (!startResult.success) {
         setCopilotLoginStatus("error");

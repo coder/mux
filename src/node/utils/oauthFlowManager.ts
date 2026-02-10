@@ -51,6 +51,32 @@ export class OAuthFlowManager {
     // If a flow ID is re-used before the completed-flow TTL expires, ensure the
     // old cleanup timer can't delete the new result.
     this.clearCompleted(flowId);
+
+    const existing = this.flows.get(flowId);
+    if (existing) {
+      // Defensive: avoid silently overwriting an active flow entry.
+      //
+      // This can happen if a provider accidentally re-uses a flow ID, or if a
+      // stale in-flight start attempt races a newer one. Best-effort cleanup to
+      // avoid leaking timeouts, deferred promises, or loopback servers.
+      log.debug(`[OAuthFlowManager] Duplicate register — replacing active flow (flowId=${flowId})`);
+
+      if (existing.timeoutHandle !== null) {
+        clearTimeout(existing.timeoutHandle);
+      }
+
+      try {
+        existing.resultDeferred.resolve(Err("OAuth flow replaced"));
+
+        if (existing.server) {
+          // Stop accepting new connections.
+          void closeServer(existing.server);
+        }
+      } catch (error) {
+        log.debug("Failed to clean up replaced OAuth flow:", error);
+      }
+    }
+
     this.flows.set(flowId, entry);
   }
 
