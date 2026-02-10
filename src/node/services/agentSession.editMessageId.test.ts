@@ -9,7 +9,7 @@ import { createMuxMessage } from "@/common/types/message";
 import type { MuxMessage } from "@/common/types/message";
 import type { SendMessageError } from "@/common/types/errors";
 import type { Result } from "@/common/types/result";
-import { Ok, Err } from "@/common/types/result";
+import { Ok } from "@/common/types/result";
 import { AgentSession } from "./agentSession";
 import { createTestHistoryService } from "./testHistoryService";
 

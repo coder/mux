@@ -51,7 +51,6 @@ describe("PartialService - Error Recovery", () => {
 
     // Spy on historyService methods to verify calls
     const appendSpy = spyOn(historyService, "appendToHistory");
-    const updateSpy = spyOn(historyService, "updateHistory");
 
     // Call commitToHistory
     const result = await partialService.commitToHistory(workspaceId);
