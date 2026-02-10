@@ -242,6 +242,29 @@ describe("generateMuxTypes", () => {
     expect(types).toContain("owner: string");
   });
 
+  test("does not strip defaults from raw JSON Schema (MCP tools)", async () => {
+    // MCP tools come with JSON Schema, not Zod. JSON Schema `default` is
+    // advisory metadata and does not make the property optional.
+    const mcpTool = {
+      description: "Mock MCP tool with defaults",
+      parameters: {
+        type: "object",
+        properties: {
+          repo: { type: "string", default: "my-repo" },
+          owner: { type: "string" },
+        },
+        required: ["repo", "owner"],
+      },
+      execute: () => Promise.resolve({ content: [] }),
+    } as unknown as Tool;
+
+    const types = await generateMuxTypes({ mcp__github__list_repos: mcpTool });
+
+    // `repo` must remain required even though it has a `default`
+    expect(types).toContain("repo: string");
+    expect(types).not.toContain("repo?:");
+    expect(types).toContain("owner: string");
+  });
   test("handles empty tool set", async () => {
     const types = await generateMuxTypes({});
 

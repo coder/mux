@@ -110,6 +110,10 @@ function pascalCase(str: string): string {
  * "required" — JSON Schema treats "required" and "default" as orthogonal
  * concepts. json-schema-to-typescript then faithfully maps "required" →
  * non-optional TS property, producing types that don't match runtime behavior.
+ *
+ * Important: Only apply this to JSON Schema that came from Zod. For raw JSON
+ * Schema (e.g. MCP tool parameters), `default` is advisory metadata and does
+ * not imply optional input.
  */
 function removeDefaultsFromRequired(schema: Record<string, unknown>): Record<string, unknown> {
   const result = { ...schema };
@@ -150,10 +154,16 @@ function getInputJsonSchema(tool: Tool): Record<string, unknown> {
 
   // Check if it's a Zod schema (has _def property)
   if (typeof schema === "object" && "_def" in schema) {
-    return z.toJSONSchema(schema as z.ZodType) as Record<string, unknown>;
+    // Zod `.default(...)` makes inputs optional, but z.toJSONSchema() keeps
+    // those fields in the "required" array. Strip them so the generated TS
+    // types match runtime behavior.
+    return removeDefaultsFromRequired(
+      z.toJSONSchema(schema as z.ZodType) as Record<string, unknown>
+    );
   }
 
-  // Already JSON Schema
+  // Already JSON Schema — leave required array untouched; `default` is advisory
+  // metadata and does not imply optional input.
   return schema as Record<string, unknown>;
 }
 
@@ -229,7 +239,7 @@ export async function generateMuxTypes(tools: Record<string, Tool>): Promise<str
 
     try {
       const argInterface = await compile(
-        removeDefaultsFromRequired(inputSchema) as Parameters<typeof compile>[0],
+        inputSchema as Parameters<typeof compile>[0],
         argsTypeName,
         {
           bannerComment: "",
