@@ -133,11 +133,12 @@ export function isFailedToolOutput(output: unknown): boolean {
 export function getNestedToolStatus(
   state: "input-available" | "output-available" | "output-redacted",
   output: unknown,
-  parentInterrupted: boolean
+  parentInterrupted: boolean,
+  failed?: boolean
 ): ToolStatus {
   if (state === "output-available") {
     return isFailedToolOutput(output) ? "failed" : "completed";
   }
-  if (state === "output-redacted") return "redacted";
+  if (state === "output-redacted") return failed ? "failed" : "redacted";
   return parentInterrupted ? "interrupted" : "executing";
 }

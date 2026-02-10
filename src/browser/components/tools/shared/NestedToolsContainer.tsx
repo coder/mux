@@ -22,7 +22,12 @@ export const NestedToolsContainer: React.FC<NestedToolsContainerProps> = ({
   return (
     <div className="-mx-3 space-y-3">
       {calls.map((call) => {
-        const status = getNestedToolStatus(call.state, call.output, parentInterrupted ?? false);
+        const status = getNestedToolStatus(
+          call.state,
+          call.output,
+          parentInterrupted ?? false,
+          call.failed
+        );
         return (
           <NestedToolRenderer
             key={call.toolCallId}
