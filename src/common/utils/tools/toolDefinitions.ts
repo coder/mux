@@ -529,9 +529,7 @@ export const AgentReportToolArgsSchema = z
 export const AgentReportToolResultSchema = z.object({ success: z.literal(true) }).strict();
 const FILE_EDIT_FILE_PATH = z
   .string()
-  .describe(
-    "Path to the file to edit (absolute or relative to the current workspace). Use `file_path` (not `path`)."
-  );
+  .describe("Path to the file to edit (absolute or relative to the current workspace)");
 
 function normalizeFilePathAlias(value: unknown): unknown {
   // Compatibility: some models emit { path: "..." } for file tools.
@@ -655,11 +653,7 @@ export const TOOL_DEFINITIONS = {
     schema: z.preprocess(
       normalizeFilePathAlias,
       z.object({
-        file_path: z
-          .string()
-          .describe(
-            "The path to the file to read (absolute or relative). Use `file_path` (not `path`)."
-          ),
+        file_path: z.string().describe("The path to the file to read (absolute or relative)"),
         offset: z
           .number()
           .int()

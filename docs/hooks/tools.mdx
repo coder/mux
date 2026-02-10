@@ -309,12 +309,12 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 <details>
 <summary>file_edit_insert (4)</summary>
 
-| Env var                        | JSON path       | Type   | Description                                                                                             |
-| ------------------------------ | --------------- | ------ | ------------------------------------------------------------------------------------------------------- |
-| `MUX_TOOL_INPUT_CONTENT`       | `content`       | string | The content to insert                                                                                   |
-| `MUX_TOOL_INPUT_FILE_PATH`     | `file_path`     | string | Path to the file to edit (absolute or relative to the current workspace). Use `file_path` (not `path`). |
-| `MUX_TOOL_INPUT_INSERT_AFTER`  | `insert_after`  | string | Anchor text to insert after. Content will be placed immediately after this substring.                   |
-| `MUX_TOOL_INPUT_INSERT_BEFORE` | `insert_before` | string | Anchor text to insert before. Content will be placed immediately before this substring.                 |
+| Env var                        | JSON path       | Type   | Description                                                                             |
+| ------------------------------ | --------------- | ------ | --------------------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_CONTENT`       | `content`       | string | The content to insert                                                                   |
+| `MUX_TOOL_INPUT_FILE_PATH`     | `file_path`     | string | Path to the file to edit (absolute or relative to the current workspace)                |
+| `MUX_TOOL_INPUT_INSERT_AFTER`  | `insert_after`  | string | Anchor text to insert after. Content will be placed immediately after this substring.   |
+| `MUX_TOOL_INPUT_INSERT_BEFORE` | `insert_before` | string | Anchor text to insert before. Content will be placed immediately before this substring. |
 
 </details>
 
@@ -326,7 +326,7 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 | `MUX_TOOL_INPUT_END_LINE`               | `end_line`                | number | 1-indexed end line (inclusive) to replace                                                                                                 |
 | `MUX_TOOL_INPUT_EXPECTED_LINES_<INDEX>` | `expected_lines[<INDEX>]` | string | Optional safety check. When provided, the current lines in the specified range must match exactly.                                        |
 | `MUX_TOOL_INPUT_EXPECTED_LINES_COUNT`   | `expected_lines.length`   | number | Number of elements in expected_lines (Optional safety check. When provided, the current lines in the specified range must match exactly.) |
-| `MUX_TOOL_INPUT_FILE_PATH`              | `file_path`               | string | Path to the file to edit (absolute or relative to the current workspace). Use `file_path` (not `path`).                                   |
+| `MUX_TOOL_INPUT_FILE_PATH`              | `file_path`               | string | Path to the file to edit (absolute or relative to the current workspace)                                                                  |
 | `MUX_TOOL_INPUT_NEW_LINES_<INDEX>`      | `new_lines[<INDEX>]`      | string | Replacement lines. Provide an empty array to delete the specified range.                                                                  |
 | `MUX_TOOL_INPUT_NEW_LINES_COUNT`        | `new_lines.length`        | number | Number of elements in new_lines (Replacement lines. Provide an empty array to delete the specified range.)                                |
 | `MUX_TOOL_INPUT_START_LINE`             | `start_line`              | number | 1-indexed start line (inclusive) to replace                                                                                               |
@@ -338,7 +338,7 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 
 | Env var                        | JSON path       | Type   | Description                                                                                                                                          |
 | ------------------------------ | --------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MUX_TOOL_INPUT_FILE_PATH`     | `file_path`     | string | Path to the file to edit (absolute or relative to the current workspace). Use `file_path` (not `path`).                                              |
+| `MUX_TOOL_INPUT_FILE_PATH`     | `file_path`     | string | Path to the file to edit (absolute or relative to the current workspace)                                                                             |
 | `MUX_TOOL_INPUT_NEW_STRING`    | `new_string`    | string | The replacement text                                                                                                                                 |
 | `MUX_TOOL_INPUT_OLD_STRING`    | `old_string`    | string | The exact text to replace (must be unique in file if replace_count is 1). Include enough context (indentation, surrounding lines) to make it unique. |
 | `MUX_TOOL_INPUT_REPLACE_COUNT` | `replace_count` | number | Number of occurrences to replace (default: 1). Use -1 to replace all occurrences. If 1, old_string must be unique in the file.                       |
@@ -348,11 +348,11 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 <details>
 <summary>file_read (3)</summary>
 
-| Env var                    | JSON path   | Type   | Description                                                                        |
-| -------------------------- | ----------- | ------ | ---------------------------------------------------------------------------------- |
-| `MUX_TOOL_INPUT_FILE_PATH` | `file_path` | string | The path to the file to read (absolute or relative). Use `file_path` (not `path`). |
-| `MUX_TOOL_INPUT_LIMIT`     | `limit`     | number | Number of lines to return from offset (optional, returns all if not specified)     |
-| `MUX_TOOL_INPUT_OFFSET`    | `offset`    | number | 1-based starting line number (optional, defaults to 1)                             |
+| Env var                    | JSON path   | Type   | Description                                                                    |
+| -------------------------- | ----------- | ------ | ------------------------------------------------------------------------------ |
+| `MUX_TOOL_INPUT_FILE_PATH` | `file_path` | string | The path to the file to read (absolute or relative)                            |
+| `MUX_TOOL_INPUT_LIMIT`     | `limit`     | number | Number of lines to return from offset (optional, returns all if not specified) |
+| `MUX_TOOL_INPUT_OFFSET`    | `offset`    | number | 1-based starting line number (optional, defaults to 1)                         |
 
 </details>
 
