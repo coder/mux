@@ -170,7 +170,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
 
   test("exposes OpenAI auth state flags", () => {
     providersConfig = {
-      openai: { apiKeySet: false, isConfigured: true, codexOauthSet: true },
+      openai: { apiKeySet: false, isEnabled: true, isConfigured: true, codexOauthSet: true },
     };
 
     const { result } = renderHook(() => useModelsFromSettings());
