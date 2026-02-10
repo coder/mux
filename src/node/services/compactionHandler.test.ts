@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from "bun:te
 import { CompactionHandler } from "./compactionHandler";
 import type { HistoryService } from "./historyService";
 import { createTestHistoryService } from "./testHistoryService";
-import type { PartialService } from "./partialService";
 import * as fsPromises from "fs/promises";
 import * as os from "os";
 import * as path from "path";
@@ -12,7 +11,7 @@ import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import type { StreamEndEvent } from "@/common/types/stream";
 import type { TelemetryService } from "./telemetryService";
 import type { TelemetryEventPayload } from "@/common/telemetry/payload";
-import { Ok, Err, type Result } from "@/common/types/result";
+import { Ok, Err } from "@/common/types/result";
 
 interface EmittedEvent {
   event: string;
@@ -24,26 +23,6 @@ interface ChatEventData {
   workspaceId: string;
   message: unknown;
 }
-
-const createMockPartialService = () => {
-  let deletePartialResult: Result<void, string> = Ok(undefined);
-
-  const deletePartial = mock((_) => Promise.resolve(deletePartialResult));
-  const readPartial = mock((_) => Promise.resolve(null));
-  const writePartial = mock((_, __) => Promise.resolve(Ok(undefined)));
-  const commitToHistory = mock((_) => Promise.resolve(Ok(undefined)));
-
-  return {
-    deletePartial,
-    readPartial,
-    writePartial,
-    commitToHistory,
-    // Allow setting mock return values
-    mockDeletePartial: (result: Result<void, string>) => {
-      deletePartialResult = result;
-    },
-  };
-};
 
 const createMockEmitter = (): { emitter: EventEmitter; events: EmittedEvent[] } => {
   const events: EmittedEvent[] = [];
@@ -119,7 +98,6 @@ describe("CompactionHandler", () => {
   let handler: CompactionHandler;
   let historyService: HistoryService;
   let cleanup: () => Promise<void>;
-  let mockPartialService: ReturnType<typeof createMockPartialService>;
   let mockEmitter: EventEmitter;
   let telemetryCapture: ReturnType<typeof mock>;
   let telemetryService: TelemetryService;
@@ -157,12 +135,9 @@ describe("CompactionHandler", () => {
 
     sessionDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-compaction-handler-"));
 
-    mockPartialService = createMockPartialService();
-
     handler = new CompactionHandler({
       workspaceId,
       historyService,
-      partialService: mockPartialService as unknown as PartialService,
       sessionDir,
       telemetryService,
       emitter: mockEmitter,
@@ -260,7 +235,6 @@ describe("CompactionHandler", () => {
       const reloaded = new CompactionHandler({
         workspaceId,
         historyService,
-        partialService: mockPartialService as unknown as PartialService,
         sessionDir,
         telemetryService,
         emitter: newEmitter,
@@ -420,13 +394,14 @@ describe("CompactionHandler", () => {
     it("should delete partial.json before appending summary (race condition fix)", async () => {
       const compactionReq = createCompactionRequest();
       await seedHistory(compactionReq);
+      const deletePartialSpy = spyOn(historyService, "deletePartial");
 
       const event = createStreamEndEvent("Summary");
       await handler.handleCompletion(event);
 
       // deletePartial should be called once before appendToHistory
-      expect(mockPartialService.deletePartial.mock.calls).toHaveLength(1);
-      expect(mockPartialService.deletePartial.mock.calls[0][0]).toBe(workspaceId);
+      expect(deletePartialSpy.mock.calls).toHaveLength(1);
+      expect(deletePartialSpy.mock.calls[0][0]).toBe(workspaceId);
 
       // Verify deletePartial was called (we can't easily verify order without more complex mocking,
       // but the important thing is that it IS called during compaction)

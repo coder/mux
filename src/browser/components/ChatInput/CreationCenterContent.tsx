@@ -1,3 +1,8 @@
+import { useRef, useEffect } from "react";
+import dancingBlinkDarkSrc from "@/browser/assets/animations/dancing-blink-dark.webm";
+import dancingBlinkLightSrc from "@/browser/assets/animations/dancing-blink-light.webm";
+import { useTheme } from "@/browser/contexts/ThemeContext";
+
 interface CreationCenterContentProps {
   projectName: string;
   isSending: boolean;
@@ -12,16 +17,38 @@ interface CreationCenterContentProps {
  * Shown as an overlay when isSending is true.
  */
 export function CreationCenterContent(props: CreationCenterContentProps) {
+  const { theme } = useTheme();
+  const isDark = theme === "dark" || theme.endsWith("-dark");
+  const videoSrc = isDark ? dancingBlinkDarkSrc : dancingBlinkLightSrc;
+
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.playbackRate = 1.3;
+    }
+  }, []);
+
   // Only render when actually sending/creating
   if (!props.isSending) {
     return null;
   }
 
   return (
-    <div className="bg-bg-dark/80 fixed inset-0 z-10 flex items-center justify-center backdrop-blur-sm">
-      <div className="max-w-xl px-8 text-center">
-        <div className="bg-accent mb-4 inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-current border-r-transparent"></div>
-        <h2 className="text-foreground mb-2 text-lg font-medium">Creating workspace</h2>
+    <div
+      className={`absolute inset-0 z-10 flex flex-col items-center justify-center pb-[30vh] ${isDark ? "bg-black" : "bg-white"}`}
+    >
+      <video
+        ref={videoRef}
+        className="h-[50vh] w-[50vw] object-contain"
+        src={videoSrc}
+        autoPlay
+        loop
+        muted
+        playsInline
+      />
+      <div className="-mt-32 max-w-xl px-8 text-center">
+        <h2 className="text-foreground mb-2 text-2xl font-medium">Creating workspace</h2>
         <p className="text-muted text-sm leading-relaxed">
           {props.workspaceName ? (
             <>

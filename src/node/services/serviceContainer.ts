@@ -293,6 +293,50 @@ export class ServiceContainer {
     await fsPromises.mkdir(projectPath, { recursive: true });
 
     await this.config.editConfig((config) => {
+      // Dev builds can run with a different MUX_ROOT (for example ~/.mux-dev).
+      // If config.json still has the built-in mux-chat workspace under an older root
+      // (for example ~/.mux), the sidebar can show duplicate "Chat with Mux" entries.
+      // Only treat entries as stale when they still look like a system Mux project so
+      // we do not delete unrelated legacy user workspaces whose generated ID happened
+      // to collide with "mux-chat" (e.g. project basename "mux" + workspace "chat").
+      const staleProjectPaths: string[] = [];
+      for (const [existingProjectPath, existingProjectConfig] of config.projects) {
+        if (existingProjectPath === projectPath) {
+          continue;
+        }
+
+        const isSystemMuxProjectPath =
+          path.basename(existingProjectPath) === "Mux" &&
+          path.basename(path.dirname(existingProjectPath)) === "system";
+
+        if (!isSystemMuxProjectPath) {
+          continue;
+        }
+
+        existingProjectConfig.workspaces = existingProjectConfig.workspaces.filter((workspace) => {
+          const isMuxChatWorkspace = workspace.id === MUX_HELP_CHAT_WORKSPACE_ID;
+          if (!isMuxChatWorkspace) {
+            return true;
+          }
+
+          const looksLikeSystemMuxChat =
+            workspace.agentId === MUX_HELP_CHAT_AGENT_ID ||
+            workspace.path === existingProjectPath ||
+            workspace.name === MUX_HELP_CHAT_WORKSPACE_NAME ||
+            workspace.title === MUX_HELP_CHAT_WORKSPACE_TITLE;
+
+          return !looksLikeSystemMuxChat;
+        });
+
+        if (existingProjectConfig.workspaces.length === 0) {
+          staleProjectPaths.push(existingProjectPath);
+        }
+      }
+
+      for (const staleProjectPath of staleProjectPaths) {
+        config.projects.delete(staleProjectPath);
+      }
+
       let projectConfig = config.projects.get(projectPath);
       if (!projectConfig) {
         projectConfig = { workspaces: [] };
@@ -300,27 +344,28 @@ export class ServiceContainer {
       }
 
       const existing = projectConfig.workspaces.find((w) => w.id === MUX_HELP_CHAT_WORKSPACE_ID);
-      if (!existing) {
-        projectConfig.workspaces.push({
-          path: projectPath,
-          id: MUX_HELP_CHAT_WORKSPACE_ID,
-          name: MUX_HELP_CHAT_WORKSPACE_NAME,
-          title: MUX_HELP_CHAT_WORKSPACE_TITLE,
-          agentId: MUX_HELP_CHAT_AGENT_ID,
-          createdAt: new Date().toISOString(),
-          runtimeConfig: { type: "local" },
-        });
-        return config;
-      }
 
-      // Self-heal: enforce invariants for the system workspace.
-      existing.path = projectPath;
-      existing.name = MUX_HELP_CHAT_WORKSPACE_NAME;
-      existing.title = MUX_HELP_CHAT_WORKSPACE_TITLE;
-      existing.agentId = MUX_HELP_CHAT_AGENT_ID;
-      existing.createdAt ??= new Date().toISOString();
-      existing.runtimeConfig = { type: "local" };
-      existing.archivedAt = undefined;
+      // Self-heal: enforce invariants for the system workspace and collapse duplicates
+      // in the active system project down to exactly one mux-chat entry.
+      const muxChatWorkspace = {
+        ...existing,
+        path: projectPath,
+        id: MUX_HELP_CHAT_WORKSPACE_ID,
+        name: MUX_HELP_CHAT_WORKSPACE_NAME,
+        title: MUX_HELP_CHAT_WORKSPACE_TITLE,
+        agentId: MUX_HELP_CHAT_AGENT_ID,
+        createdAt: existing?.createdAt ?? new Date().toISOString(),
+        runtimeConfig: { type: "local" } as const,
+        archivedAt: undefined,
+        unarchivedAt: undefined,
+      };
+
+      projectConfig.workspaces = [
+        ...projectConfig.workspaces.filter(
+          (workspace) => workspace.id !== MUX_HELP_CHAT_WORKSPACE_ID
+        ),
+        muxChatWorkspace,
+      ];
 
       return config;
     });

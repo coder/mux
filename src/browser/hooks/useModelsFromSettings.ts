@@ -127,11 +127,14 @@ export function useModelsFromSettings() {
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
   }, [config, hiddenModels, effectivePolicy]);
 
+  const openaiApiKeySet = config === null ? null : config.openai?.apiKeySet === true;
+  const codexOauthSet = config === null ? null : config.openai?.codexOauthSet === true;
+
   const models = useMemo(() => {
     const suggested = filterHiddenModels(getSuggestedModels(config), hiddenModels);
 
-    const openaiApiKeySet = config?.openai?.apiKeySet === true;
-    const codexOauthSet = config?.openai?.codexOauthSet === true;
+    const hasOpenaiApiKey = openaiApiKeySet === true;
+    const hasCodexOauth = codexOauthSet === true;
 
     // OpenAI model gating:
     // - API key + OAuth: allow everything.
@@ -143,11 +146,11 @@ export function useModelsFromSettings() {
         return true;
       }
 
-      if (openaiApiKeySet && codexOauthSet) {
+      if (hasOpenaiApiKey && hasCodexOauth) {
         return true;
       }
 
-      if (!openaiApiKeySet && codexOauthSet) {
+      if (!hasOpenaiApiKey && hasCodexOauth) {
         return isCodexOauthAllowedModelId(modelId);
       }
 
@@ -155,7 +158,7 @@ export function useModelsFromSettings() {
     });
 
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
-  }, [config, hiddenModels, effectivePolicy]);
+  }, [config, hiddenModels, effectivePolicy, openaiApiKeySet, codexOauthSet]);
 
   /**
    * If a model is selected that isn't built-in, persist it as a provider custom model.
@@ -246,5 +249,7 @@ export function useModelsFromSettings() {
     unhideModel,
     defaultModel,
     setDefaultModel: setDefaultModelAndPersist,
+    openaiApiKeySet,
+    codexOauthSet,
   };
 }

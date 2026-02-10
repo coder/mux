@@ -26,6 +26,7 @@ import type { TaskSettings } from "@/common/types/tasks";
 import { DEFAULT_TASK_SETTINGS, SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS } from "@/common/types/tasks";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
+import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
@@ -34,6 +35,7 @@ import type { Result } from "@/common/types/result";
 import type { SendMessageError } from "@/common/types/errors";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { log } from "./log";
+import type { SessionUsageService } from "./sessionUsageService";
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -69,6 +71,7 @@ export interface System1WrapOptions {
     opts?: MuxProviderOptions
   ) => Promise<Result<LanguageModel, SendMessageError>>;
   emitBashOutput: (event: BashOutputEvent) => void;
+  sessionUsageService?: SessionUsageService;
 }
 
 /**
@@ -394,6 +397,27 @@ async function maybeFilterBashOutput(
       if (keepRangesResult) {
         finishReason = keepRangesResult.finishReason;
         keepRangesCount = keepRangesResult.keepRanges.length;
+
+        // Track System 1 token usage in workspace costs.
+        // Normalize the model string so gateway-routed models merge into the
+        // same cost bucket as direct calls. Pass providerMetadata so cache
+        // tokens and costsIncluded are honored.
+        if (keepRangesResult.usage && opts.sessionUsageService) {
+          const normalizedModel = normalizeGatewayModel(system1.modelString);
+          const displayUsage = createDisplayUsage(
+            keepRangesResult.usage,
+            normalizedModel,
+            keepRangesResult.providerMetadata
+          );
+          if (displayUsage) {
+            void opts.sessionUsageService.recordUsage(
+              opts.workspaceId,
+              normalizedModel,
+              displayUsage
+            );
+          }
+        }
+
         applied = applySystem1KeepRangesToOutput({
           rawOutput: filterParams.output,
           keepRanges: keepRangesResult.keepRanges,

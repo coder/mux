@@ -6,7 +6,6 @@ import type { Config } from "@/node/config";
 import type { AIService } from "./aiService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import type { InitStateManager } from "./initStateManager";
-import type { PartialService } from "./partialService";
 import type { MuxMessage } from "@/common/types/message";
 import { createTestHistoryService } from "./testHistoryService";
 
@@ -96,13 +95,11 @@ describe("AgentSession continue-message agentId fallback", () => {
       srcDir: "/tmp",
       getSessionDir: mock(() => "/tmp"),
     } as unknown as Config;
-    const partialService: PartialService = {} as unknown as PartialService;
 
     const session = new AgentSession({
       workspaceId: "ws",
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,

@@ -21,7 +21,7 @@ export interface SessionFileWriteOptions {
  * Shared utility for managing JSON files in workspace session directories.
  * Provides consistent file locking, error handling, and path resolution.
  *
- * Used by PartialService, InitStateManager, and other services that need
+ * Used by HistoryService partial persistence, InitStateManager, and other services that need
  * to persist state to ~/.mux/sessions/{workspaceId}/.
  */
 export class SessionFileManager<T> {

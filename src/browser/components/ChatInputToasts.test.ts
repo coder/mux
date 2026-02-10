@@ -18,18 +18,18 @@ describe("ChatInputToasts", () => {
       expect(toast.message).toContain("API key");
     });
 
-    test("should create toast for oauth_not_connected error", () => {
+    test("should create generic toast for oauth_not_connected error", () => {
       const error: SendMessageError = {
         type: "oauth_not_connected",
-        provider: "codex",
+        provider: "openai",
       };
 
       const toast = createErrorToast(error);
 
       expect(toast.type).toBe("error");
       expect(toast.title).toBe("OAuth Not Connected");
-      expect(toast.message).toContain("codex");
-      expect(toast.message).toContain("OAuth");
+      expect(toast.message).toContain("openai");
+      expect(toast.message).toContain("OAuth connection");
     });
 
     test("should create toast for provider_disabled error", () => {

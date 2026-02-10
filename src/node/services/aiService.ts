@@ -36,7 +36,6 @@ import {
 import type { PostCompactionAttachment } from "@/common/types/attachment";
 
 import type { HistoryService } from "./historyService";
-import type { PartialService } from "./partialService";
 import { createErrorEvent } from "./utils/sendMessageError";
 import { createAssistantMessageId } from "./utils/messageIds";
 import type { SessionUsageService } from "./sessionUsageService";
@@ -110,7 +109,6 @@ function safeClone<T>(value: T): T {
 export class AIService extends EventEmitter {
   private readonly streamManager: StreamManager;
   private readonly historyService: HistoryService;
-  private readonly partialService: PartialService;
   private readonly config: Config;
   private readonly workspaceMcpOverridesService: WorkspaceMcpOverridesService;
   private mcpServerManager?: MCPServerManager;
@@ -138,7 +136,6 @@ export class AIService extends EventEmitter {
   constructor(
     config: Config,
     historyService: HistoryService,
-    partialService: PartialService,
     initStateManager: InitStateManager,
     providerService: ProviderService,
     backgroundProcessManager?: BackgroundProcessManager,
@@ -155,13 +152,12 @@ export class AIService extends EventEmitter {
       workspaceMcpOverridesService ?? new WorkspaceMcpOverridesService(config);
     this.config = config;
     this.historyService = historyService;
-    this.partialService = partialService;
     this.initStateManager = initStateManager;
     this.backgroundProcessManager = backgroundProcessManager;
     this.sessionUsageService = sessionUsageService;
     this.policyService = policyService;
     this.telemetryService = telemetryService;
-    this.streamManager = new StreamManager(historyService, partialService, sessionUsageService);
+    this.streamManager = new StreamManager(historyService, sessionUsageService);
     this.providerModelFactory = new ProviderModelFactory(config, providerService, policyService);
     void this.ensureSessionsDir();
     this.setupStreamEventForwarding();
@@ -247,14 +243,14 @@ export class AIService extends EventEmitter {
       void (async () => {
         if (data.abandonPartial) {
           // Caller requested discarding partial - delete without committing
-          await this.partialService.deletePartial(data.workspaceId);
+          await this.historyService.deletePartial(data.workspaceId);
         } else {
           // Commit interrupted message to history with partial:true metadata
           // This ensures /clear and /truncate can clean up interrupted messages
-          const partial = await this.partialService.readPartial(data.workspaceId);
+          const partial = await this.historyService.readPartial(data.workspaceId);
           if (partial) {
-            await this.partialService.commitToHistory(data.workspaceId);
-            await this.partialService.deletePartial(data.workspaceId);
+            await this.historyService.commitPartial(data.workspaceId);
+            await this.historyService.deletePartial(data.workspaceId);
           }
         }
 
@@ -380,7 +376,7 @@ export class AIService extends EventEmitter {
 
       // Before starting a new stream, commit any existing partial to history
       // This is idempotent - won't double-commit if already in chat.jsonl
-      await this.partialService.commitToHistory(workspaceId);
+      await this.historyService.commitPartial(workspaceId);
 
       // Helper: clean up an assistant placeholder that was appended to history but never
       // streamed (due to abort during setup). Used in two abort-check sites below.
@@ -828,14 +824,9 @@ export class AIService extends EventEmitter {
         };
 
         if (forceContextLimitError) {
-          await simulateContextLimitError(simulationCtx, this.partialService);
+          await simulateContextLimitError(simulationCtx, this.historyService);
         } else {
-          await simulateToolPolicyNoop(
-            simulationCtx,
-            effectiveToolPolicy,
-            this.historyService,
-            this.partialService
-          );
+          await simulateToolPolicyNoop(simulationCtx, effectiveToolPolicy, this.historyService);
         }
         return Ok(undefined);
       }
@@ -931,6 +922,7 @@ export class AIService extends EventEmitter {
                 this.providerModelFactory.resolveGatewayModelString(ms, dm, eg),
               createModel: (ms, o) => this.createModel(ms, o),
               emitBashOutput: (ev) => this.emit("bash-output", ev),
+              sessionUsageService: this.sessionUsageService,
             })
           : tools;
 

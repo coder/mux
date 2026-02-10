@@ -1,7 +1,6 @@
 import { describe, expect, it, mock, afterEach, spyOn } from "bun:test";
 import { EventEmitter } from "events";
 import type { AIService } from "@/node/services/aiService";
-import type { PartialService } from "@/node/services/partialService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { Config } from "@/node/config";
@@ -33,10 +32,6 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
     const truncateAfterMessage = spyOn(historyService, "truncateAfterMessage");
     const appendToHistory = spyOn(historyService, "appendToHistory");
 
-    const partialService = {
-      commitToHistory: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-    } as unknown as PartialService;
-
     const aiEmitter = new EventEmitter();
     const streamMessage = mock((_messages: MuxMessage[]) => {
       return Promise.resolve(Ok(undefined));
@@ -62,7 +57,6 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
       workspaceId,
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,
@@ -105,10 +99,6 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
     const truncateAfterMessage = spyOn(historyService, "truncateAfterMessage");
     const appendToHistory = spyOn(historyService, "appendToHistory");
 
-    const partialService = {
-      commitToHistory: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-    } as unknown as PartialService;
-
     const aiEmitter = new EventEmitter();
     const streamMessage = mock((_messages: MuxMessage[]) => {
       return Promise.resolve(Ok(undefined));
@@ -134,7 +124,6 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
       workspaceId,
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,
@@ -184,10 +173,6 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
     const appendToHistory = spyOn(historyService, "appendToHistory");
     const getHistoryFromLatestBoundary = spyOn(historyService, "getHistoryFromLatestBoundary");
 
-    const partialService = {
-      commitToHistory: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-    } as unknown as PartialService;
-
     const aiEmitter = new EventEmitter();
     const streamMessage = mock((_messages: MuxMessage[]) => {
       return Promise.resolve(Ok(undefined));
@@ -213,7 +198,6 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
       workspaceId,
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,

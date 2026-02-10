@@ -54,6 +54,9 @@ export function useStartHere(
       const result = await api.workspace.replaceChatHistory({
         workspaceId,
         summaryMessage,
+        // Start Here should create a durable boundary so older turns remain recoverable
+        // while request payloads begin at this point.
+        mode: "append-compaction-boundary",
         deletePlanFile: options?.deletePlanFile,
       });
 

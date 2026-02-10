@@ -427,7 +427,6 @@ async function main(): Promise<number> {
   const {
     aiService,
     historyService,
-    partialService,
     initStateManager,
     backgroundProcessManager,
     mcpServerManager,
@@ -478,7 +477,6 @@ async function main(): Promise<number> {
     workspaceId,
     config,
     historyService,
-    partialService,
     aiService,
     initStateManager,
     backgroundProcessManager,

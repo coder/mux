@@ -2266,7 +2266,7 @@ export class StreamingMessageAggregator {
             // Check if result indicates failure (for tools that return { success: boolean })
             status = hasFailureResult(part.output) ? "failed" : "completed";
           } else if (part.state === "output-redacted") {
-            status = "redacted";
+            status = part.failed ? "failed" : "redacted";
           } else if (part.state === "input-available") {
             // Most unfinished tool calls in partial messages represent an interruption.
             // ask_user_question is different: it's intentionally waiting on user input,

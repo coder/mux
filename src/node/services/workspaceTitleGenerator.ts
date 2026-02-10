@@ -54,6 +54,128 @@ export interface GenerateWorkspaceIdentityResult extends WorkspaceIdentity {
   modelUsed: string;
 }
 
+interface NameGenerationStreamFallback {
+  text: PromiseLike<string>;
+  content: PromiseLike<unknown>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/**
+ * Extract text payloads from a content-part array returned by some providers,
+ * e.g. [{ type: "text", text: "..." }].
+ */
+export function extractTextFromContentParts(content: unknown): string | null {
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  const textParts: string[] = [];
+  for (const part of content) {
+    if (!isRecord(part)) {
+      continue;
+    }
+
+    if (typeof part.text === "string" && part.text.trim().length > 0) {
+      textParts.push(part.text);
+    }
+
+    const nestedText = extractTextFromContentParts(part.content);
+    if (nestedText) {
+      textParts.push(nestedText);
+    }
+  }
+
+  return textParts.length > 0 ? textParts.join("\n\n") : null;
+}
+
+function collectFallbackTextCandidates(error: unknown): string[] {
+  const candidates: string[] = [];
+
+  const pushCandidate = (value: unknown): void => {
+    if (typeof value !== "string") {
+      return;
+    }
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+    candidates.push(trimmed);
+  };
+
+  const visit = (value: unknown, depth: number): void => {
+    if (value == null || depth > 2) {
+      return;
+    }
+
+    if (typeof value === "string") {
+      pushCandidate(value);
+      return;
+    }
+
+    if (NoObjectGeneratedError.isInstance(value)) {
+      pushCandidate(value.text);
+    }
+
+    if (value instanceof Error) {
+      pushCandidate(value.message);
+      visit(value.cause, depth + 1);
+    }
+
+    if (!isRecord(value)) {
+      return;
+    }
+
+    pushCandidate(value.text);
+    pushCandidate(value.message);
+    pushCandidate(value.body);
+    pushCandidate(extractTextFromContentParts(value.content));
+
+    visit(value.cause, depth + 1);
+    visit(value.response, depth + 1);
+  };
+
+  visit(error, 0);
+
+  return [...new Set(candidates)];
+}
+
+async function recoverIdentityFromFallback(
+  error: unknown,
+  stream: NameGenerationStreamFallback | null
+): Promise<{ name: string; title: string } | null> {
+  const candidates = collectFallbackTextCandidates(error);
+
+  if (stream) {
+    try {
+      candidates.push((await stream.text).trim());
+    } catch {
+      // Ignore read errors; we still have error-derived candidates.
+    }
+
+    try {
+      const contentText = extractTextFromContentParts(await stream.content);
+      if (contentText) {
+        candidates.push(contentText.trim());
+      }
+    } catch {
+      // Ignore read errors; we still have error-derived candidates.
+    }
+  }
+
+  const uniqueCandidates = [...new Set(candidates.filter((text) => text.length > 0))];
+  for (const candidate of uniqueCandidates) {
+    const parsed = extractIdentityFromText(candidate);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
 /**
  * Generate workspace identity (name + title) using AI.
  * Tries candidates in order, retrying on API errors (invalid keys, quota, etc.).
@@ -86,12 +208,13 @@ export async function generateWorkspaceIdentity(
       continue;
     }
 
+    let stream: NameGenerationStreamFallback | null = null;
     try {
       // Use streamText instead of generateText: the Codex OAuth endpoint
       // (chatgpt.com/backend-api/codex/responses) requires stream:true in the
       // request body and rejects non-streaming requests with 400.  streamText
       // sets stream:true automatically, while generateText does not.
-      const stream = streamText({
+      const currentStream = streamText({
         model: modelResult.data,
         output: Output.object({ schema: workspaceIdentitySchema }),
         prompt: `Generate a workspace name and title for this development task:
@@ -102,11 +225,12 @@ Requirements:
 - name: The area of the codebase being worked on (1-2 words, max 15 chars, git-safe: lowercase, hyphens only). Random bytes will be appended for uniqueness, so focus on the area not the specific task. Examples: "sidebar", "auth", "config", "api"
 - title: A 2-5 word description in verb-noun format. Examples: "Fix plan mode", "Add user authentication", "Refactor sidebar layout"`,
       });
+      stream = currentStream;
 
       // Awaiting .output triggers full stream consumption and JSON parsing.
       // If the model returned conversational text instead of JSON, this throws
       // NoObjectGeneratedError — caught below with a text fallback parser.
-      const output = await stream.output;
+      const output = await currentStream.output;
 
       const suffix = generateNameSuffix();
       const sanitizedName = sanitizeBranchName(output.name, 20);
@@ -118,25 +242,22 @@ Requirements:
         modelUsed: modelString,
       });
     } catch (error) {
-      // Some models ignore the structured output instruction and return
-      // conversational text (e.g. "**name:** `testing`\n**title:** `Improve test coverage`").
-      // NoObjectGeneratedError carries the raw .text — try to extract name/title
-      // from it before giving up on this candidate.
-      if (NoObjectGeneratedError.isInstance(error) && error.text) {
-        const textFallback = extractIdentityFromText(error.text);
-        if (textFallback) {
-          log.info(
-            `Name generation: structured output failed for ${modelString}, recovered from text fallback`
-          );
-          const suffix = generateNameSuffix();
-          const sanitizedName = sanitizeBranchName(textFallback.name, 20);
-          const nameWithSuffix = `${sanitizedName}-${suffix}`;
-          return Ok({
-            name: nameWithSuffix,
-            title: textFallback.title,
-            modelUsed: modelString,
-          });
-        }
+      // Some models ignore structured output instructions and return prose or
+      // content arrays. Recover from any available text source (error.text,
+      // stream.text, stream.content) before giving up on this candidate.
+      const fallback = await recoverIdentityFromFallback(error, stream);
+      if (fallback) {
+        log.info(
+          `Name generation: structured output failed for ${modelString}, recovered from text fallback`
+        );
+        const suffix = generateNameSuffix();
+        const sanitizedName = sanitizeBranchName(fallback.name, 20);
+        const nameWithSuffix = `${sanitizedName}-${suffix}`;
+        return Ok({
+          name: nameWithSuffix,
+          title: fallback.title,
+          modelUsed: modelString,
+        });
       }
 
       // API error (invalid key, quota, network, etc.) - try next candidate

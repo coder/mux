@@ -46,6 +46,7 @@ export const NestedToolCallSchema = z.object({
   input: z.unknown(),
   output: z.unknown().optional(),
   state: z.enum(["input-available", "output-available", "output-redacted"]),
+  failed: z.boolean().optional(),
   timestamp: z.number().optional(),
 });
 
@@ -64,6 +65,7 @@ export const DynamicToolPartAvailableSchema = MuxToolPartBase.extend({
 });
 export const DynamicToolPartRedactedSchema = MuxToolPartBase.extend({
   state: z.literal("output-redacted"),
+  failed: z.boolean().optional(),
   nestedCalls: z.array(NestedToolCallSchema).optional(),
 });
 

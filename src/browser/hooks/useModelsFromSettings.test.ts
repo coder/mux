@@ -140,7 +140,8 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
     const { result } = renderHook(() => useModelsFromSettings());
 
     expect(result.current.models).toContain("openai:gpt-5.2-pro");
-    expect(result.current.models).not.toContain("openai:gpt-5.1-codex");
+    expect(result.current.models).toContain("openai:gpt-5.1-codex");
+    expect(result.current.models).not.toContain("openai:gpt-5.3-codex");
   });
 
   test("api key + codex oauth: allows all OpenAI models", () => {
@@ -152,6 +153,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
 
     expect(result.current.models).toContain("openai:gpt-5.2-pro");
     expect(result.current.models).toContain("openai:gpt-5.1-codex");
+    expect(result.current.models).toContain("openai:gpt-5.3-codex");
   });
 
   test("neither: hides Codex OAuth required OpenAI models (status quo)", () => {
@@ -162,6 +164,36 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
     const { result } = renderHook(() => useModelsFromSettings());
 
     expect(result.current.models).toContain("openai:gpt-5.2-pro");
-    expect(result.current.models).not.toContain("openai:gpt-5.1-codex");
+    expect(result.current.models).toContain("openai:gpt-5.1-codex");
+    expect(result.current.models).not.toContain("openai:gpt-5.3-codex");
+  });
+
+  test("exposes OpenAI auth state flags", () => {
+    providersConfig = {
+      openai: { apiKeySet: false, isConfigured: true, codexOauthSet: true },
+    };
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.openaiApiKeySet).toBe(false);
+    expect(result.current.codexOauthSet).toBe(true);
+  });
+
+  test("returns false OpenAI auth state flags when openai provider is missing", () => {
+    providersConfig = {};
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.openaiApiKeySet).toBe(false);
+    expect(result.current.codexOauthSet).toBe(false);
+  });
+
+  test("returns null OpenAI auth state flags when provider config is unknown", () => {
+    providersConfig = null;
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.openaiApiKeySet).toBeNull();
+    expect(result.current.codexOauthSet).toBeNull();
   });
 });

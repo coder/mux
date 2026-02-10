@@ -16,9 +16,10 @@ export class UpdateService {
   private impl: DesktopUpdaterService | null = null;
   private currentStatus: UpdateStatus = { type: "idle" };
   private subscribers = new Set<(status: UpdateStatus) => void>();
+  private readonly ready: Promise<void>;
 
   constructor() {
-    this.initialize().catch((err) => {
+    this.ready = this.initialize().catch((err) => {
       log.error("Failed to initialize UpdateService:", err);
     });
   }
@@ -50,6 +51,7 @@ export class UpdateService {
   }
 
   async check(): Promise<void> {
+    await this.ready;
     if (this.impl) {
       if (process.versions.electron) {
         try {
@@ -77,6 +79,7 @@ export class UpdateService {
   }
 
   async download(): Promise<void> {
+    await this.ready;
     if (this.impl) {
       await this.impl.downloadUpdate();
     }

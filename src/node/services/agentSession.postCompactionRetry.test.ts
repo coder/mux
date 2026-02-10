@@ -6,7 +6,6 @@ import * as path from "path";
 
 import { AgentSession } from "./agentSession";
 import type { Config } from "@/node/config";
-import type { PartialService } from "./partialService";
 import type { AIService } from "./aiService";
 import type { InitStateManager } from "./initStateManager";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
@@ -72,11 +71,6 @@ describe("AgentSession post-compaction context retry", () => {
     }
     spyOn(historyService, "deleteMessage");
 
-    const partialService: PartialService = {
-      commitToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
-      deletePartial: mock(() => Promise.resolve({ success: true as const, data: undefined })),
-    } as unknown as PartialService;
-
     const aiEmitter = new EventEmitter();
 
     let resolveSecondCall: (() => void) | undefined;
@@ -141,7 +135,6 @@ describe("AgentSession post-compaction context retry", () => {
       workspaceId,
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,
@@ -235,11 +228,6 @@ describe("AgentSession execSubagentHardRestart", () => {
     }
     spyOn(historyService, "clearHistory");
     spyOn(historyService, "appendToHistory");
-
-    const partialService: PartialService = {
-      commitToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
-      deletePartial: mock(() => Promise.resolve({ success: true as const, data: undefined })),
-    } as unknown as PartialService;
 
     const aiEmitter = new EventEmitter();
 
@@ -352,7 +340,6 @@ describe("AgentSession execSubagentHardRestart", () => {
       workspaceId,
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,
@@ -433,11 +420,6 @@ describe("AgentSession execSubagentHardRestart", () => {
     }
     spyOn(historyService, "clearHistory");
     spyOn(historyService, "appendToHistory");
-
-    const partialService: PartialService = {
-      commitToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
-      deletePartial: mock(() => Promise.resolve({ success: true as const, data: undefined })),
-    } as unknown as PartialService;
 
     const aiEmitter = new EventEmitter();
 
@@ -574,7 +556,6 @@ describe("AgentSession execSubagentHardRestart", () => {
       workspaceId,
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,
@@ -624,11 +605,6 @@ describe("AgentSession execSubagentHardRestart", () => {
       await historyService.appendToHistory(workspaceId, msg);
     }
     spyOn(historyService, "clearHistory");
-
-    const partialService: PartialService = {
-      commitToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
-      deletePartial: mock(() => Promise.resolve({ success: true as const, data: undefined })),
-    } as unknown as PartialService;
 
     const aiEmitter = new EventEmitter();
 
@@ -691,7 +667,6 @@ describe("AgentSession execSubagentHardRestart", () => {
       workspaceId,
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,

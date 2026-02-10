@@ -239,7 +239,7 @@ describeIntegration("truncateHistory", () => {
         });
         expect(truncateResultWhileStreaming.success).toBe(false);
         if (!truncateResultWhileStreaming.success) {
-          expect(truncateResultWhileStreaming.error).toContain("stream is active");
+          expect(truncateResultWhileStreaming.error).toContain("turn is active");
           expect(truncateResultWhileStreaming.error).toContain("Press Esc");
         }
 

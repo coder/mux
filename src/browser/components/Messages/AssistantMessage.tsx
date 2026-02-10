@@ -72,7 +72,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
       label: startHereLabel,
       onClick: openStartHereModal,
       disabled: startHereDisabled,
-      tooltip: "Replace all chat history with this message",
+      tooltip: "Start a new context from this message and preserve earlier chat history",
       icon: <ListStart />,
     });
     buttons.push({
