@@ -316,6 +316,33 @@ mux.file_read({ path: "wrong" });`,
     expect(result.valid).toBe(true);
   });
 
+  test("catches bag reads before first bracket write", () => {
+    const result = validateTypes(
+      `
+      const r = {};
+      return r.typo;
+      r["a"] = 1;
+    `,
+      muxTypes
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("typo"))).toBe(true);
+  });
+
+  test("catches bag reads when only nested function writes exist", () => {
+    const result = validateTypes(
+      `
+      const r = {};
+      function fill() { r["a"] = 1; }
+      return r.typo;
+    `,
+      muxTypes
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("typo"))).toBe(true);
+  });
   test("does not suppress TS2339 for shadowed bag name in inner scope", () => {
     const result = validateTypes(
       `

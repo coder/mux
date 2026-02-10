@@ -231,31 +231,51 @@ function isEmptyObjectWriteError(d: ts.Diagnostic, sourceFile: ts.SourceFile): b
   );
 }
 
+type DynamicBagFirstWritePos = ReadonlyMap<ts.Symbol, number>;
+
+function getEnclosingFunctionLikeContainer(node: ts.Node, sourceFile: ts.SourceFile): ts.Node {
+  let current: ts.Node | undefined = node;
+  while (current) {
+    if (ts.isFunctionLike(current)) return current;
+    current = current.parent;
+  }
+  return sourceFile;
+}
+
 /**
- * Find variable symbols that are "dynamic empty-object bags": declared as `const x = {}`
- * AND later written to via element access (`x[key] = val`).
+ * Find "dynamic empty-object bags": declared as `const x = {}` (empty literal) and
+ * written to via element access (`x[key] = val`).
  *
- * We track bags by Symbol (not identifier text) so shadowed variables don't leak
+ * Returns a map of bag Symbol → the earliest bracket-write position.
+ *
+ * We track by Symbol (not identifier text) so shadowed variables don't leak
  * bag-ness across scopes.
  *
  * Excludes `mux` to preserve shadowing detection.
  */
-function findDynamicEmptyObjectBagSymbols(
+function findDynamicEmptyObjectBagFirstWritePos(
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker
-): Set<ts.Symbol> {
-  const emptyLiteralSymbols = new Set<ts.Symbol>();
-  const elementWriteSymbols = new Set<ts.Symbol>();
+): Map<ts.Symbol, number> {
+  const emptyLiteralSymbols = new Map<ts.Symbol, ts.Node>();
 
-  function maybeAdd(set: Set<ts.Symbol>, ident: ts.Identifier): void {
+  function maybeAddEmptyLiteralSymbol(ident: ts.Identifier, decl: ts.VariableDeclaration): void {
     if (ident.text === "mux") return;
     const sym = checker.getSymbolAtLocation(ident);
-    if (sym) {
-      set.add(sym);
-    }
+    if (!sym) return;
+
+    // Only treat immutable bindings as bags — `let` / `var` can be reassigned, which
+    // would make dot-notation reads unsafe to suppress.
+    const declList = decl.parent;
+    const isConst =
+      ts.isVariableDeclarationList(declList) && (declList.flags & ts.NodeFlags.Const) !== 0;
+    if (!isConst) return;
+
+    const container = getEnclosingFunctionLikeContainer(decl, sourceFile);
+    emptyLiteralSymbols.set(sym, container);
   }
 
-  function visit(node: ts.Node): void {
+  function collectCandidates(node: ts.Node): void {
     // Detect `const x = {}`
     if (
       ts.isVariableDeclaration(node) &&
@@ -264,17 +284,23 @@ function findDynamicEmptyObjectBagSymbols(
       ts.isObjectLiteralExpression(node.initializer) &&
       node.initializer.properties.length === 0
     ) {
-      // Only treat immutable bindings as bags — `let` / `var` can be reassigned, which
-      // would make dot-notation reads unsafe to suppress.
-      const declList = node.parent;
-      const isConst =
-        ts.isVariableDeclarationList(declList) && (declList.flags & ts.NodeFlags.Const) !== 0;
-
-      if (isConst) {
-        maybeAdd(emptyLiteralSymbols, node.name);
-      }
+      maybeAddEmptyLiteralSymbol(node.name, node);
     }
+    ts.forEachChild(node, collectCandidates);
+  }
 
+  collectCandidates(sourceFile);
+
+  const firstWritePos = new Map<ts.Symbol, number>();
+
+  function maybeRecordWrite(sym: ts.Symbol, writePos: number): void {
+    const prev = firstWritePos.get(sym);
+    if (prev === undefined || writePos < prev) {
+      firstWritePos.set(sym, writePos);
+    }
+  }
+
+  function collectWrites(node: ts.Node): void {
     // Detect `x[key] = val`
     if (
       ts.isBinaryExpression(node) &&
@@ -282,38 +308,41 @@ function findDynamicEmptyObjectBagSymbols(
       ts.isElementAccessExpression(node.left) &&
       ts.isIdentifier(node.left.expression)
     ) {
-      maybeAdd(elementWriteSymbols, node.left.expression);
+      const receiverIdent = node.left.expression;
+      if (receiverIdent.text !== "mux") {
+        const receiverSymbol = checker.getSymbolAtLocation(receiverIdent);
+        if (receiverSymbol && emptyLiteralSymbols.has(receiverSymbol)) {
+          const declContainer = emptyLiteralSymbols.get(receiverSymbol)!;
+          const writeContainer = getEnclosingFunctionLikeContainer(node, sourceFile);
+          if (writeContainer === declContainer) {
+            maybeRecordWrite(receiverSymbol, node.getStart(sourceFile));
+          }
+        }
+      }
     }
 
-    ts.forEachChild(node, visit);
+    ts.forEachChild(node, collectWrites);
   }
 
-  visit(sourceFile);
-
-  const bagSymbols = new Set<ts.Symbol>();
-  for (const sym of elementWriteSymbols) {
-    if (emptyLiteralSymbols.has(sym)) {
-      bagSymbols.add(sym);
-    }
-  }
-
-  return bagSymbols;
+  collectWrites(sourceFile);
+  return firstWritePos;
 }
 
 /**
  * Check if a TS2339 diagnostic is for a property READ on a dynamic empty-object bag.
  * Only suppresses when:
- * 1. The receiver resolves to a symbol in `dynamicBagSymbols`
+ * 1. The receiver resolves to a symbol in `dynamicBagFirstWritePos`
  * 2. The diagnostic message indicates `on type '{}'`
  * 3. The access is a read (not a write target like `=`, `+=`, `++`)
+ * 4. There's a preceding bracket write in the same function-like container
  */
 function isDynamicBagReadError(
   d: ts.Diagnostic,
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
-  dynamicBagSymbols: Set<ts.Symbol>
+  dynamicBagFirstWritePos: DynamicBagFirstWritePos
 ): boolean {
-  if (d.code !== 2339 || d.start === undefined || dynamicBagSymbols.size === 0) return false;
+  if (d.code !== 2339 || d.start === undefined || dynamicBagFirstWritePos.size === 0) return false;
   const message = ts.flattenDiagnosticMessageText(d.messageText, "");
   if (!message.includes("on type '{}'")) return false;
 
@@ -326,7 +355,10 @@ function isDynamicBagReadError(
   if (!ts.isIdentifier(ctx.receiver)) return false;
 
   const receiverSymbol = checker.getSymbolAtLocation(ctx.receiver);
-  if (!receiverSymbol || !dynamicBagSymbols.has(receiverSymbol)) return false;
+  if (!receiverSymbol) return false;
+
+  const firstWritePos = dynamicBagFirstWritePos.get(receiverSymbol);
+  if (firstWritePos === undefined) return false;
 
   // Don't suppress write targets — compound assignments (`+=`) and increment/decrement
   // on unknown properties are real bugs, not dynamic-bag reads.
@@ -344,7 +376,8 @@ function isDynamicBagReadError(
     return false;
   }
 
-  return true;
+  const readPos = ctx.propAccess.getStart(sourceFile);
+  return firstWritePos < readPos;
 }
 
 /** Returns true if the type resolves to a non-tuple never[] (including unions). */
@@ -534,7 +567,10 @@ export function validateTypes(code: string, muxTypes: string): TypeValidationRes
   // Identify variables used as dynamic "bag" objects (empty literal + bracket writes).
   // Dot-notation reads on these are suppressed since TS can't track dynamic properties.
   // We track by Symbol so shadowed names don't leak bag-ness across scopes.
-  const dynamicBagSymbols = findDynamicEmptyObjectBagSymbols(sourceFile, checker);
+  //
+  // Note: suppression is order-sensitive (write-before-read) and doesn't treat nested-function
+  // writes as establishing bag-ness for outer-scope reads.
+  const dynamicBagFirstWritePos = findDynamicEmptyObjectBagFirstWritePos(sourceFile, checker);
 
   // Filter to errors in our code only (not lib files)
   // Also filter console redeclaration warning (our minimal console conflicts with lib.dom)
@@ -550,7 +586,7 @@ export function validateTypes(code: string, muxTypes: string): TypeValidationRes
     // writes). These are valid JS patterns like `r[key] = val; return r.key` that TS can't
     // track. Does NOT suppress reads on plain `{}` without bracket writes (catches typos),
     // union types containing `{}`, or `mux` shadowing.
-    .filter((d) => !isDynamicBagReadError(d, sourceFile, checker, dynamicBagSymbols))
+    .filter((d) => !isDynamicBagReadError(d, sourceFile, checker, dynamicBagFirstWritePos))
     .map((d) => {
       const message = ts.flattenDiagnosticMessageText(d.messageText, " ");
       // Extract line number if available
