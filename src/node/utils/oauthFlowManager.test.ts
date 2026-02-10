@@ -57,6 +57,41 @@ describe("OAuthFlowManager", () => {
       expect(manager.get("f1")).toBe(entry);
     });
 
+    it("cleans up the previous active flow when registering a duplicate flowId", async () => {
+      let serverClosed = false;
+      const mockServer = {
+        close: (cb?: (err?: Error) => void) => {
+          serverClosed = true;
+          if (cb) cb();
+          return mockServer;
+        },
+      } as unknown as http.Server;
+
+      const oldEntry = createFlowEntry(mockServer);
+
+      let timeoutFired = false;
+      oldEntry.timeoutHandle = setTimeout(() => {
+        timeoutFired = true;
+      }, 10);
+
+      manager.register("f1", oldEntry);
+
+      const newEntry = createFlowEntry(null);
+      manager.register("f1", newEntry);
+
+      const oldResult = await oldEntry.resultDeferred.promise;
+      expect(oldResult.success).toBe(false);
+      if (!oldResult.success) {
+        expect(oldResult.error).toContain("replaced");
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(timeoutFired).toBe(false);
+      expect(serverClosed).toBe(true);
+
+      expect(manager.get("f1")).toBe(newEntry);
+    });
+
     it("returns undefined for unregistered flows", () => {
       expect(manager.has("nope")).toBe(false);
       expect(manager.get("nope")).toBeUndefined();

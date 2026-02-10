@@ -59,6 +59,57 @@ describe("startLoopbackServer", () => {
     expect(loopback.redirectUri).toMatch(/^http:\/\/localhost:\d+\/callback$/);
   });
 
+  it("returns 403 for non-loopback requests when validateLoopback is enabled", async () => {
+    loopback = await startLoopbackServer({ expectedState: "s1", validateLoopback: true });
+
+    // `validateLoopback` is based on `req.socket.remoteAddress`. It's tricky to
+    // force a non-loopback remoteAddress with bun's http client, so invoke the
+    // request handler directly with a mocked request/response.
+    const handler = loopback.server.listeners("request")[0] as unknown as (
+      req: http.IncomingMessage,
+      res: http.ServerResponse
+    ) => void;
+
+    let body = "";
+    const headers: Record<string, unknown> = {};
+    const res = {
+      statusCode: 0,
+      setHeader: (name: string, value: unknown) => {
+        headers[name] = value;
+      },
+      end: (chunk?: unknown) => {
+        if (typeof chunk === "string") {
+          body = chunk;
+          return;
+        }
+        if (Buffer.isBuffer(chunk)) {
+          body = chunk.toString();
+          return;
+        }
+        body = "";
+      },
+    };
+
+    const req = {
+      method: "GET",
+      url: "/callback?state=s1&code=c1",
+      socket: { remoteAddress: "192.0.2.1" },
+    };
+
+    handler(req as unknown as http.IncomingMessage, res as unknown as http.ServerResponse);
+
+    expect(res.statusCode).toBe(403);
+    expect(body).toContain("Forbidden");
+
+    const resultState = await Promise.race([
+      loopback.result.then(() => "settled" as const),
+      new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 25)),
+    ]);
+    expect(resultState).toBe("pending");
+
+    await loopback.cancel();
+  });
+
   it("resolves with Ok({code, state}) on a valid callback", async () => {
     loopback = await startLoopbackServer({ expectedState: "state123" });
 
