@@ -5,7 +5,6 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import {
   collectUniqueToolNames,
   countEncryptedWebSearchTokens,
-  createDisplayUsage,
   extractSyncMetadata,
   extractToolOutputData,
   getConsumerInfoForToolCall,
@@ -13,6 +12,7 @@ import {
   mergeResults,
   type TokenCountJob,
 } from "./tokenStatsCalculator";
+import { createDisplayUsage } from "./displayUsage";
 
 describe("createDisplayUsage", () => {
   test("uses usage.reasoningTokens when available", () => {

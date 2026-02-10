@@ -17,9 +17,6 @@ import {
 import { createDisplayUsage } from "./displayUsage";
 import type { ChatUsageDisplay } from "./usageAggregator";
 
-// Re-export for backward compatibility
-export { createDisplayUsage };
-
 /**
  * Helper Functions for Token Counting
  * (Exported for testing)

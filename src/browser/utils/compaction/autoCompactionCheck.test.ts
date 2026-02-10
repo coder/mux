@@ -28,7 +28,6 @@ const createUsageEntry = (
 // Helper to create mock WorkspaceUsageState
 const createMockUsage = (
   lastEntryTokens: number,
-  _historicalTokens?: number, // Kept for backward compat but unused (session-usage.json handles historical)
   model: string = KNOWN_MODELS.SONNET.id,
   liveUsage?: ChatUsageDisplay
 ): WorkspaceUsageState => {
@@ -121,7 +120,8 @@ describe("checkAutoCompaction", () => {
     test("handles historical usage correctly - ignores it in calculation", () => {
       // Scenario: After compaction, historical = 70K, recent = 5K
       // Should calculate based on 5K (2.5%), not 75K (37.5%)
-      const usage = createMockUsage(5_000, 70_000);
+      // (session-usage.json handles historical separately; only lastContextUsage matters)
+      const usage = createMockUsage(5_000);
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
 
       expect(result.usagePercentage).toBe(2.5);
@@ -205,7 +205,7 @@ describe("checkAutoCompaction", () => {
     });
 
     test("ignores use1M for models that don't support it (GPT)", () => {
-      const usage = createMockUsage(100_000, undefined, KNOWN_MODELS.GPT_MINI.id);
+      const usage = createMockUsage(100_000, KNOWN_MODELS.GPT_MINI.id);
       // GPT Mini has 272k context, so 100k = 36.76%
       const result = checkAutoCompaction(usage, KNOWN_MODELS.GPT_MINI.id, true);
 
@@ -353,7 +353,7 @@ describe("checkAutoCompaction", () => {
     test("shouldForceCompact uses liveUsage when available", () => {
       // lastUsage at 50%, liveUsage at 75% - should trigger based on live
       const liveUsage = createUsageEntry(150_000); // 75%
-      const usage = createMockUsage(100_000, undefined, KNOWN_MODELS.SONNET.id, liveUsage);
+      const usage = createMockUsage(100_000, KNOWN_MODELS.SONNET.id, liveUsage);
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
 
       expect(result.shouldForceCompact).toBe(true);
@@ -371,7 +371,7 @@ describe("checkAutoCompaction", () => {
     test("shouldForceCompact respects 1M context mode", () => {
       // 75% of 1M = 750k tokens
       const liveUsage = createUsageEntry(750_000);
-      const usage = createMockUsage(50_000, undefined, KNOWN_MODELS.SONNET.id, liveUsage);
+      const usage = createMockUsage(50_000, KNOWN_MODELS.SONNET.id, liveUsage);
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, true);
 
       expect(result.shouldForceCompact).toBe(true);
@@ -407,7 +407,7 @@ describe("checkAutoCompaction", () => {
     test("shouldShowWarning uses max of last and live usage", () => {
       // lastUsage at 50% (below warning), liveUsage at 72% (above warning)
       const liveUsage = createUsageEntry(144_000); // 72%
-      const usage = createMockUsage(100_000, undefined, KNOWN_MODELS.SONNET.id, liveUsage);
+      const usage = createMockUsage(100_000, KNOWN_MODELS.SONNET.id, liveUsage);
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
 
       expect(result.shouldShowWarning).toBe(true); // 72% >= 60%

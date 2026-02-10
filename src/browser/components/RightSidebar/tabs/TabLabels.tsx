@@ -13,7 +13,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
 import { FileIcon } from "../../FileIcon";
 import { formatTabDuration, type ReviewStats } from "./registry";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import { cn } from "@/common/lib/utils";
 import { useWorkspaceUsage, useWorkspaceStatsSnapshot } from "@/browser/stores/WorkspaceStore";
 import { getSessionCostTotal, getTotalCost } from "@/common/utils/tokens/usageAggregator";
 
@@ -55,12 +54,7 @@ export const ReviewTabLabel: React.FC<ReviewTabLabelProps> = ({ reviewStats }) =
   <>
     Review
     {reviewStats !== null && reviewStats.total > 0 && (
-      <span
-        className={cn(
-          "text-[10px]",
-          reviewStats.read === reviewStats.total ? "text-muted" : "text-muted"
-        )}
-      >
+      <span className="text-muted text-[10px]">
         {reviewStats.read}/{reviewStats.total}
       </span>
     )}
