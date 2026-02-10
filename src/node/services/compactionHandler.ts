@@ -466,10 +466,19 @@ export class CompactionHandler {
     // Mark as processed before performing compaction
     this.processedCompactionRequestIds.add(lastUserMsg.id);
 
+    // Use boundary-aware read so getNextCompactionEpoch (called inside performCompaction)
+    // sees the prior boundary's epoch even if it's beyond the last-10 messages window.
+    const boundaryHistoryResult = await this.historyService.getHistoryFromLatestBoundary(
+      this.workspaceId
+    );
+    const messagesForCompaction = boundaryHistoryResult.success
+      ? boundaryHistoryResult.data
+      : messages; // fallback to last-10 if boundary read fails
+
     const result = await this.performCompaction(
       summary,
       event.metadata,
-      messages,
+      messagesForCompaction,
       event.messageId,
       isIdleCompaction,
       pendingFollowUp
