@@ -15,6 +15,8 @@ export interface SpawnOptions {
   forcePTY?: boolean;
   timeout?: number;
   abortSignal?: AbortSignal;
+  /** Skip ControlMaster multiplexing for this connection. */
+  noControlMaster?: boolean;
 }
 
 export interface PtySessionParams {

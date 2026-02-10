@@ -67,6 +67,12 @@ export interface ExecOptions {
   abortSignal?: AbortSignal;
   /** Force PTY allocation (SSH only - adds -t flag) */
   forcePTY?: boolean;
+  /**
+   * Disable SSH ControlMaster multiplexing for this command.
+   * Required for large binary stdin pipes through ProxyCommand-based connections
+   * (e.g., Coder SSH proxy) where multiplexing corrupts/truncates data.
+   */
+  noControlMaster?: boolean;
 }
 
 /**
