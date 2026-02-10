@@ -210,16 +210,20 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
         )}
       >
         {leftSidebarCollapsed && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onToggleLeftSidebarCollapsed}
-            title="Open sidebar"
-            aria-label="Open sidebar menu"
-            className="mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0"
-          >
-            <Menu className="h-3.5 w-3.5" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onToggleLeftSidebarCollapsed}
+                aria-label="Open sidebar menu"
+                className="mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0"
+              >
+                <Menu className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Open sidebar ({formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)})</TooltipContent>
+          </Tooltip>
         )}
         <RuntimeBadge
           runtimeConfig={runtimeConfig}

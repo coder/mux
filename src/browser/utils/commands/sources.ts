@@ -613,6 +613,9 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         id: CommandIds.chatInterrupt(),
         title: "Interrupt Streaming",
         section: section.chat,
+        // Shows the normal-mode shortcut (Esc). Vim mode uses Ctrl+C instead,
+        // but vim state isn't available here; Esc is the common-case default.
+        shortcutHint: formatKeybind(KEYBINDS.INTERRUPT_STREAM_NORMAL),
         run: async () => {
           if (p.selectedWorkspaceState?.awaitingUserQuestion) {
             return;
@@ -682,6 +685,8 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         id: CommandIds.modelChange(),
         title: "Change Model…",
         section: section.mode,
+        // No shortcutHint: CYCLE_MODEL (⌘/) cycles to next model directly,
+        // but this action opens the model selector picker — different behavior.
         run: () => {
           window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_MODEL_SELECTOR));
         },
@@ -706,6 +711,8 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         title: "Set Thinking Effort…",
         subtitle: `Current: ${levelDescriptions[currentLevel] ?? currentLevel}`,
         section: section.mode,
+        // No shortcutHint: TOGGLE_THINKING (⌘⇧T) cycles to next level directly,
+        // but this action opens a level selection prompt — different behavior.
         run: () => undefined,
         prompt: {
           title: "Select Thinking Effort",
@@ -860,7 +867,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         title: "Open Settings",
         section: section.settings,
         keywords: ["preferences", "config", "configuration"],
-        shortcutHint: "⌘,",
+        shortcutHint: formatKeybind(KEYBINDS.OPEN_SETTINGS),
         run: () => openSettings(),
       },
       {
