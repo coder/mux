@@ -300,14 +300,18 @@ export function GeneralSection() {
   );
 
   const handleCloneDirBlur = useCallback(() => {
-    // Only persist if the initial load succeeded. If it failed, the input may
-    // still show "" which would unintentionally clear a previously configured dir.
-    if (!cloneDirLoadedOk) {
+    // Only persist once the initial load has completed (success or failure).
+    // After a failed load, allow saves only if the user has actively typed
+    // a non-empty value, so we never silently clear a configured directory.
+    if (!cloneDirLoaded) {
+      return;
+    }
+    if (!cloneDirLoadedOk && !defaultCloneDir.trim()) {
       return;
     }
 
     void api?.projects.setDefaultCloneDir({ path: defaultCloneDir });
-  }, [api, cloneDirLoadedOk, defaultCloneDir]);
+  }, [api, cloneDirLoaded, cloneDirLoadedOk, defaultCloneDir]);
 
   return (
     <div className="space-y-6">

@@ -139,19 +139,24 @@ function deriveRepoFolderName(repoUrl: string): string {
  * All other inputs (HTTPS URLs, SSH URLs, SCP-style, etc.) pass through unchanged.
  */
 function normalizeRepoUrlForClone(repoUrl: string): string {
+  // Strip query strings and fragments that may be present when URLs are copied
+  // from web pages (e.g. "...repo.git?tab=readme#section"). These are not valid
+  // for git clone and would cause failures.
+  const cleaned = repoUrl.replace(/[?#].*$/, "");
+
   // owner/repo shorthand: exactly two non-empty segments separated by a single slash,
   // where the first segment looks like a GitHub username (letters, digits, hyphens).
   // Excludes local paths like ../repo, ./foo, foo/bar/baz, and absolute paths.
   // Note: bare `foo/bar` style local relative paths are intentionally treated as GitHub
   // shorthand here because this function is only called from the Clone dialog, which is
   // specifically for remote repos. Users cloning local repos should use the "Local folder" tab.
-  if (/^[a-zA-Z0-9][\w-]*\/[a-zA-Z0-9][\w.-]*$/.test(repoUrl)) {
+  if (/^[a-zA-Z0-9][\w-]*\/[a-zA-Z0-9][\w.-]*$/.test(cleaned)) {
     // Strip existing .git suffix before appending to avoid double .git (e.g. owner/repo.git → owner/repo.git.git)
-    const withoutGitSuffix = repoUrl.replace(/\.git$/i, "");
+    const withoutGitSuffix = cleaned.replace(/\.git$/i, "");
     return `https://github.com/${withoutGitSuffix}.git`;
   }
 
-  return repoUrl;
+  return cleaned;
 }
 
 const FILE_COMPLETIONS_CACHE_TTL_MS = 10_000;
