@@ -666,3 +666,96 @@ export const WorkspaceDraftSelected: AppStory = {
     await userEvent.click(row);
   },
 };
+
+/**
+ * Archiving workspace alignment regression test.
+ *
+ * When a workspace enters the "archiving" transient state, the overflow menu
+ * button is hidden. Without a spacer, the title shifts ~24px to the left.
+ * This story triggers archive on one workspace so the "Archiving..." row
+ * stays visible (the mock archive call never resolves).
+ */
+export const ArchivingWorkspaceAlignment: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const projectPath = "/home/user/projects/my-app";
+        const workspaces = [
+          createWorkspace({
+            id: "ws-active-1",
+            name: "main",
+            title: "Main development branch",
+            projectName: "my-app",
+            projectPath,
+            createdAt: new Date(NOW - 3600000).toISOString(),
+          }),
+          createWorkspace({
+            id: "ws-to-archive",
+            name: "feature/old-experiment",
+            title: "Old experiment workspace",
+            projectName: "my-app",
+            projectPath,
+            createdAt: new Date(NOW - 7200000).toISOString(),
+          }),
+          createWorkspace({
+            id: "ws-active-2",
+            name: "bugfix/login",
+            title: "Fix login redirect",
+            projectName: "my-app",
+            projectPath,
+            createdAt: new Date(NOW - 10800000).toISOString(),
+          }),
+        ];
+
+        expandProjects([projectPath]);
+
+        const client = createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+        });
+
+        // Make archive hang forever so the workspace stays in "Archiving..." state
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        client.workspace.archive = () => new Promise(() => {});
+
+        return client;
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    // Wait for the target workspace row to appear
+    await waitFor(() => {
+      const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-to-archive"]');
+      if (!row) throw new Error("ws-to-archive row not found");
+    });
+
+    const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-to-archive"]')!;
+
+    // Hover to reveal the overflow (ellipsis) button
+    await userEvent.hover(row);
+
+    // Click the overflow menu button
+    const menuButton = within(row).getByLabelText("Workspace actions for Old experiment workspace");
+    await userEvent.click(menuButton);
+
+    // Wait for the popover to open, then click "Archive chat"
+    await waitFor(() => {
+      const archiveButton = document.body.querySelector<HTMLElement>(
+        "[data-radix-popper-content-wrapper] button"
+      );
+      if (!archiveButton) throw new Error("popover not open yet");
+    });
+
+    // Find and click the Archive chat button in the popover
+    const popoverContent = document.body.querySelector<HTMLElement>(
+      "[data-radix-popper-content-wrapper]"
+    )!;
+    const archiveButton = within(popoverContent).getByText("Archive chat").closest("button")!;
+    await userEvent.click(archiveButton);
+
+    // Wait for the "Archiving..." text to appear (confirms the transient state is active)
+    await waitFor(() => {
+      within(canvasElement).getByText("Archiving...");
+    });
+  },
+};
