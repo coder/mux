@@ -1742,6 +1742,22 @@ export class AgentSession {
     forward("reasoning-end", (payload) => this.emitChatEvent(payload));
     forward("usage-delta", (payload) => this.emitChatEvent(payload));
     forward("stream-abort", (payload) => {
+      // stopStream() emits synthetic aborts even when no real stream is active
+      // (e.g., during PREPARING or after COMPLETING). We must still forward the
+      // event to the renderer so it clears "starting…" / "interrupting…" UI, but
+      // we must NOT clobber the turn phase or reset stream state — the originating
+      // code path handles its own transition back to IDLE:
+      //   PREPARING → sendMessage error handler / sendQueuedMessages .then() handler
+      //   COMPLETING → stream-end finally block
+      if (this.turnPhase !== TurnPhase.STREAMING) {
+        log.debug("Forwarding stream-abort without phase transition (not in STREAMING)", {
+          workspaceId: this.workspaceId,
+          turnPhase: this.turnPhase,
+        });
+        this.emitChatEvent(payload);
+        return;
+      }
+
       this.setTurnPhase(TurnPhase.COMPLETING);
       const hadCompactionRequest = this.activeCompactionRequest !== undefined;
       this.activeCompactionRequest = undefined;
