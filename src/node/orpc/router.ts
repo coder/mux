@@ -1717,6 +1717,18 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.projectService.create(input.projectPath);
         }),
+      getDefaultCloneDir: t
+        .input(schemas.projects.getDefaultCloneDir.input)
+        .output(schemas.projects.getDefaultCloneDir.output)
+        .handler(({ context }) => {
+          return context.projectService.getDefaultCloneDir();
+        }),
+      clone: t
+        .input(schemas.projects.clone.input)
+        .output(schemas.projects.clone.output)
+        .handler(async ({ context, input }) => {
+          return context.projectService.clone(input);
+        }),
       pickDirectory: t
         .input(schemas.projects.pickDirectory.input)
         .output(schemas.projects.pickDirectory.output)

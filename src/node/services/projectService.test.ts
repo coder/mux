@@ -6,6 +6,21 @@ import { execSync } from "child_process";
 import { Config } from "@/node/config";
 import { ProjectService } from "./projectService";
 
+async function createLocalGitRepository(rootDir: string, repoName: string): Promise<string> {
+  const repoPath = path.join(rootDir, repoName);
+  await fs.mkdir(repoPath, { recursive: true });
+  await fs.writeFile(path.join(repoPath, "README.md"), "# test\n", "utf-8");
+
+  execSync("git init -b main", { cwd: repoPath, stdio: "ignore" });
+  execSync("git add README.md", { cwd: repoPath, stdio: "ignore" });
+  execSync('git -c user.name="test" -c user.email="test@test" commit -m "initial"', {
+    cwd: repoPath,
+    stdio: "ignore",
+  });
+
+  return repoPath;
+}
+
 describe("ProjectService", () => {
   let tempDir: string;
   let config: Config;
@@ -150,6 +165,50 @@ describe("ProjectService", () => {
       if (!result.success) throw new Error("Expected success");
 
       expect(result.data.path).toBe(os.homedir());
+    });
+  });
+
+  describe("clone", () => {
+    it("clones a local repository and persists clone parent dir when requested", async () => {
+      const sourceRepoPath = await createLocalGitRepository(tempDir, "source-repo");
+      const cloneParentDir = path.join(tempDir, "clones");
+
+      const result = await service.clone({
+        repoUrl: sourceRepoPath,
+        cloneParentDir,
+        setCloneParentDirAsDefault: true,
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) throw new Error("Expected success");
+
+      const expectedProjectPath = path.resolve(cloneParentDir, "source-repo");
+      expect(result.data.normalizedPath).toBe(expectedProjectPath);
+      expect(result.data.projectConfig).toEqual({ workspaces: [] });
+
+      const gitDir = await fs.stat(path.join(expectedProjectPath, ".git"));
+      expect(gitDir.isDirectory()).toBe(true);
+
+      const loadedConfig = config.loadConfigOrDefault();
+      expect(loadedConfig.projects.has(expectedProjectPath)).toBe(true);
+      expect(loadedConfig.defaultProjectCloneDir).toBe(path.resolve(cloneParentDir));
+    });
+
+    it("returns error when clone destination already exists", async () => {
+      const sourceRepoPath = await createLocalGitRepository(tempDir, "source-repo");
+      const cloneParentDir = path.join(tempDir, "clones");
+      const existingDestination = path.join(cloneParentDir, "source-repo");
+
+      await fs.mkdir(existingDestination, { recursive: true });
+
+      const result = await service.clone({
+        repoUrl: sourceRepoPath,
+        cloneParentDir,
+      });
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected failure");
+      expect(result.error).toContain("Destination already exists");
     });
   });
 

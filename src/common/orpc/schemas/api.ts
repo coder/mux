@@ -438,6 +438,26 @@ export const projects = {
       z.string()
     ),
   },
+  getDefaultCloneDir: {
+    input: z.void(),
+    output: z.string(),
+  },
+  clone: {
+    input: z
+      .object({
+        repoUrl: z.string(),
+        cloneParentDir: z.string().optional(),
+        setCloneParentDirAsDefault: z.boolean().optional(),
+      })
+      .strict(),
+    output: ResultSchema(
+      z.object({
+        projectConfig: ProjectConfigSchema,
+        normalizedPath: z.string(),
+      }),
+      z.string()
+    ),
+  },
   pickDirectory: {
     input: z.void(),
     output: z.string().nullable(),

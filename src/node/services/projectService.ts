@@ -23,6 +23,7 @@ import type { BranchListResult } from "@/common/orpc/types";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import * as path from "path";
 import { getMuxProjectsDir } from "@/common/constants/paths";
+import { shellQuote } from "@/common/utils/shell";
 import { expandTilde } from "@/node/runtime/tildeExpansion";
 
 /**
@@ -58,6 +59,78 @@ async function listDirectory(requestedPath: string): Promise<FileTreeNode> {
     isDirectory: true,
     children,
   };
+}
+
+interface CloneProjectParams {
+  repoUrl: string;
+  cloneParentDir?: string;
+  setCloneParentDirAsDefault?: boolean;
+}
+
+function isTildePrefixedPath(value: string): boolean {
+  return value === "~" || value.startsWith("~/") || value.startsWith("~\\");
+}
+
+function resolvePathWithTilde(inputPath: string): string {
+  const expanded = isTildePrefixedPath(inputPath) ? expandTilde(inputPath) : inputPath;
+  return path.resolve(expanded);
+}
+
+function resolveCloneParentDir(
+  cloneParentDir: string | undefined,
+  defaultCloneDir: string | undefined
+): string {
+  const rawParentDir = cloneParentDir ?? defaultCloneDir ?? getMuxProjectsDir();
+  const trimmedParentDir = rawParentDir.trim();
+
+  if (!trimmedParentDir) {
+    throw new Error("Clone destination parent directory cannot be empty");
+  }
+
+  return resolvePathWithTilde(trimmedParentDir);
+}
+
+function sanitizeRepoFolderName(name: string): string {
+  return name
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-")
+    .replace(/^[.\s]+/, "")
+    .replace(/[.\s]+$/, "");
+}
+
+function deriveRepoFolderName(repoUrl: string): string {
+  const trimmedRepoUrl = repoUrl.trim();
+  if (!trimmedRepoUrl) {
+    throw new Error("Repository URL cannot be empty");
+  }
+
+  let candidatePath = trimmedRepoUrl;
+
+  // SSH-style shorthand: git@github.com:owner/repo.git
+  const scpLikeMatch = trimmedRepoUrl.match(/^[^@\s]+@[^:\s]+:(.+)$/);
+  if (scpLikeMatch) {
+    candidatePath = scpLikeMatch[1];
+  } else if (/^[^/\\\s]+\/[^/\\\s]+$/.test(trimmedRepoUrl)) {
+    // Owner/repo shorthand
+    candidatePath = trimmedRepoUrl;
+  } else {
+    try {
+      // https://..., ssh://..., file://...
+      const parsed = new URL(trimmedRepoUrl);
+      candidatePath = decodeURIComponent(parsed.pathname);
+    } catch {
+      // Not a URL with protocol. Treat as local path-like input.
+    }
+  }
+
+  const normalizedCandidatePath = candidatePath.replace(/\\/g, "/").replace(/\/+$/, "");
+  const repoName = path.posix.basename(normalizedCandidatePath).replace(/\.git$/i, "");
+  const safeFolderName = sanitizeRepoFolderName(repoName);
+
+  if (!safeFolderName) {
+    throw new Error("Could not determine destination folder name from repository URL");
+  }
+
+  return safeFolderName;
 }
 
 const FILE_COMPLETIONS_CACHE_TTL_MS = 10_000;
@@ -148,6 +221,81 @@ export class ProjectService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Err(`Failed to create project: ${message}`);
+    }
+  }
+
+  getDefaultCloneDir(): string {
+    const config = this.config.loadConfigOrDefault();
+    return resolveCloneParentDir(undefined, config.defaultProjectCloneDir);
+  }
+
+  async clone(
+    input: CloneProjectParams
+  ): Promise<Result<{ projectConfig: ProjectConfig; normalizedPath: string }>> {
+    try {
+      const repoUrl = input.repoUrl.trim();
+      if (!repoUrl) {
+        return Err("Repository URL cannot be empty");
+      }
+
+      const config = this.config.loadConfigOrDefault();
+      const cloneParentDir = resolveCloneParentDir(
+        input.cloneParentDir,
+        config.defaultProjectCloneDir
+      );
+      const repoFolderName = deriveRepoFolderName(repoUrl);
+      const normalizedPath = path.join(cloneParentDir, repoFolderName);
+
+      if (config.projects.has(normalizedPath)) {
+        return Err(`Project already exists at ${normalizedPath}`);
+      }
+
+      let cloneParentStat: Stats | null = null;
+      try {
+        cloneParentStat = await fsPromises.stat(cloneParentDir);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code !== "ENOENT") {
+          throw error;
+        }
+      }
+
+      if (cloneParentStat && !cloneParentStat.isDirectory()) {
+        return Err("Clone destination parent directory is not a directory");
+      }
+
+      let destinationStat: Stats | null = null;
+      try {
+        destinationStat = await fsPromises.stat(normalizedPath);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code !== "ENOENT") {
+          throw error;
+        }
+      }
+
+      if (destinationStat) {
+        return Err(`Destination already exists: ${normalizedPath}`);
+      }
+
+      await fsPromises.mkdir(cloneParentDir, { recursive: true });
+
+      using cloneProc = execAsync(`git clone ${shellQuote(repoUrl)} ${shellQuote(normalizedPath)}`);
+      await cloneProc.result;
+
+      const projectConfig: ProjectConfig = { workspaces: [] };
+      config.projects.set(normalizedPath, projectConfig);
+
+      if (input.setCloneParentDirAsDefault === true) {
+        config.defaultProjectCloneDir = cloneParentDir;
+      }
+
+      await this.config.saveConfig(config);
+
+      return Ok({ projectConfig, normalizedPath });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to clone repository: ${message}`);
     }
   }
 
