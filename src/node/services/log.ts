@@ -88,6 +88,7 @@ const MAX_LOG_FILES = 3;
 
 function stripAnsi(text: string): string {
   // Matches standard ANSI escape codes for colors/styles.
+  // eslint-disable-next-line no-control-regex
   return text.replace(/\x1b\[[0-9;]*m/g, "");
 }
 

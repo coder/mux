@@ -90,7 +90,7 @@ export function OutputTab(props: OutputTabProps) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
+      <div className="border-border flex items-center gap-2 border-b px-3 py-1.5">
         <LevelFilterDropdown value={levelFilter} onChange={setLevelFilter} />
         <button
           type="button"
@@ -155,7 +155,7 @@ function LogLine(props: { entry: LogEntry }) {
   return (
     <div className="hover:bg-hover flex gap-2 px-3 py-0.5">
       <span className="text-muted shrink-0">{formatTime(entry.timestamp)}</span>
-      <span style={{ color: levelColor }} className="shrink-0 w-12">
+      <span style={{ color: levelColor }} className="w-12 shrink-0">
         {entry.level.toUpperCase()}
       </span>
       <span className="text-muted shrink-0">{entry.location}</span>
