@@ -5,9 +5,12 @@ import {
   createWorkspace,
   generateBranchName,
   sendMessageWithModel,
+  waitFor,
   HAIKU_MODEL,
   createStreamCollector,
 } from "./helpers";
+import { isMuxMessage, isQueuedMessageChanged } from "@/common/orpc/types";
+import type { HistoryService } from "@/node/services/historyService";
 
 function createDeferred<T>(): {
   promise: Promise<T>;
@@ -188,6 +191,244 @@ describe("Queued messages during stream completion", () => {
     } finally {
       releaseCompletion.resolve();
       handleCompletionSpy.mockRestore();
+
+      collector.stop();
+      await env.orpc.workspace.remove({ workspaceId });
+    }
+  }, 25000);
+  test("queues message sent during COMPLETING and auto-sends after completion finishes", async () => {
+    if (!env || !repoPath) {
+      throw new Error("Test environment not initialized");
+    }
+
+    const branchName = generateBranchName("test-completing-queue");
+    const result = await createWorkspace(env, repoPath, branchName);
+    if (!result.success) {
+      throw new Error(`Failed to create workspace: ${result.error}`);
+    }
+
+    const workspaceId = result.metadata.id;
+    const collector = createStreamCollector(env.orpc, workspaceId);
+    collector.start();
+
+    const session = env.services.workspaceService.getOrCreateSession(workspaceId);
+    const aiService = env.services.aiService;
+
+    type SessionInternals = {
+      compactionHandler: {
+        handleCompletion: (event: unknown) => Promise<boolean>;
+      };
+    };
+    const compactionHandler = (session as unknown as SessionInternals).compactionHandler;
+
+    const enteredCompletion = createDeferred<void>();
+    const releaseCompletion = createDeferred<void>();
+
+    const originalHandleCompletion = compactionHandler.handleCompletion.bind(compactionHandler);
+    const handleCompletionSpy = jest
+      .spyOn(compactionHandler, "handleCompletion")
+      .mockImplementation(async (event) => {
+        enteredCompletion.resolve();
+        await releaseCompletion.promise;
+        return originalHandleCompletion(event);
+      });
+
+    try {
+      await collector.waitForSubscription(5000);
+
+      const firstSendResult = await sendMessageWithModel(
+        env,
+        workspaceId,
+        "First message",
+        HAIKU_MODEL
+      );
+      expect(firstSendResult.success).toBe(true);
+
+      await collector.waitForEvent("stream-start", 5000);
+
+      // Hold the session in COMPLETING.
+      await enteredCompletion.promise;
+      expect(aiService.isStreaming(workspaceId)).toBe(false);
+      expect(session.isBusy()).toBe(true);
+
+      // Send a follow-up message through the *real* IPC path.
+      const secondSendResult = await sendMessageWithModel(
+        env,
+        workspaceId,
+        "Second message",
+        HAIKU_MODEL
+      );
+      expect(secondSendResult.success).toBe(true);
+
+      const queuedEvent = await collector.waitForEvent("queued-message-changed", 5000);
+      if (!queuedEvent || !isQueuedMessageChanged(queuedEvent)) {
+        throw new Error("Queued message event missing after follow-up send during completion");
+      }
+      expect(queuedEvent.queuedMessages).toEqual(["Second message"]);
+      expect(queuedEvent.displayText).toBe("Second message");
+
+      // Regression: the queued message must NOT start a new stream until completion finishes.
+      const startedSecondEarly = await waitFor(() => {
+        const streamStarts = collector
+          .getEvents()
+          .filter((event) => "type" in event && event.type === "stream-start");
+        return streamStarts.length >= 2;
+      }, 250);
+      expect(startedSecondEarly).toBe(false);
+
+      releaseCompletion.resolve();
+
+      const firstStreamEnd = await collector.waitForEvent("stream-end", 15000);
+      if (!firstStreamEnd) {
+        throw new Error("First stream never ended after releasing completion");
+      }
+
+      const sawSecondStreamStart = await waitFor(() => {
+        const streamStarts = collector
+          .getEvents()
+          .filter((event) => "type" in event && event.type === "stream-start");
+        return streamStarts.length >= 2;
+      }, 15000);
+      if (!sawSecondStreamStart) {
+        throw new Error("Second stream never started after completion finished");
+      }
+
+      const sawSecondStreamEnd = await waitFor(() => {
+        const streamEnds = collector
+          .getEvents()
+          .filter((event) => "type" in event && event.type === "stream-end");
+        return streamEnds.length >= 2;
+      }, 15000);
+      if (!sawSecondStreamEnd) {
+        throw new Error("Second stream never finished after completion finished");
+      }
+
+      // Verify the queued message made it into the second stream prompt.
+      const promptResult = aiService.debugGetLastMockPrompt(workspaceId);
+      if (!promptResult.success || !promptResult.data) {
+        throw new Error("Mock prompt snapshot missing after queued stream start");
+      }
+      const promptUserMessages = promptResult.data
+        .filter((message) => message.role === "user")
+        .map((message) =>
+          message.parts
+            .filter((part) => "text" in part)
+            .map((part) => part.text)
+            .join("")
+        );
+      expect(promptUserMessages).toEqual(expect.arrayContaining(["Second message"]));
+    } finally {
+      releaseCompletion.resolve();
+      handleCompletionSpy.mockRestore();
+
+      collector.stop();
+      await env.orpc.workspace.remove({ workspaceId });
+    }
+  }, 25000);
+
+  test("edit waits for completion cleanup before truncating history", async () => {
+    if (!env || !repoPath) {
+      throw new Error("Test environment not initialized");
+    }
+
+    const branchName = generateBranchName("test-completing-edit");
+    const result = await createWorkspace(env, repoPath, branchName);
+    if (!result.success) {
+      throw new Error(`Failed to create workspace: ${result.error}`);
+    }
+
+    const workspaceId = result.metadata.id;
+    const collector = createStreamCollector(env.orpc, workspaceId);
+    collector.start();
+
+    const session = env.services.workspaceService.getOrCreateSession(workspaceId);
+
+    type SessionInternals = {
+      compactionHandler: {
+        handleCompletion: (event: unknown) => Promise<boolean>;
+      };
+    };
+    const compactionHandler = (session as unknown as SessionInternals).compactionHandler;
+
+    const enteredCompletion = createDeferred<void>();
+    const releaseCompletion = createDeferred<void>();
+
+    const originalHandleCompletion = compactionHandler.handleCompletion.bind(compactionHandler);
+    const handleCompletionSpy = jest
+      .spyOn(compactionHandler, "handleCompletion")
+      .mockImplementation(async (event) => {
+        enteredCompletion.resolve();
+        await releaseCompletion.promise;
+        return originalHandleCompletion(event);
+      });
+
+    type WorkspaceServiceInternals = {
+      historyService: HistoryService;
+    };
+    const historyService = (env.services.workspaceService as unknown as WorkspaceServiceInternals)
+      .historyService;
+    const truncateSpy = jest.spyOn(historyService, "truncateAfterMessage");
+
+    try {
+      await collector.waitForSubscription(5000);
+
+      const firstMessageText = "First message";
+      const firstSendResult = await sendMessageWithModel(
+        env,
+        workspaceId,
+        firstMessageText,
+        HAIKU_MODEL
+      );
+      expect(firstSendResult.success).toBe(true);
+
+      let firstUserMessageId: string | undefined;
+      const sawFirstUserMessage = await waitFor(() => {
+        const firstUserMessage = collector
+          .getEvents()
+          .filter(isMuxMessage)
+          .find(
+            (event) =>
+              event.role === "user" &&
+              event.parts.some((part) => "text" in part && part.text === firstMessageText)
+          );
+        if (firstUserMessage) {
+          firstUserMessageId = firstUserMessage.id;
+          return true;
+        }
+        return false;
+      }, 5000);
+      if (!sawFirstUserMessage || !firstUserMessageId) {
+        throw new Error("First user message was not emitted before edit");
+      }
+
+      await collector.waitForEvent("stream-start", 5000);
+
+      // Hold the session in COMPLETING.
+      await enteredCompletion.promise;
+
+      const editSendPromise = sendMessageWithModel(
+        env,
+        workspaceId,
+        "Edited message",
+        HAIKU_MODEL,
+        {
+          editMessageId: firstUserMessageId,
+        }
+      );
+
+      // Regression: truncateAfterMessage must not run until completion cleanup is finished.
+      const truncateCalledEarly = await waitFor(() => truncateSpy.mock.calls.length > 0, 250);
+      expect(truncateCalledEarly).toBe(false);
+
+      releaseCompletion.resolve();
+
+      const editSendResult = await editSendPromise;
+      expect(editSendResult.success).toBe(true);
+      expect(truncateSpy).toHaveBeenCalled();
+    } finally {
+      releaseCompletion.resolve();
+      handleCompletionSpy.mockRestore();
+      truncateSpy.mockRestore();
 
       collector.stop();
       await env.orpc.workspace.remove({ workspaceId });

@@ -554,13 +554,33 @@ export class AgentSession {
     if (editMessageId) {
       // Ensure no in-flight completion code can append after we truncate.
       if (this.isBusy()) {
-        // Abort aggressively — history is about to be truncated.
-        // MUST use abandonPartial=true to prevent handleAbort from performing partial compaction
-        // with mismatched history (since we're about to truncate it).
-        await this.interruptStream({ abandonPartial: true }).catch(() => {
-          // Best-effort; proceed to waitForIdle anyway.
-        });
+        // If a turn is still PREPARING/STREAMING, interrupt aggressively — history is about to be
+        // truncated.
+        //
+        // If we're already COMPLETING, do NOT call stopStream(): StreamManager will emit a
+        // synthetic stream-abort when no stream is active, which can incorrectly transition us to
+        // IDLE while completion cleanup is still in-flight.
+        if (this.turnPhase !== TurnPhase.COMPLETING) {
+          // MUST use abandonPartial=true to prevent handleAbort from performing partial compaction
+          // with mismatched history (since we're about to truncate it).
+          const stopResult = await this.interruptStream({ abandonPartial: true });
+          if (!stopResult.success) {
+            log.warn("Failed to interrupt stream before edit", {
+              workspaceId: this.workspaceId,
+              editMessageId,
+              error: stopResult.error,
+            });
+            return Err(createUnknownSendMessageError(stopResult.error));
+          }
+        }
+
         await this.waitForIdle();
+
+        // Workspace teardown does not await in-flight async work; bail out if the session was
+        // disposed while waiting for completion cleanup.
+        if (this.disposed) {
+          return Ok(undefined);
+        }
       }
 
       // Find the truncation target: the edited message or any immediately-preceding snapshots.
