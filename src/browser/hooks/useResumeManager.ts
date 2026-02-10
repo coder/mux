@@ -7,12 +7,14 @@ import { readPersistedState, updatePersistedState } from "./usePersistedState";
 import { readAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
 import {
   getInterruptionContext,
+  getLastNonDecorativeMessage,
   isNonRetryableSendError,
 } from "@/browser/utils/messages/retryEligibility";
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
 import type { SendMessageError } from "@/common/types/errors";
 import {
   createFailedRetryState,
+  createManualRetryState,
   calculateBackoffDelay,
   INITIAL_DELAY,
 } from "@/browser/utils/messages/retryState";
@@ -252,4 +254,85 @@ export function useResumeManager() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Stable effect - no deps, uses refs
+
+  // Subscribe to provider config changes so credential-related errors (api_key_not_found,
+  // authentication, quota) get a retry attempt when the user updates their API key in Settings.
+  // Without this, these non-retryable errors stay stuck until the user manually clicks Retry,
+  // even after they've already fixed the credentials (#2051).
+  useEffect(() => {
+    if (!api) return;
+
+    const abortController = new AbortController();
+    const { signal } = abortController;
+
+    // Some oRPC iterators don't eagerly close on abort alone.
+    // Ensure we `return()` them so backend subscriptions clean up EventEmitter listeners.
+    let iterator: AsyncIterator<unknown> | null = null;
+
+    (async () => {
+      try {
+        const subscribedIterator = await api.providers.onConfigChanged(undefined, { signal });
+
+        if (signal.aborted) {
+          void subscribedIterator.return?.();
+          return;
+        }
+
+        iterator = subscribedIterator;
+
+        for await (const _ of subscribedIterator) {
+          if (signal.aborted) break;
+
+          // Check all workspaces for credential-related errors that may now be resolved
+          for (const [workspaceId, state] of workspaceStatesRef.current) {
+            if (state.canInterrupt) continue; // Currently streaming
+
+            const { hasInterruptedStream } = getInterruptionContext(
+              state.messages,
+              state.pendingStreamStartTime,
+              state.runtimeStatus,
+              state.lastAbortReason
+            );
+            if (!hasInterruptedStream) continue;
+
+            // Check if the interruption was credential-related
+            const lastMessage = getLastNonDecorativeMessage(state.messages);
+            const isCredentialStreamError =
+              lastMessage?.type === "stream-error" &&
+              (lastMessage.errorType === "authentication" || lastMessage.errorType === "quota");
+
+            const retryState = readPersistedState<RetryState>(getRetryStateKey(workspaceId), {
+              attempt: 0,
+              retryStartTime: Date.now(),
+            });
+            const isCredentialSendError =
+              retryState.lastError?.type === "api_key_not_found" ||
+              retryState.lastError?.type === "oauth_not_connected";
+
+            if (!isCredentialStreamError && !isCredentialSendError) continue;
+
+            // Clear the non-retryable error state so auto-retry can proceed,
+            // same as what the manual Retry button does.
+            if (isCredentialSendError) {
+              updatePersistedState(
+                getRetryStateKey(workspaceId),
+                createManualRetryState(retryState.attempt)
+              );
+            }
+
+            // Trigger a manual resume (bypasses non-retryable checks)
+            void attemptResume(workspaceId, true);
+          }
+        }
+      } catch {
+        // Subscription cancelled via abort signal - expected on cleanup
+      }
+    })();
+
+    return () => {
+      abortController.abort();
+      void iterator?.return?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api]); // Re-subscribe when API connection changes
 }
