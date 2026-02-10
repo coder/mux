@@ -183,6 +183,8 @@ export class AgentSession {
     [];
   private disposed = false;
   private turnPhase: TurnPhase = TurnPhase.IDLE;
+  // When true, stream-end skips auto-flushing queued messages so an edit can truncate first.
+  private deferQueuedFlushUntilAfterEdit = false;
   private idleWaiters: Array<() => void> = [];
   private readonly messageQueue = new MessageQueue();
   private readonly compactionHandler: CompactionHandler;
@@ -574,12 +576,18 @@ export class AgentSession {
           }
         }
 
-        await this.waitForIdle();
+        // Tell stream-end to skip sendQueuedMessages() so the edit truncates first.
+        this.deferQueuedFlushUntilAfterEdit = true;
+        try {
+          await this.waitForIdle();
 
-        // Workspace teardown does not await in-flight async work; bail out if the session was
-        // disposed while waiting for completion cleanup.
-        if (this.disposed) {
-          return Ok(undefined);
+          // Workspace teardown does not await in-flight async work; bail out if the session was
+          // disposed while waiting for completion cleanup.
+          if (this.disposed) {
+            return Ok(undefined);
+          }
+        } finally {
+          this.deferQueuedFlushUntilAfterEdit = false;
         }
       }
 
@@ -1749,43 +1757,71 @@ export class AgentSession {
     forward("stream-end", async (payload) => {
       this.setTurnPhase(TurnPhase.COMPLETING);
 
-      this.activeCompactionRequest = undefined;
-      const handled = await this.compactionHandler.handleCompletion(payload as StreamEndEvent);
+      let emittedStreamEnd = false;
+      try {
+        this.activeCompactionRequest = undefined;
+        const handled = await this.compactionHandler.handleCompletion(payload as StreamEndEvent);
 
-      if (!handled) {
-        this.emitChatEvent(payload);
+        if (!handled) {
+          this.emitChatEvent(payload);
+          emittedStreamEnd = true;
 
-        if (this.ackPendingPostCompactionStateOnStreamEnd) {
-          this.ackPendingPostCompactionStateOnStreamEnd = false;
-          try {
-            await this.compactionHandler.ackPendingDiffsConsumed();
-          } catch (error) {
-            log.warn("Failed to ack pending post-compaction state", {
-              workspaceId: this.workspaceId,
-              error: error instanceof Error ? error.message : String(error),
-            });
+          if (this.ackPendingPostCompactionStateOnStreamEnd) {
+            this.ackPendingPostCompactionStateOnStreamEnd = false;
+            try {
+              await this.compactionHandler.ackPendingDiffsConsumed();
+            } catch (error) {
+              log.warn("Failed to ack pending post-compaction state", {
+                workspaceId: this.workspaceId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+            this.onPostCompactionStateChange?.();
           }
-          this.onPostCompactionStateChange?.();
+        } else {
+          this.onCompactionComplete?.();
         }
-      } else {
-        this.onCompactionComplete?.();
-      }
 
-      // IMPORTANT: reset BEFORE anything that can start a new stream,
-      // so the next turn doesn't get its state clobbered by our cleanup.
-      this.resetActiveStreamState();
+        // IMPORTANT: reset BEFORE anything that can start a new stream,
+        // so the next turn doesn't get its state clobbered by our cleanup.
+        this.resetActiveStreamState();
 
-      if (handled) {
-        // Dispatch follow-up AFTER reset so it can set its own stream state.
-        await this.dispatchPendingFollowUp();
-      }
+        if (handled) {
+          // Dispatch follow-up AFTER reset so it can set its own stream state.
+          await this.dispatchPendingFollowUp();
+        }
 
-      // Stream end: auto-send queued messages (for user messages typed during streaming)
-      this.sendQueuedMessages();
+        // Stream end: auto-send queued messages (for user messages typed during streaming)
+        // P2: if an edit is waiting, skip the queue flush so the edit truncates first.
+        if (this.deferQueuedFlushUntilAfterEdit) {
+          // Clear the queued message flag so the next turn's tools don't early-return.
+          this.backgroundProcessManager.setMessageQueued(this.workspaceId, false);
+        } else {
+          this.sendQueuedMessages();
+        }
+      } catch (error) {
+        log.error("stream-end cleanup failed", {
+          workspaceId: this.workspaceId,
+          error: error instanceof Error ? error.message : String(error),
+        });
 
-      // If neither follow-up nor queue started a new turn, we're idle.
-      if (this.turnPhase === TurnPhase.COMPLETING) {
-        this.setTurnPhase(TurnPhase.IDLE);
+        // Defense-in-depth: unblock renderer if compaction handler threw before we emitted.
+        if (!emittedStreamEnd) {
+          try {
+            this.emitChatEvent(payload);
+          } catch {
+            // Best-effort; don't mask the original error.
+          }
+        }
+      } finally {
+        // Best-effort state cleanup; resetActiveStreamState is idempotent.
+        this.resetActiveStreamState();
+
+        // Only transition to IDLE if we're still in COMPLETING — don't clobber a new
+        // turn started by follow-up dispatch or queue send.
+        if (this.turnPhase === TurnPhase.COMPLETING) {
+          this.setTurnPhase(TurnPhase.IDLE);
+        }
       }
     });
 
