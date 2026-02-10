@@ -93,8 +93,8 @@ export const PostCompactionSection: React.FC<PostCompactionSectionProps> = (prop
               </span>
             </TooltipTrigger>
             <TooltipContent side="top" showArrow={false}>
-              This section is still the post-compaction context. After compaction, its contents are
-              appended.
+              After compaction, included artifacts in this list (plan + selected file diffs) are
+              attached to your next message so the agent keeps important earlier context.
             </TooltipContent>
           </Tooltip>
         </div>
