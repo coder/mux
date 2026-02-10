@@ -11,6 +11,7 @@ import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
 import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
 import { ToggleGroup, type ToggleOption } from "../ToggleGroup";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
+import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { supports1MContext } from "@/common/utils/ai/models";
 import {
   TOKEN_COMPONENT_COLORS,
@@ -60,6 +61,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
     listener: true,
   });
   const { has1MContext } = useProviderOptions();
+  const pendingSendOptions = useSendMessageOptions(workspaceId);
 
   // Post-compaction context state for UI display
   const postCompactionState = usePostCompactionState(workspaceId);
@@ -68,16 +70,16 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   const workspaceContext = useOptionalWorkspaceContext();
   const runtimeConfig = workspaceContext?.workspaceMetadata.get(workspaceId)?.runtimeConfig;
 
-  // Get model from context usage for per-model threshold storage
-  // Use lastContextUsage for context window display (last step's usage)
-  const contextUsageForModel = usage.liveUsage ?? usage.lastContextUsage;
-  const currentModel = contextUsageForModel?.model ?? null;
+  // Token counts come from usage metadata, but context limits/1M eligibility should
+  // follow the currently selected model unless a stream is actively running.
+  const contextDisplayModel = usage.liveUsage?.model ?? pendingSendOptions.baseModel;
   // Align warning with /compact model resolution so it matches actual compaction behavior.
-  const effectiveCompactionModel = resolveCompactionModel(preferredCompactionModel) ?? currentModel;
+  const effectiveCompactionModel =
+    resolveCompactionModel(preferredCompactionModel) ?? contextDisplayModel;
 
   // Auto-compaction settings: threshold per-model (100 = disabled)
   const { threshold: autoCompactThreshold, setThreshold: setAutoCompactThreshold } =
-    useAutoCompactionSettings(workspaceId, currentModel);
+    useAutoCompactionSettings(workspaceId, contextDisplayModel);
 
   // Session usage for cost calculation
   // Uses sessionTotal (pre-computed) + liveCostUsage (cumulative during streaming)
@@ -121,10 +123,14 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
           <div data-testid="context-usage-list" className="flex flex-col gap-3">
             {(() => {
               const contextUsage = usage.liveUsage ?? usage.lastContextUsage;
-              const model = contextUsage?.model ?? "unknown";
 
               const contextUsageData = contextUsage
-                ? calculateTokenMeterData(contextUsage, model, has1MContext(model), false)
+                ? calculateTokenMeterData(
+                    contextUsage,
+                    contextDisplayModel,
+                    has1MContext(contextDisplayModel),
+                    false
+                  )
                 : { segments: [], totalTokens: 0, totalPercentage: 0 };
 
               // Warn when the compaction model can't fit the auto-compact threshold to avoid failures.
@@ -151,7 +157,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                 <ContextUsageBar
                   testId="context-usage"
                   data={contextUsageData}
-                  model={model}
+                  model={contextDisplayModel}
                   autoCompaction={{
                     threshold: autoCompactThreshold,
                     setThreshold: setAutoCompactThreshold,

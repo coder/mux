@@ -473,15 +473,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const usage = useWorkspaceUsage(workspaceIdForUsage);
   const { has1MContext } = useProviderOptions();
   const lastUsage = usage?.liveUsage ?? usage?.lastContextUsage;
-  const usageModel = lastUsage?.model ?? null;
-  const use1M = has1MContext(usageModel ?? "");
+  // Token counts come from usage metadata, but context limits/1M eligibility should
+  // follow the currently selected model unless a stream is actively running.
+  const activeUsageModel = usage?.liveUsage?.model ?? null;
+  const contextDisplayModel = activeUsageModel ?? baseModel;
+  const use1M = has1MContext(contextDisplayModel);
   const contextUsageData = useMemo(() => {
     return lastUsage
-      ? calculateTokenMeterData(lastUsage, usageModel ?? "unknown", use1M, false)
+      ? calculateTokenMeterData(lastUsage, contextDisplayModel, use1M, false)
       : { segments: [], totalTokens: 0, totalPercentage: 0 };
-  }, [lastUsage, usageModel, use1M]);
+  }, [lastUsage, contextDisplayModel, use1M]);
   const { threshold: autoCompactThreshold, setThreshold: setAutoCompactThreshold } =
-    useAutoCompactionSettings(workspaceIdForUsage, usageModel);
+    useAutoCompactionSettings(workspaceIdForUsage, contextDisplayModel);
   const autoCompactionProps = useMemo(
     () => ({ threshold: autoCompactThreshold, setThreshold: setAutoCompactThreshold }),
     [autoCompactThreshold, setAutoCompactThreshold]
@@ -2476,7 +2479,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     data={contextUsageData}
                     autoCompaction={autoCompactionProps}
                     idleCompaction={idleCompactionProps}
-                    model={usageModel ?? undefined}
+                    model={contextDisplayModel}
                   />
                 )}
 
