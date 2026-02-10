@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useImperativeHandle } from "react";
+import React, { useState, useCallback, useEffect, useImperativeHandle } from "react";
 import {
   Dialog,
   DialogContent,
@@ -9,6 +9,7 @@ import {
 } from "@/browser/components/ui/dialog";
 import { DirectoryPickerModal } from "./DirectoryPickerModal";
 import { Button } from "@/browser/components/ui/button";
+import { ToggleGroup, ToggleGroupItem } from "@/browser/components/ui/toggle-group";
 import type { ProjectConfig } from "@/node/config";
 import { useAPI } from "@/browser/contexts/API";
 
@@ -243,6 +244,309 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
 
 ProjectCreateForm.displayName = "ProjectCreateForm";
 
+// Keep the existing path-based add flow unchanged while adding clone as an alternate mode.
+type ProjectCreateMode = "pick-folder" | "clone";
+
+interface ProjectCloneFormProps {
+  onSuccess: (normalizedPath: string, projectConfig: ProjectConfig) => void;
+  onClose: () => void;
+  isOpen: boolean;
+  defaultCloneDir: string;
+  onIsCreatingChange?: (isCreating: boolean) => void;
+}
+
+function getRepoNameFromUrl(repoUrl: string): string {
+  const normalizedRepoUrl = repoUrl
+    .trim()
+    .replace(/[?#].*$/, "")
+    .replace(/\/+$/, "");
+  if (!normalizedRepoUrl) {
+    return "";
+  }
+
+  const withoutGitSuffix = normalizedRepoUrl.replace(/\.git$/, "");
+  const segments = withoutGitSuffix.split(/[/:]/).filter(Boolean);
+  return segments[segments.length - 1] ?? "";
+}
+
+function buildCloneDestinationPreview(cloneParentDir: string, repoName: string): string {
+  if (!repoName) {
+    return "";
+  }
+
+  const trimmedCloneParentDir = cloneParentDir.trim();
+  if (!trimmedCloneParentDir) {
+    return "";
+  }
+
+  const normalizedCloneParentDir = trimmedCloneParentDir.replace(/[\\/]+$/, "");
+  const separator =
+    normalizedCloneParentDir.includes("\\") && !normalizedCloneParentDir.includes("/") ? "\\" : "/";
+
+  return `${normalizedCloneParentDir}${separator}${repoName}`;
+}
+
+function ProjectCloneForm(props: ProjectCloneFormProps) {
+  const { api } = useAPI();
+  const [repoUrl, setRepoUrl] = useState("");
+  const [cloneParentDir, setCloneParentDir] = useState(props.defaultCloneDir);
+  const [setCloneParentDirAsDefault, setSetCloneParentDirAsDefault] = useState(false);
+  const [hasEditedCloneParentDir, setHasEditedCloneParentDir] = useState(false);
+  const [error, setError] = useState("");
+  const [isCreating, setIsCreating] = useState(false);
+  const [isDirPickerOpen, setIsDirPickerOpen] = useState(false);
+  const isDesktop = !!window.api;
+  const hasWebFsPicker = !isDesktop;
+
+  const setCreating = useCallback(
+    (next: boolean) => {
+      setIsCreating(next);
+      props.onIsCreatingChange?.(next);
+    },
+    [props]
+  );
+
+  const reset = useCallback(() => {
+    setRepoUrl("");
+    setCloneParentDir(props.defaultCloneDir);
+    setSetCloneParentDirAsDefault(false);
+    setHasEditedCloneParentDir(false);
+    setError("");
+  }, [props.defaultCloneDir]);
+
+  useEffect(() => {
+    if (!props.isOpen) {
+      reset();
+    }
+  }, [props.isOpen, reset]);
+
+  useEffect(() => {
+    if (!props.isOpen || hasEditedCloneParentDir) {
+      return;
+    }
+
+    setCloneParentDir(props.defaultCloneDir);
+  }, [props.defaultCloneDir, props.isOpen, hasEditedCloneParentDir]);
+
+  const trimmedDefaultCloneDir = props.defaultCloneDir.trim();
+  const trimmedCloneParentDir = cloneParentDir.trim();
+  const showSetAsDefaultCheckbox =
+    trimmedDefaultCloneDir.length > 0 &&
+    trimmedCloneParentDir.length > 0 &&
+    trimmedCloneParentDir !== trimmedDefaultCloneDir;
+
+  const handleCancel = useCallback(() => {
+    reset();
+    props.onClose();
+  }, [props, reset]);
+
+  const handleWebPickerPathSelected = useCallback(
+    (selectedPath: string) => {
+      setCloneParentDir(selectedPath);
+      setHasEditedCloneParentDir(true);
+      setError("");
+
+      if (selectedPath.trim() === trimmedDefaultCloneDir) {
+        setSetCloneParentDirAsDefault(false);
+      }
+    },
+    [trimmedDefaultCloneDir]
+  );
+
+  const handleBrowse = useCallback(async () => {
+    try {
+      const selectedPath = await api?.projects.pickDirectory();
+      if (selectedPath) {
+        setCloneParentDir(selectedPath);
+        setHasEditedCloneParentDir(true);
+        setError("");
+
+        if (selectedPath.trim() === trimmedDefaultCloneDir) {
+          setSetCloneParentDirAsDefault(false);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to pick clone directory:", err);
+    }
+  }, [api, trimmedDefaultCloneDir]);
+
+  const handleBrowseClick = useCallback(() => {
+    if (isDesktop) {
+      void handleBrowse();
+      return;
+    }
+
+    if (hasWebFsPicker) {
+      setIsDirPickerOpen(true);
+    }
+  }, [handleBrowse, hasWebFsPicker, isDesktop]);
+
+  const handleClone = useCallback(async (): Promise<boolean> => {
+    const trimmedRepoUrl = repoUrl.trim();
+    if (!trimmedRepoUrl) {
+      setError("Please enter a repository URL");
+      return false;
+    }
+
+    if (isCreating) {
+      return false;
+    }
+
+    if (!api) {
+      setError("Not connected to server");
+      return false;
+    }
+
+    setError("");
+    setCreating(true);
+
+    const shouldSetCloneParentDirAsDefault = showSetAsDefaultCheckbox && setCloneParentDirAsDefault;
+
+    try {
+      const result = await api.projects.clone({
+        repoUrl: trimmedRepoUrl,
+        cloneParentDir: trimmedCloneParentDir || undefined,
+        setCloneParentDirAsDefault: shouldSetCloneParentDirAsDefault || undefined,
+      });
+
+      if (result.success) {
+        const { normalizedPath, projectConfig } = result.data;
+        props.onSuccess(normalizedPath, projectConfig);
+        reset();
+        props.onClose();
+        return true;
+      }
+
+      const errorMessage =
+        typeof result.error === "string" ? result.error : "Failed to clone project";
+      setError(errorMessage);
+      return false;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred";
+      setError(`Failed to clone project: ${errorMessage}`);
+      return false;
+    } finally {
+      setCreating(false);
+    }
+  }, [
+    api,
+    isCreating,
+    props,
+    repoUrl,
+    reset,
+    setCreating,
+    setCloneParentDirAsDefault,
+    showSetAsDefaultCheckbox,
+    trimmedCloneParentDir,
+  ]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        void handleClone();
+      }
+    },
+    [handleClone]
+  );
+
+  const repoName = getRepoNameFromUrl(repoUrl);
+  const destinationPreview = buildCloneDestinationPreview(cloneParentDir, repoName);
+
+  return (
+    <>
+      <div className="mb-3 space-y-3">
+        <div className="space-y-1">
+          <label className="text-muted text-xs">Repo URL</label>
+          <input
+            type="text"
+            value={repoUrl}
+            onChange={(e) => {
+              setRepoUrl(e.target.value);
+              setError("");
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder="owner/repo or https://github.com/..."
+            autoFocus={true}
+            disabled={isCreating}
+            className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent w-full rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-muted text-xs">Location</label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={cloneParentDir}
+              onChange={(e) => {
+                const nextCloneParentDir = e.target.value;
+                setCloneParentDir(nextCloneParentDir);
+                setHasEditedCloneParentDir(true);
+                setError("");
+
+                if (nextCloneParentDir.trim() === trimmedDefaultCloneDir) {
+                  setSetCloneParentDirAsDefault(false);
+                }
+              }}
+              onKeyDown={handleKeyDown}
+              placeholder={props.defaultCloneDir || "Select clone location"}
+              disabled={isCreating}
+              className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
+            />
+            {(isDesktop || hasWebFsPicker) && (
+              <Button
+                variant="outline"
+                onClick={handleBrowseClick}
+                disabled={isCreating}
+                className="shrink-0"
+              >
+                Browse…
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {repoName && destinationPreview && (
+          <p className="text-muted text-xs">
+            Will clone to <span className="text-foreground font-mono">{destinationPreview}</span>
+          </p>
+        )}
+
+        {showSetAsDefaultCheckbox && (
+          <label className="text-muted flex cursor-pointer items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={setCloneParentDirAsDefault}
+              onChange={(e) => setSetCloneParentDirAsDefault(e.target.checked)}
+              disabled={isCreating}
+              className="accent-accent h-3 w-3"
+            />
+            <span>Set as default</span>
+          </label>
+        )}
+      </div>
+
+      {error && <p className="text-error text-xs">{error}</p>}
+
+      <DialogFooter>
+        <Button variant="secondary" onClick={handleCancel} disabled={isCreating}>
+          Cancel
+        </Button>
+        <Button onClick={() => void handleClone()} disabled={isCreating}>
+          {isCreating ? "Cloning..." : "Clone Project"}
+        </Button>
+      </DialogFooter>
+
+      <DirectoryPickerModal
+        isOpen={isDirPickerOpen}
+        initialPath={cloneParentDir || props.defaultCloneDir || "~"}
+        onClose={() => setIsDirPickerOpen(false)}
+        onSelectPath={handleWebPickerPathSelected}
+      />
+    </>
+  );
+}
 /**
  * Project creation modal that handles the full flow from path input to backend validation.
  *
@@ -254,7 +558,52 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
   onClose,
   onSuccess,
 }) => {
+  const { api } = useAPI();
+  const [mode, setMode] = useState<ProjectCreateMode>("pick-folder");
   const [isCreating, setIsCreating] = useState(false);
+  const [defaultCloneDir, setDefaultCloneDir] = useState("");
+  const [isLoadingDefaultCloneDir, setIsLoadingDefaultCloneDir] = useState(false);
+  const [hasLoadedDefaultCloneDir, setHasLoadedDefaultCloneDir] = useState(false);
+
+  // Preload the clone destination default so clone mode opens with a usable location.
+  const ensureDefaultCloneDir = useCallback(async () => {
+    if (!api || isLoadingDefaultCloneDir || hasLoadedDefaultCloneDir) {
+      return;
+    }
+
+    setIsLoadingDefaultCloneDir(true);
+
+    try {
+      const cloneDir = await api.projects.getDefaultCloneDir();
+      setDefaultCloneDir(cloneDir);
+      setHasLoadedDefaultCloneDir(true);
+    } catch (err) {
+      console.error("Failed to fetch default clone directory:", err);
+    } finally {
+      setIsLoadingDefaultCloneDir(false);
+    }
+  }, [api, hasLoadedDefaultCloneDir, isLoadingDefaultCloneDir]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setMode("pick-folder");
+      setIsCreating(false);
+      setDefaultCloneDir("");
+      setHasLoadedDefaultCloneDir(false);
+      setIsLoadingDefaultCloneDir(false);
+      return;
+    }
+
+    void ensureDefaultCloneDir();
+  }, [ensureDefaultCloneDir, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || mode !== "clone") {
+      return;
+    }
+
+    void ensureDefaultCloneDir();
+  }, [ensureDefaultCloneDir, isOpen, mode]);
 
   const handleOpenChange = useCallback(
     (open: boolean) => {
@@ -265,21 +614,60 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
     [isCreating, onClose]
   );
 
+  const handleModeChange = useCallback(
+    (nextMode: string) => {
+      if (nextMode !== "pick-folder" && nextMode !== "clone") {
+        return;
+      }
+
+      setMode(nextMode);
+      if (nextMode === "clone") {
+        void ensureDefaultCloneDir();
+      }
+    },
+    [ensureDefaultCloneDir]
+  );
+
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogContent showCloseButton={false}>
         <DialogHeader>
           <DialogTitle>Add Project</DialogTitle>
-          <DialogDescription>Enter the path to your project directory</DialogDescription>
+          <DialogDescription>Pick a folder or clone a project repository</DialogDescription>
         </DialogHeader>
 
-        <ProjectCreateForm
-          onSuccess={onSuccess}
-          onClose={onClose}
-          showCancelButton={true}
-          autoFocus={true}
-          onIsCreatingChange={setIsCreating}
-        />
+        <ToggleGroup
+          type="single"
+          value={mode}
+          onValueChange={handleModeChange}
+          disabled={isCreating}
+          className="mb-3 h-9"
+        >
+          <ToggleGroupItem value="pick-folder" size="sm" className="h-7 px-3 text-[13px]">
+            Pick a folder
+          </ToggleGroupItem>
+          <ToggleGroupItem value="clone" size="sm" className="h-7 px-3 text-[13px]">
+            Clone
+          </ToggleGroupItem>
+        </ToggleGroup>
+
+        {mode === "pick-folder" ? (
+          <ProjectCreateForm
+            onSuccess={onSuccess}
+            onClose={onClose}
+            showCancelButton={true}
+            autoFocus={true}
+            onIsCreatingChange={setIsCreating}
+          />
+        ) : (
+          <ProjectCloneForm
+            onSuccess={onSuccess}
+            onClose={onClose}
+            isOpen={isOpen}
+            defaultCloneDir={defaultCloneDir}
+            onIsCreatingChange={setIsCreating}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );
