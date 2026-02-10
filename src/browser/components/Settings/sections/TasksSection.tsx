@@ -721,6 +721,7 @@ export function TasksSection() {
                 models={models}
                 hiddenModels={hiddenModels}
                 variant="box"
+                dropdownMode="fixed"
                 className="bg-modal-bg"
               />
               {modelValue !== INHERIT ? (
@@ -788,6 +789,7 @@ export function TasksSection() {
                 models={models}
                 hiddenModels={hiddenModels}
                 variant="box"
+                dropdownMode="fixed"
                 className="bg-modal-bg"
               />
               {modelValue !== INHERIT ? (

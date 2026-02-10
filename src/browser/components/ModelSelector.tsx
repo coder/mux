@@ -1,8 +1,9 @@
 /**
  * ModelSelector - Dropdown for selecting AI models
  *
- * Uses conditional rendering (not Radix Portal) to enable testing in happy-dom.
- * Pattern follows BaseSelectorPopover.
+ * Uses inline conditional rendering by default to enable testing in happy-dom.
+ * The settings-only fixed overlay mode uses a React portal so dialog/layout constraints
+ * never shift when opening the menu.
  */
 import React, {
   useState,
@@ -12,6 +13,7 @@ import React, {
   useImperativeHandle,
   forwardRef,
 } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/common/lib/utils";
 import { Check, ChevronDown, Eye, Settings, ShieldCheck, Star } from "lucide-react";
 import { GatewayToggleButton } from "./GatewayToggleButton";
@@ -40,6 +42,12 @@ interface ModelSelectorProps {
   onUnhideModel?: (model: string) => void;
   onOpenSettings?: () => void;
   variant?: "default" | "box";
+  /**
+   * Dropdown rendering mode.
+   * - inline: positioned inside the current layout container (default)
+   * - fixed: positioned against the viewport so parent scroll containers don't shift
+   */
+  dropdownMode?: "inline" | "fixed";
   className?: string;
 }
 
@@ -63,6 +71,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       onUnhideModel,
       onOpenSettings,
       variant = "default",
+      dropdownMode = "inline",
       className,
     },
     ref
@@ -76,16 +85,59 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     const [error, setError] = useState<string | null>(null);
     const [showAllModels, setShowAllModels] = useState(false);
     const [highlightedIndex, setHighlightedIndex] = useState<number>(0);
+    const [fixedDropdownAnchor, setFixedDropdownAnchor] = useState<{
+      left: number;
+      top: number;
+      bottom: number;
+    } | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const listRef = useRef<HTMLDivElement>(null);
+    const dropdownRef = useRef<HTMLDivElement>(null);
+    const repositionFrameRef = useRef<number | null>(null);
+
+    const updateFixedDropdownAnchor = useCallback(() => {
+      if (dropdownMode !== "fixed") {
+        return;
+      }
+
+      const container = containerRef.current;
+      if (!container) {
+        return;
+      }
+
+      const bounds = container.getBoundingClientRect();
+      const nextAnchor = {
+        left: Math.round(bounds.left),
+        top: Math.round(bounds.top),
+        bottom: Math.round(bounds.bottom),
+      };
+
+      setFixedDropdownAnchor((prev) => {
+        if (
+          prev &&
+          prev.left === nextAnchor.left &&
+          prev.top === nextAnchor.top &&
+          prev.bottom === nextAnchor.bottom
+        ) {
+          return prev;
+        }
+        return nextAnchor;
+      });
+    }, [dropdownMode]);
 
     const handleCancel = useCallback(() => {
+      if (repositionFrameRef.current !== null) {
+        window.cancelAnimationFrame(repositionFrameRef.current);
+        repositionFrameRef.current = null;
+      }
+
       setIsOpen(false);
       setInputValue("");
       setError(null);
       setShowAllModels(false);
       setHighlightedIndex(0);
+      setFixedDropdownAnchor(null);
     }, []);
 
     // Close dropdown on outside click
@@ -93,14 +145,55 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       if (!isOpen) return;
 
       const handleClickOutside = (e: MouseEvent) => {
-        if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-          handleCancel();
+        const target = e.target;
+        if (!(target instanceof Node)) {
+          return;
         }
+
+        if (containerRef.current?.contains(target) || dropdownRef.current?.contains(target)) {
+          return;
+        }
+
+        handleCancel();
       };
 
       document.addEventListener("mousedown", handleClickOutside);
       return () => document.removeEventListener("mousedown", handleClickOutside);
     }, [isOpen, handleCancel]);
+
+    useEffect(() => {
+      if (!isOpen || dropdownMode !== "fixed") {
+        return;
+      }
+
+      updateFixedDropdownAnchor();
+
+      const scheduleReposition: EventListener = (event) => {
+        if (event.target instanceof Node && listRef.current?.contains(event.target)) {
+          return;
+        }
+
+        if (repositionFrameRef.current !== null) {
+          return;
+        }
+
+        repositionFrameRef.current = window.requestAnimationFrame(() => {
+          repositionFrameRef.current = null;
+          updateFixedDropdownAnchor();
+        });
+      };
+
+      window.addEventListener("resize", scheduleReposition);
+      window.addEventListener("scroll", scheduleReposition, true);
+      return () => {
+        if (repositionFrameRef.current !== null) {
+          window.cancelAnimationFrame(repositionFrameRef.current);
+          repositionFrameRef.current = null;
+        }
+        window.removeEventListener("resize", scheduleReposition);
+        window.removeEventListener("scroll", scheduleReposition, true);
+      };
+    }, [isOpen, dropdownMode, updateFixedDropdownAnchor]);
 
     // Initialize search + focus whenever the dropdown opens.
     useEffect(() => {
@@ -214,8 +307,35 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     };
 
     const handleOpen = useCallback(() => {
+      updateFixedDropdownAnchor();
       setIsOpen(true);
-    }, []);
+    }, [updateFixedDropdownAnchor]);
+
+    const handleDropdownWheelCapture = (e: React.WheelEvent<HTMLDivElement>) => {
+      if (listRef.current?.contains(e.target as Node)) {
+        return;
+      }
+
+      // Header/footer areas are non-scrollable; keep wheel gestures from bubbling into
+      // the settings container so the page doesn't move while the dropdown is open.
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    const handleListWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+      e.stopPropagation();
+
+      const list = e.currentTarget;
+      const deltaY = e.deltaY;
+      const atTop = list.scrollTop <= 0;
+      const atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 1;
+
+      // Prevent scroll chaining from moving the underlying settings pane when the
+      // list hits either edge.
+      if ((deltaY < 0 && atTop) || (deltaY > 0 && atBottom)) {
+        e.preventDefault();
+      }
+    };
 
     const handleSetDefault = (e: React.MouseEvent, model: string) => {
       e.preventDefault();
@@ -247,6 +367,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     }, [highlightedIndex]);
 
     const isBoxVariant = variant === "box";
+    const isFixedDropdown = dropdownMode === "fixed";
     const containerClassName = cn("relative flex items-center gap-1", isBoxVariant && "w-full");
     const triggerClassName = isBoxVariant
       ? cn("border-border-medium h-9 flex-1 min-w-0 rounded border", className)
@@ -257,6 +378,222 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     const displayValue = hasValue
       ? formatModelDisplayName(getModelName(value))
       : (emptyLabel ?? "");
+
+    const dropdownClassName = cn(
+      "bg-dark border-border overflow-hidden rounded-md border shadow-md",
+      isFixedDropdown ? "fixed z-[1600] w-82" : "absolute bottom-full left-0 z-[1020] mb-1 w-82"
+    );
+
+    const dropdownStyle: React.CSSProperties | undefined = isFixedDropdown
+      ? fixedDropdownAnchor
+        ? {
+            top: `${fixedDropdownAnchor.bottom + 4}px`,
+            left: `${fixedDropdownAnchor.left}px`,
+          }
+        : { visibility: "hidden" }
+      : undefined;
+
+    const dropdownContent = (
+      <div
+        ref={dropdownRef}
+        className={dropdownClassName}
+        style={dropdownStyle}
+        onWheelCapture={handleDropdownWheelCapture}
+      >
+        {/* Search input */}
+        <div className="border-border border-b px-2 py-1">
+          <input
+            ref={inputRef}
+            type="text"
+            value={inputValue}
+            onChange={handleInputChange}
+            onKeyDown={handleKeyDown}
+            placeholder={inputPlaceholder ?? "Search [provider:model-name]"}
+            className="text-foreground placeholder:text-muted w-full bg-transparent text-xs outline-none"
+          />
+          {error && <div className="text-danger-soft mt-1 text-[10px]">{error}</div>}
+        </div>
+
+        {/* Scrollable list */}
+        <div
+          ref={listRef}
+          onWheel={handleListWheel}
+          style={{ overscrollBehavior: "contain" }}
+          className="max-h-[280px] overflow-y-auto p-1"
+        >
+          {filteredModels.length === 0 ? (
+            <div className="text-muted py-2 text-center text-[10px]">No matching models</div>
+          ) : (
+            filteredModels.map((model, index) => (
+              <div
+                key={model}
+                data-highlighted={index === highlightedIndex}
+                onMouseEnter={() => setHighlightedIndex(index)}
+                className={cn(
+                  "flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-xs cursor-pointer",
+                  index === highlightedIndex ? "bg-hover" : "hover:bg-hover",
+                  hiddenSet.has(model) && "opacity-50"
+                )}
+                onClick={() => handleSelectModel(model)}
+                role="option"
+                aria-selected={value === model}
+              >
+                <Check
+                  className={cn("h-3 w-3 shrink-0", value === model ? "opacity-100" : "opacity-0")}
+                />
+                <ProviderIcon
+                  provider={getModelProvider(model)}
+                  className="text-muted h-3 w-3 shrink-0"
+                />
+                <span className="min-w-0 flex-1 truncate">{model}</span>
+
+                {/* Gateway toggle */}
+                {gateway.canToggleModel(model) ? (
+                  <GatewayToggleButton
+                    active={gateway.modelUsesGateway(model)}
+                    onToggle={() => gateway.toggleModelGateway(model)}
+                    variant="bordered"
+                    size="sm"
+                    showTooltip
+                  />
+                ) : (
+                  <span className="h-5 w-5" />
+                )}
+                {/* Visibility toggle - Eye with line-through when hidden */}
+                {(onHideModel ?? onUnhideModel) && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (hiddenSet.has(model)) {
+                            onUnhideModel?.(model);
+                          } else {
+                            onHideModel?.(model);
+                          }
+                        }}
+                        className={cn(
+                          "relative flex h-5 w-5 items-center justify-center rounded-sm border transition-colors duration-150",
+                          hiddenSet.has(model)
+                            ? "text-muted-light border-muted-light/40"
+                            : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
+                        )}
+                        aria-label={
+                          hiddenSet.has(model)
+                            ? "Show model in selector"
+                            : "Hide model from selector"
+                        }
+                      >
+                        <Eye
+                          className={cn(
+                            "h-4 w-4 md:h-3 md:w-3",
+                            hiddenSet.has(model) ? "opacity-30" : "opacity-70"
+                          )}
+                        />
+                        {hiddenSet.has(model) && (
+                          <span className="bg-muted-light absolute h-px w-3 rotate-45" />
+                        )}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent align="center">
+                      {hiddenSet.has(model) ? "Show model in selector" : "Hide model from selector"}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+
+                {/* Default star */}
+                {onSetDefaultModel ? (
+                  hiddenSet.has(model) ? (
+                    <span className="h-5 w-5" />
+                  ) : (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={(e) => handleSetDefault(e, model)}
+                          className={cn(
+                            "flex h-5 w-5 items-center justify-center rounded-sm transition-colors duration-150 cursor-pointer",
+                            defaultModel === model
+                              ? "text-yellow-400 cursor-default"
+                              : "text-muted-light hover:text-foreground"
+                          )}
+                          aria-label={
+                            defaultModel === model
+                              ? "Current default model"
+                              : "Set as default model"
+                          }
+                          disabled={defaultModel === model}
+                        >
+                          <Star
+                            className="h-4 w-4 md:h-3 md:w-3"
+                            fill={defaultModel === model ? "currentColor" : "none"}
+                          />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent align="center">
+                        {defaultModel === model ? "Current default model" : "Set as default model"}
+                      </TooltipContent>
+                    </Tooltip>
+                  )
+                ) : (
+                  <span className="h-5 w-5" />
+                )}
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Footer actions (last row in dropdown) */}
+        {(hiddenModels.length > 0 || onOpenSettings) && (
+          <div className="border-border flex flex-col gap-1 border-t px-2 py-1">
+            {hiddenModels.length > 0 && (
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setShowAllModels((prev) => !prev);
+                  setInputValue("");
+                  setHighlightedIndex(0);
+                }}
+                className="text-muted hover:text-foreground text-[10px] transition-colors"
+              >
+                {showAllModels ? "Show fewer models" : "Show all models…"}
+              </button>
+            )}
+
+            {policyEnforced && (
+              <div className="text-muted flex items-center gap-1 text-[10px]">
+                <ShieldCheck className="h-3 w-3" aria-hidden />
+                <span>Your settings are controlled by a policy.</span>
+              </div>
+            )}
+
+            {onOpenSettings && (
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onOpenSettings();
+                  handleCancel();
+                }}
+                className="text-muted hover:bg-hover hover:text-foreground flex w-full items-center justify-start gap-1.5 rounded-sm px-2 py-1 text-[11px] transition-colors"
+              >
+                <Settings className="h-3 w-3 shrink-0" />
+                Model settings
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
 
     return (
       <div ref={containerRef} className={containerClassName}>
@@ -273,7 +610,13 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
               aria-expanded={isOpen}
               variant="ghost"
               size="xs"
-              onClick={() => setIsOpen((prev) => !prev)}
+              onClick={() => {
+                if (isOpen) {
+                  handleCancel();
+                  return;
+                }
+                handleOpen();
+              }}
             >
               <span className="flex min-w-0 items-center gap-1.5">
                 {selectedProvider && (
@@ -290,205 +633,11 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
           <TooltipContent align="center">{value}</TooltipContent>
         </Tooltip>
 
-        {/* Dropdown content - rendered inline for testability */}
-        {isOpen && (
-          <div className="bg-dark border-border absolute bottom-full left-0 z-[1020] mb-1 w-82 overflow-hidden rounded-md border shadow-md">
-            {/* Search input */}
-            <div className="border-border border-b px-2 py-1">
-              <input
-                ref={inputRef}
-                type="text"
-                value={inputValue}
-                onChange={handleInputChange}
-                onKeyDown={handleKeyDown}
-                placeholder={inputPlaceholder ?? "Search [provider:model-name]"}
-                className="text-foreground placeholder:text-muted w-full bg-transparent text-xs outline-none"
-              />
-              {error && <div className="text-danger-soft mt-1 text-[10px]">{error}</div>}
-            </div>
-
-            {/* Scrollable list */}
-            <div ref={listRef} className="max-h-[280px] overflow-y-auto p-1">
-              {filteredModels.length === 0 ? (
-                <div className="text-muted py-2 text-center text-[10px]">No matching models</div>
-              ) : (
-                filteredModels.map((model, index) => (
-                  <div
-                    key={model}
-                    data-highlighted={index === highlightedIndex}
-                    onMouseEnter={() => setHighlightedIndex(index)}
-                    className={cn(
-                      "flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-xs cursor-pointer",
-                      index === highlightedIndex ? "bg-hover" : "hover:bg-hover",
-                      hiddenSet.has(model) && "opacity-50"
-                    )}
-                    onClick={() => handleSelectModel(model)}
-                    role="option"
-                    aria-selected={value === model}
-                  >
-                    <Check
-                      className={cn(
-                        "h-3 w-3 shrink-0",
-                        value === model ? "opacity-100" : "opacity-0"
-                      )}
-                    />
-                    <ProviderIcon
-                      provider={getModelProvider(model)}
-                      className="text-muted h-3 w-3 shrink-0"
-                    />
-                    <span className="min-w-0 flex-1 truncate">{model}</span>
-
-                    {/* Gateway toggle */}
-                    {gateway.canToggleModel(model) ? (
-                      <GatewayToggleButton
-                        active={gateway.modelUsesGateway(model)}
-                        onToggle={() => gateway.toggleModelGateway(model)}
-                        variant="bordered"
-                        size="sm"
-                        showTooltip
-                      />
-                    ) : (
-                      <span className="h-5 w-5" />
-                    )}
-                    {/* Visibility toggle - Eye with line-through when hidden */}
-                    {(onHideModel ?? onUnhideModel) && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              if (hiddenSet.has(model)) {
-                                onUnhideModel?.(model);
-                              } else {
-                                onHideModel?.(model);
-                              }
-                            }}
-                            className={cn(
-                              "relative flex h-5 w-5 items-center justify-center rounded-sm border transition-colors duration-150",
-                              hiddenSet.has(model)
-                                ? "text-muted-light border-muted-light/40"
-                                : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
-                            )}
-                            aria-label={
-                              hiddenSet.has(model)
-                                ? "Show model in selector"
-                                : "Hide model from selector"
-                            }
-                          >
-                            <Eye
-                              className={cn(
-                                "h-4 w-4 md:h-3 md:w-3",
-                                hiddenSet.has(model) ? "opacity-30" : "opacity-70"
-                              )}
-                            />
-                            {hiddenSet.has(model) && (
-                              <span className="bg-muted-light absolute h-px w-3 rotate-45" />
-                            )}
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent align="center">
-                          {hiddenSet.has(model)
-                            ? "Show model in selector"
-                            : "Hide model from selector"}
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
-
-                    {/* Default star */}
-                    {onSetDefaultModel ? (
-                      hiddenSet.has(model) ? (
-                        <span className="h-5 w-5" />
-                      ) : (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              onMouseDown={(e) => e.preventDefault()}
-                              onClick={(e) => handleSetDefault(e, model)}
-                              className={cn(
-                                "flex h-5 w-5 items-center justify-center rounded-sm transition-colors duration-150 cursor-pointer",
-                                defaultModel === model
-                                  ? "text-yellow-400 cursor-default"
-                                  : "text-muted-light hover:text-foreground"
-                              )}
-                              aria-label={
-                                defaultModel === model
-                                  ? "Current default model"
-                                  : "Set as default model"
-                              }
-                              disabled={defaultModel === model}
-                            >
-                              <Star
-                                className="h-4 w-4 md:h-3 md:w-3"
-                                fill={defaultModel === model ? "currentColor" : "none"}
-                              />
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent align="center">
-                            {defaultModel === model
-                              ? "Current default model"
-                              : "Set as default model"}
-                          </TooltipContent>
-                        </Tooltip>
-                      )
-                    ) : (
-                      <span className="h-5 w-5" />
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-
-            {/* Footer actions (last row in dropdown) */}
-            {(hiddenModels.length > 0 || onOpenSettings) && (
-              <div className="border-border flex flex-col gap-1 border-t px-2 py-1">
-                {hiddenModels.length > 0 && (
-                  <button
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setShowAllModels((prev) => !prev);
-                      setInputValue("");
-                      setHighlightedIndex(0);
-                    }}
-                    className="text-muted hover:text-foreground text-[10px] transition-colors"
-                  >
-                    {showAllModels ? "Show fewer models" : "Show all models…"}
-                  </button>
-                )}
-
-                {policyEnforced && (
-                  <div className="text-muted flex items-center gap-1 text-[10px]">
-                    <ShieldCheck className="h-3 w-3" aria-hidden />
-                    <span>Your settings are controlled by a policy.</span>
-                  </div>
-                )}
-
-                {onOpenSettings && (
-                  <button
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      onOpenSettings();
-                      handleCancel();
-                    }}
-                    className="text-muted hover:bg-hover hover:text-foreground flex w-full items-center justify-start gap-1.5 rounded-sm px-2 py-1 text-[11px] transition-colors"
-                  >
-                    <Settings className="h-3 w-3 shrink-0" />
-                    Model settings
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
+        {/* Dropdown content - rendered inline by default, but portaled in fixed mode. */}
+        {isOpen &&
+          (isFixedDropdown && typeof document !== "undefined" && document.body
+            ? createPortal(dropdownContent, document.body)
+            : dropdownContent)}
       </div>
     );
   }
