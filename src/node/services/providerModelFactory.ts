@@ -24,6 +24,7 @@ import {
   ANTHROPIC_OAUTH_THINKING_BETA,
   ANTHROPIC_OAUTH_USER_AGENT,
   ANTHROPIC_OAUTH_TOOL_PREFIX,
+  ANTHROPIC_OAUTH_SYSTEM_PREFIX,
 } from "@/common/constants/anthropicOAuth";
 import type { Config, ProviderConfig } from "@/node/config";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
@@ -587,10 +588,27 @@ export class ProviderModelFactory {
               let nextInput: Parameters<typeof fetch>[0] = input;
               let nextInit: Parameters<typeof fetch>[1] | undefined = init;
 
-              // Prefix tool names with mcp_ in request bodies (required by Anthropic OAuth API).
+              // Transform request body for Anthropic OAuth API compatibility.
               if (isMessagesEndpoint && method === "POST" && typeof init?.body === "string") {
                 try {
                   const json = JSON.parse(init.body) as Record<string, unknown>;
+
+                  // Prepend the Claude Code identity prefix to the system prompt.
+                  // Anthropic's server validates that OAuth requests include this;
+                  // without it the credential is rejected as unauthorized.
+                  if (Array.isArray(json.system)) {
+                    const systemArr = json.system as Array<Record<string, unknown>>;
+                    // Prepend the prefix as a new text block, and also concatenate
+                    // it with the first existing text block (matching Claude Code's
+                    // system prompt format).
+                    if (systemArr.length > 0 && systemArr[0].type === "text" && typeof systemArr[0].text === "string") {
+                      systemArr[0] = { ...systemArr[0], text: ANTHROPIC_OAUTH_SYSTEM_PREFIX + "\n\n" + systemArr[0].text };
+                    } else {
+                      systemArr.unshift({ type: "text", text: ANTHROPIC_OAUTH_SYSTEM_PREFIX });
+                    }
+                  } else if (typeof json.system === "string") {
+                    json.system = ANTHROPIC_OAUTH_SYSTEM_PREFIX + "\n\n" + json.system;
+                  }
 
                   // Prefix custom tool definitions only. Anthropic's built-in
                   // server-side tools (web_search, code_execution, text_editor, etc.)

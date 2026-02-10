@@ -33,6 +33,12 @@ export const ANTHROPIC_OAUTH_USER_AGENT = "claude-cli/2.1.2 (external, cli)";
 // Tool name prefix required by Anthropic's OAuth API.
 export const ANTHROPIC_OAUTH_TOOL_PREFIX = "mcp_";
 
+// System prompt prefix required by Anthropic's OAuth API.
+// The server validates that Claude Code OAuth requests include this identity
+// prefix in the system prompt; without it the credential is rejected.
+export const ANTHROPIC_OAUTH_SYSTEM_PREFIX =
+  "You are Claude Code, Anthropic's official CLI for Claude.";
+
 export function buildAnthropicAuthorizeUrl(input: {
   state: string;
   codeChallenge: string;
