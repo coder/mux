@@ -1,21 +1,24 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
 import { StreamManager } from "./streamManager";
 
 import type { HistoryService } from "./historyService";
+import { createTestHistoryService } from "./testHistoryService";
 import type { PartialService } from "./partialService";
 
 describe("StreamManager - model-only tool notifications", () => {
-  test("strips __mux_notifications before emitting tool-call-end", async () => {
-    const historyService: HistoryService = {
-      appendToHistory: mock(() => Promise.resolve({ success: true })),
-      getHistoryFromLatestBoundary: mock(() => Promise.resolve({ success: true, data: [] })),
-      getLastMessages: mock(() => Promise.resolve({ success: true as const, data: [] })),
-      updateHistory: mock(() => Promise.resolve({ success: true })),
-      truncateAfterMessage: mock(() => Promise.resolve({ success: true })),
-      clearHistory: mock(() => Promise.resolve({ success: true })),
-    } as unknown as HistoryService;
+  let historyService: HistoryService;
+  let historyCleanup: () => Promise<void>;
 
+  beforeEach(async () => {
+    ({ historyService, cleanup: historyCleanup } = await createTestHistoryService());
+  });
+
+  afterEach(async () => {
+    await historyCleanup();
+  });
+
+  test("strips __mux_notifications before emitting tool-call-end", async () => {
     const partialService: PartialService = {
       writePartial: mock(() => Promise.resolve({ success: true })),
       readPartial: mock(() => Promise.resolve(null)),
@@ -102,14 +105,6 @@ describe("StreamManager - model-only tool notifications", () => {
   });
 
   test("persists orphan web_search tool-result when tool-call mapping is missing", async () => {
-    const historyService: HistoryService = {
-      appendToHistory: mock(() => Promise.resolve({ success: true })),
-      getHistory: mock(() => Promise.resolve({ success: true, data: [] })),
-      updateHistory: mock(() => Promise.resolve({ success: true })),
-      truncateAfterMessage: mock(() => Promise.resolve({ success: true })),
-      clearHistory: mock(() => Promise.resolve({ success: true })),
-    } as unknown as HistoryService;
-
     const partialService: PartialService = {
       writePartial: mock(() => Promise.resolve({ success: true })),
       readPartial: mock(() => Promise.resolve(null)),
