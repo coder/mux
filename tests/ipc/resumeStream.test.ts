@@ -29,6 +29,10 @@ describeIntegration("resumeStream", () => {
       const collector1 = createStreamCollector(env.orpc, workspaceId);
       collector1.start();
       try {
+        // Ensure the onChat subscription has finished history replay before we send a new message.
+        // Otherwise the user message can appear twice (once from live events, once from replay).
+        await collector1.waitForSubscription(5000);
+
         // Start a stream with a bash command that outputs a specific word
         const expectedWord = "RESUMPTION_TEST_SUCCESS";
         void sendMessageWithModel(
