@@ -20,10 +20,11 @@ interface LogBatch {
 const LOG_LEVELS: readonly LogLevel[] = ["debug", "info", "warn", "error"];
 
 interface OutputTabProps {
+  // Required by the RightSidebar tab system, even though the log stream itself is global.
   workspaceId: string;
 }
 
-export function OutputTab(props: OutputTabProps) {
+export function OutputTab(_props: OutputTabProps) {
   const { api } = useAPI();
 
   const [entries, setEntries] = React.useState<LogEntry[]>([]);
@@ -31,10 +32,6 @@ export function OutputTab(props: OutputTabProps) {
   const [autoScroll, setAutoScroll] = React.useState(true);
 
   const scrollRef = React.useRef<HTMLDivElement>(null);
-
-  // The log stream is global/workspace-agnostic, but RightSidebar tabs are scoped per-workspace.
-  // Include the workspace ID in the subscription effect so switching workspaces cleanly resets the stream.
-  const workspaceId = props.workspaceId;
 
   React.useEffect(() => {
     if (!api) return;
@@ -73,7 +70,7 @@ export function OutputTab(props: OutputTabProps) {
       controller.abort();
       void iterator?.return?.();
     };
-  }, [api, levelFilter, workspaceId]);
+  }, [api, levelFilter]);
 
   // Auto-scroll on new entries when the user is at the bottom.
   React.useEffect(() => {
