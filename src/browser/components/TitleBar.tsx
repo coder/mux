@@ -149,11 +149,6 @@ export function TitleBar() {
     ) {
       lastHoverCheckTime.current = now;
       setIsCheckingOnHover(true);
-
-      // Safety net: clear spinner after check timeout + buffer,
-      // in case the status stream doesn't deliver a state change.
-      setTimeout(() => setIsCheckingOnHover(false), 35_000);
-
       api?.update.check().catch((error) => {
         console.error("Update check failed:", error);
         setIsCheckingOnHover(false);
