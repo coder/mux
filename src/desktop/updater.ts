@@ -11,7 +11,8 @@ const UPDATE_CHECK_TIMEOUT_MS = 30_000;
  * surfacing an error to the user. Covers:
  * - 404 (latest.yml not yet uploaded for a new release)
  * - Network errors (offline, DNS, timeout)
- * - GitHub rate-limiting (403)
+ * - GitHub rate-limiting (explicit rate-limit signatures only — bare 403s
+ *   may indicate persistent auth/config issues and should remain visible)
  */
 function isTransientUpdateError(error: Error): boolean {
   const msg = error.message;
@@ -19,7 +20,7 @@ function isTransientUpdateError(error: Error): boolean {
     /404|Not Found/i.test(msg) ||
     /ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN/i.test(msg) ||
     /network|socket hang up/i.test(msg) ||
-    /403|rate limit/i.test(msg)
+    /rate limit/i.test(msg)
   );
 }
 
@@ -107,11 +108,14 @@ export class UpdaterService {
     autoUpdater.on("error", (error) => {
       this.clearCheckTimeout();
 
-      // Transient errors (e.g., latest.yml not uploaded yet for a new release,
-      // or network blips) should not surface as errors to the user.
-      // Silently revert to idle so the next periodic or hover-triggered check
-      // will try again.
-      if (isTransientUpdateError(error)) {
+      // Transient errors during the *check* phase (e.g., latest.yml not yet
+      // uploaded for a new release, or network blips) should not surface as
+      // errors — silently revert to idle so the next check will retry.
+      //
+      // We only apply this backoff when the current state is "checking".
+      // Errors in other phases (downloading, available, etc.) should still
+      // surface so the user knows something went wrong with an active operation.
+      if (this.updateStatus.type === "checking" && isTransientUpdateError(error)) {
         log.debug("Update check hit transient error, backing off:", error.message);
         this.updateStatus = { type: "idle" };
         this.notifyRenderer();

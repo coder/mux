@@ -247,6 +247,49 @@ describe("UpdaterService", () => {
       });
     });
 
+    it("should surface bare 403 errors (not rate-limit specific)", async () => {
+      // A bare 403 without "rate limit" wording may indicate a persistent
+      // auth/config issue — should NOT be silently swallowed.
+      mockAutoUpdater.checkForUpdates.mockImplementation(() => {
+        setImmediate(() => {
+          mockAutoUpdater.emit("error", new Error("HttpError: 403 Forbidden"));
+        });
+        return new Promise(() => {
+          // Never resolves — events drive state
+        });
+      });
+
+      service.checkForUpdates();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(statusUpdates.find((s) => s.type === "error")).toEqual({
+        type: "error",
+        message: "HttpError: 403 Forbidden",
+      });
+    });
+
+    it("should surface transient-looking errors during download phase", async () => {
+      // A network error during download should NOT be silently dropped to idle.
+      // Transient backoff only applies during the "checking" phase.
+      mockAutoUpdater.checkForUpdates.mockImplementation(() => {
+        setImmediate(() => mockAutoUpdater.emit("update-available", { version: "2.0.0" }));
+        return new Promise(() => {
+          // Never resolves — events drive state
+        });
+      });
+      service.checkForUpdates();
+      await new Promise((r) => setImmediate(r));
+
+      // Simulate starting download then hitting a network error
+      mockAutoUpdater.emit("download-progress", { percent: 30 });
+      mockAutoUpdater.emit("error", new Error("getaddrinfo ENOTFOUND github.com"));
+
+      expect(statusUpdates.find((s) => s.type === "error")).toEqual({
+        type: "error",
+        message: "getaddrinfo ENOTFOUND github.com",
+      });
+    });
+
     it("should silently back off when promise rejects with transient error", async () => {
       mockAutoUpdater.checkForUpdates.mockImplementation(() => {
         return Promise.reject(new Error("HttpError: 404 Not Found"));
