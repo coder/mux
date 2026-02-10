@@ -56,7 +56,10 @@ export class OpenSSHTransport implements SSHTransport {
     });
 
     // Note: use -tt (not -t) so PTY allocation works even when stdin is a pipe.
-    const sshArgs: string[] = [options.forcePTY ? "-tt" : "-T", ...this.buildSSHArgs()];
+    const sshArgs: string[] = [
+      options.forcePTY ? "-tt" : "-T",
+      ...this.buildSSHArgs({ noControlMaster: options.noControlMaster }),
+    ];
 
     const connectTimeout =
       options.timeout !== undefined ? Math.min(Math.ceil(options.timeout), 15) : 15;
@@ -101,7 +104,7 @@ export class OpenSSHTransport implements SSHTransport {
     });
   }
 
-  private buildSSHArgs(): string[] {
+  private buildSSHArgs(options?: { noControlMaster?: boolean }): string[] {
     const args: string[] = [];
 
     if (this.config.port) {
@@ -115,9 +118,15 @@ export class OpenSSHTransport implements SSHTransport {
     }
 
     args.push("-o", "LogLevel=FATAL");
-    args.push("-o", "ControlMaster=auto");
-    args.push("-o", `ControlPath=${this.controlPath}`);
-    args.push("-o", "ControlPersist=60");
+
+    // SSH ControlMaster multiplexing corrupts large binary stdin pipes through
+    // ProxyCommand-based connections (e.g., Coder's `coder ssh --stdio` proxy).
+    // Disable multiplexing when the caller needs a dedicated connection for bulk data transfer.
+    if (!options?.noControlMaster) {
+      args.push("-o", "ControlMaster=auto");
+      args.push("-o", `ControlPath=${this.controlPath}`);
+      args.push("-o", "ControlPersist=60");
+    }
 
     return args;
   }

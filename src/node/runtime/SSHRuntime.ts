@@ -263,6 +263,7 @@ export class SSHRuntime extends RemoteRuntime {
       forcePTY: options.forcePTY,
       timeout: options.timeout,
       abortSignal: options.abortSignal,
+      noControlMaster: options.noControlMaster,
     });
   }
 
@@ -615,9 +616,12 @@ export class SSHRuntime extends RemoteRuntime {
     });
 
     const remoteAbortController = createAbortController(300_000, abortSignal);
+    // Disable SSH ControlMaster for the bundle pipe. Multiplexed channels through
+    // ProxyCommand-based connections (Coder SSH proxy) corrupt large binary transfers.
     const remoteStream = await this.exec(`cat > ${this.quoteForRemote(remoteBundlePath)}`, {
       cwd: "~",
       abortSignal: remoteAbortController.signal,
+      noControlMaster: true,
     });
 
     try {

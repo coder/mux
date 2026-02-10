@@ -267,7 +267,7 @@ export abstract class RemoteRuntime implements Runtime {
       write: async (chunk) => {
         const nodeStdin = childProcess.stdin;
         if (!nodeStdin || nodeStdin.destroyed) {
-          return;
+          throw new Error("Remote stdin closed unexpectedly");
         }
 
         await new Promise<void>((resolve, reject) => {
