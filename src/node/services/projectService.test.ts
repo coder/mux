@@ -236,8 +236,9 @@ exit 1
         const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
 
         expect(loggedArgs[0]).toBe("clone");
-        expect(loggedArgs[1]).toBe("https://github.com/owner/repo.git");
-        expect(loggedArgs[2]).toBe(path.resolve(cloneParentDir, "repo"));
+        expect(loggedArgs[1]).toBe("--");
+        expect(loggedArgs[2]).toBe("https://github.com/owner/repo.git");
+        expect(loggedArgs[3]).toBe(path.resolve(cloneParentDir, "repo"));
       } finally {
         process.env.PATH = originalPath;
         if (originalFakeGitArgsLogPath === undefined) {

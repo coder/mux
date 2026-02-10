@@ -315,7 +315,9 @@ export class ProjectService {
       await fsPromises.mkdir(cloneParentDir, { recursive: true });
 
       const cloneUrl = normalizeRepoUrlForClone(repoUrl);
-      using cloneProc = execFileAsync("git", ["clone", cloneUrl, normalizedPath]);
+      // Use -- to terminate options so user-supplied URLs starting with "-" are
+      // never interpreted as git flags.
+      using cloneProc = execFileAsync("git", ["clone", "--", cloneUrl, normalizedPath]);
       await cloneProc.result;
 
       // Use editConfig to do an atomic read-modify-write, avoiding overwriting
