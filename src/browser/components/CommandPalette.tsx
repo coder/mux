@@ -77,13 +77,16 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (matchesKeybind(e, KEYBINDS.CANCEL) && isOpen) {
+        // Intercept Escape in capture phase so it doesn't reach global bubble handlers
+        // (e.g., stream interrupt).
         e.preventDefault();
+        e.stopPropagation();
         resetPaletteState();
         close();
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true });
   }, [isOpen, close, resetPaletteState]);
 
   // Reset state whenever palette visibility changes

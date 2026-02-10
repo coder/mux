@@ -48,10 +48,13 @@ const DiagramModal: React.FC<{ children: ReactNode; onClose: () => void }> = ({
 }) => {
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
     };
-    window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
+    window.addEventListener("keydown", handleEscape, { capture: true });
+    return () => window.removeEventListener("keydown", handleEscape, { capture: true });
   }, [onClose]);
 
   return (

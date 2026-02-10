@@ -19,14 +19,19 @@ void mock.module("@/browser/contexts/API", () => ({
 
 describe("useAIViewKeybinds", () => {
   beforeEach(() => {
-    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
-    globalThis.document = globalThis.window.document;
+    const domWindow = new GlobalWindow() as unknown as Window & typeof globalThis;
+    globalThis.window = domWindow;
+    globalThis.document = domWindow.document;
+    // happy-dom doesn't define HTMLElement on globalThis by default.
+    // Our keybind helpers use `target instanceof HTMLElement`, so polyfill it for tests.
+    (globalThis as unknown as { HTMLElement: unknown }).HTMLElement = domWindow.HTMLElement;
   });
 
   afterEach(() => {
     cleanup();
     globalThis.window = undefined as unknown as Window & typeof globalThis;
     globalThis.document = undefined as unknown as Document;
+    (globalThis as unknown as { HTMLElement: unknown }).HTMLElement = undefined;
     currentClientMock = {};
   });
 
@@ -60,6 +65,134 @@ describe("useAIViewKeybinds", () => {
     document.body.dispatchEvent(
       new window.KeyboardEvent("keydown", {
         key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+
+    expect(interruptStream.mock.calls.length).toBe(1);
+  });
+
+  test("Escape does not interrupt when the event target is an <input>", () => {
+    const interruptStream = mock(() =>
+      Promise.resolve({ success: true as const, data: undefined })
+    );
+    currentClientMock = {
+      workspace: {
+        interruptStream,
+      },
+    };
+
+    const chatInputAPI: RefObject<ChatInputAPI | null> = { current: null };
+
+    renderHook(() =>
+      useAIViewKeybinds({
+        workspaceId: "ws",
+        canInterrupt: true,
+        showRetryBarrier: false,
+        chatInputAPI,
+        jumpToBottom: () => undefined,
+        handleOpenTerminal: () => undefined,
+        handleOpenInEditor: () => undefined,
+        aggregator: undefined,
+        setEditingMessage: () => undefined,
+        vimEnabled: false,
+      })
+    );
+
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+
+    input.dispatchEvent(
+      new window.KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+
+    expect(interruptStream.mock.calls.length).toBe(0);
+  });
+
+  test("Escape interrupts when an editable element opts in", () => {
+    const interruptStream = mock(() =>
+      Promise.resolve({ success: true as const, data: undefined })
+    );
+    currentClientMock = {
+      workspace: {
+        interruptStream,
+      },
+    };
+
+    const chatInputAPI: RefObject<ChatInputAPI | null> = { current: null };
+
+    renderHook(() =>
+      useAIViewKeybinds({
+        workspaceId: "ws",
+        canInterrupt: true,
+        showRetryBarrier: false,
+        chatInputAPI,
+        jumpToBottom: () => undefined,
+        handleOpenTerminal: () => undefined,
+        handleOpenInEditor: () => undefined,
+        aggregator: undefined,
+        setEditingMessage: () => undefined,
+        vimEnabled: false,
+      })
+    );
+
+    const input = document.createElement("input");
+    input.setAttribute("data-escape-interrupts-stream", "true");
+    document.body.appendChild(input);
+    input.focus();
+
+    input.dispatchEvent(
+      new window.KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+
+    expect(interruptStream.mock.calls.length).toBe(1);
+  });
+
+  test("Ctrl+C interrupts in vim mode even when an <input> is focused", () => {
+    const interruptStream = mock(() =>
+      Promise.resolve({ success: true as const, data: undefined })
+    );
+    currentClientMock = {
+      workspace: {
+        interruptStream,
+      },
+    };
+
+    const chatInputAPI: RefObject<ChatInputAPI | null> = { current: null };
+
+    renderHook(() =>
+      useAIViewKeybinds({
+        workspaceId: "ws",
+        canInterrupt: true,
+        showRetryBarrier: false,
+        chatInputAPI,
+        jumpToBottom: () => undefined,
+        handleOpenTerminal: () => undefined,
+        handleOpenInEditor: () => undefined,
+        aggregator: undefined,
+        setEditingMessage: () => undefined,
+        vimEnabled: true,
+      })
+    );
+
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+
+    input.dispatchEvent(
+      new window.KeyboardEvent("keydown", {
+        key: "c",
+        ctrlKey: true,
         bubbles: true,
         cancelable: true,
       })
