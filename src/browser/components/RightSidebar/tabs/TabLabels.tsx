@@ -115,6 +115,10 @@ export const ExplorerTabLabel: React.FC = () => (
   </span>
 );
 
+export function OutputTabLabel() {
+  return <>Output</>;
+}
+
 interface FileTabLabelProps {
   /** File path (relative to workspace) */
   filePath: string;

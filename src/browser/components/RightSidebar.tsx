@@ -18,6 +18,7 @@ import { CostsTab } from "./RightSidebar/CostsTab";
 import { ReviewPanel } from "./RightSidebar/CodeReview/ReviewPanel";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { StatsTab } from "./RightSidebar/StatsTab";
+import { OutputTab } from "./OutputTab";
 
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { SidebarCollapseButton } from "./ui/SidebarCollapseButton";
@@ -69,6 +70,7 @@ import {
 import {
   CostsTabLabel,
   ExplorerTabLabel,
+  OutputTabLabel,
   FileTabLabel,
   ReviewTabLabel,
   StatsTabLabel,
@@ -345,6 +347,8 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       label = <ExplorerTabLabel />;
     } else if (tab === "stats") {
       label = <StatsTabLabel workspaceId={props.workspaceId} />;
+    } else if (tab === "output") {
+      label = <OutputTabLabel />;
     } else if (isTerminal) {
       const terminalIndex = terminalTabs.indexOf(tab);
       label = (
@@ -385,11 +389,13 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
   const reviewPanelId = `${tabsetBaseId}-panel-review`;
   const explorerPanelId = `${tabsetBaseId}-panel-explorer`;
   const statsPanelId = `${tabsetBaseId}-panel-stats`;
+  const outputPanelId = `${tabsetBaseId}-panel-output`;
 
   const costsTabId = `${tabsetBaseId}-tab-costs`;
   const reviewTabId = `${tabsetBaseId}-tab-review`;
   const explorerTabId = `${tabsetBaseId}-tab-explorer`;
   const statsTabId = `${tabsetBaseId}-tab-stats`;
+  const outputTabId = `${tabsetBaseId}-tab-output`;
 
   // Generate sortable IDs for tabs in this tabset
   const sortableIds = items.map((item) => `${props.node.id}:${item.tab}`);
@@ -464,6 +470,12 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
         {props.node.activeTab === "costs" && (
           <div role="tabpanel" id={costsPanelId} aria-labelledby={costsTabId}>
             <CostsTab workspaceId={props.workspaceId} />
+          </div>
+        )}
+
+        {props.node.activeTab === "output" && (
+          <div role="tabpanel" id={outputPanelId} aria-labelledby={outputTabId} className="h-full">
+            <OutputTab workspaceId={props.workspaceId} />
           </div>
         )}
 
