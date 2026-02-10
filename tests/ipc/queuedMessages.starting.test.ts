@@ -76,7 +76,7 @@ describe("Queued messages during stream start", () => {
       }
 
       const sawStartingWindow = await waitFor(() => {
-        return session.isStreamStarting() && !aiService.isStreaming(workspaceId);
+        return session.isPreparingTurn() && !aiService.isStreaming(workspaceId);
       }, 5000);
       if (!sawStartingWindow) {
         throw new Error("Stream never entered starting window before follow-up could queue");
