@@ -21,7 +21,6 @@ import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
 import { useAPI } from "@/browser/contexts/API";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import {
   formatMuxGatewayBalance,
@@ -162,7 +161,6 @@ export function ProvidersSection() {
   );
 
   const { providersExpandedProvider, setProvidersExpandedProvider } = useSettings();
-  const { options: providerOptions, setAnthropicOptions } = useProviderOptions();
 
   const { api } = useAPI();
   const { config, refresh, updateOptimistically } = useProvidersConfig();
@@ -1497,22 +1495,22 @@ export function ProvidersSection() {
                     </div>
 
                     <Select
-                      value={providerOptions.anthropic?.cacheTtl ?? "default"}
+                      value={config?.anthropic?.cacheTtl ?? "default"}
                       onValueChange={(next) => {
+                        if (!api) {
+                          return;
+                        }
                         if (next !== "default" && next !== "5m" && next !== "1h") {
                           return;
                         }
 
-                        if (next === "default") {
-                          const nextAnthropicOptions = { ...(providerOptions.anthropic ?? {}) };
-                          delete nextAnthropicOptions.cacheTtl;
-                          setAnthropicOptions(nextAnthropicOptions);
-                          return;
-                        }
-
-                        setAnthropicOptions({
-                          ...(providerOptions.anthropic ?? {}),
-                          cacheTtl: next,
+                        const cacheTtl = next === "default" ? undefined : next;
+                        updateOptimistically("anthropic", { cacheTtl });
+                        void api.providers.setProviderConfig({
+                          provider: "anthropic",
+                          keyPath: ["cacheTtl"],
+                          // Empty string clears providers.jsonc key; backend defaults to 5m when unset.
+                          value: next === "default" ? "" : next,
                         });
                       }}
                     >

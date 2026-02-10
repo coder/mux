@@ -319,6 +319,13 @@ export function parseModelString(modelString: string): [string, string] {
   return [providerName, modelId];
 }
 
+function parseAnthropicCacheTtl(value: unknown): AnthropicCacheTtl | undefined {
+  if (value === "5m" || value === "1h") {
+    return value;
+  }
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Model cost tracking
 // ---------------------------------------------------------------------------
@@ -445,8 +452,25 @@ export class ProviderModelFactory {
       }
 
       // Load providers configuration - the ONLY source of truth
-      const providersConfig = this.config.loadProvidersConfig();
-      let providerConfig = providersConfig?.[providerName] ?? {};
+      const providersConfig = this.config.loadProvidersConfig() ?? {};
+
+      // Backend config is authoritative for Anthropic prompt cache TTL on any
+      // Anthropic-routed model (direct Anthropic, mux-gateway:anthropic/*,
+      // openrouter:anthropic/*). We still allow request-level values when config
+      // is unset for backward compatibility with older clients.
+      const configAnthropicCacheTtl = parseAnthropicCacheTtl(providersConfig.anthropic?.cacheTtl);
+      const isAnthropicRoutedModel =
+        providerName === "anthropic" || modelId.startsWith("anthropic/");
+      if (isAnthropicRoutedModel && configAnthropicCacheTtl && muxProviderOptions) {
+        muxProviderOptions.anthropic = {
+          ...(muxProviderOptions.anthropic ?? {}),
+          cacheTtl: configAnthropicCacheTtl,
+        };
+      }
+      const effectiveAnthropicCacheTtl =
+        muxProviderOptions?.anthropic?.cacheTtl ?? configAnthropicCacheTtl;
+
+      let providerConfig = providersConfig[providerName] ?? {};
 
       // Providers can be disabled in providers.jsonc without deleting credentials.
       if (
@@ -506,8 +530,10 @@ export class ProviderModelFactory {
         // (SDK doesn't translate providerOptions to cache_control for these)
         // Use getProviderFetch to preserve any user-configured custom fetch (e.g., proxies)
         const baseFetch = getProviderFetch(providerConfig);
-        const cacheTtl = muxProviderOptions?.anthropic?.cacheTtl;
-        const fetchWithCacheControl = wrapFetchWithAnthropicCacheControl(baseFetch, cacheTtl);
+        const fetchWithCacheControl = wrapFetchWithAnthropicCacheControl(
+          baseFetch,
+          effectiveAnthropicCacheTtl
+        );
         const provider = createAnthropic({
           ...normalizedConfig,
           fetch: fetchWithCacheControl,
@@ -1020,9 +1046,8 @@ export class ProviderModelFactory {
         // Use getProviderFetch to preserve any user-configured custom fetch (e.g., proxies)
         const baseFetch = getProviderFetch(providerConfig);
         const isAnthropicModel = modelId.startsWith("anthropic/");
-        const cacheTtl = muxProviderOptions?.anthropic?.cacheTtl;
         const fetchWithCacheControl = isAnthropicModel
-          ? wrapFetchWithAnthropicCacheControl(baseFetch, cacheTtl)
+          ? wrapFetchWithAnthropicCacheControl(baseFetch, effectiveAnthropicCacheTtl)
           : baseFetch;
         const fetchWithAutoLogout = wrapFetchWithMuxGatewayAutoLogout(
           fetchWithCacheControl,
