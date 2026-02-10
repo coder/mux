@@ -16,9 +16,19 @@ export class VoiceService {
     try {
       // Get OpenAI API key from config
       const providersConfig = this.config.loadProvidersConfig() ?? {};
-      const openaiConfig = providersConfig.openai as { apiKey?: string } | undefined;
-      const apiKey = openaiConfig?.apiKey;
+      const openaiConfig = providersConfig.openai as
+        | { apiKey?: string; enabled?: unknown }
+        | undefined;
 
+      if (openaiConfig?.enabled === false) {
+        return {
+          success: false,
+          error:
+            "OpenAI provider is disabled. Enable it in Settings → Providers to use voice input.",
+        };
+      }
+
+      const apiKey = openaiConfig?.apiKey;
       if (!apiKey) {
         return {
           success: false,

@@ -13,6 +13,7 @@ import type { VoiceInputState } from "@/browser/hooks/useVoiceInput";
 interface VoiceInputButtonProps {
   state: VoiceInputState;
   isApiKeySet: boolean;
+  isProviderEnabled: boolean;
   shouldShowUI: boolean;
   requiresSecureContext: boolean;
   onToggle: () => void;
@@ -32,13 +33,16 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
   if (!props.shouldShowUI) return null;
 
   const needsHttps = props.requiresSecureContext;
-  const needsApiKey = !needsHttps && !props.isApiKeySet;
-  const isDisabled = needsHttps || needsApiKey;
+  const providerDisabled = !needsHttps && !props.isProviderEnabled;
+  const needsApiKey = !needsHttps && !providerDisabled && !props.isApiKeySet;
+  const isDisabled = needsHttps || providerDisabled || needsApiKey;
 
   const label = isDisabled
     ? needsHttps
       ? "Voice input (requires HTTPS)"
-      : "Voice input (requires OpenAI API key)"
+      : providerDisabled
+        ? "Voice input (OpenAI provider disabled)"
+        : "Voice input (requires OpenAI API key)"
     : props.state === "recording"
       ? "Stop recording"
       : props.state === "transcribing"
@@ -80,6 +84,12 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
             Voice input requires a secure connection.
             <br />
             Use HTTPS or access via localhost.
+          </>
+        ) : providerDisabled ? (
+          <>
+            Voice input is disabled because OpenAI provider is turned off.
+            <br />
+            Enable OpenAI in Settings → Providers.
           </>
         ) : needsApiKey ? (
           <>

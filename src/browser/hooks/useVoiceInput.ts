@@ -20,6 +20,8 @@ export interface UseVoiceInputOptions {
   /** Called after successful transcription if stop({ send: true }) was used */
   onSend?: () => void;
   openAIKeySet: boolean;
+  /** Whether the OpenAI provider is enabled in Settings → Providers. */
+  openAIProviderEnabled: boolean;
   /**
    * When true, hook manages global keybinds during recording:
    * - Space: stop and send (requires release after start)
@@ -35,6 +37,7 @@ export interface UseVoiceInputResult {
   state: VoiceInputState;
   isSupported: boolean;
   isApiKeySet: boolean;
+  isProviderEnabled: boolean;
   /** False on touch devices (they have native keyboard dictation) */
   shouldShowUI: boolean;
   /** True when running over HTTP (not localhost) - microphone requires secure context */
@@ -215,6 +218,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
       HAS_GET_USER_MEDIA &&
       !HAS_TOUCH_DICTATION &&
       state === "idle" &&
+      callbacksRef.current.openAIProviderEnabled &&
       callbacksRef.current.openAIKeySet;
 
     if (!canStart) return;
@@ -371,6 +375,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
     state,
     isSupported: HAS_MEDIA_RECORDER && HAS_GET_USER_MEDIA,
     isApiKeySet: callbacksRef.current.openAIKeySet,
+    isProviderEnabled: callbacksRef.current.openAIProviderEnabled,
     shouldShowUI: HAS_MEDIA_RECORDER && !HAS_TOUCH_DICTATION,
     requiresSecureContext: HAS_MEDIA_RECORDER && !HAS_GET_USER_MEDIA,
     mediaRecorder,
