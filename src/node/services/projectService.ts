@@ -139,24 +139,25 @@ function deriveRepoFolderName(repoUrl: string): string {
  * All other inputs (HTTPS URLs, SSH URLs, SCP-style, etc.) pass through unchanged.
  */
 function normalizeRepoUrlForClone(repoUrl: string): string {
-  // Strip query strings and fragments that may be present when URLs are copied
-  // from web pages (e.g. "...repo.git?tab=readme#section"). These are not valid
-  // for git clone and would cause failures.
-  const cleaned = repoUrl.replace(/[?#].*$/, "");
-
   // owner/repo shorthand: exactly two non-empty segments separated by a single slash,
   // where the first segment looks like a GitHub username (letters, digits, hyphens).
   // Excludes local paths like ../repo, ./foo, foo/bar/baz, and absolute paths.
   // Note: bare `foo/bar` style local relative paths are intentionally treated as GitHub
   // shorthand here because this function is only called from the Clone dialog, which is
   // specifically for remote repos. Users cloning local repos should use the "Local folder" tab.
-  if (/^[a-zA-Z0-9][\w-]*\/[a-zA-Z0-9][\w.-]*$/.test(cleaned)) {
+  if (/^[a-zA-Z0-9][\w-]*\/[a-zA-Z0-9][\w.-]*$/.test(repoUrl)) {
     // Strip existing .git suffix before appending to avoid double .git (e.g. owner/repo.git → owner/repo.git.git)
-    const withoutGitSuffix = cleaned.replace(/\.git$/i, "");
+    const withoutGitSuffix = repoUrl.replace(/\.git$/i, "");
     return `https://github.com/${withoutGitSuffix}.git`;
   }
 
-  return cleaned;
+  // Strip query strings and fragments only from URL-like inputs (protocol:// or git@),
+  // not from local paths where # and ? may be valid filename characters.
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(repoUrl) || repoUrl.startsWith("git@")) {
+    return repoUrl.replace(/[?#].*$/, "");
+  }
+
+  return repoUrl;
 }
 
 const FILE_COMPLETIONS_CACHE_TTL_MS = 10_000;
@@ -266,6 +267,8 @@ export class ProjectService {
   async clone(
     input: CloneProjectParams
   ): Promise<Result<{ projectConfig: ProjectConfig; normalizedPath: string }>> {
+    // Hoisted so the catch block can clean up partial clones.
+    let normalizedPath: string | undefined;
     try {
       const repoUrl = input.repoUrl.trim();
       if (!repoUrl) {
@@ -278,7 +281,7 @@ export class ProjectService {
         config.defaultProjectCloneDir
       );
       const repoFolderName = deriveRepoFolderName(repoUrl);
-      const normalizedPath = path.join(cloneParentDir, repoFolderName);
+      normalizedPath = path.join(cloneParentDir, repoFolderName);
 
       if (config.projects.has(normalizedPath)) {
         return Err(`Project already exists at ${normalizedPath}`);
@@ -324,18 +327,29 @@ export class ProjectService {
       // unrelated config changes that may have occurred during the clone.
       // Re-check inside the callback to avoid overwriting a project entry that
       // was concurrently added by another process/window during clone.
+      // normalizedPath is guaranteed to be set by this point (defined before clone).
+      const clonedPath = normalizedPath;
       const projectConfig: ProjectConfig = { workspaces: [] };
       await this.config.editConfig((freshConfig) => {
-        if (freshConfig.projects.has(normalizedPath)) {
+        if (freshConfig.projects.has(clonedPath)) {
           return freshConfig; // Already registered — don't overwrite
         }
         const updatedProjects = new Map(freshConfig.projects);
-        updatedProjects.set(normalizedPath, projectConfig);
+        updatedProjects.set(clonedPath, projectConfig);
         return { ...freshConfig, projects: updatedProjects };
       });
 
-      return Ok({ projectConfig, normalizedPath });
+      return Ok({ projectConfig, normalizedPath: clonedPath });
     } catch (error) {
+      // Best-effort cleanup of partial clone directory so the user can retry
+      // without hitting "Destination already exists".
+      if (normalizedPath) {
+        try {
+          await fsPromises.rm(normalizedPath, { recursive: true, force: true });
+        } catch {
+          // Ignore cleanup errors — the original error is more important.
+        }
+      }
       const message = error instanceof Error ? error.message : String(error);
       return Err(`Failed to clone repository: ${message}`);
     }
