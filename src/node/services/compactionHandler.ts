@@ -4,7 +4,6 @@ import assert from "@/common/utils/assert";
 import * as path from "path";
 
 import type { HistoryService } from "./historyService";
-import type { PartialService } from "./partialService";
 
 import type { StreamEndEvent } from "@/common/types/stream";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
@@ -213,7 +212,6 @@ function getNextCompactionEpoch(messages: MuxMessage[]): number {
 interface CompactionHandlerOptions {
   workspaceId: string;
   historyService: HistoryService;
-  partialService: PartialService;
   sessionDir: string;
   telemetryService?: TelemetryService;
   emitter: EventEmitter;
@@ -235,7 +233,6 @@ export class CompactionHandler {
   private readonly sessionDir: string;
   private readonly postCompactionStatePath: string;
   private persistedPendingStateLoaded = false;
-  private readonly partialService: PartialService;
   private readonly telemetryService?: TelemetryService;
   private readonly emitter: EventEmitter;
   private readonly processedCompactionRequestIds: Set<string> = new Set<string>();
@@ -257,7 +254,6 @@ export class CompactionHandler {
     this.historyService = options.historyService;
     this.sessionDir = trimmedSessionDir;
     this.postCompactionStatePath = path.join(trimmedSessionDir, POST_COMPACTION_STATE_FILENAME);
-    this.partialService = options.partialService;
     this.telemetryService = options.telemetryService;
     this.emitter = options.emitter;
     this.onCompactionComplete = options.onCompactionComplete;
@@ -599,10 +595,10 @@ export class CompactionHandler {
     // CRITICAL: Delete partial.json BEFORE persisting compaction summary.
     // This prevents a race condition where:
     // 1. CompactionHandler persists summary
-    // 2. sendQueuedMessages triggers commitToHistory
-    // 3. commitToHistory finds stale partial.json and appends it to history
-    // By deleting partial first, commitToHistory becomes a no-op
-    const deletePartialResult = await this.partialService.deletePartial(this.workspaceId);
+    // 2. sendQueuedMessages triggers commitPartial
+    // 3. commitPartial finds stale partial.json and appends it to history
+    // By deleting partial first, commitPartial becomes a no-op
+    const deletePartialResult = await this.historyService.deletePartial(this.workspaceId);
     if (!deletePartialResult.success) {
       log.warn(`Failed to delete partial before compaction: ${deletePartialResult.error}`);
       // Continue anyway - the partial may not exist, which is fine

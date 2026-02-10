@@ -34,7 +34,6 @@ import {
   stripNoisyErrorPrefix,
   type StreamErrorPayload,
 } from "@/node/services/utils/sendMessageError";
-import type { PartialService } from "./partialService";
 import type { HistoryService } from "./historyService";
 import { addUsage, accumulateProviderMetadata } from "@/common/utils/tokens/usageHelpers";
 import { linkAbortSignal } from "@/node/utils/abort";
@@ -317,7 +316,6 @@ export class StreamManager extends EventEmitter {
   private streamLocks = new Map<WorkspaceId, AsyncMutex>();
   private readonly PARTIAL_WRITE_THROTTLE_MS = 500;
   private readonly historyService: HistoryService;
-  private readonly partialService: PartialService;
   private mcpServerManager?: MCPServerManager;
   private readonly sessionUsageService?: SessionUsageService;
   // Token tracker for live streaming statistics
@@ -326,14 +324,9 @@ export class StreamManager extends EventEmitter {
   // When frontend retries, buildProviderOptions will omit these IDs
   private lostResponseIds = new Set<string>();
 
-  constructor(
-    historyService: HistoryService,
-    partialService: PartialService,
-    sessionUsageService?: SessionUsageService
-  ) {
+  constructor(historyService: HistoryService, sessionUsageService?: SessionUsageService) {
     super();
     this.historyService = historyService;
-    this.partialService = partialService;
     this.sessionUsageService = sessionUsageService;
   }
 
@@ -427,7 +420,7 @@ export class StreamManager extends EventEmitter {
           parts: streamInfo.parts, // Parts array includes reasoning, text, and tools
         };
 
-        await this.partialService.writePartial(workspaceId as string, partialMessage);
+        await this.historyService.writePartial(workspaceId as string, partialMessage);
         streamInfo.lastPartialWriteTime = Date.now();
       } catch (error) {
         log.error("Failed to write partial message:", error);
@@ -1190,7 +1183,7 @@ export class StreamManager extends EventEmitter {
 
     // CRITICAL: Flush partial to disk BEFORE emitting event
     // This ensures listeners (like sendQueuedMessages) see the tool result when they
-    // read partial.json via commitToHistory. Without this await, there's a race condition
+    // read partial.json via commitPartial. Without this await, there's a race condition
     // where the partial is read before the tool result is written, causing "amnesia".
     await this.flushPartialWrite(workspaceId, streamInfo);
 
@@ -1837,7 +1830,7 @@ export class StreamManager extends EventEmitter {
 
               // CRITICAL: Delete partial.json before updating chat.jsonl
               // On successful completion, partial.json becomes stale and must be removed
-              await this.partialService.deletePartial(workspaceId as string);
+              await this.historyService.deletePartial(workspaceId as string);
 
               // Update the placeholder message in chat.jsonl with final content
               await this.historyService.updateHistory(workspaceId as string, finalAssistantMessage);
@@ -2065,7 +2058,7 @@ export class StreamManager extends EventEmitter {
     await this.awaitPendingPartialWrite(streamInfo);
 
     // Write error state to disk - await to ensure consistent state before any resume.
-    await this.partialService.writePartial(workspaceId as string, errorPartialMessage);
+    await this.historyService.writePartial(workspaceId as string, errorPartialMessage);
 
     // Emit error event.
     this.emit("error", createErrorEvent(workspaceId as string, payload));
@@ -2140,7 +2133,7 @@ export class StreamManager extends EventEmitter {
 
     if (!preserveParts) {
       try {
-        await this.partialService.deletePartial(workspaceId as string);
+        await this.historyService.deletePartial(workspaceId as string);
       } catch (deleteError) {
         const logger = options?.workspaceLog ?? this.getWorkspaceLogger(workspaceId, streamInfo);
         logger.warn("Failed to clear partial state before retry", { error: deleteError });

@@ -4,19 +4,12 @@ import { MutexMap } from "./mutexMap";
  * Shared file operation lock for all workspace-related file services.
  *
  * Why this exists:
- * Multiple services (HistoryService, PartialService) operate on files within
- * the same workspace directory. When these services call each other while holding
- * locks, separate mutex instances can cause deadlock:
- *
- * Deadlock scenario with separate locks:
- * 1. PartialService.commitToHistory() acquires partialService.fileLocks[workspace]
- * 2. Inside commitToHistory, calls historyService.updateHistory()
- * 3. historyService.updateHistory() tries to acquire historyService.fileLocks[workspace]
- * 4. If another operation holds historyService.fileLocks and tries to acquire
- *    partialService.fileLocks → DEADLOCK
+ * Workspace persistence paths (chat.jsonl + partial.json) can compose operations
+ * that touch the same directory in different orders. Separate mutex instances can
+ * deadlock when one operation needs to call into another while a lock is held.
  *
  * Solution:
- * All workspace file services share this single MutexMap instance. This ensures:
+ * All workspace file operations share this single MutexMap instance. This ensures:
  * - Only one file operation per workspace at a time across ALL services
  * - Nested calls within the same operation won't try to re-acquire the lock
  *   (MutexMap allows this by queuing operations)

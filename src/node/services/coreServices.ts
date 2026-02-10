@@ -6,7 +6,6 @@ import * as os from "os";
 import * as path from "path";
 import type { Config } from "@/node/config";
 import { HistoryService } from "@/node/services/historyService";
-import { PartialService } from "@/node/services/partialService";
 import { InitStateManager } from "@/node/services/initStateManager";
 import { ProviderService } from "@/node/services/providerService";
 import { AIService } from "@/node/services/aiService";
@@ -39,7 +38,6 @@ export interface CoreServicesOptions {
 
 export interface CoreServices {
   historyService: HistoryService;
-  partialService: PartialService;
   initStateManager: InitStateManager;
   providerService: ProviderService;
   backgroundProcessManager: BackgroundProcessManager;
@@ -56,7 +54,6 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
   const { config, extensionMetadataPath } = opts;
 
   const historyService = new HistoryService(config);
-  const partialService = new PartialService(config, historyService);
   const initStateManager = new InitStateManager(config);
   const providerService = new ProviderService(config, opts.policyService);
   const backgroundProcessManager = new BackgroundProcessManager(
@@ -67,7 +64,6 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
   const aiService = new AIService(
     config,
     historyService,
-    partialService,
     initStateManager,
     providerService,
     backgroundProcessManager,
@@ -91,7 +87,6 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
   const workspaceService = new WorkspaceService(
     config,
     historyService,
-    partialService,
     aiService,
     initStateManager,
     extensionMetadata,
@@ -107,7 +102,6 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
   const taskService = new TaskService(
     config,
     historyService,
-    partialService,
     aiService,
     workspaceService,
     initStateManager
@@ -117,7 +111,6 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
 
   return {
     historyService,
-    partialService,
     initStateManager,
     providerService,
     backgroundProcessManager,

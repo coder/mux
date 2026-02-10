@@ -11,7 +11,6 @@ import { AgentSession } from "./agentSession";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import type { HistoryService } from "./historyService";
 import type { InitStateManager } from "./initStateManager";
-import type { PartialService } from "./partialService";
 import { DisposableTempDir } from "./tempDir";
 import { createTestHistoryService } from "./testHistoryService";
 
@@ -47,8 +46,6 @@ function getEditedFilePaths(attachments: PostCompactionAttachment[]): string[] {
 }
 
 function createSessionForHistory(historyService: HistoryService, sessionDir: string): AgentSession {
-  const partialService: PartialService = {} as unknown as PartialService;
-
   const aiEmitter = new EventEmitter();
   const aiService: AIService = {
     on(eventName: string | symbol, listener: (...args: unknown[]) => void) {
@@ -88,7 +85,6 @@ function createSessionForHistory(historyService: HistoryService, sessionDir: str
     workspaceId: "workspace-post-compaction-test",
     config,
     historyService,
-    partialService,
     aiService,
     initStateManager,
     backgroundProcessManager,

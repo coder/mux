@@ -53,6 +53,7 @@ description: Agent instructions for AI assistants working on the Mux codebase
 
 HistoryService is pure local disk I/O with a single dependency (`getSessionDir`). **Always use a real instance** via `createTestHistoryService()` (`src/node/services/testHistoryService.ts`) rather than mocking.
 
+- Partial message lifecycle (`readPartial` / `writePartial` / `deletePartial` / `commitPartial`) is part of HistoryService; there is no separate PartialService.
 - For pre-seeded data: call `historyService.appendToHistory()` in `beforeEach`
 - For error injection: use real instance + `spyOn(historyService, "method").mockRejectedValueOnce(...)`
 - For call tracking: `spyOn(historyService, "method")` without `mockImplementation` — real impl runs, calls are recorded

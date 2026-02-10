@@ -4,7 +4,6 @@ import type { Config } from "@/node/config";
 import type { AIService } from "@/node/services/aiService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { InitStateManager } from "@/node/services/initStateManager";
-import type { PartialService } from "@/node/services/partialService";
 import type { SendMessageError } from "@/common/types/errors";
 import type { MuxMessage } from "@/common/types/message";
 import type { Result } from "@/common/types/result";
@@ -29,10 +28,6 @@ describe("AgentSession pre-stream errors", () => {
 
     const { historyService, cleanup } = await createTestHistoryService();
     historyCleanup = cleanup;
-
-    const partialService = {
-      commitToHistory: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-    } as unknown as PartialService;
 
     const aiEmitter = new EventEmitter();
     const streamMessage = mock((_history: MuxMessage[]) => {
@@ -64,7 +59,6 @@ describe("AgentSession pre-stream errors", () => {
       workspaceId,
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,

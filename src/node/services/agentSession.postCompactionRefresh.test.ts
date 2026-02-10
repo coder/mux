@@ -1,7 +1,6 @@
 import { describe, expect, test, mock, afterEach } from "bun:test";
 import { AgentSession } from "./agentSession";
 import type { Config } from "@/node/config";
-import type { PartialService } from "./partialService";
 import type { AIService } from "./aiService";
 import type { InitStateManager } from "./initStateManager";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
@@ -51,7 +50,6 @@ describe("AgentSession post-compaction refresh trigger", () => {
       srcDir: "/tmp",
       getSessionDir: mock(() => "/tmp"),
     } as unknown as Config;
-    const partialService: PartialService = {} as unknown as PartialService;
 
     const onPostCompactionStateChange = mock(() => undefined);
 
@@ -59,7 +57,6 @@ describe("AgentSession post-compaction refresh trigger", () => {
       workspaceId: "ws",
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,

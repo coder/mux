@@ -6,7 +6,6 @@ import { execSync } from "node:child_process";
 
 import { Config } from "@/node/config";
 import { HistoryService } from "@/node/services/historyService";
-import { PartialService } from "@/node/services/partialService";
 import {
   getSubagentGitPatchMboxPath,
   readSubagentGitPatchArtifact,
@@ -179,14 +178,14 @@ function createTaskServiceHarness(
   }
 ): {
   historyService: HistoryService;
-  partialService: PartialService;
+  partialService: HistoryService;
   taskService: TaskService;
   aiService: AIService;
   workspaceService: WorkspaceService;
   initStateManager: InitStateManager;
 } {
   const historyService = new HistoryService(config);
-  const partialService = new PartialService(config, historyService);
+  const partialService = historyService;
 
   const aiService = overrides?.aiService ?? createAIServiceMocks(config).aiService;
   const workspaceService =
@@ -196,7 +195,6 @@ function createTaskServiceHarness(
   const taskService = new TaskService(
     config,
     historyService,
-    partialService,
     aiService,
     workspaceService,
     initStateManager
