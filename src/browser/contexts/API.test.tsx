@@ -49,7 +49,7 @@ class MockWebSocket {
 }
 
 const originalFetch = globalThis.fetch;
-let fetchImpl: (input: RequestInfo | URL) => Promise<Response> = () =>
+let fetchImpl: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> = () =>
   Promise.resolve({
     ok: false,
     json: () => Promise.resolve({}),
@@ -125,7 +125,8 @@ describe("API reconnection", () => {
         json: () => Promise.resolve({}),
       } as unknown as Response);
 
-    globalThis.fetch = ((input: RequestInfo | URL) => fetchImpl(input)) as typeof globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
+      fetchImpl(input, init)) as typeof globalThis.fetch;
     MockWebSocket.reset();
     pingImpl = () => Promise.resolve("pong");
   });
@@ -305,6 +306,104 @@ describe("API reconnection", () => {
 
     expect(MockWebSocket.instances).toHaveLength(1);
   });
+
+  test("does not hang startup when /api/spec.json probe stalls (schedules reconnect after timeout)", async () => {
+    const states: string[] = [];
+
+    fetchImpl = (_input, init) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new Error("aborted"));
+        });
+      });
+
+    render(
+      <APIProvider createWebSocket={createMockWebSocket}>
+        <APIStateObserver onState={(s) => states.push(s.status)} />
+      </APIProvider>
+    );
+
+    const ws1 = MockWebSocket.lastInstance();
+    expect(ws1).toBeDefined();
+
+    act(() => {
+      ws1!.simulateError();
+      ws1!.simulateClose(1006);
+    });
+
+    await waitFor(
+      () => {
+        expect(states).toContain("reconnecting");
+      },
+      { timeout: 5000 }
+    );
+
+    await waitFor(
+      () => {
+        expect(MockWebSocket.instances.length).toBeGreaterThan(1);
+      },
+      { timeout: 5000 }
+    );
+  });
+
+  test("re-probes /api/spec.json after an inconclusive result and then shows auth_required", async () => {
+    const states: string[] = [];
+    let probeCalls = 0;
+
+    fetchImpl = async () => {
+      probeCalls++;
+      if (probeCalls === 1) {
+        return Promise.resolve({
+          ok: false,
+          json: () => Promise.resolve({}),
+        } as unknown as Response);
+      }
+
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ security: [{ bearerAuth: [] }] }),
+      } as unknown as Response);
+    };
+
+    render(
+      <APIProvider createWebSocket={createMockWebSocket}>
+        <APIStateObserver onState={(s) => states.push(s.status)} />
+      </APIProvider>
+    );
+
+    const ws1 = MockWebSocket.lastInstance();
+    expect(ws1).toBeDefined();
+
+    act(() => {
+      ws1!.simulateError();
+      ws1!.simulateClose(1006);
+    });
+
+    await waitFor(() => {
+      expect(states).toContain("reconnecting");
+    });
+
+    await waitFor(() => {
+      expect(MockWebSocket.instances.length).toBeGreaterThan(1);
+    });
+
+    const ws2 = MockWebSocket.lastInstance();
+    expect(ws2).toBeDefined();
+    expect(ws2).not.toBe(ws1);
+
+    act(() => {
+      ws2!.simulateError();
+      ws2!.simulateClose(1006);
+    });
+
+    await waitFor(() => {
+      expect(states).toContain("auth_required");
+    });
+
+    expect(probeCalls).toBeGreaterThanOrEqual(2);
+    expect(MockWebSocket.instances).toHaveLength(2);
+  });
+
   test("reconnects on connection loss when previously connected", async () => {
     const states: string[] = [];
 

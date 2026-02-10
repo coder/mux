@@ -52,6 +52,11 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 const BASE_DELAY_MS = 100;
 const MAX_DELAY_MS = 10000;
 
+// Startup auth probe: if the initial WS handshake fails with an abnormal closure (1006),
+// browsers often hide the underlying HTTP status (401/403). We fetch /api/spec.json to
+// infer whether auth is required, but the probe must never block reconnect progress.
+const AUTH_PROBE_TIMEOUT_MS = 2000;
+
 // Liveness check constants
 const LIVENESS_INTERVAL_MS = 5000; // Check every 5 seconds
 const LIVENESS_TIMEOUT_MS = 3000; // Ping must respond within 3 seconds
@@ -297,21 +302,43 @@ export const APIProvider = (props: APIProviderProps) => {
           const apiBaseUrl = getBrowserBackendBaseUrl();
           const specUrl = new URL(`${apiBaseUrl}/api/spec.json`);
 
-          void fetch(specUrl)
-            .then(async (res) => {
-              if (!res.ok) {
-                return false;
+          type AuthProbeResult = "requires_auth" | "no_auth" | "unknown";
+
+          const controller = new AbortController();
+          let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+          // `fetch` has no builtin timeout, and some environments don't reliably reject on abort.
+          // Use a race so the probe cannot hang the connection loop.
+          const timeoutPromise = new Promise<AuthProbeResult>((resolve) => {
+            timeoutId = setTimeout(() => {
+              controller.abort();
+              resolve("unknown");
+            }, AUTH_PROBE_TIMEOUT_MS);
+          });
+
+          const fetchPromise: Promise<AuthProbeResult> = fetch(specUrl, {
+            signal: controller.signal,
+          })
+            .then(async (res): Promise<AuthProbeResult> => {
+              if (!res.ok) return "unknown";
+
+              try {
+                const spec = (await res.json()) as { security?: unknown };
+                const requiresAuth = Array.isArray(spec.security) && spec.security.length > 0;
+                return requiresAuth ? "requires_auth" : "no_auth";
+              } catch {
+                return "unknown";
               }
-              const spec = (await res.json()) as { security?: unknown };
-              return Array.isArray(spec.security) && spec.security.length > 0;
             })
-            .catch(() => false)
-            .then((requiresAuth) => {
+            .catch((): AuthProbeResult => "unknown");
+
+          void Promise.race([fetchPromise, timeoutPromise])
+            .then((result) => {
               if (connectionId !== connectionIdRef.current) {
                 return;
               }
 
-              if (requiresAuth) {
+              if (result === "requires_auth") {
                 authRequiredRef.current = true;
                 clearStoredAuthToken();
                 hasConnectedRef.current = false; // Reset - need fresh auth
@@ -319,7 +346,18 @@ export const APIProvider = (props: APIProviderProps) => {
                 return;
               }
 
+              if (result === "unknown") {
+                // Probe was inconclusive (timeout, network error, non-OK, invalid JSON). Allow re-probe
+                // on a later initial-handshake failure.
+                authProbeAttemptedRef.current = false;
+              }
+
               scheduleReconnectRef.current?.();
+            })
+            .finally(() => {
+              if (timeoutId) {
+                clearTimeout(timeoutId);
+              }
             });
 
           return;
