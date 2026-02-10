@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, spyOn } from "bun:test";
+import { describe, expect, test, mock, beforeEach, afterEach, spyOn } from "bun:test";
 import { WorkspaceService } from "./workspaceService";
 import type { AgentSession } from "./agentSession";
 import { WorkspaceLifecycleHooks } from "./workspaceLifecycleHooks";
@@ -10,6 +10,7 @@ import { Err, Ok, type Result } from "@/common/types/result";
 import type { ProjectsConfig } from "@/common/types/project";
 import type { Config } from "@/node/config";
 import type { HistoryService } from "./historyService";
+import { createTestHistoryService } from "./testHistoryService";
 import type { PartialService } from "./partialService";
 import type { SessionTimingService } from "./sessionTimingService";
 import type { AIService } from "./aiService";
@@ -67,8 +68,10 @@ async function writePlanFile(
 describe("WorkspaceService rename lock", () => {
   let workspaceService: WorkspaceService;
   let mockAIService: AIService;
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // Create minimal mocks for the services
     mockAIService = {
       isStreaming: mock(() => false),
@@ -79,12 +82,7 @@ describe("WorkspaceService rename lock", () => {
       off: mock(() => {}),
     } as unknown as AIService;
 
-    const mockHistoryService: Partial<HistoryService> = {
-      getHistoryFromLatestBoundary: mock(() =>
-        Promise.resolve({ success: true as const, data: [] })
-      ),
-      appendToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
-    };
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
 
     const mockConfig: Partial<Config> = {
       srcDir: "/tmp/test",
@@ -108,13 +106,17 @@ describe("WorkspaceService rename lock", () => {
 
     workspaceService = new WorkspaceService(
       mockConfig as Config,
-      mockHistoryService as HistoryService,
+      historyService,
       mockPartialService as PartialService,
       mockAIService,
       mockInitStateManager as InitStateManager,
       mockExtensionMetadataService as ExtensionMetadataService,
       mockBackgroundProcessManager as BackgroundProcessManager
     );
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
   });
 
   test("sendMessage returns error when workspace is being renamed", async () => {
@@ -178,8 +180,10 @@ describe("WorkspaceService executeBash archive guards", () => {
   let workspaceService: WorkspaceService;
   let waitForInitMock: ReturnType<typeof mock>;
   let getWorkspaceMetadataMock: ReturnType<typeof mock>;
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     waitForInitMock = mock(() => Promise.resolve());
 
     getWorkspaceMetadataMock = mock(() =>
@@ -195,12 +199,7 @@ describe("WorkspaceService executeBash archive guards", () => {
       off: mock(() => {}),
     } as unknown as AIService;
 
-    const mockHistoryService: Partial<HistoryService> = {
-      getHistoryFromLatestBoundary: mock(() =>
-        Promise.resolve({ success: true as const, data: [] })
-      ),
-      appendToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
-    };
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
 
     const mockConfig: Partial<Config> = {
       srcDir: "/tmp/test",
@@ -227,13 +226,17 @@ describe("WorkspaceService executeBash archive guards", () => {
 
     workspaceService = new WorkspaceService(
       mockConfig as Config,
-      mockHistoryService as HistoryService,
+      historyService,
       mockPartialService as PartialService,
       aiService,
       mockInitStateManager as InitStateManager,
       mockExtensionMetadataService as ExtensionMetadataService,
       mockBackgroundProcessManager as BackgroundProcessManager
     );
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
   });
 
   test("archived workspace => executeBash returns error mentioning archived", async () => {
@@ -280,8 +283,10 @@ describe("WorkspaceService executeBash archive guards", () => {
 
 describe("WorkspaceService post-compaction metadata refresh", () => {
   let workspaceService: WorkspaceService;
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     const aiService: AIService = {
       isStreaming: mock(() => false),
       getWorkspaceMetadata: mock(() =>
@@ -295,12 +300,7 @@ describe("WorkspaceService post-compaction metadata refresh", () => {
       },
     } as unknown as AIService;
 
-    const mockHistoryService: Partial<HistoryService> = {
-      getHistoryFromLatestBoundary: mock(() =>
-        Promise.resolve({ success: true as const, data: [] })
-      ),
-      appendToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
-    };
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
 
     const mockConfig: Partial<Config> = {
       srcDir: "/tmp/test",
@@ -324,13 +324,17 @@ describe("WorkspaceService post-compaction metadata refresh", () => {
 
     workspaceService = new WorkspaceService(
       mockConfig as Config,
-      mockHistoryService as HistoryService,
+      historyService,
       mockPartialService as PartialService,
       aiService,
       mockInitStateManager as InitStateManager,
       mockExtensionMetadataService as ExtensionMetadataService,
       mockBackgroundProcessManager as BackgroundProcessManager
     );
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
   });
 
   test("returns expanded plan path for local runtimes", async () => {
@@ -428,8 +432,10 @@ describe("WorkspaceService post-compaction metadata refresh", () => {
 
 describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
   let workspaceService: WorkspaceService;
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     const aiService: AIService = {
       isStreaming: mock(() => false),
       getWorkspaceMetadata: mock(() => Promise.resolve({ success: false as const, error: "nope" })),
@@ -441,12 +447,7 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
       },
     } as unknown as AIService;
 
-    const mockHistoryService: Partial<HistoryService> = {
-      getHistoryFromLatestBoundary: mock(() =>
-        Promise.resolve({ success: true as const, data: [] })
-      ),
-      appendToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
-    };
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
 
     const mockConfig: Partial<Config> = {
       srcDir: "/tmp/test",
@@ -470,13 +471,17 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
 
     workspaceService = new WorkspaceService(
       mockConfig as Config,
-      mockHistoryService as HistoryService,
+      historyService,
       mockPartialService as PartialService,
       aiService,
       mockInitStateManager as InitStateManager,
       mockExtensionMetadataService as ExtensionMetadataService,
       mockBackgroundProcessManager as BackgroundProcessManager
     );
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
   });
 
   test("persists agent AI settings for custom agent", async () => {
@@ -536,6 +541,17 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
   });
 });
 describe("WorkspaceService remove timing rollup", () => {
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+
+  beforeEach(async () => {
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
   test("waits for stream-abort before rolling up session timing", async () => {
     const workspaceId = "child-ws";
     const parentWorkspaceId = "parent-ws";
@@ -583,7 +599,6 @@ describe("WorkspaceService remove timing rollup", () => {
 
       const aiService = new FakeAIService() as unknown as AIService;
 
-      const mockHistoryService: Partial<HistoryService> = {};
       const mockPartialService: Partial<PartialService> = {};
       const mockInitStateManager: Partial<InitStateManager> = {
         on: mock(() => undefined as unknown as InitStateManager),
@@ -629,7 +644,7 @@ describe("WorkspaceService remove timing rollup", () => {
 
       const workspaceService = new WorkspaceService(
         mockConfig as Config,
-        mockHistoryService as HistoryService,
+        historyService,
         mockPartialService as PartialService,
         aiService,
         mockInitStateManager as InitStateManager,
@@ -661,6 +676,8 @@ describe("WorkspaceService archive lifecycle hooks", () => {
   let mockAIService: AIService;
   let configState: ProjectsConfig;
   let editConfigSpy: ReturnType<typeof mock>;
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
 
   const workspaceMetadata: WorkspaceMetadata = {
     id: workspaceId,
@@ -670,7 +687,7 @@ describe("WorkspaceService archive lifecycle hooks", () => {
     runtimeConfig: { type: "local", srcBaseDir: "/tmp" },
   };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     configState = {
       projects: new Map([
         [
@@ -692,6 +709,8 @@ describe("WorkspaceService archive lifecycle hooks", () => {
       return Promise.resolve();
     });
 
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+
     const mockConfig: Partial<Config> = {
       srcDir: "/tmp/src",
       getSessionDir: mock(() => "/tmp/test/sessions"),
@@ -707,7 +726,6 @@ describe("WorkspaceService archive lifecycle hooks", () => {
       getAllWorkspaceMetadata: mock(() => Promise.resolve([])),
     };
 
-    const mockHistoryService: Partial<HistoryService> = {};
     const mockPartialService: Partial<PartialService> = {};
     const mockInitStateManager: Partial<InitStateManager> = {
       on: mock(() => undefined as unknown as InitStateManager),
@@ -729,13 +747,17 @@ describe("WorkspaceService archive lifecycle hooks", () => {
 
     workspaceService = new WorkspaceService(
       mockConfig as Config,
-      mockHistoryService as HistoryService,
+      historyService,
       mockPartialService as PartialService,
       mockAIService,
       mockInitStateManager as InitStateManager,
       mockExtensionMetadataService as ExtensionMetadataService,
       mockBackgroundProcessManager as BackgroundProcessManager
     );
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
   });
 
   test("returns Err and does not persist archivedAt when beforeArchive hook fails", async () => {
@@ -790,6 +812,17 @@ describe("WorkspaceService archive lifecycle hooks", () => {
 });
 
 describe("WorkspaceService archive init cancellation", () => {
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+
+  beforeEach(async () => {
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
   test("emits metadata when it cancels init but beforeArchive hook fails", async () => {
     const workspaceId = "ws-archive-init-cancel";
     const projectPath = "/tmp/project";
@@ -883,7 +916,7 @@ describe("WorkspaceService archive init cancellation", () => {
 
     const workspaceService = new WorkspaceService(
       mockConfig as Config,
-      {} as HistoryService,
+      historyService,
       {} as PartialService,
       mockAIService,
       mockInitStateManager as InitStateManager,
@@ -941,6 +974,8 @@ describe("WorkspaceService unarchive lifecycle hooks", () => {
   let workspaceService: WorkspaceService;
   let configState: ProjectsConfig;
   let editConfigSpy: ReturnType<typeof mock>;
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
 
   const workspaceMetadata: FrontendWorkspaceMetadata = {
     id: workspaceId,
@@ -952,7 +987,9 @@ describe("WorkspaceService unarchive lifecycle hooks", () => {
     namedWorkspacePath: workspacePath,
   };
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+
     configState = {
       projects: new Map([
         [
@@ -990,7 +1027,6 @@ describe("WorkspaceService unarchive lifecycle hooks", () => {
       getAllWorkspaceMetadata: mock(() => Promise.resolve([workspaceMetadata])),
     };
 
-    const mockHistoryService: Partial<HistoryService> = {};
     const mockPartialService: Partial<PartialService> = {};
     const mockInitStateManager: Partial<InitStateManager> = {
       on: mock(() => undefined as unknown as InitStateManager),
@@ -1012,13 +1048,17 @@ describe("WorkspaceService unarchive lifecycle hooks", () => {
 
     workspaceService = new WorkspaceService(
       mockConfig as Config,
-      mockHistoryService as HistoryService,
+      historyService,
       mockPartialService as PartialService,
       aiService,
       mockInitStateManager as InitStateManager,
       mockExtensionMetadataService as ExtensionMetadataService,
       mockBackgroundProcessManager as BackgroundProcessManager
     );
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
   });
 
   test("persists unarchivedAt and runs afterUnarchive hooks (best-effort)", async () => {
@@ -1064,6 +1104,17 @@ describe("WorkspaceService unarchive lifecycle hooks", () => {
 
 describe("WorkspaceService archiveMergedInProject", () => {
   const TARGET_PROJECT_PATH = "/tmp/project";
+
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+
+  beforeEach(async () => {
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
 
   function createMetadata(
     id: string,
@@ -1145,7 +1196,6 @@ describe("WorkspaceService archiveMergedInProject", () => {
       },
     } as unknown as AIService;
 
-    const mockHistoryService: Partial<HistoryService> = {};
     const mockPartialService: Partial<PartialService> = {};
     const mockInitStateManager: Partial<InitStateManager> = {
       on: mock(() => undefined as unknown as InitStateManager),
@@ -1158,7 +1208,7 @@ describe("WorkspaceService archiveMergedInProject", () => {
 
     const workspaceService = new WorkspaceService(
       mockConfig as Config,
-      mockHistoryService as HistoryService,
+      historyService,
       mockPartialService as PartialService,
       aiService,
       mockInitStateManager as InitStateManager,
@@ -1405,6 +1455,17 @@ describe("WorkspaceService archiveMergedInProject", () => {
 });
 
 describe("WorkspaceService init cancellation", () => {
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+
+  beforeEach(async () => {
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
   test("archive() aborts init and still archives when init is running", async () => {
     const workspaceId = "ws-init-running";
 
@@ -1445,7 +1506,6 @@ describe("WorkspaceService init cancellation", () => {
       clearInMemoryState: clearInMemoryStateMock,
     };
 
-    const mockHistoryService: Partial<HistoryService> = {};
     const mockPartialService: Partial<PartialService> = {};
     const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
     const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
@@ -1454,7 +1514,7 @@ describe("WorkspaceService init cancellation", () => {
 
     const workspaceService = new WorkspaceService(
       mockConfig as Config,
-      mockHistoryService as HistoryService,
+      historyService,
       mockPartialService as PartialService,
       mockAIService,
       mockInitStateManager as InitStateManager,
@@ -1511,7 +1571,6 @@ describe("WorkspaceService init cancellation", () => {
       clearInMemoryState: mock((_workspaceId: string) => undefined),
     };
 
-    const mockHistoryService: Partial<HistoryService> = {};
     const mockPartialService: Partial<PartialService> = {};
     const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
     const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
@@ -1520,7 +1579,7 @@ describe("WorkspaceService init cancellation", () => {
 
     const workspaceService = new WorkspaceService(
       mockConfig as Config,
-      mockHistoryService as HistoryService,
+      historyService,
       mockPartialService as PartialService,
       mockAIService,
       mockInitStateManager as InitStateManager,
@@ -1583,7 +1642,6 @@ describe("WorkspaceService init cancellation", () => {
       ),
     };
 
-    const mockHistoryService: Partial<HistoryService> = {};
     const mockPartialService: Partial<PartialService> = {};
     const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
     const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
@@ -1592,7 +1650,7 @@ describe("WorkspaceService init cancellation", () => {
 
     const workspaceService = new WorkspaceService(
       mockConfig as Config,
-      mockHistoryService as HistoryService,
+      historyService,
       mockPartialService as PartialService,
       mockAIService,
       mockInitStateManager as InitStateManager,
@@ -1667,7 +1725,6 @@ describe("WorkspaceService init cancellation", () => {
       off: mock(() => {}),
     } as unknown as AIService;
 
-    const mockHistoryService: Partial<HistoryService> = {};
     const mockPartialService: Partial<PartialService> = {};
     const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
     const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
@@ -1702,7 +1759,7 @@ describe("WorkspaceService init cancellation", () => {
     try {
       const workspaceService = new WorkspaceService(
         mockConfig as Config,
-        mockHistoryService as HistoryService,
+        historyService,
         mockPartialService as PartialService,
         mockAIService,
         mockInitStateManager as InitStateManager,
@@ -1772,7 +1829,6 @@ describe("WorkspaceService init cancellation", () => {
         findWorkspace: mock(() => null),
       };
 
-      const mockHistoryService: Partial<HistoryService> = {};
       const mockPartialService: Partial<PartialService> = {};
       const mockInitStateManager: Partial<InitStateManager> = {
         on: mock(() => undefined as unknown as InitStateManager),
@@ -1786,7 +1842,7 @@ describe("WorkspaceService init cancellation", () => {
 
       const workspaceService = new WorkspaceService(
         mockConfig as Config,
-        mockHistoryService as HistoryService,
+        historyService,
         mockPartialService as PartialService,
         mockAIService,
         mockInitStateManager as InitStateManager,
@@ -1856,7 +1912,6 @@ describe("WorkspaceService init cancellation", () => {
         findWorkspace: mock(() => null),
       };
 
-      const mockHistoryService: Partial<HistoryService> = {};
       const mockPartialService: Partial<PartialService> = {};
       const mockInitStateManager: Partial<InitStateManager> = {
         on: mock(() => undefined as unknown as InitStateManager),
@@ -1870,7 +1925,7 @@ describe("WorkspaceService init cancellation", () => {
 
       const workspaceService = new WorkspaceService(
         mockConfig as Config,
-        mockHistoryService as HistoryService,
+        historyService,
         mockPartialService as PartialService,
         mockAIService,
         mockInitStateManager as InitStateManager,
@@ -1938,7 +1993,6 @@ describe("WorkspaceService init cancellation", () => {
         findWorkspace: mock(() => ({ projectPath, workspacePath: "/tmp/proj/ws" })),
       };
 
-      const mockHistoryService: Partial<HistoryService> = {};
       const mockPartialService: Partial<PartialService> = {};
       const mockInitStateManager: Partial<InitStateManager> = {
         on: mock(() => undefined as unknown as InitStateManager),
@@ -1952,7 +2006,7 @@ describe("WorkspaceService init cancellation", () => {
 
       const workspaceService = new WorkspaceService(
         mockConfig as Config,
-        mockHistoryService as HistoryService,
+        historyService,
         mockPartialService as PartialService,
         mockAIService,
         mockInitStateManager as InitStateManager,
