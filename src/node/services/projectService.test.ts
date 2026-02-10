@@ -169,14 +169,13 @@ describe("ProjectService", () => {
   });
 
   describe("clone", () => {
-    it("clones a local repository and persists clone parent dir when requested", async () => {
+    it("clones a local repository and registers it as a project", async () => {
       const sourceRepoPath = await createLocalGitRepository(tempDir, "source-repo");
       const cloneParentDir = path.join(tempDir, "clones");
 
       const result = await service.clone({
         repoUrl: sourceRepoPath,
         cloneParentDir,
-        setCloneParentDirAsDefault: true,
       });
 
       expect(result.success).toBe(true);
@@ -191,7 +190,62 @@ describe("ProjectService", () => {
 
       const loadedConfig = config.loadConfigOrDefault();
       expect(loadedConfig.projects.has(expectedProjectPath)).toBe(true);
-      expect(loadedConfig.defaultProjectCloneDir).toBe(path.resolve(cloneParentDir));
+      expect(loadedConfig.defaultProjectCloneDir).toBeUndefined();
+    });
+
+    it("normalizes owner/repo shorthand to a GitHub HTTPS URL", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "shorthand-clones");
+      const fakeBinDir = path.join(tempDir, "fake-bin");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const fakeGitArgsLogPath = path.join(tempDir, "fake-git-args.log");
+      const originalPath = process.env.PATH ?? "";
+      const originalFakeGitArgsLogPath = process.env.FAKE_GIT_ARGS_LOG;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
+if [ "$1" = "clone" ]; then
+  mkdir -p "$3/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.FAKE_GIT_ARGS_LOG = fakeGitArgsLogPath;
+
+      try {
+        const result = await service.clone({
+          repoUrl: "owner/repo",
+          cloneParentDir,
+        });
+
+        expect(result.success).toBe(true);
+        if (!result.success) throw new Error("Expected success");
+
+        const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
+
+        expect(loggedArgs[0]).toBe("clone");
+        expect(loggedArgs[1]).toBe("https://github.com/owner/repo.git");
+        expect(loggedArgs[2]).toBe(path.resolve(cloneParentDir, "repo"));
+      } finally {
+        process.env.PATH = originalPath;
+        if (originalFakeGitArgsLogPath === undefined) {
+          delete process.env.FAKE_GIT_ARGS_LOG;
+        } else {
+          process.env.FAKE_GIT_ARGS_LOG = originalFakeGitArgsLogPath;
+        }
+      }
     });
 
     it("returns error when clone destination already exists", async () => {

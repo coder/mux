@@ -1,4 +1,4 @@
-import { exec, execFileSync } from "child_process";
+import { exec, execFile, execFileSync } from "child_process";
 import type { ChildProcess } from "child_process";
 
 export function killProcessTree(pid: number): void {
@@ -201,6 +201,64 @@ export function execAsync(command: string, options?: ExecAsyncOptions): Disposab
         resolve({ stdout, stderr });
       } else {
         // Include stderr in error message for better debugging
+        const errorMsg =
+          stderr.trim() ||
+          (exitSignal
+            ? `Command killed by signal ${exitSignal}`
+            : `Command failed with exit code ${exitCode ?? "unknown"}`);
+        const error = new Error(errorMsg) as Error & {
+          code: number | null;
+          signal: string | null;
+          stdout: string;
+          stderr: string;
+        };
+        error.code = exitCode;
+        error.signal = exitSignal;
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
+      }
+    });
+
+    child.on("error", reject);
+  });
+
+  return new DisposableExec(promise, child);
+}
+
+/**
+ * Execute a file with arguments and automatic cleanup via `using` declaration.
+ * Unlike execAsync, this does not use a shell—arguments are passed directly
+ * to the executable, avoiding shell-quoting issues across platforms.
+ *
+ * @example
+ * using proc = execFileAsync("git", ["clone", url, dest]);
+ * const { stdout } = await proc.result;
+ */
+export function execFileAsync(file: string, args: string[]): DisposableExec {
+  const child = execFile(file, args);
+  const promise = new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+    let exitCode: number | null = null;
+    let exitSignal: string | null = null;
+
+    child.stdout?.on("data", (data) => {
+      stdout += data;
+    });
+    child.stderr?.on("data", (data) => {
+      stderr += data;
+    });
+
+    child.on("exit", (code, signal) => {
+      exitCode = code;
+      exitSignal = signal;
+    });
+
+    child.on("close", () => {
+      if (exitCode === 0 && exitSignal === null) {
+        resolve({ stdout, stderr });
+      } else {
         const errorMsg =
           stderr.trim() ||
           (exitSignal

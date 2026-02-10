@@ -11,7 +11,7 @@ import { Ok, Err } from "@/common/types/result";
 import type { Secret } from "@/common/types/secrets";
 import type { Stats } from "fs";
 import * as fsPromises from "fs/promises";
-import { execAsync } from "@/node/utils/disposableExec";
+import { execAsync, execFileAsync } from "@/node/utils/disposableExec";
 import {
   buildFileCompletionsIndex,
   EMPTY_FILE_COMPLETIONS_INDEX,
@@ -23,7 +23,6 @@ import type { BranchListResult } from "@/common/orpc/types";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import * as path from "path";
 import { getMuxProjectsDir } from "@/common/constants/paths";
-import { shellQuote } from "@/common/utils/shell";
 import { expandTilde } from "@/node/runtime/tildeExpansion";
 
 /**
@@ -64,7 +63,6 @@ async function listDirectory(requestedPath: string): Promise<FileTreeNode> {
 interface CloneProjectParams {
   repoUrl: string;
   cloneParentDir?: string;
-  setCloneParentDirAsDefault?: boolean;
 }
 
 function isTildePrefixedPath(value: string): boolean {
@@ -133,6 +131,20 @@ function deriveRepoFolderName(repoUrl: string): string {
   }
 
   return safeFolderName;
+}
+
+/**
+ * Normalize a repo URL so git clone receives a valid remote.
+ * Expands "owner/repo" shorthand to "https://github.com/owner/repo.git".
+ * All other inputs (HTTPS URLs, SSH URLs, SCP-style, etc.) pass through unchanged.
+ */
+function normalizeRepoUrlForClone(repoUrl: string): string {
+  // owner/repo shorthand (no protocol, no @, exactly one slash, no spaces/backslashes)
+  if (/^[^/\\\s]+\/[^/\\\s]+$/.test(repoUrl)) {
+    return `https://github.com/${repoUrl}.git`;
+  }
+
+  return repoUrl;
 }
 
 const FILE_COMPLETIONS_CACHE_TTL_MS = 10_000;
@@ -290,16 +302,12 @@ export class ProjectService {
 
       await fsPromises.mkdir(cloneParentDir, { recursive: true });
 
-      using cloneProc = execAsync(`git clone ${shellQuote(repoUrl)} ${shellQuote(normalizedPath)}`);
+      const cloneUrl = normalizeRepoUrlForClone(repoUrl);
+      using cloneProc = execFileAsync("git", ["clone", cloneUrl, normalizedPath]);
       await cloneProc.result;
 
       const projectConfig: ProjectConfig = { workspaces: [] };
       config.projects.set(normalizedPath, projectConfig);
-
-      if (input.setCloneParentDirAsDefault === true) {
-        config.defaultProjectCloneDir = cloneParentDir;
-      }
-
       await this.config.saveConfig(config);
 
       return Ok({ projectConfig, normalizedPath });

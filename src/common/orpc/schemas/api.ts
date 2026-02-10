@@ -451,7 +451,6 @@ export const projects = {
       .object({
         repoUrl: z.string(),
         cloneParentDir: z.string().optional(),
-        setCloneParentDirAsDefault: z.boolean().optional(),
       })
       .strict(),
     output: ResultSchema(
