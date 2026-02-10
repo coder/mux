@@ -533,10 +533,12 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
     try {
       const cloneDir = await api.projects.getDefaultCloneDir();
       setDefaultCloneDir(cloneDir);
-      setHasLoadedDefaultCloneDir(true);
     } catch (err) {
       console.error("Failed to fetch default clone directory:", err);
     } finally {
+      // Mark as loaded even on failure to prevent infinite retry loops
+      // when the backend is unavailable.
+      setHasLoadedDefaultCloneDir(true);
       setIsLoadingDefaultCloneDir(false);
     }
   }, [api, hasLoadedDefaultCloneDir, isLoadingDefaultCloneDir]);

@@ -139,8 +139,10 @@ function deriveRepoFolderName(repoUrl: string): string {
  * All other inputs (HTTPS URLs, SSH URLs, SCP-style, etc.) pass through unchanged.
  */
 function normalizeRepoUrlForClone(repoUrl: string): string {
-  // owner/repo shorthand (no protocol, no @, exactly one slash, no spaces/backslashes)
-  if (/^[^/\\\s]+\/[^/\\\s]+$/.test(repoUrl)) {
+  // owner/repo shorthand: exactly two non-empty segments separated by a single slash,
+  // where the first segment looks like a GitHub username (letters, digits, hyphens).
+  // Excludes local paths like ../repo, ./foo, foo/bar/baz, and absolute paths.
+  if (/^[a-zA-Z0-9][\w-]*\/[a-zA-Z0-9][\w.-]*$/.test(repoUrl)) {
     // Strip existing .git suffix before appending to avoid double .git (e.g. owner/repo.git → owner/repo.git.git)
     const withoutGitSuffix = repoUrl.replace(/\.git$/i, "");
     return `https://github.com/${withoutGitSuffix}.git`;
