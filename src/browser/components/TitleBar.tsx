@@ -253,6 +253,8 @@ export function TitleBar() {
       style={leftInset > 0 ? { paddingLeft: leftInset } : undefined}
     >
       <div
+        // Desktop titlebar: this wrapper is `flex-1` (for version ellipsis) so it fills the gap.
+        // Keep it draggable; apply `titlebar-no-drag` only to the interactive controls inside.
         className={cn(
           "mr-4 flex min-w-0 flex-1",
           leftInset > 0 ? "flex-col" : "items-center gap-2"
