@@ -209,51 +209,56 @@ mux.file_read({ path: "wrong" });`,
     expect(result.errors.some((e) => e.message.includes("file_reade"))).toBe(true);
   });
 
-  test("allows reads from empty object literals", () => {
-    // TS has no useful type info for {} - suppress all TS2339 on it
+  test("catches reads from empty object literals (typos)", () => {
+    // Reads from {} should still error - only writes are allowed
     const result = validateTypes(
       `
       const results = {};
       results.file1 = mux.file_read({ filePath: "a.txt" });
-      return results.filee1;
+      return results.filee1;  // typo: should be file1
     `,
       muxTypes
     );
-    expect(result.valid).toBe(true);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("filee1"))).toBe(true);
   });
 
-  test("allows empty object properties used in tool args", () => {
-    // TS can't track dynamic property additions to {}
+  test("catches empty object properties used in tool args", () => {
+    // Using unset properties from {} in tool calls should error
     const result = validateTypes(
       `
       const config = {};
-      mux.file_read({ filePath: config.path });
+      mux.file_read({ filePath: config.path });  // config.path doesn't exist
     `,
       muxTypes
     );
-    expect(result.valid).toBe(true);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("path"))).toBe(true);
   });
 
-  test("allows empty object reads in expressions", () => {
+  test("catches empty object reads in expressions", () => {
+    // Reading from {} in any expression context should error
     const result = validateTypes(
       `
       const obj = {};
-      const x = obj.value + 1;
+      const x = obj.value + 1;  // obj.value doesn't exist
     `,
       muxTypes
     );
-    expect(result.valid).toBe(true);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("value"))).toBe(true);
   });
 
-  test("allows empty object reads in conditionals", () => {
+  test("catches empty object reads in conditionals", () => {
     const result = validateTypes(
       `
       const obj = {};
-      if (obj.flag) { console.log("yes"); }
+      if (obj.flag) { console.log("yes"); }  // obj.flag doesn't exist
     `,
       muxTypes
     );
-    expect(result.valid).toBe(true);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("flag"))).toBe(true);
   });
 
   test("allows multiple writes to empty object", () => {
@@ -270,16 +275,17 @@ mux.file_read({ path: "wrong" });`,
     expect(result.valid).toBe(true);
   });
 
-  test("allows compound assignment on empty object (+=)", () => {
-    // TS2339 on {} is suppressed regardless of read/write context
+  test("catches compound assignment on empty object (+=)", () => {
+    // Compound assignments read then write, so should error
     const result = validateTypes(
       `
       const obj = {};
-      obj.count += 1;
+      obj.count += 1;  // reads obj.count first
     `,
       muxTypes
     );
-    expect(result.valid).toBe(true);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("count"))).toBe(true);
   });
 
   test("allows reads from {} after bracket writes", () => {
@@ -294,6 +300,61 @@ mux.file_read({ path: "wrong" });`,
       muxTypes
     );
     expect(result.valid).toBe(true);
+  });
+
+  test("allows multiple dot reads from {} bag after bracket writes", () => {
+    // The full pattern: bracket writes then multiple dot reads with chained access
+    const result = validateTypes(
+      `
+      const results = {};
+      const files = [{ path: "a.go", label: "conn" }, { path: "b.go", label: "sdk" }];
+      for (const f of files) { results[f.label] = mux.file_read({ filePath: f.path }); }
+      return results.conn.success ? results.conn.content : results.sdk.error;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("still catches mux shadowing with {}", () => {
+    // const mux = {} must NOT be treated as a dynamic bag — shadowing mux is a real bug
+    const result = validateTypes(
+      `
+      const mux = {};
+      mux.file_read({ filePath: "test.txt" });
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("file_read"))).toBe(true);
+  });
+
+  test("catches reads on {} without bracket writes (not a dynamic bag)", () => {
+    // Only dot-notation writes — no bracket writes — should NOT suppress reads
+    const result = validateTypes(
+      `
+      const data = {};
+      data.x = 1;
+      return data.y;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("y"))).toBe(true);
+  });
+
+  test("catches compound assignment on {} bag (+=)", () => {
+    // Even on a dynamic bag variable, compound assignment reads first — should error
+    const result = validateTypes(
+      `
+      const results = {};
+      results["key"] = 1;
+      results.count += 1;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("count"))).toBe(true);
   });
 
   test("accepts ES2021+ features (replaceAll, at, etc.)", () => {

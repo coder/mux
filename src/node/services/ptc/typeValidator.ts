@@ -176,16 +176,151 @@ export interface TypeValidationResult {
  * @returns Validation result with errors if any
  */
 
+/** Find the innermost token at a position in the source file */
+function findTokenAtPosition(sourceFile: ts.SourceFile, position: number): ts.Node | undefined {
+  function find(node: ts.Node): ts.Node | undefined {
+    if (position < node.getStart(sourceFile) || position >= node.getEnd()) {
+      return undefined;
+    }
+    // Try to find a more specific child
+    const child = ts.forEachChild(node, find);
+    return child ?? node;
+  }
+  return find(sourceFile);
+}
+
 /**
- * Check if a TS2339 diagnostic is for a property access on an empty object literal.
- * Agent code frequently uses `const results = {}; results[key] = val; ... results.key`
- * which is valid JS but TS can't track dynamic property additions to `{}`.
- * Suppress all such errors since TS has no useful type info for `{}` anyway.
+ * Walk up from a token to find the enclosing PropertyAccessExpression and its receiver.
+ * Returns undefined if no PropertyAccessExpression is found.
  */
-function isEmptyObjectPropertyError(d: ts.Diagnostic): boolean {
-  if (d.code !== 2339) return false;
+function findPropertyAccessContext(
+  token: ts.Node
+): { propAccess: ts.PropertyAccessExpression; receiver: ts.Expression } | undefined {
+  let node: ts.Node = token;
+  while (node.parent) {
+    if (ts.isPropertyAccessExpression(node.parent)) {
+      return { propAccess: node.parent, receiver: node.parent.expression };
+    }
+    node = node.parent;
+  }
+  return undefined;
+}
+
+/**
+ * Check if a TS2339 diagnostic is for a property WRITE on an empty object literal.
+ * Returns true only for patterns like `results.foo = x` where `results` is typed as `{}`.
+ * Returns false for reads like `return results.foo` or `fn(results.foo)`.
+ */
+function isEmptyObjectWriteError(d: ts.Diagnostic, sourceFile: ts.SourceFile): boolean {
+  if (d.code !== 2339 || d.start === undefined) return false;
   const message = ts.flattenDiagnosticMessageText(d.messageText, "");
-  return message.includes("on type '{}'");
+  if (!message.includes("on type '{}'")) return false;
+
+  const token = findTokenAtPosition(sourceFile, d.start);
+  if (!token) return false;
+
+  const ctx = findPropertyAccessContext(token);
+  if (!ctx) return false;
+
+  // Check if this PropertyAccessExpression is on the left side of an assignment
+  const parent = ctx.propAccess.parent;
+  return (
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    parent.left === ctx.propAccess
+  );
+}
+
+/**
+ * Find variable names that are "dynamic empty-object bags": declared as `const x = {}`
+ * AND later written to via element access (`x[key] = val`). These variables are used
+ * as dynamic maps where TS can't track properties, so dot-notation reads should be
+ * suppressed. Excludes `mux` to preserve shadowing detection.
+ */
+function findDynamicEmptyObjectBagVars(sourceFile: ts.SourceFile): Set<string> {
+  const emptyLiteralVars = new Set<string>();
+  const elementWriteVars = new Set<string>();
+
+  function visit(node: ts.Node): void {
+    // Detect `const x = {}`
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      ts.isObjectLiteralExpression(node.initializer) &&
+      node.initializer.properties.length === 0
+    ) {
+      emptyLiteralVars.add(node.name.text);
+    }
+
+    // Detect `x[key] = val`
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isElementAccessExpression(node.left) &&
+      ts.isIdentifier(node.left.expression)
+    ) {
+      elementWriteVars.add(node.left.expression.text);
+    }
+
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+
+  // Only variables that are both empty-literal AND have element-access writes qualify.
+  // Exclude `mux` to ensure `const mux = {}; mux.file_read(...)` still errors.
+  const bagVars = new Set<string>();
+  for (const name of elementWriteVars) {
+    if (emptyLiteralVars.has(name) && name !== "mux") {
+      bagVars.add(name);
+    }
+  }
+  return bagVars;
+}
+
+/**
+ * Check if a TS2339 diagnostic is for a property READ on a dynamic empty-object bag.
+ * Only suppresses when:
+ * 1. The receiver is an identifier in `dynamicBagVars`
+ * 2. The diagnostic message indicates `on type '{}'`
+ * 3. The access is a read (not a write target like `=`, `+=`, `++`)
+ */
+function isDynamicBagReadError(
+  d: ts.Diagnostic,
+  sourceFile: ts.SourceFile,
+  dynamicBagVars: Set<string>
+): boolean {
+  if (d.code !== 2339 || d.start === undefined || dynamicBagVars.size === 0) return false;
+  const message = ts.flattenDiagnosticMessageText(d.messageText, "");
+  if (!message.includes("on type '{}'")) return false;
+
+  const token = findTokenAtPosition(sourceFile, d.start);
+  if (!token) return false;
+
+  const ctx = findPropertyAccessContext(token);
+  if (!ctx) return false;
+
+  // Receiver must be a simple identifier in our bag set
+  if (!ts.isIdentifier(ctx.receiver) || !dynamicBagVars.has(ctx.receiver.text)) return false;
+
+  // Don't suppress write targets — compound assignments (`+=`) and increment/decrement
+  // on unknown properties are real bugs, not dynamic-bag reads.
+  const parent = ctx.propAccess.parent;
+  if (ts.isBinaryExpression(parent) && parent.left === ctx.propAccess) {
+    // Simple assignment `x.foo = val` is already handled by isEmptyObjectWriteError.
+    // Compound assignments like `x.foo += 1` read first — don't suppress.
+    return parent.operatorToken.kind === ts.SyntaxKind.EqualsToken;
+  }
+  if (
+    (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+    (parent.operator === ts.SyntaxKind.PlusPlusToken ||
+      parent.operator === ts.SyntaxKind.MinusMinusToken)
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 /** Returns true if the type resolves to a non-tuple never[] (including unions). */
@@ -368,7 +503,12 @@ export function validateTypes(code: string, muxTypes: string): TypeValidationRes
     program = ts.createProgram(ROOT_FILE_NAMES, compilerOptions, host, originalProgram);
   }
 
+  const sourceFile = program.getSourceFile("agent.ts") ?? getSourceFile();
   const diagnostics = ts.getPreEmitDiagnostics(program);
+
+  // Identify variables used as dynamic "bag" objects (empty literal + bracket writes).
+  // Dot-notation reads on these are suppressed since TS can't track dynamic properties.
+  const dynamicBagVars = findDynamicEmptyObjectBagVars(sourceFile);
 
   // Filter to errors in our code only (not lib files)
   // Also filter console redeclaration warning (our minimal console conflicts with lib.dom)
@@ -376,10 +516,15 @@ export function validateTypes(code: string, muxTypes: string): TypeValidationRes
     .filter((d) => d.category === ts.DiagnosticCategory.Error)
     .filter((d) => !d.file || d.file.fileName === "agent.ts")
     .filter((d) => !ts.flattenDiagnosticMessageText(d.messageText, "").includes("console"))
-    // Suppress all TS2339 on `{}` - agent code frequently builds objects dynamically
-    // (e.g., `const r = {}; r[key] = val; return r.key`) which is valid JS but TS
-    // can't track. No useful type info exists for `{}` so these errors are noise.
-    .filter((d) => !isEmptyObjectPropertyError(d))
+    // Allow dynamic property WRITES on empty object literals - Claude frequently uses
+    // `const results = {}; results.foo = mux.file_read(...)` to collate parallel reads.
+    // Only suppress when the property access is on the LEFT side of an assignment.
+    .filter((d) => !isEmptyObjectWriteError(d, sourceFile))
+    // Allow dot-notation READS on variables that are "dynamic bags" (empty literal + bracket
+    // writes). These are valid JS patterns like `r[key] = val; return r.key` that TS can't
+    // track. Does NOT suppress reads on plain `{}` without bracket writes (catches typos),
+    // union types containing `{}`, or `mux` shadowing.
+    .filter((d) => !isDynamicBagReadError(d, sourceFile, dynamicBagVars))
     .map((d) => {
       const message = ts.flattenDiagnosticMessageText(d.messageText, " ");
       // Extract line number if available
