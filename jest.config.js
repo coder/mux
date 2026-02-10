@@ -22,6 +22,7 @@ module.exports = {
     "\\.css$": "<rootDir>/tests/__mocks__/styleMock.js",
     "\\.txt$": "<rootDir>/tests/__mocks__/textMock.js",
     "\\.svg$": "<rootDir>/tests/__mocks__/svgMock.js",
+    "\\.webm$": "<rootDir>/tests/__mocks__/textMock.js",
   },
   // Avoid haste module collision with vscode extension
   modulePathIgnorePatterns: ["<rootDir>/vscode/"],
