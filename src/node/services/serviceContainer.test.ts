@@ -101,4 +101,43 @@ describe("ServiceContainer", () => {
     expect(muxChatWorkspace?.archivedAt).toBeUndefined();
     expect(muxChatWorkspace?.unarchivedAt).toBeUndefined();
   });
+
+  it("keeps non-system legacy workspaces whose IDs also equal mux-chat", async () => {
+    const legacyProjectPath = path.join(tempDir, "repos", "mux");
+    const legacyWorkspacePath = path.join(config.srcDir, "mux", "chat");
+
+    await config.editConfig((cfg) => {
+      cfg.projects.set(legacyProjectPath, {
+        workspaces: [
+          {
+            path: legacyWorkspacePath,
+            id: MUX_HELP_CHAT_WORKSPACE_ID,
+            name: "chat",
+            title: "Legacy Chat Branch",
+            runtimeConfig: { type: "local" },
+          },
+        ],
+      });
+      return cfg;
+    });
+
+    services = new ServiceContainer(config);
+    await services.initialize();
+
+    const loaded = config.loadConfigOrDefault();
+    const legacyProject = loaded.projects.get(legacyProjectPath);
+
+    expect(legacyProject).toBeDefined();
+    expect(legacyProject?.workspaces).toHaveLength(1);
+    expect(legacyProject?.workspaces[0].id).toBe(MUX_HELP_CHAT_WORKSPACE_ID);
+    expect(legacyProject?.workspaces[0].path).toBe(legacyWorkspacePath);
+
+    const activeSystemProject = loaded.projects.get(getMuxHelpChatProjectPath(config.rootDir));
+    expect(activeSystemProject).toBeDefined();
+    expect(
+      activeSystemProject?.workspaces.some(
+        (workspace) => workspace.id === MUX_HELP_CHAT_WORKSPACE_ID
+      )
+    ).toBe(true);
+  });
 });

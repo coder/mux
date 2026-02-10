@@ -294,25 +294,39 @@ export class ServiceContainer {
 
     await this.config.editConfig((config) => {
       // Dev builds can run with a different MUX_ROOT (for example ~/.mux-dev).
-      // If config.json still has mux-chat under an older root (for example ~/.mux),
-      // the sidebar can show duplicate "Chat with Mux" entries. Keep mux-chat scoped
-      // to the active root's single system project.
+      // If config.json still has the built-in mux-chat workspace under an older root
+      // (for example ~/.mux), the sidebar can show duplicate "Chat with Mux" entries.
+      // Only treat entries as stale when they still look like a system Mux project so
+      // we do not delete unrelated legacy user workspaces whose generated ID happened
+      // to collide with "mux-chat" (e.g. project basename "mux" + workspace "chat").
       const staleProjectPaths: string[] = [];
       for (const [existingProjectPath, existingProjectConfig] of config.projects) {
         if (existingProjectPath === projectPath) {
           continue;
         }
 
-        const hadMuxChatWorkspace = existingProjectConfig.workspaces.some(
-          (workspace) => workspace.id === MUX_HELP_CHAT_WORKSPACE_ID
-        );
-        if (!hadMuxChatWorkspace) {
+        const isSystemMuxProjectPath =
+          path.basename(existingProjectPath) === "Mux" &&
+          path.basename(path.dirname(existingProjectPath)) === "system";
+
+        if (!isSystemMuxProjectPath) {
           continue;
         }
 
-        existingProjectConfig.workspaces = existingProjectConfig.workspaces.filter(
-          (workspace) => workspace.id !== MUX_HELP_CHAT_WORKSPACE_ID
-        );
+        existingProjectConfig.workspaces = existingProjectConfig.workspaces.filter((workspace) => {
+          const isMuxChatWorkspace = workspace.id === MUX_HELP_CHAT_WORKSPACE_ID;
+          if (!isMuxChatWorkspace) {
+            return true;
+          }
+
+          const looksLikeSystemMuxChat =
+            workspace.agentId === MUX_HELP_CHAT_AGENT_ID ||
+            workspace.path === existingProjectPath ||
+            workspace.name === MUX_HELP_CHAT_WORKSPACE_NAME ||
+            workspace.title === MUX_HELP_CHAT_WORKSPACE_TITLE;
+
+          return !looksLikeSystemMuxChat;
+        });
 
         if (existingProjectConfig.workspaces.length === 0) {
           staleProjectPaths.push(existingProjectPath);
