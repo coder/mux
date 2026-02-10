@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useImperativeHandle } from "react";
+import { FolderOpen, Github } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -290,7 +291,6 @@ function ProjectCloneForm(props: ProjectCloneFormProps) {
   const { api } = useAPI();
   const [repoUrl, setRepoUrl] = useState("");
   const [cloneParentDir, setCloneParentDir] = useState(props.defaultCloneDir);
-  const [setCloneParentDirAsDefault, setSetCloneParentDirAsDefault] = useState(false);
   const [hasEditedCloneParentDir, setHasEditedCloneParentDir] = useState(false);
   const [error, setError] = useState("");
   const [isCreating, setIsCreating] = useState(false);
@@ -309,7 +309,6 @@ function ProjectCloneForm(props: ProjectCloneFormProps) {
   const reset = useCallback(() => {
     setRepoUrl("");
     setCloneParentDir(props.defaultCloneDir);
-    setSetCloneParentDirAsDefault(false);
     setHasEditedCloneParentDir(false);
     setError("");
   }, [props.defaultCloneDir]);
@@ -328,30 +327,18 @@ function ProjectCloneForm(props: ProjectCloneFormProps) {
     setCloneParentDir(props.defaultCloneDir);
   }, [props.defaultCloneDir, props.isOpen, hasEditedCloneParentDir]);
 
-  const trimmedDefaultCloneDir = props.defaultCloneDir.trim();
   const trimmedCloneParentDir = cloneParentDir.trim();
-  const showSetAsDefaultCheckbox =
-    trimmedDefaultCloneDir.length > 0 &&
-    trimmedCloneParentDir.length > 0 &&
-    trimmedCloneParentDir !== trimmedDefaultCloneDir;
 
   const handleCancel = useCallback(() => {
     reset();
     props.onClose();
   }, [props, reset]);
 
-  const handleWebPickerPathSelected = useCallback(
-    (selectedPath: string) => {
-      setCloneParentDir(selectedPath);
-      setHasEditedCloneParentDir(true);
-      setError("");
-
-      if (selectedPath.trim() === trimmedDefaultCloneDir) {
-        setSetCloneParentDirAsDefault(false);
-      }
-    },
-    [trimmedDefaultCloneDir]
-  );
+  const handleWebPickerPathSelected = useCallback((selectedPath: string) => {
+    setCloneParentDir(selectedPath);
+    setHasEditedCloneParentDir(true);
+    setError("");
+  }, []);
 
   const handleBrowse = useCallback(async () => {
     try {
@@ -360,15 +347,11 @@ function ProjectCloneForm(props: ProjectCloneFormProps) {
         setCloneParentDir(selectedPath);
         setHasEditedCloneParentDir(true);
         setError("");
-
-        if (selectedPath.trim() === trimmedDefaultCloneDir) {
-          setSetCloneParentDirAsDefault(false);
-        }
       }
     } catch (err) {
       console.error("Failed to pick clone directory:", err);
     }
-  }, [api, trimmedDefaultCloneDir]);
+  }, [api]);
 
   const handleBrowseClick = useCallback(() => {
     if (isDesktop) {
@@ -400,13 +383,10 @@ function ProjectCloneForm(props: ProjectCloneFormProps) {
     setError("");
     setCreating(true);
 
-    const shouldSetCloneParentDirAsDefault = showSetAsDefaultCheckbox && setCloneParentDirAsDefault;
-
     try {
       const result = await api.projects.clone({
         repoUrl: trimmedRepoUrl,
         cloneParentDir: trimmedCloneParentDir || undefined,
-        setCloneParentDirAsDefault: shouldSetCloneParentDirAsDefault || undefined,
       });
 
       if (result.success) {
@@ -428,17 +408,7 @@ function ProjectCloneForm(props: ProjectCloneFormProps) {
     } finally {
       setCreating(false);
     }
-  }, [
-    api,
-    isCreating,
-    props,
-    repoUrl,
-    reset,
-    setCreating,
-    setCloneParentDirAsDefault,
-    showSetAsDefaultCheckbox,
-    trimmedCloneParentDir,
-  ]);
+  }, [api, isCreating, props, repoUrl, reset, setCreating, trimmedCloneParentDir]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -484,10 +454,6 @@ function ProjectCloneForm(props: ProjectCloneFormProps) {
                 setCloneParentDir(nextCloneParentDir);
                 setHasEditedCloneParentDir(true);
                 setError("");
-
-                if (nextCloneParentDir.trim() === trimmedDefaultCloneDir) {
-                  setSetCloneParentDirAsDefault(false);
-                }
               }}
               onKeyDown={handleKeyDown}
               placeholder={props.defaultCloneDir || "Select clone location"}
@@ -513,18 +479,9 @@ function ProjectCloneForm(props: ProjectCloneFormProps) {
           </p>
         )}
 
-        {showSetAsDefaultCheckbox && (
-          <label className="text-muted flex cursor-pointer items-center gap-2 text-xs">
-            <input
-              type="checkbox"
-              checked={setCloneParentDirAsDefault}
-              onChange={(e) => setSetCloneParentDirAsDefault(e.target.checked)}
-              disabled={isCreating}
-              className="accent-accent h-3 w-3"
-            />
-            <span>Set as default</span>
-          </label>
-        )}
+        <p className="text-muted text-xs">
+          Default location can be changed in <span className="text-foreground">Settings</span>.
+        </p>
       </div>
 
       {error && <p className="text-error text-xs">{error}</p>}
@@ -644,10 +601,12 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
           className="mb-3 h-9"
         >
           <ToggleGroupItem value="pick-folder" size="sm" className="h-7 px-3 text-[13px]">
-            Pick a folder
+            <FolderOpen className="h-3.5 w-3.5" />
+            Local folder
           </ToggleGroupItem>
           <ToggleGroupItem value="clone" size="sm" className="h-7 px-3 text-[13px]">
-            Clone
+            <Github className="h-3.5 w-3.5" />
+            Clone repo
           </ToggleGroupItem>
         </ToggleGroup>
 
