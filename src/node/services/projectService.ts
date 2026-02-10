@@ -90,9 +90,11 @@ function resolveCloneParentDir(
   return resolvePathWithTilde(trimmedParentDir);
 }
 
+// Strip filesystem-unsafe characters (including control chars U+0000–U+001F)
 function sanitizeRepoFolderName(name: string): string {
+  const unsafeCharsPattern = /[<>:"/\\|?*]/g;
   return name
-    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-")
+    .replace(unsafeCharsPattern, "-")
     .replace(/^[.\s]+/, "")
     .replace(/[.\s]+$/, "");
 }
@@ -106,7 +108,7 @@ function deriveRepoFolderName(repoUrl: string): string {
   let candidatePath = trimmedRepoUrl;
 
   // SSH-style shorthand: git@github.com:owner/repo.git
-  const scpLikeMatch = trimmedRepoUrl.match(/^[^@\s]+@[^:\s]+:(.+)$/);
+  const scpLikeMatch = /^[^@\s]+@[^:\s]+:(.+)$/.exec(trimmedRepoUrl);
   if (scpLikeMatch) {
     candidatePath = scpLikeMatch[1];
   } else if (/^[^/\\\s]+\/[^/\\\s]+$/.test(trimmedRepoUrl)) {
