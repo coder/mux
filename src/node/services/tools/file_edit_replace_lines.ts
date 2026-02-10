@@ -34,7 +34,7 @@ export const createFileEditReplaceLinesTool: ToolFactory = (config: ToolConfigur
     ): Promise<FileEditReplaceLinesToolResult> => {
       const result = await executeFileEditOperation({
         config,
-        filePath: args.file_path,
+        filePath: args.path,
         operation: (originalContent) => handleLineReplace(args, originalContent),
         abortSignal,
       });

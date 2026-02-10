@@ -6,19 +6,19 @@ import { applyPatch, createPatch, parsePatch } from "diff";
 
 /**
  * Input shape for file edit tools.
- * Current calls use `file_path`; older transcripts may still contain `path`.
+ * Current calls use `path`; older transcripts may still contain `file_path`.
  */
 interface FileEditToolInput {
-  file_path?: string;
   path?: string;
+  file_path?: string;
 }
 
 function extractFilePath(input: FileEditToolInput | undefined): string | undefined {
-  if (typeof input?.file_path === "string") {
-    return input.file_path;
+  if (typeof input?.path === "string") {
+    return input.path;
   }
 
-  return typeof input?.path === "string" ? input.path : undefined;
+  return typeof input?.file_path === "string" ? input.file_path : undefined;
 }
 
 /**

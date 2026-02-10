@@ -70,9 +70,13 @@ export const FileReadToolCall: React.FC<FileReadToolCallProps> = ({
 }) => {
   const { expanded, toggleExpanded } = useToolExpansion();
 
-  // Support both new (file_path) and legacy (filePath) property names for backwards compatibility
+  // Support canonical (path), legacy (file_path), and older (filePath) property names for backwards compat
   const filePath =
-    "file_path" in args ? args.file_path : ((args as { filePath?: string }).filePath ?? "");
+    "path" in args
+      ? args.path
+      : "file_path" in args
+        ? args.file_path
+        : ((args as { filePath?: string }).filePath ?? "");
 
   // Parse the file content to extract line numbers and actual content
   const parsedContent = result?.success && result.content ? parseFileContent(result.content) : null;

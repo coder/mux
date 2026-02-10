@@ -50,20 +50,20 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
     description: TOOL_DEFINITIONS.file_edit_insert.description,
     inputSchema: TOOL_DEFINITIONS.file_edit_insert.schema,
     execute: async (
-      { file_path, content, insert_before, insert_after }: FileEditInsertToolArgs,
+      { path, content, insert_before, insert_after }: FileEditInsertToolArgs,
       { abortSignal }
     ): Promise<FileEditInsertToolResult> => {
       try {
         const { correctedPath, warning: pathWarning } = validateAndCorrectPath(
-          file_path,
+          path,
           config.cwd,
           config.runtime
         );
-        file_path = correctedPath;
-        const resolvedPath = config.runtime.normalizePath(file_path, config.cwd);
+        path = correctedPath;
+        const resolvedPath = config.runtime.normalizePath(path, config.cwd);
 
         // Validate plan mode access restrictions
-        const planModeError = await validatePlanModeAccess(file_path, config);
+        const planModeError = await validatePlanModeAccess(path, config);
         if (planModeError) {
           return planModeError;
         }
@@ -111,7 +111,7 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
 
         return executeFileEditOperation({
           config,
-          filePath: file_path,
+          filePath: path,
           abortSignal,
           operation: (originalContent) =>
             insertContent(originalContent, content, {
@@ -123,7 +123,7 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
         if (error && typeof error === "object" && "code" in error && error.code === "EACCES") {
           return {
             success: false,
-            error: `Permission denied: ${file_path}`,
+            error: `Permission denied: ${path}`,
           };
         }
 

@@ -109,12 +109,12 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
 
   const uiOnlyDiff = getToolOutputUiOnly(result)?.file_edit?.diff;
   const diff = result && result.success ? (uiOnlyDiff ?? result.diff) : undefined;
-  const filePathCandidate = args as { file_path?: unknown; path?: unknown };
+  const filePathCandidate = args as { path?: unknown; file_path?: unknown };
   const filePath =
-    typeof filePathCandidate.file_path === "string"
-      ? filePathCandidate.file_path
-      : typeof filePathCandidate.path === "string"
-        ? filePathCandidate.path
+    typeof filePathCandidate.path === "string"
+      ? filePathCandidate.path
+      : typeof filePathCandidate.file_path === "string"
+        ? filePathCandidate.file_path
         : undefined;
 
   // Copy to clipboard with feedback

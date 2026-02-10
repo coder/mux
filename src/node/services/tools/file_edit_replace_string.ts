@@ -32,7 +32,7 @@ export const createFileEditReplaceStringTool: ToolFactory = (config: ToolConfigu
     ): Promise<FileEditReplaceStringToolResult> => {
       return executeFileEditOperation({
         config,
-        filePath: args.file_path,
+        filePath: args.path,
         operation: (originalContent) => handleStringReplace(args, originalContent),
         abortSignal,
       });

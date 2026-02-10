@@ -527,25 +527,25 @@ export const AgentReportToolArgsSchema = z
   .strict();
 
 export const AgentReportToolResultSchema = z.object({ success: z.literal(true) }).strict();
-const FILE_EDIT_FILE_PATH = z
+const FILE_TOOL_PATH = z
   .string()
   .describe("Path to the file to edit (absolute or relative to the current workspace)");
 
-function normalizeFilePathAlias(value: unknown): unknown {
-  // Compatibility: some models emit { path: "..." } for file tools.
-  // Normalize to `file_path` so handlers and stored transcripts stay canonical.
+function normalizeFilePath(value: unknown): unknown {
+  // Compatibility: legacy callers may emit { file_path: "..." } for file tools.
+  // Normalize to canonical `path` so schemas and handlers use one key.
   if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
 
   const obj = value as Record<string, unknown>;
 
-  // Prefer canonical `file_path` whenever it is present.
+  // Canonical `path` wins when present.
   // If it's invalid, let schema validation fail instead of silently replacing it.
-  if ("file_path" in obj || typeof obj.path !== "string") {
+  if ("path" in obj || typeof obj.file_path !== "string") {
     return value;
   }
 
-  const { path, ...rest } = obj;
-  return { ...rest, file_path: path };
+  const { file_path, ...rest } = obj;
+  return { ...rest, path: file_path };
 }
 
 interface ToolSchema {
@@ -651,9 +651,9 @@ export const TOOL_DEFINITIONS = {
     description:
       "Read the contents of a file from the file system. Read as little as possible to complete the task.",
     schema: z.preprocess(
-      normalizeFilePathAlias,
+      normalizeFilePath,
       z.object({
-        file_path: z.string().describe("The path to the file to read (absolute or relative)"),
+        path: z.string().describe("The path to the file to read (absolute or relative)"),
         offset: z
           .number()
           .int()
@@ -736,9 +736,9 @@ export const TOOL_DEFINITIONS = {
       "⚠️ CRITICAL: Always check tool results - edits WILL fail if old_string is not found or unique. Do not proceed with dependent operations (commits, pushes, builds) until confirming success.\n\n" +
       "Apply one or more edits to a file by replacing exact text matches. All edits are applied sequentially. Each old_string must be unique in the file unless replace_count > 1 or replace_count is -1.",
     schema: z.preprocess(
-      normalizeFilePathAlias,
+      normalizeFilePath,
       z.object({
-        file_path: FILE_EDIT_FILE_PATH,
+        path: FILE_TOOL_PATH,
         old_string: z
           .string()
           .describe(
@@ -760,9 +760,9 @@ export const TOOL_DEFINITIONS = {
       "⚠️ CRITICAL: Always check tool results - edits WILL fail if line numbers are invalid or file content has changed. Do not proceed with dependent operations (commits, pushes, builds) until confirming success.\n\n" +
       "Replace a range of lines in a file. Use this for line-based edits when you know the exact line numbers to modify.",
     schema: z.preprocess(
-      normalizeFilePathAlias,
+      normalizeFilePath,
       z.object({
-        file_path: FILE_EDIT_FILE_PATH,
+        path: FILE_TOOL_PATH,
         start_line: z.number().int().min(1).describe("1-indexed start line (inclusive) to replace"),
         end_line: z.number().int().min(1).describe("1-indexed end line (inclusive) to replace"),
         new_lines: z
@@ -786,10 +786,10 @@ export const TOOL_DEFINITIONS = {
       "Avoid short guards like `}` or `}\\n` that match multiple locations — " +
       `use longer patterns like full function signatures or unique comments. ${TOOL_EDIT_WARNING}`,
     schema: z.preprocess(
-      normalizeFilePathAlias,
+      normalizeFilePath,
       z
         .object({
-          file_path: FILE_EDIT_FILE_PATH,
+          path: FILE_TOOL_PATH,
           insert_before: z
             .string()
             .min(1)

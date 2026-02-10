@@ -119,7 +119,7 @@ async function countToolOutputTokens(
   return countTokensForData(outputData, tokenizer);
 }
 
-/** Tools that operate on files - canonical input uses `file_path` (with legacy `path` fallback). */
+/** Tools that operate on files - canonical input uses `path` (with legacy `file_path` fallback). */
 const FILE_PATH_TOOLS = new Set([
   "file_read",
   "file_edit_insert",
@@ -133,11 +133,11 @@ function extractFilePathValue(input: unknown): string | undefined {
   }
 
   const record = input as Record<string, unknown>;
-  if (typeof record.file_path === "string") {
-    return record.file_path;
+  if (typeof record.path === "string") {
+    return record.path;
   }
 
-  return typeof record.path === "string" ? record.path : undefined;
+  return typeof record.file_path === "string" ? record.file_path : undefined;
 }
 
 /**

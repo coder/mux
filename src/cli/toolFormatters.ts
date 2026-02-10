@@ -48,8 +48,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function extractFilePathArg(args: unknown): string | undefined {
   if (!isRecord(args)) return undefined;
 
-  if (typeof args.file_path === "string") return args.file_path;
   if (typeof args.path === "string") return args.path;
+  if (typeof args.file_path === "string") return args.file_path;
   if (typeof args.filePath === "string") return args.filePath;
 
   return undefined;
