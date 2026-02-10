@@ -269,6 +269,10 @@ export class ProjectService {
   ): Promise<Result<{ projectConfig: ProjectConfig; normalizedPath: string }>> {
     // Hoisted so the catch block can clean up partial clones.
     let normalizedPath: string | undefined;
+    // Track whether we confirmed the destination didn't exist before cloning,
+    // so we only clean up directories we created (not concurrent clones).
+    let destinationVerifiedEmpty = false;
+    let cloneSucceeded = false;
     try {
       const repoUrl = input.repoUrl.trim();
       if (!repoUrl) {
@@ -314,6 +318,7 @@ export class ProjectService {
       if (destinationStat) {
         return Err(`Destination already exists: ${normalizedPath}`);
       }
+      destinationVerifiedEmpty = true;
 
       await fsPromises.mkdir(cloneParentDir, { recursive: true });
 
@@ -322,6 +327,7 @@ export class ProjectService {
       // never interpreted as git flags.
       using cloneProc = execFileAsync("git", ["clone", "--", cloneUrl, normalizedPath]);
       await cloneProc.result;
+      cloneSucceeded = true;
 
       // Use editConfig to do an atomic read-modify-write, avoiding overwriting
       // unrelated config changes that may have occurred during the clone.
@@ -342,8 +348,10 @@ export class ProjectService {
       return Ok({ projectConfig, normalizedPath: clonedPath });
     } catch (error) {
       // Best-effort cleanup of partial clone directory so the user can retry
-      // without hitting "Destination already exists".
-      if (normalizedPath) {
+      // without hitting "Destination already exists". Only clean up if:
+      // 1. We verified the path didn't exist before cloning (so we own it)
+      // 2. The clone itself failed (not a post-clone config save error)
+      if (normalizedPath && destinationVerifiedEmpty && !cloneSucceeded) {
         try {
           await fsPromises.rm(normalizedPath, { recursive: true, force: true });
         } catch {
