@@ -71,6 +71,7 @@ export class ProviderService {
         baseUrl?: string;
         models?: string[];
         serviceTier?: unknown;
+        cacheTtl?: unknown;
         /** OpenAI-only: default auth precedence for Codex-OAuth-allowed models. */
         codexOauthDefaultAuth?: unknown;
         region?: string;
@@ -122,6 +123,12 @@ export class ProviderService {
           serviceTier === "priority")
       ) {
         providerInfo.serviceTier = serviceTier;
+      }
+
+      // Anthropic-specific fields
+      const cacheTtl = config.cacheTtl;
+      if (provider === "anthropic" && (cacheTtl === "5m" || cacheTtl === "1h")) {
+        providerInfo.cacheTtl = cacheTtl;
       }
 
       if (provider === "openai") {

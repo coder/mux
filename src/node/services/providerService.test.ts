@@ -121,4 +121,49 @@ describe("ProviderService.setConfig", () => {
       expect(afterEnable?.openai?.enabled).toBeUndefined();
     });
   });
+
+  it("surfaces valid Anthropic cacheTtl", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-provider-service-"));
+    try {
+      const config = new Config(tmpDir);
+      config.saveProvidersConfig({
+        anthropic: {
+          apiKey: "sk-ant-test",
+          cacheTtl: "1h",
+        },
+      });
+
+      const service = new ProviderService(config);
+      const cfg = service.getConfig();
+
+      expect(cfg.anthropic.apiKeySet).toBe(true);
+      expect(cfg.anthropic.cacheTtl).toBe("1h");
+      expect(Object.prototype.hasOwnProperty.call(cfg.anthropic, "cacheTtl")).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("omits invalid Anthropic cacheTtl", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-provider-service-"));
+    try {
+      const config = new Config(tmpDir);
+      config.saveProvidersConfig({
+        anthropic: {
+          apiKey: "sk-ant-test",
+          // Intentionally invalid
+          cacheTtl: "24h",
+        },
+      });
+
+      const service = new ProviderService(config);
+      const cfg = service.getConfig();
+
+      expect(cfg.anthropic.apiKeySet).toBe(true);
+      expect(cfg.anthropic.cacheTtl).toBeUndefined();
+      expect(Object.prototype.hasOwnProperty.call(cfg.anthropic, "cacheTtl")).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
