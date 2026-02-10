@@ -906,17 +906,24 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             </TooltipTrigger>
                             <TooltipContent align="end">Remove project</TooltipContent>
                           </Tooltip>
-                          <button
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              handleAddWorkspace(projectPath);
-                            }}
-                            aria-label={`New chat in ${projectName}`}
-                            data-project-path={projectPath}
-                            className="text-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none transition-all duration-200"
-                          >
-                            +
-                          </button>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleAddWorkspace(projectPath);
+                                }}
+                                aria-label={`New chat in ${projectName}`}
+                                data-project-path={projectPath}
+                                className="text-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none transition-all duration-200"
+                              >
+                                +
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              New chat ({formatKeybind(KEYBINDS.NEW_WORKSPACE)})
+                            </TooltipContent>
+                          </Tooltip>
                         </DraggableProjectItem>
 
                         {isExpanded && (
