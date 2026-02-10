@@ -49,6 +49,15 @@ description: Agent instructions for AI assistants working on the Mux codebase
 - **Codex reviews:** if a PR has Codex review comments, address + resolve them, then re-request review by commenting `@codex review` on the PR. Repeat until `./scripts/check_codex_comments.sh <pr_number>` reports none.
 - Full `static-check` includes docs link checking via `mintlify broken-links`.
 
+## Testing: HistoryService
+
+HistoryService is pure local disk I/O with a single dependency (`getSessionDir`). **Always use a real instance** via `createTestHistoryService()` (`src/node/services/testHistoryService.ts`) rather than mocking.
+
+- For pre-seeded data: call `historyService.appendToHistory()` in `beforeEach`
+- For error injection: use real instance + `spyOn(historyService, "method").mockRejectedValueOnce(...)`
+- For call tracking: `spyOn(historyService, "method")` without `mockImplementation` — real impl runs, calls are recorded
+- For assertions: read history back with `getHistoryFromLatestBoundary()` or `getLastMessages()` instead of checking mock calls
+
 ## Refactoring & Runtime Etiquette
 
 - Use `git mv` to retain history when moving files.
