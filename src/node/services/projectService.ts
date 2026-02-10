@@ -231,6 +231,14 @@ export class ProjectService {
     return resolveCloneParentDir(undefined, config.defaultProjectCloneDir);
   }
 
+  async setDefaultCloneDir(dirPath: string): Promise<void> {
+    const trimmed = dirPath.trim();
+    await this.config.editConfig((config) => ({
+      ...config,
+      defaultProjectCloneDir: trimmed || undefined,
+    }));
+  }
+
   async clone(
     input: CloneProjectParams
   ): Promise<Result<{ projectConfig: ProjectConfig; normalizedPath: string }>> {

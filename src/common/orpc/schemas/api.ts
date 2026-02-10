@@ -442,6 +442,10 @@ export const projects = {
     input: z.void(),
     output: z.string(),
   },
+  setDefaultCloneDir: {
+    input: z.object({ path: z.string() }),
+    output: z.void(),
+  },
   clone: {
     input: z
       .object({

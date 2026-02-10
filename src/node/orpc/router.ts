@@ -1723,6 +1723,12 @@ export const router = (authToken?: string) => {
         .handler(({ context }) => {
           return context.projectService.getDefaultCloneDir();
         }),
+      setDefaultCloneDir: t
+        .input(schemas.projects.setDefaultCloneDir.input)
+        .output(schemas.projects.setDefaultCloneDir.output)
+        .handler(async ({ context, input }) => {
+          await context.projectService.setDefaultCloneDir(input.path);
+        }),
       clone: t
         .input(schemas.projects.clone.input)
         .output(schemas.projects.clone.output)

@@ -153,6 +153,8 @@ export function GeneralSection() {
   const editorConfig = normalizeEditorConfig(rawEditorConfig);
   const [sshHost, setSshHost] = useState<string>("");
   const [sshHostLoaded, setSshHostLoaded] = useState(false);
+  const [defaultCloneDir, setDefaultCloneDir] = useState("");
+  const [cloneDirLoaded, setCloneDirLoaded] = useState(false);
 
   // Backend config: default to ON so archiving is safest even before async load completes.
   const [stopCoderWorkspaceOnArchive, setStopCoderWorkspaceOnArchive] = useState(true);
@@ -246,6 +248,23 @@ export function GeneralSection() {
     }
   }, [api]);
 
+  useEffect(() => {
+    if (!api) {
+      return;
+    }
+
+    void api.projects
+      .getDefaultCloneDir()
+      .then((dir) => {
+        setDefaultCloneDir(dir);
+        setCloneDirLoaded(true);
+      })
+      .catch(() => {
+        // Best-effort only. Keep the input editable if load fails.
+        setCloneDirLoaded(true);
+      });
+  }, [api]);
+
   const handleEditorChange = (editor: EditorType) => {
     setEditorConfig((prev) => ({ ...normalizeEditorConfig(prev), editor }));
   };
@@ -274,6 +293,14 @@ export function GeneralSection() {
     },
     [api]
   );
+
+  const handleCloneDirBlur = useCallback(() => {
+    if (!cloneDirLoaded) {
+      return;
+    }
+
+    void api?.projects.setDefaultCloneDir({ path: defaultCloneDir });
+  }, [api, cloneDirLoaded, defaultCloneDir]);
 
   return (
     <div className="space-y-6">
@@ -438,6 +465,28 @@ export function GeneralSection() {
           />
         </div>
       )}
+
+      <div>
+        <h3 className="text-foreground mb-4 text-sm font-medium">Projects</h3>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <div className="text-foreground text-sm">Default clone directory</div>
+              <div className="text-muted text-xs">Parent folder used when cloning repositories</div>
+            </div>
+            <Input
+              value={defaultCloneDir}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setDefaultCloneDir(e.target.value)
+              }
+              onBlur={handleCloneDirBlur}
+              placeholder="~/.mux/projects"
+              disabled={!cloneDirLoaded}
+              className="border-border-medium bg-background-secondary h-9 w-80"
+            />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
