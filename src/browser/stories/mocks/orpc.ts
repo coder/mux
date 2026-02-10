@@ -858,10 +858,19 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       getDefaultCloneDir: () => Promise.resolve("~/.mux/projects"),
       setDefaultCloneDir: () => Promise.resolve(),
       clone: () =>
-        Promise.resolve({
-          success: true,
-          data: { projectConfig: { workspaces: [] }, normalizedPath: "/mock/cloned-project" },
-        }),
+        Promise.resolve(
+          (async function* () {
+            yield {
+              type: "progress" as const,
+              line: "Cloning into '/mock/cloned-project'...\n",
+            };
+            yield {
+              type: "success" as const,
+              projectConfig: { workspaces: [] },
+              normalizedPath: "/mock/cloned-project",
+            };
+          })()
+        ),
       listBranches: (input: { projectPath: string }) => {
         if (customListBranches) {
           return customListBranches(input);

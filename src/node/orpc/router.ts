@@ -1732,8 +1732,8 @@ export const router = (authToken?: string) => {
       clone: t
         .input(schemas.projects.clone.input)
         .output(schemas.projects.clone.output)
-        .handler(async ({ context, input }) => {
-          return context.projectService.clone(input);
+        .handler(async function* ({ context, input, signal }) {
+          yield* context.projectService.cloneWithProgress(input, signal);
         }),
       pickDirectory: t
         .input(schemas.projects.pickDirectory.input)

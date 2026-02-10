@@ -3,6 +3,7 @@ import type { SectionConfig } from "@/common/types/project";
 import { DEFAULT_SECTION_COLOR } from "@/common/constants/ui";
 import { sortSectionsByLinkedList } from "@/common/utils/sections";
 import { isWorkspaceArchived } from "@/common/utils/archive";
+import { spawn } from "child_process";
 import { randomBytes } from "crypto";
 import { validateProjectPath, isGitRepository } from "@/node/utils/pathUtils";
 import { listLocalBranches, detectDefaultTrunkBranch } from "@/node/git";
@@ -62,8 +63,13 @@ async function listDirectory(requestedPath: string): Promise<FileTreeNode> {
 
 interface CloneProjectParams {
   repoUrl: string;
-  cloneParentDir?: string;
+  cloneParentDir?: string | null;
 }
+
+export type CloneEvent =
+  | { type: "progress"; line: string }
+  | { type: "success"; projectConfig: ProjectConfig; normalizedPath: string }
+  | { type: "error"; error: string };
 
 function isTildePrefixedPath(value: string): boolean {
   return value === "~" || value.startsWith("~/") || value.startsWith("~\\");
@@ -75,7 +81,7 @@ function resolvePathWithTilde(inputPath: string): string {
 }
 
 function resolveCloneParentDir(
-  cloneParentDir: string | undefined,
+  cloneParentDir: string | null | undefined,
   defaultCloneDir: string | undefined
 ): string {
   const rawParentDir = cloneParentDir ?? defaultCloneDir ?? getMuxProjectsDir();
@@ -264,15 +270,9 @@ export class ProjectService {
     }));
   }
 
-  async clone(
+  private validateAndPrepareClone(
     input: CloneProjectParams
-  ): Promise<Result<{ projectConfig: ProjectConfig; normalizedPath: string }>> {
-    // Hoisted so the catch block can clean up partial clones.
-    let normalizedPath: string | undefined;
-    // Track whether we confirmed the destination didn't exist before cloning,
-    // so we only clean up directories we created (not concurrent clones).
-    let destinationVerifiedEmpty = false;
-    let cloneSucceeded = false;
+  ): Result<{ cloneUrl: string; normalizedPath: string; cloneParentDir: string }> {
     try {
       const repoUrl = input.repoUrl.trim();
       if (!repoUrl) {
@@ -285,12 +285,225 @@ export class ProjectService {
         config.defaultProjectCloneDir
       );
       const repoFolderName = deriveRepoFolderName(repoUrl);
-      normalizedPath = path.join(cloneParentDir, repoFolderName);
+      const normalizedPath = path.join(cloneParentDir, repoFolderName);
 
       if (config.projects.has(normalizedPath)) {
         return Err(`Project already exists at ${normalizedPath}`);
       }
 
+      return Ok({
+        cloneUrl: normalizeRepoUrlForClone(repoUrl),
+        normalizedPath,
+        cloneParentDir,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(message);
+    }
+  }
+
+  async *cloneWithProgress(
+    input: CloneProjectParams,
+    signal?: AbortSignal
+  ): AsyncGenerator<CloneEvent> {
+    const prepared = this.validateAndPrepareClone(input);
+    if (!prepared.success) {
+      yield { type: "error", error: prepared.error };
+      return;
+    }
+
+    const { cloneUrl, normalizedPath, cloneParentDir } = prepared.data;
+    let destinationVerifiedEmpty = false;
+    let cloneSucceeded = false;
+
+    const cleanupPartialClone = async () => {
+      if (!destinationVerifiedEmpty || cloneSucceeded) {
+        return;
+      }
+
+      try {
+        await fsPromises.rm(normalizedPath, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup errors — the original error is more important.
+      }
+    };
+
+    try {
+      if (signal?.aborted) {
+        yield { type: "error", error: "Clone cancelled" };
+        return;
+      }
+
+      let cloneParentStat: Stats | null = null;
+      try {
+        cloneParentStat = await fsPromises.stat(cloneParentDir);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code !== "ENOENT") {
+          throw error;
+        }
+      }
+
+      if (cloneParentStat && !cloneParentStat.isDirectory()) {
+        yield { type: "error", error: "Clone destination parent directory is not a directory" };
+        return;
+      }
+
+      let destinationStat: Stats | null = null;
+      try {
+        destinationStat = await fsPromises.stat(normalizedPath);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code !== "ENOENT") {
+          throw error;
+        }
+      }
+
+      if (destinationStat) {
+        yield { type: "error", error: `Destination already exists: ${normalizedPath}` };
+        return;
+      }
+      destinationVerifiedEmpty = true;
+
+      await fsPromises.mkdir(cloneParentDir, { recursive: true });
+
+      const child = spawn("git", ["clone", "--progress", "--", cloneUrl, normalizedPath], {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      });
+
+      const stderrChunks: string[] = [];
+      let resolveChunk: (() => void) | null = null;
+      let processEnded = false;
+      let spawnError: Error | null = null;
+      let exitCode: number | null = null;
+      let exitSignal: NodeJS.Signals | null = null;
+
+      const notifyChunk = () => {
+        if (!resolveChunk) {
+          return;
+        }
+
+        const resolve = resolveChunk;
+        resolveChunk = null;
+        resolve();
+      };
+
+      child.stderr?.on("data", (data: Buffer) => {
+        stderrChunks.push(data.toString());
+        notifyChunk();
+      });
+
+      child.on("error", (error) => {
+        spawnError = error;
+        processEnded = true;
+        notifyChunk();
+      });
+
+      child.on("exit", (code, currentSignal) => {
+        exitCode = code;
+        exitSignal = currentSignal;
+      });
+
+      child.on("close", () => {
+        processEnded = true;
+        notifyChunk();
+      });
+
+      const onAbort = () => {
+        if (!child.killed && child.exitCode === null && child.signalCode === null) {
+          child.kill();
+        }
+        notifyChunk();
+      };
+
+      if (signal) {
+        if (signal.aborted) {
+          onAbort();
+        } else {
+          signal.addEventListener("abort", onAbort, { once: true });
+        }
+      }
+
+      try {
+        while (!processEnded) {
+          if (stderrChunks.length > 0) {
+            yield { type: "progress", line: stderrChunks.shift()! };
+            continue;
+          }
+
+          await new Promise<void>((resolve) => {
+            resolveChunk = resolve;
+          });
+        }
+      } finally {
+        signal?.removeEventListener("abort", onAbort);
+
+        if (!child.killed && child.exitCode === null && child.signalCode === null) {
+          child.kill();
+        }
+      }
+
+      while (stderrChunks.length > 0) {
+        yield { type: "progress", line: stderrChunks.shift()! };
+      }
+
+      if (spawnError) {
+        throw spawnError;
+      }
+
+      if (signal?.aborted) {
+        await cleanupPartialClone();
+        yield { type: "error", error: "Clone cancelled" };
+        return;
+      }
+
+      if (exitCode !== 0 || exitSignal !== null) {
+        await cleanupPartialClone();
+        const errorMessage =
+          exitSignal !== null
+            ? `Clone failed: process terminated by signal ${exitSignal}`
+            : `Clone failed with exit code ${exitCode ?? "unknown"}`;
+        yield { type: "error", error: errorMessage };
+        return;
+      }
+
+      cloneSucceeded = true;
+
+      const projectConfig: ProjectConfig = { workspaces: [] };
+      await this.config.editConfig((freshConfig) => {
+        if (freshConfig.projects.has(normalizedPath)) {
+          return freshConfig;
+        }
+        const updatedProjects = new Map(freshConfig.projects);
+        updatedProjects.set(normalizedPath, projectConfig);
+        return { ...freshConfig, projects: updatedProjects };
+      });
+
+      yield { type: "success", projectConfig, normalizedPath };
+    } catch (error) {
+      await cleanupPartialClone();
+      const message = error instanceof Error ? error.message : String(error);
+      yield { type: "error", error: `Failed to clone repository: ${message}` };
+    }
+  }
+
+  async clone(
+    input: CloneProjectParams
+  ): Promise<Result<{ projectConfig: ProjectConfig; normalizedPath: string }>> {
+    const prepared = this.validateAndPrepareClone(input);
+    if (!prepared.success) {
+      return Err(prepared.error);
+    }
+
+    const { cloneUrl, normalizedPath, cloneParentDir } = prepared.data;
+
+    // Track whether we confirmed the destination didn't exist before cloning,
+    // so we only clean up directories we created (not concurrent clones).
+    let destinationVerifiedEmpty = false;
+    let cloneSucceeded = false;
+
+    try {
       let cloneParentStat: Stats | null = null;
       try {
         cloneParentStat = await fsPromises.stat(cloneParentDir);
@@ -322,10 +535,11 @@ export class ProjectService {
 
       await fsPromises.mkdir(cloneParentDir, { recursive: true });
 
-      const cloneUrl = normalizeRepoUrlForClone(repoUrl);
       // Use -- to terminate options so user-supplied URLs starting with "-" are
       // never interpreted as git flags.
-      using cloneProc = execFileAsync("git", ["clone", "--", cloneUrl, normalizedPath]);
+      using cloneProc = execFileAsync("git", ["clone", "--", cloneUrl, normalizedPath], {
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      });
       await cloneProc.result;
       cloneSucceeded = true;
 
@@ -333,25 +547,23 @@ export class ProjectService {
       // unrelated config changes that may have occurred during the clone.
       // Re-check inside the callback to avoid overwriting a project entry that
       // was concurrently added by another process/window during clone.
-      // normalizedPath is guaranteed to be set by this point (defined before clone).
-      const clonedPath = normalizedPath;
       const projectConfig: ProjectConfig = { workspaces: [] };
       await this.config.editConfig((freshConfig) => {
-        if (freshConfig.projects.has(clonedPath)) {
+        if (freshConfig.projects.has(normalizedPath)) {
           return freshConfig; // Already registered — don't overwrite
         }
         const updatedProjects = new Map(freshConfig.projects);
-        updatedProjects.set(clonedPath, projectConfig);
+        updatedProjects.set(normalizedPath, projectConfig);
         return { ...freshConfig, projects: updatedProjects };
       });
 
-      return Ok({ projectConfig, normalizedPath: clonedPath });
+      return Ok({ projectConfig, normalizedPath });
     } catch (error) {
       // Best-effort cleanup of partial clone directory so the user can retry
       // without hitting "Destination already exists". Only clean up if:
       // 1. We verified the path didn't exist before cloning (so we own it)
       // 2. The clone itself failed (not a post-clone config save error)
-      if (normalizedPath && destinationVerifiedEmpty && !cloneSucceeded) {
+      if (destinationVerifiedEmpty && !cloneSucceeded) {
         try {
           await fsPromises.rm(normalizedPath, { recursive: true, force: true });
         } catch {

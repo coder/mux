@@ -450,15 +450,22 @@ export const projects = {
     input: z
       .object({
         repoUrl: z.string(),
-        cloneParentDir: z.string().optional(),
+        cloneParentDir: z.string().nullish(),
       })
       .strict(),
-    output: ResultSchema(
-      z.object({
-        projectConfig: ProjectConfigSchema,
-        normalizedPath: z.string(),
-      }),
-      z.string()
+    output: eventIterator(
+      z.discriminatedUnion("type", [
+        z.object({ type: z.literal("progress"), line: z.string() }),
+        z.object({
+          type: z.literal("success"),
+          projectConfig: ProjectConfigSchema,
+          normalizedPath: z.string(),
+        }),
+        z.object({
+          type: z.literal("error"),
+          error: z.string(),
+        }),
+      ])
     ),
   },
   pickDirectory: {

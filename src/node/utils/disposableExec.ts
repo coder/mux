@@ -227,6 +227,16 @@ export function execAsync(command: string, options?: ExecAsyncOptions): Disposab
 }
 
 /**
+ * Options for execFileAsync.
+ */
+export interface ExecFileAsyncOptions {
+  /** Extra environment variables for the child process. */
+  env?: Record<string, string | undefined>;
+  /** Optional callback for each stderr data chunk from the process. */
+  onStderrData?: (chunk: string) => void;
+}
+
+/**
  * Execute a file with arguments and automatic cleanup via `using` declaration.
  * Unlike execAsync, this does not use a shell—arguments are passed directly
  * to the executable, avoiding shell-quoting issues across platforms.
@@ -237,8 +247,15 @@ export function execAsync(command: string, options?: ExecAsyncOptions): Disposab
  * using proc = execFileAsync("git", ["clone", url, dest]);
  * const { stdout } = await proc.result;
  */
-export function execFileAsync(file: string, args: string[]): DisposableExec {
-  const child = spawn(file, args, { stdio: ["ignore", "pipe", "pipe"] });
+export function execFileAsync(
+  file: string,
+  args: string[],
+  options?: ExecFileAsyncOptions
+): DisposableExec {
+  const child = spawn(file, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: options?.env ? { ...process.env, ...options.env } : undefined,
+  });
   const promise = new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
     let stdout = "";
     let stderr = "";
@@ -249,7 +266,9 @@ export function execFileAsync(file: string, args: string[]): DisposableExec {
       stdout += data;
     });
     child.stderr?.on("data", (data) => {
-      stderr += data;
+      const chunk = data.toString();
+      stderr += chunk;
+      options?.onStderrData?.(chunk);
     });
 
     child.on("exit", (code, signal) => {

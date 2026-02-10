@@ -384,22 +384,31 @@ function ProjectCloneForm(props: ProjectCloneFormProps) {
     setCreating(true);
 
     try {
-      const result = await api.projects.clone({
+      const cloneEvents = await api.projects.clone({
         repoUrl: trimmedRepoUrl,
         cloneParentDir: trimmedCloneParentDir || undefined,
       });
 
-      if (result.success) {
-        const { normalizedPath, projectConfig } = result.data;
-        props.onSuccess(normalizedPath, projectConfig);
-        reset();
-        props.onClose();
-        return true;
+      for await (const event of cloneEvents) {
+        if (event.type === "progress") {
+          // Keep current UX unchanged for now: the button still shows "Cloning...".
+          // A dedicated follow-up task will surface progress lines in the modal.
+          continue;
+        }
+
+        if (event.type === "success") {
+          const { normalizedPath, projectConfig } = event;
+          props.onSuccess(normalizedPath, projectConfig);
+          reset();
+          props.onClose();
+          return true;
+        }
+
+        setError(event.error || "Failed to clone project");
+        return false;
       }
 
-      const errorMessage =
-        typeof result.error === "string" ? result.error : "Failed to clone project";
-      setError(errorMessage);
+      setError("Clone did not return a completion event");
       return false;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred";
