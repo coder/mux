@@ -6,6 +6,24 @@ import { parseDebugUpdater } from "@/common/utils/env";
 // Update check timeout in milliseconds (30 seconds)
 const UPDATE_CHECK_TIMEOUT_MS = 30_000;
 
+/**
+ * Detect transient errors that should trigger silent backoff rather than
+ * surfacing an error to the user. Covers:
+ * - 404 (latest.yml not yet uploaded for a new release)
+ * - Network errors (offline, DNS, timeout)
+ * - GitHub rate-limiting (explicit rate-limit signatures only — bare 403s
+ *   may indicate persistent auth/config issues and should remain visible)
+ */
+function isTransientUpdateError(error: Error): boolean {
+  const msg = error.message;
+  return (
+    /404|Not Found/i.test(msg) ||
+    /ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN/i.test(msg) ||
+    /network|socket hang up/i.test(msg) ||
+    /rate limit/i.test(msg)
+  );
+}
+
 // Backend UpdateStatus type (uses full UpdateInfo from electron-updater)
 export type UpdateStatus =
   | { type: "idle" } // Initial state, no check performed yet
@@ -88,8 +106,23 @@ export class UpdaterService {
     });
 
     autoUpdater.on("error", (error) => {
-      log.error("Update error:", error);
       this.clearCheckTimeout();
+
+      // Transient errors during the *check* phase (e.g., latest.yml not yet
+      // uploaded for a new release, or network blips) should not surface as
+      // errors — silently revert to idle so the next check will retry.
+      //
+      // We only apply this backoff when the current state is "checking".
+      // Errors in other phases (downloading, available, etc.) should still
+      // surface so the user knows something went wrong with an active operation.
+      if (this.updateStatus.type === "checking" && isTransientUpdateError(error)) {
+        log.debug("Update check hit transient error, backing off:", error.message);
+        this.updateStatus = { type: "idle" };
+        this.notifyRenderer();
+        return;
+      }
+
+      log.error("Update error:", error);
       this.updateStatus = { type: "error", message: error.message };
       this.notifyRenderer();
     });
@@ -114,6 +147,15 @@ export class UpdaterService {
    * A 30-second timeout ensures we don't stay in "checking" state indefinitely.
    */
   checkForUpdates(): void {
+    // Skip when a check/download is already in progress or an update
+    // is ready to install — the 4-hour interval fires unconditionally,
+    // and we don't want it clobbering active states.
+    const dominated = ["checking", "downloading", "downloaded"] as const;
+    if ((dominated as readonly string[]).includes(this.updateStatus.type)) {
+      log.debug(`checkForUpdates() skipped — current state: ${this.updateStatus.type}`);
+      return;
+    }
+
     log.debug("checkForUpdates() called");
     try {
       // Clear any existing timeout
@@ -145,8 +187,9 @@ export class UpdaterService {
       log.debug(`Setting ${UPDATE_CHECK_TIMEOUT_MS}ms timeout`);
       this.checkTimeout = setTimeout(() => {
         if (this.updateStatus.type === "checking") {
-          log.debug(
-            `Update check timed out after ${UPDATE_CHECK_TIMEOUT_MS}ms, returning to idle state`
+          log.warn(
+            `Update check timed out after ${UPDATE_CHECK_TIMEOUT_MS}ms — ` +
+              `reverting to idle (will retry on next trigger)`
           );
           this.updateStatus = { type: "idle" };
           this.notifyRenderer();
@@ -159,9 +202,18 @@ export class UpdaterService {
       log.debug("Calling autoUpdater.checkForUpdates()");
       autoUpdater.checkForUpdates().catch((error) => {
         this.clearCheckTimeout();
-        const message = error instanceof Error ? error.message : "Unknown error";
-        log.error("Update check failed:", message);
-        this.updateStatus = { type: "error", message };
+        const err = error instanceof Error ? error : new Error(String(error));
+        if (isTransientUpdateError(err)) {
+          log.debug(
+            "Update check promise rejected with transient error, backing off:",
+            err.message
+          );
+          this.updateStatus = { type: "idle" };
+          this.notifyRenderer();
+          return;
+        }
+        log.error("Update check failed:", err.message);
+        this.updateStatus = { type: "error", message: err.message };
         this.notifyRenderer();
       });
     } catch (error) {
