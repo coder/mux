@@ -602,6 +602,10 @@ async function main(): Promise<number> {
 
   // Track usage for cost summary at end of run
   const usageHistory: ChatUsageDisplay[] = [];
+  // Running total of completed main-agent message costs (from stream-end events only,
+  // excluding session-usage-delta sub-agent rollups). Used to emit usage-cost events
+  // that don't double-count sub-agent costs (which mux-run.sh sums separately).
+  let completedMainAgentCost = 0;
   // Track latest usage-delta per message as fallback when stream-end lacks usage metadata
   const latestUsageDelta = new Map<
     string,
@@ -877,6 +881,11 @@ async function main(): Promise<number> {
       }
       if (displayUsage) {
         usageHistory.push(displayUsage);
+        // Accumulate main-agent cost for usage-cost events (excludes sub-agent rollups)
+        const messageCost = getTotalCost(displayUsage);
+        if (messageCost !== undefined) {
+          completedMainAgentCost += messageCost;
+        }
 
         // Budget enforcement at stream-end for providers that don't emit usage-delta events
         // Use cumulative cost across all messages in this run (not just the current message)
@@ -970,15 +979,13 @@ async function main(): Promise<number> {
 
       const cost = getTotalCost(displayUsage);
 
-      // In JSON mode, emit a running cost total so that if the process is killed
-      // (e.g. by timeout) before run-complete, the fallback extraction in
-      // mux-run.sh can recover the latest cumulative cost.
+      // In JSON mode, emit a running main-agent cost total so that if the process
+      // is killed (e.g. by timeout) before run-complete, the fallback extraction
+      // in mux-run.sh can recover the latest cumulative cost. Uses
+      // completedMainAgentCost (stream-end events only) to avoid double-counting
+      // sub-agent costs which mux-run.sh sums separately from session-usage-delta.
       if (emitJson && cost !== undefined) {
-        // Compute total cost across all completed messages + current message.
-        // usageHistory has costs from stream-end events of prior messages;
-        // add the current message's live cost on top.
-        const completedCost = getTotalCost(sumUsageHistory(usageHistory)) ?? 0;
-        emitJsonLine({ type: "usage-cost", cost_usd: completedCost + cost });
+        emitJsonLine({ type: "usage-cost", cost_usd: completedMainAgentCost + cost });
       }
 
       // Budget enforcement
