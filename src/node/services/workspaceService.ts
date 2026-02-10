@@ -2837,9 +2837,7 @@ export class WorkspaceService extends EventEmitter {
       // Persist last-used model + thinking level for cross-device consistency.
       await this.maybePersistAISettingsFromOptions(workspaceId, normalizedOptions, "send");
 
-      const shouldQueue =
-        !normalizedOptions?.editMessageId &&
-        (this.aiService.isStreaming(workspaceId) || session.isStreamStarting());
+      const shouldQueue = !normalizedOptions?.editMessageId && session.isBusy();
 
       if (shouldQueue) {
         const pendingAskUserQuestion = askUserQuestionManager.getLatestPending(workspaceId);
@@ -3293,9 +3291,10 @@ export class WorkspaceService extends EventEmitter {
   }
 
   async truncateHistory(workspaceId: string, percentage?: number): Promise<Result<void>> {
-    if (this.aiService.isStreaming(workspaceId)) {
+    const session = this.sessions.get(workspaceId);
+    if (session?.isBusy() || this.aiService.isStreaming(workspaceId)) {
       return Err(
-        "Cannot truncate history while stream is active. Press Esc to stop the stream first."
+        "Cannot truncate history while a turn is active. Press Esc to stop the stream first."
       );
     }
 
@@ -3314,7 +3313,6 @@ export class WorkspaceService extends EventEmitter {
         historySequences: deletedSequences,
       };
       // Emit through the session so ORPC subscriptions receive the event
-      const session = this.sessions.get(workspaceId);
       if (session) {
         session.emitChatEvent(deleteMessage);
       } else {
@@ -3345,10 +3343,13 @@ export class WorkspaceService extends EventEmitter {
   ): Promise<Result<void>> {
     // Support both new enum ("user"|"idle") and legacy boolean (true)
     const isCompaction = !!summaryMessage.metadata?.compacted;
-    if (!isCompaction && this.aiService.isStreaming(workspaceId)) {
-      return Err(
-        "Cannot replace history while stream is active. Press Esc to stop the stream first."
-      );
+    if (!isCompaction) {
+      const session = this.sessions.get(workspaceId);
+      if (session?.isBusy() || this.aiService.isStreaming(workspaceId)) {
+        return Err(
+          "Cannot replace history while a turn is active. Press Esc to stop the stream first."
+        );
+      }
     }
 
     const replaceMode = options?.mode ?? "destructive";
