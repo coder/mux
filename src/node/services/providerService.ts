@@ -7,6 +7,7 @@ import type {
   ProviderConfigInfo,
   ProvidersConfigMap,
 } from "@/common/orpc/types";
+import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
 import { log } from "@/node/services/log";
 import { checkProviderConfigured } from "@/node/utils/providerRequirements";
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
@@ -100,7 +101,7 @@ export class ProviderService {
 
       const codexOauthSet =
         provider === "openai" && parseCodexOauthAuth(config.codexOauth) !== null;
-      const isEnabled = config.enabled !== false;
+      const isEnabled = !isProviderDisabledInConfig(config);
 
       const providerInfo: ProviderConfigInfo = {
         apiKeySet: !!config.apiKey,
@@ -247,7 +248,16 @@ export class ProviderService {
 
       if (keyPath.length > 0) {
         const lastKey = keyPath[keyPath.length - 1];
-        if (value === undefined) {
+        const isProviderEnabledToggle = keyPath.length === 1 && lastKey === "enabled";
+
+        if (isProviderEnabledToggle) {
+          // Persist only `enabled: false` and delete on enable so providers.jsonc stays minimal.
+          if (value === false || value === "false") {
+            current[lastKey] = false;
+          } else {
+            delete current[lastKey];
+          }
+        } else if (value === undefined) {
           delete current[lastKey];
         } else {
           current[lastKey] = value;

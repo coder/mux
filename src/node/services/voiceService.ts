@@ -1,5 +1,6 @@
 import type { Config } from "@/node/config";
 import type { Result } from "@/common/types/result";
+import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
 
 /**
  * Voice input service using OpenAI's Whisper API for transcription.
@@ -20,7 +21,7 @@ export class VoiceService {
         | { apiKey?: string; enabled?: unknown }
         | undefined;
 
-      if (openaiConfig?.enabled === false) {
+      if (isProviderDisabledInConfig(openaiConfig ?? {})) {
         return {
           success: false,
           error:

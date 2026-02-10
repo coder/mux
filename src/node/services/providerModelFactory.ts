@@ -19,6 +19,7 @@ import {
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 import type { Config, ProviderConfig } from "@/node/config";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
 import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
@@ -439,7 +440,7 @@ export class ProviderModelFactory {
       // Providers can be disabled in providers.jsonc without deleting credentials.
       if (
         providerName !== "mux-gateway" &&
-        (providerConfig as { enabled?: unknown }).enabled === false
+        isProviderDisabledInConfig(providerConfig as { enabled?: unknown })
       ) {
         return Err({ type: "provider_disabled", provider: providerName });
       }
