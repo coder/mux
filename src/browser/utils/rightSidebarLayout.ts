@@ -500,6 +500,21 @@ export function addTabToFocusedTabset(
 }
 
 /**
+ * Select an existing tab anywhere in the layout, or add it to the focused tabset if missing.
+ */
+export function selectOrAddTab(
+  state: RightSidebarLayoutState,
+  tab: TabType
+): RightSidebarLayoutState {
+  const found = collectAllTabsWithTabset(state.root).find((t) => t.tab === tab);
+  if (found) {
+    return selectTabInTabset(setFocusedTabset(state, found.tabsetId), found.tabsetId, found.tab);
+  }
+
+  return addTabToFocusedTabset(state, tab);
+}
+
+/**
  * Move a tab from one tabset to another.
  * Handles edge cases:
  * - If source tabset becomes empty, it gets removed (along with its parent split if needed)
