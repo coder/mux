@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useImperativeHandle } from "react";
+import React, { useState, useCallback, useEffect, useImperativeHandle, useRef } from "react";
 import { FolderOpen, Github } from "lucide-react";
 import {
   Dialog,
@@ -521,6 +521,9 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
   const [defaultCloneDir, setDefaultCloneDir] = useState("");
   const [isLoadingDefaultCloneDir, setIsLoadingDefaultCloneDir] = useState(false);
   const [hasLoadedDefaultCloneDir, setHasLoadedDefaultCloneDir] = useState(false);
+  // Nonce to prevent stale fetch responses from updating state after modal closes.
+  // Incremented on every close so in-flight promises become no-ops.
+  const cloneDirLoadNonceRef = useRef(0);
 
   // Preload the clone destination default so clone mode opens with a usable location.
   const ensureDefaultCloneDir = useCallback(async () => {
@@ -529,22 +532,30 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
     }
 
     setIsLoadingDefaultCloneDir(true);
+    const nonce = cloneDirLoadNonceRef.current;
 
     try {
       const cloneDir = await api.projects.getDefaultCloneDir();
+      if (nonce !== cloneDirLoadNonceRef.current) {
+        return; // Modal was closed/reopened while loading — discard stale result
+      }
       setDefaultCloneDir(cloneDir);
     } catch (err) {
       console.error("Failed to fetch default clone directory:", err);
     } finally {
-      // Mark as loaded even on failure to prevent infinite retry loops
-      // when the backend is unavailable.
-      setHasLoadedDefaultCloneDir(true);
-      setIsLoadingDefaultCloneDir(false);
+      if (nonce === cloneDirLoadNonceRef.current) {
+        // Mark as loaded even on failure to prevent infinite retry loops
+        // when the backend is unavailable.
+        setHasLoadedDefaultCloneDir(true);
+        setIsLoadingDefaultCloneDir(false);
+      }
     }
   }, [api, hasLoadedDefaultCloneDir, isLoadingDefaultCloneDir]);
 
   useEffect(() => {
     if (!isOpen) {
+      // Invalidate any in-flight fetch so its stale promise doesn't update state.
+      cloneDirLoadNonceRef.current++;
       setMode("pick-folder");
       setIsCreating(false);
       setDefaultCloneDir("");

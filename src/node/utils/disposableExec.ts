@@ -1,4 +1,4 @@
-import { exec, execFile, execFileSync } from "child_process";
+import { exec, execFileSync, spawn } from "child_process";
 import type { ChildProcess } from "child_process";
 
 export function killProcessTree(pid: number): void {
@@ -230,13 +230,15 @@ export function execAsync(command: string, options?: ExecAsyncOptions): Disposab
  * Execute a file with arguments and automatic cleanup via `using` declaration.
  * Unlike execAsync, this does not use a shell—arguments are passed directly
  * to the executable, avoiding shell-quoting issues across platforms.
+ * Uses `spawn` instead of `execFile` to avoid Node's default maxBuffer limit
+ * which would kill long-running processes like `git clone` on verbose repos.
  *
  * @example
  * using proc = execFileAsync("git", ["clone", url, dest]);
  * const { stdout } = await proc.result;
  */
 export function execFileAsync(file: string, args: string[]): DisposableExec {
-  const child = execFile(file, args);
+  const child = spawn(file, args, { stdio: ["ignore", "pipe", "pipe"] });
   const promise = new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
     let stdout = "";
     let stderr = "";
