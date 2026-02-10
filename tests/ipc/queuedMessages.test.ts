@@ -225,6 +225,12 @@ describeIntegration("Queued messages", () => {
     async () => {
       const { env, workspaceId, cleanup } = await setupWorkspace("anthropic");
       try {
+        // Start collector first and wait for subscription to avoid replay/live
+        // event duplication of the user message (same race as resumeStream fix).
+        const collector = createStreamCollector(env.orpc, workspaceId);
+        collector.start();
+        await collector.waitForSubscription(5000);
+
         // Start a stream
         void sendMessageWithModel(
           env,
@@ -233,8 +239,6 @@ describeIntegration("Queued messages", () => {
           modelString("anthropic", "claude-sonnet-4-5")
         );
 
-        const collector = createStreamCollector(env.orpc, workspaceId);
-        collector.start();
         await collector.waitForEvent("stream-start", 5000);
 
         // Queue a message
@@ -290,6 +294,12 @@ describeIntegration("Queued messages", () => {
     async () => {
       const { env, workspaceId, cleanup } = await setupWorkspace("anthropic");
       try {
+        // Start collector first and wait for subscription to avoid replay/live
+        // event duplication of the user message (same race as resumeStream fix).
+        const collector1 = createStreamCollector(env.orpc, workspaceId);
+        collector1.start();
+        await collector1.waitForSubscription(5000);
+
         // Start a stream
         void sendMessageWithModel(
           env,
@@ -298,8 +308,6 @@ describeIntegration("Queued messages", () => {
           modelString("anthropic", "claude-sonnet-4-5")
         );
 
-        const collector1 = createStreamCollector(env.orpc, workspaceId);
-        collector1.start();
         await collector1.waitForEvent("stream-start", 5000);
 
         // Queue multiple messages, waiting for each queued-message-changed event
