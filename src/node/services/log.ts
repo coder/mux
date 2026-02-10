@@ -397,7 +397,9 @@ function safePipeLog(level: LogLevel, ...args: unknown[]): void {
   pushLogEntry({
     timestamp: Date.now(),
     level,
-    message: cleanLine,
+    // Send just the log message, not the pre-formatted line (timestamp+location
+    // are already separate fields — no need to duplicate them in the message).
+    message,
     location,
   });
 }

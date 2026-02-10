@@ -152,16 +152,28 @@ function LogLine(props: { entry: LogEntry }) {
           ? "var(--color-muted-foreground)"
           : "var(--color-foreground)";
 
+  // Inline flow layout — wraps naturally at any panel width instead of
+  // forcing fixed-width columns that crush the message content.
   return (
-    <div className="hover:bg-hover flex gap-2 px-3 py-0.5">
-      <span className="text-muted shrink-0">{formatTime(entry.timestamp)}</span>
-      <span style={{ color: levelColor }} className="w-12 shrink-0">
-        {entry.level.toUpperCase()}
-      </span>
-      <span className="text-muted shrink-0">{entry.location}</span>
-      <span className="break-all">{entry.message}</span>
+    <div className="hover:bg-hover px-3 py-0.5 break-words">
+      <span className="text-muted-foreground">{formatTime(entry.timestamp)}</span>{" "}
+      <span style={{ color: levelColor }}>{entry.level.toUpperCase()}</span>{" "}
+      <span className="text-muted-foreground">[{shortenLocation(entry.location)}]</span>{" "}
+      <span>{entry.message}</span>
     </div>
   );
+}
+
+/** Strip common path prefixes to show just the meaningful part. e.g.
+ *  "src/node/services/log.ts:486" → "log.ts:486"
+ *  "/home/user/.mux/src/cmux/.../log.ts:486" → "log.ts:486"  */
+function shortenLocation(location: string): string {
+  // Grab the last path segment (filename:line)
+  const lastSlash = location.lastIndexOf("/");
+  if (lastSlash >= 0) {
+    return location.slice(lastSlash + 1);
+  }
+  return location;
 }
 
 function formatTime(timestampMs: number): string {
