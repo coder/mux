@@ -887,6 +887,13 @@ async function main(): Promise<number> {
           completedMainAgentCost += messageCost;
         }
 
+        // Emit recovery cost at stream-end so providers that skip usage-delta
+        // (and only report usage in stream-end metadata) still get a cost snapshot
+        // recoverable by mux-run.sh on timeout/crash.
+        if (emitJson && completedMainAgentCost > 0) {
+          emitJsonLine({ type: "usage-cost", cost_usd: completedMainAgentCost });
+        }
+
         // Budget enforcement at stream-end for providers that don't emit usage-delta events
         // Use cumulative cost across all messages in this run (not just the current message)
         if (budget !== undefined && !budgetExceeded) {
