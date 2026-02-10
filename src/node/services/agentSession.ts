@@ -1799,6 +1799,9 @@ export class AgentSession {
             this.onPostCompactionStateChange?.();
           }
         } else {
+          // CompactionHandler emits its own sanitized stream-end; mark as handled
+          // so the catch block doesn't re-emit the unsanitized original payload.
+          emittedStreamEnd = true;
           this.onCompactionComplete?.();
         }
 
@@ -1834,12 +1837,10 @@ export class AgentSession {
           }
         }
       } finally {
-        // Best-effort state cleanup; resetActiveStreamState is idempotent.
-        this.resetActiveStreamState();
-
-        // Only transition to IDLE if we're still in COMPLETING — don't clobber a new
-        // turn started by follow-up dispatch or queue send.
+        // Only clean up if we're still in COMPLETING — a new turn started by
+        // dispatchPendingFollowUp() or sendQueuedMessages() owns the stream state now.
         if (this.turnPhase === TurnPhase.COMPLETING) {
+          this.resetActiveStreamState();
           this.setTurnPhase(TurnPhase.IDLE);
         }
       }
