@@ -960,16 +960,29 @@ async function main(): Promise<number> {
         model, // Use the model from CLI options
       });
 
+      // Compute display usage with cost for this message's cumulative tokens.
+      // Used for both budget enforcement and JSON cost tracking.
+      const displayUsage = createDisplayUsage(
+        payload.cumulativeUsage,
+        model,
+        payload.cumulativeProviderMetadata
+      );
+
+      const cost = getTotalCost(displayUsage);
+
+      // In JSON mode, emit a running cost total so that if the process is killed
+      // (e.g. by timeout) before run-complete, the fallback extraction in
+      // mux-run.sh can recover the latest cumulative cost.
+      if (emitJson && cost !== undefined) {
+        // Compute total cost across all completed messages + current message.
+        // usageHistory has costs from stream-end events of prior messages;
+        // add the current message's live cost on top.
+        const completedCost = getTotalCost(sumUsageHistory(usageHistory)) ?? 0;
+        emitJsonLine({ type: "usage-cost", cost_usd: completedCost + cost });
+      }
+
       // Budget enforcement
       if (budget !== undefined) {
-        const displayUsage = createDisplayUsage(
-          payload.cumulativeUsage,
-          model,
-          payload.cumulativeProviderMetadata
-        );
-
-        const cost = getTotalCost(displayUsage);
-
         // Reject if model has unknown pricing: displayUsage exists with tokens but cost is undefined
         // (createDisplayUsage doesn't set hasUnknownCosts; that's only set by sumUsageHistory)
         // Include all token types: input, output, cached, cacheCreate, and reasoning
