@@ -1,4 +1,4 @@
-import assert from "node:assert";
+import assert from "@/common/utils/assert";
 
 import type { MuxMessage } from "@/common/types/message";
 
