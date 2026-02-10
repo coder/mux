@@ -265,7 +265,7 @@ export function execFileAsync(
     child.stdout?.on("data", (data) => {
       stdout += data;
     });
-    child.stderr?.on("data", (data) => {
+    child.stderr?.on("data", (data: Buffer) => {
       const chunk = data.toString();
       stderr += chunk;
       options?.onStderrData?.(chunk);

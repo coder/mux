@@ -478,7 +478,7 @@ function ProjectCloneForm(props: ProjectCloneFormProps) {
           <div className="space-y-1">
             <label className="text-muted text-xs">Cloning repository…</label>
             <div className="bg-modal-bg border-border-medium max-h-40 overflow-y-auto rounded border p-3">
-              <pre className="text-muted text-xs whitespace-pre-wrap break-all font-mono">
+              <pre className="text-muted font-mono text-xs break-all whitespace-pre-wrap">
                 {progressLines.length > 0 ? progressLines.join("") : "Starting clone…"}
               </pre>
               <div ref={progressEndRef} />

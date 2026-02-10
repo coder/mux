@@ -375,7 +375,7 @@ export class ProjectService {
       const stderrChunks: string[] = [];
       let resolveChunk: (() => void) | null = null;
       let processEnded = false;
-      let spawnError: Error | null = null;
+      let spawnErrorMessage: string | null = null;
       let exitCode: number | null = null;
       let exitSignal: NodeJS.Signals | null = null;
 
@@ -394,8 +394,8 @@ export class ProjectService {
         notifyChunk();
       });
 
-      child.on("error", (error) => {
-        spawnError = error;
+      child.on("error", (error: Error) => {
+        spawnErrorMessage = error.message;
         processEnded = true;
         notifyChunk();
       });
@@ -448,8 +448,10 @@ export class ProjectService {
         yield { type: "progress", line: stderrChunks.shift()! };
       }
 
-      if (spawnError) {
-        throw spawnError;
+      if (spawnErrorMessage != null) {
+        await cleanupPartialClone();
+        yield { type: "error", error: spawnErrorMessage };
+        return;
       }
 
       if (signal?.aborted) {
@@ -461,8 +463,8 @@ export class ProjectService {
       if (exitCode !== 0 || exitSignal !== null) {
         await cleanupPartialClone();
         const errorMessage =
-          exitSignal !== null
-            ? `Clone failed: process terminated by signal ${exitSignal}`
+          exitSignal != null
+            ? `Clone failed: process terminated by signal ${String(exitSignal)}`
             : `Clone failed with exit code ${exitCode ?? "unknown"}`;
         yield { type: "error", error: errorMessage };
         return;

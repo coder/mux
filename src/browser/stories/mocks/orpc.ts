@@ -859,7 +859,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       setDefaultCloneDir: () => Promise.resolve(),
       clone: () =>
         Promise.resolve(
-          (async function* () {
+          (function* () {
             yield {
               type: "progress" as const,
               line: "Cloning into '/mock/cloned-project'...\n",
