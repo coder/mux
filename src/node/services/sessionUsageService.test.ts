@@ -1,31 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { SessionUsageService, type SessionUsageTokenStatsCacheV1 } from "./sessionUsageService";
 import type { HistoryService } from "./historyService";
 import { Config } from "@/node/config";
 import { createMuxMessage } from "@/common/types/message";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
-import { Ok } from "@/common/types/result";
+import { createTestHistoryService } from "./testHistoryService";
 import * as fs from "fs/promises";
 import * as path from "path";
-import * as os from "os";
-
-function createMockHistoryService(
-  messages: Array<ReturnType<typeof createMuxMessage>> = []
-): HistoryService {
-  return {
-    // sessionUsageService calls iterateFullHistory to collect all messages for rebuild
-    iterateFullHistory: mock(
-      (_workspaceId: string, _direction: string, visitor: (chunk: unknown[]) => void) => {
-        if (messages.length > 0) visitor(messages);
-        return Promise.resolve(Ok(undefined));
-      }
-    ),
-    appendToHistory: mock(() => Promise.resolve(Ok(undefined))),
-    updateHistory: mock(() => Promise.resolve(Ok(undefined))),
-    truncateAfterMessage: mock(() => Promise.resolve(Ok(undefined))),
-    clearHistory: mock(() => Promise.resolve(Ok([]))),
-  } as unknown as HistoryService;
-}
 
 function createUsage(input: number, output: number): ChatUsageDisplay {
   return {
@@ -40,23 +21,16 @@ function createUsage(input: number, output: number): ChatUsageDisplay {
 describe("SessionUsageService", () => {
   let service: SessionUsageService;
   let config: Config;
-  let tempDir: string;
-  let mockHistoryService: HistoryService;
+  let historyService: HistoryService;
+  let cleanup: () => Promise<void>;
 
   beforeEach(async () => {
-    tempDir = path.join(os.tmpdir(), `mux-session-usage-test-${Date.now()}-${Math.random()}`);
-    await fs.mkdir(tempDir, { recursive: true });
-    config = new Config(tempDir);
-    mockHistoryService = createMockHistoryService();
-    service = new SessionUsageService(config, mockHistoryService);
+    ({ config, historyService, cleanup } = await createTestHistoryService());
+    service = new SessionUsageService(config, historyService);
   });
 
   afterEach(async () => {
-    try {
-      await fs.rm(tempDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
-    }
+    await cleanup();
   });
 
   describe("rollUpUsageIntoParent", () => {
@@ -250,21 +224,25 @@ describe("SessionUsageService", () => {
   describe("getSessionUsage", () => {
     it("should rebuild from messages when file missing (ENOENT)", async () => {
       const workspaceId = "test-workspace";
-      const messages = [
+      // Seed messages via real historyService
+      await historyService.appendToHistory(
+        workspaceId,
         createMuxMessage("msg1", "assistant", "Hello", {
           model: "claude-sonnet-4-20250514",
           usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
-        }),
+        })
+      );
+      await historyService.appendToHistory(
+        workspaceId,
         createMuxMessage("msg2", "assistant", "World", {
           model: "claude-sonnet-4-20250514",
           usage: { inputTokens: 200, outputTokens: 75, totalTokens: 275 },
-        }),
-      ];
-      mockHistoryService = createMockHistoryService(messages);
-      service = new SessionUsageService(config, mockHistoryService);
+        })
+      );
 
-      // Create session dir but NOT the session-usage.json file
-      await fs.mkdir(config.getSessionDir(workspaceId), { recursive: true });
+      // Delete session-usage.json but keep session dir (appendToHistory created it)
+      const usagePath = path.join(config.getSessionDir(workspaceId), "session-usage.json");
+      await fs.rm(usagePath, { force: true });
 
       const result = await service.getSessionUsage(workspaceId);
 
@@ -277,18 +255,17 @@ describe("SessionUsageService", () => {
   describe("rebuildFromMessages", () => {
     it("should rebuild from messages when file is corrupted JSON", async () => {
       const workspaceId = "test-workspace";
-      const messages = [
+      // Seed messages via real historyService
+      await historyService.appendToHistory(
+        workspaceId,
         createMuxMessage("msg1", "assistant", "Hello", {
           model: "claude-sonnet-4-20250514",
           usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
-        }),
-      ];
-      mockHistoryService = createMockHistoryService(messages);
-      service = new SessionUsageService(config, mockHistoryService);
+        })
+      );
 
-      // Create session dir with corrupted JSON
+      // Overwrite session-usage.json with corrupted JSON
       const sessionDir = config.getSessionDir(workspaceId);
-      await fs.mkdir(sessionDir, { recursive: true });
       await fs.writeFile(path.join(sessionDir, "session-usage.json"), "{ invalid json");
 
       const result = await service.getSessionUsage(workspaceId);
@@ -324,11 +301,13 @@ describe("SessionUsageService", () => {
         usage: { inputTokens: 200, outputTokens: 75, totalTokens: 275 },
       });
 
-      mockHistoryService = createMockHistoryService([compactionSummary, postCompactionMsg]);
-      service = new SessionUsageService(config, mockHistoryService);
+      // Seed messages via real historyService
+      await historyService.appendToHistory(workspaceId, compactionSummary);
+      await historyService.appendToHistory(workspaceId, postCompactionMsg);
 
-      // Create session dir but NOT the session-usage.json file (triggers rebuild)
-      await fs.mkdir(config.getSessionDir(workspaceId), { recursive: true });
+      // Delete session-usage.json to trigger rebuild from messages
+      const usagePath = path.join(config.getSessionDir(workspaceId), "session-usage.json");
+      await fs.rm(usagePath, { force: true });
 
       const result = await service.getSessionUsage(workspaceId);
 
