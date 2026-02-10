@@ -18,7 +18,7 @@ describe("ChatInputToasts", () => {
       expect(toast.message).toContain("API key");
     });
 
-    test("should create Codex-aware toast for OpenAI oauth_not_connected error", () => {
+    test("should create generic toast for oauth_not_connected error", () => {
       const error: SendMessageError = {
         type: "oauth_not_connected",
         provider: "openai",
@@ -27,9 +27,9 @@ describe("ChatInputToasts", () => {
       const toast = createErrorToast(error);
 
       expect(toast.type).toBe("error");
-      expect(toast.title).toBe("Codex OAuth Not Connected");
-      expect(toast.message).toContain("GPT-5.3 Codex");
-      expect(toast.message).toContain("ChatGPT (Codex) OAuth");
+      expect(toast.title).toBe("OAuth Not Connected");
+      expect(toast.message).toContain("openai");
+      expect(toast.message).toContain("OAuth connection");
     });
 
     test("should create toast for provider_not_supported error", () => {

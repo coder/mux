@@ -150,20 +150,15 @@ export const createErrorToast = (error: SendMessageErrorType): Toast => {
 
     case "oauth_not_connected": {
       const formatted = formatSendMessageError(error);
-      const isOpenAICodexPath = error.provider === "openai";
       return {
         id: Date.now().toString(),
         type: "error",
-        title: isOpenAICodexPath ? "Codex OAuth Not Connected" : "OAuth Not Connected",
-        message: isOpenAICodexPath
-          ? "GPT-5.3 Codex requires ChatGPT (Codex) OAuth through OpenAI."
-          : `The ${error.provider} provider requires an OAuth connection to function.`,
+        title: "OAuth Not Connected",
+        message: `The ${error.provider} provider requires an OAuth connection to function.`,
         solution: (
           <>
             <SolutionLabel>Fix:</SolutionLabel>
-            {isOpenAICodexPath
-              ? "Open Settings → Providers and connect ChatGPT (Codex) under OpenAI."
-              : (formatted.resolutionHint ?? "Open Settings → Providers and connect your account.")}
+            {formatted.resolutionHint ?? "Open Settings → Providers and connect your account."}
             <br />
             <DocsLink path="/config/providers">mux.coder.com/providers</DocsLink>
           </>
