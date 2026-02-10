@@ -256,22 +256,11 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[80vh] max-w-2xl overflow-y-auto">
-        <DialogHeader className="space-y-0">
-          <div className="flex items-start justify-between gap-3 pr-8">
-            <DialogTitle className="flex items-center gap-2">
-              <Server className="h-5 w-5" />
-              Workspace MCP Configuration
-            </DialogTitle>
-            <div className="flex shrink-0 items-center gap-2">
-              <Button variant="ghost" onClick={() => onOpenChange(false)}>
-                Cancel
-              </Button>
-              <Button onClick={() => void handleSave()} disabled={saving || loading || !hasServers}>
-                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Save
-              </Button>
-            </div>
-          </div>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Server className="h-5 w-5" />
+            Workspace MCP Configuration
+          </DialogTitle>
         </DialogHeader>
 
         {loading ? (
@@ -296,10 +285,21 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
           </div>
         ) : (
           <div className="space-y-4">
-            <p className="text-muted text-sm">
-              Customize which MCP servers and tools are available in this workspace. Changes only
-              affect this workspace.
-            </p>
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-muted flex-1 pr-3 text-sm">
+                Customize which MCP servers and tools are available in this workspace. Changes only
+                affect this workspace.
+              </p>
+              <div className="flex shrink-0 items-center gap-2 pt-0.5">
+                <Button variant="ghost" onClick={() => onOpenChange(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={() => void handleSave()} disabled={saving}>
+                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  Save
+                </Button>
+              </div>
+            </div>
 
             {error && (
               <div className="bg-danger-soft/10 text-danger-soft rounded-md p-3 text-sm">
