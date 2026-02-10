@@ -63,7 +63,7 @@ export const buildEditingStateFromCompaction = (
   id: messageId,
   pending: {
     content: command,
-    fileParts: followUp?.fileParts ?? [],
-    reviews: followUp?.reviews ?? [],
+    fileParts: followUp?.message.fileParts ?? [],
+    reviews: followUp?.message.reviews ?? [],
   },
 });

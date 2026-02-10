@@ -254,7 +254,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       api,
       workspaceId,
       sendMessageOptions: pendingSendOptions,
-      followUpContent: { text: "Continue" },
+      followUpContent: { message: { content: "Continue" } },
     });
   }, [api, workspaceId, pendingSendOptions, autoBackgroundOnSend]);
 

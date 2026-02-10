@@ -17,9 +17,8 @@ import { type ReviewNoteData, formatReviewForModel } from "./review";
 export type ReviewNoteDataForDisplay = ReviewNoteData;
 
 /**
- * Content that a user wants to send in a message.
- * Shared between normal send and continue-after-compaction to ensure
- * both paths handle the same fields (text, attachments, reviews).
+ * Content that a user wants to send in a message (legacy shape with `text` field).
+ * Used by the ContinueMessage branded type. New code should prefer ChatInputMessageDraft.
  */
 export interface UserMessageContent {
   text: string;
@@ -29,10 +28,22 @@ export interface UserMessageContent {
 }
 
 /**
- * Input for follow-up content - what call sites provide when triggering compaction.
- * Does not include model/agentId since those come from sendMessageOptions.
+ * Canonical message draft shared between chat input and compaction follow-up.
+ * Uses `content` (matching the chat-input field name) instead of `text`.
  */
-export interface CompactionFollowUpInput extends UserMessageContent {
+export interface ChatInputMessageDraft {
+  content: string;
+  fileParts?: FilePart[];
+  reviews?: ReviewNoteDataForDisplay[];
+}
+
+/**
+ * Input for follow-up content - what call sites provide when triggering compaction.
+ * The message is a plain chat-input draft; model/agentId come from sendMessageOptions.
+ */
+export interface CompactionFollowUpInput {
+  /** The message to send after compaction completes */
+  message: ChatInputMessageDraft;
   /** Frontend metadata to apply to the queued follow-up user message (e.g., preserve /skill display) */
   muxMetadata?: MuxFrontendMetadata;
 }
@@ -66,23 +77,92 @@ export function pickPreservedSendOptions(options: SendMessageOptions): Preserved
 }
 
 /**
- * Content to send after compaction completes.
- * Extends CompactionFollowUpInput with model/agentId for the follow-up message,
- * plus preserved send options so the follow-up uses the same settings as the
- * original user message.
- *
- * These fields are required because compaction uses its own agentId ("compact")
- * and potentially a different model for summarization. The follow-up message
- * should use the user's original model, agentId, and send options.
- *
- * Call sites provide CompactionFollowUpInput; prepareCompactionMessage converts
- * it to CompactionFollowUpRequest by adding model/agentId/options from sendMessageOptions.
+ * Compaction-specific execution policy: model, agentId, and preserved send options.
+ * Isolated from the message content so callers don't mix chat-draft fields with send policy.
  */
-export interface CompactionFollowUpRequest extends CompactionFollowUpInput, PreservedSendOptions {
+export type CompactionFollowUpSendOptions = {
   /** Model to use for the follow-up message (user's original model, not compaction model) */
   model: string;
   /** Agent ID for the follow-up message (user's original agentId, not "compact") */
   agentId: string;
+} & PreservedSendOptions;
+
+/**
+ * Full request to send after compaction completes.
+ * Separates the message draft from execution policy (sendOptions).
+ *
+ * Call sites provide CompactionFollowUpInput (message + optional metadata);
+ * prepareCompactionMessage converts it to CompactionFollowUpRequest by
+ * adding sendOptions from the active sendMessageOptions.
+ */
+export interface CompactionFollowUpRequest extends CompactionFollowUpInput {
+  sendOptions: CompactionFollowUpSendOptions;
+}
+
+/**
+ * Legacy flattened follow-up shape from older persisted requests.
+ * Used only by normalizeCompactionFollowUpRequest for backward compatibility.
+ */
+interface LegacyCompactionFollowUpRequest {
+  text?: string;
+  fileParts?: FilePart[];
+  /** @deprecated Older entries stored file attachments as `imageParts`. */
+  imageParts?: FilePart[];
+  reviews?: ReviewNoteDataForDisplay[];
+  muxMetadata?: MuxFrontendMetadata;
+  model?: string;
+  agentId?: string;
+  /** @deprecated Older entries stored agent mode instead of agentId. */
+  mode?: "exec" | "plan";
+  thinkingLevel?: SendMessageOptions["thinkingLevel"];
+  additionalSystemInstructions?: string;
+  providerOptions?: SendMessageOptions["providerOptions"];
+  experiments?: SendMessageOptions["experiments"];
+  disableWorkspaceAgents?: boolean;
+}
+
+/**
+ * Normalize a persisted follow-up request into the current envelope shape.
+ * Legacy requests stored all fields flat (text, model, agentId, thinkingLevel, ...);
+ * the new shape nests message content in `message` and send policy in `sendOptions`.
+ *
+ * Detection: if `raw` already has a `message` object, assume it's the new shape.
+ */
+export function normalizeCompactionFollowUpRequest(
+  raw: CompactionFollowUpRequest | LegacyCompactionFollowUpRequest,
+  defaults: { model: string; agentId: string }
+): CompactionFollowUpRequest {
+  // New shape: has nested `message` object with `content` field
+  if ("message" in raw && raw.message != null && typeof raw.message === "object") {
+    // Already new shape — fill in sendOptions defaults if somehow missing
+    return {
+      ...raw,
+      sendOptions: raw.sendOptions ?? {
+        model: defaults.model,
+        agentId: defaults.agentId,
+      },
+    };
+  }
+
+  // Legacy flattened shape — migrate to envelope
+  const legacy = raw as LegacyCompactionFollowUpRequest;
+  return {
+    message: {
+      content: legacy.text ?? "",
+      fileParts: legacy.fileParts ?? legacy.imageParts,
+      reviews: legacy.reviews,
+    },
+    muxMetadata: legacy.muxMetadata,
+    sendOptions: {
+      model: legacy.model ?? defaults.model,
+      agentId: legacy.agentId ?? legacy.mode ?? defaults.agentId,
+      thinkingLevel: legacy.thinkingLevel,
+      additionalSystemInstructions: legacy.additionalSystemInstructions,
+      providerOptions: legacy.providerOptions,
+      experiments: legacy.experiments,
+      disableWorkspaceAgents: legacy.disableWorkspaceAgents,
+    },
+  };
 }
 
 /**
@@ -161,9 +241,9 @@ export type PersistedContinueMessage = Partial<
  * True when the content is the default resume sentinel ("Continue")
  * with no attachments.
  */
-export function isDefaultSourceContent(content?: Partial<UserMessageContent>): boolean {
+export function isDefaultSourceContent(content?: Partial<ChatInputMessageDraft>): boolean {
   if (!content) return false;
-  const text = typeof content.text === "string" ? content.text.trim() : "";
+  const text = typeof content.content === "string" ? content.content.trim() : "";
   const hasFiles = (content.fileParts?.length ?? 0) > 0;
   const hasReviews = (content.reviews?.length ?? 0) > 0;
   return text === "Continue" && !hasFiles && !hasReviews;
@@ -211,21 +291,21 @@ export interface CompactionRequestData {
 }
 
 /**
- * Process UserMessageContent into final message text and metadata.
- * Used by both normal send path and backend continue message processing.
+ * Process a chat-input message draft into final message text and metadata.
+ * Used by both normal send path and backend follow-up message processing.
  *
- * @param content - The user message content (text, attachments, reviews)
+ * @param message - The message draft (content text, attachments, reviews)
  * @param existingMetadata - Optional existing metadata to merge with (e.g., for compaction messages)
  * @returns Object with finalText (reviews prepended) and metadata (reviews for display)
  */
 export function prepareUserMessageForSend(
-  content: UserMessageContent,
+  message: ChatInputMessageDraft,
   existingMetadata?: MuxFrontendMetadata
 ): {
   finalText: string;
   metadata: MuxFrontendMetadata | undefined;
 } {
-  const { text, reviews } = content;
+  const { content: text, reviews } = message;
 
   // Format reviews into message text
   const reviewsText = reviews?.length ? reviews.map(formatReviewForModel).join("\n\n") : "";

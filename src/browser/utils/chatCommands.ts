@@ -14,6 +14,7 @@ import {
   type CompactionRequestData,
   type CompactionFollowUpRequest,
   type CompactionFollowUpInput,
+  type CompactionFollowUpSendOptions,
   isDefaultSourceContent,
   pickPreservedSendOptions,
 } from "@/common/types/message";
@@ -788,40 +789,36 @@ export function prepareCompactionMessage(options: CompactionOptions): {
   // misread it as a competing instruction. We still keep it in metadata so the backend resumes.
   // Only treat it as the default resume when there's no other queued content (images/reviews).
   //
-  // Convert CompactionFollowUpInput to CompactionFollowUpRequest by adding model/agentId.
+  // Convert CompactionFollowUpInput to CompactionFollowUpRequest by adding sendOptions.
   // Compaction uses its own agentId ("compact") and potentially a different model for
   // summarization, so we capture the user's original settings for the follow-up message.
   //
   // In compaction recovery (retrying a failed /compact), followUpContent may already be
-  // a CompactionFollowUpRequest with preserved model/agentId. Only fill in missing fields
+  // a CompactionFollowUpRequest with preserved sendOptions. Only fill in missing fields
   // to avoid overwriting the original settings when the user changes model/agent before retry.
   let fc: CompactionFollowUpRequest | undefined;
   if (options.followUpContent) {
-    // Check if already a CompactionFollowUpRequest (has model/agentId from previous compaction)
-    const existingModel =
-      "model" in options.followUpContent &&
-      typeof options.followUpContent.model === "string" &&
-      options.followUpContent.model
-        ? options.followUpContent.model
+    // Check if already a CompactionFollowUpRequest (has sendOptions from previous compaction)
+    const existingSendOptions =
+      "sendOptions" in options.followUpContent
+        ? (options.followUpContent as CompactionFollowUpRequest).sendOptions
         : undefined;
-    const existingAgentId =
-      "agentId" in options.followUpContent &&
-      typeof options.followUpContent.agentId === "string" &&
-      options.followUpContent.agentId
-        ? options.followUpContent.agentId
-        : undefined;
+
+    const sendOpts: CompactionFollowUpSendOptions = {
+      model: existingSendOptions?.model ?? options.sendMessageOptions.model,
+      agentId: existingSendOptions?.agentId ?? options.sendMessageOptions.agentId ?? "exec",
+      ...pickPreservedSendOptions(options.sendMessageOptions),
+    };
 
     fc = {
       ...options.followUpContent,
-      model: existingModel ?? options.sendMessageOptions.model,
-      agentId: existingAgentId ?? options.sendMessageOptions.agentId ?? "exec",
-      ...pickPreservedSendOptions(options.sendMessageOptions),
+      sendOptions: sendOpts,
     };
   }
-  const isDefaultResume = isDefaultSourceContent(fc);
+  const isDefaultResume = isDefaultSourceContent(fc?.message);
 
   if (fc && !isDefaultResume) {
-    messageText += `\n\nThe user wants to continue with: ${fc.text}`;
+    messageText += `\n\nThe user wants to continue with: ${fc.message.content}`;
   }
 
   // Handle model preference (sticky globally)
@@ -1052,9 +1049,11 @@ export async function handleCompactCommand(
       parsed.continueMessage ?? context.fileParts?.length ?? context.reviews?.length;
     const followUpContent: CompactionFollowUpInput | undefined = hasContent
       ? {
-          text: parsed.continueMessage ?? "",
-          fileParts: context.fileParts,
-          reviews: context.reviews,
+          message: {
+            content: parsed.continueMessage ?? "",
+            fileParts: context.fileParts,
+            reviews: context.reviews,
+          },
         }
       : undefined;
 

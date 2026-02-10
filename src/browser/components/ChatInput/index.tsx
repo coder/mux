@@ -1870,9 +1870,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             api,
             workspaceId: props.workspaceId,
             followUpContent: {
-              text: messageTextForSend,
-              fileParts,
-              reviews: reviewsData,
+              message: {
+                content: messageTextForSend,
+                fileParts,
+                reviews: reviewsData,
+              },
               muxMetadata: skillMuxMetadata,
             },
             sendMessageOptions: compactionSendMessageOptions,
@@ -1949,9 +1951,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               followUpContent:
                 parsed.continueMessage || sendFileParts?.length || reviewsData?.length
                   ? {
-                      text: parsed.continueMessage ?? "",
-                      fileParts: sendFileParts,
-                      reviews: reviewsData,
+                      message: {
+                        content: parsed.continueMessage ?? "",
+                        fileParts: sendFileParts,
+                        reviews: reviewsData,
+                      },
                     }
                   : undefined,
               model: parsed.model,
@@ -1964,7 +1968,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         }
 
         const { finalText: finalMessageText, metadata: reviewMetadata } = prepareUserMessageForSend(
-          { text: actualMessageText, reviews: reviewsData },
+          { content: actualMessageText, reviews: reviewsData },
           muxMetadata
         );
         // When editing /compact, compactionOptions already includes the base sendMessageOptions.

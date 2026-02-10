@@ -1,5 +1,5 @@
 import { describe, expect, test, mock } from "bun:test";
-import { buildContinueMessage } from "@/common/types/message";
+import { buildContinueMessage, type CompactionFollowUpRequest } from "@/common/types/message";
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 import { AgentSession } from "./agentSession";
 import type { Config } from "@/node/config";
@@ -48,13 +48,14 @@ describe("AgentSession continue-message agentId fallback", () => {
       throw new Error("Expected base continue message to be built");
     }
 
-    // Simulate legacy format: no agentId, but has mode instead
+    // Simulate legacy format: flat fields with mode instead of agentId.
+    // Cast through unknown because persisted data can be any shape — the normalizer handles it.
     const legacyFollowUp = {
       text: baseContinueMessage.text,
       model: "openai:gpt-4o",
       agentId: undefined as unknown as string, // Legacy: missing agentId
       mode: "plan" as const, // Legacy: mode field instead of agentId
-    };
+    } as unknown as CompactionFollowUpRequest;
 
     // Mock history service to return a compaction summary with pending follow-up
     const mockSummaryMessage = {

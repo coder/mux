@@ -26,7 +26,12 @@ describe("cancelCompaction", () => {
             muxMetadata: {
               type: "compaction-request",
               rawCommand: "/compact -t 100",
-              parsed: { followUpContent: { text: "Do the thing" } },
+              parsed: {
+                followUpContent: {
+                  message: { content: "Do the thing" },
+                  sendOptions: { model: "m", agentId: "exec" },
+                },
+              },
             },
           },
         },
@@ -89,9 +94,12 @@ describe("cancelCompaction", () => {
               rawCommand: "/compact",
               parsed: {
                 followUpContent: {
-                  text: "Continue work",
-                  fileParts: [mockFilePart],
-                  reviews: [mockReview],
+                  message: {
+                    content: "Continue work",
+                    fileParts: [mockFilePart],
+                    reviews: [mockReview],
+                  },
+                  sendOptions: { model: "m", agentId: "exec" },
                 },
               },
             },

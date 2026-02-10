@@ -47,12 +47,11 @@ import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import {
   createMuxMessage,
   isCompactionSummaryMetadata,
+  normalizeCompactionFollowUpRequest,
   prepareUserMessageForSend,
-  type CompactionFollowUpRequest,
   type MuxFrontendMetadata,
   type MuxFilePart,
   type MuxMessage,
-  type ReviewNoteDataForDisplay,
 } from "@/common/types/message";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
@@ -83,24 +82,8 @@ import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
 // Re-export types from FileChangeTracker for backward compatibility
 export type { FileState, EditedFileAttachment } from "@/node/services/utils/fileChangeTracker";
 
-// Type guard for compaction request metadata
-// Supports both new `followUpContent` and legacy `continueMessage` for backwards compatibility
-interface CompactionRequestMetadata {
-  type: "compaction-request";
-  parsed: {
-    followUpContent?: CompactionFollowUpRequest;
-    // Legacy field - older persisted requests may use this instead of followUpContent
-    continueMessage?: {
-      text?: string;
-      imageParts?: FilePart[];
-      reviews?: ReviewNoteDataForDisplay[];
-      muxMetadata?: MuxFrontendMetadata;
-      model?: string;
-      agentId?: string;
-      mode?: "exec" | "plan"; // Legacy: older versions stored mode instead of agentId
-    };
-  };
-}
+// Note: Legacy compaction request metadata (flat follow-up fields, `continueMessage`)
+// is handled by normalizeCompactionFollowUpRequest in @/common/types/message.
 
 const PDF_MEDIA_TYPE = "application/pdf";
 
@@ -121,7 +104,9 @@ function estimateBase64DataUrlBytes(dataUrl: string): number | null {
   const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
   return Math.floor((base64.length * 3) / 4) - padding;
 }
-function isCompactionRequestMetadata(meta: unknown): meta is CompactionRequestMetadata {
+function isCompactionRequestMetadata(
+  meta: unknown
+): meta is Extract<MuxFrontendMetadata, { type: "compaction-request" }> {
   if (typeof meta !== "object" || meta === null) return false;
   const obj = meta as Record<string, unknown>;
   if (obj.type !== "compaction-request") return false;
@@ -1903,57 +1888,41 @@ export class AgentSession {
       return;
     }
 
-    // Handle legacy formats: older persisted requests may have `mode` instead of `agentId`,
-    // and `imageParts` instead of `fileParts`.
-    const followUp = muxMeta.pendingFollowUp as typeof muxMeta.pendingFollowUp & {
-      mode?: "exec" | "plan";
-      imageParts?: FilePart[];
-    };
-
-    // Derive agentId: new field has it directly, legacy may use `mode` field.
-    // Legacy `mode` was "exec" | "plan" and maps directly to agentId.
-    const effectiveAgentId = followUp.agentId ?? followUp.mode ?? "exec";
-
-    // Normalize attachments: newer metadata uses `fileParts`, older persisted entries used `imageParts`.
-    const effectiveFileParts = followUp.fileParts ?? followUp.imageParts;
-
-    // Model fallback for legacy follow-ups that may lack the model field.
-    // DEFAULT_MODEL is a safe fallback that's always available.
-    const effectiveModel = followUp.model ?? DEFAULT_MODEL;
+    // Normalize the follow-up into the current envelope shape.
+    // Handles legacy flattened fields (text, model, agentId, imageParts, mode, etc.)
+    // and the new nested shape (message, sendOptions) uniformly.
+    const followUp = normalizeCompactionFollowUpRequest(muxMeta.pendingFollowUp, {
+      model: DEFAULT_MODEL,
+      agentId: "exec",
+    });
 
     log.debug("Dispatching pending follow-up from compaction summary", {
       workspaceId: this.workspaceId,
-      hasText: Boolean(followUp.text),
-      hasFileParts: Boolean(effectiveFileParts?.length),
-      hasReviews: Boolean(followUp.reviews?.length),
-      model: effectiveModel,
-      agentId: effectiveAgentId,
+      hasContent: Boolean(followUp.message.content),
+      hasFileParts: Boolean(followUp.message.fileParts?.length),
+      hasReviews: Boolean(followUp.message.reviews?.length),
+      model: followUp.sendOptions.model,
+      agentId: followUp.sendOptions.agentId,
     });
 
     // Process the follow-up content (handles reviews -> text formatting + metadata)
     const { finalText, metadata } = prepareUserMessageForSend(
-      {
-        text: followUp.text,
-        fileParts: effectiveFileParts,
-        reviews: followUp.reviews,
-      },
+      followUp.message,
       followUp.muxMetadata
     );
 
     // Build options for the follow-up message.
-    // Spread the followUp to include preserved send options (thinkingLevel, providerOptions, etc.)
+    // sendOptions contains the preserved send options (thinkingLevel, providerOptions, etc.)
     // that were captured from the original user message in prepareCompactionMessage().
     const options: SendMessageOptions & {
       fileParts?: FilePart[];
       muxMetadata?: MuxFrontendMetadata;
     } = {
-      ...followUp,
-      model: effectiveModel,
-      agentId: effectiveAgentId,
+      ...followUp.sendOptions,
     };
 
-    if (effectiveFileParts && effectiveFileParts.length > 0) {
-      options.fileParts = effectiveFileParts;
+    if (followUp.message.fileParts && followUp.message.fileParts.length > 0) {
+      options.fileParts = followUp.message.fileParts;
     }
 
     if (metadata) {

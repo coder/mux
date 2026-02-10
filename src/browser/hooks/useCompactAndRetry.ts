@@ -53,9 +53,11 @@ function buildFollowUpFromSource(
   source: Extract<DisplayedMessage, { type: "user" }>
 ): CompactionFollowUpInput {
   return {
-    text: source.content,
-    fileParts: source.fileParts,
-    reviews: source.reviews,
+    message: {
+      content: source.content,
+      fileParts: source.fileParts,
+      reviews: source.reviews,
+    },
     muxMetadata: source.agentSkill
       ? buildAgentSkillMetadata({
           rawCommand: source.content,
@@ -249,7 +251,7 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
 
           insertIntoChatInput(
             fallbackText + (shouldAppendNewline ? "\n" : ""),
-            nestedFollowUp?.fileParts
+            nestedFollowUp?.message.fileParts
           );
         }
 

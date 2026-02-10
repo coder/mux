@@ -112,7 +112,7 @@ function buildMockCompactionSummary(options: {
   const assistantCount = options.preCompactionMessages.filter((m) => m.role === "assistant").length;
   const totalCount = options.preCompactionMessages.length;
 
-  const followUpText = options.followUpContent?.text?.trim();
+  const followUpText = options.followUpContent?.message.content?.trim();
 
   return [
     "Mock compaction summary:",

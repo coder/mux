@@ -26,8 +26,8 @@ export function getFollowUpContentText(
   followUpContent?: CompactionRequestData["followUpContent"]
 ): string | null {
   if (!followUpContent) return null;
-  if (isDefaultSourceContent(followUpContent)) return null;
-  const text = followUpContent.text;
+  if (isDefaultSourceContent(followUpContent.message)) return null;
+  const text = followUpContent.message.content;
   if (typeof text !== "string" || text.trim().length === 0) {
     return null;
   }
