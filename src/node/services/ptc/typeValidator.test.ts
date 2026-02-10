@@ -316,6 +316,31 @@ mux.file_read({ path: "wrong" });`,
     expect(result.valid).toBe(true);
   });
 
+  test("catches bag reads in bracket-write RHS before assignment applies", () => {
+    const result = validateTypes(
+      `
+      const r = {};
+      r["a"] = r.typo;
+    `,
+      muxTypes
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("typo"))).toBe(true);
+  });
+
+  test("catches bag reads in bracket-write index expression before assignment applies", () => {
+    const result = validateTypes(
+      `
+      const r = {};
+      r[r.typo] = 1;
+    `,
+      muxTypes
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("typo"))).toBe(true);
+  });
   test("does not suppress bag reads in nested function due to outer writes", () => {
     const result = validateTypes(
       `

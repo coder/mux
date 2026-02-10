@@ -318,7 +318,12 @@ function findDynamicEmptyObjectBagFirstWritePosByContainer(
         const receiverSymbol = checker.getSymbolAtLocation(receiverIdent);
         if (receiverSymbol && emptyLiteralSymbols.has(receiverSymbol)) {
           const writeContainer = getEnclosingFunctionLikeContainer(node, sourceFile);
-          maybeRecordWrite(receiverSymbol, writeContainer, node.getStart(sourceFile));
+
+          // Record the "write" position *after* the assignment has evaluated. JS evaluates the
+          // element-access base + index + RHS before applying the assignment, so using the node's
+          // start would incorrectly treat reads inside the assignment expression as "after" the
+          // write (e.g. `r["a"] = r.typo`).
+          maybeRecordWrite(receiverSymbol, writeContainer, node.right.getEnd());
         }
       }
     }
