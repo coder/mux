@@ -315,8 +315,13 @@ export class ProjectService {
 
       // Use editConfig to do an atomic read-modify-write, avoiding overwriting
       // unrelated config changes that may have occurred during the clone.
+      // Re-check inside the callback to avoid overwriting a project entry that
+      // was concurrently added by another process/window during clone.
       const projectConfig: ProjectConfig = { workspaces: [] };
       await this.config.editConfig((freshConfig) => {
+        if (freshConfig.projects.has(normalizedPath)) {
+          return freshConfig; // Already registered — don't overwrite
+        }
         const updatedProjects = new Map(freshConfig.projects);
         updatedProjects.set(normalizedPath, projectConfig);
         return { ...freshConfig, projects: updatedProjects };

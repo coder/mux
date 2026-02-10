@@ -155,6 +155,9 @@ export function GeneralSection() {
   const [sshHostLoaded, setSshHostLoaded] = useState(false);
   const [defaultCloneDir, setDefaultCloneDir] = useState("");
   const [cloneDirLoaded, setCloneDirLoaded] = useState(false);
+  // Track whether the initial load succeeded to prevent saving empty string
+  // (which would clear the config) when the initial fetch failed.
+  const [cloneDirLoadedOk, setCloneDirLoadedOk] = useState(false);
 
   // Backend config: default to ON so archiving is safest even before async load completes.
   const [stopCoderWorkspaceOnArchive, setStopCoderWorkspaceOnArchive] = useState(true);
@@ -258,9 +261,11 @@ export function GeneralSection() {
       .then((dir) => {
         setDefaultCloneDir(dir);
         setCloneDirLoaded(true);
+        setCloneDirLoadedOk(true);
       })
       .catch(() => {
-        // Best-effort only. Keep the input editable if load fails.
+        // Best-effort only. Keep the input editable if load fails,
+        // but don't mark as successfully loaded to prevent clearing config on blur.
         setCloneDirLoaded(true);
       });
   }, [api]);
@@ -295,12 +300,14 @@ export function GeneralSection() {
   );
 
   const handleCloneDirBlur = useCallback(() => {
-    if (!cloneDirLoaded) {
+    // Only persist if the initial load succeeded. If it failed, the input may
+    // still show "" which would unintentionally clear a previously configured dir.
+    if (!cloneDirLoadedOk) {
       return;
     }
 
     void api?.projects.setDefaultCloneDir({ path: defaultCloneDir });
-  }, [api, cloneDirLoaded, defaultCloneDir]);
+  }, [api, cloneDirLoadedOk, defaultCloneDir]);
 
   return (
     <div className="space-y-6">
