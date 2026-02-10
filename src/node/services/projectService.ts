@@ -141,7 +141,9 @@ function deriveRepoFolderName(repoUrl: string): string {
 function normalizeRepoUrlForClone(repoUrl: string): string {
   // owner/repo shorthand (no protocol, no @, exactly one slash, no spaces/backslashes)
   if (/^[^/\\\s]+\/[^/\\\s]+$/.test(repoUrl)) {
-    return `https://github.com/${repoUrl}.git`;
+    // Strip existing .git suffix before appending to avoid double .git (e.g. owner/repo.git → owner/repo.git.git)
+    const withoutGitSuffix = repoUrl.replace(/\.git$/i, "");
+    return `https://github.com/${withoutGitSuffix}.git`;
   }
 
   return repoUrl;
@@ -306,9 +308,14 @@ export class ProjectService {
       using cloneProc = execFileAsync("git", ["clone", cloneUrl, normalizedPath]);
       await cloneProc.result;
 
+      // Use editConfig to do an atomic read-modify-write, avoiding overwriting
+      // unrelated config changes that may have occurred during the clone.
       const projectConfig: ProjectConfig = { workspaces: [] };
-      config.projects.set(normalizedPath, projectConfig);
-      await this.config.saveConfig(config);
+      await this.config.editConfig((freshConfig) => {
+        const updatedProjects = new Map(freshConfig.projects);
+        updatedProjects.set(normalizedPath, projectConfig);
+        return { ...freshConfig, projects: updatedProjects };
+      });
 
       return Ok({ projectConfig, normalizedPath });
     } catch (error) {
