@@ -1763,8 +1763,8 @@ export function ProvidersSection() {
 
       {config && !hasAnyConfiguredProvider && (
         <div className="border-warning/40 bg-warning/10 text-warning rounded-md border px-3 py-2 text-xs">
-          No providers are currently enabled. You won't be able to send messages until you enable a
-          provider.
+          No providers are currently enabled. You won&apos;t be able to send messages until you
+          enable a provider.
         </div>
       )}
     </div>

@@ -45,4 +45,26 @@ describe("VoiceService.transcribe", () => {
       }
     });
   });
+
+  it("calls fetch when OpenAI provider is enabled with an API key", async () => {
+    await withTempConfig(async (config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+        },
+      });
+
+      const fetchSpy = spyOn(globalThis, "fetch");
+      fetchSpy.mockResolvedValue(new Response("transcribed text"));
+
+      try {
+        const result = await service.transcribe("Zm9v");
+
+        expect(result).toEqual({ success: true, data: "transcribed text" });
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+  });
 });

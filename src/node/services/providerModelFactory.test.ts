@@ -6,21 +6,30 @@ import { Config } from "@/node/config";
 import { ProviderModelFactory } from "./providerModelFactory";
 import { ProviderService } from "./providerService";
 
+async function withTempConfig(
+  run: (config: Config, factory: ProviderModelFactory) => Promise<void> | void
+): Promise<void> {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-provider-model-factory-"));
+
+  try {
+    const config = new Config(tmpDir);
+    const providerService = new ProviderService(config);
+    const factory = new ProviderModelFactory(config, providerService);
+    await run(config, factory);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 describe("ProviderModelFactory.createModel", () => {
   it("returns provider_disabled when a non-gateway provider is disabled", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-provider-model-factory-"));
-
-    try {
-      const config = new Config(tmpDir);
+    await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({
         openai: {
           apiKey: "sk-test",
           enabled: false,
         },
       });
-
-      const providerService = new ProviderService(config);
-      const factory = new ProviderModelFactory(config, providerService);
 
       const result = await factory.createModel("openai:gpt-5");
 
@@ -31,8 +40,79 @@ describe("ProviderModelFactory.createModel", () => {
           provider: "openai",
         });
       }
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
+    });
+  });
+
+  it("does not return provider_disabled when provider is enabled and credentials exist", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+        },
+      });
+
+      const result = await factory.createModel("openai:gpt-5");
+
+      if (!result.success) {
+        expect(result.error.type).not.toBe("provider_disabled");
+      }
+    });
+  });
+});
+
+describe("ProviderModelFactory.resolveGatewayModelString", () => {
+  it("routes through gateway when provider is disabled but gateway is configured and model is allowlisted", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          enabled: false,
+        },
+        "mux-gateway": {
+          couponCode: "test-coupon",
+        },
+      });
+
+      const projectConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...projectConfig,
+        muxGatewayEnabled: true,
+        muxGatewayModels: ["openai:gpt-5"],
+      });
+
+      const resolved = factory.resolveGatewayModelString("openai:gpt-5", "openai:gpt-5", false);
+
+      expect(resolved).toBe("mux-gateway:openai/gpt-5");
+    });
+  });
+
+  it("keeps disabled provider blocked when gateway is not configured", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          enabled: false,
+        },
+      });
+
+      const projectConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...projectConfig,
+        muxGatewayEnabled: true,
+        muxGatewayModels: ["openai:gpt-5"],
+      });
+
+      const resolved = factory.resolveGatewayModelString("openai:gpt-5", "openai:gpt-5", false);
+      expect(resolved).toBe("openai:gpt-5");
+
+      const result = await factory.createModel(resolved);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toEqual({
+          type: "provider_disabled",
+          provider: "openai",
+        });
+      }
+    });
   });
 });

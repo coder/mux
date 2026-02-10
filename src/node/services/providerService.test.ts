@@ -70,6 +70,28 @@ describe("ProviderService.getConfig", () => {
       expect(cfg.openai.isConfigured).toBe(false);
     });
   });
+
+  it("treats disabled OpenAI as unconfigured even when Codex OAuth tokens are stored", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          enabled: false,
+          codexOauth: {
+            type: "oauth",
+            access: "test-access-token",
+            refresh: "test-refresh-token",
+            expires: Date.now() + 60_000,
+          },
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg.openai.codexOauthSet).toBe(true);
+      expect(cfg.openai.isEnabled).toBe(false);
+      expect(cfg.openai.isConfigured).toBe(false);
+    });
+  });
 });
 
 describe("ProviderService.setConfig", () => {
