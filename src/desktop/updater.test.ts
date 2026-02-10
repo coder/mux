@@ -114,9 +114,10 @@ describe("UpdaterService", () => {
       expect(statusUpdates).toContainEqual({ type: "available", info: updateInfo });
     });
 
-    it("should handle errors from checkForUpdates", async () => {
-      // Setup
-      const error = new Error("Network error");
+    it("should handle non-transient errors from checkForUpdates", async () => {
+      // Use a non-transient error (transient errors like "Network error" now
+      // silently back off to idle — see "transient error backoff" tests)
+      const error = new Error("Code signing verification failed");
 
       mockAutoUpdater.checkForUpdates.mockImplementation(() => {
         return Promise.reject(error);
@@ -134,7 +135,7 @@ describe("UpdaterService", () => {
       // Should eventually get error status
       const errorStatus = statusUpdates.find((s) => s.type === "error");
       expect(errorStatus).toBeDefined();
-      expect(errorStatus).toEqual({ type: "error", message: "Network error" });
+      expect(errorStatus).toEqual({ type: "error", message: "Code signing verification failed" });
     });
 
     it("should timeout if no events fire within 30 seconds", () => {
@@ -173,6 +174,137 @@ describe("UpdaterService", () => {
 
       // Restore original setTimeout
       global.setTimeout = originalSetTimeout;
+    });
+  });
+
+  describe("transient error backoff", () => {
+    it("should silently back off on 404 (latest.yml missing)", async () => {
+      mockAutoUpdater.checkForUpdates.mockImplementation(() => {
+        setImmediate(() => {
+          mockAutoUpdater.emit("error", new Error("HttpError: 404 Not Found"));
+        });
+        return new Promise(() => {
+          // Never resolves — events drive state
+        });
+      });
+
+      service.checkForUpdates();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const lastStatus = statusUpdates[statusUpdates.length - 1];
+      expect(lastStatus).toEqual({ type: "idle" });
+      expect(statusUpdates.find((s) => s.type === "error")).toBeUndefined();
+    });
+
+    it("should silently back off on network errors", async () => {
+      mockAutoUpdater.checkForUpdates.mockImplementation(() => {
+        setImmediate(() => {
+          mockAutoUpdater.emit("error", new Error("getaddrinfo ENOTFOUND github.com"));
+        });
+        return new Promise(() => {
+          // Never resolves — events drive state
+        });
+      });
+
+      service.checkForUpdates();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(statusUpdates[statusUpdates.length - 1]).toEqual({ type: "idle" });
+    });
+
+    it("should silently back off on rate limit errors", async () => {
+      mockAutoUpdater.checkForUpdates.mockImplementation(() => {
+        setImmediate(() => {
+          mockAutoUpdater.emit("error", new Error("HttpError: 403 rate limit exceeded"));
+        });
+        return new Promise(() => {
+          // Never resolves — events drive state
+        });
+      });
+
+      service.checkForUpdates();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(statusUpdates[statusUpdates.length - 1]).toEqual({ type: "idle" });
+    });
+
+    it("should surface non-transient errors to the user", async () => {
+      mockAutoUpdater.checkForUpdates.mockImplementation(() => {
+        setImmediate(() => {
+          mockAutoUpdater.emit("error", new Error("Code signing verification failed"));
+        });
+        return new Promise(() => {
+          // Never resolves — events drive state
+        });
+      });
+
+      service.checkForUpdates();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(statusUpdates.find((s) => s.type === "error")).toEqual({
+        type: "error",
+        message: "Code signing verification failed",
+      });
+    });
+
+    it("should silently back off when promise rejects with transient error", async () => {
+      mockAutoUpdater.checkForUpdates.mockImplementation(() => {
+        return Promise.reject(new Error("HttpError: 404 Not Found"));
+      });
+
+      service.checkForUpdates();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const lastStatus = statusUpdates[statusUpdates.length - 1];
+      expect(lastStatus).toEqual({ type: "idle" });
+      expect(statusUpdates.find((s) => s.type === "error")).toBeUndefined();
+    });
+  });
+
+  describe("state guards", () => {
+    it("should skip check when already checking", () => {
+      mockAutoUpdater.checkForUpdates.mockReturnValue(
+        new Promise(() => {
+          // Never resolves
+        })
+      );
+      service.checkForUpdates();
+      service.checkForUpdates(); // should be skipped
+      expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+    });
+
+    it("should skip check when downloading", async () => {
+      // Get to downloading state via update-available → download-progress
+      mockAutoUpdater.checkForUpdates.mockImplementation(() => {
+        setImmediate(() => mockAutoUpdater.emit("update-available", { version: "2.0.0" }));
+        return new Promise(() => {
+          // Never resolves — events drive state
+        });
+      });
+      service.checkForUpdates();
+      await new Promise((r) => setImmediate(r));
+      // Simulate download-progress event to enter downloading state
+      mockAutoUpdater.emit("download-progress", { percent: 50 });
+
+      mockAutoUpdater.checkForUpdates.mockClear();
+      service.checkForUpdates(); // should be skipped
+      expect(mockAutoUpdater.checkForUpdates).not.toHaveBeenCalled();
+      expect(statusUpdates[statusUpdates.length - 1]).toEqual({ type: "downloading", percent: 50 });
+    });
+
+    it("should skip check when update already downloaded", async () => {
+      mockAutoUpdater.checkForUpdates.mockImplementation(() => {
+        setImmediate(() => mockAutoUpdater.emit("update-downloaded", { version: "2.0.0" }));
+        return new Promise(() => {
+          // Never resolves — events drive state
+        });
+      });
+      service.checkForUpdates();
+      await new Promise((r) => setImmediate(r));
+
+      mockAutoUpdater.checkForUpdates.mockClear();
+      service.checkForUpdates(); // should be skipped — don't throw away the download
+      expect(mockAutoUpdater.checkForUpdates).not.toHaveBeenCalled();
     });
   });
 

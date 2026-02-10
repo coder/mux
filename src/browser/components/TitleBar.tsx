@@ -138,13 +138,22 @@ export function TitleBar() {
       return; // Too soon since last hover check
     }
 
-    // Only trigger check if idle/up-to-date and not already checking
+    // Only trigger check if idle/up-to-date/error and not already checking.
+    // Including "error" ensures the user can retry after a failure by hovering
+    // again, instead of being stuck until the 4-hour interval or a restart.
     if (
-      (updateStatus.type === "idle" || updateStatus.type === "up-to-date") &&
+      (updateStatus.type === "idle" ||
+        updateStatus.type === "up-to-date" ||
+        updateStatus.type === "error") &&
       !isCheckingOnHover
     ) {
       lastHoverCheckTime.current = now;
       setIsCheckingOnHover(true);
+
+      // Safety net: clear spinner after check timeout + buffer,
+      // in case the status stream doesn't deliver a state change.
+      setTimeout(() => setIsCheckingOnHover(false), 35_000);
+
       api?.update.check().catch((error) => {
         console.error("Update check failed:", error);
         setIsCheckingOnHover(false);
