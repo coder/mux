@@ -513,13 +513,17 @@ export class CompactionHandler {
         ...event.metadata,
         providerMetadata: undefined,
         contextProviderMetadata: undefined,
+        // contextUsage reflects the pre-compaction context window; keeping it
+        // would inflate the usage indicator until the next real request.
+        contextUsage: undefined,
       },
     };
 
     assert(
       sanitizedEvent.metadata.providerMetadata === undefined &&
-        sanitizedEvent.metadata.contextProviderMetadata === undefined,
-      "Compaction stream-end event must not carry stale provider metadata"
+        sanitizedEvent.metadata.contextProviderMetadata === undefined &&
+        sanitizedEvent.metadata.contextUsage === undefined,
+      "Compaction stream-end event must not carry stale provider metadata or context usage"
     );
 
     return sanitizedEvent;

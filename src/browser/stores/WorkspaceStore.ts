@@ -35,6 +35,7 @@ import type {
 } from "@/common/types/stream";
 import { MapStore } from "./MapStore";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
+import { isDurableCompactionBoundaryMarker } from "@/common/utils/messages/compactionBoundary";
 import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
@@ -1255,11 +1256,15 @@ export class WorkspaceStore {
           sessionTotal.reasoning.tokens
         : 0;
 
-      // Get last message's context usage (unchanged from before)
+      // Get last message's context usage — only search within the current
+      // compaction epoch. Pre-boundary messages carry stale contextUsage from
+      // before compaction; including them inflates the usage indicator and
+      // triggers premature auto-compaction.
       const messages = aggregator.getAllMessages();
       const lastContextUsage = (() => {
         for (let i = messages.length - 1; i >= 0; i--) {
           const msg = messages[i];
+          if (isDurableCompactionBoundaryMarker(msg)) break;
           if (msg.role === "assistant") {
             if (msg.metadata?.compacted) continue;
             const rawUsage = msg.metadata?.contextUsage;
