@@ -316,6 +316,22 @@ mux.file_read({ path: "wrong" });`,
     expect(result.valid).toBe(true);
   });
 
+  test("does not suppress TS2339 for shadowed bag name in inner scope", () => {
+    const result = validateTypes(
+      `
+      const results = {};
+      results["a"] = 1;
+      {
+        const results = {};
+        return results.typo;
+      }
+    `,
+      muxTypes
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("typo"))).toBe(true);
+  });
   test("still catches mux shadowing with {}", () => {
     // const mux = {} must NOT be treated as a dynamic bag — shadowing mux is a real bug
     const result = validateTypes(
