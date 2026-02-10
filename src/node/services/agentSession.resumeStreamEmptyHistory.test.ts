@@ -1,16 +1,21 @@
-import { describe, expect, test, mock } from "bun:test";
+import { describe, expect, test, mock, afterEach } from "bun:test";
 
 import { AgentSession } from "./agentSession";
 import type { Config } from "@/node/config";
-import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 import type { AIService } from "./aiService";
 import type { InitStateManager } from "./initStateManager";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import type { Result } from "@/common/types/result";
 import { Ok } from "@/common/types/result";
+import { createTestHistoryService } from "./testHistoryService";
 
 describe("AgentSession.resumeStream", () => {
+  let historyCleanup: (() => Promise<void>) | undefined;
+  afterEach(async () => {
+    await historyCleanup?.();
+  });
+
   test("returns an error when history is empty", async () => {
     const streamMessage = mock(() => Promise.resolve(Ok(undefined)));
 
@@ -22,10 +27,8 @@ describe("AgentSession.resumeStream", () => {
       streamMessage,
     } as unknown as AIService;
 
-    const historyService: HistoryService = {
-      getHistoryFromLatestBoundary: mock(() => Promise.resolve(Ok([]))),
-      getLastMessages: mock(() => Promise.resolve({ success: true as const, data: [] })),
-    } as unknown as HistoryService;
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
 
     const partialService: PartialService = {
       commitToHistory: mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined))),

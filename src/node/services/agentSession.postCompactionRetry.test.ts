@@ -1,4 +1,4 @@
-import { describe, expect, test, mock } from "bun:test";
+import { describe, expect, test, mock, afterEach, spyOn } from "bun:test";
 import { EventEmitter } from "events";
 import * as fsPromises from "fs/promises";
 import * as os from "os";
@@ -6,7 +6,6 @@ import * as path from "path";
 
 import { AgentSession } from "./agentSession";
 import type { Config } from "@/node/config";
-import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 import type { AIService } from "./aiService";
 import type { InitStateManager } from "./initStateManager";
@@ -14,6 +13,7 @@ import type { BackgroundProcessManager } from "./backgroundProcessManager";
 
 import type { MuxMessage } from "@/common/types/message";
 import type { SendMessageOptions } from "@/common/orpc/types";
+import { createTestHistoryService } from "./testHistoryService";
 
 function createPersistedPostCompactionState(options: {
   filePath: string;
@@ -29,6 +29,11 @@ function createPersistedPostCompactionState(options: {
 }
 
 describe("AgentSession post-compaction context retry", () => {
+  let historyCleanup: (() => Promise<void>) | undefined;
+  afterEach(async () => {
+    await historyCleanup?.();
+  });
+
   test("retries once without post-compaction injection on context_exceeded", async () => {
     const workspaceId = "ws";
     const sessionDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-agentSession-"));
@@ -60,15 +65,12 @@ describe("AgentSession post-compaction context retry", () => {
       },
     ];
 
-    const historyService: HistoryService = {
-      getHistoryFromLatestBoundary: mock(() =>
-        Promise.resolve({ success: true as const, data: history })
-      ),
-      getLastMessages: mock((_: string, n: number) =>
-        Promise.resolve({ success: true as const, data: history.slice(-n) })
-      ),
-      deleteMessage: mock(() => Promise.resolve({ success: true as const, data: undefined })),
-    } as unknown as HistoryService;
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+    for (const msg of history) {
+      await historyService.appendToHistory(workspaceId, msg);
+    }
+    spyOn(historyService, "deleteMessage");
 
     const partialService: PartialService = {
       commitToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
@@ -196,11 +198,16 @@ describe("AgentSession post-compaction context retry", () => {
 });
 
 describe("AgentSession execSubagentHardRestart", () => {
+  let historyCleanup: (() => Promise<void>) | undefined;
+  afterEach(async () => {
+    await historyCleanup?.();
+  });
+
   test("hard-restarts exec-like subagent history on context_exceeded and retries once", async () => {
     const workspaceId = "ws-hard";
     const sessionDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-agentSession-"));
 
-    let history: MuxMessage[] = [
+    const history: MuxMessage[] = [
       {
         id: "snapshot-1",
         role: "user",
@@ -221,22 +228,13 @@ describe("AgentSession execSubagentHardRestart", () => {
       },
     ];
 
-    const historyService: HistoryService = {
-      getHistoryFromLatestBoundary: mock(() =>
-        Promise.resolve({ success: true as const, data: history })
-      ),
-      getLastMessages: mock((_: string, n: number) =>
-        Promise.resolve({ success: true as const, data: history.slice(-n) })
-      ),
-      clearHistory: mock(() => {
-        history = [];
-        return Promise.resolve({ success: true as const, data: [] });
-      }),
-      appendToHistory: mock((_workspaceId: string, message: MuxMessage) => {
-        history = [...history, message];
-        return Promise.resolve({ success: true as const, data: undefined });
-      }),
-    } as unknown as HistoryService;
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+    for (const msg of history) {
+      await historyService.appendToHistory(workspaceId, msg);
+    }
+    spyOn(historyService, "clearHistory");
+    spyOn(historyService, "appendToHistory");
 
     const partialService: PartialService = {
       commitToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
@@ -417,7 +415,7 @@ describe("AgentSession execSubagentHardRestart", () => {
     const workspaceId = "ws-hard-custom-agent";
     const sessionDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-agentSession-"));
 
-    let history: MuxMessage[] = [
+    const history: MuxMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -428,22 +426,13 @@ describe("AgentSession execSubagentHardRestart", () => {
       },
     ];
 
-    const historyService: HistoryService = {
-      getHistoryFromLatestBoundary: mock(() =>
-        Promise.resolve({ success: true as const, data: history })
-      ),
-      getLastMessages: mock((_: string, n: number) =>
-        Promise.resolve({ success: true as const, data: history.slice(-n) })
-      ),
-      clearHistory: mock(() => {
-        history = [];
-        return Promise.resolve({ success: true as const, data: [] });
-      }),
-      appendToHistory: mock((_workspaceId: string, message: MuxMessage) => {
-        history = [...history, message];
-        return Promise.resolve({ success: true as const, data: undefined });
-      }),
-    } as unknown as HistoryService;
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+    for (const msg of history) {
+      await historyService.appendToHistory(workspaceId, msg);
+    }
+    spyOn(historyService, "clearHistory");
+    spyOn(historyService, "appendToHistory");
 
     const partialService: PartialService = {
       commitToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
@@ -629,16 +618,12 @@ describe("AgentSession execSubagentHardRestart", () => {
       },
     ];
 
-    const historyService: HistoryService = {
-      getHistoryFromLatestBoundary: mock(() =>
-        Promise.resolve({ success: true as const, data: history })
-      ),
-      getLastMessages: mock((_: string, n: number) =>
-        Promise.resolve({ success: true as const, data: history.slice(-n) })
-      ),
-      clearHistory: mock(() => Promise.resolve({ success: true as const, data: [] })),
-      appendToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
-    } as unknown as HistoryService;
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+    for (const msg of history) {
+      await historyService.appendToHistory(workspaceId, msg);
+    }
+    spyOn(historyService, "clearHistory");
 
     const partialService: PartialService = {
       commitToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
