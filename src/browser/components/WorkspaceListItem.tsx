@@ -643,9 +643,11 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
               </TooltipContent>
             </Tooltip>
           </ActionButtonWrapper>
+        ) : isDisabled ? (
+          // Invisible spacer preserves title alignment during archive/remove transitions
+          <div className="h-4 w-4 shrink-0" />
         ) : (
-          !isEditing &&
-          !isDisabled && (
+          !isEditing && (
             <ActionButtonWrapper hasSubtitle={hasStatusText}>
               {/* Keep the overflow menu in the left action slot to avoid duplicate affordances. */}
               <Popover
