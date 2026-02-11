@@ -6,9 +6,6 @@ import type { RecursivePartial } from "@/browser/testUtils";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { installDom } from "../../../tests/ui/dom";
-
-let cleanupDom: (() => void) | null = null;
 
 let currentClientMock: RecursivePartial<APIClient> = {};
 void mock.module("@/browser/contexts/API", () => ({
@@ -24,14 +21,11 @@ import { ProjectAddForm } from "./ProjectCreateModal";
 
 describe("ProjectAddForm", () => {
   beforeEach(() => {
-    cleanupDom = installDom();
     currentClientMock = {};
   });
 
   afterEach(() => {
     cleanup();
-    cleanupDom?.();
-    cleanupDom = null;
     currentClientMock = {};
   });
 
