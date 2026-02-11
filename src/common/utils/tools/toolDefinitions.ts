@@ -39,6 +39,7 @@ import { TOOL_EDIT_WARNING } from "@/common/types/tools";
 import { SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS } from "@/common/types/tasks";
 
 import { zodToJsonSchema } from "zod-to-json-schema";
+import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
 
 // -----------------------------------------------------------------------------
 // ask_user_question (plan-mode interactive questions)
@@ -531,21 +532,23 @@ const FILE_TOOL_PATH = z
   .string()
   .describe("Path to the file to edit (absolute or relative to the current workspace)");
 
+/**
+ * Zod preprocessor: normalizes legacy `file_path` / `filePath` keys to canonical `path`.
+ * Signature is `unknown → unknown` because `z.preprocess` requires it.
+ */
 function normalizeFilePath(value: unknown): unknown {
-  // Compatibility: legacy callers may emit { file_path: "..." } for file tools.
-  // Normalize to canonical `path` so schemas and handlers use one key.
   if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
 
   const obj = value as Record<string, unknown>;
 
-  // Canonical `path` wins when present.
-  // If it's invalid, let schema validation fail instead of silently replacing it.
-  if ("path" in obj || typeof obj.file_path !== "string") {
-    return value;
-  }
+  // Canonical `path` already present — let schema validation handle it.
+  if ("path" in obj) return value;
 
-  const { file_path, ...rest } = obj;
-  return { ...rest, path: file_path };
+  const resolved = extractToolFilePath(value);
+  if (resolved == null) return value;
+
+  const { file_path: _, filePath: __, ...rest } = obj;
+  return { ...rest, path: resolved };
 }
 
 interface ToolSchema {
