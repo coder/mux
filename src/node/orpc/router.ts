@@ -1284,15 +1284,15 @@ export const router = (authToken?: string) => {
       clearLogs: t
         .input(schemas.general.clearLogs.input)
         .output(schemas.general.clearLogs.output)
-        .handler(() => {
-          clearLogEntries();
+        .handler(async () => {
           try {
-            clearLogFiles();
+            await clearLogFiles();
+            clearLogEntries();
+            return { success: true };
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             return { success: false, error: message };
           }
-          return { success: true };
         }),
       subscribeLogs: t
         .input(schemas.general.subscribeLogs.input)

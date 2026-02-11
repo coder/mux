@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 
 import { MAX_LOG_ENTRIES } from "@/common/constants/ui";
 
@@ -168,6 +168,33 @@ describe("OutputTab", () => {
     await waitFor(() => {
       expect(view.queryByText(formatEntryMessage(0))).toBeNull();
     });
+  });
+
+  test("displays warning when clearLogs returns failure", async () => {
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      mockApi = {
+        general: {
+          subscribeLogs: () =>
+            Promise.resolve(
+              streamEvents({ type: "snapshot", epoch: 1, entries: createEntries(0, 1) })
+            ),
+          clearLogs: () => Promise.resolve({ success: false, error: "disk error" }),
+        },
+      };
+
+      const view = render(<OutputTab workspaceId="workspace-1" />);
+      const deleteButton = view.getByRole("button", { name: "Delete output logs" });
+
+      fireEvent.click(deleteButton);
+
+      await waitFor(() => {
+        expect(warnSpy).toHaveBeenCalledWith("Log files could not be fully deleted:", "disk error");
+      });
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   test("stale append after reset is rejected", async () => {

@@ -91,12 +91,8 @@ describe("log file sink state machine", () => {
     }
 
     const firstStreamEndSpy = spyOn(firstStream, "end");
-    const firstStreamClose = new Promise<void>((resolve) => {
-      firstStream.once("close", () => resolve());
-    });
 
-    clearLogFiles();
-    await firstStreamClose;
+    await clearLogFiles();
 
     expect(firstStreamEndSpy).toHaveBeenCalledTimes(1);
     expect(createdStreams).toHaveLength(2);
@@ -104,6 +100,49 @@ describe("log file sink state machine", () => {
 
     log.info("line after clear");
     expect(createWriteStreamSpy).toHaveBeenCalledTimes(2);
+  });
+
+  test("clearLogFiles rejects when truncate fails", async () => {
+    const openSyncSpy = spyOn(fs, "openSync").mockImplementation(() => {
+      throw new Error("truncate failed");
+    });
+
+    let clearError: unknown;
+    try {
+      await clearLogFiles();
+    } catch (error) {
+      clearError = error;
+    }
+
+    expect(openSyncSpy).toHaveBeenCalled();
+    expect(clearError).toBeInstanceOf(Error);
+    if (!(clearError instanceof Error)) {
+      throw new Error("expected clearLogFiles to reject with Error");
+    }
+    expect(clearError.message).toContain("truncate failed");
+  });
+
+  test("queued clear cannot reopen after closeLogFile", async () => {
+    const originalCreateWriteStream = fs.createWriteStream;
+    const createdStreams: fs.WriteStream[] = [];
+
+    const createWriteStreamSpy = spyOn(fs, "createWriteStream").mockImplementation((...args) => {
+      const stream = originalCreateWriteStream(...args);
+      createdStreams.push(stream);
+      return stream;
+    });
+
+    log.info("line before clear and close");
+    expect(createdStreams).toHaveLength(1);
+
+    const clearPromise = clearLogFiles();
+    closeLogFile();
+    await clearPromise.catch(() => undefined);
+
+    expect(createdStreams).toHaveLength(1);
+
+    log.info("line after close should be dropped");
+    expect(createWriteStreamSpy).toHaveBeenCalledTimes(1);
   });
 
   test("closeLogFile transitions sink to closed and blocks reopen attempts", () => {

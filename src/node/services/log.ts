@@ -88,16 +88,27 @@ type FileSinkState =
 let fileSinkState: FileSinkState = { status: "idle" };
 let sinkTransition: Promise<void> = Promise.resolve();
 let sinkTransitionDepth = 0;
+let sinkLifecycleEpoch = 0;
 
-function enqueueSinkTransition(task: () => Promise<void>): void {
+function enqueueSinkTransition(task: () => Promise<void>): Promise<void> {
   sinkTransitionDepth += 1;
-  sinkTransition = sinkTransition
-    .catch(() => undefined)
-    .then(task)
-    .catch((error) => setDegradedState(error))
+
+  // `run` is the caller-visible promise: resolves/rejects with the task's real outcome.
+  const run = sinkTransition.catch(() => undefined).then(task);
+
+  // The internal chain absorbs failures so subsequent commands still execute,
+  // but only transitions to degraded if the sink hasn't been terminally closed.
+  sinkTransition = run
+    .catch((error) => {
+      if (fileSinkState.status !== "closed") {
+        setDegradedState(error);
+      }
+    })
     .finally(() => {
       sinkTransitionDepth -= 1;
     });
+
+  return run;
 }
 
 const MAX_LOG_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
@@ -207,6 +218,7 @@ function rotateSink(): void {
   }
 
   const openSink = fileSinkState;
+  const transitionEpoch = sinkLifecycleEpoch;
   // Immediately move to idle so writeSink() won't write to the old stream.
   fileSinkState = { status: "idle" };
 
@@ -226,9 +238,13 @@ function rotateSink(): void {
       }
     }
 
+    if (fileSinkState.status === "closed" || transitionEpoch !== sinkLifecycleEpoch) {
+      return;
+    }
+
     const stream = createSafeStream(openSink.path);
     fileSinkState = { status: "open", stream, path: openSink.path, size: 0 };
-  });
+  }).catch(() => undefined);
 }
 
 function writeSink(cleanLineWithNewline: string): void {
@@ -264,17 +280,18 @@ export function getLogFilePath(): string {
   return path.join(getMuxLogsDir(), "mux.log");
 }
 
-function clearSink(): void {
+function clearSink(): Promise<void> {
   const logsDir = getMuxLogsDir();
   const activeLogPath = path.join(logsDir, "mux.log");
 
   const openSink = fileSinkState.status === "open" ? fileSinkState : null;
+  const transitionEpoch = sinkLifecycleEpoch;
   // Immediately move to idle so writeSink() won't write to the old stream.
   if (openSink) {
     fileSinkState = { status: "idle" };
   }
 
-  enqueueSinkTransition(async () => {
+  return enqueueSinkTransition(async () => {
     if (openSink) {
       await waitForStreamClose(openSink.stream);
     }
@@ -295,7 +312,7 @@ function clearSink(): void {
       }
     }
 
-    if (!openSink) {
+    if (!openSink || fileSinkState.status === "closed" || transitionEpoch !== sinkLifecycleEpoch) {
       return;
     }
 
@@ -304,8 +321,8 @@ function clearSink(): void {
   });
 }
 
-export function clearLogFiles(): void {
-  clearSink();
+export function clearLogFiles(): Promise<void> {
+  return clearSink();
 }
 
 function closeSink(): void {
@@ -313,6 +330,7 @@ function closeSink(): void {
 
   // Terminal state — set immediately so no new writes start.
   fileSinkState = { status: "closed" };
+  sinkLifecycleEpoch += 1;
 
   if (!openSink) {
     return;
@@ -320,7 +338,7 @@ function closeSink(): void {
 
   enqueueSinkTransition(async () => {
     await waitForStreamClose(openSink.stream);
-  });
+  }).catch(() => undefined);
 }
 
 export function closeLogFile(): void {
@@ -340,6 +358,7 @@ export function __resetFileSinkForTests(): void {
   fileSinkState = { status: "idle" };
   sinkTransition = Promise.resolve();
   sinkTransitionDepth = 0;
+  sinkLifecycleEpoch = 0;
 }
 
 let currentLogLevel: LogLevel = getDefaultLogLevel();
