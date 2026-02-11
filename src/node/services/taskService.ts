@@ -1569,6 +1569,16 @@ export class TaskService {
     return false;
   }
 
+  /**
+   * Topology predicate: does this workspace still have child agent-task nodes in config?
+   * Unlike hasActiveDescendantAgentTasks (which checks runtime activity for scheduling),
+   * this checks structural tree shape — any child node blocks parent deletion regardless
+   * of its status.
+   */
+  private hasChildAgentTasks(index: AgentTaskIndex, workspaceId: string): boolean {
+    return (index.childrenByParent.get(workspaceId)?.length ?? 0) > 0;
+  }
+
   private getTaskDepth(
     config: ReturnType<Config["loadConfigOrDefault"]>,
     workspaceId: string
@@ -2693,8 +2703,12 @@ export class TaskService {
       return { ok: false, reason: "still_streaming" };
     }
 
-    if (this.hasActiveDescendantAgentTasks(config, workspaceId)) {
-      return { ok: false, reason: "has_active_descendants" };
+    // Topology gate: a reported task can only be cleaned up when it is a structural leaf
+    // (has no child agent tasks in config). This is status-agnostic — even reported children
+    // block parent deletion, ensuring artifact rollup always targets an existing parent path.
+    const index = this.buildAgentTaskIndex(config);
+    if (this.hasChildAgentTasks(index, workspaceId)) {
+      return { ok: false, reason: "has_child_tasks" };
     }
 
     const parentSessionDir = this.config.getSessionDir(parentWorkspaceId);
@@ -2713,6 +2727,9 @@ export class TaskService {
   private async cleanupReportedLeafTask(workspaceId: string): Promise<void> {
     assert(workspaceId.length > 0, "cleanupReportedLeafTask: workspaceId must be non-empty");
 
+    // Lineage reduction: each iteration removes exactly one leaf node, then re-evaluates
+    // the parent on fresh config. The structural-leaf gate in canCleanupReportedTask ensures
+    // parents are only removed after all children are gone.
     let currentWorkspaceId = workspaceId;
     const visited = new Set<string>();
     for (let depth = 0; depth < 32; depth++) {
