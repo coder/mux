@@ -12,7 +12,7 @@ import * as os from "os";
 import * as path from "path";
 import { spawn, type ChildProcess } from "child_process";
 import { Duplex } from "stream";
-import { Client } from "ssh2";
+import type { Client } from "ssh2";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 import { attachStreamErrorHandler } from "@/node/utils/streamErrors";
@@ -503,7 +503,11 @@ export class SSH2ConnectionPool {
             ? spawnProxyCommand(resolvedConfigWithIdentities.proxyCommand, proxyTokens)
             : undefined;
 
-          const client = new Client();
+          // Lazy-load ssh2 to avoid loading the native sshcrypto.node module at
+          // startup. Bun doesn't support the libuv functions the NAPI module calls,
+          // so eagerly importing ssh2 crashes the headless CLI in sandboxes.
+          const { Client: SSH2Client } = await import("ssh2");
+          const client = new SSH2Client();
           const entry: SSH2ConnectionEntry = {
             client,
             resolvedConfig: resolvedConfigWithIdentities,
