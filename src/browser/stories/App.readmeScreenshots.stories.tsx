@@ -6,6 +6,7 @@
  * images from a named Storybook story.
  */
 
+import React from "react";
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import {
   NOW,
@@ -48,15 +49,75 @@ import {
 import type { RightSidebarLayoutState } from "@/browser/utils/rightSidebarLayout";
 import { within, userEvent, waitFor, expect } from "@storybook/test";
 
+/** Mock macOS window controls for screenshot fidelity. */
+function MacTrafficLights() {
+  const size = 12;
+  const gap = 8;
+
+  // Vertically centered in the 36px desktop titlebar, inset ~20px from left
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        width: 80,
+        height: 36,
+        display: "flex",
+        alignItems: "center",
+        paddingLeft: 20,
+        gap,
+        zIndex: 9999,
+        pointerEvents: "none",
+      }}
+    >
+      {["#FF5F57", "#FEBC2E", "#28C840"].map((color) => (
+        <div
+          key={color}
+          style={{
+            width: size,
+            height: size,
+            borderRadius: "50%",
+            backgroundColor: color,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 export default {
   ...appMeta,
   title: "Docs/README Screenshots",
   decorators: [
-    (Story: () => JSX.Element) => (
-      <div style={{ width: 1600, height: "100dvh" }}>
-        <Story />
-      </div>
-    ),
+    (Story: () => JSX.Element) => {
+      // Save and restore window.api to prevent leaking to other stories
+      const originalApiRef = React.useRef(window.api);
+      window.api = {
+        platform: "darwin",
+        versions: {
+          node: "20.0.0",
+          chrome: "120.0.0",
+          electron: "28.0.0",
+        },
+        // This function's presence triggers isDesktopMode() → true
+        getIsRosetta: () => Promise.resolve(false),
+      };
+
+      React.useEffect(() => {
+        const savedApi = originalApiRef.current;
+        return () => {
+          window.api = savedApi;
+        };
+      }, []);
+
+      return (
+        <div style={{ width: 1900, height: "100dvh", position: "relative" }}>
+          <MacTrafficLights />
+          <Story />
+        </div>
+      );
+    },
   ],
   parameters: {
     ...appMeta.parameters,
@@ -64,7 +125,7 @@ export default {
       ...(appMeta.parameters?.chromatic ?? {}),
       modes: {
         // README screenshots are taken in dark mode.
-        dark: { theme: "dark", viewport: 1600 },
+        dark: { theme: "dark", viewport: 1900 },
       },
     },
   },
@@ -181,7 +242,7 @@ export const ProductHero: AppStory = {
     <AppWithMocks
       setup={() => {
         window.localStorage.setItem(GIT_STATUS_INDICATOR_MODE_KEY, JSON.stringify("line-delta"));
-        window.localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "520");
+        window.localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "620");
 
         const workspaceId = "ws-hero";
         const terminalSessionId = "term-hero";
@@ -635,9 +696,9 @@ export const CodeReview: AppStory = {
         // Collapse left sidebar to maximize space for chat + review.
         window.localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(true));
 
-        // 50/50 split: 800px review pane out of 1600px viewport.
+        // 50/50 split: 950px review pane out of 1900px viewport.
         window.localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        window.localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "800");
+        window.localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "950");
         window.localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
 
         const REVIEW_DIFF = `diff --git a/src/browser/components/WorkspaceShell.tsx b/src/browser/components/WorkspaceShell.tsx
@@ -868,7 +929,7 @@ index 0000000..def5678
 
 // README: docs/img/agent-status.webp
 // This story renders the full app. The screenshot is produced by Playwright
-// clipping the left sidebar region and then upscaling to 1600×1171 with sharp.
+// clipping the left sidebar region and then upscaling to a 3800px-wide output with sharp.
 export const AgentStatusSidebar: AppStory = {
   render: () => (
     <AppWithMocks
@@ -1139,7 +1200,7 @@ export const PlanMermaidWithCosts: AppStory = {
 
         window.localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
         window.localStorage.setItem("costsTab:viewMode", JSON.stringify("session"));
-        window.localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "420");
+        window.localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "500");
         window.localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
 
         expandProjects([README_PROJECT_PATH]);
@@ -1320,7 +1381,7 @@ export const CostsTabRich: AppStory = {
 
         window.localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
         window.localStorage.setItem("costsTab:viewMode", JSON.stringify("session"));
-        window.localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "420");
+        window.localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "500");
         window.localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
 
         expandProjects([README_PROJECT_PATH]);
@@ -1436,7 +1497,7 @@ export const OpportunisticCompactionTooltip: AppStory = {
 
         window.localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
         window.localStorage.setItem("costsTab:viewMode", JSON.stringify("session"));
-        window.localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "420");
+        window.localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "500");
         window.localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
 
         expandProjects([README_PROJECT_PATH]);

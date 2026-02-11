@@ -36,16 +36,16 @@ const SINGLE_STORY = flags.story;
 // Constants
 // ---------------------------------------------------------------------------
 
-const VIEWPORT = { width: 1600, height: 1171 };
+const VIEWPORT = { width: 1900, height: 1188 };
 const DEVICE_SCALE_FACTOR = 2;
 const WEBP_QUALITY = 90;
 
 /**
- * Target output width for documentation screenshots. Original README assets
- * ranged ~2400–4000px. We capture at 3200px (1600 CSS × DPR 2) and resize
- * down to this width for a consistent, high-fidelity result.
+ * Target output width for documentation screenshots. We capture at 3800px
+ * (1900 CSS × DPR 2) and keep the final README assets at that full width for
+ * a consistent, high-fidelity result.
  */
-const TARGET_WIDTH = 2400;
+const TARGET_WIDTH = 3800;
 
 const DOCS_IMG_DIR = path.resolve(import.meta.dirname, "..", "docs", "img");
 
