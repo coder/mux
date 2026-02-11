@@ -1067,6 +1067,18 @@ body,
 
   body {
     font-size: 15px;
+    /* User request: prevent accidental text highlighting while tapping/scrolling on touch devices. */
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Keep selection/caret behavior in editable controls on touch devices. */
+  input,
+  textarea,
+  [contenteditable="true"],
+  [contenteditable="plaintext-only"] {
+    -webkit-user-select: text;
+    user-select: text;
   }
 
   button,
