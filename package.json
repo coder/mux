@@ -241,6 +241,7 @@
     "dist/**/*.woff2",
     "dist/**/*.json",
     "dist/**/*.png",
+    "dist/**/*.webm",
     "dist/assets/**/*",
     "scripts/postinstall.sh",
     "npm-shrinkwrap.json",
