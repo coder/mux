@@ -227,4 +227,78 @@ describe("About dialog (UI)", () => {
       updateService.install = originalInstall;
     }
   });
+
+  describe("error states", () => {
+    test("check phase error shows Update check failed message and Try again button", async () => {
+      if (!view) {
+        throw new Error("App was not rendered");
+      }
+
+      const updateService = getUpdateService(env);
+      setUpdateStatus(updateService, {
+        type: "error",
+        phase: "check",
+        message: "Network error",
+      });
+      setDesktopApiEnabled();
+
+      const dialog = await openAboutDialog(view);
+
+      await waitFor(() => {
+        expect(dialog.getByText("Update check failed: Network error")).toBeTruthy();
+      });
+
+      expect(dialog.getByRole("button", { name: "Try again" })).toBeTruthy();
+      expect(dialog.queryByRole("button", { name: "Retry download" })).toBeNull();
+      expect(dialog.queryByRole("button", { name: "Try install again" })).toBeNull();
+    });
+
+    test("download phase error shows Download failed message and retry buttons", async () => {
+      if (!view) {
+        throw new Error("App was not rendered");
+      }
+
+      const updateService = getUpdateService(env);
+      setUpdateStatus(updateService, {
+        type: "error",
+        phase: "download",
+        message: "Connection reset",
+      });
+      setDesktopApiEnabled();
+
+      const dialog = await openAboutDialog(view);
+
+      await waitFor(() => {
+        expect(dialog.getByText("Download failed: Connection reset")).toBeTruthy();
+      });
+
+      expect(dialog.getByRole("button", { name: "Retry download" })).toBeTruthy();
+      expect(dialog.getByRole("button", { name: "Check again" })).toBeTruthy();
+      expect(dialog.queryByRole("button", { name: "Try again" })).toBeNull();
+    });
+
+    test("install phase error shows Install failed message and retry buttons", async () => {
+      if (!view) {
+        throw new Error("App was not rendered");
+      }
+
+      const updateService = getUpdateService(env);
+      setUpdateStatus(updateService, {
+        type: "error",
+        phase: "install",
+        message: "Permission denied",
+      });
+      setDesktopApiEnabled();
+
+      const dialog = await openAboutDialog(view);
+
+      await waitFor(() => {
+        expect(dialog.getByText("Install failed: Permission denied")).toBeTruthy();
+      });
+
+      expect(dialog.getByRole("button", { name: "Try install again" })).toBeTruthy();
+      expect(dialog.getByRole("button", { name: "Check again" })).toBeTruthy();
+      expect(dialog.queryByRole("button", { name: "Try again" })).toBeNull();
+    });
+  });
 });
