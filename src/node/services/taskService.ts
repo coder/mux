@@ -2237,8 +2237,9 @@ export class TaskService {
 
     // NOTE: Stream continues — we intentionally do NOT abort it.
     // Deterministic termination is enforced by StreamManager stopWhen logic that
-    // waits for a successful agent_report tool result at the step boundary
-    // (preserving usage accounting). recordSessionUsage runs when the stream ends naturally.
+    // waits for an agent_report tool result where output.success === true at the
+    // step boundary (preserving usage accounting). recordSessionUsage runs when
+    // the stream ends naturally.
 
     const cfgAfterReport = this.config.loadConfigOrDefault();
     const latestChildEntry = findWorkspaceEntry(cfgAfterReport, childWorkspaceId) ?? childEntry;

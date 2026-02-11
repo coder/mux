@@ -1020,12 +1020,25 @@ export class StreamManager extends EventEmitter {
     }
 
     // For autonomous loops: cap steps, check for queued messages, and stop after
-    // a successful agent_report result so the stream ends naturally (preserving
-    // usage accounting) without allowing post-report tool execution.
+    // a successful agent_report result (`output.success === true`) so the stream ends
+    // naturally (preserving usage accounting) without allowing post-report tool execution.
+    const isSuccessfulAgentReportOutput = (value: unknown): boolean => {
+      return (
+        typeof value === "object" &&
+        value !== null &&
+        "success" in value &&
+        (value as { success?: unknown }).success === true
+      );
+    };
+
     const hasSuccessfulAgentReportResult: ReturnType<typeof stepCountIs> = ({ steps }) => {
       const lastStep = steps[steps.length - 1];
       return (
-        lastStep?.toolResults?.some((toolResult) => toolResult.toolName === "agent_report") ?? false
+        lastStep?.toolResults?.some(
+          (toolResult) =>
+            toolResult.toolName === "agent_report" &&
+            isSuccessfulAgentReportOutput(toolResult.output)
+        ) ?? false
       );
     };
 

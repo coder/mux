@@ -119,7 +119,7 @@ describe("StreamManager - stopWhen configuration", () => {
 
     expect(
       agentReportCondition({
-        steps: [{ toolResults: [{ toolName: "agent_report" }] }],
+        steps: [{ toolResults: [{ toolName: "agent_report", output: { success: true } }] }],
       })
     ).toBe(true);
   });
@@ -144,9 +144,16 @@ describe("StreamManager - stopWhen configuration", () => {
     // Returns true when step contains successful agent_report tool result.
     expect(
       reportStop({
-        steps: [{ toolResults: [{ toolName: "agent_report" }] }],
+        steps: [{ toolResults: [{ toolName: "agent_report", output: { success: true } }] }],
       })
     ).toBe(true);
+
+    // Returns false when step contains failed agent_report output.
+    expect(
+      reportStop({
+        steps: [{ toolResults: [{ toolName: "agent_report", output: { success: false } }] }],
+      })
+    ).toBe(false);
 
     // Returns false when step only contains agent_report tool call (no successful result yet).
     expect(
@@ -158,7 +165,7 @@ describe("StreamManager - stopWhen configuration", () => {
     // Returns false when step contains other tool results.
     expect(
       reportStop({
-        steps: [{ toolResults: [{ toolName: "bash" }] }],
+        steps: [{ toolResults: [{ toolName: "bash", output: { success: true } }] }],
       })
     ).toBe(false);
 
