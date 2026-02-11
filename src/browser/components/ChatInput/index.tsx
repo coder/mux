@@ -420,7 +420,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const focusBorderColor = currentAgent?.uiColor ?? "var(--color-border-light)";
   const {
     models,
-    hiddenModels,
+    hiddenModelsForSelector,
     ensureModelInSettings,
     defaultModel,
     setDefaultModel,
@@ -2459,7 +2459,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     onComplete={() => inputRef.current?.focus()}
                     defaultModel={defaultModel}
                     onSetDefaultModel={setDefaultModel}
-                    hiddenModels={hiddenModels}
+                    hiddenModels={hiddenModelsForSelector}
                     onOpenSettings={() => open("models")}
                     className="w-[clamp(5.5rem,28vw,8rem)] min-w-0"
                   />

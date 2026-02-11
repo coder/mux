@@ -8,6 +8,11 @@ import {
 } from "./useModelsFromSettings";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
+import {
+  GATEWAY_ENABLED_KEY,
+  GATEWAY_MODELS_KEY,
+  HIDDEN_MODELS_KEY,
+} from "@/common/constants/storage";
 
 function countOccurrences(haystack: string[], needle: string): number {
   return haystack.filter((v) => v === needle).length;
@@ -156,9 +161,9 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
     expect(result.current.models).toContain("openai:gpt-5.3-codex");
   });
 
-  test("neither: hides Codex OAuth required OpenAI models (status quo)", () => {
+  test("neither with configured provider: hides Codex OAuth required OpenAI models", () => {
     providersConfig = {
-      openai: { apiKeySet: false, isEnabled: true, isConfigured: false, codexOauthSet: false },
+      openai: { apiKeySet: false, isEnabled: true, isConfigured: true, codexOauthSet: false },
     };
 
     const { result } = renderHook(() => useModelsFromSettings());
@@ -195,5 +200,140 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
 
     expect(result.current.openaiApiKeySet).toBeNull();
     expect(result.current.codexOauthSet).toBeNull();
+  });
+});
+
+describe("useModelsFromSettings provider availability gating", () => {
+  beforeEach(() => {
+    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
+    globalThis.document = globalThis.window.document;
+    globalThis.window.localStorage.clear();
+    providersConfig = null;
+  });
+
+  afterEach(() => {
+    cleanup();
+    globalThis.window = undefined as unknown as Window & typeof globalThis;
+    globalThis.document = undefined as unknown as Document;
+  });
+
+  test("hides models from unconfigured providers", () => {
+    providersConfig = {
+      anthropic: { apiKeySet: false, isEnabled: true, isConfigured: false },
+      openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+    };
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.models).not.toContain(KNOWN_MODELS.OPUS.id);
+    expect(result.current.models).not.toContain(KNOWN_MODELS.SONNET.id);
+    expect(result.current.models).not.toContain(KNOWN_MODELS.HAIKU.id);
+
+    expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.OPUS.id);
+    expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.SONNET.id);
+
+    expect(result.current.models).toContain(KNOWN_MODELS.GPT.id);
+  });
+
+  test("keeps gateway-opted-in models visible when gateway is active", () => {
+    providersConfig = {
+      anthropic: { apiKeySet: false, isEnabled: true, isConfigured: false },
+      "mux-gateway": {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        couponCodeSet: true,
+      },
+    };
+
+    globalThis.window.localStorage.setItem(GATEWAY_ENABLED_KEY, JSON.stringify(true));
+    // Only OPUS is opted-in to gateway routing
+    globalThis.window.localStorage.setItem(
+      GATEWAY_MODELS_KEY,
+      JSON.stringify([KNOWN_MODELS.OPUS.id])
+    );
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    // OPUS is opted-in to gateway — should stay visible
+    expect(result.current.models).toContain(KNOWN_MODELS.OPUS.id);
+    expect(result.current.hiddenModelsForSelector).not.toContain(KNOWN_MODELS.OPUS.id);
+
+    // SONNET and HAIKU are NOT opted-in — should be hidden despite gateway being active
+    expect(result.current.models).not.toContain(KNOWN_MODELS.SONNET.id);
+    expect(result.current.models).not.toContain(KNOWN_MODELS.HAIKU.id);
+    expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.SONNET.id);
+    expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.HAIKU.id);
+  });
+
+  test("excludes OAuth-gated OpenAI models from hidden bucket when unconfigured", () => {
+    // OpenAI is unconfigured and neither API key nor OAuth is set.
+    providersConfig = {
+      openai: { apiKeySet: false, isEnabled: true, isConfigured: false, codexOauthSet: false },
+    };
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    // OAuth-required models (e.g. gpt-5.3-codex) should NOT appear in either list
+    // because selecting them from "Show all models…" would also fail at send time.
+    expect(result.current.models).not.toContain("openai:gpt-5.3-codex");
+    expect(result.current.hiddenModelsForSelector).not.toContain("openai:gpt-5.3-codex");
+
+    // Non-OAuth-required OpenAI models should still be in the hidden bucket
+    expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.GPT.id);
+  });
+
+  test("hides models from disabled providers", () => {
+    providersConfig = {
+      anthropic: { apiKeySet: true, isEnabled: false, isConfigured: true },
+      openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+    };
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.models).not.toContain(KNOWN_MODELS.OPUS.id);
+    expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.OPUS.id);
+    expect(result.current.models).toContain(KNOWN_MODELS.GPT.id);
+  });
+
+  test("keeps persisted hiddenModels separate from provider-hidden models", () => {
+    globalThis.window.localStorage.setItem(
+      HIDDEN_MODELS_KEY,
+      JSON.stringify([KNOWN_MODELS.GPT.id])
+    );
+
+    providersConfig = {
+      anthropic: { apiKeySet: false, isEnabled: true, isConfigured: false },
+      openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+    };
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.hiddenModels).toEqual([KNOWN_MODELS.GPT.id]);
+    expect(result.current.hiddenModels).not.toContain(KNOWN_MODELS.OPUS.id);
+
+    expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.GPT.id);
+    expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.OPUS.id);
+  });
+
+  test("shows all built-in provider models when config is null", () => {
+    providersConfig = null;
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.models).toContain(KNOWN_MODELS.OPUS.id);
+    expect(result.current.models).toContain(KNOWN_MODELS.GPT.id);
+    expect(result.current.hiddenModelsForSelector.length).toBe(0);
+  });
+
+  test("provider missing from config is treated as available", () => {
+    providersConfig = {
+      anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true },
+    };
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.models).toContain(KNOWN_MODELS.OPUS.id);
+    expect(result.current.models).toContain(KNOWN_MODELS.GPT.id);
   });
 });
