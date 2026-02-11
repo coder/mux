@@ -22,6 +22,7 @@ describe("UpdaterService", () => {
   let service: UpdaterService;
   let statusUpdates: UpdateStatus[];
   let originalDebugUpdater: string | undefined;
+  let originalDebugUpdaterFail: string | undefined;
 
   beforeEach(() => {
     // Reset mocks
@@ -30,9 +31,11 @@ describe("UpdaterService", () => {
     mockAutoUpdater.quitAndInstall.mockClear();
     mockAutoUpdater.removeAllListeners();
 
-    // Save and clear DEBUG_UPDATER to ensure clean test environment
+    // Save and clear debug updater env vars to ensure clean test environment
     originalDebugUpdater = process.env.DEBUG_UPDATER;
+    originalDebugUpdaterFail = process.env.DEBUG_UPDATER_FAIL;
     delete process.env.DEBUG_UPDATER;
+    delete process.env.DEBUG_UPDATER_FAIL;
     service = new UpdaterService();
 
     // Capture status updates via subscriber pattern (ORPC model)
@@ -41,11 +44,17 @@ describe("UpdaterService", () => {
   });
 
   afterEach(() => {
-    // Restore DEBUG_UPDATER
+    // Restore debug updater env vars
     if (originalDebugUpdater !== undefined) {
       process.env.DEBUG_UPDATER = originalDebugUpdater;
     } else {
       delete process.env.DEBUG_UPDATER;
+    }
+
+    if (originalDebugUpdaterFail !== undefined) {
+      process.env.DEBUG_UPDATER_FAIL = originalDebugUpdaterFail;
+    } else {
+      delete process.env.DEBUG_UPDATER_FAIL;
     }
   });
 
@@ -60,6 +69,110 @@ describe("UpdaterService", () => {
         throw new Error(`Expected available status, got: ${status.type}`);
       }
       expect(status.info.version).toBe("0.0.1");
+    });
+  });
+
+  describe("debug updater fail mode", () => {
+    it("should simulate check failure when DEBUG_UPDATER_FAIL=check", async () => {
+      process.env.DEBUG_UPDATER = "2.0.0";
+      process.env.DEBUG_UPDATER_FAIL = "check";
+      const debugService = new UpdaterService();
+
+      // Constructor should not surface available immediately when check is configured to fail.
+      expect(debugService.getStatus().type).not.toBe("available");
+
+      debugService.checkForUpdates({ source: "manual" });
+      await new Promise((resolve) => setTimeout(resolve, 600));
+
+      const status = debugService.getStatus();
+      expect(status.type).toBe("error");
+      if (status.type !== "error") {
+        throw new Error(`Expected error status, got: ${status.type}`);
+      }
+      expect(status.phase).toBe("check");
+      expect(status.message).toContain("Simulated check failure");
+    });
+
+    it("should simulate download failure when DEBUG_UPDATER_FAIL=download", async () => {
+      process.env.DEBUG_UPDATER = "2.0.0";
+      process.env.DEBUG_UPDATER_FAIL = "download";
+      const debugService = new UpdaterService();
+
+      // Download failure should not affect the fake check/available state.
+      expect(debugService.getStatus().type).toBe("available");
+
+      await debugService.downloadUpdate();
+
+      const status = debugService.getStatus();
+      expect(status.type).toBe("error");
+      if (status.type !== "error") {
+        throw new Error(`Expected error status, got: ${status.type}`);
+      }
+      expect(status.phase).toBe("download");
+      expect(status.message).toContain("Simulated download failure");
+    });
+
+    it("should allow retrying download after DEBUG_UPDATER_FAIL=download", async () => {
+      process.env.DEBUG_UPDATER = "2.0.0";
+      process.env.DEBUG_UPDATER_FAIL = "download";
+      const debugService = new UpdaterService();
+
+      await debugService.downloadUpdate();
+      const firstStatus = debugService.getStatus();
+      expect(firstStatus.type).toBe("error");
+      if (firstStatus.type !== "error") {
+        throw new Error(`Expected error status, got: ${firstStatus.type}`);
+      }
+      expect(firstStatus.phase).toBe("download");
+      expect(firstStatus.message).toContain("Simulated download failure");
+
+      await debugService.downloadUpdate();
+      const secondStatus = debugService.getStatus();
+      expect(secondStatus.type).toBe("error");
+      if (secondStatus.type !== "error") {
+        throw new Error(`Expected error status, got: ${secondStatus.type}`);
+      }
+      expect(secondStatus.phase).toBe("download");
+      expect(secondStatus.message).toContain("Simulated download failure");
+    });
+
+    it("should simulate install failure and surface retry attempts when DEBUG_UPDATER_FAIL=install", async () => {
+      process.env.DEBUG_UPDATER = "2.0.0";
+      process.env.DEBUG_UPDATER_FAIL = "install";
+      const debugService = new UpdaterService();
+
+      // Reach downloaded state first through fake happy-path download.
+      await debugService.downloadUpdate();
+      expect(debugService.getStatus().type).toBe("downloaded");
+
+      debugService.installUpdate();
+
+      const firstStatus = debugService.getStatus();
+      expect(firstStatus.type).toBe("error");
+      if (firstStatus.type !== "error") {
+        throw new Error(`Expected error status, got: ${firstStatus.type}`);
+      }
+      expect(firstStatus.phase).toBe("install");
+      expect(firstStatus.message).toContain("Simulated install failure");
+      expect(firstStatus.message).not.toContain("attempt 2");
+
+      debugService.installUpdate();
+      const secondStatus = debugService.getStatus();
+      expect(secondStatus.type).toBe("error");
+      if (secondStatus.type !== "error") {
+        throw new Error(`Expected error status, got: ${secondStatus.type}`);
+      }
+      expect(secondStatus.phase).toBe("install");
+      expect(secondStatus.message).toContain("Simulated install failure");
+      expect(secondStatus.message).toContain("attempt 2");
+    });
+
+    it("should ignore DEBUG_UPDATER_FAIL without a fake DEBUG_UPDATER version", () => {
+      process.env.DEBUG_UPDATER = "1";
+      process.env.DEBUG_UPDATER_FAIL = "download";
+      const debugService = new UpdaterService();
+
+      expect(debugService.getStatus()).toEqual({ type: "idle" });
     });
   });
 
@@ -149,7 +262,11 @@ describe("UpdaterService", () => {
       // Should eventually get error status
       const errorStatus = statusUpdates.find((s) => s.type === "error");
       expect(errorStatus).toBeDefined();
-      expect(errorStatus).toEqual({ type: "error", message: "Code signing verification failed" });
+      expect(errorStatus).toEqual({
+        type: "error",
+        phase: "check",
+        message: "Code signing verification failed",
+      });
     });
 
     it("should timeout if no events fire within 30 seconds", () => {
@@ -192,7 +309,7 @@ describe("UpdaterService", () => {
   });
 
   describe("transient error backoff", () => {
-    it("should silently back off on 404 (latest.yml missing)", async () => {
+    it("should silently back off on 404 (latest.yml missing) for auto checks", async () => {
       mockAutoUpdater.checkForUpdates.mockImplementation(() => {
         setImmediate(() => {
           mockAutoUpdater.emit("error", new Error("HttpError: 404 Not Found"));
@@ -202,12 +319,32 @@ describe("UpdaterService", () => {
         });
       });
 
-      service.checkForUpdates();
+      service.checkForUpdates({ source: "auto" });
       await new Promise((resolve) => setImmediate(resolve));
 
       const lastStatus = statusUpdates[statusUpdates.length - 1];
       expect(lastStatus).toEqual({ type: "idle" });
       expect(statusUpdates.find((s) => s.type === "error")).toBeUndefined();
+    });
+
+    it("should surface transient errors for manual checks", async () => {
+      mockAutoUpdater.checkForUpdates.mockImplementation(() => {
+        setImmediate(() => {
+          mockAutoUpdater.emit("error", new Error("HttpError: 404 Not Found"));
+        });
+        return new Promise(() => {
+          // Never resolves — events drive state
+        });
+      });
+
+      service.checkForUpdates({ source: "manual" });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(statusUpdates[statusUpdates.length - 1]).toEqual({
+        type: "error",
+        phase: "check",
+        message: "HttpError: 404 Not Found",
+      });
     });
 
     it("should silently back off on network errors", async () => {
@@ -257,6 +394,7 @@ describe("UpdaterService", () => {
 
       expect(statusUpdates.find((s) => s.type === "error")).toEqual({
         type: "error",
+        phase: "check",
         message: "Code signing verification failed",
       });
     });
@@ -278,6 +416,7 @@ describe("UpdaterService", () => {
 
       expect(statusUpdates.find((s) => s.type === "error")).toEqual({
         type: "error",
+        phase: "check",
         message: "HttpError: 403 Forbidden",
       });
     });
@@ -300,7 +439,40 @@ describe("UpdaterService", () => {
 
       expect(statusUpdates.find((s) => s.type === "error")).toEqual({
         type: "error",
+        phase: "download",
         message: "getaddrinfo ENOTFOUND github.com",
+      });
+    });
+
+    it("should map errors during downloaded state to install phase", () => {
+      mockAutoUpdater.emit("update-available", { version: "2.0.0" });
+      mockAutoUpdater.emit("update-downloaded", { version: "2.0.0" });
+
+      mockAutoUpdater.emit("error", new Error("Install failed while preparing restart"));
+
+      expect(statusUpdates[statusUpdates.length - 1]).toEqual({
+        type: "error",
+        phase: "install",
+        message: "Install failed while preparing restart",
+      });
+    });
+
+    it("should preserve existing error phase on follow-up updater errors", () => {
+      mockAutoUpdater.emit("update-available", { version: "2.0.0" });
+      mockAutoUpdater.emit("download-progress", { percent: 30 });
+
+      mockAutoUpdater.emit("error", new Error("First download failure"));
+      expect(statusUpdates[statusUpdates.length - 1]).toEqual({
+        type: "error",
+        phase: "download",
+        message: "First download failure",
+      });
+
+      mockAutoUpdater.emit("error", new Error("Follow-up updater error"));
+      expect(statusUpdates[statusUpdates.length - 1]).toEqual({
+        type: "error",
+        phase: "download",
+        message: "Follow-up updater error",
       });
     });
 
@@ -318,6 +490,106 @@ describe("UpdaterService", () => {
     });
   });
 
+  describe("downloadUpdate", () => {
+    it("should emit phase-aware error when download fails", async () => {
+      mockAutoUpdater.checkForUpdates.mockImplementation(() => {
+        setImmediate(() => {
+          mockAutoUpdater.emit("update-available", { version: "2.0.0" });
+        });
+        return new Promise(() => {
+          // Never resolves — events drive state
+        });
+      });
+      service.checkForUpdates();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      mockAutoUpdater.downloadUpdate.mockImplementationOnce(() =>
+        Promise.reject(new Error("Download failed due to network interruption"))
+      );
+
+      await service.downloadUpdate();
+
+      expect(statusUpdates[statusUpdates.length - 1]).toEqual({
+        type: "error",
+        phase: "download",
+        message: "Download failed due to network interruption",
+      });
+    });
+
+    it("should allow download retry after download failure", async () => {
+      const downloadedInfo = { version: "2.0.0" };
+      mockAutoUpdater.emit("update-available", downloadedInfo);
+
+      mockAutoUpdater.downloadUpdate
+        .mockImplementationOnce(() =>
+          Promise.reject(new Error("Download failed due to network interruption"))
+        )
+        .mockImplementationOnce(() => {
+          setImmediate(() => {
+            mockAutoUpdater.emit("update-downloaded", downloadedInfo);
+          });
+          return Promise.resolve();
+        });
+
+      await service.downloadUpdate();
+      expect(service.getStatus()).toEqual({
+        type: "error",
+        phase: "download",
+        message: "Download failed due to network interruption",
+      });
+
+      await service.downloadUpdate();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const retryStatus = service.getStatus();
+      expect(retryStatus.type).toBe("downloaded");
+      if (retryStatus.type !== "downloaded") {
+        throw new Error(`Expected downloaded status, got ${retryStatus.type}`);
+      }
+      expect(retryStatus.info.version).toBe(downloadedInfo.version);
+    });
+  });
+
+  describe("installUpdate", () => {
+    it("should emit phase-aware error when install fails", () => {
+      mockAutoUpdater.emit("update-downloaded", { version: "2.0.0" });
+
+      mockAutoUpdater.quitAndInstall.mockImplementationOnce(() => {
+        throw new Error("Install failed due to permission error");
+      });
+
+      service.installUpdate();
+
+      expect(statusUpdates[statusUpdates.length - 1]).toEqual({
+        type: "error",
+        phase: "install",
+        message: "Install failed due to permission error",
+      });
+    });
+
+    it("should allow install retry after install failure", () => {
+      mockAutoUpdater.emit("update-downloaded", { version: "2.0.0" });
+
+      mockAutoUpdater.quitAndInstall
+        .mockImplementationOnce(() => {
+          throw new Error("Install failed due to permission error");
+        })
+        .mockImplementationOnce(() => {
+          // second attempt succeeds
+        });
+
+      service.installUpdate();
+      expect(service.getStatus()).toEqual({
+        type: "error",
+        phase: "install",
+        message: "Install failed due to permission error",
+      });
+
+      expect(() => service.installUpdate()).not.toThrow();
+      expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe("state guards", () => {
     it("should skip check when already checking", () => {
       mockAutoUpdater.checkForUpdates.mockReturnValue(
@@ -328,6 +600,27 @@ describe("UpdaterService", () => {
       service.checkForUpdates();
       service.checkForUpdates(); // should be skipped
       expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+    });
+
+    it("should upgrade check source to manual when check is already in-flight", () => {
+      mockAutoUpdater.checkForUpdates.mockReturnValue(
+        new Promise(() => {
+          // Never resolves
+        })
+      );
+
+      service.checkForUpdates({ source: "auto" });
+      service.checkForUpdates({ source: "manual" }); // skipped, but should upgrade source
+
+      expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+
+      mockAutoUpdater.emit("error", new Error("HttpError: 404 Not Found"));
+
+      expect(statusUpdates[statusUpdates.length - 1]).toEqual({
+        type: "error",
+        phase: "check",
+        message: "HttpError: 404 Not Found",
+      });
     });
 
     it("should skip check when downloading", async () => {

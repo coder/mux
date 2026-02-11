@@ -97,14 +97,6 @@ export function AboutDialog() {
     };
   }, [api, isDesktop, isOpen]);
 
-  useEffect(() => {
-    if (!isOpen || !api || !isDesktop) {
-      return;
-    }
-
-    api.update.check(undefined).catch(console.error);
-  }, [api, isDesktop, isOpen]);
-
   const canUseUpdateApi = isDesktop && Boolean(api);
   const isChecking =
     canUseUpdateApi && (updateStatus.type === "checking" || updateStatus.type === "downloading");
@@ -114,7 +106,7 @@ export function AboutDialog() {
       return;
     }
 
-    api.update.check(undefined).catch(console.error);
+    api.update.check({ source: "manual" }).catch(console.error);
   };
 
   const handleDownload = () => {
@@ -223,11 +215,29 @@ export function AboutDialog() {
               {updateStatus.type === "error" && (
                 <div className="space-y-2">
                   <div className="text-destructive text-xs">
-                    Update check failed: {updateStatus.message}
+                    {updateStatus.phase === "download"
+                      ? `Download failed: ${updateStatus.message}`
+                      : updateStatus.phase === "install"
+                        ? `Install failed: ${updateStatus.message}`
+                        : `Update check failed: ${updateStatus.message}`}
                   </div>
-                  <Button variant="outline" size="sm" onClick={handleCheckForUpdates}>
-                    Try again
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {updateStatus.phase === "download" && (
+                      <Button size="sm" onClick={handleDownload}>
+                        <Download className="h-3.5 w-3.5" />
+                        Retry download
+                      </Button>
+                    )}
+                    {updateStatus.phase === "install" && (
+                      <Button size="sm" onClick={handleInstall}>
+                        <RefreshCw className="h-3.5 w-3.5" />
+                        Try install again
+                      </Button>
+                    )}
+                    <Button variant="outline" size="sm" onClick={handleCheckForUpdates}>
+                      {updateStatus.phase === "check" ? "Try again" : "Check again"}
+                    </Button>
+                  </div>
                 </div>
               )}
             </>

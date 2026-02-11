@@ -444,7 +444,11 @@ export const UpdateStatusSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("up-to-date") }),
   z.object({ type: z.literal("downloading"), percent: z.number() }),
   z.object({ type: z.literal("downloaded"), info: z.object({ version: z.string() }) }),
-  z.object({ type: z.literal("error"), message: z.string() }),
+  z.object({
+    type: z.literal("error"),
+    phase: z.enum(["check", "download", "install"]),
+    message: z.string(),
+  }),
 ]);
 
 // Tool policy schemas

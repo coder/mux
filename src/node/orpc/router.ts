@@ -3588,8 +3588,8 @@ export const router = (authToken?: string) => {
       check: t
         .input(schemas.update.check.input)
         .output(schemas.update.check.output)
-        .handler(async ({ context }) => {
-          return context.updateService.check();
+        .handler(async ({ context, input }) => {
+          return context.updateService.check(input ?? undefined);
         }),
       download: t
         .input(schemas.update.download.input)
