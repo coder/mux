@@ -123,10 +123,14 @@ describe("PowerModeContext", () => {
       "padding-right": "9px",
       "padding-bottom": "11px",
       "padding-left": "13px",
-      "border-top-width": "0px",
-      "border-right-width": "0px",
-      "border-bottom-width": "0px",
-      "border-left-width": "0px",
+      "border-top-style": "solid",
+      "border-right-style": "solid",
+      "border-bottom-style": "solid",
+      "border-left-style": "solid",
+      "border-top-width": "1px",
+      "border-right-width": "1px",
+      "border-bottom-width": "1px",
+      "border-left-width": "1px",
     });
 
     const nativeGetComputedStyle = window.getComputedStyle.bind(window);
@@ -157,6 +161,8 @@ describe("PowerModeContext", () => {
 
     expect(mirror.style.getPropertyValue("padding-left")).toBe("13px");
     expect(mirror.style.getPropertyValue("padding-top")).toBe("7px");
+    expect(mirror.style.getPropertyValue("border-top-style")).toBe("solid");
+    expect(mirror.style.getPropertyValue("border-top-width")).toBe("1px");
     expect(mirror.style.getPropertyValue("font-family")).toContain("Fira Code");
     expect(burstSpy).toHaveBeenCalledTimes(1);
   });

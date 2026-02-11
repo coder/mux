@@ -92,6 +92,12 @@ const MIRROR_STYLE_PROPS = [
   "padding-right",
   "padding-bottom",
   "padding-left",
+  // Border widths only contribute to layout when border style is non-none.
+  // Copy styles too so mirror geometry stays aligned with the textarea.
+  "border-top-style",
+  "border-right-style",
+  "border-bottom-style",
+  "border-left-style",
   "border-top-width",
   "border-right-width",
   "border-bottom-width",
