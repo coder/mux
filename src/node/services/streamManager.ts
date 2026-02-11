@@ -1837,10 +1837,23 @@ export class StreamManager extends EventEmitter {
 
               // CRITICAL: Delete partial.json before updating chat.jsonl
               // On successful completion, partial.json becomes stale and must be removed
-              await this.historyService.deletePartial(workspaceId as string);
+              const deleteResult = await this.historyService.deletePartial(workspaceId as string);
+              if (!deleteResult.success) {
+                workspaceLog.warn("Failed to delete partial on stream end", {
+                  error: deleteResult.error,
+                });
+              }
 
               // Update the placeholder message in chat.jsonl with final content
-              await this.historyService.updateHistory(workspaceId as string, finalAssistantMessage);
+              const updateResult = await this.historyService.updateHistory(
+                workspaceId as string,
+                finalAssistantMessage
+              );
+              if (!updateResult.success) {
+                workspaceLog.warn("Failed to update history on stream end", {
+                  error: updateResult.error,
+                });
+              }
 
               // Update cumulative session usage (if service is available)
               // Wrapped in try-catch: usage recording is non-critical and shouldn't block stream completion
