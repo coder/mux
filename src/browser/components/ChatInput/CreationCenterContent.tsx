@@ -50,7 +50,7 @@ export function CreationCenterContent(props: CreationCenterContentProps) {
 
       {props.isSending && (
         <div
-          className={`absolute inset-0 z-10 flex flex-col items-center justify-center pb-[30vh] ${isDark ? "bg-black" : "bg-white"}`}
+          className={`absolute inset-0 z-10 flex flex-col items-center justify-center pb-[30vh] ${isDark ? "bg-sidebar" : "bg-white"}`}
         >
           <video
             ref={videoRef}
