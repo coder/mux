@@ -61,6 +61,8 @@ export type TaskKind = "agent";
 
 export type AgentTaskStatus = NonNullable<WorkspaceConfigEntry["taskStatus"]>;
 
+type TaskTerminationSource = "stream-end" | "stream-abort";
+
 export interface TaskCreateArgs {
   parentWorkspaceId: string;
   kind: TaskKind;
@@ -2060,43 +2062,82 @@ export class TaskService {
       return;
     }
 
+    await this.handleTaskTermination({
+      workspaceId,
+      messageId: event.messageId,
+      source: "stream-end",
+      parts: event.parts,
+    });
+  }
+
+  /**
+   * Finalize task termination when a stream ends/aborts.
+   *
+   * Invariant: once we observe stream termination for a task message, we should
+   * recover any persisted `agent_report` output by messageId and complete cleanup.
+   * This prevents tasks from staying active when the stream aborts after
+   * `agent_report` succeeds but before `stream-end` fires.
+   */
+  private async handleTaskTermination(params: {
+    workspaceId: string;
+    messageId: string;
+    source: TaskTerminationSource;
+    parts?: readonly unknown[];
+  }): Promise<void> {
+    const cfg = this.config.loadConfigOrDefault();
+    const entry = findWorkspaceEntry(cfg, params.workspaceId);
+    if (!entry?.workspace.parentWorkspaceId) return;
+
     const status = entry.workspace.taskStatus;
     if (status === "reported") {
-      await this.finalizeTerminationPhaseForReportedTask(workspaceId);
+      await this.finalizeTerminationPhaseForReportedTask(params.workspaceId);
       return;
     }
 
     // Never allow a task to finish/report while it still has active descendant tasks.
     // We'll auto-resume this task once the last descendant reports.
-    const hasActiveDescendants = this.hasActiveDescendantAgentTasks(cfg, workspaceId);
+    const hasActiveDescendants = this.hasActiveDescendantAgentTasks(cfg, params.workspaceId);
     if (hasActiveDescendants) {
       if (status === "awaiting_report") {
-        await this.setTaskStatus(workspaceId, "running");
+        await this.setTaskStatus(params.workspaceId, "running");
       }
       return;
     }
 
-    const reportArgs = this.findAgentReportArgsInParts(event.parts);
+    const terminationParts = await this.loadTerminationParts({
+      workspaceId: params.workspaceId,
+      messageId: params.messageId,
+      inlineParts: params.parts,
+    });
+    const reportArgs = this.findAgentReportArgsInParts(terminationParts);
     if (reportArgs) {
-      await this.finalizeAgentTaskReport(workspaceId, entry, reportArgs);
-      await this.finalizeTerminationPhaseForReportedTask(workspaceId);
+      await this.finalizeAgentTaskReport(params.workspaceId, entry, reportArgs);
+      await this.finalizeTerminationPhaseForReportedTask(params.workspaceId);
+      return;
+    }
+
+    if (params.source === "stream-abort") {
+      log.debug("Task stream aborted without recoverable agent_report output", {
+        workspaceId: params.workspaceId,
+        messageId: params.messageId,
+      });
       return;
     }
 
     // If a task stream ends without agent_report, request it once.
-    if (status === "awaiting_report" && this.remindedAwaitingReport.has(workspaceId)) {
+    if (status === "awaiting_report" && this.remindedAwaitingReport.has(params.workspaceId)) {
       await this.fallbackReportMissingAgentReport(entry);
-      await this.finalizeTerminationPhaseForReportedTask(workspaceId);
+      await this.finalizeTerminationPhaseForReportedTask(params.workspaceId);
       return;
     }
 
-    await this.setTaskStatus(workspaceId, "awaiting_report");
+    await this.setTaskStatus(params.workspaceId, "awaiting_report");
 
-    this.remindedAwaitingReport.add(workspaceId);
+    this.remindedAwaitingReport.add(params.workspaceId);
 
     const model = entry.workspace.taskModelString ?? defaultModel;
     await this.workspaceService.sendMessage(
-      workspaceId,
+      params.workspaceId,
       "Your stream ended without calling agent_report. Call agent_report exactly once now with your final report.",
       {
         model,
@@ -2108,18 +2149,56 @@ export class TaskService {
     );
   }
 
+  private async loadTerminationParts(params: {
+    workspaceId: string;
+    messageId: string;
+    inlineParts?: readonly unknown[];
+  }): Promise<readonly unknown[]> {
+    if (params.inlineParts !== undefined) {
+      return params.inlineParts;
+    }
+
+    // Regression fix: stream-abort can arrive after AIService persisted the final
+    // assistant message, so recover by messageId before declaring report missing.
+    const partial = await this.historyService.readPartial(params.workspaceId);
+    if (partial?.id === params.messageId) {
+      return partial.parts;
+    }
+
+    const historyResult = await this.historyService.getLastMessages(params.workspaceId, 20);
+    if (!historyResult.success) {
+      log.error("Failed to read history while recovering task termination parts", {
+        workspaceId: params.workspaceId,
+        messageId: params.messageId,
+        error: historyResult.error,
+      });
+      return [];
+    }
+
+    for (let i = historyResult.data.length - 1; i >= 0; i--) {
+      const message = historyResult.data[i];
+      if (message?.id === params.messageId) {
+        return message.parts;
+      }
+    }
+
+    return [];
+  }
+
   /**
-   * Clean up reported tasks whose stream was aborted before ending naturally.
-   * Only acts on tasks already in "reported" state.
+   * Handle task stream aborts via the same termination pipeline as stream-end.
+   * This allows aborts to finalize newly-produced `agent_report` output.
    */
   private async handleStreamAbort(event: StreamAbortEvent): Promise<void> {
     const cfg = this.config.loadConfigOrDefault();
     const entry = findWorkspaceEntry(cfg, event.workspaceId);
     if (!entry?.workspace.parentWorkspaceId) return;
 
-    if (entry.workspace.taskStatus === "reported") {
-      await this.finalizeTerminationPhaseForReportedTask(event.workspaceId);
-    }
+    await this.handleTaskTermination({
+      workspaceId: event.workspaceId,
+      messageId: event.messageId,
+      source: "stream-abort",
+    });
   }
 
   private async finalizeTerminationPhaseForReportedTask(workspaceId: string): Promise<void> {
