@@ -393,6 +393,13 @@ function formatLogLine(level: LogLevel): {
 function safePipeLog(level: LogLevel, ...args: unknown[]): void {
   const shouldConsoleLog = shouldLog(level);
 
+  // Fast path: skip formatting entirely for debug entries that won't be
+  // logged to console or persisted. Avoids the expensive new Error().stack
+  // capture in getCallerLocation() on hot callsites.
+  if (level === "debug" && !shouldConsoleLog && !hasDebugSubscriber()) {
+    return;
+  }
+
   const { timestamp, location, useColor, prefix } = formatLogLine(level);
 
   try {
