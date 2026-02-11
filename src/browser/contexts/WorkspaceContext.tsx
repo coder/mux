@@ -1004,11 +1004,11 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
               const nextMeta = nextId ? workspaceMetadataRef.current.get(nextId) : null;
 
               if (nextMeta) {
-                const nextSelection = toWorkspaceSelection(nextMeta);
-                selectedWorkspaceRef.current = nextSelection;
-                updatePersistedState(SELECTED_WORKSPACE_KEY, nextSelection);
-                navigateToWorkspace(nextMeta.id);
+                // Navigate to the adjacent workspace (same pattern the delete handler uses).
+                setSelectedWorkspace(toWorkspaceSelection(nextMeta));
               } else {
+                // No siblings visible — land on the project page, not home.
+                // Can't use setSelectedWorkspace(null) here because that routes to home.
                 selectedWorkspaceRef.current = null;
                 updatePersistedState(SELECTED_WORKSPACE_KEY, null);
                 navigateToProject(meta.projectPath);
@@ -1105,14 +1105,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     return () => {
       controller.abort();
     };
-  }, [
-    navigateToProject,
-    navigateToWorkspace,
-    refreshProjects,
-    setSelectedWorkspace,
-    setWorkspaceMetadata,
-    api,
-  ]);
+  }, [navigateToProject, refreshProjects, setSelectedWorkspace, setWorkspaceMetadata, api]);
 
   const createWorkspace = useCallback(
     async (
