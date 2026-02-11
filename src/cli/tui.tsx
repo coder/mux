@@ -92,7 +92,24 @@ async function runTui(): Promise<void> {
       ws.close();
     }
   };
-  process.once("exit", closeSocket);
+
+  let isAlternateScreenActive = false;
+  const restoreTerminal = () => {
+    if (!isAlternateScreenActive) {
+      return;
+    }
+
+    process.stdout.write("\x1b[?25h");
+    process.stdout.write("\x1b[?1049l");
+    isAlternateScreenActive = false;
+  };
+
+  const cleanupOnExit = () => {
+    restoreTerminal();
+    closeSocket();
+  };
+
+  process.once("exit", cleanupOnExit);
 
   try {
     const link = new WebSocketLink({ websocket: ws as unknown as globalThis.WebSocket });
@@ -101,10 +118,17 @@ async function runTui(): Promise<void> {
     // Validate auth/token before initializing the UI.
     await api.general.ping("tui-auth-check");
 
+    // Enter alternate screen buffer to prevent flashing during Ink re-renders.
+    // This is how full-screen terminal apps (vim, htop, etc.) avoid visible redraws.
+    process.stdout.write("\x1b[?1049h");
+    process.stdout.write("\x1b[?25l");
+    isAlternateScreenActive = true;
+
     const { waitUntilExit } = render(<TuiApp api={api} options={flags} />, { exitOnCtrlC: false });
     await waitUntilExit();
   } finally {
-    closeSocket();
+    cleanupOnExit();
+    process.off("exit", cleanupOnExit);
   }
 }
 
