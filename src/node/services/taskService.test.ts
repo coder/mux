@@ -2137,7 +2137,8 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
     });
 
-    const { aiService } = createAIServiceMocks(config);
+    const isStreaming = mock(() => true);
+    const { aiService } = createAIServiceMocks(config, { isStreaming });
     const { workspaceService, remove } = createWorkspaceServiceMocks();
     const { partialService, taskService } = createTaskServiceHarness(config, {
       aiService,
@@ -2191,6 +2192,7 @@ describe("TaskService", () => {
         result: unknown;
         timestamp: number;
       }) => Promise<void>;
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
     };
 
     const parentSessionDir = config.getSessionDir(parentId);
@@ -2201,7 +2203,7 @@ describe("TaskService", () => {
       requestingWorkspaceId: parentId,
     });
 
-    const handleReportPromise = internal.handleAgentReport({
+    await internal.handleAgentReport({
       type: "tool-call-end",
       workspaceId: childId,
       messageId: "assistant-child-partial",
@@ -2214,14 +2216,20 @@ describe("TaskService", () => {
     const report = await waiter;
     expect(report).toEqual({ reportMarkdown: "Hello from child", title: "Result" });
 
-    const artifactAfterWait = await readSubagentGitPatchArtifact(parentSessionDir, childId);
-    expect(artifactAfterWait).not.toBeNull();
-    expect(["pending", "ready"]).toContain(artifactAfterWait!.status);
-
-    await handleReportPromise;
-
-    // Cleanup should be deferred until git-format-patch generation completes.
+    // Report handling is purely logical now; patch generation/cleanup start at stream termination.
     expect(remove).not.toHaveBeenCalled();
+    const artifactAfterReport = await readSubagentGitPatchArtifact(parentSessionDir, childId);
+    expect(artifactAfterReport).toBeNull();
+
+    isStreaming.mockImplementation(() => false);
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-partial",
+      metadata: { model: "test-model" },
+      parts: childPartial.parts as StreamEndEvent["parts"],
+    });
 
     const start = Date.now();
     let lastArtifact: unknown = null;
@@ -2244,7 +2252,7 @@ describe("TaskService", () => {
         );
       }
 
-      if (Date.now() - start > 10_000) {
+      if (Date.now() - start > 20_000) {
         throw new Error(
           `Timed out waiting for patch artifact generation (removeCalled=${remove.mock.calls.length > 0}, lastArtifact=${JSON.stringify(lastArtifact)})`
         );
@@ -2321,7 +2329,8 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
     });
 
-    const { aiService } = createAIServiceMocks(config);
+    const isStreaming = mock(() => true);
+    const { aiService } = createAIServiceMocks(config, { isStreaming });
     const { workspaceService, remove } = createWorkspaceServiceMocks();
     const { partialService, taskService } = createTaskServiceHarness(config, {
       aiService,
@@ -2375,6 +2384,7 @@ describe("TaskService", () => {
         result: unknown;
         timestamp: number;
       }) => Promise<void>;
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
     };
 
     const parentSessionDir = config.getSessionDir(parentId);
@@ -2385,7 +2395,7 @@ describe("TaskService", () => {
       requestingWorkspaceId: parentId,
     });
 
-    const handleReportPromise = internal.handleAgentReport({
+    await internal.handleAgentReport({
       type: "tool-call-end",
       workspaceId: childId,
       messageId: "assistant-child-partial",
@@ -2398,14 +2408,20 @@ describe("TaskService", () => {
     const report = await waiter;
     expect(report).toEqual({ reportMarkdown: "Hello from child", title: "Result" });
 
-    const artifactAfterWait = await readSubagentGitPatchArtifact(parentSessionDir, childId);
-    expect(artifactAfterWait).not.toBeNull();
-    expect(["pending", "ready"]).toContain(artifactAfterWait!.status);
-
-    await handleReportPromise;
-
-    // Cleanup should be deferred until git-format-patch generation completes.
+    // Report handling is purely logical now; patch generation/cleanup start at stream termination.
     expect(remove).not.toHaveBeenCalled();
+    const artifactAfterReport = await readSubagentGitPatchArtifact(parentSessionDir, childId);
+    expect(artifactAfterReport).toBeNull();
+
+    isStreaming.mockImplementation(() => false);
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-partial",
+      metadata: { model: "test-model" },
+      parts: childPartial.parts as StreamEndEvent["parts"],
+    });
 
     const start = Date.now();
     let lastArtifact: unknown = null;
@@ -2428,7 +2444,7 @@ describe("TaskService", () => {
         );
       }
 
-      if (Date.now() - start > 10_000) {
+      if (Date.now() - start > 20_000) {
         throw new Error(
           `Timed out waiting for patch artifact generation (removeCalled=${remove.mock.calls.length > 0}, lastArtifact=${JSON.stringify(lastArtifact)})`
         );

@@ -414,7 +414,7 @@ export class TaskService {
         await this.gitPatchArtifactService.maybeStartGeneration(
           task.parentWorkspaceId,
           task.id!,
-          (wsId) => this.cleanupReportedLeafTask(wsId)
+          (wsId) => this.requestReportedTaskCleanupRecheck(wsId)
         );
       } catch (error: unknown) {
         log.error("Failed to resume subagent git patch generation on startup", {
@@ -2071,7 +2071,7 @@ export class TaskService {
 
     const status = entry.workspace.taskStatus;
     if (status === "reported") {
-      await this.cleanupReportedLeafTask(workspaceId);
+      await this.finalizeTerminationPhaseForReportedTask(workspaceId);
       return;
     }
 
@@ -2088,14 +2088,14 @@ export class TaskService {
     const reportArgs = this.findAgentReportArgsInParts(event.parts);
     if (reportArgs) {
       await this.finalizeAgentTaskReport(workspaceId, entry, reportArgs);
-      await this.cleanupReportedLeafTask(workspaceId);
+      await this.finalizeTerminationPhaseForReportedTask(workspaceId);
       return;
     }
 
     // If a task stream ends without agent_report, request it once.
     if (status === "awaiting_report" && this.remindedAwaitingReport.has(workspaceId)) {
       await this.fallbackReportMissingAgentReport(entry);
-      await this.cleanupReportedLeafTask(workspaceId);
+      await this.finalizeTerminationPhaseForReportedTask(workspaceId);
       return;
     }
 
@@ -2127,8 +2127,56 @@ export class TaskService {
     if (!entry?.workspace.parentWorkspaceId) return;
 
     if (entry.workspace.taskStatus === "reported") {
-      await this.cleanupReportedLeafTask(event.workspaceId);
+      await this.finalizeTerminationPhaseForReportedTask(event.workspaceId);
     }
+  }
+
+  private async finalizeTerminationPhaseForReportedTask(workspaceId: string): Promise<void> {
+    assert(
+      workspaceId.length > 0,
+      "finalizeTerminationPhaseForReportedTask: workspaceId must be non-empty"
+    );
+
+    await this.maybeStartPatchGenerationForReportedTask(workspaceId);
+    await this.cleanupReportedLeafTask(workspaceId);
+  }
+
+  private async maybeStartPatchGenerationForReportedTask(workspaceId: string): Promise<void> {
+    assert(
+      workspaceId.length > 0,
+      "maybeStartPatchGenerationForReportedTask: workspaceId must be non-empty"
+    );
+
+    const cfg = this.config.loadConfigOrDefault();
+    const parentWorkspaceId = findWorkspaceEntry(cfg, workspaceId)?.workspace.parentWorkspaceId;
+    if (!parentWorkspaceId) {
+      return;
+    }
+
+    try {
+      await this.gitPatchArtifactService.maybeStartGeneration(
+        parentWorkspaceId,
+        workspaceId,
+        (wsId) => this.requestReportedTaskCleanupRecheck(wsId)
+      );
+    } catch (error: unknown) {
+      log.error("Failed to start subagent git patch generation", {
+        parentWorkspaceId,
+        childWorkspaceId: workspaceId,
+        error,
+      });
+    }
+  }
+
+  private requestReportedTaskCleanupRecheck(workspaceId: string): Promise<void> {
+    assert(
+      workspaceId.length > 0,
+      "requestReportedTaskCleanupRecheck: workspaceId must be non-empty"
+    );
+
+    return this.workspaceEventLocks.withLock(workspaceId, async () => {
+      await this.cleanupReportedLeafTask(workspaceId);
+    });
   }
 
   private async fallbackReportMissingAgentReport(entry: {
@@ -2319,37 +2367,11 @@ export class TaskService {
       reportArgs
     );
 
-    // Begin git-format-patch generation (best-effort).
-    //
-    // This must run before cleanup so the reported task workspace isn't deleted while we're still
-    // reading commits from it.
-    //
-    // It must also run before resolving waiters so an immediate `task_await` result after
-    // `agent_report` can include at least a pending artifact record.
-    try {
-      await this.gitPatchArtifactService.maybeStartGeneration(
-        parentWorkspaceId,
-        childWorkspaceId,
-        (wsId) => this.cleanupReportedLeafTask(wsId)
-      );
-    } catch (error: unknown) {
-      log.error("Failed to start subagent git patch generation", {
-        parentWorkspaceId,
-        childWorkspaceId,
-        error,
-      });
-    }
-
     // Resolve foreground waiters.
     this.resolveWaiters(childWorkspaceId, reportArgs);
 
     // Free slot and start queued tasks.
     await this.maybeStartQueuedTasks();
-
-    // NOTE: Cleanup (cleanupReportedLeafTask) is NOT called here.
-    // Callers trigger cleanup after confirming the stream has terminated
-    // (handleStreamEnd/handleStreamAbort), ensuring usage is persisted first.
-    // The gitPatchArtifactService callback handles deferred cleanup independently.
 
     // Auto-resume any parent stream that was waiting on a task tool call (restart-safe).
     const postCfg = this.config.loadConfigOrDefault();
@@ -2643,6 +2665,51 @@ export class TaskService {
     return true;
   }
 
+  private async canCleanupReportedTask(
+    workspaceId: string
+  ): Promise<{ ok: true; parentWorkspaceId: string } | { ok: false; reason: string }> {
+    assert(workspaceId.length > 0, "canCleanupReportedTask: workspaceId must be non-empty");
+
+    const config = this.config.loadConfigOrDefault();
+    const entry = findWorkspaceEntry(config, workspaceId);
+    if (!entry) {
+      return { ok: false, reason: "workspace_not_found" };
+    }
+
+    const parentWorkspaceId = entry.workspace.parentWorkspaceId;
+    if (!parentWorkspaceId) {
+      return { ok: false, reason: "missing_parent_workspace" };
+    }
+
+    if (entry.workspace.taskStatus !== "reported") {
+      return { ok: false, reason: "task_not_reported" };
+    }
+
+    if (this.aiService.isStreaming(workspaceId)) {
+      log.debug("cleanupReportedLeafTask: deferring auto-delete; stream still active", {
+        workspaceId,
+        parentWorkspaceId,
+      });
+      return { ok: false, reason: "still_streaming" };
+    }
+
+    if (this.hasActiveDescendantAgentTasks(config, workspaceId)) {
+      return { ok: false, reason: "has_active_descendants" };
+    }
+
+    const parentSessionDir = this.config.getSessionDir(parentWorkspaceId);
+    const patchArtifact = await readSubagentGitPatchArtifact(parentSessionDir, workspaceId);
+    if (patchArtifact?.status === "pending") {
+      log.debug("cleanupReportedLeafTask: deferring auto-delete; patch artifact pending", {
+        workspaceId,
+        parentWorkspaceId,
+      });
+      return { ok: false, reason: "patch_pending" };
+    }
+
+    return { ok: true, parentWorkspaceId };
+  }
+
   private async cleanupReportedLeafTask(workspaceId: string): Promise<void> {
     assert(workspaceId.length > 0, "cleanupReportedLeafTask: workspaceId must be non-empty");
 
@@ -2657,32 +2724,10 @@ export class TaskService {
       }
       visited.add(currentWorkspaceId);
 
-      const config = this.config.loadConfigOrDefault();
-      const entry = findWorkspaceEntry(config, currentWorkspaceId);
-      if (!entry) return;
-
-      const ws = entry.workspace;
-      const parentWorkspaceId = ws.parentWorkspaceId;
-      if (!parentWorkspaceId) return;
-      if (ws.taskStatus !== "reported") return;
-
-      const hasChildren = this.listAgentTaskWorkspaces(config).some(
-        (t) => t.parentWorkspaceId === currentWorkspaceId
-      );
-      const parentSessionDir = this.config.getSessionDir(parentWorkspaceId);
-      const patchArtifact = await readSubagentGitPatchArtifact(
-        parentSessionDir,
-        currentWorkspaceId
-      );
-      if (patchArtifact?.status === "pending") {
-        log.debug("cleanupReportedLeafTask: deferring auto-delete; patch artifact pending", {
-          workspaceId: currentWorkspaceId,
-          parentWorkspaceId,
-        });
+      const cleanupEligibility = await this.canCleanupReportedTask(currentWorkspaceId);
+      if (!cleanupEligibility.ok) {
         return;
       }
-
-      if (hasChildren) return;
 
       const removeResult = await this.workspaceService.remove(currentWorkspaceId, true);
       if (!removeResult.success) {
@@ -2693,7 +2738,7 @@ export class TaskService {
         return;
       }
 
-      currentWorkspaceId = parentWorkspaceId;
+      currentWorkspaceId = cleanupEligibility.parentWorkspaceId;
     }
 
     log.error("cleanupReportedLeafTask: exceeded max parent traversal depth", {
