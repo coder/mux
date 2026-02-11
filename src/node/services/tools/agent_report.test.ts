@@ -52,7 +52,7 @@ describe("agent_report tool", () => {
 
     expect(result).toEqual({
       success: true,
-      message: "Report submitted successfully. STOP. Do not generate any further output.",
+      message: "Report submitted successfully.",
     });
   });
 });
