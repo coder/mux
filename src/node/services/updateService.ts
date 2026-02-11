@@ -39,8 +39,10 @@ export class UpdateService {
           this.notifySubscribers();
         });
 
-        // Sync initial status
+        // Sync initial status and push it in case subscribers connected before
+        // the updater implementation finished initializing.
         this.currentStatus = this.impl.getStatus();
+        this.notifySubscribers();
       } catch (err) {
         log.debug(
           "UpdateService: Failed to load desktop updater (likely CLI mode or missing dep):",

@@ -49,6 +49,20 @@ describe("UpdaterService", () => {
     }
   });
 
+  describe("debug updater mode", () => {
+    it("should expose an available update immediately when fake version is set", () => {
+      process.env.DEBUG_UPDATER = "0.0.1";
+      const debugService = new UpdaterService();
+
+      const status = debugService.getStatus();
+      expect(status.type).toBe("available");
+      if (status.type !== "available") {
+        throw new Error(`Expected available status, got: ${status.type}`);
+      }
+      expect(status.info.version).toBe("0.0.1");
+    });
+  });
+
   describe("checkForUpdates", () => {
     it("should set status to 'checking' immediately and notify subscribers", () => {
       // Setup
