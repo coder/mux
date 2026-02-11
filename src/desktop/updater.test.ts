@@ -446,6 +446,25 @@ describe("UpdaterService", () => {
       });
     });
 
+    it("should preserve existing error phase on follow-up updater errors", () => {
+      mockAutoUpdater.emit("update-available", { version: "2.0.0" });
+      mockAutoUpdater.emit("download-progress", { percent: 30 });
+
+      mockAutoUpdater.emit("error", new Error("First download failure"));
+      expect(statusUpdates[statusUpdates.length - 1]).toEqual({
+        type: "error",
+        phase: "download",
+        message: "First download failure",
+      });
+
+      mockAutoUpdater.emit("error", new Error("Follow-up updater error"));
+      expect(statusUpdates[statusUpdates.length - 1]).toEqual({
+        type: "error",
+        phase: "download",
+        message: "Follow-up updater error",
+      });
+    });
+
     it("should silently back off when promise rejects with transient error", async () => {
       mockAutoUpdater.checkForUpdates.mockImplementation(() => {
         return Promise.reject(new Error("HttpError: 404 Not Found"));

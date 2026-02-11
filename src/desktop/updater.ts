@@ -168,7 +168,9 @@ export class UpdaterService {
           ? "download"
           : this.updateStatus.type === "downloaded"
             ? "install"
-            : "check";
+            : this.updateStatus.type === "error"
+              ? this.updateStatus.phase
+              : "check";
       log.error("Update error:", error);
       this.updateStatus = { type: "error", phase, message: error.message };
       this.notifyRenderer();
