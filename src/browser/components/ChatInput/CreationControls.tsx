@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect } from "react";
+import * as SelectPrimitive from "@radix-ui/react-select";
 import {
   RUNTIME_MODE,
   type CoderWorkspaceConfig,
@@ -271,6 +272,20 @@ interface SectionPickerProps {
   disabled?: boolean;
 }
 
+function SectionSelectItem(props: { section: SectionConfig }) {
+  const color = resolveSectionColor(props.section.color);
+
+  return (
+    <SelectPrimitive.Item
+      value={props.section.id}
+      className="hover:bg-hover focus:bg-hover flex cursor-default select-none items-center gap-2.5 rounded-sm px-3 py-1.5 text-sm font-medium outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+    >
+      <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+      <SelectPrimitive.ItemText>{props.section.name}</SelectPrimitive.ItemText>
+    </SelectPrimitive.Item>
+  );
+}
+
 function SectionPicker(props: SectionPickerProps) {
   const { sections, selectedSectionId, onSectionChange, disabled } = props;
 
@@ -317,11 +332,20 @@ function SectionPicker(props: SectionPickerProps) {
         >
           <SelectValue placeholder="Select..." />
         </SelectTrigger>
-        <SelectContent>
+        <SelectContent
+          className="border-border-medium bg-separator"
+          style={
+            selectedSection
+              ? {
+                  borderColor: sectionColor,
+                  borderLeftWidth: "3px",
+                  backgroundColor: `${sectionColor}08`,
+                }
+              : undefined
+          }
+        >
           {sections.map((section) => (
-            <SelectItem key={section.id} value={section.id}>
-              {section.name}
-            </SelectItem>
+            <SectionSelectItem key={section.id} section={section} />
           ))}
         </SelectContent>
       </RadixSelect>
