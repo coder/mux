@@ -246,14 +246,21 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
 ProjectCreateForm.displayName = "ProjectCreateForm";
 
 // Keep the existing path-based add flow unchanged while adding clone as an alternate mode.
-type ProjectCreateMode = "pick-folder" | "clone";
+export type ProjectCreateMode = "pick-folder" | "clone";
 
 interface ProjectCloneFormProps {
   onSuccess: (normalizedPath: string, projectConfig: ProjectConfig) => void;
-  onClose: () => void;
+  onClose?: () => void;
   isOpen: boolean;
   defaultCloneDir: string;
   onIsCreatingChange?: (isCreating: boolean) => void;
+  hideFooter?: boolean;
+  autoFocus?: boolean;
+}
+
+export interface ProjectCloneFormHandle {
+  submit: () => Promise<boolean>;
+  getTrimmedRepoUrl: () => string;
 }
 
 function getRepoNameFromUrl(repoUrl: string): string {
@@ -287,405 +294,442 @@ function buildCloneDestinationPreview(cloneParentDir: string, repoName: string):
   return `${normalizedCloneParentDir}${separator}${repoName}`;
 }
 
-function ProjectCloneForm(props: ProjectCloneFormProps) {
-  const { api } = useAPI();
-  const [repoUrl, setRepoUrl] = useState("");
-  const [cloneParentDir, setCloneParentDir] = useState(props.defaultCloneDir);
-  const [hasEditedCloneParentDir, setHasEditedCloneParentDir] = useState(false);
-  const [error, setError] = useState("");
-  const [isCreating, setIsCreating] = useState(false);
-  const [isDirPickerOpen, setIsDirPickerOpen] = useState(false);
-  const [progressLines, setProgressLines] = useState<string[]>([]);
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const progressEndRef = useRef<HTMLDivElement | null>(null);
-  const isDesktop = !!window.api;
-  const hasWebFsPicker = !isDesktop;
+const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFormProps>(
+  function ProjectCloneForm(props, ref) {
+    const { api } = useAPI();
+    const [repoUrl, setRepoUrl] = useState("");
+    const [cloneParentDir, setCloneParentDir] = useState(props.defaultCloneDir);
+    const [hasEditedCloneParentDir, setHasEditedCloneParentDir] = useState(false);
+    const [error, setError] = useState("");
+    const [isCreating, setIsCreating] = useState(false);
+    const [isDirPickerOpen, setIsDirPickerOpen] = useState(false);
+    const [progressLines, setProgressLines] = useState<string[]>([]);
+    const abortControllerRef = useRef<AbortController | null>(null);
+    const progressEndRef = useRef<HTMLDivElement | null>(null);
+    const isDesktop = !!window.api;
+    const hasWebFsPicker = !isDesktop;
 
-  const setCreating = useCallback(
-    (next: boolean) => {
-      setIsCreating(next);
-      props.onIsCreatingChange?.(next);
-    },
-    [props]
-  );
+    const setCreating = useCallback(
+      (next: boolean) => {
+        setIsCreating(next);
+        props.onIsCreatingChange?.(next);
+      },
+      [props]
+    );
 
-  const reset = useCallback(() => {
-    setRepoUrl("");
-    setCloneParentDir(props.defaultCloneDir);
-    setHasEditedCloneParentDir(false);
-    setError("");
-    setProgressLines([]);
-  }, [props.defaultCloneDir]);
+    const reset = useCallback(() => {
+      setRepoUrl("");
+      setCloneParentDir(props.defaultCloneDir);
+      setHasEditedCloneParentDir(false);
+      setError("");
+      setProgressLines([]);
+    }, [props.defaultCloneDir]);
 
-  useEffect(() => {
-    if (!props.isOpen) {
+    useEffect(() => {
+      if (!props.isOpen) {
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          abortControllerRef.current = null;
+        }
+        reset();
+      }
+    }, [props.isOpen, reset]);
+
+    useEffect(() => {
+      if (!props.isOpen || hasEditedCloneParentDir) {
+        return;
+      }
+
+      setCloneParentDir(props.defaultCloneDir);
+    }, [props.defaultCloneDir, props.isOpen, hasEditedCloneParentDir]);
+
+    useEffect(() => {
+      progressEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }, [progressLines]);
+
+    const trimmedCloneParentDir = cloneParentDir.trim();
+
+    const handleCancel = useCallback(() => {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
       }
+
       reset();
-    }
-  }, [props.isOpen, reset]);
+      props.onClose?.();
+    }, [props, reset]);
 
-  useEffect(() => {
-    if (!props.isOpen || hasEditedCloneParentDir) {
-      return;
-    }
+    const handleWebPickerPathSelected = useCallback((selectedPath: string) => {
+      setCloneParentDir(selectedPath);
+      setHasEditedCloneParentDir(true);
+      setError("");
+    }, []);
 
-    setCloneParentDir(props.defaultCloneDir);
-  }, [props.defaultCloneDir, props.isOpen, hasEditedCloneParentDir]);
-
-  useEffect(() => {
-    progressEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [progressLines]);
-
-  const trimmedCloneParentDir = cloneParentDir.trim();
-
-  const handleCancel = useCallback(() => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
-
-    reset();
-    props.onClose();
-  }, [props, reset]);
-
-  const handleWebPickerPathSelected = useCallback((selectedPath: string) => {
-    setCloneParentDir(selectedPath);
-    setHasEditedCloneParentDir(true);
-    setError("");
-  }, []);
-
-  const handleBrowse = useCallback(async () => {
-    try {
-      const selectedPath = await api?.projects.pickDirectory();
-      if (selectedPath) {
-        setCloneParentDir(selectedPath);
-        setHasEditedCloneParentDir(true);
-        setError("");
-      }
-    } catch (err) {
-      console.error("Failed to pick clone directory:", err);
-    }
-  }, [api]);
-
-  const handleBrowseClick = useCallback(() => {
-    if (isDesktop) {
-      void handleBrowse();
-      return;
-    }
-
-    if (hasWebFsPicker) {
-      setIsDirPickerOpen(true);
-    }
-  }, [handleBrowse, hasWebFsPicker, isDesktop]);
-
-  const handleClone = useCallback(async (): Promise<boolean> => {
-    const trimmedRepoUrl = repoUrl.trim();
-    if (!trimmedRepoUrl) {
-      setError("Please enter a repository URL");
-      return false;
-    }
-
-    if (isCreating) {
-      return false;
-    }
-
-    if (!api) {
-      setError("Not connected to server");
-      return false;
-    }
-
-    setError("");
-    setProgressLines([]);
-    setCreating(true);
-
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-
-    try {
-      const cloneEvents = await api.projects.clone(
-        {
-          repoUrl: trimmedRepoUrl,
-          cloneParentDir: trimmedCloneParentDir || undefined,
-        },
-        { signal: controller.signal }
-      );
-
-      for await (const event of cloneEvents) {
-        if (controller.signal.aborted) {
-          break;
+    const handleBrowse = useCallback(async () => {
+      try {
+        const selectedPath = await api?.projects.pickDirectory();
+        if (selectedPath) {
+          setCloneParentDir(selectedPath);
+          setHasEditedCloneParentDir(true);
+          setError("");
         }
-
-        if (event.type === "progress") {
-          // Show the raw git stderr stream so users can confirm clone progress and diagnose hangs.
-          setProgressLines((previousLines) => [...previousLines, event.line]);
-          continue;
-        }
-
-        if (event.type === "success") {
-          const { normalizedPath, projectConfig } = event;
-          props.onSuccess(normalizedPath, projectConfig);
-          reset();
-          props.onClose();
-          return true;
-        }
-
-        setError(event.error || "Failed to clone project");
-        return false;
+      } catch (err) {
+        console.error("Failed to pick clone directory:", err);
       }
+    }, [api]);
 
-      if (controller.signal.aborted) {
-        setError("Clone cancelled");
-        return false;
-      }
-
-      setError("Clone did not return a completion event");
-      return false;
-    } catch (err) {
-      if (controller.signal.aborted) {
-        setError("Clone cancelled");
-        return false;
-      }
-
-      const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred";
-      setError(`Failed to clone project: ${errorMessage}`);
-      return false;
-    } finally {
-      abortControllerRef.current = null;
-      setCreating(false);
-    }
-  }, [api, isCreating, props, repoUrl, reset, setCreating, trimmedCloneParentDir]);
-
-  const handleRetry = useCallback(() => {
-    setError("");
-    setProgressLines([]);
-  }, []);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        void handleClone();
-      }
-    },
-    [handleClone]
-  );
-
-  const repoName = getRepoNameFromUrl(repoUrl);
-  const destinationPreview = buildCloneDestinationPreview(cloneParentDir, repoName);
-  // Keep the progress log visible after failed clones so users can diagnose the git error before retrying.
-  const hasCloneFailure = !isCreating && progressLines.length > 0 && error.length > 0;
-  const showCloneProgress = isCreating || hasCloneFailure;
-
-  return (
-    <>
-      {showCloneProgress ? (
-        <div className="mb-3 space-y-3">
-          <div className="space-y-1">
-            <label className="text-muted text-xs">
-              {hasCloneFailure ? "Clone failed" : "Cloning repository…"}
-            </label>
-            <div className="bg-modal-bg border-border-medium max-h-40 overflow-y-auto rounded border p-3">
-              <pre className="text-muted font-mono text-xs break-all whitespace-pre-wrap">
-                {progressLines.length > 0 ? progressLines.join("") : "Starting clone…"}
-              </pre>
-              <div ref={progressEndRef} />
-            </div>
-          </div>
-
-          {destinationPreview && (
-            <p className="text-muted text-xs">
-              Cloning to <span className="text-foreground font-mono">{destinationPreview}</span>
-            </p>
-          )}
-        </div>
-      ) : (
-        <div className="mb-3 space-y-3">
-          <div className="space-y-1">
-            <label className="text-muted text-xs">Repo URL</label>
-            <input
-              type="text"
-              value={repoUrl}
-              onChange={(e) => {
-                setRepoUrl(e.target.value);
-                setError("");
-              }}
-              onKeyDown={handleKeyDown}
-              placeholder="owner/repo or https://github.com/..."
-              autoFocus={true}
-              disabled={isCreating}
-              className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent w-full rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
-            />
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-muted text-xs">Location</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={cloneParentDir}
-                onChange={(e) => {
-                  const nextCloneParentDir = e.target.value;
-                  setCloneParentDir(nextCloneParentDir);
-                  setHasEditedCloneParentDir(true);
-                  setError("");
-                }}
-                onKeyDown={handleKeyDown}
-                placeholder={props.defaultCloneDir || "Select clone location"}
-                disabled={isCreating}
-                className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
-              />
-              {(isDesktop || hasWebFsPicker) && (
-                <Button
-                  variant="outline"
-                  onClick={handleBrowseClick}
-                  disabled={isCreating}
-                  className="shrink-0"
-                >
-                  Browse…
-                </Button>
-              )}
-            </div>
-          </div>
-
-          {repoName && destinationPreview && (
-            <p className="text-muted text-xs">
-              Will clone to <span className="text-foreground font-mono">{destinationPreview}</span>
-            </p>
-          )}
-
-          <p className="text-muted text-xs">
-            Default location can be changed in <span className="text-foreground">Settings</span>.
-          </p>
-        </div>
-      )}
-
-      {error && <p className="text-error text-xs">{error}</p>}
-
-      <DialogFooter>
-        <Button variant="secondary" onClick={handleCancel}>
-          Cancel
-        </Button>
-        {!isCreating && (
-          <Button onClick={hasCloneFailure ? handleRetry : () => void handleClone()}>
-            {hasCloneFailure ? "Try Again" : "Clone Project"}
-          </Button>
-        )}
-      </DialogFooter>
-
-      <DirectoryPickerModal
-        isOpen={isDirPickerOpen}
-        initialPath={cloneParentDir || props.defaultCloneDir || "~"}
-        onClose={() => setIsDirPickerOpen(false)}
-        onSelectPath={handleWebPickerPathSelected}
-      />
-    </>
-  );
-}
-/**
- * Project creation modal that handles the full flow from path input to backend validation.
- *
- * Displays a modal for path input, calls the backend to create the project, and shows
- * validation errors inline. Modal stays open until project is successfully created or user cancels.
- */
-export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
-  isOpen,
-  onClose,
-  onSuccess,
-}) => {
-  const { api } = useAPI();
-  const [mode, setMode] = useState<ProjectCreateMode>("pick-folder");
-  const [isCreating, setIsCreating] = useState(false);
-  const [defaultCloneDir, setDefaultCloneDir] = useState("");
-  const [isLoadingDefaultCloneDir, setIsLoadingDefaultCloneDir] = useState(false);
-  const [hasLoadedDefaultCloneDir, setHasLoadedDefaultCloneDir] = useState(false);
-  // Nonce to prevent stale fetch responses from updating state after modal closes.
-  // Incremented on every close so in-flight promises become no-ops.
-  const cloneDirLoadNonceRef = useRef(0);
-
-  // Preload the clone destination default so clone mode opens with a usable location.
-  const ensureDefaultCloneDir = useCallback(async () => {
-    if (!api || isLoadingDefaultCloneDir || hasLoadedDefaultCloneDir) {
-      return;
-    }
-
-    setIsLoadingDefaultCloneDir(true);
-    const nonce = cloneDirLoadNonceRef.current;
-
-    try {
-      const cloneDir = await api.projects.getDefaultCloneDir();
-      if (nonce !== cloneDirLoadNonceRef.current) {
-        return; // Modal was closed/reopened while loading — discard stale result
-      }
-      setDefaultCloneDir(cloneDir);
-    } catch (err) {
-      console.error("Failed to fetch default clone directory:", err);
-    } finally {
-      if (nonce === cloneDirLoadNonceRef.current) {
-        // Mark as loaded even on failure to prevent infinite retry loops
-        // when the backend is unavailable.
-        setHasLoadedDefaultCloneDir(true);
-        setIsLoadingDefaultCloneDir(false);
-      }
-    }
-  }, [api, hasLoadedDefaultCloneDir, isLoadingDefaultCloneDir]);
-
-  useEffect(() => {
-    if (!isOpen) {
-      // Invalidate any in-flight fetch so its stale promise doesn't update state.
-      cloneDirLoadNonceRef.current++;
-      setMode("pick-folder");
-      setIsCreating(false);
-      setDefaultCloneDir("");
-      setHasLoadedDefaultCloneDir(false);
-      setIsLoadingDefaultCloneDir(false);
-      return;
-    }
-
-    void ensureDefaultCloneDir();
-  }, [ensureDefaultCloneDir, isOpen]);
-
-  useEffect(() => {
-    if (!isOpen || mode !== "clone") {
-      return;
-    }
-
-    void ensureDefaultCloneDir();
-  }, [ensureDefaultCloneDir, isOpen, mode]);
-
-  const handleOpenChange = useCallback(
-    (open: boolean) => {
-      if (!open && !isCreating) {
-        onClose();
-      }
-    },
-    [isCreating, onClose]
-  );
-
-  const handleModeChange = useCallback(
-    (nextMode: string) => {
-      if (nextMode !== "pick-folder" && nextMode !== "clone") {
+    const handleBrowseClick = useCallback(() => {
+      if (isDesktop) {
+        void handleBrowse();
         return;
       }
 
-      setMode(nextMode);
-      if (nextMode === "clone") {
-        void ensureDefaultCloneDir();
+      if (hasWebFsPicker) {
+        setIsDirPickerOpen(true);
       }
-    },
-    [ensureDefaultCloneDir]
-  );
+    }, [handleBrowse, hasWebFsPicker, isDesktop]);
 
-  return (
-    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
-      <DialogContent showCloseButton={false}>
-        <DialogHeader>
-          <DialogTitle>Add Project</DialogTitle>
-          <DialogDescription>Pick a folder or clone a project repository</DialogDescription>
-        </DialogHeader>
+    const handleClone = useCallback(async (): Promise<boolean> => {
+      const trimmedRepoUrl = repoUrl.trim();
+      if (!trimmedRepoUrl) {
+        setError("Please enter a repository URL");
+        return false;
+      }
 
+      if (isCreating) {
+        return false;
+      }
+
+      if (!api) {
+        setError("Not connected to server");
+        return false;
+      }
+
+      setError("");
+      setProgressLines([]);
+      setCreating(true);
+
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
+      try {
+        const cloneEvents = await api.projects.clone(
+          {
+            repoUrl: trimmedRepoUrl,
+            cloneParentDir: trimmedCloneParentDir || undefined,
+          },
+          { signal: controller.signal }
+        );
+
+        for await (const event of cloneEvents) {
+          if (controller.signal.aborted) {
+            break;
+          }
+
+          if (event.type === "progress") {
+            // Show the raw git stderr stream so users can confirm clone progress and diagnose hangs.
+            setProgressLines((previousLines) => [...previousLines, event.line]);
+            continue;
+          }
+
+          if (event.type === "success") {
+            const { normalizedPath, projectConfig } = event;
+            props.onSuccess(normalizedPath, projectConfig);
+            reset();
+            props.onClose?.();
+            return true;
+          }
+
+          setError(event.error || "Failed to clone project");
+          return false;
+        }
+
+        if (controller.signal.aborted) {
+          setError("Clone cancelled");
+          return false;
+        }
+
+        setError("Clone did not return a completion event");
+        return false;
+      } catch (err) {
+        if (controller.signal.aborted) {
+          setError("Clone cancelled");
+          return false;
+        }
+
+        const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred";
+        setError(`Failed to clone project: ${errorMessage}`);
+        return false;
+      } finally {
+        abortControllerRef.current = null;
+        setCreating(false);
+      }
+    }, [api, isCreating, props, repoUrl, reset, setCreating, trimmedCloneParentDir]);
+
+    const handleRetry = useCallback(() => {
+      setError("");
+      setProgressLines([]);
+    }, []);
+
+    const handleKeyDown = useCallback(
+      (e: React.KeyboardEvent) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          void handleClone();
+        }
+      },
+      [handleClone]
+    );
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        submit: handleClone,
+        getTrimmedRepoUrl: () => repoUrl.trim(),
+      }),
+      [handleClone, repoUrl]
+    );
+
+    const repoName = getRepoNameFromUrl(repoUrl);
+    const destinationPreview = buildCloneDestinationPreview(cloneParentDir, repoName);
+    // Keep the progress log visible after failed clones so users can diagnose the git error before retrying.
+    const hasCloneFailure = !isCreating && progressLines.length > 0 && error.length > 0;
+    const showCloneProgress = isCreating || (hasCloneFailure && !props.hideFooter);
+
+    return (
+      <>
+        {showCloneProgress ? (
+          <div className="mb-3 space-y-3">
+            <div className="space-y-1">
+              <label className="text-muted text-xs">
+                {hasCloneFailure ? "Clone failed" : "Cloning repository…"}
+              </label>
+              <div className="bg-modal-bg border-border-medium max-h-40 overflow-y-auto rounded border p-3">
+                <pre className="text-muted font-mono text-xs break-all whitespace-pre-wrap">
+                  {progressLines.length > 0 ? progressLines.join("") : "Starting clone…"}
+                </pre>
+                <div ref={progressEndRef} />
+              </div>
+            </div>
+
+            {destinationPreview && (
+              <p className="text-muted text-xs">
+                Cloning to <span className="text-foreground font-mono">{destinationPreview}</span>
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="mb-3 space-y-3">
+            <div className="space-y-1">
+              <label className="text-muted text-xs">Repo URL</label>
+              <input
+                type="text"
+                value={repoUrl}
+                onChange={(e) => {
+                  setRepoUrl(e.target.value);
+                  setError("");
+                }}
+                onKeyDown={handleKeyDown}
+                placeholder="owner/repo or https://github.com/..."
+                autoFocus={props.autoFocus ?? true}
+                disabled={isCreating}
+                className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent w-full rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-muted text-xs">Location</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={cloneParentDir}
+                  onChange={(e) => {
+                    const nextCloneParentDir = e.target.value;
+                    setCloneParentDir(nextCloneParentDir);
+                    setHasEditedCloneParentDir(true);
+                    setError("");
+                  }}
+                  onKeyDown={handleKeyDown}
+                  placeholder={props.defaultCloneDir || "Select clone location"}
+                  disabled={isCreating}
+                  className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
+                />
+                {(isDesktop || hasWebFsPicker) && (
+                  <Button
+                    variant="outline"
+                    onClick={handleBrowseClick}
+                    disabled={isCreating}
+                    className="shrink-0"
+                  >
+                    Browse…
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {repoName && destinationPreview && (
+              <p className="text-muted text-xs">
+                Will clone to{" "}
+                <span className="text-foreground font-mono">{destinationPreview}</span>
+              </p>
+            )}
+
+            <p className="text-muted text-xs">
+              Default location can be changed in <span className="text-foreground">Settings</span>.
+            </p>
+          </div>
+        )}
+
+        {error && <p className="text-error text-xs">{error}</p>}
+
+        {!props.hideFooter && (
+          <DialogFooter>
+            <Button variant="secondary" onClick={handleCancel}>
+              Cancel
+            </Button>
+            {!isCreating && (
+              <Button onClick={hasCloneFailure ? handleRetry : () => void handleClone()}>
+                {hasCloneFailure ? "Try Again" : "Clone Project"}
+              </Button>
+            )}
+          </DialogFooter>
+        )}
+
+        <DirectoryPickerModal
+          isOpen={isDirPickerOpen}
+          initialPath={cloneParentDir || props.defaultCloneDir || "~"}
+          onClose={() => setIsDirPickerOpen(false)}
+          onSelectPath={handleWebPickerPathSelected}
+        />
+      </>
+    );
+  }
+);
+
+ProjectCloneForm.displayName = "ProjectCloneForm";
+
+const NOOP = (): void => undefined;
+
+export interface ProjectAddFormHandle {
+  submit: () => Promise<boolean>;
+  getTrimmedInput: () => string;
+  getMode: () => ProjectCreateMode;
+}
+
+interface ProjectAddFormProps {
+  onSuccess: (normalizedPath: string, projectConfig: ProjectConfig) => void;
+  onClose?: () => void;
+  isOpen: boolean;
+  onIsCreatingChange?: (isCreating: boolean) => void;
+  autoFocus?: boolean;
+  hideFooter?: boolean;
+  showCancelButton?: boolean;
+}
+
+export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddFormProps>(
+  function ProjectAddForm(props, ref) {
+    const { api } = useAPI();
+    const [mode, setMode] = useState<ProjectCreateMode>("pick-folder");
+    const [isCreating, setIsCreating] = useState(false);
+    const [defaultCloneDir, setDefaultCloneDir] = useState("");
+    const [isLoadingDefaultCloneDir, setIsLoadingDefaultCloneDir] = useState(false);
+    const [hasLoadedDefaultCloneDir, setHasLoadedDefaultCloneDir] = useState(false);
+    const cloneDirLoadNonceRef = useRef(0);
+    const projectCreateFormRef = useRef<ProjectCreateFormHandle | null>(null);
+    const projectCloneFormRef = useRef<ProjectCloneFormHandle | null>(null);
+
+    const setCreating = useCallback(
+      (next: boolean) => {
+        setIsCreating(next);
+        props.onIsCreatingChange?.(next);
+      },
+      [props]
+    );
+
+    const ensureDefaultCloneDir = useCallback(async () => {
+      if (!api || isLoadingDefaultCloneDir || hasLoadedDefaultCloneDir) {
+        return;
+      }
+
+      setIsLoadingDefaultCloneDir(true);
+      const nonce = cloneDirLoadNonceRef.current;
+
+      try {
+        const cloneDir = await api.projects.getDefaultCloneDir();
+        if (nonce !== cloneDirLoadNonceRef.current) {
+          return; // Parent was closed/reopened while loading — discard stale result
+        }
+        setDefaultCloneDir(cloneDir);
+      } catch (err) {
+        console.error("Failed to fetch default clone directory:", err);
+      } finally {
+        if (nonce === cloneDirLoadNonceRef.current) {
+          // Mark as loaded even on failure to prevent infinite retry loops
+          // when the backend is unavailable.
+          setHasLoadedDefaultCloneDir(true);
+          setIsLoadingDefaultCloneDir(false);
+        }
+      }
+    }, [api, hasLoadedDefaultCloneDir, isLoadingDefaultCloneDir]);
+
+    useEffect(() => {
+      if (!props.isOpen) {
+        cloneDirLoadNonceRef.current++;
+        setMode("pick-folder");
+        setCreating(false);
+        setDefaultCloneDir("");
+        setHasLoadedDefaultCloneDir(false);
+        setIsLoadingDefaultCloneDir(false);
+        return;
+      }
+
+      void ensureDefaultCloneDir();
+    }, [ensureDefaultCloneDir, props.isOpen, setCreating]);
+
+    useEffect(() => {
+      if (!props.isOpen || mode !== "clone") {
+        return;
+      }
+
+      void ensureDefaultCloneDir();
+    }, [ensureDefaultCloneDir, mode, props.isOpen]);
+
+    const handleModeChange = useCallback(
+      (nextMode: string) => {
+        if (nextMode !== "pick-folder" && nextMode !== "clone") {
+          return;
+        }
+
+        setMode(nextMode);
+        if (nextMode === "clone") {
+          void ensureDefaultCloneDir();
+        }
+      },
+      [ensureDefaultCloneDir]
+    );
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        submit: async () => {
+          if (mode === "pick-folder") {
+            return (await projectCreateFormRef.current?.submit()) ?? false;
+          }
+          return (await projectCloneFormRef.current?.submit()) ?? false;
+        },
+        getTrimmedInput: () => {
+          if (mode === "pick-folder") {
+            return projectCreateFormRef.current?.getTrimmedPath() ?? "";
+          }
+          return projectCloneFormRef.current?.getTrimmedRepoUrl() ?? "";
+        },
+        getMode: () => mode,
+      }),
+      [mode]
+    );
+
+    return (
+      <>
         <ToggleGroup
           type="single"
           value={mode}
@@ -705,21 +749,71 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
 
         {mode === "pick-folder" ? (
           <ProjectCreateForm
-            onSuccess={onSuccess}
-            onClose={onClose}
-            showCancelButton={true}
-            autoFocus={true}
-            onIsCreatingChange={setIsCreating}
+            ref={projectCreateFormRef}
+            onSuccess={props.onSuccess}
+            onClose={props.onClose}
+            showCancelButton={props.showCancelButton ?? false}
+            autoFocus={props.autoFocus}
+            onIsCreatingChange={setCreating}
+            hideFooter={props.hideFooter}
           />
         ) : (
           <ProjectCloneForm
-            onSuccess={onSuccess}
-            onClose={onClose}
-            isOpen={isOpen}
+            ref={projectCloneFormRef}
+            onSuccess={props.onSuccess}
+            onClose={props.onClose ?? NOOP}
+            isOpen={props.isOpen}
             defaultCloneDir={defaultCloneDir}
-            onIsCreatingChange={setIsCreating}
+            onIsCreatingChange={setCreating}
+            hideFooter={props.hideFooter}
+            autoFocus={props.autoFocus}
           />
         )}
+      </>
+    );
+  }
+);
+
+ProjectAddForm.displayName = "ProjectAddForm";
+
+/**
+ * Project creation modal that handles the full flow from path input to backend validation.
+ *
+ * Displays a modal for path input, calls the backend to create the project, and shows
+ * validation errors inline. Modal stays open until project is successfully created or user cancels.
+ */
+export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
+  isOpen,
+  onClose,
+  onSuccess,
+}) => {
+  const [isCreating, setIsCreating] = useState(false);
+
+  const handleOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open && !isCreating) {
+        onClose();
+      }
+    },
+    [isCreating, onClose]
+  );
+
+  return (
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+      <DialogContent showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>Add Project</DialogTitle>
+          <DialogDescription>Pick a folder or clone a project repository</DialogDescription>
+        </DialogHeader>
+
+        <ProjectAddForm
+          isOpen={isOpen}
+          onSuccess={onSuccess}
+          onClose={onClose}
+          showCancelButton={true}
+          autoFocus={true}
+          onIsCreatingChange={setIsCreating}
+        />
       </DialogContent>
     </Dialog>
   );
