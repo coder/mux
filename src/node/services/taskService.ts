@@ -39,7 +39,7 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import { AgentIdSchema } from "@/common/orpc/schemas";
 import { GitPatchArtifactService } from "@/node/services/gitPatchArtifactService";
 import type { ThinkingLevel } from "@/common/types/thinking";
-import type { StreamAbortEvent, StreamEndEvent } from "@/common/types/stream";
+import type { StreamEndEvent } from "@/common/types/stream";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
 import {
   AgentReportToolArgsSchema,
@@ -154,10 +154,6 @@ function isStreamEndEvent(value: unknown): value is StreamEndEvent {
   return isTypedWorkspaceEvent(value, "stream-end");
 }
 
-function isStreamAbortEvent(value: unknown): value is StreamAbortEvent {
-  return isTypedWorkspaceEvent(value, "stream-abort");
-}
-
 function hasAncestorWorkspaceId(
   entry: { ancestorWorkspaceIds?: unknown } | null | undefined,
   ancestorWorkspaceId: string
@@ -205,7 +201,7 @@ function getIsoNow(): string {
 }
 
 export class TaskService {
-  // Serialize stream-end/stream-abort processing per workspace to avoid races when
+  // Serialize stream-end processing per workspace to avoid races when
   // finalizing reported tasks and cleanup state transitions.
   private readonly workspaceEventLocks = new MutexMap<string>();
   private readonly mutex = new AsyncMutex();
@@ -241,18 +237,6 @@ export class TaskService {
         })
         .catch((error: unknown) => {
           log.error("TaskService.handleStreamEnd failed", { error });
-        });
-    });
-
-    this.aiService.on("stream-abort", (payload: unknown) => {
-      if (!isStreamAbortEvent(payload)) return;
-
-      void this.workspaceEventLocks
-        .withLock(payload.workspaceId, async () => {
-          await this.handleStreamAbort(payload);
-        })
-        .catch((error: unknown) => {
-          log.error("TaskService.handleStreamAbort failed", { error });
         });
     });
   }
@@ -2106,20 +2090,6 @@ export class TaskService {
       },
       { synthetic: true }
     );
-  }
-
-  /**
-   * Clean up reported tasks whose stream was aborted before ending naturally.
-   * Only acts on tasks already in "reported" state.
-   */
-  private async handleStreamAbort(event: StreamAbortEvent): Promise<void> {
-    const cfg = this.config.loadConfigOrDefault();
-    const entry = findWorkspaceEntry(cfg, event.workspaceId);
-    if (!entry?.workspace.parentWorkspaceId) return;
-
-    if (entry.workspace.taskStatus === "reported") {
-      await this.finalizeTerminationPhaseForReportedTask(event.workspaceId);
-    }
   }
 
   private async finalizeTerminationPhaseForReportedTask(workspaceId: string): Promise<void> {
