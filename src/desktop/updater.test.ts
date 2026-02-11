@@ -84,11 +84,13 @@ describe("UpdaterService", () => {
       debugService.checkForUpdates({ source: "manual" });
       await new Promise((resolve) => setTimeout(resolve, 600));
 
-      expect(debugService.getStatus()).toEqual({
-        type: "error",
-        phase: "check",
-        message: expect.stringContaining("Simulated check failure"),
-      });
+      const status = debugService.getStatus();
+      expect(status.type).toBe("error");
+      if (status.type !== "error") {
+        throw new Error(`Expected error status, got: ${status.type}`);
+      }
+      expect(status.phase).toBe("check");
+      expect(status.message).toContain("Simulated check failure");
     });
 
     it("should simulate download failure when DEBUG_UPDATER_FAIL=download", async () => {
@@ -101,11 +103,13 @@ describe("UpdaterService", () => {
 
       await debugService.downloadUpdate();
 
-      expect(debugService.getStatus()).toEqual({
-        type: "error",
-        phase: "download",
-        message: expect.stringContaining("Simulated download failure"),
-      });
+      const status = debugService.getStatus();
+      expect(status.type).toBe("error");
+      if (status.type !== "error") {
+        throw new Error(`Expected error status, got: ${status.type}`);
+      }
+      expect(status.phase).toBe("download");
+      expect(status.message).toContain("Simulated download failure");
     });
 
     it("should allow retrying download after DEBUG_UPDATER_FAIL=download", async () => {
@@ -114,18 +118,22 @@ describe("UpdaterService", () => {
       const debugService = new UpdaterService();
 
       await debugService.downloadUpdate();
-      expect(debugService.getStatus()).toEqual({
-        type: "error",
-        phase: "download",
-        message: expect.stringContaining("Simulated download failure"),
-      });
+      const firstStatus = debugService.getStatus();
+      expect(firstStatus.type).toBe("error");
+      if (firstStatus.type !== "error") {
+        throw new Error(`Expected error status, got: ${firstStatus.type}`);
+      }
+      expect(firstStatus.phase).toBe("download");
+      expect(firstStatus.message).toContain("Simulated download failure");
 
       await debugService.downloadUpdate();
-      expect(debugService.getStatus()).toEqual({
-        type: "error",
-        phase: "download",
-        message: expect.stringContaining("Simulated download failure"),
-      });
+      const secondStatus = debugService.getStatus();
+      expect(secondStatus.type).toBe("error");
+      if (secondStatus.type !== "error") {
+        throw new Error(`Expected error status, got: ${secondStatus.type}`);
+      }
+      expect(secondStatus.phase).toBe("download");
+      expect(secondStatus.message).toContain("Simulated download failure");
     });
 
     it("should simulate install failure when DEBUG_UPDATER_FAIL=install", async () => {
@@ -139,11 +147,13 @@ describe("UpdaterService", () => {
 
       debugService.installUpdate();
 
-      expect(debugService.getStatus()).toEqual({
-        type: "error",
-        phase: "install",
-        message: expect.stringContaining("Simulated install failure"),
-      });
+      const status = debugService.getStatus();
+      expect(status.type).toBe("error");
+      if (status.type !== "error") {
+        throw new Error(`Expected error status, got: ${status.type}`);
+      }
+      expect(status.phase).toBe("install");
+      expect(status.message).toContain("Simulated install failure");
     });
 
     it("should ignore DEBUG_UPDATER_FAIL without a fake DEBUG_UPDATER version", () => {

@@ -31,7 +31,7 @@ export function parseBoolEnv(value: string | undefined): boolean {
  */
 export function parseDebugUpdater(
   value: string | undefined,
-  failValue?: string | undefined
+  failValue?: string
 ): {
   enabled: boolean;
   fakeVersion?: string;
