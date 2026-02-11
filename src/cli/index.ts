@@ -61,6 +61,12 @@ if (subcommand === "run") {
   // The .mjs extension is critical for Node.js to treat it as ESM.
   // eslint-disable-next-line @typescript-eslint/no-implied-eval, @typescript-eslint/no-unsafe-call
   void new Function("return import('./api.mjs')")();
+} else if (subcommand === "tui") {
+  process.argv.splice(env.firstArgIndex, 1);
+  // Must use native import() to load ESM module - Ink requires ESM.
+  // Using Function constructor prevents TypeScript from converting this to require().
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval, @typescript-eslint/no-unsafe-call
+  void new Function("return import('./tui.mjs')")();
 } else if (
   subcommand === "desktop" ||
   (env.isElectron && (subcommand === undefined || isElectronLaunchArg(subcommand, env)))
@@ -110,6 +116,7 @@ if (subcommand === "run") {
   }
   program.command("server").description("Start the HTTP/WebSocket ORPC server");
   program.command("api").description("Interact with the mux API via a running server");
+  program.command("tui").description("Launch simplified terminal UI");
   if (isCommandAvailable("desktop", env)) {
     program
       .command("desktop")

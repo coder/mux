@@ -48,6 +48,9 @@ endif
 # Common esbuild flags for CLI API bundle (ESM format for trpc-cli)
 ESBUILD_CLI_FLAGS := --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:jsonc-parser --external:@trpc/server --external:ssh2 --external:cpu-features --banner:js="import{createRequire}from'module';globalThis.require=createRequire(import.meta.url);"
 
+# Common esbuild flags for TUI CLI bundle (Ink requires ESM)
+ESBUILD_TUI_FLAGS := --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/tui.mjs --external:zod --external:commander --external:react-devtools-core --banner:js="import{createRequire}from'module';globalThis.require=createRequire(import.meta.url);"
+
 # Include formatting rules
 include fmt.mk
 
@@ -119,7 +122,7 @@ rebuild-native: node_modules/.installed ## Rebuild native modules (node-pty) for
 
 # Run compiled CLI with trailing arguments (builds only if missing)
 mux: ## Run the compiled mux CLI (e.g., make mux server --port 3000)
-	@test -f dist/cli/index.js -a -f dist/cli/api.mjs || $(MAKE) build-main
+	@test -f dist/cli/index.js -a -f dist/cli/api.mjs -a -f dist/cli/tui.mjs || $(MAKE) build-main
 	@node dist/cli/index.js $(filter-out $@,$(MAKECMDGOALS))
 
 # Catch unknown targets passed to mux (prevents "No rule to make target" errors)
@@ -195,7 +198,7 @@ start: node_modules/.installed build-main build-preload build-static ## Build an
 ## Build targets (can run in parallel)
 build: node_modules/.installed src/version.ts build-renderer build-main build-preload build-icons build-static ## Build all targets
 
-build-main: node_modules/.installed dist/cli/index.js dist/cli/api.mjs ## Build main process
+build-main: node_modules/.installed dist/cli/index.js dist/cli/api.mjs dist/cli/tui.mjs ## Build main process
 
 BUILTIN_AGENTS_GENERATED := src/node/services/agentDefinitions/builtInAgentContent.generated.ts
 BUILTIN_SKILLS_GENERATED := src/node/services/agentSkills/builtInSkillContent.generated.ts
@@ -215,6 +218,11 @@ dist/cli/index.js: src/cli/index.ts src/desktop/main.ts src/cli/server.ts src/ve
 dist/cli/api.mjs: src/cli/api.ts src/cli/proxifyOrpc.ts $(TS_SOURCES)
 	@echo "Building API CLI (ESM)..."
 	@bun x esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS)
+
+# Build TUI CLI as ESM bundle (Ink requires ESM)
+dist/cli/tui.mjs: src/cli/tui.tsx $(TS_SOURCES)
+	@echo "Building TUI CLI (ESM)..."
+	@bun x esbuild src/cli/tui.tsx $(ESBUILD_TUI_FLAGS)
 
 build-preload: node_modules/.installed dist/preload.js ## Build preload script
 
