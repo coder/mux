@@ -193,7 +193,7 @@ describe("ProjectService", () => {
       expect(loadedConfig.defaultProjectCloneDir).toBeUndefined();
     });
 
-    it("normalizes owner/repo shorthand to a valid GitHub remote URL", async () => {
+    it("normalizes owner/repo shorthand to GitHub HTTPS when SSH agent is unavailable", async () => {
       if (process.platform === "win32") {
         // This test relies on a POSIX shell shim named "git" in PATH.
         return;
@@ -242,9 +242,7 @@ exit 1
         expect(loggedArgs[0]).toBe("clone");
         expect(loggedArgs[1]).toBe("--progress");
         expect(loggedArgs[2]).toBe("--");
-        expect(loggedArgs[3]).toMatch(
-          /^((https:\/\/github\.com\/owner\/repo\.git)|(git@github\.com:owner\/repo\.git))$/
-        );
+        expect(loggedArgs[3]).toBe("https://github.com/owner/repo.git");
         expect(path.dirname(loggedArgs[4])).toBe(path.resolve(cloneParentDir));
         expect(path.basename(loggedArgs[4])).toMatch(/^repo\.mux-clone-[a-f0-9]{12}$/);
       } finally {
