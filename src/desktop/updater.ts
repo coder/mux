@@ -163,7 +163,12 @@ export class UpdaterService {
         return;
       }
 
-      const phase = this.updateStatus.type === "downloading" ? "download" : "check";
+      const phase =
+        this.updateStatus.type === "downloading"
+          ? "download"
+          : this.updateStatus.type === "downloaded"
+            ? "install"
+            : "check";
       log.error("Update error:", error);
       this.updateStatus = { type: "error", phase, message: error.message };
       this.notifyRenderer();
@@ -194,6 +199,11 @@ export class UpdaterService {
     // and we don't want it clobbering active states.
     const dominated = ["checking", "downloading", "downloaded"] as const;
     if ((dominated as readonly string[]).includes(this.updateStatus.type)) {
+      // If a check is already in flight and the user explicitly triggers a manual
+      // check, upgrade the source so transient failures surface to the user.
+      if (this.updateStatus.type === "checking" && options?.source === "manual") {
+        this.checkSource = "manual";
+      }
       log.debug(`checkForUpdates() skipped — current state: ${this.updateStatus.type}`);
       return;
     }

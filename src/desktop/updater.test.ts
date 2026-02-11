@@ -423,6 +423,19 @@ describe("UpdaterService", () => {
       });
     });
 
+    it("should map errors during downloaded state to install phase", () => {
+      mockAutoUpdater.emit("update-available", { version: "2.0.0" });
+      mockAutoUpdater.emit("update-downloaded", { version: "2.0.0" });
+
+      mockAutoUpdater.emit("error", new Error("Install failed while preparing restart"));
+
+      expect(statusUpdates[statusUpdates.length - 1]).toEqual({
+        type: "error",
+        phase: "install",
+        message: "Install failed while preparing restart",
+      });
+    });
+
     it("should silently back off when promise rejects with transient error", async () => {
       mockAutoUpdater.checkForUpdates.mockImplementation(() => {
         return Promise.reject(new Error("HttpError: 404 Not Found"));
@@ -547,6 +560,27 @@ describe("UpdaterService", () => {
       service.checkForUpdates();
       service.checkForUpdates(); // should be skipped
       expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+    });
+
+    it("should upgrade check source to manual when check is already in-flight", () => {
+      mockAutoUpdater.checkForUpdates.mockReturnValue(
+        new Promise(() => {
+          // Never resolves
+        })
+      );
+
+      service.checkForUpdates({ source: "auto" });
+      service.checkForUpdates({ source: "manual" }); // skipped, but should upgrade source
+
+      expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+
+      mockAutoUpdater.emit("error", new Error("HttpError: 404 Not Found"));
+
+      expect(statusUpdates[statusUpdates.length - 1]).toEqual({
+        type: "error",
+        phase: "check",
+        message: "HttpError: 404 Not Found",
+      });
     });
 
     it("should skip check when downloading", async () => {
