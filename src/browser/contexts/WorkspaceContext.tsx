@@ -52,6 +52,7 @@ import { getProjectRouteId } from "@/common/utils/projectRouteId";
 import { resolveProjectPathFromProjectQuery } from "@/common/utils/deepLink";
 import { shouldApplyWorkspaceAiSettingsFromBackend } from "@/browser/utils/workspaceAiSettingsSync";
 import { isAbortError } from "@/browser/utils/isAbortError";
+import { findAdjacentWorkspaceId } from "@/browser/utils/ui/workspaceDomNav";
 import { useRouter } from "@/browser/contexts/RouterContext";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
@@ -993,12 +994,25 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           // If the currently-selected workspace is being archived, navigate away *before*
           // removing it from the active metadata map. Otherwise we can briefly render the
           // welcome screen while still on `/workspace/:id`.
+          //
+          // Prefer the next workspace in sidebar DOM order (like Ctrl+J) so the user
+          // stays in flow; fall back to the project page when no siblings remain.
           if (meta !== null && isNowArchived) {
             const currentSelection = selectedWorkspaceRef.current;
             if (currentSelection?.workspaceId === event.workspaceId) {
-              selectedWorkspaceRef.current = null;
-              updatePersistedState(SELECTED_WORKSPACE_KEY, null);
-              navigateToProject(meta.projectPath);
+              const nextId = findAdjacentWorkspaceId(event.workspaceId);
+              const nextMeta = nextId ? workspaceMetadataRef.current.get(nextId) : null;
+
+              if (nextMeta) {
+                const nextSelection = toWorkspaceSelection(nextMeta);
+                selectedWorkspaceRef.current = nextSelection;
+                updatePersistedState(SELECTED_WORKSPACE_KEY, nextSelection);
+                navigateToWorkspace(nextMeta.id);
+              } else {
+                selectedWorkspaceRef.current = null;
+                updatePersistedState(SELECTED_WORKSPACE_KEY, null);
+                navigateToProject(meta.projectPath);
+              }
             }
           }
 
@@ -1091,7 +1105,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     return () => {
       controller.abort();
     };
-  }, [navigateToProject, refreshProjects, setSelectedWorkspace, setWorkspaceMetadata, api]);
+  }, [
+    navigateToProject,
+    navigateToWorkspace,
+    refreshProjects,
+    setSelectedWorkspace,
+    setWorkspaceMetadata,
+    api,
+  ]);
 
   const createWorkspace = useCallback(
     async (

@@ -20,6 +20,7 @@ import { useResizableSidebar } from "./hooks/useResizableSidebar";
 import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
 import { handleLayoutSlotHotkeys } from "./utils/ui/layoutSlotHotkeys";
 import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
+import { getVisibleWorkspaceIds } from "./utils/ui/workspaceDomNav";
 import { useResumeManager } from "./hooks/useResumeManager";
 import { useUnreadTracking } from "./hooks/useUnreadTracking";
 import { useWorkspaceStoreRaw, useWorkspaceRecency } from "./stores/WorkspaceStore";
@@ -296,11 +297,8 @@ function AppInner() {
 
   const handleNavigateWorkspace = useCallback(
     (direction: "next" | "prev") => {
-      // Read actual rendered workspace order from DOM - impossible to drift from sidebar
-      // Use compound selector to target only row elements (not archive buttons or edit inputs)
-      const els = document.querySelectorAll("[data-workspace-id][data-workspace-path]");
-      const visibleIds = Array.from(els).map((el) => el.getAttribute("data-workspace-id")!);
-
+      // Read actual rendered workspace order from DOM — impossible to drift from sidebar.
+      const visibleIds = getVisibleWorkspaceIds();
       if (visibleIds.length === 0) return;
 
       const currentIndex = selectedWorkspace

@@ -110,8 +110,117 @@ describeIntegration("Workspace Archive (UI)", () => {
     await cleanupSharedRepo();
   });
 
-  test("archiving the active workspace navigates to project page, not home", async () => {
-    // Use withSharedWorkspace to get a properly initialized workspace
+  test("archiving the active workspace navigates to the next sibling workspace", async () => {
+    // When a project has multiple workspaces, archiving the active one should
+    // navigate to the next workspace in DOM order (like Ctrl+J), not the project page.
+    const env = getSharedEnv();
+    const projectPath = getSharedRepoPath();
+    const trunkBranch = await detectDefaultTrunkBranch(projectPath);
+
+    const firstBranch = generateBranchName("test-archive-nav-first");
+    const secondBranch = generateBranchName("test-archive-nav-second");
+
+    const firstResult = await env.orpc.workspace.create({
+      projectPath,
+      branchName: firstBranch,
+      trunkBranch,
+    });
+    if (!firstResult.success) throw new Error(firstResult.error);
+    const firstWorkspace = firstResult.metadata;
+
+    const secondResult = await env.orpc.workspace.create({
+      projectPath,
+      branchName: secondBranch,
+      trunkBranch,
+    });
+    if (!secondResult.success) throw new Error(secondResult.error);
+    const secondWorkspace = secondResult.metadata;
+    const firstDisplayTitle = firstWorkspace.title ?? firstWorkspace.name;
+
+    const cleanupDom = installDom();
+    const view = renderApp({
+      apiClient: env.orpc,
+      metadata: firstWorkspace,
+    });
+
+    try {
+      // Navigate to the first workspace (make it active)
+      await setupWorkspaceView(view, firstWorkspace, firstWorkspace.id);
+
+      // Verify second workspace is also visible in sidebar
+      await waitFor(
+        () => {
+          const el = view.container.querySelector(`[data-workspace-id="${secondWorkspace.id}"]`);
+          if (!el) throw new Error("Second workspace not in sidebar");
+        },
+        { timeout: 5_000 }
+      );
+
+      // Archive the first workspace via sidebar menu
+      const menuButton = await waitFor(
+        () => {
+          const btn = view.container.querySelector(
+            `[aria-label="Workspace actions for ${firstDisplayTitle}"]`
+          ) as HTMLElement;
+          if (!btn) throw new Error("Workspace actions menu button not found");
+          return btn;
+        },
+        { timeout: 5_000 }
+      );
+      fireEvent.click(menuButton);
+
+      const archiveButton = await waitFor(
+        () => {
+          const buttons = Array.from(document.querySelectorAll("button"));
+          const archiveBtn = buttons.find((b) => b.textContent?.includes("Archive chat"));
+          if (!archiveBtn) throw new Error("Archive button not found in menu");
+          return archiveBtn as HTMLElement;
+        },
+        { timeout: 5_000 }
+      );
+      fireEvent.click(archiveButton);
+
+      // Wait for the archived workspace to disappear from sidebar
+      await waitFor(
+        () => {
+          const wsEl = view.container.querySelector(`[data-workspace-id="${firstWorkspace.id}"]`);
+          if (wsEl) throw new Error("Archived workspace still in sidebar");
+        },
+        { timeout: 5_000 }
+      );
+
+      // KEY ASSERTION: Should navigate to the second workspace, NOT the project page.
+      // The second workspace should now be the active one (its chat view is shown).
+      await waitFor(
+        () => {
+          // The URL should point to the second workspace
+          if (!window.location.pathname.includes(secondWorkspace.id)) {
+            throw new Error(
+              `Expected to navigate to second workspace (${secondWorkspace.id}), ` +
+                `but URL is ${window.location.pathname}`
+            );
+          }
+        },
+        { timeout: 5_000 }
+      );
+
+      // Should NOT be on project page (no creation textarea as main content)
+      const homeScreen = view.container.querySelector('[data-testid="home-screen"]');
+      expect(homeScreen).toBeNull();
+    } finally {
+      await env.orpc.workspace
+        .remove({ workspaceId: firstWorkspace.id, options: { force: true } })
+        .catch(() => {});
+      await env.orpc.workspace
+        .remove({ workspaceId: secondWorkspace.id, options: { force: true } })
+        .catch(() => {});
+      await cleanupView(view, cleanupDom);
+    }
+  }, 60_000);
+
+  test("archiving the only workspace in a project falls back to project page", async () => {
+    // When there are no sibling workspaces to navigate to, archiving should
+    // fall back to the project page (not home).
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
       const projectPath = metadata.projectPath;
       const displayTitle = metadata.title ?? metadata.name;
@@ -178,6 +287,7 @@ describeIntegration("Workspace Archive (UI)", () => {
         expect(homeScreen).toBeNull();
 
         // Should be on the project page (has creation textarea for new workspace)
+        // When there are no other workspaces, archiving falls back to the project page.
         await waitFor(
           () => {
             const creationTextarea = view.container.querySelector("textarea");
