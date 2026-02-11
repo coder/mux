@@ -7,6 +7,7 @@
  */
 
 import type { MuxMessage } from "@/common/types/message";
+import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
 import type { ChatStats, TokenConsumer } from "@/common/types/chatStats";
 import {
   getTokenizerForModel,
@@ -127,19 +128,6 @@ const FILE_PATH_TOOLS = new Set([
   "file_edit_replace_lines",
 ]);
 
-function extractFilePathValue(input: unknown): string | undefined {
-  if (typeof input !== "object" || input === null) {
-    return undefined;
-  }
-
-  const record = input as Record<string, unknown>;
-  if (typeof record.path === "string") {
-    return record.path;
-  }
-
-  return typeof record.file_path === "string" ? record.file_path : undefined;
-}
-
 /**
  * Extracts file path from tool input for file operations.
  */
@@ -148,7 +136,7 @@ function extractFilePathFromToolInput(toolName: string, input: unknown): string 
     return undefined;
   }
 
-  return extractFilePathValue(input);
+  return extractToolFilePath(input);
 }
 
 /**

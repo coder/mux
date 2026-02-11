@@ -3,23 +3,7 @@ import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 import { FILE_EDIT_TOOL_NAMES } from "@/common/types/tools";
 import { MAX_EDITED_FILES, MAX_FILE_CONTENT_SIZE } from "@/common/constants/attachments";
 import { applyPatch, createPatch, parsePatch } from "diff";
-
-/**
- * Input shape for file edit tools.
- * Current calls use `path`; older transcripts may still contain `file_path`.
- */
-interface FileEditToolInput {
-  path?: string;
-  file_path?: string;
-}
-
-function extractFilePath(input: FileEditToolInput | undefined): string | undefined {
-  if (typeof input?.path === "string") {
-    return input.path;
-  }
-
-  return typeof input?.file_path === "string" ? input.file_path : undefined;
-}
+import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
 
 /**
  * Output shape for file edit tools.
@@ -69,8 +53,7 @@ export function extractEditedFilePaths(messages: MuxMessage[]): string[] {
       if (!output?.success) continue;
 
       // Extract file path from input
-      const input = part.input as FileEditToolInput | undefined;
-      const filePath = extractFilePath(input);
+      const filePath = extractToolFilePath(part.input);
       if (filePath && !seen.has(filePath)) {
         seen.add(filePath);
         editedFiles.push(filePath);
@@ -214,8 +197,7 @@ export function extractEditedFileDiffs(messages: MuxMessage[]): FileEditDiff[] {
       const diff = uiOnly?.file_edit?.diff ?? output.diff;
       if (!diff) continue;
 
-      const input = part.input as FileEditToolInput | undefined;
-      const filePath = extractFilePath(input);
+      const filePath = extractToolFilePath(part.input);
       if (!filePath) continue;
 
       // Add diff to this file's list

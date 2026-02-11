@@ -1,5 +1,6 @@
 import React from "react";
 import { FileIcon } from "@/browser/components/FileIcon";
+import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
 import type { FileReadToolArgs, FileReadToolResult } from "@/common/types/tools";
 import {
   ToolContainer,
@@ -70,9 +71,7 @@ export const FileReadToolCall: React.FC<FileReadToolCallProps> = ({
 }) => {
   const { expanded, toggleExpanded } = useToolExpansion();
 
-  // Support canonical (path) and legacy (file_path / filePath) property names for backwards compat
-  const legacyArgs = args as { file_path?: string; filePath?: string };
-  const filePath = args.path ?? legacyArgs.file_path ?? legacyArgs.filePath ?? "";
+  const filePath = extractToolFilePath(args) ?? "";
 
   // Parse the file content to extract line numbers and actual content
   const parsedContent = result?.success && result.content ? parseFileContent(result.content) : null;
