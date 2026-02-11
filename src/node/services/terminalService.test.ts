@@ -7,6 +7,8 @@ import type { TerminalCreateParams } from "@/common/types/terminal";
 import * as childProcess from "child_process";
 import * as fs from "fs/promises";
 
+const getEffectiveSecretsMock = mock(() => [{ key: "TEST_SECRET", value: "secret-value" }]);
+
 // Mock dependencies
 const mockConfig = {
   getAllWorkspaceMetadata: mock(() =>
@@ -19,6 +21,7 @@ const mockConfig = {
       },
     ])
   ),
+  getEffectiveSecrets: getEffectiveSecretsMock,
   srcDir: "/tmp",
 } as unknown as Config;
 
@@ -28,7 +31,9 @@ const createSessionMock = mock(
     _runtime: unknown,
     _path: string,
     onData: (d: string) => void,
-    _onExit: (code: number) => void
+    _onExit: (code: number) => void,
+    _runtimeConfig?: unknown,
+    _options?: { env?: NodeJS.ProcessEnv }
   ) => {
     // Simulate immediate data emission to test buffering
     onData("initial data");
@@ -75,6 +80,7 @@ describe("TerminalService", () => {
     service = new TerminalService(mockConfig, mockPTYService);
     service.setTerminalWindowManager(mockWindowManager);
     createSessionMock.mockClear();
+    getEffectiveSecretsMock.mockClear();
     resizeMock.mockClear();
     sendInputMock.mockClear();
     openTerminalWindowMock.mockClear();
@@ -90,6 +96,22 @@ describe("TerminalService", () => {
     expect(session.sessionId).toBe("session-1");
     expect(session.workspaceId).toBe("ws-1");
     expect(createSessionMock).toHaveBeenCalled();
+    expect(getEffectiveSecretsMock).toHaveBeenCalledWith("/tmp/project");
+
+    const call = createSessionMock.mock.calls[0];
+    if (!call) {
+      throw new Error("Expected createSession to be called");
+    }
+
+    const options = call[6] as { env?: NodeJS.ProcessEnv } | undefined;
+    if (!options?.env) {
+      throw new Error("Expected createSession to receive terminal env");
+    }
+
+    expect(options.env.MUX_PROJECT_PATH).toBe("/tmp/project");
+    expect(options.env.MUX_RUNTIME).toBe("worktree");
+    expect(options.env.MUX_WORKSPACE_NAME).toBe("main");
+    expect(options.env.TEST_SECRET).toBe("secret-value");
   });
 
   it("should handle resizing", () => {
