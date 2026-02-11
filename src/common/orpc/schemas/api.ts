@@ -820,6 +820,10 @@ export const workspace = {
     input: z.object({ workspaceId: z.string(), title: z.string() }),
     output: ResultSchema(z.void(), z.string()),
   },
+  regenerateTitle: {
+    input: z.object({ workspaceId: z.string() }),
+    output: ResultSchema(z.object({ title: z.string() }), z.string()),
+  },
   updateAgentAISettings: {
     input: z.object({
       workspaceId: z.string(),

@@ -273,6 +273,12 @@ export const KEYBINDS = {
   /** Create new workspace for current project */
   NEW_WORKSPACE: { key: "n", ctrl: true },
 
+  /** Rename current workspace (inline edit) */
+  RENAME_WORKSPACE: { key: "F2" },
+
+  /** Regenerate title for current workspace via AI */
+  REGENERATE_WORKSPACE_NAME: { key: "F2", shift: true },
+
   /** Archive current workspace */
   // macOS: Cmd+Shift+Backspace, Win/Linux: Ctrl+Shift+Backspace
   ARCHIVE_WORKSPACE: { key: "Backspace", ctrl: true, shift: true, macCtrlBehavior: "command" },

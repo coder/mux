@@ -266,6 +266,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         id: CommandIds.workspaceRename(),
         title: "Rename Current Workspace…",
         subtitle: workspaceDisplayName,
+        shortcutHint: formatKeybind(KEYBINDS.RENAME_WORKSPACE),
         section: section.workspaces,
         run: () => undefined,
         prompt: {
@@ -285,6 +286,16 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           onSubmit: async (vals) => {
             await p.onRenameWorkspace(selected.workspaceId, vals.newName.trim());
           },
+        },
+      });
+      list.push({
+        id: CommandIds.workspaceRegenerateName(),
+        title: "Generate New Title for Current Workspace",
+        subtitle: workspaceDisplayName,
+        shortcutHint: formatKeybind(KEYBINDS.REGENERATE_WORKSPACE_NAME),
+        section: section.workspaces,
+        run: async () => {
+          await p.api?.workspace.regenerateTitle({ workspaceId: selected.workspaceId });
         },
       });
     }

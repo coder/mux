@@ -2066,6 +2066,58 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
+   * Regenerate the workspace title from its chat history using AI.
+   * Reads the first user message (and optional first assistant reply) as context,
+   * then calls generateWorkspaceIdentity and persists the result via updateTitle.
+   */
+  async regenerateTitle(workspaceId: string): Promise<Result<{ title: string }>> {
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+    if (!historyResult.success) {
+      return Err("Could not read workspace history");
+    }
+
+    const firstUserMsg = historyResult.data.find((m) => m.role === "user");
+    if (!firstUserMsg) {
+      return Err("No user messages in workspace history");
+    }
+
+    const userText =
+      firstUserMsg.parts
+        ?.filter((p) => p.type === "text")
+        .map((p) => p.text)
+        .join("\n") || "";
+
+    if (!userText) {
+      return Err("First user message has no text content");
+    }
+
+    // Use the first assistant reply for richer context (same pattern as autoGenerateTitle)
+    let assistantContext: string | undefined;
+    const firstAssistantMsg = historyResult.data.find((m) => m.role === "assistant");
+    if (firstAssistantMsg) {
+      assistantContext =
+        firstAssistantMsg.parts
+          ?.filter((p) => p.type === "text")
+          .map((p) => p.text)
+          .join("\n") ?? undefined;
+    }
+
+    const candidates: string[] = [...AUTO_NAME_PREFERRED_MODELS];
+    const result = await generateWorkspaceIdentity(
+      userText,
+      candidates,
+      this.aiService,
+      assistantContext
+    );
+    if (!result.success) {
+      return Err("Title generation failed");
+    }
+
+    await this.updateTitle(workspaceId, result.data.title);
+    return Ok({ title: result.data.title });
+  }
+
+  /**
    * Archive a workspace. Archived workspaces are hidden from the main sidebar
    * but can be viewed on the project page.
    *
