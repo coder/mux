@@ -176,45 +176,6 @@ export interface TypeValidationResult {
  * @returns Validation result with errors if any
  */
 
-/**
- * Check if a TS2339 diagnostic is for a property WRITE on an empty object literal.
- * Returns true only for patterns like `results.foo = x` where `results` is typed as `{}`.
- * Returns false for reads like `return results.foo` or `fn(results.foo)`.
- */
-function isEmptyObjectWriteError(d: ts.Diagnostic, sourceFile: ts.SourceFile): boolean {
-  if (d.code !== 2339 || d.start === undefined) return false;
-  const message = ts.flattenDiagnosticMessageText(d.messageText, "");
-  if (!message.includes("on type '{}'")) return false;
-
-  // Find the node at the error position and walk up to find context
-  const token = findTokenAtPosition(sourceFile, d.start);
-  if (!token) return false;
-
-  // Walk up to find PropertyAccessExpression containing this token
-  let propAccess: ts.PropertyAccessExpression | undefined;
-  let node: ts.Node = token;
-  while (node.parent) {
-    if (ts.isPropertyAccessExpression(node.parent)) {
-      propAccess = node.parent;
-      break;
-    }
-    node = node.parent;
-  }
-  if (!propAccess) return false;
-
-  // Check if this PropertyAccessExpression is on the left side of an assignment
-  const parent = propAccess.parent;
-  if (
-    ts.isBinaryExpression(parent) &&
-    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-    parent.left === propAccess
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
 /** Find the innermost token at a position in the source file */
 function findTokenAtPosition(sourceFile: ts.SourceFile, position: number): ts.Node | undefined {
   function find(node: ts.Node): ts.Node | undefined {
@@ -226,6 +187,207 @@ function findTokenAtPosition(sourceFile: ts.SourceFile, position: number): ts.No
     return child ?? node;
   }
   return find(sourceFile);
+}
+
+/**
+ * Walk up from a token to find the enclosing PropertyAccessExpression and its receiver.
+ * Returns undefined if no PropertyAccessExpression is found.
+ */
+function findPropertyAccessContext(
+  token: ts.Node
+): { propAccess: ts.PropertyAccessExpression; receiver: ts.Expression } | undefined {
+  let node: ts.Node = token;
+  while (node.parent) {
+    if (ts.isPropertyAccessExpression(node.parent)) {
+      return { propAccess: node.parent, receiver: node.parent.expression };
+    }
+    node = node.parent;
+  }
+  return undefined;
+}
+
+/**
+ * Check if a TS2339 diagnostic is for a property WRITE on an empty object literal.
+ * Returns true only for patterns like `results.foo = x` where `results` is typed as `{}`.
+ * Returns false for reads like `return results.foo` or `fn(results.foo)`.
+ */
+function isEmptyObjectWriteError(d: ts.Diagnostic, sourceFile: ts.SourceFile): boolean {
+  if (d.code !== 2339 || d.start === undefined) return false;
+  const message = ts.flattenDiagnosticMessageText(d.messageText, "");
+  if (!message.includes("on type '{}'")) return false;
+
+  const token = findTokenAtPosition(sourceFile, d.start);
+  if (!token) return false;
+
+  const ctx = findPropertyAccessContext(token);
+  if (!ctx) return false;
+
+  // Check if this PropertyAccessExpression is on the left side of an assignment
+  const parent = ctx.propAccess.parent;
+  return (
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    parent.left === ctx.propAccess
+  );
+}
+
+type DynamicBagFirstWritePosByContainer = ReadonlyMap<ts.Symbol, ReadonlyMap<ts.Node, number>>;
+
+function getEnclosingFunctionLikeContainer(node: ts.Node, sourceFile: ts.SourceFile): ts.Node {
+  let current: ts.Node | undefined = node;
+  while (current) {
+    if (ts.isFunctionLike(current)) return current;
+    current = current.parent;
+  }
+  return sourceFile;
+}
+
+/**
+ * Find "dynamic empty-object bags": declared as `const x = {}` (empty literal) and
+ * written to via element access (`x[key] = val`).
+ *
+ * Returns a map of bag Symbol → (function-like container → earliest bracket-write position).
+ *
+ * We track by Symbol (not identifier text) so shadowed variables don't leak
+ * bag-ness across scopes.
+ *
+ * Excludes `mux` to preserve shadowing detection.
+ */
+function findDynamicEmptyObjectBagFirstWritePosByContainer(
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker
+): Map<ts.Symbol, Map<ts.Node, number>> {
+  const emptyLiteralSymbols = new Set<ts.Symbol>();
+
+  function maybeAddEmptyLiteralSymbol(ident: ts.Identifier, decl: ts.VariableDeclaration): void {
+    if (ident.text === "mux") return;
+    const sym = checker.getSymbolAtLocation(ident);
+    if (!sym) return;
+
+    // Only treat immutable bindings as bags — `let` / `var` can be reassigned, which
+    // would make dot-notation reads unsafe to suppress.
+    const declList = decl.parent;
+    const isConst =
+      ts.isVariableDeclarationList(declList) && (declList.flags & ts.NodeFlags.Const) !== 0;
+    if (!isConst) return;
+
+    emptyLiteralSymbols.add(sym);
+  }
+
+  function collectCandidates(node: ts.Node): void {
+    // Detect `const x = {}`
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      ts.isObjectLiteralExpression(node.initializer) &&
+      node.initializer.properties.length === 0
+    ) {
+      maybeAddEmptyLiteralSymbol(node.name, node);
+    }
+    ts.forEachChild(node, collectCandidates);
+  }
+
+  collectCandidates(sourceFile);
+
+  const firstWritePosByContainer = new Map<ts.Symbol, Map<ts.Node, number>>();
+
+  function maybeRecordWrite(sym: ts.Symbol, container: ts.Node, writePos: number): void {
+    let containerMap = firstWritePosByContainer.get(sym);
+    if (!containerMap) {
+      containerMap = new Map<ts.Node, number>();
+      firstWritePosByContainer.set(sym, containerMap);
+    }
+
+    const prev = containerMap.get(container);
+    if (prev === undefined || writePos < prev) {
+      containerMap.set(container, writePos);
+    }
+  }
+
+  function collectWrites(node: ts.Node): void {
+    // Detect `x[key] = val`
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isElementAccessExpression(node.left) &&
+      ts.isIdentifier(node.left.expression)
+    ) {
+      const receiverIdent = node.left.expression;
+      if (receiverIdent.text !== "mux") {
+        const receiverSymbol = checker.getSymbolAtLocation(receiverIdent);
+        if (receiverSymbol && emptyLiteralSymbols.has(receiverSymbol)) {
+          const writeContainer = getEnclosingFunctionLikeContainer(node, sourceFile);
+
+          // Record the "write" position *after* the assignment has evaluated. JS evaluates the
+          // element-access base + index + RHS before applying the assignment, so using the node's
+          // start would incorrectly treat reads inside the assignment expression as "after" the
+          // write (e.g. `r["a"] = r.typo`).
+          maybeRecordWrite(receiverSymbol, writeContainer, node.right.getEnd());
+        }
+      }
+    }
+
+    ts.forEachChild(node, collectWrites);
+  }
+
+  collectWrites(sourceFile);
+  return firstWritePosByContainer;
+}
+
+/**
+ * Check if a TS2339 diagnostic is for a property READ on a dynamic empty-object bag.
+ * Only suppresses when:
+ * 1. The receiver resolves to a symbol in `dynamicBagFirstWritePosByContainer`
+ * 2. The diagnostic message indicates `on type '{}'`
+ * 3. The access is a read (not a write target like `=`, `+=`, `++`)
+ * 4. There's a preceding bracket write in the same function-like container
+ */
+function isDynamicBagReadError(
+  d: ts.Diagnostic,
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+  dynamicBagFirstWritePosByContainer: DynamicBagFirstWritePosByContainer
+): boolean {
+  if (d.code !== 2339 || d.start === undefined || dynamicBagFirstWritePosByContainer.size === 0) {
+    return false;
+  }
+  const message = ts.flattenDiagnosticMessageText(d.messageText, "");
+  if (!message.includes("on type '{}'")) return false;
+
+  const token = findTokenAtPosition(sourceFile, d.start);
+  if (!token) return false;
+
+  const ctx = findPropertyAccessContext(token);
+  if (!ctx) return false;
+
+  if (!ts.isIdentifier(ctx.receiver)) return false;
+
+  const receiverSymbol = checker.getSymbolAtLocation(ctx.receiver);
+  if (!receiverSymbol) return false;
+
+  const readContainer = getEnclosingFunctionLikeContainer(ctx.propAccess, sourceFile);
+  const firstWritePos = dynamicBagFirstWritePosByContainer.get(receiverSymbol)?.get(readContainer);
+  if (firstWritePos === undefined) return false;
+
+  // Don't suppress write targets — compound assignments (`+=`) and increment/decrement
+  // on unknown properties are real bugs, not dynamic-bag reads.
+  const parent = ctx.propAccess.parent;
+  if (ts.isBinaryExpression(parent) && parent.left === ctx.propAccess) {
+    // Simple assignment `x.foo = val` is already handled by isEmptyObjectWriteError.
+    // Compound assignments like `x.foo += 1` read first — don't suppress.
+    return parent.operatorToken.kind === ts.SyntaxKind.EqualsToken;
+  }
+  if (
+    (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+    (parent.operator === ts.SyntaxKind.PlusPlusToken ||
+      parent.operator === ts.SyntaxKind.MinusMinusToken)
+  ) {
+    return false;
+  }
+
+  const readPos = ctx.propAccess.getStart(sourceFile);
+  return firstWritePos < readPos;
 }
 
 /** Returns true if the type resolves to a non-tuple never[] (including unions). */
@@ -409,7 +571,19 @@ export function validateTypes(code: string, muxTypes: string): TypeValidationRes
   }
 
   const sourceFile = program.getSourceFile("agent.ts") ?? getSourceFile();
+  const checker = program.getTypeChecker();
   const diagnostics = ts.getPreEmitDiagnostics(program);
+
+  // Identify variables used as dynamic "bag" objects (empty literal + bracket writes).
+  // Dot-notation reads on these are suppressed since TS can't track dynamic properties.
+  // We track by Symbol so shadowed names don't leak bag-ness across scopes.
+  //
+  // Note: suppression is order-sensitive (write-before-read) and function-scope-sensitive:
+  // bracket writes only suppress dot reads in the same function-like container.
+  const dynamicBagFirstWritePosByContainer = findDynamicEmptyObjectBagFirstWritePosByContainer(
+    sourceFile,
+    checker
+  );
 
   // Filter to errors in our code only (not lib files)
   // Also filter console redeclaration warning (our minimal console conflicts with lib.dom)
@@ -420,8 +594,14 @@ export function validateTypes(code: string, muxTypes: string): TypeValidationRes
     // Allow dynamic property WRITES on empty object literals - Claude frequently uses
     // `const results = {}; results.foo = mux.file_read(...)` to collate parallel reads.
     // Only suppress when the property access is on the LEFT side of an assignment.
-    // Reads like `return results.typo` must still error.
     .filter((d) => !isEmptyObjectWriteError(d, sourceFile))
+    // Allow dot-notation READS on variables that are "dynamic bags" (empty literal + bracket
+    // writes). These are valid JS patterns like `r[key] = val; return r.key` that TS can't
+    // track. Does NOT suppress reads on plain `{}` without bracket writes (catches typos),
+    // union types containing `{}`, or `mux` shadowing.
+    .filter(
+      (d) => !isDynamicBagReadError(d, sourceFile, checker, dynamicBagFirstWritePosByContainer)
+    )
     .map((d) => {
       const message = ts.flattenDiagnosticMessageText(d.messageText, " ");
       // Extract line number if available
