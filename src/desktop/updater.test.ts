@@ -22,6 +22,7 @@ describe("UpdaterService", () => {
   let service: UpdaterService;
   let statusUpdates: UpdateStatus[];
   let originalDebugUpdater: string | undefined;
+  let originalDebugUpdaterFail: string | undefined;
 
   beforeEach(() => {
     // Reset mocks
@@ -30,9 +31,11 @@ describe("UpdaterService", () => {
     mockAutoUpdater.quitAndInstall.mockClear();
     mockAutoUpdater.removeAllListeners();
 
-    // Save and clear DEBUG_UPDATER to ensure clean test environment
+    // Save and clear debug updater env vars to ensure clean test environment
     originalDebugUpdater = process.env.DEBUG_UPDATER;
+    originalDebugUpdaterFail = process.env.DEBUG_UPDATER_FAIL;
     delete process.env.DEBUG_UPDATER;
+    delete process.env.DEBUG_UPDATER_FAIL;
     service = new UpdaterService();
 
     // Capture status updates via subscriber pattern (ORPC model)
@@ -41,11 +44,17 @@ describe("UpdaterService", () => {
   });
 
   afterEach(() => {
-    // Restore DEBUG_UPDATER
+    // Restore debug updater env vars
     if (originalDebugUpdater !== undefined) {
       process.env.DEBUG_UPDATER = originalDebugUpdater;
     } else {
       delete process.env.DEBUG_UPDATER;
+    }
+
+    if (originalDebugUpdaterFail !== undefined) {
+      process.env.DEBUG_UPDATER_FAIL = originalDebugUpdaterFail;
+    } else {
+      delete process.env.DEBUG_UPDATER_FAIL;
     }
   });
 
@@ -60,6 +69,69 @@ describe("UpdaterService", () => {
         throw new Error(`Expected available status, got: ${status.type}`);
       }
       expect(status.info.version).toBe("0.0.1");
+    });
+  });
+
+  describe("debug updater fail mode", () => {
+    it("should simulate check failure when DEBUG_UPDATER_FAIL=check", async () => {
+      process.env.DEBUG_UPDATER = "2.0.0";
+      process.env.DEBUG_UPDATER_FAIL = "check";
+      const debugService = new UpdaterService();
+
+      // Constructor should not surface available immediately when check is configured to fail.
+      expect(debugService.getStatus().type).not.toBe("available");
+
+      debugService.checkForUpdates({ source: "manual" });
+      await new Promise((resolve) => setTimeout(resolve, 600));
+
+      expect(debugService.getStatus()).toEqual({
+        type: "error",
+        phase: "check",
+        message: expect.stringContaining("Simulated check failure"),
+      });
+    });
+
+    it("should simulate download failure when DEBUG_UPDATER_FAIL=download", async () => {
+      process.env.DEBUG_UPDATER = "2.0.0";
+      process.env.DEBUG_UPDATER_FAIL = "download";
+      const debugService = new UpdaterService();
+
+      // Download failure should not affect the fake check/available state.
+      expect(debugService.getStatus().type).toBe("available");
+
+      await debugService.downloadUpdate();
+
+      expect(debugService.getStatus()).toEqual({
+        type: "error",
+        phase: "download",
+        message: expect.stringContaining("Simulated download failure"),
+      });
+    });
+
+    it("should simulate install failure when DEBUG_UPDATER_FAIL=install", async () => {
+      process.env.DEBUG_UPDATER = "2.0.0";
+      process.env.DEBUG_UPDATER_FAIL = "install";
+      const debugService = new UpdaterService();
+
+      // Reach downloaded state first through fake happy-path download.
+      await debugService.downloadUpdate();
+      expect(debugService.getStatus().type).toBe("downloaded");
+
+      debugService.installUpdate();
+
+      expect(debugService.getStatus()).toEqual({
+        type: "error",
+        phase: "install",
+        message: expect.stringContaining("Simulated install failure"),
+      });
+    });
+
+    it("should ignore DEBUG_UPDATER_FAIL without a fake DEBUG_UPDATER version", () => {
+      process.env.DEBUG_UPDATER = "1";
+      process.env.DEBUG_UPDATER_FAIL = "download";
+      const debugService = new UpdaterService();
+
+      expect(debugService.getStatus()).toEqual({ type: "idle" });
     });
   });
 

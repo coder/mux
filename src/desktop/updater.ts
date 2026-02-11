@@ -47,6 +47,7 @@ export class UpdaterService {
   private updateStatus: UpdateStatus = { type: "idle" };
   private checkTimeout: ReturnType<typeof setTimeout> | null = null;
   private readonly fakeVersion: string | undefined;
+  private readonly failPhase: "check" | "download" | "install" | undefined;
   private checkSource: "auto" | "manual" = "auto";
   private subscribers = new Set<(status: UpdateStatus) => void>();
 
@@ -55,9 +56,14 @@ export class UpdaterService {
     autoUpdater.autoDownload = false; // Wait for user confirmation
     autoUpdater.autoInstallOnAppQuit = true;
 
-    // Parse DEBUG_UPDATER for dev mode and optional fake version
-    const debugConfig = parseDebugUpdater(process.env.DEBUG_UPDATER);
+    // Parse DEBUG_UPDATER for dev mode and optional fake version/fail phase
+    const debugConfig = parseDebugUpdater(
+      process.env.DEBUG_UPDATER,
+      process.env.DEBUG_UPDATER_FAIL
+    );
     this.fakeVersion = debugConfig.fakeVersion;
+    // DEBUG_UPDATER_FAIL only applies to fake version flows.
+    this.failPhase = this.fakeVersion ? debugConfig.failPhase : undefined;
 
     if (debugConfig.enabled) {
       log.debug("Forcing dev update config (DEBUG_UPDATER is set)");
@@ -66,15 +72,24 @@ export class UpdaterService {
       if (this.fakeVersion) {
         log.debug(`DEBUG_UPDATER fake version enabled: ${this.fakeVersion}`);
 
+        if (this.failPhase) {
+          log.debug(`DEBUG_UPDATER_FAIL: will simulate ${this.failPhase} failure`);
+        }
+
         // Surface a pending update immediately in debug mode so the UI can
         // reliably exercise the "update available" state without waiting for
         // an explicit check action.
-        const version = this.fakeVersion;
-        const fakeInfo = { version } satisfies Partial<UpdateInfo> as UpdateInfo;
-        this.updateStatus = {
-          type: "available",
-          info: fakeInfo,
-        };
+        //
+        // When simulating check failures, keep the initial state as-is so
+        // checkForUpdates() can drive the phase-aware error state.
+        if (this.failPhase !== "check") {
+          const version = this.fakeVersion;
+          const fakeInfo = { version } satisfies Partial<UpdateInfo> as UpdateInfo;
+          this.updateStatus = {
+            type: "available",
+            info: fakeInfo,
+          };
+        }
       }
     }
 
@@ -195,9 +210,22 @@ export class UpdaterService {
       this.updateStatus = { type: "checking" };
       this.notifyRenderer();
 
-      // If fake version is set, immediately report it as available
+      // If fake version is set, simulate check completion or configured failure.
       if (this.fakeVersion) {
         log.debug(`Faking update available: ${this.fakeVersion}`);
+
+        if (this.failPhase === "check") {
+          setTimeout(() => {
+            this.updateStatus = {
+              type: "error",
+              phase: "check",
+              message: "Simulated check failure (DEBUG_UPDATER_FAIL)",
+            };
+            this.notifyRenderer();
+          }, 500);
+          return;
+        }
+
         const version = this.fakeVersion;
         setTimeout(() => {
           const fakeInfo = {
@@ -286,8 +314,25 @@ export class UpdaterService {
       this.updateStatus = { type: "downloading", percent: 0 };
       this.notifyRenderer();
 
+      if (this.failPhase === "download") {
+        // Simulate partial progress before a phase-aware failure.
+        for (let percent = 0; percent <= 40; percent += 10) {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          this.updateStatus = { type: "downloading", percent };
+          this.notifyRenderer();
+        }
+
+        this.updateStatus = {
+          type: "error",
+          phase: "download",
+          message: "Simulated download failure (DEBUG_UPDATER_FAIL)",
+        };
+        this.notifyRenderer();
+        return;
+      }
+
       // Simulate download progress
-      for (let percent = 0; percent <= 100; percent += 10) {
+      for (let percent = 10; percent <= 100; percent += 10) {
         await new Promise((resolve) => setTimeout(resolve, 200));
         this.updateStatus = { type: "downloading", percent };
         this.notifyRenderer();
@@ -321,8 +366,18 @@ export class UpdaterService {
       throw new Error("No update downloaded to install");
     }
 
-    // If using fake version, just log (can't actually restart with fake update)
+    // If using fake version, simulate install behavior without restarting.
     if (this.fakeVersion) {
+      if (this.failPhase === "install") {
+        this.updateStatus = {
+          type: "error",
+          phase: "install",
+          message: "Simulated install failure (DEBUG_UPDATER_FAIL)",
+        };
+        this.notifyRenderer();
+        return;
+      }
+
       log.debug(`Fake update install requested for ${this.fakeVersion} - would restart app here`);
       return;
     }
