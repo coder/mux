@@ -353,7 +353,6 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
       }
 
       abortControllerRef.current.abort();
-      abortControllerRef.current = null;
     }, []);
 
     useEffect(() => {
@@ -466,8 +465,10 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
         setError(`Failed to clone project: ${errorMessage}`);
         return false;
       } finally {
-        abortControllerRef.current = null;
-        setCreating(false);
+        if (abortControllerRef.current === controller) {
+          abortControllerRef.current = null;
+          setCreating(false);
+        }
       }
     }, [api, isCreating, props, repoUrl, reset, setCreating, trimmedCloneParentDir]);
 
