@@ -1589,7 +1589,10 @@ export const general = {
   },
   clearLogs: {
     input: z.void(),
-    output: z.object({ success: z.literal(true) }),
+    output: z.object({
+      success: z.boolean(),
+      error: z.string().nullish(),
+    }),
   },
   subscribeLogs: {
     input: z.object({

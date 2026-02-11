@@ -1286,7 +1286,12 @@ export const router = (authToken?: string) => {
         .output(schemas.general.clearLogs.output)
         .handler(() => {
           clearLogEntries();
-          clearLogFiles();
+          try {
+            clearLogFiles();
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            return { success: false, error: message };
+          }
           return { success: true };
         }),
       subscribeLogs: t

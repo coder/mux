@@ -94,8 +94,11 @@ export function OutputTab(_props: OutputTabProps) {
 
     api.general
       .clearLogs()
-      .then(() => {
+      .then((result) => {
         setEntries([]);
+        if (!result.success) {
+          console.warn("Log files could not be fully deleted:", result.error);
+        }
       })
       .catch((error) => {
         console.warn("Failed to delete logs:", error);

@@ -171,29 +171,24 @@ export function clearLogFiles(): void {
   const logsDir = getMuxLogsDir();
   const activeLogPath = path.join(logsDir, "mux.log");
 
-  try {
-    fs.mkdirSync(logsDir, { recursive: true });
+  fs.mkdirSync(logsDir, { recursive: true });
 
-    // Truncate (or create) the active log file while keeping the existing
-    // stream usable. Future writes continue appending from a clean slate.
-    const fd = fs.openSync(activeLogPath, "w");
-    fs.closeSync(fd);
+  // Truncate the active log. Throws on permission errors.
+  const fd = fs.openSync(activeLogPath, "w");
+  fs.closeSync(fd);
 
-    // Remove rotated history files as part of a full delete action.
-    for (let i = 1; i <= MAX_LOG_FILES; i++) {
-      const rotatedPath = path.join(logsDir, `mux.${i}.log`);
-      try {
-        fs.unlinkSync(rotatedPath);
-      } catch {
-        // file may not exist
-      }
+  // Remove rotated files — missing files are fine.
+  for (let i = 1; i <= MAX_LOG_FILES; i++) {
+    const rotatedPath = path.join(logsDir, `mux.${i}.log`);
+    try {
+      fs.unlinkSync(rotatedPath);
+    } catch {
+      // file may not exist
     }
-
-    logFilePath = activeLogPath;
-    logFileSize = 0;
-  } catch {
-    // Silent failure.
   }
+
+  logFilePath = activeLogPath;
+  logFileSize = 0;
 }
 
 export function closeLogFile(): void {
