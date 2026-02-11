@@ -72,14 +72,7 @@ export function CreateWorkspaceScreen(props: CreateWorkspaceScreenProps) {
   }, [api, dispatch, projectPath]);
 
   const navigateBack = () => {
-    dispatch({
-      type: "NAVIGATE",
-      screen: {
-        type: "workspaces",
-        projectPath,
-        projectName,
-      },
-    });
+    dispatch({ type: "SET_FOCUS", focus: "sidebar-workspaces" });
   };
 
   const createWorkspace = async (): Promise<void> => {
@@ -111,15 +104,27 @@ export function CreateWorkspaceScreen(props: CreateWorkspaceScreenProps) {
         return;
       }
 
+      const createdWorkspace = {
+        id: result.metadata.id,
+        name: result.metadata.name,
+        title: result.metadata.title,
+        projectPath: result.metadata.projectPath,
+        projectName: result.metadata.projectName,
+      };
+      const existingWorkspaces = props.state.workspaces.filter(
+        (workspace) => workspace.id !== createdWorkspace.id
+      );
+      const nextWorkspaces = [...existingWorkspaces, createdWorkspace];
+
+      dispatch({ type: "SET_WORKSPACES", workspaces: nextWorkspaces });
+      dispatch({ type: "SELECT_WORKSPACE", index: nextWorkspaces.length - 1 });
       dispatch({
-        type: "NAVIGATE",
-        screen: {
-          type: "chat",
-          workspaceId: result.metadata.id,
-          projectPath: result.metadata.projectPath,
-          projectName: result.metadata.projectName,
-        },
+        type: "OPEN_WORKSPACE",
+        workspaceId: createdWorkspace.id,
+        projectPath: createdWorkspace.projectPath,
+        projectName: createdWorkspace.projectName,
       });
+      dispatch({ type: "SET_FOCUS", focus: "chat" });
     } catch (error: unknown) {
       const message = `Failed to create workspace: ${toErrorMessage(error)}`;
       setLocalError(message);

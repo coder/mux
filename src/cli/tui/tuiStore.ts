@@ -10,12 +10,34 @@ function createInitialChatState(): ChatState {
   };
 }
 
+function clampIndex(index: number, length: number): number {
+  if (length <= 0) {
+    return 0;
+  }
+
+  if (index < 0) {
+    return 0;
+  }
+
+  if (index >= length) {
+    return length - 1;
+  }
+
+  return index;
+}
+
 export const initialChatState: ChatState = createInitialChatState();
 
 export const initialState: TuiState = {
-  screen: { type: "projects" },
+  focus: "sidebar-projects",
+  selectedProjectIndex: 0,
+  selectedWorkspaceIndex: 0,
   projects: [],
   workspaces: [],
+  workspaceActivity: {},
+  activeWorkspaceId: null,
+  activeProjectPath: null,
+  activeProjectName: null,
   chat: createInitialChatState(),
   loading: false,
   error: null,
@@ -30,23 +52,54 @@ function buildAssistantMessage(content: string): ChatMessage {
 
 export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
   switch (action.type) {
-    case "NAVIGATE": {
-      const isLeavingChat = state.screen.type === "chat" && action.screen.type !== "chat";
+    case "SET_FOCUS":
       return {
         ...state,
-        screen: action.screen,
-        chat: isLeavingChat ? createInitialChatState() : state.chat,
+        focus: action.focus,
       };
-    }
     case "SET_PROJECTS":
       return {
         ...state,
         projects: action.projects,
+        selectedProjectIndex: clampIndex(state.selectedProjectIndex, action.projects.length),
       };
     case "SET_WORKSPACES":
       return {
         ...state,
         workspaces: action.workspaces,
+        selectedWorkspaceIndex: clampIndex(state.selectedWorkspaceIndex, action.workspaces.length),
+      };
+    case "SET_WORKSPACE_ACTIVITY":
+      return {
+        ...state,
+        workspaceActivity: action.activity,
+      };
+    case "SELECT_PROJECT":
+      return {
+        ...state,
+        selectedProjectIndex: clampIndex(action.index, state.projects.length),
+        selectedWorkspaceIndex: 0,
+      };
+    case "SELECT_WORKSPACE":
+      return {
+        ...state,
+        selectedWorkspaceIndex: clampIndex(action.index, state.workspaces.length),
+      };
+    case "OPEN_WORKSPACE":
+      return {
+        ...state,
+        activeWorkspaceId: action.workspaceId,
+        activeProjectPath: action.projectPath,
+        activeProjectName: action.projectName,
+      };
+    case "CLOSE_WORKSPACE":
+      return {
+        ...state,
+        focus: "sidebar-workspaces",
+        activeWorkspaceId: null,
+        activeProjectPath: null,
+        activeProjectName: null,
+        chat: createInitialChatState(),
       };
     case "SET_LOADING":
       return {

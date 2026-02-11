@@ -4,16 +4,15 @@ import type { WorkspaceChatMessage } from "@/common/orpc/types";
 
 export type APIClient = RouterClient<AppRouter>;
 
-// Preserve a direct link to the shared chat message type for upcoming screen implementations.
 export type TuiWorkspaceChatMessage = WorkspaceChatMessage;
 
-// Navigation screens
-export type Screen =
-  | { type: "projects" }
-  | { type: "workspaces"; projectPath: string; projectName: string }
-  | { type: "chat"; workspaceId: string; projectPath: string; projectName: string }
-  | { type: "createProject" }
-  | { type: "createWorkspace"; projectPath: string; projectName: string };
+// Focus determines which pane consumes keyboard input.
+export type FocusArea =
+  | "sidebar-projects"
+  | "sidebar-workspaces"
+  | "chat"
+  | "create-project"
+  | "create-workspace";
 
 // Project metadata (from api.projects.list)
 export interface TuiProject {
@@ -28,6 +27,11 @@ export interface TuiWorkspace {
   title?: string;
   projectPath: string;
   projectName: string;
+}
+
+export interface WorkspaceActivity {
+  streaming: boolean;
+  recency: number;
 }
 
 // Chat state
@@ -57,19 +61,42 @@ export interface ToolCallSummary {
 
 // TUI global state
 export interface TuiState {
-  screen: Screen;
+  // Sidebar
+  focus: FocusArea;
+  selectedProjectIndex: number;
+  selectedWorkspaceIndex: number;
   projects: TuiProject[];
   workspaces: TuiWorkspace[];
+  workspaceActivity: Record<string, WorkspaceActivity>;
+
+  // Active workspace shown in the main panel
+  activeWorkspaceId: string | null;
+  activeProjectPath: string | null;
+  activeProjectName: string | null;
+
+  // Chat
   chat: ChatState;
+
+  // Status
   loading: boolean;
   error: string | null;
 }
 
 // Actions
 export type TuiAction =
-  | { type: "NAVIGATE"; screen: Screen }
+  | { type: "SET_FOCUS"; focus: FocusArea }
   | { type: "SET_PROJECTS"; projects: TuiProject[] }
   | { type: "SET_WORKSPACES"; workspaces: TuiWorkspace[] }
+  | { type: "SET_WORKSPACE_ACTIVITY"; activity: Record<string, WorkspaceActivity> }
+  | { type: "SELECT_PROJECT"; index: number }
+  | { type: "SELECT_WORKSPACE"; index: number }
+  | {
+      type: "OPEN_WORKSPACE";
+      workspaceId: string;
+      projectPath: string;
+      projectName: string;
+    }
+  | { type: "CLOSE_WORKSPACE" }
   | { type: "SET_LOADING"; loading: boolean }
   | { type: "SET_ERROR"; error: string | null }
   | { type: "CHAT_CAUGHT_UP" }

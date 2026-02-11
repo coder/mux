@@ -1,8 +1,9 @@
 import { useReducer } from "react";
-import { Text, useApp, useInput } from "ink";
-import { ProjectsScreen } from "@/cli/tui/screens/ProjectsScreen";
+import type { ReactNode } from "react";
+import { Box, Text, useApp, useInput } from "ink";
+import { FullScreenLayout } from "@/cli/tui/components/FullScreenLayout";
+import { Sidebar } from "@/cli/tui/components/Sidebar";
 import { CreateProjectScreen } from "@/cli/tui/screens/CreateProjectScreen";
-import { WorkspacesScreen } from "@/cli/tui/screens/WorkspacesScreen";
 import { CreateWorkspaceScreen } from "@/cli/tui/screens/CreateWorkspaceScreen";
 import { ChatScreen } from "@/cli/tui/screens/ChatScreen";
 import { initialState, tuiReducer } from "./tuiStore";
@@ -13,77 +14,113 @@ interface TuiAppProps {
   options: TuiOptions;
 }
 
+function clampIndex(index: number, length: number): number {
+  if (length <= 0) {
+    return 0;
+  }
+
+  if (index < 0) {
+    return 0;
+  }
+
+  if (index >= length) {
+    return length - 1;
+  }
+
+  return index;
+}
+
 export function TuiApp(props: TuiAppProps) {
   const { exit } = useApp();
   const [state, dispatch] = useReducer(tuiReducer, initialState);
 
+  const selectedProjectIndex = clampIndex(state.selectedProjectIndex, state.projects.length);
+  const selectedProject = state.projects[selectedProjectIndex] ?? null;
+
   // Global keybindings
   useInput((input, key) => {
-    if (input === "q" && state.screen.type !== "chat") {
+    if (input === "q" && state.focus !== "chat") {
       exit();
       return;
     }
 
-    if (!key.escape) {
+    if (!key.tab) {
       return;
     }
 
-    // Navigate back
-    if (state.screen.type === "workspaces") {
-      dispatch({ type: "NAVIGATE", screen: { type: "projects" } });
+    if (state.focus === "chat") {
+      dispatch({ type: "SET_FOCUS", focus: "sidebar-workspaces" });
       return;
     }
 
-    if (state.screen.type === "chat") {
-      dispatch({
-        type: "NAVIGATE",
-        screen: {
-          type: "workspaces",
-          projectPath: state.screen.projectPath,
-          projectName: state.screen.projectName,
-        },
-      });
+    if (state.focus === "sidebar-projects" || state.focus === "sidebar-workspaces") {
+      if (state.activeWorkspaceId) {
+        dispatch({ type: "SET_FOCUS", focus: "chat" });
+      }
+      return;
     }
-    // createProject / createWorkspace: back handled within those screens
+
+    if (state.focus === "create-project") {
+      dispatch({ type: "SET_FOCUS", focus: "sidebar-projects" });
+      return;
+    }
+
+    dispatch({ type: "SET_FOCUS", focus: "sidebar-workspaces" });
   });
 
-  const screen = state.screen;
-  switch (screen.type) {
-    case "projects":
-      return <ProjectsScreen api={props.api} state={state} dispatch={dispatch} />;
-    case "workspaces":
-      return (
-        <WorkspacesScreen
-          api={props.api}
-          state={state}
-          dispatch={dispatch}
-          projectPath={screen.projectPath}
-          projectName={screen.projectName}
-        />
-      );
-    case "chat":
-      return (
-        <ChatScreen
-          api={props.api}
-          state={state}
-          dispatch={dispatch}
-          workspaceId={screen.workspaceId}
-          options={props.options}
-        />
-      );
-    case "createProject":
-      return <CreateProjectScreen api={props.api} state={state} dispatch={dispatch} />;
-    case "createWorkspace":
-      return (
+  let mainPanel: ReactNode;
+  if (state.focus === "create-project") {
+    mainPanel = <CreateProjectScreen api={props.api} state={state} dispatch={dispatch} />;
+  } else if (state.focus === "create-workspace") {
+    if (selectedProject) {
+      mainPanel = (
         <CreateWorkspaceScreen
           api={props.api}
           state={state}
           dispatch={dispatch}
-          projectPath={screen.projectPath}
-          projectName={screen.projectName}
+          projectPath={selectedProject.path}
+          projectName={selectedProject.name}
         />
       );
-    default:
-      return <Text>Unknown screen</Text>;
+    } else {
+      mainPanel = (
+        <Box paddingLeft={1} paddingTop={1}>
+          <Text dimColor>Select a project before creating a workspace.</Text>
+        </Box>
+      );
+    }
+  } else if (state.activeWorkspaceId) {
+    const activeWorkspace = state.workspaces.find(
+      (workspace) => workspace.id === state.activeWorkspaceId
+    );
+    const workspaceLabel = activeWorkspace
+      ? activeWorkspace.title?.trim().length
+        ? activeWorkspace.title
+        : activeWorkspace.name
+      : state.activeWorkspaceId;
+
+    mainPanel = (
+      <ChatScreen
+        api={props.api}
+        state={state}
+        dispatch={dispatch}
+        workspaceId={state.activeWorkspaceId}
+        workspaceLabel={workspaceLabel}
+        options={props.options}
+      />
+    );
+  } else {
+    mainPanel = (
+      <Box paddingLeft={1} paddingTop={1}>
+        <Text dimColor>Select a workspace to start chatting</Text>
+      </Box>
+    );
   }
+
+  return (
+    <FullScreenLayout
+      sidebar={<Sidebar api={props.api} state={state} dispatch={dispatch} />}
+      main={mainPanel}
+    />
+  );
 }

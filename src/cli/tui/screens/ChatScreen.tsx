@@ -28,6 +28,7 @@ interface ChatScreenProps {
   state: TuiState;
   dispatch: React.Dispatch<TuiAction>;
   workspaceId: string;
+  workspaceLabel: string;
   options: TuiOptions;
 }
 
@@ -213,6 +214,7 @@ export function ChatScreen(props: ChatScreenProps) {
   const api = props.api;
   const dispatch = props.dispatch;
   const workspaceId = props.workspaceId;
+  const workspaceLabel = props.workspaceLabel;
   const options = props.options;
 
   useEffect(() => {
@@ -450,6 +452,10 @@ export function ChatScreen(props: ChatScreenProps) {
   };
 
   const handleInputSubmit = () => {
+    if (props.state.focus !== "chat") {
+      return;
+    }
+
     const trimmed = inputValue.trim();
     if (!trimmed) {
       return;
@@ -499,6 +505,15 @@ export function ChatScreen(props: ChatScreenProps) {
   };
 
   useInput((input, key) => {
+    if (props.state.focus !== "chat") {
+      return;
+    }
+
+    if (key.escape) {
+      dispatch({ type: "CLOSE_WORKSPACE" });
+      return;
+    }
+
     if (!(key.ctrl && input === "c")) {
       return;
     }
@@ -523,7 +538,7 @@ export function ChatScreen(props: ChatScreenProps) {
 
   return (
     <Box flexDirection="column">
-      <Text bold>Chat · {workspaceId}</Text>
+      <Text bold>Chat · {workspaceLabel}</Text>
       <Text dimColor>
         Model: {options.model} · Agent: {options.agentId} · Esc: back · Ctrl+C: interrupt
       </Text>
@@ -615,7 +630,7 @@ export function ChatScreen(props: ChatScreenProps) {
           onChange={setInputValue}
           onSubmit={handleInputSubmit}
           placeholder={pendingQuestion ? "Type your answer" : "Type a message"}
-          focus={!isSending && !isAnsweringQuestion}
+          focus={props.state.focus === "chat" && !isSending && !isAnsweringQuestion}
         />
       </Box>
 

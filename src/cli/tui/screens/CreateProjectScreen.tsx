@@ -13,6 +13,11 @@ function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function deriveProjectName(projectPath: string): string {
+  const segments = projectPath.split(/[\\/]/).filter(Boolean);
+  return segments[segments.length - 1] ?? projectPath;
+}
+
 export function CreateProjectScreen(props: CreateProjectScreenProps) {
   const [projectPath, setProjectPath] = useState("");
   const [isCreating, setIsCreating] = useState(false);
@@ -32,14 +37,27 @@ export function CreateProjectScreen(props: CreateProjectScreenProps) {
     try {
       const result = await props.api.projects.create({ projectPath: trimmedPath });
       if (!result.success) {
-        const message = typeof result.error === "string" ? result.error : "Failed to create project.";
+        const message =
+          typeof result.error === "string" ? result.error : "Failed to create project.";
         setLocalError(message);
         props.dispatch({ type: "SET_ERROR", error: message });
         return;
       }
 
+      const normalizedPath = result.data.normalizedPath;
+      const createdProject = {
+        path: normalizedPath,
+        name: deriveProjectName(normalizedPath),
+      };
+      const existingProjects = props.state.projects.filter(
+        (project) => project.path !== normalizedPath
+      );
+      const nextProjects = [...existingProjects, createdProject];
+
       setProjectPath("");
-      props.dispatch({ type: "NAVIGATE", screen: { type: "projects" } });
+      props.dispatch({ type: "SET_PROJECTS", projects: nextProjects });
+      props.dispatch({ type: "SELECT_PROJECT", index: nextProjects.length - 1 });
+      props.dispatch({ type: "SET_FOCUS", focus: "sidebar-projects" });
     } catch (error: unknown) {
       const message = `Failed to create project: ${toErrorMessage(error)}`;
       setLocalError(message);
@@ -54,7 +72,7 @@ export function CreateProjectScreen(props: CreateProjectScreenProps) {
       return;
     }
 
-    props.dispatch({ type: "NAVIGATE", screen: { type: "projects" } });
+    props.dispatch({ type: "SET_FOCUS", focus: "sidebar-projects" });
   });
 
   return (
