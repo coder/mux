@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Loader2, RefreshCw } from "lucide-react";
 import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import type { RetryState } from "@/browser/hooks/useResumeManager";
@@ -77,6 +77,10 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
   }, [autoRetry, workspaceState, lastError]);
 
   const [isManualRetryInFlight, setIsManualRetryInFlight] = useState(false);
+  // createManualRetryState clears retryState.lastError immediately.
+  // Keep showing the last error text while the manual retry is in flight to avoid
+  // the banner collapsing and re-expanding if the retry fails with the same error.
+  const lastErrorBeforeManualRetryRef = useRef<typeof lastError>(undefined);
 
   // Manual retry should acknowledge the click immediately, even before stream-start arrives.
   // Clear once retry enters auto-retry UI, stream starts, or a new error lands.
@@ -111,6 +115,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
   // Emits event to useResumeManager instead of calling resumeStream directly
   // This keeps all retry logic centralized in one place
   const handleManualRetry = () => {
+    lastErrorBeforeManualRetryRef.current = lastError;
     setIsManualRetryInFlight(true);
     enableAutoRetryPreference(props.workspaceId); // Re-enable auto-retry for next failure
 
@@ -144,9 +149,12 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
       : formatted.message;
   };
 
-  const details = lastError ? (
+  const displayedError =
+    lastError ?? (isManualRetryInFlight ? lastErrorBeforeManualRetryRef.current : undefined);
+
+  const details = displayedError ? (
     <div className="font-primary text-foreground/80 pl-8 text-[12px]">
-      <span className="text-warning font-semibold">Error:</span> {getErrorMessage(lastError)}
+      <span className="text-warning font-semibold">Error:</span> {getErrorMessage(displayedError)}
     </div>
   ) : null;
 
