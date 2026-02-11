@@ -8,7 +8,7 @@ import {
 } from "./useModelsFromSettings";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
-import { HIDDEN_MODELS_KEY } from "@/common/constants/storage";
+import { GATEWAY_ENABLED_KEY, HIDDEN_MODELS_KEY } from "@/common/constants/storage";
 
 function countOccurrences(haystack: string[], needle: string): number {
   return haystack.filter((v) => v === needle).length;
@@ -229,6 +229,29 @@ describe("useModelsFromSettings provider availability gating", () => {
     expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.SONNET.id);
 
     expect(result.current.models).toContain(KNOWN_MODELS.GPT.id);
+  });
+
+  test("keeps gateway-routable models visible when gateway is active", () => {
+    providersConfig = {
+      anthropic: { apiKeySet: false, isEnabled: true, isConfigured: false },
+      "mux-gateway": {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        couponCodeSet: true,
+      },
+    };
+
+    globalThis.window.localStorage.setItem(GATEWAY_ENABLED_KEY, JSON.stringify(true));
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.models).toContain(KNOWN_MODELS.OPUS.id);
+    expect(result.current.models).toContain(KNOWN_MODELS.SONNET.id);
+    expect(result.current.models).toContain(KNOWN_MODELS.HAIKU.id);
+
+    expect(result.current.hiddenModelsForSelector).not.toContain(KNOWN_MODELS.OPUS.id);
+    expect(result.current.hiddenModelsForSelector).not.toContain(KNOWN_MODELS.SONNET.id);
   });
 
   test("hides models from disabled providers", () => {

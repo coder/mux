@@ -9,12 +9,16 @@ import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useProvidersConfig } from "./useProvidersConfig";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
-import { migrateGatewayModel } from "./useGatewayModels";
+import { isProviderSupported, migrateGatewayModel } from "./useGatewayModels";
 import { isValidProvider } from "@/common/constants/providers";
 import { isModelAllowedByPolicy } from "@/browser/utils/policyUi";
 import { getModelProvider } from "@/common/utils/ai/models";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
-import { DEFAULT_MODEL_KEY, HIDDEN_MODELS_KEY } from "@/common/constants/storage";
+import {
+  DEFAULT_MODEL_KEY,
+  GATEWAY_ENABLED_KEY,
+  HIDDEN_MODELS_KEY,
+} from "@/common/constants/storage";
 
 const BUILT_IN_MODELS: string[] = Object.values(KNOWN_MODELS).map((m) => m.id);
 const BUILT_IN_MODEL_SET = new Set<string>(BUILT_IN_MODELS);
@@ -151,6 +155,11 @@ export function useModelsFromSettings() {
     listener: true,
   });
 
+  const [gatewayEnabled] = usePersistedState<boolean>(GATEWAY_ENABLED_KEY, true, {
+    listener: true,
+  });
+  const gatewayActive = config?.["mux-gateway"]?.couponCodeSet === true && gatewayEnabled;
+
   const customModels = useMemo(() => {
     const next = filterHiddenModels(getCustomModels(config), hiddenModels);
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
@@ -173,11 +182,16 @@ export function useModelsFromSettings() {
       }
 
       const provider = getModelProvider(modelId);
-      return provider !== "" && !isProviderAvailable(config, provider);
+      if (provider === "" || isProviderAvailable(config, provider)) {
+        return false;
+      }
+
+      // Keep gateway-routable models visible in the selector even when native provider is unavailable.
+      return !(gatewayActive && isProviderSupported(modelId));
     });
 
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
-  }, [config, hiddenModels, effectivePolicy]);
+  }, [config, hiddenModels, effectivePolicy, gatewayActive]);
 
   const hiddenModelsForSelector = useMemo(
     () => dedupeKeepFirst([...hiddenModels, ...providerHiddenModels]),
@@ -192,7 +206,14 @@ export function useModelsFromSettings() {
     const providerFiltered =
       config == null
         ? suggested
-        : suggested.filter((modelId) => isProviderAvailable(config, getModelProvider(modelId)));
+        : suggested.filter((modelId) => {
+            if (isProviderAvailable(config, getModelProvider(modelId))) {
+              return true;
+            }
+
+            // Keep models routable through Mux Gateway even if native provider is unavailable.
+            return gatewayActive && isProviderSupported(modelId);
+          });
 
     if (config == null) {
       return effectivePolicy
@@ -224,7 +245,7 @@ export function useModelsFromSettings() {
     });
 
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
-  }, [config, hiddenModels, effectivePolicy, openaiApiKeySet, codexOauthSet]);
+  }, [config, hiddenModels, effectivePolicy, gatewayActive, openaiApiKeySet, codexOauthSet]);
 
   /**
    * If a model is selected that isn't built-in, persist it as a provider custom model.
