@@ -1,6 +1,9 @@
 import { EventEmitter } from "events";
 import { spawn } from "child_process";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { secretsToRecord } from "@/common/types/secrets";
 import type { Config } from "@/node/config";
+import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import type { PTYService } from "@/node/services/ptyService";
 import type { TerminalWindowManager } from "@/desktop/terminalWindowManager";
 import type {
@@ -96,6 +99,24 @@ export class TerminalService {
         workspaceMetadata.name
       );
 
+      // Keep integrated terminal context aligned with the bash tool for stable workspace metadata.
+      // We intentionally skip dynamic values (like cost/model) because long-lived shells would go stale.
+      const runtimeType = getRuntimeType(workspaceMetadata.runtimeConfig);
+      const shouldInjectLocalEnv = runtimeType === "local" || runtimeType === "worktree";
+      const muxEnv = shouldInjectLocalEnv
+        ? getMuxEnv(workspaceMetadata.projectPath, runtimeType, workspaceMetadata.name)
+        : undefined;
+
+      // Secrets are local/worktree only. Remote/docker-style transports would expose env via command args
+      // unless we add a dedicated secure propagation path.
+      const secrets =
+        shouldInjectLocalEnv && workspaceMetadata.id !== MUX_HELP_CHAT_WORKSPACE_ID
+          ? secretsToRecord(this.config.getEffectiveSecrets(workspaceMetadata.projectPath))
+          : {};
+
+      // Any process launched from this terminal inherits these variables.
+      const terminalEnv = muxEnv ? { ...muxEnv, ...secrets } : undefined;
+
       // 4. Setup emitters and buffer
       // We don't know the sessionId yet (PTYService generates it), but PTYService uses a callback.
       // We need to capture the sessionId.
@@ -135,7 +156,8 @@ export class TerminalService {
         workspacePath,
         onData,
         onExit,
-        workspaceMetadata.runtimeConfig
+        workspaceMetadata.runtimeConfig,
+        { env: terminalEnv }
       );
 
       tempSessionId = session.sessionId;

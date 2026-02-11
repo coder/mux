@@ -39,6 +39,10 @@ interface SessionData {
   onExit: (exitCode: number) => void;
 }
 
+interface CreateSessionOptions {
+  env?: NodeJS.ProcessEnv;
+}
+
 /**
  * Create a data handler that buffers incomplete escape sequences
  */
@@ -86,7 +90,8 @@ export class PTYService {
     workspacePath: string,
     onData: (data: string) => void,
     onExit: (exitCode: number) => void,
-    runtimeConfig?: RuntimeConfig
+    runtimeConfig?: RuntimeConfig,
+    options?: CreateSessionOptions
   ): Promise<TerminalSession> {
     // Include a random suffix to avoid collisions when creating multiple sessions quickly.
     // Collisions can cause two PTYs to appear "merged" under one sessionId.
@@ -154,6 +159,7 @@ export class PTYService {
         cols: params.cols,
         rows: params.rows,
         preferElectronBuild: true,
+        env: options?.env,
         logLocalEnv: true,
       });
     } else if (runtime instanceof DockerRuntime) {
