@@ -19,8 +19,8 @@ import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { createAuthMiddleware } from "./authMiddleware";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 import { clearLogFiles, getLogFilePath } from "@/node/services/log";
-import type { LogEntry } from "@/node/services/logBuffer";
-import { clearLogEntries, getRecentLogs, onLogEntry } from "@/node/services/logBuffer";
+import type { BufferEvent, LogEntry } from "@/node/services/logBuffer";
+import { clearLogEntries, getEpoch, getRecentLogs, onLogEntry } from "@/node/services/logBuffer";
 import { createReplayBufferedStreamMessageRelay } from "./replayBufferedStreamMessageRelay";
 
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
@@ -1317,20 +1317,30 @@ export const router = (authToken?: string) => {
 
           const minLevel = input.level ?? "info";
 
-          const queue = createAsyncMessageQueue<{ entries: LogEntry[]; isInitial: boolean }>();
+          const queue = createAsyncMessageQueue<
+            | { type: "snapshot"; epoch: number; entries: LogEntry[] }
+            | { type: "append"; epoch: number; entries: LogEntry[] }
+            | { type: "reset"; epoch: number }
+          >();
 
-          // Send recent history as initial batch.
+          // Send recent history as an explicit snapshot so clients can sync epoch.
           const recent = getRecentLogs().filter((e) => shouldInclude(e.level, minLevel));
-          queue.push({ entries: recent, isInitial: true });
+          queue.push({ type: "snapshot", epoch: getEpoch(), entries: recent });
 
-          // Subscribe to new entries.
-          const unsubscribe = onLogEntry((entry) => {
+          // Subscribe to buffer events.
+          const unsubscribe = onLogEntry((event: BufferEvent) => {
             if (signal?.aborted) {
               return;
             }
-            if (shouldInclude(entry.level, minLevel)) {
-              queue.push({ entries: [entry], isInitial: false });
+
+            if (event.type === "append") {
+              if (shouldInclude(event.entry.level, minLevel)) {
+                queue.push({ type: "append", epoch: event.epoch, entries: [event.entry] });
+              }
+              return;
             }
+
+            queue.push({ type: "reset", epoch: event.epoch });
           }, minLevel);
 
           const onAbort = () => {

@@ -8,9 +8,14 @@ export interface LogEntry {
   location: string;
 }
 
-const buffer: LogEntry[] = [];
+export type BufferEvent =
+  | { type: "append"; epoch: number; entry: LogEntry }
+  | { type: "reset"; epoch: number };
 
-type LogListener = (entry: LogEntry) => void;
+const buffer: LogEntry[] = [];
+let epoch = 0;
+
+type LogListener = (event: BufferEvent) => void;
 const listeners = new Set<LogListener>();
 const subscriberLevels = new Map<LogListener, LogLevel>();
 
@@ -20,8 +25,9 @@ export function pushLogEntry(entry: LogEntry): void {
     buffer.shift();
   }
 
+  const appendEvent: BufferEvent = { type: "append", epoch, entry };
   for (const listener of listeners) {
-    listener(entry);
+    listener(appendEvent);
   }
 }
 
@@ -29,8 +35,18 @@ export function getRecentLogs(): LogEntry[] {
   return [...buffer];
 }
 
+export function getEpoch(): number {
+  return epoch;
+}
+
 export function clearLogEntries(): void {
   buffer.length = 0;
+  epoch += 1;
+
+  const resetEvent: BufferEvent = { type: "reset", epoch };
+  for (const listener of listeners) {
+    listener(resetEvent);
+  }
 }
 
 export function onLogEntry(listener: LogListener, requestedLevel?: LogLevel): () => void {

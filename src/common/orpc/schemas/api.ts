@@ -1599,17 +1599,36 @@ export const general = {
       level: z.enum(["error", "warn", "info", "debug"]).nullish(),
     }),
     output: eventIterator(
-      z.object({
-        entries: z.array(
-          z.object({
-            timestamp: z.number(),
-            level: z.enum(["error", "warn", "info", "debug"]),
-            message: z.string(),
-            location: z.string(),
-          })
-        ),
-        isInitial: z.boolean(),
-      })
+      z.discriminatedUnion("type", [
+        z.object({
+          type: z.literal("snapshot"),
+          epoch: z.number(),
+          entries: z.array(
+            z.object({
+              timestamp: z.number(),
+              level: z.enum(["error", "warn", "info", "debug"]),
+              message: z.string(),
+              location: z.string(),
+            })
+          ),
+        }),
+        z.object({
+          type: z.literal("append"),
+          epoch: z.number(),
+          entries: z.array(
+            z.object({
+              timestamp: z.number(),
+              level: z.enum(["error", "warn", "info", "debug"]),
+              message: z.string(),
+              location: z.string(),
+            })
+          ),
+        }),
+        z.object({
+          type: z.literal("reset"),
+          epoch: z.number(),
+        }),
+      ])
     ),
   },
 };

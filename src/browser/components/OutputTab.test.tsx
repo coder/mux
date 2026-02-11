@@ -13,14 +13,14 @@ interface LogEntry {
   location: string;
 }
 
-interface LogBatch {
-  entries: LogEntry[];
-  isInitial: boolean;
-}
+type LogStreamEvent =
+  | { type: "snapshot"; epoch: number; entries: LogEntry[] }
+  | { type: "append"; epoch: number; entries: LogEntry[] }
+  | { type: "reset"; epoch: number };
 
 interface MockAPI {
   general: {
-    subscribeLogs: () => Promise<AsyncGenerator<LogBatch, void, unknown>>;
+    subscribeLogs: () => Promise<AsyncGenerator<LogStreamEvent, void, unknown>>;
     clearLogs: () => Promise<{ success: boolean; error?: string | null }>;
   };
 }
@@ -55,10 +55,10 @@ function createEntries(startId: number, count: number): LogEntry[] {
   });
 }
 
-function streamBatches(...batches: LogBatch[]): AsyncGenerator<LogBatch, void, unknown> {
+function streamEvents(...events: LogStreamEvent[]): AsyncGenerator<LogStreamEvent, void, unknown> {
   return (async function* () {
-    for (const batch of batches) {
-      yield batch;
+    for (const event of events) {
+      yield event;
       // Keep this helper explicitly async to match oRPC stream semantics.
       await Promise.resolve();
     }
@@ -86,12 +86,12 @@ describe("OutputTab", () => {
     globalThis.document = originalDocument;
   });
 
-  test("renders initial log batch from subscription", async () => {
+  test("renders initial log snapshot from subscription", async () => {
     const initialEntries = createEntries(0, 5);
     mockApi = {
       general: {
         subscribeLogs: () =>
-          Promise.resolve(streamBatches({ entries: initialEntries, isInitial: true })),
+          Promise.resolve(streamEvents({ type: "snapshot", epoch: 1, entries: initialEntries })),
         clearLogs: () => Promise.resolve({ success: true }),
       },
     };
@@ -114,9 +114,9 @@ describe("OutputTab", () => {
       general: {
         subscribeLogs: () =>
           Promise.resolve(
-            streamBatches(
-              { entries: initialEntries, isInitial: true },
-              { entries: appendedEntries, isInitial: false }
+            streamEvents(
+              { type: "snapshot", epoch: 1, entries: initialEntries },
+              { type: "append", epoch: 1, entries: appendedEntries }
             )
           ),
         clearLogs: () => Promise.resolve({ success: true }),
@@ -133,5 +133,81 @@ describe("OutputTab", () => {
     expect(view.queryByText(formatEntryMessage(199))).toBeNull();
     expect(view.getByText(formatEntryMessage(200))).toBeTruthy();
     expect(view.getByText(formatEntryMessage(MAX_LOG_ENTRIES + 199))).toBeTruthy();
+  });
+
+  test("reset event clears entries", async () => {
+    const initialEntries = createEntries(0, 3);
+
+    let resolveResetGate: () => void = () => undefined;
+    const resetGate = new Promise<void>((resolve) => {
+      resolveResetGate = () => resolve();
+    });
+
+    mockApi = {
+      general: {
+        subscribeLogs: () =>
+          Promise.resolve(
+            (async function* (): AsyncGenerator<LogStreamEvent, void, unknown> {
+              yield { type: "snapshot", epoch: 1, entries: initialEntries };
+              await resetGate;
+              yield { type: "reset", epoch: 2 };
+            })()
+          ),
+        clearLogs: () => Promise.resolve({ success: true }),
+      },
+    };
+
+    const view = render(<OutputTab workspaceId="workspace-1" />);
+
+    await waitFor(() => {
+      expect(view.getByText(formatEntryMessage(0))).toBeTruthy();
+    });
+
+    resolveResetGate();
+
+    await waitFor(() => {
+      expect(view.queryByText(formatEntryMessage(0))).toBeNull();
+    });
+  });
+
+  test("stale append after reset is rejected", async () => {
+    const initialEntries = createEntries(0, 1);
+    const staleEntries = createEntries(1000, 1);
+    const currentEpochEntries = createEntries(2000, 1);
+
+    let resolvePostSnapshotGate: () => void = () => undefined;
+    const postSnapshotGate = new Promise<void>((resolve) => {
+      resolvePostSnapshotGate = () => resolve();
+    });
+
+    mockApi = {
+      general: {
+        subscribeLogs: () =>
+          Promise.resolve(
+            (async function* (): AsyncGenerator<LogStreamEvent, void, unknown> {
+              yield { type: "snapshot", epoch: 1, entries: initialEntries };
+              await postSnapshotGate;
+              yield { type: "reset", epoch: 2 };
+              yield { type: "append", epoch: 1, entries: staleEntries };
+              yield { type: "append", epoch: 2, entries: currentEpochEntries };
+            })()
+          ),
+        clearLogs: () => Promise.resolve({ success: true }),
+      },
+    };
+
+    const view = render(<OutputTab workspaceId="workspace-1" />);
+
+    await waitFor(() => {
+      expect(view.getByText(formatEntryMessage(0))).toBeTruthy();
+    });
+
+    resolvePostSnapshotGate();
+
+    await waitFor(() => {
+      expect(view.queryByText(formatEntryMessage(0))).toBeNull();
+      expect(view.queryByText(formatEntryMessage(1000))).toBeNull();
+      expect(view.getByText(formatEntryMessage(2000))).toBeTruthy();
+    });
   });
 });

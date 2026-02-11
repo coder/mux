@@ -1,4 +1,4 @@
-import { type UIEvent, useEffect, useRef, useState } from "react";
+import { type UIEvent, useEffect, useReducer, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { useAPI } from "@/browser/contexts/API";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
@@ -14,9 +14,39 @@ interface LogEntry {
   location: string;
 }
 
-interface LogBatch {
+type LogStreamEvent =
+  | { type: "snapshot"; epoch: number; entries: LogEntry[] }
+  | { type: "append"; epoch: number; entries: LogEntry[] }
+  | { type: "reset"; epoch: number };
+
+interface LogState {
+  epoch: number;
   entries: LogEntry[];
-  isInitial: boolean;
+}
+
+function reduceLogState(state: LogState, event: LogStreamEvent): LogState {
+  switch (event.type) {
+    case "snapshot":
+      return {
+        epoch: event.epoch,
+        entries: event.entries,
+      };
+    case "append": {
+      if (event.epoch !== state.epoch) {
+        return state;
+      }
+      const merged = [...state.entries, ...event.entries];
+      return {
+        epoch: state.epoch,
+        entries: merged.length > MAX_LOG_ENTRIES ? merged.slice(-MAX_LOG_ENTRIES) : merged,
+      };
+    }
+    case "reset":
+      return {
+        epoch: event.epoch,
+        entries: [],
+      };
+  }
 }
 
 const LOG_LEVELS: readonly LogLevel[] = ["debug", "info", "warn", "error"];
@@ -29,7 +59,10 @@ interface OutputTabProps {
 export function OutputTab(_props: OutputTabProps) {
   const { api } = useAPI();
 
-  const [entries, setEntries] = useState<LogEntry[]>([]);
+  const [logState, dispatch] = useReducer(reduceLogState, {
+    epoch: 0,
+    entries: [],
+  });
   const [levelFilter, setLevelFilter] = usePersistedState<LogLevel>("output-tab-level", "info");
   const [autoScroll, setAutoScroll] = useState(true);
 
@@ -41,7 +74,7 @@ export function OutputTab(_props: OutputTabProps) {
     const controller = new AbortController();
     const { signal } = controller;
 
-    let iterator: AsyncIterator<LogBatch> | null = null;
+    let iterator: AsyncIterator<LogStreamEvent> | null = null;
 
     void (async () => {
       try {
@@ -58,16 +91,9 @@ export function OutputTab(_props: OutputTabProps) {
 
         iterator = subscribedIterator;
 
-        for await (const batch of subscribedIterator) {
+        for await (const event of subscribedIterator) {
           if (signal.aborted) break;
-          setEntries((prev) => {
-            if (batch.isInitial) {
-              return batch.entries;
-            }
-
-            const merged = [...prev, ...batch.entries];
-            return merged.length > MAX_LOG_ENTRIES ? merged.slice(-MAX_LOG_ENTRIES) : merged;
-          });
+          dispatch(event);
         }
       } catch (error) {
         if (signal.aborted || isAbortError(error)) return;
@@ -86,7 +112,7 @@ export function OutputTab(_props: OutputTabProps) {
     if (!autoScroll) return;
     if (!scrollRef.current) return;
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [entries, autoScroll]);
+  }, [logState.entries, autoScroll]);
 
   const handleScroll = (e: UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
@@ -96,14 +122,13 @@ export function OutputTab(_props: OutputTabProps) {
 
   const handleDelete = () => {
     if (!api) {
-      setEntries([]);
+      dispatch({ type: "reset", epoch: 0 });
       return;
     }
 
     api.general
       .clearLogs()
       .then((result) => {
-        setEntries([]);
         if (!result.success) {
           console.warn("Log files could not be fully deleted:", result.error);
         }
@@ -133,7 +158,7 @@ export function OutputTab(_props: OutputTabProps) {
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto font-mono text-xs"
       >
-        {entries.map((entry, i) => (
+        {logState.entries.map((entry, i) => (
           <LogLine key={i} entry={entry} />
         ))}
       </div>
