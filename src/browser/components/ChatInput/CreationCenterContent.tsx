@@ -24,44 +24,61 @@ export function CreationCenterContent(props: CreationCenterContentProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.playbackRate = 1.3;
+    if (!props.isSending || !videoRef.current) {
+      return;
     }
-  }, []);
 
-  // Only render when actually sending/creating
-  if (!props.isSending) {
-    return null;
-  }
+    videoRef.current.playbackRate = 1.3;
+  }, [props.isSending, videoSrc]);
 
   return (
-    <div
-      className={`absolute inset-0 z-10 flex flex-col items-center justify-center pb-[30vh] ${isDark ? "bg-black" : "bg-white"}`}
-    >
-      <video
-        ref={videoRef}
-        className="h-[50vh] w-[50vw] object-contain"
-        src={videoSrc}
-        autoPlay
-        loop
-        muted
-        playsInline
-      />
-      <div className="-mt-32 max-w-xl px-8 text-center">
-        <h2 className="text-foreground mb-2 text-2xl font-medium">Creating workspace</h2>
-        <p className="text-muted text-sm leading-relaxed">
-          {props.workspaceName ? (
-            <>
-              <code className="bg-separator rounded px-1">{props.workspaceName}</code>
-              {props.workspaceTitle && (
-                <span className="text-muted-foreground ml-1">— {props.workspaceTitle}</span>
+    <>
+      {/*
+        Preload the current theme's creation animation while idle so the loading overlay starts
+        animating immediately as soon as workspace creation begins.
+      */}
+      {!props.isSending && (
+        <video
+          className="pointer-events-none absolute h-0 w-0 opacity-0"
+          src={videoSrc}
+          preload="auto"
+          muted
+          playsInline
+          aria-hidden="true"
+        />
+      )}
+
+      {props.isSending && (
+        <div
+          className={`absolute inset-0 z-10 flex flex-col items-center justify-center pb-[30vh] ${isDark ? "bg-black" : "bg-white"}`}
+        >
+          <video
+            ref={videoRef}
+            className="h-[50vh] w-[50vw] object-contain"
+            src={videoSrc}
+            preload="auto"
+            autoPlay
+            loop
+            muted
+            playsInline
+          />
+          <div className="-mt-32 max-w-xl px-8 text-center">
+            <h2 className="text-foreground mb-2 text-2xl font-medium">Creating workspace</h2>
+            <p className="text-muted text-sm leading-relaxed">
+              {props.workspaceName ? (
+                <>
+                  <code className="bg-separator rounded px-1">{props.workspaceName}</code>
+                  {props.workspaceTitle && (
+                    <span className="text-muted-foreground ml-1">— {props.workspaceTitle}</span>
+                  )}
+                </>
+              ) : (
+                "Generating name…"
               )}
-            </>
-          ) : (
-            "Generating name…"
-          )}
-        </p>
-      </div>
-    </div>
+            </p>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
