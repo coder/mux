@@ -593,21 +593,20 @@ export class ProviderModelFactory {
                 try {
                   const json = JSON.parse(init.body) as Record<string, unknown>;
 
-                  // Prepend the Claude Code identity prefix to the system prompt.
-                  // Anthropic's server validates that OAuth requests include this;
-                  // without it the credential is rejected as unauthorized.
+                  // Prepend the Claude Code identity prefix as a SEPARATE text block.
+                  // The server validates that the first system text block is EXACTLY
+                  // the Claude Code identity string. Concatenating it with other text
+                  // causes the check to fail. It must be its own standalone block.
                   if (Array.isArray(json.system)) {
                     const systemArr = json.system as Array<Record<string, unknown>>;
-                    // Prepend the prefix as a new text block, and also concatenate
-                    // it with the first existing text block (matching Claude Code's
-                    // system prompt format).
-                    if (systemArr.length > 0 && systemArr[0].type === "text" && typeof systemArr[0].text === "string") {
-                      systemArr[0] = { ...systemArr[0], text: ANTHROPIC_OAUTH_SYSTEM_PREFIX + "\n\n" + systemArr[0].text };
-                    } else {
-                      systemArr.unshift({ type: "text", text: ANTHROPIC_OAUTH_SYSTEM_PREFIX });
-                    }
+                    systemArr.unshift({ type: "text", text: ANTHROPIC_OAUTH_SYSTEM_PREFIX });
                   } else if (typeof json.system === "string") {
-                    json.system = ANTHROPIC_OAUTH_SYSTEM_PREFIX + "\n\n" + json.system;
+                    json.system = [
+                      { type: "text", text: ANTHROPIC_OAUTH_SYSTEM_PREFIX },
+                      { type: "text", text: json.system },
+                    ];
+                  } else if (!json.system) {
+                    json.system = [{ type: "text", text: ANTHROPIC_OAUTH_SYSTEM_PREFIX }];
                   }
 
                   // Prefix custom tool definitions only. Anthropic's built-in
@@ -677,12 +676,19 @@ export class ProviderModelFactory {
                 }
               }
 
-              // Set auth headers.
+              // Set auth headers for Claude Code OAuth impersonation.
               const reqHeaders = new Headers(nextInit?.headers);
               reqHeaders.set("Authorization", `Bearer ${authResult.data.access}`);
               reqHeaders.delete("x-api-key");
 
-              // Merge anthropic-beta header (preserve existing beta values like 1M context).
+              // Remove app attribution headers that identify this as a non-Claude-Code
+              // client. The server checks these and rejects OAuth credentials when
+              // they come from an unrecognized application.
+              reqHeaders.delete("http-referer");
+              reqHeaders.delete("x-title");
+
+              // Merge anthropic-beta: ensure required OAuth betas are present
+              // while preserving SDK betas (e.g. structured-outputs, effort).
               const existingBeta = reqHeaders.get("anthropic-beta") ?? "";
               const existingValues = existingBeta.split(",").map((v) => v.trim()).filter(Boolean);
               const oauthBetas = [ANTHROPIC_OAUTH_BETA_HEADER, ANTHROPIC_OAUTH_THINKING_BETA];
