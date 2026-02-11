@@ -39,7 +39,7 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import { AgentIdSchema } from "@/common/orpc/schemas";
 import { GitPatchArtifactService } from "@/node/services/gitPatchArtifactService";
 import type { ThinkingLevel } from "@/common/types/thinking";
-import type { ToolCallEndEvent, StreamEndEvent } from "@/common/types/stream";
+import type { ToolCallEndEvent, StreamAbortEvent, StreamEndEvent } from "@/common/types/stream";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
 import {
   AgentReportToolArgsSchema,
@@ -139,26 +139,27 @@ interface CompletedAgentReportCacheEntry {
   ancestorWorkspaceIds: string[];
 }
 
-function isToolCallEndEvent(value: unknown): value is ToolCallEndEvent {
+function isTypedWorkspaceEvent(value: unknown, type: string): boolean {
   return (
     typeof value === "object" &&
     value !== null &&
     "type" in value &&
-    (value as { type: unknown }).type === "tool-call-end" &&
+    (value as { type: unknown }).type === type &&
     "workspaceId" in value &&
     typeof (value as { workspaceId: unknown }).workspaceId === "string"
   );
 }
 
+function isToolCallEndEvent(value: unknown): value is ToolCallEndEvent {
+  return isTypedWorkspaceEvent(value, "tool-call-end");
+}
+
 function isStreamEndEvent(value: unknown): value is StreamEndEvent {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "type" in value &&
-    (value as { type: unknown }).type === "stream-end" &&
-    "workspaceId" in value &&
-    typeof (value as { workspaceId: unknown }).workspaceId === "string"
-  );
+  return isTypedWorkspaceEvent(value, "stream-end");
+}
+
+function isStreamAbortEvent(value: unknown): value is StreamAbortEvent {
+  return isTypedWorkspaceEvent(value, "stream-abort");
 }
 
 function hasAncestorWorkspaceId(
@@ -259,6 +260,18 @@ export class TaskService {
         })
         .catch((error: unknown) => {
           log.error("TaskService.handleStreamEnd failed", { error });
+        });
+    });
+
+    this.aiService.on("stream-abort", (payload: unknown) => {
+      if (!isStreamAbortEvent(payload)) return;
+
+      void this.workspaceEventLocks
+        .withLock(payload.workspaceId, async () => {
+          await this.handleStreamAbort(payload);
+        })
+        .catch((error: unknown) => {
+          log.error("TaskService.handleStreamAbort failed", { error });
         });
     });
   }
@@ -2057,7 +2070,10 @@ export class TaskService {
     }
 
     const status = entry.workspace.taskStatus;
-    if (status === "reported") return;
+    if (status === "reported") {
+      await this.cleanupReportedLeafTask(workspaceId);
+      return;
+    }
 
     // Never allow a task to finish/report while it still has active descendant tasks.
     // We'll auto-resume this task once the last descendant reports.
@@ -2072,12 +2088,14 @@ export class TaskService {
     const reportArgs = this.findAgentReportArgsInParts(event.parts);
     if (reportArgs) {
       await this.finalizeAgentTaskReport(workspaceId, entry, reportArgs);
+      await this.cleanupReportedLeafTask(workspaceId);
       return;
     }
 
     // If a task stream ends without agent_report, request it once.
     if (status === "awaiting_report" && this.remindedAwaitingReport.has(workspaceId)) {
       await this.fallbackReportMissingAgentReport(entry);
+      await this.cleanupReportedLeafTask(workspaceId);
       return;
     }
 
@@ -2097,6 +2115,20 @@ export class TaskService {
       },
       { synthetic: true }
     );
+  }
+
+  /**
+   * Clean up reported tasks whose stream was aborted before ending naturally.
+   * Only acts on tasks already in "reported" state (handleAgentReport ran).
+   */
+  private async handleStreamAbort(event: StreamAbortEvent): Promise<void> {
+    const cfg = this.config.loadConfigOrDefault();
+    const entry = findWorkspaceEntry(cfg, event.workspaceId);
+    if (!entry?.workspace.parentWorkspaceId) return;
+
+    if (entry.workspace.taskStatus === "reported") {
+      await this.cleanupReportedLeafTask(event.workspaceId);
+    }
   }
 
   private async fallbackReportMissingAgentReport(entry: {
@@ -2189,16 +2221,14 @@ export class TaskService {
       return;
     }
 
-    await this.finalizeAgentTaskReport(childWorkspaceId, childEntryBeforeReport, reportArgs, {
-      stopStream: true,
-    });
+    await this.finalizeAgentTaskReport(childWorkspaceId, childEntryBeforeReport, reportArgs);
+    // Cleanup deferred to handleStreamEnd/handleStreamAbort — stream is still running.
   }
 
   private async finalizeAgentTaskReport(
     childWorkspaceId: string,
     childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined,
-    reportArgs: { reportMarkdown: string; title?: string },
-    options?: { stopStream?: boolean }
+    reportArgs: { reportMarkdown: string; title?: string }
   ): Promise<void> {
     assert(
       childWorkspaceId.length > 0,
@@ -2228,49 +2258,9 @@ export class TaskService {
 
     await this.emitWorkspaceMetadata(childWorkspaceId);
 
-    if (options?.stopStream) {
-      // `agent_report` is terminal. Stop the child stream immediately to prevent any further token
-      // usage and to ensure parallelism accounting never "frees" a slot while the stream is still
-      // active (Claude/Anthropic can emit tool calls before the final assistant block completes).
-      //
-      // Important: Do NOT abandon the partial assistant message here. The in-flight assistant block
-      // contains the tool calls (including the agent_report tool call) that should be archived into
-      // chat.jsonl for transcript viewing after workspace cleanup.
-      try {
-        const stopResult = await this.aiService.stopStream(childWorkspaceId, {
-          abandonPartial: false,
-        });
-        if (!stopResult.success) {
-          log.debug("Failed to stop task stream after agent_report", {
-            workspaceId: childWorkspaceId,
-            error: stopResult.error,
-          });
-        }
-      } catch (error: unknown) {
-        log.debug("Failed to stop task stream after agent_report (threw)", {
-          workspaceId: childWorkspaceId,
-          error,
-        });
-      }
-
-      // stopStream() forwards stream-abort asynchronously (after partial cleanup). Workspace cleanup
-      // may archive/delete session files immediately after this method returns, so commit the partial
-      // synchronously here (best-effort) to ensure tool calls are present in the archived transcript.
-      try {
-        const commitResult = await this.historyService.commitPartial(childWorkspaceId);
-        if (!commitResult.success) {
-          log.error("Failed to commit final partial to history after agent_report", {
-            workspaceId: childWorkspaceId,
-            error: commitResult.error,
-          });
-        }
-      } catch (error: unknown) {
-        log.error("Failed to commit final partial to history after agent_report (threw)", {
-          workspaceId: childWorkspaceId,
-          error,
-        });
-      }
-    }
+    // NOTE: Stream continues — we intentionally do NOT abort it.
+    // The agent_report tool result tells the LLM to stop.
+    // recordSessionUsage runs when the stream ends naturally.
 
     const cfgAfterReport = this.config.loadConfigOrDefault();
     const latestChildEntry = findWorkspaceEntry(cfgAfterReport, childWorkspaceId) ?? childEntry;
@@ -2356,8 +2346,10 @@ export class TaskService {
     // Free slot and start queued tasks.
     await this.maybeStartQueuedTasks();
 
-    // Attempt cleanup of reported tasks (leaf-first).
-    await this.cleanupReportedLeafTask(childWorkspaceId);
+    // NOTE: Cleanup (cleanupReportedLeafTask) is NOT called here.
+    // Callers trigger cleanup after confirming the stream has terminated
+    // (handleStreamEnd/handleStreamAbort), ensuring usage is persisted first.
+    // The gitPatchArtifactService callback handles deferred cleanup independently.
 
     // Auto-resume any parent stream that was waiting on a task tool call (restart-safe).
     const postCfg = this.config.loadConfigOrDefault();

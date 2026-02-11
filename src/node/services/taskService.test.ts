@@ -1904,7 +1904,7 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
     });
 
-    const { aiService, stopStream } = createAIServiceMocks(config);
+    const { aiService } = createAIServiceMocks(config);
     const { workspaceService, sendMessage, remove, emit } = createWorkspaceServiceMocks();
     const { historyService, partialService, taskService } = createTaskServiceHarness(config, {
       aiService,
@@ -1980,6 +1980,7 @@ describe("TaskService", () => {
         result: unknown;
         timestamp: number;
       }) => Promise<void>;
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
     };
     await internal.handleAgentReport({
       type: "tool-call-end",
@@ -1991,10 +1992,9 @@ describe("TaskService", () => {
       timestamp: Date.now(),
     });
 
-    expect(stopStream).toHaveBeenCalledWith(
-      childId,
-      expect.objectContaining({ abandonPartial: false })
-    );
+    // Simulate stream manager committing the final partial at natural stream end.
+    const commitChildPartial = await partialService.commitPartial(childId);
+    expect(commitChildPartial.success).toBe(true);
 
     const childMessages = await collectFullHistory(historyService, childId);
     // Ensure the in-flight assistant message (tool calls + agent_report) was committed to history
@@ -2064,7 +2064,18 @@ describe("TaskService", () => {
       expect.objectContaining({ workspaceId: childId })
     );
 
-    expect(remove).toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled(); // Cleanup deferred to stream-end
+
+    // Simulate stream ending naturally — cleanup runs now
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-partial",
+      metadata: { model: "test-model" },
+      parts: childPartial.parts as StreamEndEvent["parts"],
+    });
+
+    expect(remove).toHaveBeenCalled(); // NOW cleanup runs
     expect(sendMessage).toHaveBeenCalledWith(
       parentId,
       expect.stringContaining("sub-agent task(s) have completed"),
@@ -2523,6 +2534,7 @@ describe("TaskService", () => {
         result: unknown;
         timestamp: number;
       }) => Promise<void>;
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
     };
     await internal.handleAgentReport({
       type: "tool-call-end",
@@ -2563,6 +2575,16 @@ describe("TaskService", () => {
       expect(text).toContain("Hello from child");
       expect(text).toContain(childId);
     }
+
+    expect(remove).not.toHaveBeenCalled(); // Cleanup deferred to stream-end
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-partial",
+      metadata: { model: "test-model" },
+      parts: childPartial.parts as StreamEndEvent["parts"],
+    });
 
     expect(remove).toHaveBeenCalled();
     expect(sendMessageMock).toHaveBeenCalledWith(
