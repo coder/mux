@@ -304,7 +304,10 @@ export class UpdaterService {
    * Download an available update
    */
   async downloadUpdate(): Promise<void> {
-    if (this.updateStatus.type !== "available") {
+    if (
+      this.updateStatus.type !== "available" &&
+      !(this.updateStatus.type === "error" && this.updateStatus.phase === "download")
+    ) {
       throw new Error("No update available to download");
     }
 
@@ -362,7 +365,10 @@ export class UpdaterService {
    * Install a downloaded update and restart the app
    */
   installUpdate(): void {
-    if (this.updateStatus.type !== "downloaded") {
+    if (
+      this.updateStatus.type !== "downloaded" &&
+      !(this.updateStatus.type === "error" && this.updateStatus.phase === "install")
+    ) {
       throw new Error("No update downloaded to install");
     }
 

@@ -108,6 +108,26 @@ describe("UpdaterService", () => {
       });
     });
 
+    it("should allow retrying download after DEBUG_UPDATER_FAIL=download", async () => {
+      process.env.DEBUG_UPDATER = "2.0.0";
+      process.env.DEBUG_UPDATER_FAIL = "download";
+      const debugService = new UpdaterService();
+
+      await debugService.downloadUpdate();
+      expect(debugService.getStatus()).toEqual({
+        type: "error",
+        phase: "download",
+        message: expect.stringContaining("Simulated download failure"),
+      });
+
+      await debugService.downloadUpdate();
+      expect(debugService.getStatus()).toEqual({
+        type: "error",
+        phase: "download",
+        message: expect.stringContaining("Simulated download failure"),
+      });
+    });
+
     it("should simulate install failure when DEBUG_UPDATER_FAIL=install", async () => {
       process.env.DEBUG_UPDATER = "2.0.0";
       process.env.DEBUG_UPDATER_FAIL = "install";
@@ -442,6 +462,39 @@ describe("UpdaterService", () => {
         message: "Download failed due to network interruption",
       });
     });
+
+    it("should allow download retry after download failure", async () => {
+      const downloadedInfo = { version: "2.0.0" };
+      mockAutoUpdater.emit("update-available", downloadedInfo);
+
+      mockAutoUpdater.downloadUpdate
+        .mockImplementationOnce(() =>
+          Promise.reject(new Error("Download failed due to network interruption"))
+        )
+        .mockImplementationOnce(() => {
+          setImmediate(() => {
+            mockAutoUpdater.emit("update-downloaded", downloadedInfo);
+          });
+          return Promise.resolve();
+        });
+
+      await service.downloadUpdate();
+      expect(service.getStatus()).toEqual({
+        type: "error",
+        phase: "download",
+        message: "Download failed due to network interruption",
+      });
+
+      await service.downloadUpdate();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const retryStatus = service.getStatus();
+      expect(retryStatus.type).toBe("downloaded");
+      if (retryStatus.type !== "downloaded") {
+        throw new Error(`Expected downloaded status, got ${retryStatus.type}`);
+      }
+      expect(retryStatus.info.version).toBe(downloadedInfo.version);
+    });
   });
 
   describe("installUpdate", () => {
@@ -459,6 +512,28 @@ describe("UpdaterService", () => {
         phase: "install",
         message: "Install failed due to permission error",
       });
+    });
+
+    it("should allow install retry after install failure", () => {
+      mockAutoUpdater.emit("update-downloaded", { version: "2.0.0" });
+
+      mockAutoUpdater.quitAndInstall
+        .mockImplementationOnce(() => {
+          throw new Error("Install failed due to permission error");
+        })
+        .mockImplementationOnce(() => {
+          // second attempt succeeds
+        });
+
+      service.installUpdate();
+      expect(service.getStatus()).toEqual({
+        type: "error",
+        phase: "install",
+        message: "Install failed due to permission error",
+      });
+
+      expect(() => service.installUpdate()).not.toThrow();
+      expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledTimes(2);
     });
   });
 
