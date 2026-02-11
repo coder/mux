@@ -413,6 +413,40 @@ exit 1
       }
     });
 
+    it("yields error and rolls back when cloned project cannot be persisted in config", async () => {
+      const sourceRepoPath = await createLocalGitRepository(tempDir, "source-repo-persist-fail");
+      const cloneParentDir = path.join(tempDir, "persist-fail-clones");
+      const nonPersistingConfig = new Config(tempDir);
+      nonPersistingConfig.editConfig = () => Promise.resolve();
+      const nonPersistingService = new ProjectService(nonPersistingConfig);
+
+      const events: CloneEvent[] = [];
+      for await (const event of nonPersistingService.cloneWithProgress({
+        repoUrl: sourceRepoPath,
+        cloneParentDir,
+      })) {
+        events.push(event);
+      }
+
+      const terminalEvent = events[events.length - 1];
+      expect(terminalEvent?.type).toBe("error");
+      if (terminalEvent?.type !== "error") throw new Error("Expected error event");
+      expect(terminalEvent.error).toContain("persist");
+
+      const expectedProjectPath = path.resolve(cloneParentDir, "source-repo-persist-fail");
+      expect(nonPersistingConfig.loadConfigOrDefault().projects.has(expectedProjectPath)).toBe(
+        false
+      );
+
+      try {
+        await fs.stat(expectedProjectPath);
+        throw new Error("Expected clone destination to be rolled back");
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        expect(err.code).toBe("ENOENT");
+      }
+    });
+
     it("cleans up partial clone and yields cancellation event when aborted", async () => {
       if (process.platform === "win32") {
         // This test relies on a POSIX shell shim named "git" in PATH.

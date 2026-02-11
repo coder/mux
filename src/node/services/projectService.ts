@@ -583,6 +583,18 @@ export class ProjectService {
         return { ...freshConfig, projects: updatedProjects };
       });
 
+      if (!this.config.loadConfigOrDefault().projects.has(normalizedPath)) {
+        // Config.saveConfig logs-and-continues on write failures, so verify persistence
+        // explicitly before reporting success.
+        try {
+          await fsPromises.rm(normalizedPath, { recursive: true, force: true });
+        } catch {
+          // Best-effort rollback only.
+        }
+        yield { type: "error", error: "Failed to persist cloned project configuration" };
+        return;
+      }
+
       cloneSucceeded = true;
       yield { type: "success", projectConfig, normalizedPath };
     } catch (error) {
