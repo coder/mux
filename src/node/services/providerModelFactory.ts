@@ -1024,10 +1024,25 @@ export class ProviderModelFactory {
         // Use configured baseURL or fall back to default gateway URL
         const gatewayBaseURL =
           providerConfig.baseURL ?? "https://gateway.mux.coder.com/api/v1/ai-gateway/v1/ai";
+
+        // For Anthropic models via gateway, apply 1M context beta header when enabled.
+        // Without this, compaction retry with 1M context fails because the gateway request
+        // never includes the anthropic-beta header the upstream Anthropic API requires.
+        let gatewayHeaders: Record<string, string> | undefined;
+        if (isAnthropicModel) {
+          const fullModelId = `anthropic:${modelId.slice("anthropic/".length)}`;
+          const is1MEnabled =
+            ((muxProviderOptions?.anthropic?.use1MContextModels?.includes(fullModelId) ?? false) ||
+              muxProviderOptions?.anthropic?.use1MContext === true) &&
+            supports1MContext(fullModelId);
+          gatewayHeaders = buildAnthropicHeaders(undefined, is1MEnabled);
+        }
+
         const gateway = createGateway({
           apiKey: couponCode,
           baseURL: gatewayBaseURL,
           fetch: fetchWithAutoLogout,
+          ...(gatewayHeaders ? { headers: gatewayHeaders } : {}),
         });
         const model = gateway(modelId);
 
