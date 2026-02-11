@@ -9,7 +9,7 @@ export const createAgentReportTool: ToolFactory = (config: ToolConfiguration) =>
   return tool({
     description: TOOL_DEFINITIONS.agent_report.description,
     inputSchema: TOOL_DEFINITIONS.agent_report.schema,
-    execute: (): { success: true } => {
+    execute: (): { success: true; message: string } => {
       const workspaceId = requireWorkspaceId(config, "agent_report");
       const taskService = requireTaskService(config, "agent_report");
 
@@ -22,7 +22,12 @@ export const createAgentReportTool: ToolFactory = (config: ToolConfiguration) =>
 
       // Intentionally no side-effects. The backend orchestrator consumes the tool-call args
       // via persisted history/partial state once the tool call completes successfully.
-      return { success: true };
+      // The stream continues after this so the SDK can record usage.
+      // The message tells the LLM to stop generating further output.
+      return {
+        success: true,
+        message: "Report submitted successfully. STOP. Do not generate any further output.",
+      };
     },
   });
 };
