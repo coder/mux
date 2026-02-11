@@ -29,7 +29,7 @@ export interface VimTextAreaProps extends Omit<
   "onChange" | "value"
 > {
   value: string;
-  onChange: (next: string) => void;
+  onChange: (next: string, caretIndex?: number) => void;
   isEditing?: boolean;
   suppressKeys?: string[]; // keys for which Vim should not interfere (e.g. ["Tab","ArrowUp","ArrowDown","Escape"]) when popovers are open
   trailingAction?: React.ReactNode;
@@ -206,7 +206,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
       cursorRef.current = newState.cursor;
 
       if (newState.text !== value) {
-        onChange(newState.text);
+        onChange(newState.text, newState.cursor);
       }
       if (newState.mode !== vimMode) {
         setVimMode(newState.mode);
@@ -300,7 +300,9 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
           <textarea
             ref={textareaRef}
             value={value}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(e) =>
+              onChange(e.target.value, e.target.selectionStart ?? e.target.value.length)
+            }
             onKeyDown={handleKeyDownInternal}
             spellCheck={false}
             autoCorrect="off"

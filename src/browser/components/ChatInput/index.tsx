@@ -351,7 +351,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   }, [input.length]);
 
   const handleInputChange = useCallback(
-    (next: string) => {
+    (next: string, caretFromEvent?: number) => {
       if (powerMode.enabled) {
         const prev = latestInputValueRef.current;
         const delta = next.length - prev.length;
@@ -365,7 +365,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           const kind = delta < 0 ? "delete" : "insert";
           // Capture the caret index now (before rAF) so bursts queued within the same frame
           // don't all measure the latest caret position and appear "ahead" during fast typing.
-          const caretIndex = inputRef.current?.selectionStart ?? next.length;
+          const caretIndex = caretFromEvent ?? inputRef.current?.selectionStart ?? next.length;
 
           requestAnimationFrame(() => {
             const el = inputRef.current;
@@ -373,7 +373,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               return;
             }
 
-            powerMode.burstFromTextarea(el, intensity, kind, caretIndex);
+            const emit = () => powerMode.burstFromTextarea(el, intensity, kind, caretIndex);
+
+            // When the textarea is scrollable, scrollTop may settle one frame after
+            // the layout shift, so defer measurement to a second rAF.
+            if (el.scrollHeight > el.clientHeight) {
+              requestAnimationFrame(emit);
+              return;
+            }
+
+            emit();
           });
         }
       }
