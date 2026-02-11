@@ -342,7 +342,10 @@ describe("About dialog (UI)", () => {
         setDesktopApiEnabled();
 
         const dialog = await openAboutDialog(view);
-        fireEvent.click(dialog.getByRole("button", { name: "Try install again" }));
+        const retryInstallButton = await waitFor(() => {
+          return dialog.getByRole("button", { name: "Try install again" });
+        });
+        fireEvent.click(retryInstallButton);
 
         await waitFor(() => {
           expect(installSpy).toHaveBeenCalledTimes(1);
