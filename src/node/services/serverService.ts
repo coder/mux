@@ -1,4 +1,9 @@
-import { createOrpcServer, type OrpcServer, type OrpcServerOptions } from "@/node/orpc/server";
+import {
+  createOrpcServer,
+  resolveOrpcStaticDir,
+  type OrpcServer,
+  type OrpcServerOptions,
+} from "@/node/orpc/server";
 import { ServerLockfile } from "./serverLockfile";
 import type { ORPCContext } from "@/node/orpc/context";
 import * as fs from "fs/promises";
@@ -223,7 +228,8 @@ export class ServerService {
 
     this.apiAuthToken = options.authToken;
 
-    const staticDir = path.join(__dirname, "../..");
+    // Resolve the renderer root across both compiled dist/ and source-tree layouts.
+    const staticDir = await resolveOrpcStaticDir();
     let serveStatic = options.serveStatic ?? false;
     if (serveStatic) {
       const indexPath = path.join(staticDir, "index.html");
