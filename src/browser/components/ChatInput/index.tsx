@@ -30,7 +30,6 @@ import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
-import { NAME_GEN_PREFERRED_MODELS } from "@/browser/hooks/useWorkspaceName";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
 import {
@@ -411,15 +410,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   );
   const preEditDraftRef = useRef<DraftState>({ text: "", attachments: [] });
   const preEditReviewsRef = useRef<ReviewNoteDataForDisplay[] | null>(null);
-  // Guard to prevent double-firing auto-name generation on rapid sends
-  const autoNameTriggeredRef = useRef(false);
   const { open } = useSettings();
-  const {
-    selectedWorkspace,
-    beginWorkspaceCreation,
-    updateWorkspaceDraftSection,
-    workspaceMetadata,
-  } = useWorkspaceContext();
+  const { selectedWorkspace, beginWorkspaceCreation, updateWorkspaceDraftSection } =
+    useWorkspaceContext();
   const { agentId, currentAgent } = useAgent();
 
   // Use current agent's uiColor, or neutral border until agents load
@@ -2104,35 +2097,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           // Mark attached reviews as completed (checked)
           if (sentReviewIds.length > 0) {
             props.onCheckReviews?.(sentReviewIds);
-          }
-
-          // Auto-name: if this workspace has an auto-generated placeholder title,
-          // trigger LLM-based title generation from the first user message.
-          // Uses the same nameGeneration IPC as workspace creation.
-          const wsMetadata = workspaceMetadata.get(props.workspaceId);
-          if (wsMetadata?.autoName && !autoNameTriggeredRef.current) {
-            autoNameTriggeredRef.current = true;
-            void (async () => {
-              try {
-                // Use preferred fast models + the user's current model as fallback
-                const candidates: string[] = [...NAME_GEN_PREFERRED_MODELS];
-                if (effectiveModel && !candidates.includes(effectiveModel)) {
-                  candidates.push(effectiveModel);
-                }
-                const identity = await api.nameGeneration.generate({
-                  message: finalMessageText,
-                  candidates,
-                });
-                if (identity.success) {
-                  await api.workspace.updateTitle({
-                    workspaceId: props.workspaceId,
-                    title: identity.data.title,
-                  });
-                }
-              } catch {
-                /* best-effort */
-              }
-            })();
           }
 
           // Exit editing mode if we were editing
