@@ -21,7 +21,7 @@ export function CodeBlock(props: CodeBlockProps) {
 
   return (
     <Box flexDirection="column" marginTop={1} marginBottom={1}>
-      {languageLabel ? <Text dimColor>{`─── ${languageLabel} ───`}</Text> : null}
+      {languageLabel ? <Text color="cyan" dimColor>{`─── ${languageLabel} ───`}</Text> : null}
       <Box borderStyle="round" borderColor="gray" paddingLeft={1} paddingRight={1}>
         <Text color="white">{code.length > 0 ? code : " "}</Text>
       </Box>

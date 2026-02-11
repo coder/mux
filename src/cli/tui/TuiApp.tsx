@@ -121,6 +121,7 @@ export function TuiApp(props: TuiAppProps) {
     <FullScreenLayout
       sidebar={<Sidebar api={props.api} state={state} dispatch={dispatch} />}
       main={mainPanel}
+      focus={state.focus}
     />
   );
 }

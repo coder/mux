@@ -1,10 +1,12 @@
 import { useEffect } from "react";
 import { Box, Text, useInput } from "ink";
+import { SIDEBAR_WIDTH } from "@/cli/tui/components/FullScreenLayout";
 import { SelectableList } from "@/cli/tui/components/SelectableList";
 import type { APIClient, TuiAction, TuiProject, TuiState, TuiWorkspace } from "@/cli/tui/tuiTypes";
 
 const PROJECT_MAX_VISIBLE = 8;
 const WORKSPACE_MAX_VISIBLE = 10;
+const SECTION_HEADER_WIDTH = SIDEBAR_WIDTH - 4;
 
 interface SidebarProps {
   api: APIClient;
@@ -102,6 +104,18 @@ function clampIndex(index: number, length: number): number {
   return index;
 }
 
+function SectionHeader(headerProps: { title: string; isActive: boolean; width: number }) {
+  const label = ` ${headerProps.title} `;
+  const lineLength = Math.max(0, headerProps.width - label.length);
+  const line = "─".repeat(lineLength);
+
+  return (
+    <Text color={headerProps.isActive ? "cyan" : "gray"} bold={headerProps.isActive}>
+      {"─" + label + line}
+    </Text>
+  );
+}
+
 export function Sidebar(props: SidebarProps) {
   const api = props.api;
   const state = props.state;
@@ -110,6 +124,10 @@ export function Sidebar(props: SidebarProps) {
   const selectedProjectIndex = clampIndex(state.selectedProjectIndex, state.projects.length);
   const selectedWorkspaceIndex = clampIndex(state.selectedWorkspaceIndex, state.workspaces.length);
   const selectedProject = state.projects[selectedProjectIndex] ?? null;
+  const projectSectionActive =
+    state.focus === "sidebar-projects" || state.focus === "create-project";
+  const workspaceSectionActive =
+    state.focus === "sidebar-workspaces" || state.focus === "create-workspace";
 
   useEffect(() => {
     let cancelled = false;
@@ -265,10 +283,11 @@ export function Sidebar(props: SidebarProps) {
 
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Text bold color={state.focus === "sidebar-projects" ? "cyan" : undefined}>
-        Projects
-      </Text>
-      <Text dimColor>Enter: workspaces · n: new</Text>
+      <SectionHeader
+        title="Projects"
+        isActive={projectSectionActive}
+        width={SECTION_HEADER_WIDTH}
+      />
       {state.projects.length === 0 ? (
         <Text dimColor>No projects</Text>
       ) : (
@@ -281,10 +300,11 @@ export function Sidebar(props: SidebarProps) {
       )}
 
       <Box marginTop={1} flexDirection="column">
-        <Text bold color={state.focus === "sidebar-workspaces" ? "cyan" : undefined}>
-          Workspaces
-        </Text>
-        <Text dimColor>Enter: chat · n: new · Esc: projects</Text>
+        <SectionHeader
+          title="Workspaces"
+          isActive={workspaceSectionActive}
+          width={SECTION_HEADER_WIDTH}
+        />
         {selectedProject ? (
           state.workspaces.length === 0 ? (
             <Text dimColor>No workspaces</Text>
@@ -312,10 +332,6 @@ export function Sidebar(props: SidebarProps) {
         ) : (
           <Text dimColor>Select a project</Text>
         )}
-      </Box>
-
-      <Box marginTop={1}>
-        <Text dimColor>[n] new [q] quit</Text>
       </Box>
 
       {state.error ? (

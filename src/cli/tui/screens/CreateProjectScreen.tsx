@@ -76,7 +76,7 @@ export function CreateProjectScreen(props: CreateProjectScreenProps) {
   });
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" paddingX={1}>
       <Text bold>Create Project</Text>
       <Text dimColor>Enter a path and press Enter. Esc to cancel.</Text>
 

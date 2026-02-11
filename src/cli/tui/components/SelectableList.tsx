@@ -52,7 +52,11 @@ export function SelectableList<T>(props: SelectableListProps<T>) {
 
   return (
     <Box flexDirection="column">
-      {startIndex > 0 ? <Text dimColor>↑ more</Text> : null}
+      {startIndex > 0 ? (
+        <Text dimColor color="gray">
+          {"  ↑ more"}
+        </Text>
+      ) : null}
       {visibleItems.map((item, offset) => {
         const listIndex = startIndex + offset;
         const isSelected = listIndex === safeSelectedIndex;
@@ -74,7 +78,11 @@ export function SelectableList<T>(props: SelectableListProps<T>) {
           </Box>
         );
       })}
-      {endIndex < props.items.length ? <Text dimColor>↓ more</Text> : null}
+      {endIndex < props.items.length ? (
+        <Text dimColor color="gray">
+          {"  ↓ more"}
+        </Text>
+      ) : null}
     </Box>
   );
 }

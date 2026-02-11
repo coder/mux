@@ -571,8 +571,10 @@ export function ChatScreen(props: ChatScreenProps) {
     : null;
 
   return (
-    <Box flexDirection="column">
-      <Text bold>Chat · {workspaceLabel}</Text>
+    <Box flexDirection="column" paddingX={1}>
+      <Text bold color="cyan">
+        {"─ Chat · " + workspaceLabel + " " + "─".repeat(Math.max(0, 40 - workspaceLabel.length))}
+      </Text>
       <Text dimColor>
         Model: {options.model} · Agent: {options.agentId} · Esc: back · Ctrl+C: interrupt
       </Text>
@@ -603,7 +605,7 @@ export function ChatScreen(props: ChatScreenProps) {
                 flexDirection="column"
                 marginBottom={1}
               >
-                <Text bold color={isUserMessage ? "green" : "magenta"}>
+                <Text bold color={isUserMessage ? "#6fbf73" : "#ce93d8"}>
                   {label}
                 </Text>
                 {isUserMessage ? <Text>{content}</Text> : <MarkdownText content={content} />}
@@ -614,7 +616,7 @@ export function ChatScreen(props: ChatScreenProps) {
 
         {props.state.chat.streamingBuffer ? (
           <Box flexDirection="column" marginBottom={1}>
-            <Text bold color="magenta">
+            <Text bold color="#ce93d8">
               Assistant <Text dimColor>(streaming...)</Text>
             </Text>
             <MarkdownText content={props.state.chat.streamingBuffer} />
@@ -671,15 +673,18 @@ export function ChatScreen(props: ChatScreenProps) {
         </Box>
       ) : null}
 
-      <Box marginTop={1}>
-        <Text color="cyan">{pendingQuestion ? "answer> " : "you> "}</Text>
-        <TextInput
-          value={inputValue}
-          onChange={setInputValue}
-          onSubmit={handleInputSubmit}
-          placeholder={pendingQuestion ? "Type your answer" : "Type a message"}
-          focus={props.state.focus === "chat" && !isSending && !isAnsweringQuestion}
-        />
+      <Box marginTop={1} flexDirection="column">
+        <Text dimColor>{"─".repeat(40)}</Text>
+        <Box>
+          <Text color="cyan">{pendingQuestion ? "answer> " : "you> "}</Text>
+          <TextInput
+            value={inputValue}
+            onChange={setInputValue}
+            onSubmit={handleInputSubmit}
+            placeholder={pendingQuestion ? "Type your answer" : "Type a message"}
+            focus={props.state.focus === "chat" && !isSending && !isAnsweringQuestion}
+          />
+        </Box>
       </Box>
 
       {isSending ? <Text dimColor>Sending message…</Text> : null}

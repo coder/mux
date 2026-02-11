@@ -170,7 +170,7 @@ export function CreateWorkspaceScreen(props: CreateWorkspaceScreenProps) {
   const activeValue = step === "branch" ? branchName : title;
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" paddingX={1}>
       <Text bold>Create Workspace · {projectName}</Text>
       <Text dimColor>
         {step === "branch"
