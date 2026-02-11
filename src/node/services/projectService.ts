@@ -400,6 +400,10 @@ export class ProjectService {
       let collectedStderr = "";
       let resolveChunk: (() => void) | null = null;
       let processEnded = false;
+      let resolveProcessExit: (() => void) | null = null;
+      const processExitPromise = new Promise<void>((resolve) => {
+        resolveProcessExit = resolve;
+      });
       let spawnErrorMessage: string | null = null;
 
       const getLastMeaningfulStderrLine = (): string | null => {
@@ -425,6 +429,21 @@ export class ProjectService {
         resolve();
       };
 
+      const markProcessEnded = () => {
+        if (processEnded) {
+          return;
+        }
+
+        processEnded = true;
+        notifyChunk();
+
+        if (resolveProcessExit) {
+          const resolve = resolveProcessExit;
+          resolveProcessExit = null;
+          resolve();
+        }
+      };
+
       child.stderr?.on("data", (data: Buffer) => {
         const chunk = data.toString();
         stderrChunks.push(chunk);
@@ -434,14 +453,16 @@ export class ProjectService {
 
       child.on("error", (error: Error) => {
         spawnErrorMessage = error.message;
-        processEnded = true;
-        notifyChunk();
+        markProcessEnded();
       });
 
       child.on("close", () => {
-        processEnded = true;
-        notifyChunk();
+        markProcessEnded();
       });
+
+      if (child.exitCode !== null || child.signalCode !== null) {
+        markProcessEnded();
+      }
 
       const terminateCloneProcess = () => {
         if (child.killed || child.exitCode !== null || child.signalCode !== null) {
@@ -488,6 +509,7 @@ export class ProjectService {
       } finally {
         signal?.removeEventListener("abort", onAbort);
         terminateCloneProcess();
+        await processExitPromise;
       }
 
       while (stderrChunks.length > 0) {
