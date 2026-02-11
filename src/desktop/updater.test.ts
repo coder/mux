@@ -149,7 +149,11 @@ describe("UpdaterService", () => {
       // Should eventually get error status
       const errorStatus = statusUpdates.find((s) => s.type === "error");
       expect(errorStatus).toBeDefined();
-      expect(errorStatus).toEqual({ type: "error", message: "Code signing verification failed" });
+      expect(errorStatus).toEqual({
+        type: "error",
+        phase: "check",
+        message: "Code signing verification failed",
+      });
     });
 
     it("should timeout if no events fire within 30 seconds", () => {
@@ -192,7 +196,7 @@ describe("UpdaterService", () => {
   });
 
   describe("transient error backoff", () => {
-    it("should silently back off on 404 (latest.yml missing)", async () => {
+    it("should silently back off on 404 (latest.yml missing) for auto checks", async () => {
       mockAutoUpdater.checkForUpdates.mockImplementation(() => {
         setImmediate(() => {
           mockAutoUpdater.emit("error", new Error("HttpError: 404 Not Found"));
@@ -202,12 +206,32 @@ describe("UpdaterService", () => {
         });
       });
 
-      service.checkForUpdates();
+      service.checkForUpdates({ source: "auto" });
       await new Promise((resolve) => setImmediate(resolve));
 
       const lastStatus = statusUpdates[statusUpdates.length - 1];
       expect(lastStatus).toEqual({ type: "idle" });
       expect(statusUpdates.find((s) => s.type === "error")).toBeUndefined();
+    });
+
+    it("should surface transient errors for manual checks", async () => {
+      mockAutoUpdater.checkForUpdates.mockImplementation(() => {
+        setImmediate(() => {
+          mockAutoUpdater.emit("error", new Error("HttpError: 404 Not Found"));
+        });
+        return new Promise(() => {
+          // Never resolves — events drive state
+        });
+      });
+
+      service.checkForUpdates({ source: "manual" });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(statusUpdates[statusUpdates.length - 1]).toEqual({
+        type: "error",
+        phase: "check",
+        message: "HttpError: 404 Not Found",
+      });
     });
 
     it("should silently back off on network errors", async () => {
@@ -257,6 +281,7 @@ describe("UpdaterService", () => {
 
       expect(statusUpdates.find((s) => s.type === "error")).toEqual({
         type: "error",
+        phase: "check",
         message: "Code signing verification failed",
       });
     });
@@ -278,6 +303,7 @@ describe("UpdaterService", () => {
 
       expect(statusUpdates.find((s) => s.type === "error")).toEqual({
         type: "error",
+        phase: "check",
         message: "HttpError: 403 Forbidden",
       });
     });
@@ -300,6 +326,7 @@ describe("UpdaterService", () => {
 
       expect(statusUpdates.find((s) => s.type === "error")).toEqual({
         type: "error",
+        phase: "download",
         message: "getaddrinfo ENOTFOUND github.com",
       });
     });
@@ -315,6 +342,51 @@ describe("UpdaterService", () => {
       const lastStatus = statusUpdates[statusUpdates.length - 1];
       expect(lastStatus).toEqual({ type: "idle" });
       expect(statusUpdates.find((s) => s.type === "error")).toBeUndefined();
+    });
+  });
+
+  describe("downloadUpdate", () => {
+    it("should emit phase-aware error when download fails", async () => {
+      mockAutoUpdater.checkForUpdates.mockImplementation(() => {
+        setImmediate(() => {
+          mockAutoUpdater.emit("update-available", { version: "2.0.0" });
+        });
+        return new Promise(() => {
+          // Never resolves — events drive state
+        });
+      });
+      service.checkForUpdates();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      mockAutoUpdater.downloadUpdate.mockImplementationOnce(() =>
+        Promise.reject(new Error("Download failed due to network interruption"))
+      );
+
+      await service.downloadUpdate();
+
+      expect(statusUpdates[statusUpdates.length - 1]).toEqual({
+        type: "error",
+        phase: "download",
+        message: "Download failed due to network interruption",
+      });
+    });
+  });
+
+  describe("installUpdate", () => {
+    it("should emit phase-aware error when install fails", () => {
+      mockAutoUpdater.emit("update-downloaded", { version: "2.0.0" });
+
+      mockAutoUpdater.quitAndInstall.mockImplementationOnce(() => {
+        throw new Error("Install failed due to permission error");
+      });
+
+      service.installUpdate();
+
+      expect(statusUpdates[statusUpdates.length - 1]).toEqual({
+        type: "error",
+        phase: "install",
+        message: "Install failed due to permission error",
+      });
     });
   });
 

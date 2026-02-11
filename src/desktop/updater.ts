@@ -32,7 +32,7 @@ export type UpdateStatus =
   | { type: "up-to-date" } // Explicitly checked, no updates available
   | { type: "downloading"; percent: number }
   | { type: "downloaded"; info: UpdateInfo }
-  | { type: "error"; message: string };
+  | { type: "error"; phase: "check" | "download" | "install"; message: string };
 
 /**
  * Manages application updates using electron-updater.
@@ -47,6 +47,7 @@ export class UpdaterService {
   private updateStatus: UpdateStatus = { type: "idle" };
   private checkTimeout: ReturnType<typeof setTimeout> | null = null;
   private readonly fakeVersion: string | undefined;
+  private checkSource: "auto" | "manual" = "auto";
   private subscribers = new Set<(status: UpdateStatus) => void>();
 
   constructor() {
@@ -118,22 +119,38 @@ export class UpdaterService {
     autoUpdater.on("error", (error) => {
       this.clearCheckTimeout();
 
-      // Transient errors during the *check* phase (e.g., latest.yml not yet
-      // uploaded for a new release, or network blips) should not surface as
-      // errors — silently revert to idle so the next check will retry.
-      //
-      // We only apply this backoff when the current state is "checking".
-      // Errors in other phases (downloading, available, etc.) should still
-      // surface so the user knows something went wrong with an active operation.
-      if (this.updateStatus.type === "checking" && isTransientUpdateError(error)) {
-        log.debug("Update check hit transient error, backing off:", error.message);
-        this.updateStatus = { type: "idle" };
+      if (this.updateStatus.type === "checking") {
+        if (isTransientUpdateError(error)) {
+          if (this.checkSource === "manual") {
+            log.warn("Manual update check hit transient error:", error.message);
+            this.updateStatus = {
+              type: "error",
+              phase: "check",
+              message: error.message,
+            };
+            this.notifyRenderer();
+            return;
+          }
+
+          log.debug("Auto update check hit transient error, backing off:", error.message);
+          this.updateStatus = { type: "idle" };
+          this.notifyRenderer();
+          return;
+        }
+
+        log.error("Update check failed:", error);
+        this.updateStatus = {
+          type: "error",
+          phase: "check",
+          message: error.message,
+        };
         this.notifyRenderer();
         return;
       }
 
+      const phase = this.updateStatus.type === "downloading" ? "download" : "check";
       log.error("Update error:", error);
-      this.updateStatus = { type: "error", message: error.message };
+      this.updateStatus = { type: "error", phase, message: error.message };
       this.notifyRenderer();
     });
   }
@@ -156,7 +173,7 @@ export class UpdaterService {
    *
    * A 30-second timeout ensures we don't stay in "checking" state indefinitely.
    */
-  checkForUpdates(): void {
+  checkForUpdates(options?: { source?: "auto" | "manual" }): void {
     // Skip when a check/download is already in progress or an update
     // is ready to install — the 4-hour interval fires unconditionally,
     // and we don't want it clobbering active states.
@@ -165,6 +182,8 @@ export class UpdaterService {
       log.debug(`checkForUpdates() skipped — current state: ${this.updateStatus.type}`);
       return;
     }
+
+    this.checkSource = options?.source ?? "auto";
 
     log.debug("checkForUpdates() called");
     try {
@@ -197,11 +216,20 @@ export class UpdaterService {
       log.debug(`Setting ${UPDATE_CHECK_TIMEOUT_MS}ms timeout`);
       this.checkTimeout = setTimeout(() => {
         if (this.updateStatus.type === "checking") {
-          log.warn(
-            `Update check timed out after ${UPDATE_CHECK_TIMEOUT_MS}ms — ` +
-              `reverting to idle (will retry on next trigger)`
-          );
-          this.updateStatus = { type: "idle" };
+          if (this.checkSource === "manual") {
+            log.warn(`Manual update check timed out after ${UPDATE_CHECK_TIMEOUT_MS}ms`);
+            this.updateStatus = {
+              type: "error",
+              phase: "check",
+              message: "Update check timed out",
+            };
+          } else {
+            log.warn(
+              `Auto update check timed out after ${UPDATE_CHECK_TIMEOUT_MS}ms — ` +
+                `reverting to idle (will retry on next trigger)`
+            );
+            this.updateStatus = { type: "idle" };
+          }
           this.notifyRenderer();
         } else {
           log.debug(`Timeout fired but status already changed to: ${this.updateStatus.type}`);
@@ -214,23 +242,32 @@ export class UpdaterService {
         this.clearCheckTimeout();
         const err = error instanceof Error ? error : new Error(String(error));
         if (isTransientUpdateError(err)) {
-          log.debug(
-            "Update check promise rejected with transient error, backing off:",
-            err.message
-          );
-          this.updateStatus = { type: "idle" };
+          if (this.checkSource === "manual") {
+            log.warn("Manual update check promise rejected with transient error:", err.message);
+            this.updateStatus = {
+              type: "error",
+              phase: "check",
+              message: err.message,
+            };
+          } else {
+            log.debug(
+              "Auto update check promise rejected with transient error, backing off:",
+              err.message
+            );
+            this.updateStatus = { type: "idle" };
+          }
           this.notifyRenderer();
           return;
         }
         log.error("Update check failed:", err.message);
-        this.updateStatus = { type: "error", message: err.message };
+        this.updateStatus = { type: "error", phase: "check", message: err.message };
         this.notifyRenderer();
       });
     } catch (error) {
       this.clearCheckTimeout();
       const message = error instanceof Error ? error.message : "Unknown error";
       log.error("Update check error:", message);
-      this.updateStatus = { type: "error", message };
+      this.updateStatus = { type: "error", phase: "check", message };
       this.notifyRenderer();
     }
   }
@@ -267,7 +304,13 @@ export class UpdaterService {
       return;
     }
 
-    await autoUpdater.downloadUpdate();
+    try {
+      await autoUpdater.downloadUpdate();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Download failed";
+      this.updateStatus = { type: "error", phase: "download", message };
+      this.notifyRenderer();
+    }
   }
 
   /**
@@ -284,7 +327,13 @@ export class UpdaterService {
       return;
     }
 
-    autoUpdater.quitAndInstall();
+    try {
+      autoUpdater.quitAndInstall();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Install failed";
+      this.updateStatus = { type: "error", phase: "install", message };
+      this.notifyRenderer();
+    }
   }
 
   /**

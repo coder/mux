@@ -1494,7 +1494,7 @@ export const splashScreens = {
 // Update
 export const update = {
   check: {
-    input: z.void(),
+    input: z.object({ source: z.enum(["auto", "manual"]).optional() }).optional(),
     output: z.void(),
   },
   download: {

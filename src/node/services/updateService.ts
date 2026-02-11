@@ -5,7 +5,7 @@ import { parseDebugUpdater } from "@/common/utils/env";
 // Interface matching the implementation class in desktop/updater.ts
 // We redefine it here to avoid importing the class directly which brings in electron-updater
 interface DesktopUpdaterService {
-  checkForUpdates(): void;
+  checkForUpdates(options?: { source?: "auto" | "manual" }): void;
   downloadUpdate(): Promise<void>;
   installUpdate(): void;
   subscribe(callback: (status: UpdateStatus) => void): () => void;
@@ -52,7 +52,7 @@ export class UpdateService {
     }
   }
 
-  async check(): Promise<void> {
+  async check(options?: { source?: "auto" | "manual" }): Promise<void> {
     await this.ready;
     if (this.impl) {
       if (process.versions.electron) {
@@ -74,7 +74,7 @@ export class UpdateService {
           log.debug("UpdateService: Error checking env:", err);
         }
       }
-      this.impl.checkForUpdates();
+      this.impl.checkForUpdates(options);
     } else {
       log.debug("UpdateService: check() called but no implementation (CLI mode)");
     }
