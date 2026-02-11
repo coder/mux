@@ -1,5 +1,7 @@
 import React from "react";
 import {
+  ArrowLeft,
+  Menu,
   Settings,
   Key,
   Cpu,
@@ -87,7 +89,12 @@ const BASE_SECTIONS: SettingsSection[] = [
   },
 ];
 
-export function SettingsPage() {
+interface SettingsPageProps {
+  leftSidebarCollapsed: boolean;
+  onToggleLeftSidebarCollapsed: () => void;
+}
+
+export function SettingsPage(props: SettingsPageProps) {
   const { close, activeSection, setActiveSection } = useSettings();
   const system1Enabled = useExperimentValue(EXPERIMENT_IDS.SYSTEM_1);
   const governorEnabled = useExperimentValue(EXPERIMENT_IDS.MUX_GOVERNOR);
@@ -131,6 +138,41 @@ export function SettingsPage() {
 
   return (
     <div className="bg-dark flex min-h-0 flex-1 flex-col overflow-hidden">
+      {/*
+        Keep explicit mobile escape controls in the page chrome:
+        - The desktop close button is hidden below md.
+        - On touch layouts, the left sidebar is often off-canvas by default.
+        Without back + menu actions here, /settings/:section can trap users in-pane.
+      */}
+      <div className="bg-sidebar border-border-light flex shrink-0 items-center justify-between border-b px-2 md:hidden [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          {props.leftSidebarCollapsed && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={props.onToggleLeftSidebarCollapsed}
+              title="Open sidebar"
+              aria-label="Open sidebar menu"
+              className="mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0"
+            >
+              <Menu className="h-4 w-4" />
+            </Button>
+          )}
+          <span className="text-foreground text-sm font-semibold">Settings</span>
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={close}
+          title="Back"
+          aria-label="Back to previous page"
+          className="text-muted hover:text-foreground px-2"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Back
+        </Button>
+      </div>
+
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <aside className="border-border-medium hidden w-48 shrink-0 flex-col border-r md:flex">
           <div className="border-border-medium flex h-12 items-center border-b px-4">

@@ -930,7 +930,10 @@ function AppInner() {
           <div className="mobile-layout flex flex-1 overflow-hidden">
             {/* Route-driven settings render in the main pane so project/workspace navigation stays visible. */}
             {currentSettingsSection ? (
-              <SettingsPage />
+              <SettingsPage
+                leftSidebarCollapsed={sidebarCollapsed}
+                onToggleLeftSidebarCollapsed={handleToggleSidebar}
+              />
             ) : selectedWorkspace ? (
               (() => {
                 const currentMetadata = workspaceMetadata.get(selectedWorkspace.workspaceId);
