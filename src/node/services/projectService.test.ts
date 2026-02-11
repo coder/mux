@@ -245,7 +245,8 @@ exit 1
         expect(loggedArgs[3]).toMatch(
           /^((https:\/\/github\.com\/owner\/repo\.git)|(git@github\.com:owner\/repo\.git))$/
         );
-        expect(loggedArgs[4]).toBe(path.resolve(cloneParentDir, "repo"));
+        expect(path.dirname(loggedArgs[4])).toBe(path.resolve(cloneParentDir));
+        expect(path.basename(loggedArgs[4])).toMatch(/^repo\.mux-clone-[a-f0-9]{12}$/);
       } finally {
         process.env.PATH = originalPath;
         if (originalFakeGitArgsLogPath === undefined) {
@@ -316,7 +317,8 @@ exit 1
         expect(loggedArgs[1]).toBe("--progress");
         expect(loggedArgs[2]).toBe("--");
         expect(loggedArgs[3]).toBe("git@github.com:owner/repo.git");
-        expect(loggedArgs[4]).toBe(path.resolve(cloneParentDir, "repo"));
+        expect(path.dirname(loggedArgs[4])).toBe(path.resolve(cloneParentDir));
+        expect(path.basename(loggedArgs[4])).toMatch(/^repo\.mux-clone-[a-f0-9]{12}$/);
       } finally {
         process.env.PATH = originalPath;
         if (originalFakeGitArgsLogPath === undefined) {
@@ -482,6 +484,80 @@ exit 1
       } catch (error) {
         const err = error as NodeJS.ErrnoException;
         expect(err.code).toBe("ENOENT");
+      }
+    });
+
+    it("does not delete destination created concurrently during clone failure cleanup", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const sourceRepoPath = await createLocalGitRepository(tempDir, "source-repo-race");
+      const cloneParentDir = path.join(tempDir, "race-clones");
+      const expectedProjectPath = path.resolve(cloneParentDir, "source-repo-race");
+      const concurrentMarkerPath = path.join(expectedProjectPath, "keep.txt");
+      const fakeBinDir = path.join(tempDir, "fake-bin-race");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+      const originalConcurrentDestPath = process.env.CONCURRENT_DEST_PATH;
+      const originalConcurrentMarkerPath = process.env.CONCURRENT_MARKER_PATH;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  mkdir -p "$5/.git"
+  mkdir -p "$CONCURRENT_DEST_PATH"
+  printf 'keep\n' > "$CONCURRENT_MARKER_PATH"
+  exit 1
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.CONCURRENT_DEST_PATH = expectedProjectPath;
+      process.env.CONCURRENT_MARKER_PATH = concurrentMarkerPath;
+
+      try {
+        const events: CloneEvent[] = [];
+        for await (const event of service.cloneWithProgress({
+          repoUrl: sourceRepoPath,
+          cloneParentDir,
+        })) {
+          events.push(event);
+        }
+
+        const terminalEvent = events[events.length - 1];
+        expect(terminalEvent?.type).toBe("error");
+        if (terminalEvent?.type !== "error") throw new Error("Expected error event");
+        expect(terminalEvent.error).toContain("Clone failed");
+
+        const destinationStat = await fs.stat(expectedProjectPath);
+        expect(destinationStat.isDirectory()).toBe(true);
+        expect((await fs.readFile(concurrentMarkerPath, "utf-8")).trim()).toBe("keep");
+
+        const cloneParentEntries = await fs.readdir(cloneParentDir);
+        const tempCloneEntries = cloneParentEntries.filter((entry) =>
+          entry.startsWith("source-repo-race.mux-clone-")
+        );
+        expect(tempCloneEntries).toEqual([]);
+      } finally {
+        process.env.PATH = originalPath;
+        if (originalConcurrentDestPath === undefined) {
+          delete process.env.CONCURRENT_DEST_PATH;
+        } else {
+          process.env.CONCURRENT_DEST_PATH = originalConcurrentDestPath;
+        }
+        if (originalConcurrentMarkerPath === undefined) {
+          delete process.env.CONCURRENT_MARKER_PATH;
+        } else {
+          process.env.CONCURRENT_MARKER_PATH = originalConcurrentMarkerPath;
+        }
       }
     });
   });

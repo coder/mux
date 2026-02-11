@@ -303,14 +303,25 @@ export function GeneralSection() {
     // Only persist once the initial load has completed (success or failure).
     // After a failed load, allow saves only if the user has actively typed
     // a non-empty value, so we never silently clear a configured directory.
-    if (!cloneDirLoaded) {
-      return;
-    }
-    if (!cloneDirLoadedOk && !defaultCloneDir.trim()) {
+    if (!cloneDirLoaded || !api) {
       return;
     }
 
-    void api?.projects.setDefaultCloneDir({ path: defaultCloneDir });
+    const trimmedCloneDir = defaultCloneDir.trim();
+    if (!cloneDirLoadedOk && !trimmedCloneDir) {
+      return;
+    }
+
+    void api.projects
+      .setDefaultCloneDir({ path: defaultCloneDir })
+      .then(() => {
+        // A successful save means subsequent clears are safe, even if the
+        // initial getDefaultCloneDir() request failed earlier in this session.
+        setCloneDirLoadedOk(true);
+      })
+      .catch(() => {
+        // Best-effort save: keep current UI state on failure.
+      });
   }, [api, cloneDirLoaded, cloneDirLoadedOk, defaultCloneDir]);
 
   return (

@@ -360,16 +360,18 @@ export class ProjectService {
     }
 
     const { cloneUrl, normalizedPath, cloneParentDir } = prepared.data;
-    let destinationVerifiedEmpty = false;
+    const cloneWorkPath = `${normalizedPath}.mux-clone-${randomBytes(6).toString("hex")}`;
     let cloneSucceeded = false;
 
     const cleanupPartialClone = async () => {
-      if (!destinationVerifiedEmpty || cloneSucceeded) {
+      if (cloneSucceeded) {
         return;
       }
 
       try {
-        await fsPromises.rm(normalizedPath, { recursive: true, force: true });
+        // Only clean up the temp clone path we created so we never delete
+        // a destination directory that another process created concurrently.
+        await fsPromises.rm(cloneWorkPath, { recursive: true, force: true });
       } catch {
         // Ignore cleanup errors — the original error is more important.
       }
@@ -410,11 +412,10 @@ export class ProjectService {
         yield { type: "error", error: `Destination already exists: ${normalizedPath}` };
         return;
       }
-      destinationVerifiedEmpty = true;
 
       await fsPromises.mkdir(cloneParentDir, { recursive: true });
 
-      const child = spawn("git", ["clone", "--progress", "--", cloneUrl, normalizedPath], {
+      const child = spawn("git", ["clone", "--progress", "--", cloneUrl, cloneWorkPath], {
         stdio: ["ignore", "pipe", "pipe"],
         env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
       });
@@ -531,6 +532,18 @@ export class ProjectService {
             : `Clone failed with exit code ${exitCode ?? "unknown"}`);
         yield { type: "error", error: errorMessage };
         return;
+      }
+
+      try {
+        await fsPromises.rename(cloneWorkPath, normalizedPath);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === "EEXIST" || err.code === "ENOTEMPTY") {
+          await cleanupPartialClone();
+          yield { type: "error", error: `Destination already exists: ${normalizedPath}` };
+          return;
+        }
+        throw error;
       }
 
       cloneSucceeded = true;
