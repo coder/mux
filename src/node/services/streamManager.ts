@@ -4,6 +4,7 @@ import { PlatformPaths } from "@/common/utils/paths";
 import {
   streamText,
   stepCountIs,
+  hasToolCall,
   type ModelMessage,
   type LanguageModel,
   type Tool,
@@ -1019,9 +1020,14 @@ export class StreamManager extends EventEmitter {
       return stepCountIs(1);
     }
 
-    // Allow effectively unlimited autonomous steps while still yielding quickly
-    // when a queued user message should interrupt at the next step boundary.
-    return [stepCountIs(100000), () => request.hasQueuedMessage?.() ?? false];
+    // For autonomous loops: cap steps, check for queued messages, and stop after
+    // agent_report so the stream ends naturally (preserving usage accounting)
+    // without allowing post-report tool execution.
+    return [
+      stepCountIs(100000),
+      () => request.hasQueuedMessage?.() ?? false,
+      hasToolCall("agent_report"),
+    ];
   }
 
   private createStreamResult(

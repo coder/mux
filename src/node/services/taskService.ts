@@ -2317,8 +2317,9 @@ export class TaskService {
     await this.emitWorkspaceMetadata(childWorkspaceId);
 
     // NOTE: Stream continues — we intentionally do NOT abort it.
-    // The agent_report tool result tells the LLM to stop.
-    // recordSessionUsage runs when the stream ends naturally.
+    // Deterministic termination is enforced by stopWhen(hasToolCall("agent_report"))
+    // in StreamManager, which ends the stream at the step boundary (preserving usage
+    // accounting). recordSessionUsage runs when the stream ends naturally.
 
     const cfgAfterReport = this.config.loadConfigOrDefault();
     const latestChildEntry = findWorkspaceEntry(cfgAfterReport, childWorkspaceId) ?? childEntry;
