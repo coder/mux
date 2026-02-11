@@ -31,10 +31,10 @@ Always check `$MUX_MODEL_STRING`, `$MUX_THINKING_LEVEL`, and `$MUX_COSTS_USD` vi
 
 ## CI & Validation
 
-- After pushing, you may use `./scripts/wait_pr_checks.sh <pr_number>` to wait for CI to pass.
-- Use `wait_pr_checks` only when there's no more useful work to do.
-- Waiting for PR checks can take 10+ minutes, so prefer local validation (e.g., run a subset of integration tests) to catch issues early.
-- If asked to fix an issue in CI, first replicate it locally, get it to pass locally, then use `wait_pr_checks` to wait for CI to pass.
+- Use `wait_pr_checks` only as a **last-step** helper when there's no more useful local work left.
+- Prefer local validation first (e.g., `make static-check` or a targeted test subset) because CI waiting can take 10+ minutes.
+- After local validation is done and no useful work remains, run `./scripts/wait_pr_checks.sh <pr_number>`.
+- If asked to fix an issue in CI, first replicate it locally, get it to pass locally, then use `wait_pr_checks`.
 
 ## Status Decoding
 
