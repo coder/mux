@@ -5,7 +5,7 @@ import { SettingsButton } from "./SettingsButton";
 import { GatewayIcon } from "./icons/GatewayIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import type { UpdateStatus } from "@/common/orpc/types";
-import { Download, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Download, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 
 import { useAPI } from "@/browser/contexts/API";
 import { useAboutDialog } from "@/browser/contexts/AboutDialogContext";
@@ -94,11 +94,11 @@ export function TitleBar() {
     })();
 
     // Check for updates on mount
-    api.update.check(undefined).catch(console.error);
+    api.update.check({ source: "auto" }).catch(console.error);
 
     // Check periodically
     const checkInterval = setInterval(() => {
-      api.update.check(undefined).catch(console.error);
+      api.update.check({ source: "auto" }).catch(console.error);
     }, UPDATE_CHECK_INTERVAL_MS);
 
     return () => {
@@ -118,6 +118,10 @@ export function TitleBar() {
 
     if (updateStatus.type === "downloading" || updateStatus.type === "checking") {
       return <Loader2 className="size-3.5 animate-spin" />;
+    }
+
+    if (updateStatus.type === "error") {
+      return <AlertTriangle className="size-3.5" />;
     }
 
     return null;
