@@ -24,12 +24,21 @@ export function getVisibleWorkspaceIds(): string[] {
  *
  * Prefers the item immediately *after* {@link currentWorkspaceId} (so the list
  * feels like it scrolled up to fill the gap), falling back to the item before
- * it. Returns `null` when there are no other workspaces in the sidebar.
+ * it.  When the current workspace isn't rendered at all (e.g. its project or
+ * section is collapsed), returns the first visible workspace — matching how
+ * Ctrl+J picks a target when the selection is off-screen.
+ *
+ * Returns `null` only when no other workspaces are visible in the sidebar.
  */
 export function findAdjacentWorkspaceId(currentWorkspaceId: string): string | null {
   const ids = getVisibleWorkspaceIds();
   const idx = ids.indexOf(currentWorkspaceId);
-  if (idx === -1) return null;
+
+  if (idx === -1) {
+    // Current workspace not rendered (collapsed project/section) — pick the
+    // first visible workspace that isn't the one being removed.
+    return ids.find((id) => id !== currentWorkspaceId) ?? null;
+  }
 
   // Prefer next (below), then previous (above).
   if (idx + 1 < ids.length) return ids[idx + 1];

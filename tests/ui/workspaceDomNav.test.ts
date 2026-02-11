@@ -63,12 +63,14 @@ describe("findAdjacentWorkspaceId", () => {
     expect(findAdjacentWorkspaceId("ws-a")).toBeNull();
   });
 
-  test("returns null when current workspace is not in the DOM", () => {
+  test("returns first visible workspace when current is not in the DOM (collapsed project)", () => {
     addWorkspaceRow("ws-a");
-    expect(findAdjacentWorkspaceId("ws-unknown")).toBeNull();
+    addWorkspaceRow("ws-b");
+    // "ws-hidden" is the active workspace but its project is collapsed
+    expect(findAdjacentWorkspaceId("ws-hidden")).toBe("ws-a");
   });
 
-  test("returns null when DOM is empty", () => {
+  test("returns null when DOM is empty (no visible workspaces at all)", () => {
     expect(findAdjacentWorkspaceId("ws-a")).toBeNull();
   });
 });
