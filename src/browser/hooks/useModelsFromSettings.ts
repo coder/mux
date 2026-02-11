@@ -17,6 +17,7 @@ import type { ProvidersConfigMap } from "@/common/orpc/types";
 import {
   DEFAULT_MODEL_KEY,
   GATEWAY_ENABLED_KEY,
+  GATEWAY_MODELS_KEY,
   HIDDEN_MODELS_KEY,
 } from "@/common/constants/storage";
 
@@ -158,7 +159,11 @@ export function useModelsFromSettings() {
   const [gatewayEnabled] = usePersistedState<boolean>(GATEWAY_ENABLED_KEY, true, {
     listener: true,
   });
+  const [gatewayModels] = usePersistedState<string[]>(GATEWAY_MODELS_KEY, [], {
+    listener: true,
+  });
   const gatewayActive = config?.["mux-gateway"]?.couponCodeSet === true && gatewayEnabled;
+  const gatewayModelSet = useMemo(() => new Set(gatewayModels), [gatewayModels]);
 
   const customModels = useMemo(() => {
     const next = filterHiddenModels(getCustomModels(config), hiddenModels);
@@ -186,12 +191,13 @@ export function useModelsFromSettings() {
         return false;
       }
 
-      // Keep gateway-routable models visible in the selector even when native provider is unavailable.
-      return !(gatewayActive && isProviderSupported(modelId));
+      // Keep models visible when they're actively opted-in to Mux Gateway routing,
+      // even if the native provider is unavailable.
+      return !(gatewayActive && isProviderSupported(modelId) && gatewayModelSet.has(modelId));
     });
 
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
-  }, [config, hiddenModels, effectivePolicy, gatewayActive]);
+  }, [config, hiddenModels, effectivePolicy, gatewayActive, gatewayModelSet]);
 
   const hiddenModelsForSelector = useMemo(
     () => dedupeKeepFirst([...hiddenModels, ...providerHiddenModels]),
@@ -211,8 +217,8 @@ export function useModelsFromSettings() {
               return true;
             }
 
-            // Keep models routable through Mux Gateway even if native provider is unavailable.
-            return gatewayActive && isProviderSupported(modelId);
+            // Keep models routable through Mux Gateway (per-model opt-in) even if native provider is unavailable.
+            return gatewayActive && isProviderSupported(modelId) && gatewayModelSet.has(modelId);
           });
 
     if (config == null) {
@@ -245,7 +251,15 @@ export function useModelsFromSettings() {
     });
 
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
-  }, [config, hiddenModels, effectivePolicy, gatewayActive, openaiApiKeySet, codexOauthSet]);
+  }, [
+    config,
+    hiddenModels,
+    effectivePolicy,
+    gatewayActive,
+    gatewayModelSet,
+    openaiApiKeySet,
+    codexOauthSet,
+  ]);
 
   /**
    * If a model is selected that isn't built-in, persist it as a provider custom model.

@@ -8,7 +8,11 @@ import {
 } from "./useModelsFromSettings";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
-import { GATEWAY_ENABLED_KEY, HIDDEN_MODELS_KEY } from "@/common/constants/storage";
+import {
+  GATEWAY_ENABLED_KEY,
+  GATEWAY_MODELS_KEY,
+  HIDDEN_MODELS_KEY,
+} from "@/common/constants/storage";
 
 function countOccurrences(haystack: string[], needle: string): number {
   return haystack.filter((v) => v === needle).length;
@@ -231,7 +235,7 @@ describe("useModelsFromSettings provider availability gating", () => {
     expect(result.current.models).toContain(KNOWN_MODELS.GPT.id);
   });
 
-  test("keeps gateway-routable models visible when gateway is active", () => {
+  test("keeps gateway-opted-in models visible when gateway is active", () => {
     providersConfig = {
       anthropic: { apiKeySet: false, isEnabled: true, isConfigured: false },
       "mux-gateway": {
@@ -243,15 +247,23 @@ describe("useModelsFromSettings provider availability gating", () => {
     };
 
     globalThis.window.localStorage.setItem(GATEWAY_ENABLED_KEY, JSON.stringify(true));
+    // Only OPUS is opted-in to gateway routing
+    globalThis.window.localStorage.setItem(
+      GATEWAY_MODELS_KEY,
+      JSON.stringify([KNOWN_MODELS.OPUS.id])
+    );
 
     const { result } = renderHook(() => useModelsFromSettings());
 
+    // OPUS is opted-in to gateway — should stay visible
     expect(result.current.models).toContain(KNOWN_MODELS.OPUS.id);
-    expect(result.current.models).toContain(KNOWN_MODELS.SONNET.id);
-    expect(result.current.models).toContain(KNOWN_MODELS.HAIKU.id);
-
     expect(result.current.hiddenModelsForSelector).not.toContain(KNOWN_MODELS.OPUS.id);
-    expect(result.current.hiddenModelsForSelector).not.toContain(KNOWN_MODELS.SONNET.id);
+
+    // SONNET and HAIKU are NOT opted-in — should be hidden despite gateway being active
+    expect(result.current.models).not.toContain(KNOWN_MODELS.SONNET.id);
+    expect(result.current.models).not.toContain(KNOWN_MODELS.HAIKU.id);
+    expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.SONNET.id);
+    expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.HAIKU.id);
   });
 
   test("hides models from disabled providers", () => {
