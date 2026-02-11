@@ -16,7 +16,7 @@ import { WorkspaceHoverPreview } from "./WorkspaceHoverPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
-import { Pencil, Trash2, Ellipsis, Loader2, Link2 } from "lucide-react";
+import { Pencil, Trash2, Ellipsis, Loader2, Link2, Sparkles } from "lucide-react";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
@@ -24,6 +24,7 @@ import { WORKSPACE_DRAG_TYPE, type WorkspaceDragItem } from "./WorkspaceSectionD
 import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ShareTranscriptDialog } from "./ShareTranscriptDialog";
+import { useAPI } from "@/browser/contexts/API";
 
 const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
 
@@ -364,6 +365,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
 
   // Get title edit context (renamed from rename context since we now edit titles, not names)
   const { editingWorkspaceId, requestRename, confirmRename, cancelRename } = useRename();
+  const { api } = useAPI();
 
   // Local state for title editing
   const [editingTitle, setEditingTitle] = useState<string>("");
@@ -695,7 +697,26 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   >
                     <span className="flex items-center gap-2">
                       <Pencil className="h-3 w-3 shrink-0" />
-                      Edit chat title
+                      Edit chat title{" "}
+                      <span className="text-muted text-[10px]">
+                        ({formatKeybind(KEYBINDS.RENAME_WORKSPACE)})
+                      </span>
+                    </span>
+                  </button>
+                  <button
+                    className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsTitleMenuOpen(false);
+                      void api?.workspace.regenerateTitle({ workspaceId });
+                    }}
+                  >
+                    <span className="flex items-center gap-2">
+                      <Sparkles className="h-3 w-3 shrink-0" />
+                      Generate new title{" "}
+                      <span className="text-muted text-[10px]">
+                        ({formatKeybind(KEYBINDS.REGENERATE_WORKSPACE_NAME)})
+                      </span>
                     </span>
                   </button>
                   {/* Share transcript link (gated on telemetry/link-sharing being enabled). */}

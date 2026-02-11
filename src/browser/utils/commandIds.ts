@@ -26,6 +26,7 @@ export const CommandIds = {
   workspaceRemoveAny: () => "ws:remove-any" as const,
   workspaceRename: () => "ws:rename" as const,
   workspaceRenameAny: () => "ws:rename-any" as const,
+  workspaceRegenerateName: () => "ws:regenerate-name" as const,
   workspaceOpenTerminal: () => "ws:open-terminal" as const,
   workspaceOpenTerminalCurrent: () => "ws:open-terminal-current" as const,
   workspaceArchiveMergedInProject: () => "ws:archive-merged-in-project" as const,
