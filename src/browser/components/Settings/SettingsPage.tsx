@@ -16,7 +16,6 @@ import {
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
-import { Dialog, DialogContent, DialogTitle, VisuallyHidden } from "@/browser/components/ui/dialog";
 import { GeneralSection } from "./sections/GeneralSection";
 import { TasksSection } from "./sections/TasksSection";
 import { ProvidersSection } from "./sections/ProvidersSection";
@@ -88,12 +87,12 @@ const BASE_SECTIONS: SettingsSection[] = [
   },
 ];
 
-export function SettingsModal() {
-  const { isOpen, close, activeSection, setActiveSection } = useSettings();
+export function SettingsPage() {
+  const { close, activeSection, setActiveSection } = useSettings();
   const system1Enabled = useExperimentValue(EXPERIMENT_IDS.SYSTEM_1);
   const governorEnabled = useExperimentValue(EXPERIMENT_IDS.MUX_GOVERNOR);
 
-  // Reset activeSection if the experiment is disabled
+  // Keep routing on a valid section when an experiment-gated section is disabled.
   React.useEffect(() => {
     if (!system1Enabled && activeSection === "system1") {
       setActiveSection(BASE_SECTIONS[0]?.id ?? "general");
@@ -103,7 +102,6 @@ export function SettingsModal() {
     }
   }, [activeSection, setActiveSection, system1Enabled, governorEnabled]);
 
-  // Build sections list based on enabled experiments
   let sections: SettingsSection[] = BASE_SECTIONS;
   if (system1Enabled) {
     sections = [
@@ -128,43 +126,23 @@ export function SettingsModal() {
     ];
   }
 
-  const currentSection = sections.find((s) => s.id === activeSection) ?? sections[0];
+  const currentSection = sections.find((section) => section.id === activeSection) ?? sections[0];
   const SectionComponent = currentSection.component;
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && close()}>
-      <DialogContent
-        showCloseButton={false}
-        maxWidth="800px"
-        aria-describedby={undefined}
-        className="flex h-[80vh] max-h-[600px] flex-col gap-0 overflow-hidden p-0 md:h-[70vh] md:flex-row"
-      >
-        {/* Visually hidden title for accessibility */}
-        <VisuallyHidden>
-          <DialogTitle>Settings</DialogTitle>
-        </VisuallyHidden>
-        {/* Sidebar - horizontal tabs on mobile, vertical on desktop */}
-        <div className="border-border-medium flex shrink-0 flex-col border-b md:w-48 md:border-r md:border-b-0">
-          <div className="border-border-medium flex h-12 items-center justify-between border-b px-4 md:justify-start">
+    <div className="bg-dark flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <aside className="border-border-medium hidden w-48 shrink-0 flex-col border-r md:flex">
+          <div className="border-border-medium flex h-12 items-center border-b px-4">
             <span className="text-foreground text-sm font-semibold">Settings</span>
-            {/* Close button in header on mobile only */}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={close}
-              className="h-6 w-6 md:hidden"
-              aria-label="Close settings"
-            >
-              <X className="h-4 w-4" />
-            </Button>
           </div>
-          <nav className="flex gap-1 overflow-x-auto p-2 md:flex-1 md:flex-col md:overflow-y-auto">
+          <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
             {sections.map((section) => (
               <Button
                 key={section.id}
                 variant="ghost"
                 onClick={() => setActiveSection(section.id)}
-                className={`flex h-auto shrink-0 items-center justify-start gap-2 rounded-md px-3 py-2 text-left text-sm whitespace-nowrap md:w-full ${
+                className={`flex h-auto w-full items-center justify-start gap-2 rounded-md px-3 py-2 text-left text-sm ${
                   activeSection === section.id
                     ? "bg-accent/20 text-accent hover:bg-accent/20 hover:text-accent"
                     : "text-muted hover:bg-hover hover:text-foreground"
@@ -175,10 +153,29 @@ export function SettingsModal() {
               </Button>
             ))}
           </nav>
-        </div>
+        </aside>
 
-        {/* Content */}
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="border-border-medium shrink-0 border-b md:hidden">
+            <nav className="flex gap-1 overflow-x-auto p-2">
+              {sections.map((section) => (
+                <Button
+                  key={section.id}
+                  variant="ghost"
+                  onClick={() => setActiveSection(section.id)}
+                  className={`flex h-auto shrink-0 items-center justify-start gap-2 rounded-md px-3 py-2 text-left text-sm whitespace-nowrap ${
+                    activeSection === section.id
+                      ? "bg-accent/20 text-accent hover:bg-accent/20 hover:text-accent"
+                      : "text-muted hover:bg-hover hover:text-foreground"
+                  }`}
+                >
+                  {section.icon}
+                  {section.label}
+                </Button>
+              ))}
+            </nav>
+          </div>
+
           <div className="border-border-medium hidden h-12 items-center justify-between border-b px-6 md:flex">
             <span className="text-foreground text-sm font-medium">{currentSection.label}</span>
             <Button
@@ -195,7 +192,7 @@ export function SettingsModal() {
             <SectionComponent />
           </div>
         </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </div>
   );
 }

@@ -65,8 +65,8 @@ import { ProjectPage } from "@/browser/components/ProjectPage";
 
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
 import { AboutDialogProvider } from "./contexts/AboutDialogContext";
-import { SettingsModal } from "./components/Settings/SettingsModal";
 import { AboutDialog } from "./components/About/AboutDialog";
+import { SettingsPage } from "@/browser/components/Settings/SettingsPage";
 import { MuxGatewaySessionExpiredDialog } from "./components/MuxGatewaySessionExpiredDialog";
 import { SplashScreenProvider } from "./components/splashScreens/SplashScreenProvider";
 import { TutorialProvider } from "./contexts/TutorialContext";
@@ -99,7 +99,7 @@ function AppInner() {
     pendingNewWorkspaceDraftId,
     beginWorkspaceCreation,
   } = useWorkspaceContext();
-  const { currentWorkspaceId } = useRouter();
+  const { currentWorkspaceId, currentSettingsSection } = useRouter();
   const { theme, setTheme, toggleTheme } = useTheme();
   const { open: openSettings, isOpen: isSettingsOpen } = useSettings();
   const setThemePreference = useCallback(
@@ -928,7 +928,10 @@ function AppInner() {
           <WindowsToolchainBanner />
           <RosettaBanner />
           <div className="mobile-layout flex flex-1 overflow-hidden">
-            {selectedWorkspace ? (
+            {/* Route-driven settings render in the main pane so project/workspace navigation stays visible. */}
+            {currentSettingsSection ? (
+              <SettingsPage />
+            ) : selectedWorkspace ? (
               (() => {
                 const currentMetadata = workspaceMetadata.get(selectedWorkspace.workspaceId);
                 // Guard: Don't render AIView if workspace metadata not found.
@@ -1076,7 +1079,6 @@ function AppInner() {
             beginWorkspaceCreation(normalizedPath);
           }}
         />
-        <SettingsModal />
         <AboutDialog />
         <MuxGatewaySessionExpiredDialog />
       </div>
