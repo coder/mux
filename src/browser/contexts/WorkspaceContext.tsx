@@ -836,6 +836,20 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     [navigateToWorkspace, navigateToHome]
   );
 
+  /**
+   * Clear the workspace selection and navigate to a specific project page
+   * instead of home.  Use this when deselecting a workspace where we know
+   * which project the user was working in (archive, delete fallback, etc.).
+   */
+  const clearSelectionToProject = useCallback(
+    (projectPath: string) => {
+      selectedWorkspaceRef.current = null;
+      updatePersistedState(SELECTED_WORKSPACE_KEY, null);
+      navigateToProject(projectPath);
+    },
+    [navigateToProject]
+  );
+
   // Used by async subscription handlers to safely access the most recent metadata map
   // without triggering render-phase state updates.
   const workspaceMetadataRef = useRef(workspaceMetadata);
@@ -1004,14 +1018,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
               const nextMeta = nextId ? workspaceMetadataRef.current.get(nextId) : null;
 
               if (nextMeta) {
-                // Navigate to the adjacent workspace (same pattern the delete handler uses).
                 setSelectedWorkspace(toWorkspaceSelection(nextMeta));
               } else {
-                // No siblings visible — land on the project page, not home.
-                // Can't use setSelectedWorkspace(null) here because that routes to home.
-                selectedWorkspaceRef.current = null;
-                updatePersistedState(SELECTED_WORKSPACE_KEY, null);
-                navigateToProject(meta.projectPath);
+                clearSelectionToProject(meta.projectPath);
               }
             }
           }
@@ -1082,14 +1091,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
               );
 
             if (fallbackMeta) {
-              setSelectedWorkspace({
-                workspaceId: fallbackMeta.id,
-                projectPath: fallbackMeta.projectPath,
-                projectName: fallbackMeta.projectName,
-                namedWorkspacePath: fallbackMeta.namedWorkspacePath,
-              });
+              setSelectedWorkspace(toWorkspaceSelection(fallbackMeta));
             } else if (projectPath) {
-              navigateToProject(projectPath);
+              clearSelectionToProject(projectPath);
             } else {
               setSelectedWorkspace(null);
             }
@@ -1105,7 +1109,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     return () => {
       controller.abort();
     };
-  }, [navigateToProject, refreshProjects, setSelectedWorkspace, setWorkspaceMetadata, api]);
+  }, [clearSelectionToProject, refreshProjects, setSelectedWorkspace, setWorkspaceMetadata, api]);
 
   const createWorkspace = useCallback(
     async (
