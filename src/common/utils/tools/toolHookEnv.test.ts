@@ -95,4 +95,18 @@ describe("flattenToolHookValueToEnv", () => {
       PFX_OK: "x",
     });
   });
+
+  it("emits legacy FILE_PATH alias when canonical PATH is present", () => {
+    // After the file_path → path rename, existing hooks may reference
+    // MUX_TOOL_INPUT_FILE_PATH. The flattener emits it as an alias.
+    expect(flattenToolHookValueToEnv({ path: "src/app.ts" }, "MUX_TOOL_INPUT")).toEqual({
+      MUX_TOOL_INPUT_PATH: "src/app.ts",
+      MUX_TOOL_INPUT_FILE_PATH: "src/app.ts",
+    });
+  });
+
+  it("does not emit FILE_PATH alias when PATH is absent", () => {
+    const result = flattenToolHookValueToEnv({ script: "echo hi" }, "MUX_TOOL_INPUT");
+    expect(result).not.toHaveProperty("MUX_TOOL_INPUT_FILE_PATH");
+  });
 });
