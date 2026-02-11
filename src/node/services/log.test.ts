@@ -1,9 +1,19 @@
-import { afterAll, afterEach, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  spyOn,
+  test,
+} from "bun:test";
 import * as fs from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { clearLogFiles, closeLogFile, log } from "./log";
+import { __resetFileSinkForTests, clearLogFiles, closeLogFile, log } from "./log";
 
 describe("log file sink state machine", () => {
   let tempMuxRoot: string;
@@ -13,6 +23,10 @@ describe("log file sink state machine", () => {
     originalMuxRoot = process.env.MUX_ROOT;
     tempMuxRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-log-test-"));
     process.env.MUX_ROOT = tempMuxRoot;
+  });
+
+  beforeEach(() => {
+    __resetFileSinkForTests();
   });
 
   afterEach(() => {
@@ -55,7 +69,7 @@ describe("log file sink state machine", () => {
     expect(createWriteStreamSpy).toHaveBeenCalledTimes(1);
   });
 
-  test("clearLogFiles closes and reopens the active sink stream", () => {
+  test("clearLogFiles closes and reopens the active sink stream", async () => {
     const originalCreateWriteStream = fs.createWriteStream;
     const createdStreams: fs.WriteStream[] = [];
 
@@ -77,8 +91,12 @@ describe("log file sink state machine", () => {
     }
 
     const firstStreamEndSpy = spyOn(firstStream, "end");
+    const firstStreamClose = new Promise<void>((resolve) => {
+      firstStream.once("close", () => resolve());
+    });
 
     clearLogFiles();
+    await firstStreamClose;
 
     expect(firstStreamEndSpy).toHaveBeenCalledTimes(1);
     expect(createdStreams).toHaveLength(2);

@@ -86,6 +86,19 @@ type FileSinkState =
   | { status: "closed" };
 
 let fileSinkState: FileSinkState = { status: "idle" };
+let sinkTransition: Promise<void> = Promise.resolve();
+let sinkTransitionDepth = 0;
+
+function enqueueSinkTransition(task: () => Promise<void>): void {
+  sinkTransitionDepth += 1;
+  sinkTransition = sinkTransition
+    .catch(() => undefined)
+    .then(task)
+    .catch((error) => setDegradedState(error))
+    .finally(() => {
+      sinkTransitionDepth -= 1;
+    });
+}
 
 const MAX_LOG_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const MAX_LOG_FILES = 3;
@@ -127,6 +140,25 @@ function setDegradedState(error: unknown): void {
   };
 }
 
+function waitForStreamClose(stream: fs.WriteStream): Promise<void> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) {
+        return;
+      }
+      done = true;
+      resolve();
+    };
+
+    stream.once("close", finish);
+    stream.once("error", finish);
+    // .end() callback fires on 'finish', which precedes 'close'—
+    // but the callback guarantees flush completed.
+    stream.end(() => finish());
+  });
+}
+
 function stripAnsi(text: string): string {
   // Matches standard ANSI escape codes for colors/styles.
   // eslint-disable-next-line no-control-regex
@@ -134,6 +166,12 @@ function stripAnsi(text: string): string {
 }
 
 function ensureSinkOpen(): void {
+  // Bail while a transition (rotate/clear/close) is in progress — the queue
+  // will reopen the sink if appropriate.
+  if (sinkTransitionDepth > 0) {
+    return;
+  }
+
   if (fileSinkState.status === "open" || fileSinkState.status === "closed") {
     return;
   }
@@ -169,9 +207,11 @@ function rotateSink(): void {
   }
 
   const openSink = fileSinkState;
+  // Immediately move to idle so writeSink() won't write to the old stream.
+  fileSinkState = { status: "idle" };
 
-  try {
-    openSink.stream.end();
+  enqueueSinkTransition(async () => {
+    await waitForStreamClose(openSink.stream);
 
     const logsDir = path.dirname(openSink.path);
 
@@ -188,9 +228,7 @@ function rotateSink(): void {
 
     const stream = createSafeStream(openSink.path);
     fileSinkState = { status: "open", stream, path: openSink.path, size: 0 };
-  } catch (error) {
-    setDegradedState(error);
-  }
+  });
 }
 
 function writeSink(cleanLineWithNewline: string): void {
@@ -231,41 +269,39 @@ function clearSink(): void {
   const activeLogPath = path.join(logsDir, "mux.log");
 
   const openSink = fileSinkState.status === "open" ? fileSinkState : null;
+  // Immediately move to idle so writeSink() won't write to the old stream.
   if (openSink) {
-    try {
-      openSink.stream.end();
-    } catch {
-      // logger must fail silently
-    }
     fileSinkState = { status: "idle" };
   }
 
-  fs.mkdirSync(logsDir, { recursive: true });
-
-  // Truncate the active log. Throws on permission errors.
-  const fd = fs.openSync(activeLogPath, "w");
-  fs.closeSync(fd);
-
-  // Remove rotated files — missing files are fine.
-  for (let i = 1; i <= MAX_LOG_FILES; i++) {
-    const rotatedPath = path.join(logsDir, `mux.${i}.log`);
-    try {
-      fs.unlinkSync(rotatedPath);
-    } catch {
-      // file may not exist
+  enqueueSinkTransition(async () => {
+    if (openSink) {
+      await waitForStreamClose(openSink.stream);
     }
-  }
 
-  if (!openSink) {
-    return;
-  }
+    fs.mkdirSync(logsDir, { recursive: true });
 
-  try {
+    // Truncate the active log. Throws on permission errors.
+    const fd = fs.openSync(activeLogPath, "w");
+    fs.closeSync(fd);
+
+    // Remove rotated files — missing files are fine.
+    for (let i = 1; i <= MAX_LOG_FILES; i++) {
+      const rotatedPath = path.join(logsDir, `mux.${i}.log`);
+      try {
+        fs.unlinkSync(rotatedPath);
+      } catch {
+        // file may not exist
+      }
+    }
+
+    if (!openSink) {
+      return;
+    }
+
     const stream = createSafeStream(activeLogPath);
     fileSinkState = { status: "open", stream, path: activeLogPath, size: 0 };
-  } catch (error) {
-    setDegradedState(error);
-  }
+  });
 }
 
 export function clearLogFiles(): void {
@@ -273,19 +309,37 @@ export function clearLogFiles(): void {
 }
 
 function closeSink(): void {
-  if (fileSinkState.status === "open") {
-    try {
-      fileSinkState.stream.end();
-    } catch {
-      // ignore
-    }
+  const openSink = fileSinkState.status === "open" ? fileSinkState : null;
+
+  // Terminal state — set immediately so no new writes start.
+  fileSinkState = { status: "closed" };
+
+  if (!openSink) {
+    return;
   }
 
-  fileSinkState = { status: "closed" };
+  enqueueSinkTransition(async () => {
+    await waitForStreamClose(openSink.stream);
+  });
 }
 
 export function closeLogFile(): void {
   closeSink();
+}
+
+/** @internal Test seam: reset singleton sink state for hermetic tests. */
+export function __resetFileSinkForTests(): void {
+  if (fileSinkState.status === "open") {
+    try {
+      fileSinkState.stream.end();
+    } catch {
+      // silent
+    }
+  }
+
+  fileSinkState = { status: "idle" };
+  sinkTransition = Promise.resolve();
+  sinkTransitionDepth = 0;
 }
 
 let currentLogLevel: LogLevel = getDefaultLogLevel();
