@@ -276,7 +276,7 @@ export function TasksSection() {
     agentAiDefaults: AgentAiDefaults;
   } | null>(null);
 
-  const { models, hiddenModels } = useModelsFromSettings();
+  const { models, hiddenModelsForSelector } = useModelsFromSettings();
 
   // Resolve the workspace's active model so that when a sub-agent's model is
   // "Inherit", we show thinking levels for the workspace model (falling back to
@@ -729,7 +729,7 @@ export function TasksSection() {
                 emptyLabel="Inherit"
                 onChange={(value) => setAgentModel(agent.id, value)}
                 models={models}
-                hiddenModels={hiddenModels}
+                hiddenModels={hiddenModelsForSelector}
                 variant="box"
                 className="bg-modal-bg"
               />
@@ -796,7 +796,7 @@ export function TasksSection() {
                 emptyLabel="Inherit"
                 onChange={(value) => setAgentModel(agentId, value)}
                 models={models}
-                hiddenModels={hiddenModels}
+                hiddenModels={hiddenModelsForSelector}
                 variant="box"
                 className="bg-modal-bg"
               />

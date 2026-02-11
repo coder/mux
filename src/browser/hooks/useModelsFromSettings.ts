@@ -12,6 +12,7 @@ import { useAPI } from "@/browser/contexts/API";
 import { migrateGatewayModel } from "./useGatewayModels";
 import { isValidProvider } from "@/common/constants/providers";
 import { isModelAllowedByPolicy } from "@/browser/utils/policyUi";
+import { getModelProvider } from "@/common/utils/ai/models";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { DEFAULT_MODEL_KEY, HIDDEN_MODELS_KEY } from "@/common/constants/storage";
 
@@ -31,6 +32,34 @@ function getCustomModels(config: ProvidersConfigMap | null): string[] {
       models.push(`${provider}:${modelId}`);
     }
   }
+  return models;
+}
+
+/** A provider is available only when it is enabled and has credentials configured. */
+function isProviderAvailable(config: ProvidersConfigMap | null, provider: string): boolean {
+  if (config == null) return true; // Config is loading/unknown; avoid temporary hiding flicker.
+
+  const info = config[provider];
+  // Unknown providers are treated as available so we do not hide valid models by default.
+  if (!info) return true;
+
+  return info.isEnabled && info.isConfigured;
+}
+
+function getAllCustomModels(config: ProvidersConfigMap | null): string[] {
+  if (!config) return [];
+
+  const models: string[] = [];
+  for (const [provider, info] of Object.entries(config)) {
+    // Skip mux-gateway - those models are accessed via the cloud toggle, not listed separately
+    if (provider === "mux-gateway") continue;
+    if (!info.models) continue;
+
+    for (const modelId of info.models) {
+      models.push(`${provider}:${modelId}`);
+    }
+  }
+
   return models;
 }
 
@@ -130,9 +159,46 @@ export function useModelsFromSettings() {
   const openaiApiKeySet = config === null ? null : config.openai?.apiKeySet === true;
   const codexOauthSet = config === null ? null : config.openai?.codexOauthSet === true;
 
+  const providerHiddenModels = useMemo(() => {
+    if (config == null) {
+      return [];
+    }
+
+    const allModels = dedupeKeepFirst([...getAllCustomModels(config), ...BUILT_IN_MODELS]);
+    const userHiddenSet = new Set(hiddenModels);
+
+    const next = allModels.filter((modelId) => {
+      if (userHiddenSet.has(modelId)) {
+        return false;
+      }
+
+      const provider = getModelProvider(modelId);
+      return provider !== "" && !isProviderAvailable(config, provider);
+    });
+
+    return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
+  }, [config, hiddenModels, effectivePolicy]);
+
+  const hiddenModelsForSelector = useMemo(
+    () => dedupeKeepFirst([...hiddenModels, ...providerHiddenModels]),
+    [hiddenModels, providerHiddenModels]
+  );
+
   const models = useMemo(() => {
     const suggested = filterHiddenModels(getSuggestedModels(config), hiddenModels);
 
+    // Hide models from providers that are disabled or not configured.
+    // Keep all models visible while provider config is still loading to avoid UI flicker.
+    const providerFiltered =
+      config == null
+        ? suggested
+        : suggested.filter((modelId) => isProviderAvailable(config, getModelProvider(modelId)));
+
+    if (config == null) {
+      return effectivePolicy
+        ? providerFiltered.filter((m) => isModelAllowedByPolicy(effectivePolicy, m))
+        : providerFiltered;
+    }
     const hasOpenaiApiKey = openaiApiKeySet === true;
     const hasCodexOauth = codexOauthSet === true;
 
@@ -141,7 +207,7 @@ export function useModelsFromSettings() {
     // - API key only: hide models that require OAuth.
     // - OAuth only: show only models routable via OAuth.
     // - Neither: hide models that require OAuth (status quo).
-    const next = suggested.filter((modelId) => {
+    const next = providerFiltered.filter((modelId) => {
       if (!modelId.startsWith("openai:")) {
         return true;
       }
@@ -245,6 +311,7 @@ export function useModelsFromSettings() {
     models,
     customModels,
     hiddenModels,
+    hiddenModelsForSelector,
     hideModel,
     unhideModel,
     defaultModel,
