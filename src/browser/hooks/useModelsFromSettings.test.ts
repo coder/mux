@@ -266,6 +266,23 @@ describe("useModelsFromSettings provider availability gating", () => {
     expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.HAIKU.id);
   });
 
+  test("excludes OAuth-gated OpenAI models from hidden bucket when unconfigured", () => {
+    // OpenAI is unconfigured and neither API key nor OAuth is set.
+    providersConfig = {
+      openai: { apiKeySet: false, isEnabled: true, isConfigured: false, codexOauthSet: false },
+    };
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    // OAuth-required models (e.g. gpt-5.3-codex) should NOT appear in either list
+    // because selecting them from "Show all models…" would also fail at send time.
+    expect(result.current.models).not.toContain("openai:gpt-5.3-codex");
+    expect(result.current.hiddenModelsForSelector).not.toContain("openai:gpt-5.3-codex");
+
+    // Non-OAuth-required OpenAI models should still be in the hidden bucket
+    expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.GPT.id);
+  });
+
   test("hides models from disabled providers", () => {
     providersConfig = {
       anthropic: { apiKeySet: true, isEnabled: false, isConfigured: true },

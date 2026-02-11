@@ -181,6 +181,9 @@ export function useModelsFromSettings() {
     const allModels = dedupeKeepFirst([...getAllCustomModels(config), ...BUILT_IN_MODELS]);
     const userHiddenSet = new Set(hiddenModels);
 
+    const hasOpenaiApiKey = openaiApiKeySet === true;
+    const hasCodexOauth = codexOauthSet === true;
+
     const next = allModels.filter((modelId) => {
       if (userHiddenSet.has(modelId)) {
         return false;
@@ -193,11 +196,36 @@ export function useModelsFromSettings() {
 
       // Keep models visible when they're actively opted-in to Mux Gateway routing,
       // even if the native provider is unavailable.
-      return !(gatewayActive && isProviderSupported(modelId) && gatewayModelSet.has(modelId));
+      if (gatewayActive && isProviderSupported(modelId) && gatewayModelSet.has(modelId)) {
+        return false;
+      }
+
+      // Exclude OpenAI models that would also be filtered by OAuth gating.
+      // Surfacing them in the hidden bucket would let users select models that
+      // fail at send time (oauth_not_connected / api_key_not_found).
+      if (modelId.startsWith("openai:")) {
+        if (!hasOpenaiApiKey && hasCodexOauth) {
+          return isCodexOauthAllowedModelId(modelId);
+        }
+        if (hasOpenaiApiKey && hasCodexOauth) {
+          return true;
+        }
+        return !isCodexOauthRequiredModelId(modelId);
+      }
+
+      return true;
     });
 
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
-  }, [config, hiddenModels, effectivePolicy, gatewayActive, gatewayModelSet]);
+  }, [
+    config,
+    hiddenModels,
+    effectivePolicy,
+    gatewayActive,
+    gatewayModelSet,
+    openaiApiKeySet,
+    codexOauthSet,
+  ]);
 
   const hiddenModelsForSelector = useMemo(
     () => dedupeKeepFirst([...hiddenModels, ...providerHiddenModels]),
