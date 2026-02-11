@@ -48,6 +48,11 @@ export class UpdaterService {
   private checkTimeout: ReturnType<typeof setTimeout> | null = null;
   private readonly fakeVersion: string | undefined;
   private readonly failPhase: "check" | "download" | "install" | undefined;
+  private readonly debugFailureAttempts: Record<"check" | "download" | "install", number> = {
+    check: 0,
+    download: 0,
+    install: 0,
+  };
   private checkSource: "auto" | "manual" = "auto";
   private subscribers = new Set<(status: UpdateStatus) => void>();
 
@@ -177,6 +182,17 @@ export class UpdaterService {
     });
   }
 
+  private getDebugFailureMessage(phase: "check" | "download" | "install"): string {
+    this.debugFailureAttempts[phase] += 1;
+    const attempt = this.debugFailureAttempts[phase];
+
+    if (attempt === 1) {
+      return `Simulated ${phase} failure (DEBUG_UPDATER_FAIL)`;
+    }
+
+    return `Simulated ${phase} failure (DEBUG_UPDATER_FAIL, attempt ${attempt})`;
+  }
+
   /**
    * Clear the check timeout
    */
@@ -231,7 +247,7 @@ export class UpdaterService {
             this.updateStatus = {
               type: "error",
               phase: "check",
-              message: "Simulated check failure (DEBUG_UPDATER_FAIL)",
+              message: this.getDebugFailureMessage("check"),
             };
             this.notifyRenderer();
           }, 500);
@@ -340,7 +356,7 @@ export class UpdaterService {
         this.updateStatus = {
           type: "error",
           phase: "download",
-          message: "Simulated download failure (DEBUG_UPDATER_FAIL)",
+          message: this.getDebugFailureMessage("download"),
         };
         this.notifyRenderer();
         return;
@@ -390,7 +406,7 @@ export class UpdaterService {
         this.updateStatus = {
           type: "error",
           phase: "install",
-          message: "Simulated install failure (DEBUG_UPDATER_FAIL)",
+          message: this.getDebugFailureMessage("install"),
         };
         this.notifyRenderer();
         return;

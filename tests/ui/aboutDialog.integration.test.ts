@@ -322,5 +322,34 @@ describe("About dialog (UI)", () => {
       expect(dialog.getByRole("button", { name: "Check again" })).toBeTruthy();
       expect(dialog.queryByRole("button", { name: "Try again" })).toBeNull();
     });
+
+    test("install phase retry button calls api.update.install", async () => {
+      if (!view) {
+        throw new Error("App was not rendered");
+      }
+
+      const updateService = getUpdateService(env);
+      const originalInstall = updateService.install;
+      const installSpy = jest.fn(() => undefined);
+      updateService.install = installSpy as typeof updateService.install;
+
+      try {
+        setUpdateStatus(updateService, {
+          type: "error",
+          phase: "install",
+          message: "Permission denied",
+        });
+        setDesktopApiEnabled();
+
+        const dialog = await openAboutDialog(view);
+        fireEvent.click(dialog.getByRole("button", { name: "Try install again" }));
+
+        await waitFor(() => {
+          expect(installSpy).toHaveBeenCalledTimes(1);
+        });
+      } finally {
+        updateService.install = originalInstall;
+      }
+    });
   });
 });

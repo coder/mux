@@ -136,7 +136,7 @@ describe("UpdaterService", () => {
       expect(secondStatus.message).toContain("Simulated download failure");
     });
 
-    it("should simulate install failure when DEBUG_UPDATER_FAIL=install", async () => {
+    it("should simulate install failure and surface retry attempts when DEBUG_UPDATER_FAIL=install", async () => {
       process.env.DEBUG_UPDATER = "2.0.0";
       process.env.DEBUG_UPDATER_FAIL = "install";
       const debugService = new UpdaterService();
@@ -147,13 +147,24 @@ describe("UpdaterService", () => {
 
       debugService.installUpdate();
 
-      const status = debugService.getStatus();
-      expect(status.type).toBe("error");
-      if (status.type !== "error") {
-        throw new Error(`Expected error status, got: ${status.type}`);
+      const firstStatus = debugService.getStatus();
+      expect(firstStatus.type).toBe("error");
+      if (firstStatus.type !== "error") {
+        throw new Error(`Expected error status, got: ${firstStatus.type}`);
       }
-      expect(status.phase).toBe("install");
-      expect(status.message).toContain("Simulated install failure");
+      expect(firstStatus.phase).toBe("install");
+      expect(firstStatus.message).toContain("Simulated install failure");
+      expect(firstStatus.message).not.toContain("attempt 2");
+
+      debugService.installUpdate();
+      const secondStatus = debugService.getStatus();
+      expect(secondStatus.type).toBe("error");
+      if (secondStatus.type !== "error") {
+        throw new Error(`Expected error status, got: ${secondStatus.type}`);
+      }
+      expect(secondStatus.phase).toBe("install");
+      expect(secondStatus.message).toContain("Simulated install failure");
+      expect(secondStatus.message).toContain("attempt 2");
     });
 
     it("should ignore DEBUG_UPDATER_FAIL without a fake DEBUG_UPDATER version", () => {
