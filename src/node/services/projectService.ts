@@ -547,9 +547,10 @@ export class ProjectService {
 
       yield { type: "success", projectConfig, normalizedPath };
     } catch (error) {
-      await cleanupPartialClone();
       const message = error instanceof Error ? error.message : String(error);
       yield { type: "error", error: `Failed to clone repository: ${message}` };
+    } finally {
+      await cleanupPartialClone();
     }
   }
 

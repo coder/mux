@@ -485,6 +485,70 @@ exit 1
       }
     });
 
+    it("cleans up temp clone directories when consumer stops iterating after abort", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const sourceRepoPath = await createLocalGitRepository(tempDir, "source-repo-stop");
+      const cloneParentDir = path.join(tempDir, "stop-clones");
+      const fakeBinDir = path.join(tempDir, "fake-bin-stop");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  echo 'progress: starting' >&2
+  mkdir -p "$5/.git"
+  sleep 1000 &
+  pid=$!
+  trap 'kill $pid 2>/dev/null; exit 0' TERM INT
+  wait $pid
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+
+      const controller = new AbortController();
+
+      try {
+        for await (const event of service.cloneWithProgress(
+          {
+            repoUrl: sourceRepoPath,
+            cloneParentDir,
+          },
+          controller.signal
+        )) {
+          if (event.type === "progress") {
+            controller.abort();
+            break;
+          }
+        }
+      } finally {
+        process.env.PATH = originalPath;
+      }
+
+      const cloneEntries = await fs
+        .readdir(cloneParentDir)
+        .catch((error: NodeJS.ErrnoException) =>
+          error.code === "ENOENT" ? [] : Promise.reject(error)
+        );
+
+      expect(
+        cloneEntries.filter((entry) => entry.startsWith("source-repo-stop.mux-clone-"))
+      ).toEqual([]);
+      expect(cloneEntries).not.toContain("source-repo-stop");
+    });
+
     it("does not delete destination created concurrently during clone failure cleanup", async () => {
       if (process.platform === "win32") {
         // This test relies on a POSIX shell shim named "git" in PATH.
