@@ -19,8 +19,8 @@ import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { createAuthMiddleware } from "./authMiddleware";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 import { clearLogFiles, getLogFilePath } from "@/node/services/log";
-import type { BufferEvent, LogEntry } from "@/node/services/logBuffer";
-import { clearLogEntries, getEpoch, getRecentLogs, onLogEntry } from "@/node/services/logBuffer";
+import type { LogEntry } from "@/node/services/logBuffer";
+import { clearLogEntries, subscribeLogFeed } from "@/node/services/logBuffer";
 import { createReplayBufferedStreamMessageRelay } from "./replayBufferedStreamMessageRelay";
 
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
@@ -1323,12 +1323,9 @@ export const router = (authToken?: string) => {
             | { type: "reset"; epoch: number }
           >();
 
-          // Send recent history as an explicit snapshot so clients can sync epoch.
-          const recent = getRecentLogs().filter((e) => shouldInclude(e.level, minLevel));
-          queue.push({ type: "snapshot", epoch: getEpoch(), entries: recent });
-
-          // Subscribe to buffer events.
-          const unsubscribe = onLogEntry((event: BufferEvent) => {
+          // Atomic handshake: register listener + snapshot in one step.
+          // No events can be lost between snapshot and subscription.
+          const { snapshot, unsubscribe } = subscribeLogFeed((event) => {
             if (signal?.aborted) {
               return;
             }
@@ -1342,6 +1339,12 @@ export const router = (authToken?: string) => {
 
             queue.push({ type: "reset", epoch: event.epoch });
           }, minLevel);
+
+          queue.push({
+            type: "snapshot",
+            epoch: snapshot.epoch,
+            entries: snapshot.entries.filter((e) => shouldInclude(e.level, minLevel)),
+          });
 
           const onAbort = () => {
             queue.end();

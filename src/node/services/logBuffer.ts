@@ -12,6 +12,11 @@ export type BufferEvent =
   | { type: "append"; epoch: number; entry: LogEntry }
   | { type: "reset"; epoch: number };
 
+export interface LogFeedSnapshot {
+  epoch: number;
+  entries: LogEntry[];
+}
+
 const buffer: LogEntry[] = [];
 let epoch = 0;
 
@@ -37,6 +42,24 @@ export function getRecentLogs(): LogEntry[] {
 
 export function getEpoch(): number {
   return epoch;
+}
+
+export function subscribeLogFeed(
+  listener: (event: BufferEvent) => void,
+  requestedLevel?: LogLevel
+): { snapshot: LogFeedSnapshot; unsubscribe: () => void } {
+  listeners.add(listener);
+  if (requestedLevel) {
+    subscriberLevels.set(listener, requestedLevel);
+  }
+
+  return {
+    snapshot: { epoch, entries: [...buffer] },
+    unsubscribe: () => {
+      listeners.delete(listener);
+      subscriberLevels.delete(listener);
+    },
+  };
 }
 
 export function clearLogEntries(): void {

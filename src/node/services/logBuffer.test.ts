@@ -7,6 +7,7 @@ import {
   getRecentLogs,
   onLogEntry,
   pushLogEntry,
+  subscribeLogFeed,
   type BufferEvent,
   type LogEntry,
 } from "./logBuffer";
@@ -39,6 +40,26 @@ describe("logBuffer", () => {
     unsubscribe();
 
     expect(received).toEqual([{ type: "append", epoch: startEpoch, entry }]);
+  });
+
+  test("subscribeLogFeed snapshots existing entries and streams new events", () => {
+    const existingEntry = createEntry(2);
+    pushLogEntry(existingEntry);
+    const currentEpoch = getEpoch();
+    const received: BufferEvent[] = [];
+
+    const { snapshot, unsubscribe } = subscribeLogFeed((event) => {
+      received.push(event);
+    });
+
+    expect(snapshot).toEqual({ epoch: currentEpoch, entries: [existingEntry] });
+
+    const nextEntry = createEntry(3);
+    pushLogEntry(nextEntry);
+
+    unsubscribe();
+
+    expect(received).toEqual([{ type: "append", epoch: currentEpoch, entry: nextEntry }]);
   });
 
   test("clearLogEntries emits a reset event and increments epoch", () => {
