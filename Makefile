@@ -49,7 +49,7 @@ endif
 ESBUILD_CLI_FLAGS := --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:jsonc-parser --external:@trpc/server --external:ssh2 --external:cpu-features --banner:js="import{createRequire}from'module';globalThis.require=createRequire(import.meta.url);"
 
 # Common esbuild flags for TUI CLI bundle (Ink requires ESM)
-ESBUILD_TUI_FLAGS := --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/tui.mjs --external:zod --external:commander --external:react-devtools-core --banner:js="import{createRequire}from'module';globalThis.require=createRequire(import.meta.url);"
+ESBUILD_TUI_FLAGS := --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/tui.mjs --external:zod --external:commander --banner:js="import{createRequire}from'module';globalThis.require=createRequire(import.meta.url);"
 
 # Include formatting rules
 include fmt.mk

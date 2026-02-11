@@ -206,6 +206,7 @@
     "prettier": "^3.6.2",
     "react": "^18.2.0",
     "react-compiler-runtime": "^1.0.0",
+    "react-devtools-core": "^7.0.1",
     "react-dnd": "^16.0.1",
     "react-dnd-html5-backend": "^16.0.1",
     "react-dnd-test-backend": "^16.0.1",
