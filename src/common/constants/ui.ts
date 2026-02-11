@@ -70,6 +70,14 @@ export const FORCE_COMPACTION_BUFFER_PERCENT = 5;
 export const COPY_FEEDBACK_DURATION_MS = 2000;
 
 /**
+ * Maximum number of log entries retained in memory for Output tab views.
+ *
+ * This cap is shared by the backend log ring buffer and frontend Output tab
+ * state to prevent unbounded growth during long-running verbose sessions.
+ */
+export const MAX_LOG_ENTRIES = 1000;
+
+/**
  * Predefined color palette for project sections.
  * Each color is designed to work well with the dark theme.
  * Format: [name, hex value]

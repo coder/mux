@@ -3,6 +3,7 @@ import { Trash2 } from "lucide-react";
 import { useAPI } from "@/browser/contexts/API";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { isAbortError } from "@/browser/utils/isAbortError";
+import { MAX_LOG_ENTRIES } from "@/common/constants/ui";
 
 type LogLevel = "error" | "warn" | "info" | "debug";
 
@@ -59,7 +60,14 @@ export function OutputTab(_props: OutputTabProps) {
 
         for await (const batch of subscribedIterator) {
           if (signal.aborted) break;
-          setEntries((prev) => (batch.isInitial ? batch.entries : [...prev, ...batch.entries]));
+          setEntries((prev) => {
+            if (batch.isInitial) {
+              return batch.entries;
+            }
+
+            const merged = [...prev, ...batch.entries];
+            return merged.length > MAX_LOG_ENTRIES ? merged.slice(-MAX_LOG_ENTRIES) : merged;
+          });
         }
       } catch (error) {
         if (signal.aborted || isAbortError(error)) return;

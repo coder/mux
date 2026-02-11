@@ -1,3 +1,4 @@
+import { MAX_LOG_ENTRIES } from "@/common/constants/ui";
 import type { LogLevel } from "./log";
 
 export interface LogEntry {
@@ -7,7 +8,6 @@ export interface LogEntry {
   location: string;
 }
 
-const MAX_BUFFER_SIZE = 1000;
 const buffer: LogEntry[] = [];
 
 type LogListener = (entry: LogEntry) => void;
@@ -16,7 +16,7 @@ const subscriberLevels = new Map<LogListener, LogLevel>();
 
 export function pushLogEntry(entry: LogEntry): void {
   buffer.push(entry);
-  if (buffer.length > MAX_BUFFER_SIZE) {
+  if (buffer.length > MAX_LOG_ENTRIES) {
     buffer.shift();
   }
 
