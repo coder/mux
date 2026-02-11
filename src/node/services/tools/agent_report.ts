@@ -23,7 +23,7 @@ export const createAgentReportTool: ToolFactory = (config: ToolConfiguration) =>
       // Intentionally no side-effects. The backend orchestrator consumes the tool-call args
       // via persisted history/partial state once the tool call completes successfully.
       // The stream continues after this so the SDK can record usage, while StreamManager
-      // stopWhen(hasToolCall("agent_report")) deterministically ends the stream boundary.
+      // stops autonomous loops once it observes a successful agent_report tool result.
       return {
         success: true,
         message: "Report submitted successfully.",

@@ -119,12 +119,12 @@ describe("StreamManager - stopWhen configuration", () => {
 
     expect(
       agentReportCondition({
-        steps: [{ toolCalls: [{ toolName: "agent_report" }] }],
+        steps: [{ toolResults: [{ toolName: "agent_report" }] }],
       })
     ).toBe(true);
   });
 
-  test("stops after agent_report tool call in autonomous mode", () => {
+  test("stops only after successful agent_report tool result in autonomous mode", () => {
     const streamManager = new StreamManager(historyService);
     const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
       | BuildStopWhenCondition
@@ -141,21 +141,28 @@ describe("StreamManager - stopWhen configuration", () => {
       throw new Error("Expected autonomous stopWhen to include agent_report condition");
     }
 
-    // Returns true when step contains agent_report tool call
+    // Returns true when step contains successful agent_report tool result.
+    expect(
+      reportStop({
+        steps: [{ toolResults: [{ toolName: "agent_report" }] }],
+      })
+    ).toBe(true);
+
+    // Returns false when step only contains agent_report tool call (no successful result yet).
     expect(
       reportStop({
         steps: [{ toolCalls: [{ toolName: "agent_report" }] }],
       })
-    ).toBe(true);
+    ).toBe(false);
 
-    // Returns false when step contains other tool calls
+    // Returns false when step contains other tool results.
     expect(
       reportStop({
-        steps: [{ toolCalls: [{ toolName: "bash" }] }],
+        steps: [{ toolResults: [{ toolName: "bash" }] }],
       })
     ).toBe(false);
 
-    // Returns false when no steps
+    // Returns false when no steps.
     expect(reportStop({ steps: [] })).toBe(false);
   });
 

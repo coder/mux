@@ -4,7 +4,6 @@ import { PlatformPaths } from "@/common/utils/paths";
 import {
   streamText,
   stepCountIs,
-  hasToolCall,
   type ModelMessage,
   type LanguageModel,
   type Tool,
@@ -1021,12 +1020,19 @@ export class StreamManager extends EventEmitter {
     }
 
     // For autonomous loops: cap steps, check for queued messages, and stop after
-    // agent_report so the stream ends naturally (preserving usage accounting)
-    // without allowing post-report tool execution.
+    // a successful agent_report result so the stream ends naturally (preserving
+    // usage accounting) without allowing post-report tool execution.
+    const hasSuccessfulAgentReportResult: ReturnType<typeof stepCountIs> = ({ steps }) => {
+      const lastStep = steps[steps.length - 1];
+      return (
+        lastStep?.toolResults?.some((toolResult) => toolResult.toolName === "agent_report") ?? false
+      );
+    };
+
     return [
       stepCountIs(100000),
       () => request.hasQueuedMessage?.() ?? false,
-      hasToolCall("agent_report"),
+      hasSuccessfulAgentReportResult,
     ];
   }
 
