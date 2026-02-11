@@ -190,6 +190,7 @@ export {
   copilotOauth,
   muxGovernorOauth,
   codexOauth,
+  anthropicOauth,
   policy,
   providers,
   ProvidersConfigMapSchema,

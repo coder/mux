@@ -539,6 +539,119 @@ export function ProvidersSection() {
     setCodexOauthError(null);
   };
 
+  // --- Anthropic OAuth (Claude Max/Pro subscription) ---
+  type AnthropicOauthFlowStatus = "idle" | "starting" | "waiting_for_code" | "submitting" | "error";
+  const [anthropicOauthStatus, setAnthropicOauthStatus] =
+    useState<AnthropicOauthFlowStatus>("idle");
+  const [anthropicOauthError, setAnthropicOauthError] = useState<string | null>(null);
+  const [anthropicOauthFlowId, setAnthropicOauthFlowId] = useState<string | null>(null);
+  const [anthropicOauthCodeInput, setAnthropicOauthCodeInput] = useState("");
+  const anthropicOauthAttemptRef = useRef(0);
+
+  const anthropicOauthIsConnected = config?.anthropic?.anthropicOauthSet === true;
+  const anthropicOauthInProgress =
+    anthropicOauthStatus === "starting" ||
+    anthropicOauthStatus === "waiting_for_code" ||
+    anthropicOauthStatus === "submitting";
+
+  const startAnthropicOauthConnect = async () => {
+    if (!api) return;
+    const attempt = ++anthropicOauthAttemptRef.current;
+
+    if (anthropicOauthFlowId) {
+      void api.anthropicOauth.cancelFlow({ flowId: anthropicOauthFlowId });
+    }
+
+    setAnthropicOauthStatus("starting");
+    setAnthropicOauthError(null);
+    setAnthropicOauthCodeInput("");
+
+    try {
+      const result = await api.anthropicOauth.startFlow();
+      if (attempt !== anthropicOauthAttemptRef.current) return;
+
+      if (!result.success) {
+        setAnthropicOauthStatus("error");
+        setAnthropicOauthError(result.error);
+        return;
+      }
+
+      setAnthropicOauthFlowId(result.data.flowId);
+      setAnthropicOauthStatus("waiting_for_code");
+      window.open(result.data.authorizeUrl, "_blank");
+    } catch (err) {
+      if (attempt !== anthropicOauthAttemptRef.current) return;
+      setAnthropicOauthStatus("error");
+      setAnthropicOauthError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const submitAnthropicOauthCode = async () => {
+    if (!api || !anthropicOauthFlowId || !anthropicOauthCodeInput.trim()) return;
+    const attempt = ++anthropicOauthAttemptRef.current;
+
+    setAnthropicOauthStatus("submitting");
+
+    try {
+      const result = await api.anthropicOauth.submitCode({
+        flowId: anthropicOauthFlowId,
+        code: anthropicOauthCodeInput.trim(),
+      });
+      if (attempt !== anthropicOauthAttemptRef.current) return;
+
+      if (!result.success) {
+        setAnthropicOauthStatus("error");
+        setAnthropicOauthError(result.error);
+        return;
+      }
+
+      updateOptimistically("anthropic", { anthropicOauthSet: true });
+      setAnthropicOauthStatus("idle");
+      setAnthropicOauthCodeInput("");
+      setAnthropicOauthFlowId(null);
+      await refresh();
+    } catch (err) {
+      if (attempt !== anthropicOauthAttemptRef.current) return;
+      setAnthropicOauthStatus("error");
+      setAnthropicOauthError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const disconnectAnthropicOauth = async () => {
+    if (!api) return;
+    const attempt = ++anthropicOauthAttemptRef.current;
+
+    try {
+      const result = await api.anthropicOauth.disconnect();
+      if (attempt !== anthropicOauthAttemptRef.current) return;
+
+      if (!result.success) {
+        setAnthropicOauthStatus("error");
+        setAnthropicOauthError(result.error);
+        return;
+      }
+
+      updateOptimistically("anthropic", { anthropicOauthSet: false });
+      setAnthropicOauthStatus("idle");
+      await refresh();
+    } catch (err) {
+      if (attempt !== anthropicOauthAttemptRef.current) return;
+      setAnthropicOauthStatus("error");
+      setAnthropicOauthError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const cancelAnthropicOauth = () => {
+    anthropicOauthAttemptRef.current++;
+    if (anthropicOauthFlowId && api) {
+      void api.anthropicOauth.cancelFlow({ flowId: anthropicOauthFlowId });
+    }
+    setAnthropicOauthStatus("idle");
+    setAnthropicOauthFlowId(null);
+    setAnthropicOauthCodeInput("");
+    setAnthropicOauthError(null);
+  };
+
   const [muxGatewayLoginError, setMuxGatewayLoginError] = useState<string | null>(null);
 
   const muxGatewayApplyDefaultModelsOnSuccessRef = useRef(false);
@@ -1467,6 +1580,99 @@ export function ProvidersSection() {
                     </div>
                   );
                 })}
+
+                {/* Anthropic: Claude Max/Pro OAuth */}
+                {provider === "anthropic" && (
+                  <div className="border-border-light space-y-3 border-t pt-3">
+                    <div>
+                      <label className="text-foreground block text-xs font-medium">
+                        Claude Max/Pro OAuth
+                      </label>
+                      <span className="text-muted text-xs">
+                        {anthropicOauthStatus === "starting"
+                          ? "Starting..."
+                          : anthropicOauthStatus === "waiting_for_code"
+                            ? "Waiting for authorization code..."
+                            : anthropicOauthStatus === "submitting"
+                              ? "Submitting..."
+                              : anthropicOauthIsConnected
+                                ? "Connected"
+                                : "Not connected"}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          void startAnthropicOauthConnect();
+                        }}
+                        disabled={!api || anthropicOauthInProgress}
+                      >
+                        {anthropicOauthIsConnected ? "Reconnect" : "Connect with Claude"}
+                      </Button>
+
+                      {anthropicOauthInProgress && (
+                        <Button variant="secondary" size="sm" onClick={cancelAnthropicOauth}>
+                          Cancel
+                        </Button>
+                      )}
+
+                      {anthropicOauthIsConnected && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            void disconnectAnthropicOauth();
+                          }}
+                          disabled={!api || anthropicOauthInProgress}
+                        >
+                          Disconnect
+                        </Button>
+                      )}
+                    </div>
+
+                    {anthropicOauthStatus === "waiting_for_code" && (
+                      <div className="bg-background-tertiary space-y-2 rounded-md p-3">
+                        <p className="text-muted text-xs">
+                          Authorize in the browser, then paste the code below:
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={anthropicOauthCodeInput}
+                            onChange={(e) => setAnthropicOauthCodeInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                void submitAnthropicOauthCode();
+                              }
+                            }}
+                            placeholder="Paste authorization code here"
+                            className="border-border bg-background text-foreground flex-1 rounded border px-2 py-1 text-sm"
+                            autoFocus
+                          />
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              void submitAnthropicOauthCode();
+                            }}
+                            disabled={!anthropicOauthCodeInput.trim()}
+                          >
+                            Submit
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {anthropicOauthStatus === "error" && anthropicOauthError && (
+                      <p className="text-destructive text-xs">{anthropicOauthError}</p>
+                    )}
+
+                    <p className="text-muted text-xs">
+                      Claude Max/Pro OAuth uses subscription billing (costs included).
+                    </p>
+                  </div>
+                )}
 
                 {/* OpenAI: ChatGPT OAuth + service tier */}
                 {provider === "openai" && (

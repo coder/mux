@@ -89,6 +89,7 @@ export async function createTestEnvironment(): Promise<TestEnvironment> {
     muxGatewayOauthService: services.muxGatewayOauthService,
     muxGovernorOauthService: services.muxGovernorOauthService,
     codexOauthService: services.codexOauthService,
+    anthropicOauthService: services.anthropicOauthService,
     copilotOauthService: services.copilotOauthService,
     taskService: services.taskService,
     providerService: services.providerService,

@@ -140,6 +140,8 @@ export const ProviderConfigInfoSchema = z.object({
   codexOauthDefaultAuth: z.enum(["oauth", "apiKey"]).optional(),
   /** AWS-specific fields (only present for bedrock provider) */
   aws: AWSCredentialStatusSchema.optional(),
+  /** Anthropic-only: whether Anthropic OAuth tokens are present in providers.jsonc */
+  anthropicOauthSet: z.boolean().optional(),
   /** Mux Gateway-specific fields */
   couponCodeSet: z.boolean().optional(),
 });
@@ -328,6 +330,27 @@ export const codexOauth = {
     output: ResultSchema(z.void(), z.string()),
   },
 };
+
+// Anthropic OAuth (Claude Max/Pro subscription auth)
+export const anthropicOauth = {
+  startFlow: {
+    input: z.void(),
+    output: ResultSchema(z.object({ flowId: z.string(), authorizeUrl: z.string() }), z.string()),
+  },
+  submitCode: {
+    input: z.object({ flowId: z.string(), code: z.string() }).strict(),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  cancelFlow: {
+    input: z.object({ flowId: z.string() }).strict(),
+    output: z.void(),
+  },
+  disconnect: {
+    input: z.void(),
+    output: ResultSchema(z.void(), z.string()),
+  },
+};
+
 // Mux Gateway
 export const muxGateway = {
   getAccountStatus: {

@@ -26,6 +26,7 @@ import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
+import type { AnthropicOauthService } from "@/node/services/anthropicOauthService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { FileState, EditedFileAttachment } from "@/node/services/agentSession";
 import { log } from "./log";
@@ -171,6 +172,9 @@ export class AIService extends EventEmitter {
 
   setCodexOauthService(service: CodexOauthService): void {
     this.providerModelFactory.codexOauthService = service;
+  }
+  setAnthropicOauthService(service: AnthropicOauthService): void {
+    this.providerModelFactory.anthropicOauthService = service;
   }
   setMCPServerManager(manager: MCPServerManager): void {
     this.mcpServerManager = manager;
