@@ -51,7 +51,8 @@ export interface ChatMessage {
 
 export interface ActiveToolCall {
   toolName: string;
-  status: string;
+  status: "running" | "completed";
+  result?: string;
 }
 
 export interface ToolCallSummary {
@@ -106,7 +107,7 @@ export type TuiAction =
   | { type: "CHAT_STREAM_END" }
   | { type: "CHAT_STREAM_ABORT" }
   | { type: "CHAT_TOOL_CALL_START"; toolCallId: string; toolName: string }
-  | { type: "CHAT_TOOL_CALL_END"; toolCallId: string }
+  | { type: "CHAT_TOOL_CALL_END"; toolCallId: string; result?: string }
   | { type: "CHAT_RESET" };
 
 // Options passed from CLI flags

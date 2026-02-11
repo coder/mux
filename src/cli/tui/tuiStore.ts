@@ -148,6 +148,13 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       const assistantMessage = state.chat.streamingBuffer
         ? buildAssistantMessage(state.chat.streamingBuffer)
         : null;
+      const activeToolCalls = new Map(
+        Array.from(state.chat.activeToolCalls.entries()).filter(([, toolCall]) => {
+          // Keep only running calls between streams so finished call results don't accumulate forever.
+          return toolCall.status === "running";
+        })
+      );
+
       return {
         ...state,
         chat: {
@@ -157,6 +164,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
             : state.chat.messages,
           isStreaming: false,
           streamingBuffer: "",
+          activeToolCalls,
         },
       };
     }
@@ -186,7 +194,16 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
     }
     case "CHAT_TOOL_CALL_END": {
       const activeToolCalls = new Map(state.chat.activeToolCalls);
-      activeToolCalls.delete(action.toolCallId);
+      const existing = activeToolCalls.get(action.toolCallId);
+
+      if (existing) {
+        activeToolCalls.set(action.toolCallId, {
+          ...existing,
+          status: "completed",
+          result: action.result,
+        });
+      }
+
       return {
         ...state,
         chat: {

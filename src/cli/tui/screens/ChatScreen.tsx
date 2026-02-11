@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
+import { MarkdownText } from "@/cli/tui/components/MarkdownText";
+import { ToolCallBlock } from "@/cli/tui/components/ToolCallBlock";
 import {
   isCaughtUpMessage,
   isMuxMessage,
@@ -204,6 +206,37 @@ function formatSendMessageError(error: unknown): string {
   return type;
 }
 
+function formatToolCallResult(result: unknown): string | undefined {
+  if (typeof result === "string") {
+    return result;
+  }
+
+  if (result == null) {
+    return undefined;
+  }
+
+  try {
+    const serialized = JSON.stringify(result);
+    return serialized.length > 200 ? `${serialized.slice(0, 199)}…` : serialized;
+  } catch {
+    if (
+      typeof result === "number" ||
+      typeof result === "boolean" ||
+      typeof result === "bigint" ||
+      typeof result === "symbol"
+    ) {
+      const primitiveValue = String(result);
+      return primitiveValue.length > 200 ? `${primitiveValue.slice(0, 199)}…` : primitiveValue;
+    }
+
+    if (result instanceof Error) {
+      return result.message;
+    }
+
+    return undefined;
+  }
+}
+
 export function ChatScreen(props: ChatScreenProps) {
   const [inputValue, setInputValue] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -318,6 +351,7 @@ export function ChatScreen(props: ChatScreenProps) {
           dispatch({
             type: "CHAT_TOOL_CALL_END",
             toolCallId: event.toolCallId,
+            result: formatToolCallResult(event.result),
           });
           setPendingQuestion((current) =>
             current && current.toolCallId === event.toolCallId ? null : current
@@ -559,32 +593,46 @@ export function ChatScreen(props: ChatScreenProps) {
           <Text dimColor>No messages yet. Send a message to begin.</Text>
         ) : (
           visibleMessages.map((message, index) => {
-            const color = message.role === "user" ? "green" : "magenta";
-            const label = message.role === "user" ? "You" : "Assistant";
+            const isUserMessage = message.role === "user";
+            const label = isUserMessage ? "You" : "Assistant";
             const content = message.content.trim().length > 0 ? message.content : "(no text)";
 
             return (
-              <Text color={color} key={`chat-message-${visibleStartIndex + index}`}>
-                {label}: {content}
-              </Text>
+              <Box
+                key={`chat-message-${visibleStartIndex + index}`}
+                flexDirection="column"
+                marginBottom={1}
+              >
+                <Text bold color={isUserMessage ? "green" : "magenta"}>
+                  {label}
+                </Text>
+                {isUserMessage ? <Text>{content}</Text> : <MarkdownText content={content} />}
+              </Box>
             );
           })
         )}
 
         {props.state.chat.streamingBuffer ? (
-          <Text color="yellow" dimColor>
-            Assistant (typing): {props.state.chat.streamingBuffer}
-          </Text>
+          <Box flexDirection="column" marginBottom={1}>
+            <Text bold color="magenta">
+              Assistant <Text dimColor>(streaming...)</Text>
+            </Text>
+            <MarkdownText content={props.state.chat.streamingBuffer} />
+          </Box>
         ) : null}
       </Box>
 
       {activeToolCalls.length > 0 ? (
         <Box marginTop={1} flexDirection="column">
-          <Text bold>Active tool calls</Text>
+          <Text bold>Tool calls</Text>
           {activeToolCalls.map(([toolCallId, call]) => (
-            <Text key={toolCallId} dimColor>
-              • {call.toolName} ({call.status})
-            </Text>
+            <ToolCallBlock
+              key={toolCallId}
+              toolName={call.toolName}
+              status={call.status}
+              result={call.result}
+              isActive={call.status === "running"}
+            />
           ))}
         </Box>
       ) : null}
