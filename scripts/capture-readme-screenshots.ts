@@ -126,8 +126,8 @@ const STORIES: StoryDef[] = [
       const tooltip = page.locator('.bg-modal-bg[data-state="open"]');
       await tooltip.waitFor({ timeout: 10_000 });
 
-      // Click "Commits" tab in the tooltip.
-      await tooltip.getByText("Commits").click();
+      // Click "Commits" tab in the tooltip (use radio role to avoid ambiguity).
+      await tooltip.getByRole("radio", { name: "Show commit divergence" }).click();
 
       // Wait for divergence indicators to appear.
       await row.getByText("↑3").waitFor({ timeout: 5_000 });
@@ -166,18 +166,16 @@ const STORIES: StoryDef[] = [
     storyId: `${STORY_ID_PREFIX}project-secrets-modal`,
     outputFile: "project-secrets.webp",
     playInteraction: async (page: Page) => {
-      // Hover the project row to reveal the manage-secrets button.
-      const projectRow = page.locator('[data-project-path="/home/user/projects/mux"]');
-      await projectRow.waitFor({ timeout: 10_000 });
-      await projectRow.hover();
-
-      // Click "Manage secrets" button.
-      const manageBtn = projectRow.getByRole("button", { name: /manage secrets/i });
-      await manageBtn.click();
+      // The "Manage secrets" button is hidden until hover. Target the button directly
+      // by its aria-label (which is unique) and force-click to bypass visibility.
+      const manageBtn = page.getByRole("button", { name: "Manage secrets for mux" });
+      await manageBtn.waitFor({ timeout: 10_000 });
+      await manageBtn.click({ force: true });
 
       // Wait for the modal to appear with secrets content.
+      // Secret keys are rendered inside <input> elements, so use getByDisplayValue.
       await page.getByText(/Manage Secrets/i).waitFor({ timeout: 10_000 });
-      await page.getByText(/GITHUB_TOKEN/i).waitFor({ timeout: 5_000 });
+      await page.locator('input[value="GITHUB_TOKEN"]').waitFor({ timeout: 5_000 });
     },
   },
   {
@@ -258,53 +256,75 @@ async function main() {
 
   for (const story of storiesToCapture) {
     const outputPath = path.join(DOCS_IMG_DIR, story.outputFile);
-    console.log(`Capturing ${story.exportName} → ${path.relative(process.cwd(), outputPath)}...`);
+    const relPath = path.relative(process.cwd(), outputPath);
 
-    const page = await context.newPage();
-    try {
-      // Navigate and wait for network idle + DOM stability.
-      await page.goto(iframeUrl(story.storyId), {
-        waitUntil: "networkidle",
-        timeout: 30_000,
-      });
+    // Stories with playInteraction can be flaky under sequential load (Radix
+    // portals, hover timing). Retry up to MAX_RETRIES times before giving up.
+    const MAX_RETRIES = 3;
+    let captured = false;
 
-      // Brief stabilization delay for async renders (git status polling, mermaid, etc.).
-      await page.waitForTimeout(2_000);
-
-      // Run play-function interactions if the story requires them.
-      if (story.playInteraction) {
-        await story.playInteraction(page);
-        // Allow UI to settle after interactions.
-        await page.waitForTimeout(500);
-      }
-
-      // Capture full-page screenshot as PNG buffer.
-      const pngBuffer = await page.screenshot({ type: "png", fullPage: true });
-
-      // Convert to WebP (or run custom post-processing).
-      // The default pipeline resizes from native DPR resolution to TARGET_WIDTH.
-      let webpBuffer: Buffer;
-      if (story.postProcess) {
-        webpBuffer = await story.postProcess(Buffer.from(pngBuffer));
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      if (attempt === 1) {
+        console.log(`Capturing ${story.exportName} → ${relPath}...`);
       } else {
-        webpBuffer = await sharp(pngBuffer)
-          .resize({ width: TARGET_WIDTH, kernel: "lanczos3" })
-          .webp({ quality: WEBP_QUALITY })
-          .toBuffer();
+        console.log(`  retry ${attempt}/${MAX_RETRIES}...`);
       }
 
-      await Bun.write(outputPath, webpBuffer);
+      const page = await context.newPage();
+      try {
+        // Navigate and wait for network idle + DOM stability.
+        await page.goto(iframeUrl(story.storyId), {
+          waitUntil: "networkidle",
+          timeout: 30_000,
+        });
 
-      // Report dimensions and size.
-      const meta = await sharp(webpBuffer).metadata();
-      console.log(`  ${meta.width}×${meta.height}  ${formatBytes(webpBuffer.byteLength)}`);
-      succeeded.push(story.exportName);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`  FAILED: ${message}`);
+        // Brief stabilization delay for async renders (git status polling, mermaid, etc.).
+        await page.waitForTimeout(2_000);
+
+        // Run play-function interactions if the story requires them.
+        if (story.playInteraction) {
+          await story.playInteraction(page);
+          // Allow UI to settle after interactions.
+          await page.waitForTimeout(500);
+        }
+
+        // Capture full-page screenshot as PNG buffer.
+        const pngBuffer = await page.screenshot({ type: "png", fullPage: true });
+
+        // Convert to WebP (or run custom post-processing).
+        // The default pipeline resizes from native DPR resolution to TARGET_WIDTH.
+        let webpBuffer: Buffer;
+        if (story.postProcess) {
+          webpBuffer = await story.postProcess(Buffer.from(pngBuffer));
+        } else {
+          webpBuffer = await sharp(pngBuffer)
+            .resize({ width: TARGET_WIDTH, kernel: "lanczos3" })
+            .webp({ quality: WEBP_QUALITY })
+            .toBuffer();
+        }
+
+        await Bun.write(outputPath, webpBuffer);
+
+        // Report dimensions and size.
+        const meta = await sharp(webpBuffer).metadata();
+        console.log(`  ${meta.width}×${meta.height}  ${formatBytes(webpBuffer.byteLength)}`);
+        succeeded.push(story.exportName);
+        captured = true;
+        break; // Success — no more retries.
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (attempt < MAX_RETRIES) {
+          console.warn(`  attempt ${attempt} failed: ${message}`);
+        } else {
+          console.error(`  FAILED after ${MAX_RETRIES} attempts: ${message}`);
+        }
+      } finally {
+        await page.close();
+      }
+    }
+
+    if (!captured) {
       failed.push(story.exportName);
-    } finally {
-      await page.close();
     }
   }
 
