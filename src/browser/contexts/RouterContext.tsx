@@ -18,7 +18,12 @@ export interface RouterContext {
   navigateToWorkspace: (workspaceId: string) => void;
   navigateToProject: (projectPath: string, sectionId?: string, draftId?: string) => void;
   navigateToHome: () => void;
+  navigateToSettings: (section?: string) => void;
+  navigateFromSettings: () => void;
   currentWorkspaceId: string | null;
+
+  /** Settings section from URL (null when not on settings page). */
+  currentSettingsSection: string | null;
 
   /** Project identifier from URL (does not include full filesystem path). */
   currentProjectId: string | null;
@@ -107,6 +112,15 @@ function RouterContextInner(props: { children: ReactNode }) {
       : null;
   const currentProjectPathFromState =
     location.pathname === "/project" ? getProjectPathFromLocationState(location.state) : null;
+  const settingsMatch = /^\/settings\/([^/]+)$/.exec(location.pathname);
+  const currentSettingsSection = settingsMatch ? decodeURIComponent(settingsMatch[1]) : null;
+
+  const lastNonSettingsLocationRef = useRef<string>(getInitialRoute());
+  useEffect(() => {
+    if (!location.pathname.startsWith("/settings")) {
+      lastNonSettingsLocationRef.current = location.pathname + location.search;
+    }
+  }, [location.pathname, location.search]);
 
   // Back-compat: if we ever land on a legacy deep link (/project?path=<full path>),
   // immediately replace it with the non-path project id URL.
@@ -159,12 +173,26 @@ function RouterContextInner(props: { children: ReactNode }) {
     void navigateRef.current("/");
   }, []);
 
+  const navigateToSettings = useCallback((section?: string) => {
+    const nextSection = section ?? "general";
+    void navigateRef.current(`/settings/${encodeURIComponent(nextSection)}`);
+  }, []);
+
+  const navigateFromSettings = useCallback(() => {
+    const lastLocation = lastNonSettingsLocationRef.current;
+    const fallback = lastLocation && !lastLocation.startsWith("/settings") ? lastLocation : "/";
+    void navigateRef.current(fallback);
+  }, []);
+
   const value = useMemo<RouterContext>(
     () => ({
       navigateToWorkspace,
       navigateToProject,
       navigateToHome,
+      navigateToSettings,
+      navigateFromSettings,
       currentWorkspaceId,
+      currentSettingsSection,
       currentProjectId,
       currentProjectPathFromState,
       pendingSectionId,
@@ -173,10 +201,13 @@ function RouterContextInner(props: { children: ReactNode }) {
     [
       navigateToHome,
       navigateToProject,
+      navigateToSettings,
+      navigateFromSettings,
       navigateToWorkspace,
+      currentWorkspaceId,
+      currentSettingsSection,
       currentProjectId,
       currentProjectPathFromState,
-      currentWorkspaceId,
       pendingSectionId,
       pendingDraftId,
     ]

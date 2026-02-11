@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { useRouter } from "@/browser/contexts/RouterContext";
 
 interface OpenSettingsOptions {
   /** When opening the Providers settings, expand the given provider. */
@@ -28,37 +29,39 @@ export function useSettings(): SettingsContextValue {
 const DEFAULT_SECTION = "general";
 
 export function SettingsProvider(props: { children: ReactNode }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [activeSection, setActiveSection] = useState(DEFAULT_SECTION);
+  const router = useRouter();
   const [providersExpandedProvider, setProvidersExpandedProvider] = useState<string | null>(null);
 
-  const setSection = useCallback((section: string) => {
-    setActiveSection(section);
-
-    if (section !== "providers") {
-      setProvidersExpandedProvider(null);
-    }
-  }, []);
+  const isOpen = router.currentSettingsSection != null;
+  const activeSection = router.currentSettingsSection ?? DEFAULT_SECTION;
 
   const open = useCallback(
     (section?: string, options?: OpenSettingsOptions) => {
-      if (section) {
-        setSection(section);
-      }
-
-      if (section === "providers") {
+      const nextSection = section ?? DEFAULT_SECTION;
+      if (nextSection === "providers") {
         setProvidersExpandedProvider(options?.expandProvider ?? null);
+      } else {
+        setProvidersExpandedProvider(null);
       }
-
-      setIsOpen(true);
+      router.navigateToSettings(nextSection);
     },
-    [setSection]
+    [router]
   );
 
   const close = useCallback(() => {
-    setIsOpen(false);
     setProvidersExpandedProvider(null);
-  }, []);
+    router.navigateFromSettings();
+  }, [router]);
+
+  const setActiveSection = useCallback(
+    (section: string) => {
+      if (section !== "providers") {
+        setProvidersExpandedProvider(null);
+      }
+      router.navigateToSettings(section);
+    },
+    [router]
+  );
 
   const value = useMemo<SettingsContextValue>(
     () => ({
@@ -66,11 +69,11 @@ export function SettingsProvider(props: { children: ReactNode }) {
       activeSection,
       open,
       close,
-      setActiveSection: setSection,
+      setActiveSection,
       providersExpandedProvider,
       setProvidersExpandedProvider,
     }),
-    [isOpen, activeSection, open, close, setSection, providersExpandedProvider]
+    [isOpen, activeSection, open, close, setActiveSection, providersExpandedProvider]
   );
 
   return <SettingsContext.Provider value={value}>{props.children}</SettingsContext.Provider>;
