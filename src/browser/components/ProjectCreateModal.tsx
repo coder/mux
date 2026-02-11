@@ -429,13 +429,11 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
         );
 
         for await (const event of cloneEvents) {
-          if (controller.signal.aborted) {
-            break;
-          }
-
           if (event.type === "progress") {
-            // Show the raw git stderr stream so users can confirm clone progress and diagnose hangs.
-            setProgressLines((previousLines) => [...previousLines, event.line]);
+            if (!controller.signal.aborted) {
+              // Show the raw git stderr stream so users can confirm clone progress and diagnose hangs.
+              setProgressLines((previousLines) => [...previousLines, event.line]);
+            }
             continue;
           }
 
