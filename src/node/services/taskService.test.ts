@@ -2949,6 +2949,164 @@ describe("TaskService", () => {
     expect(childEntry?.runtimeConfig?.type).toBe("worktree");
   }, 20_000);
 
+  test("sibling reported task blocks parent deletion during cleanup", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const parentTaskId = "parent-222";
+    const childTaskAId = "child-a-333";
+    const childTaskBId = "child-b-444";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
+              {
+                path: path.join(projectPath, "parent-task"),
+                id: parentTaskId,
+                name: "agent_exec_parent",
+                parentWorkspaceId: rootWorkspaceId,
+                agentType: "exec",
+                taskStatus: "reported",
+              },
+              {
+                path: path.join(projectPath, "child-task-a"),
+                id: childTaskAId,
+                name: "agent_explore_child_a",
+                parentWorkspaceId: parentTaskId,
+                agentType: "explore",
+                taskStatus: "reported",
+              },
+              {
+                path: path.join(projectPath, "child-task-b"),
+                id: childTaskBId,
+                name: "agent_explore_child_b",
+                parentWorkspaceId: parentTaskId,
+                agentType: "explore",
+                taskStatus: "reported",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const isStreaming = mock(() => false);
+    const { aiService } = createAIServiceMocks(config, { isStreaming });
+    const remove = mock(async (workspaceId: string): Promise<Result<void>> => {
+      await config.removeWorkspace(workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childTaskAId,
+      messageId: "assistant-child-a",
+      metadata: { model: "openai:gpt-4o-mini" },
+      parts: [],
+    });
+
+    expect(remove).toHaveBeenCalledWith(childTaskAId, true);
+
+    const removedWorkspaceIds = (
+      remove as unknown as { mock: { calls: Array<[string, boolean]> } }
+    ).mock.calls.map((call) => call[0]);
+    expect(removedWorkspaceIds).not.toContain(parentTaskId);
+  });
+
+  test("parent deletes only after all sibling children are cleaned up", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const parentTaskId = "parent-222";
+    const childTaskAId = "child-a-333";
+    const childTaskBId = "child-b-444";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
+              {
+                path: path.join(projectPath, "parent-task"),
+                id: parentTaskId,
+                name: "agent_exec_parent",
+                parentWorkspaceId: rootWorkspaceId,
+                agentType: "exec",
+                taskStatus: "reported",
+              },
+              {
+                path: path.join(projectPath, "child-task-a"),
+                id: childTaskAId,
+                name: "agent_explore_child_a",
+                parentWorkspaceId: parentTaskId,
+                agentType: "explore",
+                taskStatus: "reported",
+              },
+              {
+                path: path.join(projectPath, "child-task-b"),
+                id: childTaskBId,
+                name: "agent_explore_child_b",
+                parentWorkspaceId: parentTaskId,
+                agentType: "explore",
+                taskStatus: "reported",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const isStreaming = mock(() => false);
+    const { aiService } = createAIServiceMocks(config, { isStreaming });
+    const remove = mock(async (workspaceId: string): Promise<Result<void>> => {
+      await config.removeWorkspace(workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childTaskAId,
+      messageId: "assistant-child-a",
+      metadata: { model: "openai:gpt-4o-mini" },
+      parts: [],
+    });
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childTaskBId,
+      messageId: "assistant-child-b",
+      metadata: { model: "openai:gpt-4o-mini" },
+      parts: [],
+    });
+
+    expect(remove).toHaveBeenCalledTimes(3);
+    expect(remove).toHaveBeenNthCalledWith(1, childTaskAId, true);
+    expect(remove).toHaveBeenNthCalledWith(2, childTaskBId, true);
+    expect(remove).toHaveBeenNthCalledWith(3, parentTaskId, true);
+  });
+
   describe("parent auto-resume flood protection", () => {
     async function setupParentWithActiveChild(rootDirPath: string) {
       const config = await createTestConfig(rootDirPath);
