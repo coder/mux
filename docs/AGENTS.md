@@ -49,6 +49,8 @@ description: Agent instructions for AI assistants working on the Mux codebase
 - **Codex reviews:** if a PR has Codex review comments, address + resolve them, then re-request review by commenting `@codex review` on the PR. Repeat until `./scripts/check_codex_comments.sh <pr_number>` reports none.
 - Full `static-check` includes docs link checking via `mintlify broken-links`.
 
+- `./scripts/wait_pr_checks.sh` is a tail-end CI polling helper. Use it only after local validation and after you've exhausted useful local work.
+
 ## Testing: HistoryService
 
 HistoryService is pure local disk I/O with a single dependency (`getSessionDir`). **Always use a real instance** via `createTestHistoryService()` (`src/node/services/testHistoryService.ts`) rather than mocking.
