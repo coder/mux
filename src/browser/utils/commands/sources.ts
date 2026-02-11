@@ -6,7 +6,11 @@ import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import { getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 import assert from "@/common/utils/assert";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import { getRightSidebarLayoutKey, RIGHT_SIDEBAR_TAB_KEY } from "@/common/constants/storage";
+import {
+  getRightSidebarLayoutKey,
+  RIGHT_SIDEBAR_COLLAPSED_KEY,
+  RIGHT_SIDEBAR_TAB_KEY,
+} from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { disableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
 import { CommandIds } from "@/browser/utils/commandIds";
@@ -20,11 +24,12 @@ import type { LayoutPresetsConfig, LayoutSlotNumber } from "@/common/types/uiLay
 import {
   addToolToFocusedTabset,
   getDefaultRightSidebarLayoutState,
+  hasTab,
   parseRightSidebarLayoutState,
-  selectOrAddTab,
   selectTabInTabset,
   setFocusedTabset,
   splitFocusedTabset,
+  toggleTab,
 } from "@/browser/utils/rightSidebarLayout";
 
 import type { ProjectConfig } from "@/node/config";
@@ -116,6 +121,15 @@ const section = {
 const getRightSidebarTabFallback = (): TabType => {
   const raw = readPersistedState<string>(RIGHT_SIDEBAR_TAB_KEY, "costs");
   return isTabType(raw) ? raw : "costs";
+};
+
+const readRightSidebarLayout = (workspaceId: string) => {
+  const fallback = getRightSidebarTabFallback();
+  const raw = readPersistedState(
+    getRightSidebarLayoutKey(workspaceId),
+    getDefaultRightSidebarLayoutState(fallback)
+  );
+  return parseRightSidebarLayoutState(raw, fallback);
 };
 
 const updateRightSidebarLayout = (
@@ -442,11 +456,17 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     if (wsId) {
       list.push(
         {
-          id: CommandIds.navShowOutput(),
-          title: "Show Output",
+          id: CommandIds.navToggleOutput(),
+          title: hasTab(readRightSidebarLayout(wsId), "output") ? "Hide Output" : "Show Output",
           section: section.navigation,
           keywords: ["log", "logs", "output"],
-          run: () => updateRightSidebarLayout(wsId, (s) => selectOrAddTab(s, "output")),
+          run: () => {
+            const isOutputVisible = hasTab(readRightSidebarLayout(wsId), "output");
+            updateRightSidebarLayout(wsId, (s) => toggleTab(s, "output"));
+            if (!isOutputVisible) {
+              updatePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false);
+            }
+          },
         },
         {
           id: CommandIds.navOpenLogFile(),

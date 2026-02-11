@@ -1587,6 +1587,10 @@ export const general = {
     input: z.void(),
     output: z.object({ path: z.string() }),
   },
+  clearLogs: {
+    input: z.void(),
+    output: z.object({ success: z.literal(true) }),
+  },
   subscribeLogs: {
     input: z.object({
       level: z.enum(["error", "warn", "info", "debug"]).nullish(),

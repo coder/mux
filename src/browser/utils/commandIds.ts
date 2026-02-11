@@ -38,7 +38,7 @@ export const CommandIds = {
   navRightSidebarSplitHorizontal: () => "nav:rightSidebar:splitHorizontal" as const,
   navRightSidebarSplitVertical: () => "nav:rightSidebar:splitVertical" as const,
   navRightSidebarAddTool: () => "nav:rightSidebar:addTool" as const,
-  navShowOutput: () => "nav:show-output" as const,
+  navToggleOutput: () => "nav:toggle-output" as const,
   navOpenLogFile: () => "nav:open-log-file" as const,
 
   // Chat commands

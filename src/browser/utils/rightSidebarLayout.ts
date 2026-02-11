@@ -416,6 +416,14 @@ export function collectActiveTabs(node: RightSidebarLayoutNode): TabType[] {
   return [...collectActiveTabs(node.children[0]), ...collectActiveTabs(node.children[1])];
 }
 
+export function hasTab(state: RightSidebarLayoutState, tab: TabType): boolean {
+  return collectAllTabs(state.root).includes(tab);
+}
+
+export function toggleTab(state: RightSidebarLayoutState, tab: TabType): RightSidebarLayoutState {
+  return hasTab(state, tab) ? removeTabEverywhere(state, tab) : selectOrAddTab(state, tab);
+}
+
 /**
  * Collect all tabs from all tabsets with their tabset IDs.
  * Returns tabs in layout order (depth-first, left-to-right/top-to-bottom).

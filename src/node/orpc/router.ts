@@ -18,9 +18,9 @@ import type {
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { createAuthMiddleware } from "./authMiddleware";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
-import { getLogFilePath } from "@/node/services/log";
+import { clearLogFiles, getLogFilePath } from "@/node/services/log";
 import type { LogEntry } from "@/node/services/logBuffer";
-import { getRecentLogs, onLogEntry } from "@/node/services/logBuffer";
+import { clearLogEntries, getRecentLogs, onLogEntry } from "@/node/services/logBuffer";
 import { createReplayBufferedStreamMessageRelay } from "./replayBufferedStreamMessageRelay";
 
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
@@ -1281,6 +1281,14 @@ export const router = (authToken?: string) => {
         .handler(() => {
           return { path: getLogFilePath() };
         }),
+      clearLogs: t
+        .input(schemas.general.clearLogs.input)
+        .output(schemas.general.clearLogs.output)
+        .handler(() => {
+          clearLogEntries();
+          clearLogFiles();
+          return { success: true };
+        }),
       subscribeLogs: t
         .input(schemas.general.subscribeLogs.input)
         .output(schemas.general.subscribeLogs.output)
@@ -1318,7 +1326,7 @@ export const router = (authToken?: string) => {
             if (shouldInclude(entry.level, minLevel)) {
               queue.push({ entries: [entry], isInitial: false });
             }
-          });
+          }, minLevel);
 
           const onAbort = () => {
             queue.end();

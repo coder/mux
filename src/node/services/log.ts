@@ -21,7 +21,7 @@ import * as path from "path";
 import chalk from "chalk";
 import { parseBoolEnv } from "@/common/utils/env";
 import { getMuxHome, getMuxLogsDir } from "@/common/constants/paths";
-import { pushLogEntry } from "./logBuffer";
+import { hasDebugSubscriber, pushLogEntry } from "./logBuffer";
 
 process.once("exit", () => {
   closeLogFile();
@@ -167,6 +167,35 @@ export function getLogFilePath(): string {
   return path.join(getMuxLogsDir(), "mux.log");
 }
 
+export function clearLogFiles(): void {
+  const logsDir = getMuxLogsDir();
+  const activeLogPath = path.join(logsDir, "mux.log");
+
+  try {
+    fs.mkdirSync(logsDir, { recursive: true });
+
+    // Truncate (or create) the active log file while keeping the existing
+    // stream usable. Future writes continue appending from a clean slate.
+    const fd = fs.openSync(activeLogPath, "w");
+    fs.closeSync(fd);
+
+    // Remove rotated history files as part of a full delete action.
+    for (let i = 1; i <= MAX_LOG_FILES; i++) {
+      const rotatedPath = path.join(logsDir, `mux.${i}.log`);
+      try {
+        fs.unlinkSync(rotatedPath);
+      } catch {
+        // file may not exist
+      }
+    }
+
+    logFilePath = activeLogPath;
+    logFileSize = 0;
+  } catch {
+    // Silent failure.
+  }
+}
+
 export function closeLogFile(): void {
   try {
     logFileStream?.end();
@@ -243,33 +272,79 @@ function getTimestamp(): string {
   return `${hours}:${mm}.${ms}${ampm}`;
 }
 
+interface ParsedStackFrame {
+  filePath: string;
+  lineNum: string;
+}
+
+function parseStackFrame(stackLine: string): ParsedStackFrame | null {
+  const match = /\((.+):(\d+):\d+\)$/.exec(stackLine) ?? /at (.+):(\d+):\d+$/.exec(stackLine);
+  if (!match) {
+    return null;
+  }
+
+  const [, filePath, lineNum] = match;
+  return { filePath, lineNum };
+}
+
+function isLoggerStackFrame(stackLine: string, filePath: string): boolean {
+  const normalizedPath = filePath.replace(/\\/g, "/");
+
+  if (
+    normalizedPath.endsWith("/src/node/services/log.ts") ||
+    normalizedPath.endsWith("/src/node/services/log.js")
+  ) {
+    return true;
+  }
+
+  return (
+    stackLine.includes("getCallerLocation") ||
+    stackLine.includes("safePipeLog") ||
+    stackLine.includes("formatLogLine")
+  );
+}
+
+function formatCallerLocation(filePath: string, lineNum: string): string {
+  const normalizedPath = filePath.replace(/\\/g, "/");
+  const normalizedCwd = process.cwd().replace(/\\/g, "/");
+
+  if (normalizedPath.startsWith(`${normalizedCwd}/`)) {
+    return `${normalizedPath.slice(normalizedCwd.length + 1)}:${lineNum}`;
+  }
+
+  const srcIndex = normalizedPath.lastIndexOf("/src/");
+  if (srcIndex >= 0) {
+    return `${normalizedPath.slice(srcIndex + 1)}:${lineNum}`;
+  }
+
+  return `${path.basename(normalizedPath)}:${lineNum}`;
+}
+
 /**
- * Get the caller's file path and line number from the stack trace
- * Returns format: "path/to/file.ts:123"
+ * Get the first non-logger caller frame from the stack trace.
+ *
+ * We intentionally scan frames instead of using a fixed stack index because
+ * wrapper levels can shift over time and otherwise collapse locations to the
+ * logger wrapper (e.g. log.ts:488) instead of the real call site.
  */
 function getCallerLocation(): string {
-  const error = new Error();
-  const stack = error.stack?.split("\n");
+  const stackLines = new Error().stack?.split("\n").slice(1) ?? [];
 
-  // Stack trace format:
-  // 0: "Error"
-  // 1: "    at getCallerLocation (log.ts:X:Y)"
-  // 2: "    at safePipeLog (log.ts:X:Y)"
-  // 3: "    at log.info (log.ts:X:Y)"  or  "at log.error (log.ts:X:Y)"
-  // 4: "    at <actual caller> (file.ts:X:Y)" <- We want this one
-
-  if (stack && stack.length > 4) {
-    const callerLine = stack[4];
-    // Extract file path and line number from the stack trace
-    // Format: "    at FunctionName (path/to/file.ts:123:45)"
-    const match = /\((.+):(\d+):\d+\)/.exec(callerLine) ?? /at (.+):(\d+):\d+/.exec(callerLine);
-
-    if (match) {
-      const [, filePath, lineNum] = match;
-      // Strip the full path to just show relative path from project root
-      const relativePath = filePath.replace(/^.*\/mux\//, "");
-      return `${relativePath}:${lineNum}`;
+  for (const stackLine of stackLines) {
+    const parsedFrame = parseStackFrame(stackLine);
+    if (!parsedFrame) {
+      continue;
     }
+
+    if (parsedFrame.filePath.startsWith("node:")) {
+      continue;
+    }
+
+    if (isLoggerStackFrame(stackLine, parsedFrame.filePath)) {
+      continue;
+    }
+
+    return formatCallerLocation(parsedFrame.filePath, parsedFrame.lineNum);
   }
 
   return "unknown:0";
@@ -366,7 +441,10 @@ function safePipeLog(level: LogLevel, ...args: unknown[]): void {
     }
   }
 
-  const shouldPersist = level === "error" || level === "warn" || shouldConsoleLog;
+  // Always persist error/warn/info to buffer+file.
+  // Debug entries only persist when console level includes debug
+  // or an Output tab subscriber has requested debug level.
+  const shouldPersist = level !== "debug" || shouldConsoleLog || hasDebugSubscriber();
   if (!shouldPersist) {
     return;
   }

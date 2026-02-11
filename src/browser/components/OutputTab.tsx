@@ -1,6 +1,7 @@
 import { type UIEvent, useEffect, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { useAPI } from "@/browser/contexts/API";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { isAbortError } from "@/browser/utils/isAbortError";
 
 type LogLevel = "error" | "warn" | "info" | "debug";
@@ -28,7 +29,7 @@ export function OutputTab(_props: OutputTabProps) {
   const { api } = useAPI();
 
   const [entries, setEntries] = useState<LogEntry[]>([]);
-  const [levelFilter, setLevelFilter] = useState<LogLevel>("info");
+  const [levelFilter, setLevelFilter] = usePersistedState<LogLevel>("output-tab-level", "info");
   const [autoScroll, setAutoScroll] = useState(true);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -85,6 +86,22 @@ export function OutputTab(_props: OutputTabProps) {
     setAutoScroll(isAtBottom);
   };
 
+  const handleDelete = () => {
+    if (!api) {
+      setEntries([]);
+      return;
+    }
+
+    api.general
+      .clearLogs()
+      .then(() => {
+        setEntries([]);
+      })
+      .catch((error) => {
+        console.warn("Failed to delete logs:", error);
+      });
+  };
+
   return (
     <div className="flex h-full flex-col">
       <div className="border-border flex items-center gap-2 border-b px-3 py-1.5">
@@ -92,9 +109,9 @@ export function OutputTab(_props: OutputTabProps) {
         <button
           type="button"
           className="text-muted hover:text-foreground hover:bg-hover flex h-6 w-6 items-center justify-center rounded border-none bg-transparent p-0 transition-colors"
-          onClick={() => setEntries([])}
-          title="Clear"
-          aria-label="Clear output"
+          onClick={handleDelete}
+          title="Delete"
+          aria-label="Delete output logs"
         >
           <Trash2 className="h-3.5 w-3.5" />
         </button>
