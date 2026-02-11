@@ -12,6 +12,7 @@ import { Ok, Err } from "@/common/types/result";
 import type { Secret } from "@/common/types/secrets";
 import type { Stats } from "fs";
 import * as fsPromises from "fs/promises";
+import * as os from "os";
 import { execAsync, execFileAsync } from "@/node/utils/disposableExec";
 import {
   buildFileCompletionsIndex,
@@ -139,21 +140,67 @@ function deriveRepoFolderName(repoUrl: string): string {
   return safeFolderName;
 }
 
+const GITHUB_SHORTHAND_PATTERN = /^[a-zA-Z0-9][\w-]*\/[a-zA-Z0-9][\w.-]*$/;
+const COMMON_SSH_PRIVATE_KEY_FILES = [
+  "id_ed25519",
+  "id_ed25519_sk",
+  "id_rsa",
+  "id_ecdsa",
+  "id_ecdsa_sk",
+  "id_dsa",
+] as const;
+
+async function hasLikelySshCredentials(): Promise<boolean> {
+  const sshAgentSocket = process.env.SSH_AUTH_SOCK;
+  if (typeof sshAgentSocket === "string" && sshAgentSocket.trim().length > 0) {
+    return true;
+  }
+
+  const homeDir = os.homedir();
+  if (!homeDir) {
+    return false;
+  }
+
+  const sshDir = path.join(homeDir, ".ssh");
+  for (const privateKeyFile of COMMON_SSH_PRIVATE_KEY_FILES) {
+    try {
+      const stat = await fsPromises.stat(path.join(sshDir, privateKeyFile));
+      if (stat.isFile()) {
+        return true;
+      }
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      if (err.code !== "ENOENT") {
+        log.debug("Failed to stat SSH key during clone URL detection:", err.message);
+      }
+    }
+  }
+
+  return false;
+}
+
 /**
  * Normalize a repo URL so git clone receives a valid remote.
- * Expands "owner/repo" shorthand to "https://github.com/owner/repo.git".
+ * Expands "owner/repo" shorthand to either SSH or HTTPS based on likely local credentials.
  * All other inputs (HTTPS URLs, SSH URLs, SCP-style, etc.) pass through unchanged.
  */
-function normalizeRepoUrlForClone(repoUrl: string): string {
+async function normalizeRepoUrlForClone(repoUrl: string): Promise<string> {
   // owner/repo shorthand: exactly two non-empty segments separated by a single slash,
   // where the first segment looks like a GitHub username (letters, digits, hyphens).
   // Excludes local paths like ../repo, ./foo, foo/bar/baz, and absolute paths.
   // Note: bare `foo/bar` style local relative paths are intentionally treated as GitHub
   // shorthand here because this function is only called from the Clone dialog, which is
   // specifically for remote repos. Users cloning local repos should use the "Local folder" tab.
-  if (/^[a-zA-Z0-9][\w-]*\/[a-zA-Z0-9][\w.-]*$/.test(repoUrl)) {
+  if (GITHUB_SHORTHAND_PATTERN.test(repoUrl)) {
     // Strip existing .git suffix before appending to avoid double .git (e.g. owner/repo.git → owner/repo.git.git)
     const withoutGitSuffix = repoUrl.replace(/\.git$/i, "");
+
+    // Prefer SSH for shorthand when the machine appears SSH-capable so users with
+    // existing SSH auth (agent or common private keys) don't get forced through HTTPS.
+    if (await hasLikelySshCredentials()) {
+      return `git@github.com:${withoutGitSuffix}.git`;
+    }
+
     return `https://github.com/${withoutGitSuffix}.git`;
   }
 
@@ -270,9 +317,9 @@ export class ProjectService {
     }));
   }
 
-  private validateAndPrepareClone(
+  private async validateAndPrepareClone(
     input: CloneProjectParams
-  ): Result<{ cloneUrl: string; normalizedPath: string; cloneParentDir: string }> {
+  ): Promise<Result<{ cloneUrl: string; normalizedPath: string; cloneParentDir: string }>> {
     try {
       const repoUrl = input.repoUrl.trim();
       if (!repoUrl) {
@@ -292,7 +339,7 @@ export class ProjectService {
       }
 
       return Ok({
-        cloneUrl: normalizeRepoUrlForClone(repoUrl),
+        cloneUrl: await normalizeRepoUrlForClone(repoUrl),
         normalizedPath,
         cloneParentDir,
       });
@@ -306,7 +353,7 @@ export class ProjectService {
     input: CloneProjectParams,
     signal?: AbortSignal
   ): AsyncGenerator<CloneEvent> {
-    const prepared = this.validateAndPrepareClone(input);
+    const prepared = await this.validateAndPrepareClone(input);
     if (!prepared.success) {
       yield { type: "error", error: prepared.error };
       return;
@@ -508,7 +555,7 @@ export class ProjectService {
   async clone(
     input: CloneProjectParams
   ): Promise<Result<{ projectConfig: ProjectConfig; normalizedPath: string }>> {
-    const prepared = this.validateAndPrepareClone(input);
+    const prepared = await this.validateAndPrepareClone(input);
     if (!prepared.success) {
       return Err(prepared.error);
     }

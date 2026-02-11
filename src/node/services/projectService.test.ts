@@ -193,7 +193,7 @@ describe("ProjectService", () => {
       expect(loadedConfig.defaultProjectCloneDir).toBeUndefined();
     });
 
-    it("normalizes owner/repo shorthand to a GitHub HTTPS URL", async () => {
+    it("normalizes owner/repo shorthand to a valid GitHub remote URL", async () => {
       if (process.platform === "win32") {
         // This test relies on a POSIX shell shim named "git" in PATH.
         return;
@@ -205,6 +205,8 @@ describe("ProjectService", () => {
       const fakeGitArgsLogPath = path.join(tempDir, "fake-git-args.log");
       const originalPath = process.env.PATH ?? "";
       const originalFakeGitArgsLogPath = process.env.FAKE_GIT_ARGS_LOG;
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
 
       await fs.mkdir(fakeBinDir, { recursive: true });
       await fs.writeFile(
@@ -212,7 +214,7 @@ describe("ProjectService", () => {
         `#!/bin/sh
 printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
 if [ "$1" = "clone" ]; then
-  mkdir -p "$3/.git"
+  mkdir -p "$4/.git"
   exit 0
 fi
 exit 1
@@ -223,6 +225,8 @@ exit 1
 
       process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
       process.env.FAKE_GIT_ARGS_LOG = fakeGitArgsLogPath;
+      process.env.HOME = tempDir;
+      delete process.env.SSH_AUTH_SOCK;
 
       try {
         const result = await service.clone({
@@ -237,7 +241,9 @@ exit 1
 
         expect(loggedArgs[0]).toBe("clone");
         expect(loggedArgs[1]).toBe("--");
-        expect(loggedArgs[2]).toBe("https://github.com/owner/repo.git");
+        expect(loggedArgs[2]).toMatch(
+          /^((https:\/\/github\.com\/owner\/repo\.git)|(git@github\.com:owner\/repo\.git))$/
+        );
         expect(loggedArgs[3]).toBe(path.resolve(cloneParentDir, "repo"));
       } finally {
         process.env.PATH = originalPath;
@@ -245,6 +251,86 @@ exit 1
           delete process.env.FAKE_GIT_ARGS_LOG;
         } else {
           process.env.FAKE_GIT_ARGS_LOG = originalFakeGitArgsLogPath;
+        }
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+      }
+    });
+
+    it("normalizes owner/repo shorthand to GitHub SSH when SSH credentials are available", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "ssh-shorthand-clones");
+      const fakeBinDir = path.join(tempDir, "fake-bin-ssh");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const fakeGitArgsLogPath = path.join(tempDir, "fake-git-ssh-args.log");
+      const originalPath = process.env.PATH ?? "";
+      const originalFakeGitArgsLogPath = process.env.FAKE_GIT_ARGS_LOG;
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
+if [ "$1" = "clone" ]; then
+  mkdir -p "$4/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.FAKE_GIT_ARGS_LOG = fakeGitArgsLogPath;
+      process.env.HOME = tempDir;
+      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
+
+      try {
+        const result = await service.clone({
+          repoUrl: "owner/repo",
+          cloneParentDir,
+        });
+
+        expect(result.success).toBe(true);
+        if (!result.success) throw new Error("Expected success");
+
+        const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
+
+        expect(loggedArgs[0]).toBe("clone");
+        expect(loggedArgs[1]).toBe("--");
+        expect(loggedArgs[2]).toBe("git@github.com:owner/repo.git");
+        expect(loggedArgs[3]).toBe(path.resolve(cloneParentDir, "repo"));
+      } finally {
+        process.env.PATH = originalPath;
+        if (originalFakeGitArgsLogPath === undefined) {
+          delete process.env.FAKE_GIT_ARGS_LOG;
+        } else {
+          process.env.FAKE_GIT_ARGS_LOG = originalFakeGitArgsLogPath;
+        }
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
         }
       }
     });
