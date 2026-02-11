@@ -12,7 +12,7 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { UpdateStatus } from "@/common/orpc/types";
 
 type MutableUpdateService = {
-  check: () => Promise<void>;
+  check: (options?: { source?: "auto" | "manual" }) => Promise<void>;
   download: () => Promise<void>;
   install: () => void;
   currentStatus: UpdateStatus;
@@ -139,6 +139,28 @@ describe("About dialog (UI)", () => {
     expect(dialog.getByRole("heading", { name: "About" })).toBeTruthy();
   });
 
+  test("opening About dialog does not trigger an automatic update check", async () => {
+    if (!view) {
+      throw new Error("App was not rendered");
+    }
+
+    const updateService = getUpdateService(env);
+    const originalCheck = updateService.check;
+    const checkSpy = jest.fn(async () => undefined);
+    updateService.check = checkSpy as typeof updateService.check;
+
+    try {
+      setDesktopApiEnabled();
+      await openAboutDialog(view);
+
+      // The dialog should reflect already-streamed status and wait for explicit user intent
+      // before triggering a manual check.
+      expect(checkSpy).toHaveBeenCalledTimes(0);
+    } finally {
+      updateService.check = originalCheck;
+    }
+  });
+
   test("Check for Updates button calls api.update.check", async () => {
     if (!view) {
       throw new Error("App was not rendered");
@@ -153,12 +175,12 @@ describe("About dialog (UI)", () => {
       setDesktopApiEnabled();
 
       const dialog = await openAboutDialog(view);
-      const callsBeforeClick = checkSpy.mock.calls.length;
       fireEvent.click(dialog.getByRole("button", { name: "Check for Updates" }));
 
       await waitFor(() => {
-        expect(checkSpy).toHaveBeenCalledTimes(callsBeforeClick + 1);
+        expect(checkSpy).toHaveBeenCalledTimes(1);
       });
+      expect(checkSpy).toHaveBeenCalledWith({ source: "manual" });
     } finally {
       updateService.check = originalCheck;
     }

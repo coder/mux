@@ -97,14 +97,6 @@ export function AboutDialog() {
     };
   }, [api, isDesktop, isOpen]);
 
-  useEffect(() => {
-    if (!isOpen || !api || !isDesktop) {
-      return;
-    }
-
-    api.update.check({ source: "manual" }).catch(console.error);
-  }, [api, isDesktop, isOpen]);
-
   const canUseUpdateApi = isDesktop && Boolean(api);
   const isChecking =
     canUseUpdateApi && (updateStatus.type === "checking" || updateStatus.type === "downloading");
