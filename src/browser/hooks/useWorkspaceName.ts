@@ -15,7 +15,7 @@ export type WorkspaceNameUIError =
   | { kind: "transport"; message: string };
 
 /** Small/fast models preferred for name generation */
-export const NAME_GEN_PREFERRED_MODELS = [getKnownModel("HAIKU").id, getKnownModel("GPT_MINI").id];
+const NAME_GEN_PREFERRED_MODELS = [getKnownModel("HAIKU").id, getKnownModel("GPT_MINI").id];
 
 /**
  * Build ordered candidate list for name generation, respecting gateway prefs.

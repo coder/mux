@@ -32,6 +32,8 @@ import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
+import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
+import { getKnownModel } from "@/common/constants/knownModels";
 import type { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
 import { getDevcontainerContainerName } from "@/node/runtime/devcontainerCli";
 import { expandTilde, expandTildeForSSH } from "@/node/runtime/tildeExpansion";
@@ -111,6 +113,8 @@ import {
 
 /** Maximum number of retry attempts when workspace name collides */
 const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
+/** Small/fast models preferred for auto-naming forked workspaces */
+const AUTO_NAME_PREFERRED_MODELS = [getKnownModel("HAIKU").id, getKnownModel("GPT_MINI").id];
 
 // Keep short to feel instant, but debounce bursts of file_edit_* tool calls.
 
@@ -2006,6 +2010,62 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
+   * Fire-and-forget: generate a semantic title for a workspace whose name
+   * was auto-generated during fork. Reads the current user message plus
+   * the prior assistant message from history (forked from parent) for context.
+   * Matches the draft-chat naming behavior: triggers on user send, not after
+   * the assistant replies.
+   */
+  private async autoGenerateTitle(workspaceId: string, userMessage: string): Promise<void> {
+    try {
+      // Atomically clear autoName first — prevents double-fire on rapid sends
+      // (replaces the frontend autoNameTriggeredRef guard).
+      await this.config.editConfig((config) => {
+        for (const [, project] of config.projects) {
+          const ws = project.workspaces.find((w) => w.id === workspaceId);
+          if (ws) {
+            delete ws.autoName;
+            break;
+          }
+        }
+        return config;
+      });
+
+      // Read prior assistant message from forked history for additional context.
+      // The fork copies chat.jsonl from the parent, so the last assistant message
+      // is the one the user was reading when they decided to fork.
+      let priorAssistantText: string | undefined;
+      const lastMsgResult = await this.historyService.getLastMessages(workspaceId, 1);
+      if (lastMsgResult.success) {
+        const lastMsg = lastMsgResult.data[0];
+        if (lastMsg?.role === "assistant") {
+          priorAssistantText =
+            lastMsg.parts
+              ?.filter((p) => p.type === "text")
+              .map((p) => p.text)
+              .join("\n") ?? undefined;
+        }
+      }
+
+      const candidates: string[] = [...AUTO_NAME_PREFERRED_MODELS];
+      // No gateway transforms needed — aiService.createModel() handles resolution
+
+      const result = await generateWorkspaceIdentity(
+        userMessage,
+        candidates,
+        this.aiService,
+        priorAssistantText
+      );
+      if (result.success) {
+        await this.updateTitle(workspaceId, result.data.title);
+      }
+    } catch (error) {
+      // Best-effort — don't let naming failures affect the user's workflow
+      log.warn("Auto-generate title failed", { workspaceId, error });
+    }
+  }
+
+  /**
    * Archive a workspace. Archived workspaces are hidden from the main sidebar
    * but can be viewed on the project page.
    *
@@ -2834,6 +2894,22 @@ export class WorkspaceService extends EventEmitter {
       const messageTimestamp = Date.now();
       if (!isIdleCompaction) {
         void this.updateRecencyTimestamp(workspaceId, messageTimestamp);
+      }
+
+      // Auto-name: generate title from first user message if workspace has placeholder title.
+      // Matches draft-chat behavior: triggers on send, includes prior assistant context from
+      // forked history. Follows the same fire-and-forget pattern as updateRecencyTimestamp.
+      if (!isIdleCompaction) {
+        const found = this.config.findWorkspace(workspaceId);
+        if (found) {
+          const wsConfig = this.config
+            .loadConfigOrDefault()
+            .projects.get(found.projectPath)
+            ?.workspaces.find((w) => w.id === workspaceId);
+          if (wsConfig?.autoName) {
+            void this.autoGenerateTitle(workspaceId, message);
+          }
+        }
       }
 
       // Experiments: resolve flags respecting userOverridable setting.
