@@ -4,7 +4,22 @@ import * as path from "path";
 import * as os from "os";
 import { execSync } from "child_process";
 import { Config } from "@/node/config";
-import { ProjectService } from "./projectService";
+import { ProjectService, type CloneEvent } from "./projectService";
+
+async function createLocalGitRepository(rootDir: string, repoName: string): Promise<string> {
+  const repoPath = path.join(rootDir, repoName);
+  await fs.mkdir(repoPath, { recursive: true });
+  await fs.writeFile(path.join(repoPath, "README.md"), "# test\n", "utf-8");
+
+  execSync("git init -b main", { cwd: repoPath, stdio: "ignore" });
+  execSync("git add README.md", { cwd: repoPath, stdio: "ignore" });
+  execSync('git -c user.name="test" -c user.email="test@test" commit -m "initial"', {
+    cwd: repoPath,
+    stdio: "ignore",
+  });
+
+  return repoPath;
+}
 
 describe("ProjectService", () => {
   let tempDir: string;
@@ -150,6 +165,496 @@ describe("ProjectService", () => {
       if (!result.success) throw new Error("Expected success");
 
       expect(result.data.path).toBe(os.homedir());
+    });
+  });
+
+  describe("clone", () => {
+    it("clones a local repository and registers it as a project", async () => {
+      const sourceRepoPath = await createLocalGitRepository(tempDir, "source-repo");
+      const cloneParentDir = path.join(tempDir, "clones");
+
+      const result = await service.clone({
+        repoUrl: sourceRepoPath,
+        cloneParentDir,
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) throw new Error("Expected success");
+
+      const expectedProjectPath = path.resolve(cloneParentDir, "source-repo");
+      expect(result.data.normalizedPath).toBe(expectedProjectPath);
+      expect(result.data.projectConfig).toEqual({ workspaces: [] });
+
+      const gitDir = await fs.stat(path.join(expectedProjectPath, ".git"));
+      expect(gitDir.isDirectory()).toBe(true);
+
+      const loadedConfig = config.loadConfigOrDefault();
+      expect(loadedConfig.projects.has(expectedProjectPath)).toBe(true);
+      expect(loadedConfig.defaultProjectCloneDir).toBeUndefined();
+    });
+
+    it("normalizes trailing-slash owner/repo shorthand to GitHub HTTPS when SSH agent is unavailable", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "shorthand-clones");
+      const fakeBinDir = path.join(tempDir, "fake-bin");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const fakeGitArgsLogPath = path.join(tempDir, "fake-git-args.log");
+      const originalPath = process.env.PATH ?? "";
+      const originalFakeGitArgsLogPath = process.env.FAKE_GIT_ARGS_LOG;
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
+if [ "$1" = "clone" ]; then
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.FAKE_GIT_ARGS_LOG = fakeGitArgsLogPath;
+      process.env.HOME = tempDir;
+      delete process.env.SSH_AUTH_SOCK;
+
+      try {
+        const result = await service.clone({
+          repoUrl: "owner/repo/",
+          cloneParentDir,
+        });
+
+        expect(result.success).toBe(true);
+        if (!result.success) throw new Error("Expected success");
+
+        const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
+
+        expect(loggedArgs[0]).toBe("clone");
+        expect(loggedArgs[1]).toBe("--progress");
+        expect(loggedArgs[2]).toBe("--");
+        expect(loggedArgs[3]).toBe("https://github.com/owner/repo.git");
+        expect(path.dirname(loggedArgs[4])).toBe(path.resolve(cloneParentDir));
+        expect(path.basename(loggedArgs[4])).toMatch(/^repo\.mux-clone-[a-f0-9]{12}$/);
+      } finally {
+        process.env.PATH = originalPath;
+        if (originalFakeGitArgsLogPath === undefined) {
+          delete process.env.FAKE_GIT_ARGS_LOG;
+        } else {
+          process.env.FAKE_GIT_ARGS_LOG = originalFakeGitArgsLogPath;
+        }
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+      }
+    });
+
+    it("normalizes owner/repo shorthand to GitHub SSH when SSH credentials are available", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "ssh-shorthand-clones");
+      const fakeBinDir = path.join(tempDir, "fake-bin-ssh");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const fakeGitArgsLogPath = path.join(tempDir, "fake-git-ssh-args.log");
+      const originalPath = process.env.PATH ?? "";
+      const originalFakeGitArgsLogPath = process.env.FAKE_GIT_ARGS_LOG;
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
+if [ "$1" = "clone" ]; then
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.FAKE_GIT_ARGS_LOG = fakeGitArgsLogPath;
+      process.env.HOME = tempDir;
+      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
+
+      try {
+        const result = await service.clone({
+          repoUrl: "owner/repo",
+          cloneParentDir,
+        });
+
+        expect(result.success).toBe(true);
+        if (!result.success) throw new Error("Expected success");
+
+        const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
+
+        expect(loggedArgs[0]).toBe("clone");
+        expect(loggedArgs[1]).toBe("--progress");
+        expect(loggedArgs[2]).toBe("--");
+        expect(loggedArgs[3]).toBe("git@github.com:owner/repo.git");
+        expect(path.dirname(loggedArgs[4])).toBe(path.resolve(cloneParentDir));
+        expect(path.basename(loggedArgs[4])).toMatch(/^repo\.mux-clone-[a-f0-9]{12}$/);
+      } finally {
+        process.env.PATH = originalPath;
+        if (originalFakeGitArgsLogPath === undefined) {
+          delete process.env.FAKE_GIT_ARGS_LOG;
+        } else {
+          process.env.FAKE_GIT_ARGS_LOG = originalFakeGitArgsLogPath;
+        }
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+      }
+    });
+
+    it("returns error when clone destination already exists", async () => {
+      const sourceRepoPath = await createLocalGitRepository(tempDir, "source-repo");
+      const cloneParentDir = path.join(tempDir, "clones");
+      const existingDestination = path.join(cloneParentDir, "source-repo");
+
+      await fs.mkdir(existingDestination, { recursive: true });
+
+      const result = await service.clone({
+        repoUrl: sourceRepoPath,
+        cloneParentDir,
+      });
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected failure");
+      expect(result.error).toContain("Destination already exists");
+    });
+  });
+
+  describe("cloneWithProgress", () => {
+    it("emits progress events and registers project on success", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const sourceRepoPath = await createLocalGitRepository(tempDir, "source-repo-progress");
+      const cloneParentDir = path.join(tempDir, "progress-clones");
+      const fakeBinDir = path.join(tempDir, "fake-bin-progress");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  echo 'progress: starting' >&2
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+
+      try {
+        const events: CloneEvent[] = [];
+        for await (const event of service.cloneWithProgress({
+          repoUrl: sourceRepoPath,
+          cloneParentDir,
+        })) {
+          events.push(event);
+        }
+
+        const progressEvent = events.find((event) => event.type === "progress");
+        expect(progressEvent?.type).toBe("progress");
+        if (progressEvent?.type !== "progress") throw new Error("Expected progress event");
+        expect(progressEvent.line).toContain("progress: starting");
+
+        const successEvent = events.find((event) => event.type === "success");
+        expect(successEvent?.type).toBe("success");
+        if (successEvent?.type !== "success") throw new Error("Expected success event");
+
+        const expectedProjectPath = path.resolve(cloneParentDir, "source-repo-progress");
+        expect(successEvent.normalizedPath).toBe(expectedProjectPath);
+
+        const loadedConfig = config.loadConfigOrDefault();
+        expect(loadedConfig.projects.has(expectedProjectPath)).toBe(true);
+      } finally {
+        process.env.PATH = originalPath;
+      }
+    });
+
+    it("yields error and rolls back when cloned project cannot be persisted in config", async () => {
+      const sourceRepoPath = await createLocalGitRepository(tempDir, "source-repo-persist-fail");
+      const cloneParentDir = path.join(tempDir, "persist-fail-clones");
+      const nonPersistingConfig = new Config(tempDir);
+      nonPersistingConfig.editConfig = () => Promise.resolve();
+      const nonPersistingService = new ProjectService(nonPersistingConfig);
+
+      const events: CloneEvent[] = [];
+      for await (const event of nonPersistingService.cloneWithProgress({
+        repoUrl: sourceRepoPath,
+        cloneParentDir,
+      })) {
+        events.push(event);
+      }
+
+      const terminalEvent = events[events.length - 1];
+      expect(terminalEvent?.type).toBe("error");
+      if (terminalEvent?.type !== "error") throw new Error("Expected error event");
+      expect(terminalEvent.error).toContain("persist");
+
+      const expectedProjectPath = path.resolve(cloneParentDir, "source-repo-persist-fail");
+      expect(nonPersistingConfig.loadConfigOrDefault().projects.has(expectedProjectPath)).toBe(
+        false
+      );
+
+      try {
+        await fs.stat(expectedProjectPath);
+        throw new Error("Expected clone destination to be rolled back");
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        expect(err.code).toBe("ENOENT");
+      }
+    });
+
+    it("cleans up partial clone and yields cancellation event when aborted", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const sourceRepoPath = await createLocalGitRepository(tempDir, "source-repo-cancel");
+      const cloneParentDir = path.join(tempDir, "cancel-clones");
+      const fakeBinDir = path.join(tempDir, "fake-bin-cancel");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  echo 'progress: starting' >&2
+  mkdir -p "$5/.git"
+  sleep 1000 &
+  pid=$!
+  trap 'kill $pid 2>/dev/null; exit 0' TERM INT
+  wait $pid
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+
+      const controller = new AbortController();
+      let sawProgress = false;
+      let lastEvent: CloneEvent | null = null;
+
+      try {
+        for await (const event of service.cloneWithProgress(
+          {
+            repoUrl: sourceRepoPath,
+            cloneParentDir,
+          },
+          controller.signal
+        )) {
+          lastEvent = event;
+          if (!sawProgress && event.type === "progress") {
+            sawProgress = true;
+            controller.abort();
+          }
+        }
+      } finally {
+        process.env.PATH = originalPath;
+      }
+
+      expect(sawProgress).toBe(true);
+      expect(lastEvent?.type).toBe("error");
+      if (lastEvent?.type !== "error") throw new Error("Expected error event");
+      expect(lastEvent.error).toContain("Clone cancelled");
+
+      const expectedProjectPath = path.resolve(cloneParentDir, "source-repo-cancel");
+      expect(config.loadConfigOrDefault().projects.has(expectedProjectPath)).toBe(false);
+
+      try {
+        await fs.stat(expectedProjectPath);
+        throw new Error("Expected clone destination to be cleaned up");
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        expect(err.code).toBe("ENOENT");
+      }
+    });
+
+    it("cleans up temp clone directories when consumer stops iterating after abort", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const sourceRepoPath = await createLocalGitRepository(tempDir, "source-repo-stop");
+      const cloneParentDir = path.join(tempDir, "stop-clones");
+      const fakeBinDir = path.join(tempDir, "fake-bin-stop");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  echo 'progress: starting' >&2
+  mkdir -p "$5/.git"
+  sleep 1000 &
+  pid=$!
+  trap 'kill $pid 2>/dev/null; exit 0' TERM INT
+  wait $pid
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+
+      const controller = new AbortController();
+
+      try {
+        for await (const event of service.cloneWithProgress(
+          {
+            repoUrl: sourceRepoPath,
+            cloneParentDir,
+          },
+          controller.signal
+        )) {
+          if (event.type === "progress") {
+            controller.abort();
+            break;
+          }
+        }
+      } finally {
+        process.env.PATH = originalPath;
+      }
+
+      const cloneEntries = await fs
+        .readdir(cloneParentDir)
+        .catch((error: NodeJS.ErrnoException) =>
+          error.code === "ENOENT" ? [] : Promise.reject(error)
+        );
+
+      expect(
+        cloneEntries.filter((entry) => entry.startsWith("source-repo-stop.mux-clone-"))
+      ).toEqual([]);
+      expect(cloneEntries).not.toContain("source-repo-stop");
+    });
+
+    it("does not delete destination created concurrently during clone failure cleanup", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const sourceRepoPath = await createLocalGitRepository(tempDir, "source-repo-race");
+      const cloneParentDir = path.join(tempDir, "race-clones");
+      const expectedProjectPath = path.resolve(cloneParentDir, "source-repo-race");
+      const concurrentMarkerPath = path.join(expectedProjectPath, "keep.txt");
+      const fakeBinDir = path.join(tempDir, "fake-bin-race");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+      const originalConcurrentDestPath = process.env.CONCURRENT_DEST_PATH;
+      const originalConcurrentMarkerPath = process.env.CONCURRENT_MARKER_PATH;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  mkdir -p "$5/.git"
+  mkdir -p "$CONCURRENT_DEST_PATH"
+  printf 'keep\n' > "$CONCURRENT_MARKER_PATH"
+  exit 1
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.CONCURRENT_DEST_PATH = expectedProjectPath;
+      process.env.CONCURRENT_MARKER_PATH = concurrentMarkerPath;
+
+      try {
+        const events: CloneEvent[] = [];
+        for await (const event of service.cloneWithProgress({
+          repoUrl: sourceRepoPath,
+          cloneParentDir,
+        })) {
+          events.push(event);
+        }
+
+        const terminalEvent = events[events.length - 1];
+        expect(terminalEvent?.type).toBe("error");
+        if (terminalEvent?.type !== "error") throw new Error("Expected error event");
+        expect(terminalEvent.error).toContain("Clone failed");
+
+        const destinationStat = await fs.stat(expectedProjectPath);
+        expect(destinationStat.isDirectory()).toBe(true);
+        expect((await fs.readFile(concurrentMarkerPath, "utf-8")).trim()).toBe("keep");
+
+        const cloneParentEntries = await fs.readdir(cloneParentDir);
+        const tempCloneEntries = cloneParentEntries.filter((entry) =>
+          entry.startsWith("source-repo-race.mux-clone-")
+        );
+        expect(tempCloneEntries).toEqual([]);
+      } finally {
+        process.env.PATH = originalPath;
+        if (originalConcurrentDestPath === undefined) {
+          delete process.env.CONCURRENT_DEST_PATH;
+        } else {
+          process.env.CONCURRENT_DEST_PATH = originalConcurrentDestPath;
+        }
+        if (originalConcurrentMarkerPath === undefined) {
+          delete process.env.CONCURRENT_MARKER_PATH;
+        } else {
+          process.env.CONCURRENT_MARKER_PATH = originalConcurrentMarkerPath;
+        }
+      }
     });
   });
 

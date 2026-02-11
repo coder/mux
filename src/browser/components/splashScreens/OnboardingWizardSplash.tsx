@@ -18,10 +18,7 @@ import {
   SSHIcon,
   WorktreeIcon,
 } from "@/browser/components/icons/RuntimeIcons";
-import {
-  ProjectCreateForm,
-  type ProjectCreateFormHandle,
-} from "@/browser/components/ProjectCreateModal";
+import { ProjectAddForm, type ProjectAddFormHandle } from "@/browser/components/ProjectCreateModal";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { Button } from "@/browser/components/ui/button";
 import { useSettings } from "@/browser/contexts/SettingsContext";
@@ -194,7 +191,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   const { config: providersConfig, loading: providersLoading } = useProvidersConfig();
   const { addProject, projects } = useProjectContext();
 
-  const projectCreateFormRef = useRef<ProjectCreateFormHandle | null>(null);
+  const projectAddFormRef = useRef<ProjectAddFormHandle | null>(null);
   const [isProjectCreating, setIsProjectCreating] = useState(false);
 
   const [direction, setDirection] = useState<Direction>("forward");
@@ -719,8 +716,8 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
       body: (
         <>
           <p>
-            Projects are the folders you want Mux to work in. Choose one now, then click Next to add
-            it.
+            Projects are the folders or repos you want Mux to work in. Add a local folder or clone
+            from GitHub, then click Next.
           </p>
 
           {projects.size > 0 ? (
@@ -734,8 +731,9 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
           )}
 
           <div className="mt-3">
-            <ProjectCreateForm
-              ref={projectCreateFormRef}
+            <ProjectAddForm
+              ref={projectAddFormRef}
+              isOpen
               autoFocus={projects.size === 0}
               hideFooter
               onIsCreatingChange={setIsProjectCreating}
@@ -750,8 +748,8 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
 
           <p className="mt-2 text-xs">
             {projects.size > 0
-              ? "Pick another folder to add, or leave this blank and click Next to continue."
-              : "Click Next to add the project."}
+              ? "Add another folder or repo, or leave this blank and click Next to continue."
+              : "Click Next to add this project."}
           </p>
         </>
       ),
@@ -984,14 +982,14 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
                 }
 
                 if (isProjectStep) {
-                  const form = projectCreateFormRef.current;
+                  const form = projectAddFormRef.current;
                   if (!form) {
                     goForward();
                     return;
                   }
 
-                  const trimmedPath = form.getTrimmedPath();
-                  if (!trimmedPath && projects.size > 0) {
+                  const trimmedInput = form.getTrimmedInput();
+                  if (!trimmedInput && projects.size > 0) {
                     goForward();
                     return;
                   }

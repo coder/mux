@@ -1,8 +1,12 @@
+import "../../../tests/ui/dom";
+
 import React from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { GlobalWindow } from "happy-dom";
 import { cleanup, render } from "@testing-library/react";
 import { useTheme } from "../contexts/ThemeContext";
+import { installDom } from "../../../tests/ui/dom";
+
+let cleanupDom: (() => void) | null = null;
 
 let apiStatus: "auth_required" | "connecting" | "error" = "auth_required";
 let apiError: string | null = "Authentication required";
@@ -70,15 +74,13 @@ import { AppLoader } from "./AppLoader";
 
 describe("AppLoader", () => {
   beforeEach(() => {
-    const dom = new GlobalWindow();
-    globalThis.window = dom as unknown as Window & typeof globalThis;
-    globalThis.document = globalThis.window.document;
+    cleanupDom = installDom();
   });
 
   afterEach(() => {
     cleanup();
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    globalThis.document = undefined as unknown as Document;
+    cleanupDom?.();
+    cleanupDom = null;
   });
 
   test("renders AuthTokenModal when API status is auth_required (before workspaces load)", () => {

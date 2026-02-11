@@ -440,6 +440,36 @@ export const projects = {
       z.string()
     ),
   },
+  getDefaultCloneDir: {
+    input: z.void(),
+    output: z.string(),
+  },
+  setDefaultCloneDir: {
+    input: z.object({ path: z.string() }),
+    output: z.void(),
+  },
+  clone: {
+    input: z
+      .object({
+        repoUrl: z.string(),
+        cloneParentDir: z.string().nullish(),
+      })
+      .strict(),
+    output: eventIterator(
+      z.discriminatedUnion("type", [
+        z.object({ type: z.literal("progress"), line: z.string() }),
+        z.object({
+          type: z.literal("success"),
+          projectConfig: ProjectConfigSchema,
+          normalizedPath: z.string(),
+        }),
+        z.object({
+          type: z.literal("error"),
+          error: z.string(),
+        }),
+      ])
+    ),
+  },
   pickDirectory: {
     input: z.void(),
     output: z.string().nullable(),

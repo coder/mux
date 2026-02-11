@@ -153,6 +153,11 @@ export function GeneralSection() {
   const editorConfig = normalizeEditorConfig(rawEditorConfig);
   const [sshHost, setSshHost] = useState<string>("");
   const [sshHostLoaded, setSshHostLoaded] = useState(false);
+  const [defaultCloneDir, setDefaultCloneDir] = useState("");
+  const [cloneDirLoaded, setCloneDirLoaded] = useState(false);
+  // Track whether the initial load succeeded to prevent saving empty string
+  // (which would clear the config) when the initial fetch failed.
+  const [cloneDirLoadedOk, setCloneDirLoadedOk] = useState(false);
 
   // Backend config: default to ON so archiving is safest even before async load completes.
   const [stopCoderWorkspaceOnArchive, setStopCoderWorkspaceOnArchive] = useState(true);
@@ -246,6 +251,25 @@ export function GeneralSection() {
     }
   }, [api]);
 
+  useEffect(() => {
+    if (!api) {
+      return;
+    }
+
+    void api.projects
+      .getDefaultCloneDir()
+      .then((dir) => {
+        setDefaultCloneDir(dir);
+        setCloneDirLoaded(true);
+        setCloneDirLoadedOk(true);
+      })
+      .catch(() => {
+        // Best-effort only. Keep the input editable if load fails,
+        // but don't mark as successfully loaded to prevent clearing config on blur.
+        setCloneDirLoaded(true);
+      });
+  }, [api]);
+
   const handleEditorChange = (editor: EditorType) => {
     setEditorConfig((prev) => ({ ...normalizeEditorConfig(prev), editor }));
   };
@@ -274,6 +298,31 @@ export function GeneralSection() {
     },
     [api]
   );
+
+  const handleCloneDirBlur = useCallback(() => {
+    // Only persist once the initial load has completed (success or failure).
+    // After a failed load, allow saves only if the user has actively typed
+    // a non-empty value, so we never silently clear a configured directory.
+    if (!cloneDirLoaded || !api) {
+      return;
+    }
+
+    const trimmedCloneDir = defaultCloneDir.trim();
+    if (!cloneDirLoadedOk && !trimmedCloneDir) {
+      return;
+    }
+
+    void api.projects
+      .setDefaultCloneDir({ path: defaultCloneDir })
+      .then(() => {
+        // A successful save means subsequent clears are safe, even if the
+        // initial getDefaultCloneDir() request failed earlier in this session.
+        setCloneDirLoadedOk(true);
+      })
+      .catch(() => {
+        // Best-effort save: keep current UI state on failure.
+      });
+  }, [api, cloneDirLoaded, cloneDirLoadedOk, defaultCloneDir]);
 
   return (
     <div className="space-y-6">
@@ -438,6 +487,28 @@ export function GeneralSection() {
           />
         </div>
       )}
+
+      <div>
+        <h3 className="text-foreground mb-4 text-sm font-medium">Projects</h3>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <div className="text-foreground text-sm">Default clone directory</div>
+              <div className="text-muted text-xs">Parent folder used when cloning repositories</div>
+            </div>
+            <Input
+              value={defaultCloneDir}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setDefaultCloneDir(e.target.value)
+              }
+              onBlur={handleCloneDirBlur}
+              placeholder="~/.mux/projects"
+              disabled={!cloneDirLoaded}
+              className="border-border-medium bg-background-secondary h-9 w-80"
+            />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
