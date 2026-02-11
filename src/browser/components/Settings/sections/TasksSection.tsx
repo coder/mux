@@ -54,6 +54,16 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     subagentRunnable: true,
   },
   {
+    // Keep Ask visible when workspace agent discovery is unavailable.
+    id: "ask",
+    scope: "built-in",
+    name: "Ask",
+    description: "Delegate questions to Explore sub-agents and synthesize an answer.",
+    uiSelectable: true,
+    subagentRunnable: false,
+    base: "exec",
+  },
+  {
     id: "compact",
     scope: "built-in",
     name: "Compact",
