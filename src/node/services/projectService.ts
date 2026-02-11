@@ -12,7 +12,7 @@ import { Ok, Err } from "@/common/types/result";
 import type { Secret } from "@/common/types/secrets";
 import type { Stats } from "fs";
 import * as fsPromises from "fs/promises";
-import { execAsync } from "@/node/utils/disposableExec";
+import { execAsync, killProcessTree } from "@/node/utils/disposableExec";
 import {
   buildFileCompletionsIndex,
   EMPTY_FILE_COMPLETIONS_INDEX,
@@ -154,15 +154,18 @@ function hasLikelySshCredentials(): boolean {
  * All other inputs (HTTPS URLs, SSH URLs, SCP-style, etc.) pass through unchanged.
  */
 function normalizeRepoUrlForClone(repoUrl: string): string {
+  const trimmedRepoUrl = repoUrl.trim();
+  const shorthandCandidate = trimmedRepoUrl.replace(/[\\/]+$/, "");
+
   // owner/repo shorthand: exactly two non-empty segments separated by a single slash,
   // where the first segment looks like a GitHub username (letters, digits, hyphens).
   // Excludes local paths like ../repo, ./foo, foo/bar/baz, and absolute paths.
   // Note: bare `foo/bar` style local relative paths are intentionally treated as GitHub
   // shorthand here because this function is only called from the Clone dialog, which is
   // specifically for remote repos. Users cloning local repos should use the "Local folder" tab.
-  if (GITHUB_SHORTHAND_PATTERN.test(repoUrl)) {
+  if (GITHUB_SHORTHAND_PATTERN.test(shorthandCandidate)) {
     // Strip existing .git suffix before appending to avoid double .git (e.g. owner/repo.git → owner/repo.git.git)
-    const withoutGitSuffix = repoUrl.replace(/\.git$/i, "");
+    const withoutGitSuffix = shorthandCandidate.replace(/\.git$/i, "");
 
     // Prefer SSH for shorthand only when the current session has an active SSH agent.
     // This avoids assuming GitHub access from unrelated key files on disk.
@@ -175,11 +178,11 @@ function normalizeRepoUrlForClone(repoUrl: string): string {
 
   // Strip query strings and fragments only from URL-like inputs (protocol:// or git@),
   // not from local paths where # and ? may be valid filename characters.
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(repoUrl) || repoUrl.startsWith("git@")) {
-    return repoUrl.replace(/[?#].*$/, "");
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmedRepoUrl) || trimmedRepoUrl.startsWith("git@")) {
+    return trimmedRepoUrl.replace(/[?#].*$/, "");
   }
 
-  return repoUrl;
+  return trimmedRepoUrl;
 }
 
 const FILE_COMPLETIONS_CACHE_TTL_MS = 10_000;
@@ -387,6 +390,9 @@ export class ProjectService {
       const child = spawn("git", ["clone", "--progress", "--", cloneUrl, cloneWorkPath], {
         stdio: ["ignore", "pipe", "pipe"],
         env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+        // Detached children become process-group leaders on Unix so we can
+        // reliably terminate clone helpers (ssh, shells) as a full tree.
+        detached: process.platform !== "win32",
       });
 
       const stderrChunks: string[] = [];
@@ -437,10 +443,25 @@ export class ProjectService {
         notifyChunk();
       });
 
-      const onAbort = () => {
-        if (!child.killed && child.exitCode === null && child.signalCode === null) {
-          child.kill();
+      const terminateCloneProcess = () => {
+        if (child.killed || child.exitCode !== null || child.signalCode !== null) {
+          return;
         }
+
+        if (typeof child.pid === "number" && child.pid > 0) {
+          killProcessTree(child.pid);
+          return;
+        }
+
+        try {
+          child.kill();
+        } catch {
+          // Ignore ESRCH races if process exits between checks.
+        }
+      };
+
+      const onAbort = () => {
+        terminateCloneProcess();
         notifyChunk();
       };
 
@@ -466,10 +487,7 @@ export class ProjectService {
         }
       } finally {
         signal?.removeEventListener("abort", onAbort);
-
-        if (!child.killed && child.exitCode === null && child.signalCode === null) {
-          child.kill();
-        }
+        terminateCloneProcess();
       }
 
       while (stderrChunks.length > 0) {

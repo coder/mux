@@ -193,7 +193,7 @@ describe("ProjectService", () => {
       expect(loadedConfig.defaultProjectCloneDir).toBeUndefined();
     });
 
-    it("normalizes owner/repo shorthand to GitHub HTTPS when SSH agent is unavailable", async () => {
+    it("normalizes trailing-slash owner/repo shorthand to GitHub HTTPS when SSH agent is unavailable", async () => {
       if (process.platform === "win32") {
         // This test relies on a POSIX shell shim named "git" in PATH.
         return;
@@ -230,7 +230,7 @@ exit 1
 
       try {
         const result = await service.clone({
-          repoUrl: "owner/repo",
+          repoUrl: "owner/repo/",
           cloneParentDir,
         });
 
