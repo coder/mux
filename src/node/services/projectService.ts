@@ -373,11 +373,22 @@ export class ProjectService {
       });
 
       const stderrChunks: string[] = [];
+      // Preserve full stderr so failed clones can surface git's fatal message instead of only exit code 128.
+      let collectedStderr = "";
       let resolveChunk: (() => void) | null = null;
       let processEnded = false;
       let spawnErrorMessage: string | null = null;
       let exitCode: number | null = null;
       let exitSignal: NodeJS.Signals | null = null;
+
+      const getLastMeaningfulStderrLine = (): string | null => {
+        const stderrLines = collectedStderr
+          .trim()
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0);
+        return stderrLines[stderrLines.length - 1] ?? null;
+      };
 
       const notifyChunk = () => {
         if (!resolveChunk) {
@@ -390,7 +401,9 @@ export class ProjectService {
       };
 
       child.stderr?.on("data", (data: Buffer) => {
-        stderrChunks.push(data.toString());
+        const chunk = data.toString();
+        stderrChunks.push(chunk);
+        collectedStderr += chunk;
         notifyChunk();
       });
 
@@ -450,7 +463,8 @@ export class ProjectService {
 
       if (spawnErrorMessage != null) {
         await cleanupPartialClone();
-        yield { type: "error", error: spawnErrorMessage };
+        const errorMessage = getLastMeaningfulStderrLine() ?? spawnErrorMessage;
+        yield { type: "error", error: errorMessage };
         return;
       }
 
@@ -463,9 +477,10 @@ export class ProjectService {
       if (exitCode !== 0 || exitSignal !== null) {
         await cleanupPartialClone();
         const errorMessage =
-          exitSignal != null
+          getLastMeaningfulStderrLine() ??
+          (exitSignal != null
             ? `Clone failed: process terminated by signal ${String(exitSignal)}`
-            : `Clone failed with exit code ${exitCode ?? "unknown"}`;
+            : `Clone failed with exit code ${exitCode ?? "unknown"}`);
         yield { type: "error", error: errorMessage };
         return;
       }

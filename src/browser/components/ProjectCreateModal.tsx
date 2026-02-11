@@ -458,6 +458,11 @@ function ProjectCloneForm(props: ProjectCloneFormProps) {
     }
   }, [api, isCreating, props, repoUrl, reset, setCreating, trimmedCloneParentDir]);
 
+  const handleRetry = useCallback(() => {
+    setError("");
+    setProgressLines([]);
+  }, []);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Enter") {
@@ -470,13 +475,18 @@ function ProjectCloneForm(props: ProjectCloneFormProps) {
 
   const repoName = getRepoNameFromUrl(repoUrl);
   const destinationPreview = buildCloneDestinationPreview(cloneParentDir, repoName);
+  // Keep the progress log visible after failed clones so users can diagnose the git error before retrying.
+  const hasCloneFailure = !isCreating && progressLines.length > 0 && error.length > 0;
+  const showCloneProgress = isCreating || hasCloneFailure;
 
   return (
     <>
-      {isCreating ? (
+      {showCloneProgress ? (
         <div className="mb-3 space-y-3">
           <div className="space-y-1">
-            <label className="text-muted text-xs">Cloning repository…</label>
+            <label className="text-muted text-xs">
+              {hasCloneFailure ? "Clone failed" : "Cloning repository…"}
+            </label>
             <div className="bg-modal-bg border-border-medium max-h-40 overflow-y-auto rounded border p-3">
               <pre className="text-muted font-mono text-xs break-all whitespace-pre-wrap">
                 {progressLines.length > 0 ? progressLines.join("") : "Starting clone…"}
@@ -558,7 +568,11 @@ function ProjectCloneForm(props: ProjectCloneFormProps) {
         <Button variant="secondary" onClick={handleCancel}>
           Cancel
         </Button>
-        {!isCreating && <Button onClick={() => void handleClone()}>Clone Project</Button>}
+        {!isCreating && (
+          <Button onClick={hasCloneFailure ? handleRetry : () => void handleClone()}>
+            {hasCloneFailure ? "Try Again" : "Clone Project"}
+          </Button>
+        )}
       </DialogFooter>
 
       <DirectoryPickerModal
