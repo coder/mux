@@ -4,7 +4,7 @@ import * as path from "path";
 import * as os from "os";
 import { execSync } from "child_process";
 import { Config } from "@/node/config";
-import { ProjectService } from "./projectService";
+import { ProjectService, type CloneEvent } from "./projectService";
 
 async function createLocalGitRepository(rootDir: string, repoName: string): Promise<string> {
   const repoPath = path.join(rootDir, repoName);
@@ -214,7 +214,7 @@ describe("ProjectService", () => {
         `#!/bin/sh
 printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
 if [ "$1" = "clone" ]; then
-  mkdir -p "$4/.git"
+  mkdir -p "$5/.git"
   exit 0
 fi
 exit 1
@@ -240,11 +240,12 @@ exit 1
         const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
 
         expect(loggedArgs[0]).toBe("clone");
-        expect(loggedArgs[1]).toBe("--");
-        expect(loggedArgs[2]).toMatch(
+        expect(loggedArgs[1]).toBe("--progress");
+        expect(loggedArgs[2]).toBe("--");
+        expect(loggedArgs[3]).toMatch(
           /^((https:\/\/github\.com\/owner\/repo\.git)|(git@github\.com:owner\/repo\.git))$/
         );
-        expect(loggedArgs[3]).toBe(path.resolve(cloneParentDir, "repo"));
+        expect(loggedArgs[4]).toBe(path.resolve(cloneParentDir, "repo"));
       } finally {
         process.env.PATH = originalPath;
         if (originalFakeGitArgsLogPath === undefined) {
@@ -286,7 +287,7 @@ exit 1
         `#!/bin/sh
 printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
 if [ "$1" = "clone" ]; then
-  mkdir -p "$4/.git"
+  mkdir -p "$5/.git"
   exit 0
 fi
 exit 1
@@ -312,9 +313,10 @@ exit 1
         const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
 
         expect(loggedArgs[0]).toBe("clone");
-        expect(loggedArgs[1]).toBe("--");
-        expect(loggedArgs[2]).toBe("git@github.com:owner/repo.git");
-        expect(loggedArgs[3]).toBe(path.resolve(cloneParentDir, "repo"));
+        expect(loggedArgs[1]).toBe("--progress");
+        expect(loggedArgs[2]).toBe("--");
+        expect(loggedArgs[3]).toBe("git@github.com:owner/repo.git");
+        expect(loggedArgs[4]).toBe(path.resolve(cloneParentDir, "repo"));
       } finally {
         process.env.PATH = originalPath;
         if (originalFakeGitArgsLogPath === undefined) {
@@ -350,6 +352,137 @@ exit 1
       expect(result.success).toBe(false);
       if (result.success) throw new Error("Expected failure");
       expect(result.error).toContain("Destination already exists");
+    });
+  });
+
+  describe("cloneWithProgress", () => {
+    it("emits progress events and registers project on success", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const sourceRepoPath = await createLocalGitRepository(tempDir, "source-repo-progress");
+      const cloneParentDir = path.join(tempDir, "progress-clones");
+      const fakeBinDir = path.join(tempDir, "fake-bin-progress");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  echo 'progress: starting' >&2
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+
+      try {
+        const events: CloneEvent[] = [];
+        for await (const event of service.cloneWithProgress({
+          repoUrl: sourceRepoPath,
+          cloneParentDir,
+        })) {
+          events.push(event);
+        }
+
+        const progressEvent = events.find((event) => event.type === "progress");
+        expect(progressEvent?.type).toBe("progress");
+        if (progressEvent?.type !== "progress") throw new Error("Expected progress event");
+        expect(progressEvent.line).toContain("progress: starting");
+
+        const successEvent = events.find((event) => event.type === "success");
+        expect(successEvent?.type).toBe("success");
+        if (successEvent?.type !== "success") throw new Error("Expected success event");
+
+        const expectedProjectPath = path.resolve(cloneParentDir, "source-repo-progress");
+        expect(successEvent.normalizedPath).toBe(expectedProjectPath);
+
+        const loadedConfig = config.loadConfigOrDefault();
+        expect(loadedConfig.projects.has(expectedProjectPath)).toBe(true);
+      } finally {
+        process.env.PATH = originalPath;
+      }
+    });
+
+    it("cleans up partial clone and yields cancellation event when aborted", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const sourceRepoPath = await createLocalGitRepository(tempDir, "source-repo-cancel");
+      const cloneParentDir = path.join(tempDir, "cancel-clones");
+      const fakeBinDir = path.join(tempDir, "fake-bin-cancel");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  echo 'progress: starting' >&2
+  mkdir -p "$5/.git"
+  sleep 1000 &
+  pid=$!
+  trap 'kill $pid 2>/dev/null; exit 0' TERM INT
+  wait $pid
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+
+      const controller = new AbortController();
+      let sawProgress = false;
+      let lastEvent: CloneEvent | null = null;
+
+      try {
+        for await (const event of service.cloneWithProgress(
+          {
+            repoUrl: sourceRepoPath,
+            cloneParentDir,
+          },
+          controller.signal
+        )) {
+          lastEvent = event;
+          if (!sawProgress && event.type === "progress") {
+            sawProgress = true;
+            controller.abort();
+          }
+        }
+      } finally {
+        process.env.PATH = originalPath;
+      }
+
+      expect(sawProgress).toBe(true);
+      expect(lastEvent?.type).toBe("error");
+      if (lastEvent?.type !== "error") throw new Error("Expected error event");
+      expect(lastEvent.error).toContain("Clone cancelled");
+
+      const expectedProjectPath = path.resolve(cloneParentDir, "source-repo-cancel");
+      expect(config.loadConfigOrDefault().projects.has(expectedProjectPath)).toBe(false);
+
+      try {
+        await fs.stat(expectedProjectPath);
+        throw new Error("Expected clone destination to be cleaned up");
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        expect(err.code).toBe("ENOENT");
+      }
     });
   });
 

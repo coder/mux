@@ -14,6 +14,56 @@ import { ToggleGroup, ToggleGroupItem } from "@/browser/components/ui/toggle-gro
 import type { ProjectConfig } from "@/node/config";
 import { useAPI } from "@/browser/contexts/API";
 
+type ApiClient = ReturnType<typeof useAPI>["api"];
+
+function useDirectoryPicker(params: {
+  api: ApiClient;
+  initialPath: string;
+  onSelectPath: (path: string) => void;
+  errorLabel: string;
+}) {
+  const { api, initialPath, onSelectPath, errorLabel } = params;
+  const isDesktop = !!window.api;
+  const hasWebFsPicker = !isDesktop;
+  const [isDirPickerOpen, setIsDirPickerOpen] = useState(false);
+
+  const handleWebPickerPathSelected = useCallback(
+    (selected: string) => {
+      onSelectPath(selected);
+    },
+    [onSelectPath]
+  );
+
+  const browse = useCallback(async () => {
+    if (isDesktop) {
+      try {
+        const selectedPath = await api?.projects.pickDirectory();
+        if (selectedPath) {
+          onSelectPath(selectedPath);
+        }
+      } catch (err) {
+        console.error(errorLabel, err);
+      }
+      return;
+    }
+
+    if (hasWebFsPicker) {
+      setIsDirPickerOpen(true);
+    }
+  }, [api, errorLabel, hasWebFsPicker, isDesktop, onSelectPath]);
+
+  const directoryPickerModal = hasWebFsPicker ? (
+    <DirectoryPickerModal
+      isOpen={isDirPickerOpen}
+      initialPath={initialPath || "~"}
+      onClose={() => setIsDirPickerOpen(false)}
+      onSelectPath={handleWebPickerPathSelected}
+    />
+  ) : null;
+
+  return { canBrowse: isDesktop || hasWebFsPicker, browse, directoryPickerModal };
+}
+
 interface ProjectCreateModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -65,12 +115,7 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
     const { api } = useAPI();
     const [path, setPath] = useState("");
     const [error, setError] = useState("");
-    // In Electron mode, window.api exists (set by preload) and has native directory picker via ORPC
-    // In browser mode, window.api doesn't exist and we use web-based DirectoryPickerModal
-    const isDesktop = !!window.api;
-    const hasWebFsPicker = !isDesktop;
     const [isCreating, setIsCreating] = useState(false);
-    const [isDirPickerOpen, setIsDirPickerOpen] = useState(false);
 
     const setCreating = useCallback(
       (next: boolean) => {
@@ -90,22 +135,15 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
       onClose?.();
     }, [onClose, reset]);
 
-    const handleWebPickerPathSelected = useCallback((selected: string) => {
-      setPath(selected);
-      setError("");
-    }, []);
-
-    const handleBrowse = useCallback(async () => {
-      try {
-        const selectedPath = await api?.projects.pickDirectory();
-        if (selectedPath) {
-          setPath(selectedPath);
-          setError("");
-        }
-      } catch (err) {
-        console.error("Failed to pick directory:", err);
-      }
-    }, [api]);
+    const { canBrowse, browse, directoryPickerModal } = useDirectoryPicker({
+      api,
+      initialPath: path || "~",
+      onSelectPath: (selectedPath) => {
+        setPath(selectedPath);
+        setError("");
+      },
+      errorLabel: "Failed to pick directory:",
+    });
 
     const handleSelect = useCallback(async (): Promise<boolean> => {
       const trimmedPath = path.trim();
@@ -162,14 +200,6 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
       }
     }, [api, isCreating, onClose, onSuccess, path, reset, setCreating]);
 
-    const handleBrowseClick = useCallback(() => {
-      if (isDesktop) {
-        void handleBrowse();
-      } else if (hasWebFsPicker) {
-        setIsDirPickerOpen(true);
-      }
-    }, [handleBrowse, hasWebFsPicker, isDesktop]);
-
     const handleKeyDown = useCallback(
       (e: React.KeyboardEvent) => {
         if (e.key === "Enter") {
@@ -205,10 +235,10 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
             disabled={isCreating}
             className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
           />
-          {(isDesktop || hasWebFsPicker) && (
+          {canBrowse && (
             <Button
               variant="outline"
-              onClick={handleBrowseClick}
+              onClick={() => void browse()}
               disabled={isCreating}
               className="shrink-0"
             >
@@ -232,12 +262,7 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
           </DialogFooter>
         )}
 
-        <DirectoryPickerModal
-          isOpen={isDirPickerOpen}
-          initialPath={path || "~"}
-          onClose={() => setIsDirPickerOpen(false)}
-          onSelectPath={handleWebPickerPathSelected}
-        />
+        {directoryPickerModal}
       </>
     );
   }
@@ -302,12 +327,9 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
     const [hasEditedCloneParentDir, setHasEditedCloneParentDir] = useState(false);
     const [error, setError] = useState("");
     const [isCreating, setIsCreating] = useState(false);
-    const [isDirPickerOpen, setIsDirPickerOpen] = useState(false);
     const [progressLines, setProgressLines] = useState<string[]>([]);
     const abortControllerRef = useRef<AbortController | null>(null);
     const progressEndRef = useRef<HTMLDivElement | null>(null);
-    const isDesktop = !!window.api;
-    const hasWebFsPicker = !isDesktop;
 
     const setCreating = useCallback(
       (next: boolean) => {
@@ -325,15 +347,23 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
       setProgressLines([]);
     }, [props.defaultCloneDir]);
 
+    const abortInFlightClone = useCallback(() => {
+      if (!abortControllerRef.current) {
+        return;
+      }
+
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }, []);
+
     useEffect(() => {
       if (!props.isOpen) {
-        if (abortControllerRef.current) {
-          abortControllerRef.current.abort();
-          abortControllerRef.current = null;
-        }
+        abortInFlightClone();
         reset();
       }
-    }, [props.isOpen, reset]);
+    }, [abortInFlightClone, props.isOpen, reset]);
+
+    useEffect(() => abortInFlightClone, [abortInFlightClone]);
 
     useEffect(() => {
       if (!props.isOpen || hasEditedCloneParentDir) {
@@ -350,44 +380,21 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
     const trimmedCloneParentDir = cloneParentDir.trim();
 
     const handleCancel = useCallback(() => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null;
-      }
-
+      abortInFlightClone();
       reset();
       props.onClose?.();
-    }, [props, reset]);
+    }, [abortInFlightClone, props, reset]);
 
-    const handleWebPickerPathSelected = useCallback((selectedPath: string) => {
-      setCloneParentDir(selectedPath);
-      setHasEditedCloneParentDir(true);
-      setError("");
-    }, []);
-
-    const handleBrowse = useCallback(async () => {
-      try {
-        const selectedPath = await api?.projects.pickDirectory();
-        if (selectedPath) {
-          setCloneParentDir(selectedPath);
-          setHasEditedCloneParentDir(true);
-          setError("");
-        }
-      } catch (err) {
-        console.error("Failed to pick clone directory:", err);
-      }
-    }, [api]);
-
-    const handleBrowseClick = useCallback(() => {
-      if (isDesktop) {
-        void handleBrowse();
-        return;
-      }
-
-      if (hasWebFsPicker) {
-        setIsDirPickerOpen(true);
-      }
-    }, [handleBrowse, hasWebFsPicker, isDesktop]);
+    const { canBrowse, browse, directoryPickerModal } = useDirectoryPicker({
+      api,
+      initialPath: cloneParentDir || props.defaultCloneDir || "~",
+      onSelectPath: (selectedPath) => {
+        setCloneParentDir(selectedPath);
+        setHasEditedCloneParentDir(true);
+        setError("");
+      },
+      errorLabel: "Failed to pick clone directory:",
+    });
 
     const handleClone = useCallback(async (): Promise<boolean> => {
       const trimmedRepoUrl = repoUrl.trim();
@@ -554,10 +561,10 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
                   disabled={isCreating}
                   className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
                 />
-                {(isDesktop || hasWebFsPicker) && (
+                {canBrowse && (
                   <Button
                     variant="outline"
-                    onClick={handleBrowseClick}
+                    onClick={() => void browse()}
                     disabled={isCreating}
                     className="shrink-0"
                   >
@@ -589,18 +596,13 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
             </Button>
             {!isCreating && (
               <Button onClick={hasCloneFailure ? handleRetry : () => void handleClone()}>
-                {hasCloneFailure ? "Try Again" : "Clone Project"}
+                {hasCloneFailure ? "Back to form" : "Clone Project"}
               </Button>
             )}
           </DialogFooter>
         )}
 
-        <DirectoryPickerModal
-          isOpen={isDirPickerOpen}
-          initialPath={cloneParentDir || props.defaultCloneDir || "~"}
-          onClose={() => setIsDirPickerOpen(false)}
-          onSelectPath={handleWebPickerPathSelected}
-        />
+        {directoryPickerModal}
       </>
     );
   }

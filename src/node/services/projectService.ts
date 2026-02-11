@@ -13,7 +13,7 @@ import type { Secret } from "@/common/types/secrets";
 import type { Stats } from "fs";
 import * as fsPromises from "fs/promises";
 import * as os from "os";
-import { execAsync, execFileAsync } from "@/node/utils/disposableExec";
+import { execAsync } from "@/node/utils/disposableExec";
 import {
   buildFileCompletionsIndex,
   EMPTY_FILE_COMPLETIONS_INDEX,
@@ -425,8 +425,6 @@ export class ProjectService {
       let resolveChunk: (() => void) | null = null;
       let processEnded = false;
       let spawnErrorMessage: string | null = null;
-      let exitCode: number | null = null;
-      let exitSignal: NodeJS.Signals | null = null;
 
       const getLastMeaningfulStderrLine = (): string | null => {
         const stderrLines = collectedStderr
@@ -439,6 +437,10 @@ export class ProjectService {
 
       const notifyChunk = () => {
         if (!resolveChunk) {
+          return;
+        }
+
+        if (!processEnded && stderrChunks.length === 0) {
           return;
         }
 
@@ -458,11 +460,6 @@ export class ProjectService {
         spawnErrorMessage = error.message;
         processEnded = true;
         notifyChunk();
-      });
-
-      child.on("exit", (code, currentSignal) => {
-        exitCode = code;
-        exitSignal = currentSignal;
       });
 
       child.on("close", () => {
@@ -494,6 +491,7 @@ export class ProjectService {
 
           await new Promise<void>((resolve) => {
             resolveChunk = resolve;
+            notifyChunk();
           });
         }
       } finally {
@@ -521,7 +519,10 @@ export class ProjectService {
         return;
       }
 
-      if (exitCode !== 0 || exitSignal !== null) {
+      const exitCode = child.exitCode;
+      const exitSignal = child.signalCode;
+
+      if (exitCode !== 0 || exitSignal != null) {
         await cleanupPartialClone();
         const errorMessage =
           getLastMeaningfulStderrLine() ??
@@ -555,88 +556,17 @@ export class ProjectService {
   async clone(
     input: CloneProjectParams
   ): Promise<Result<{ projectConfig: ProjectConfig; normalizedPath: string }>> {
-    const prepared = await this.validateAndPrepareClone(input);
-    if (!prepared.success) {
-      return Err(prepared.error);
+    for await (const event of this.cloneWithProgress(input)) {
+      if (event.type === "success") {
+        return Ok({ projectConfig: event.projectConfig, normalizedPath: event.normalizedPath });
+      }
+
+      if (event.type === "error") {
+        return Err(event.error);
+      }
     }
 
-    const { cloneUrl, normalizedPath, cloneParentDir } = prepared.data;
-
-    // Track whether we confirmed the destination didn't exist before cloning,
-    // so we only clean up directories we created (not concurrent clones).
-    let destinationVerifiedEmpty = false;
-    let cloneSucceeded = false;
-
-    try {
-      let cloneParentStat: Stats | null = null;
-      try {
-        cloneParentStat = await fsPromises.stat(cloneParentDir);
-      } catch (error) {
-        const err = error as NodeJS.ErrnoException;
-        if (err.code !== "ENOENT") {
-          throw error;
-        }
-      }
-
-      if (cloneParentStat && !cloneParentStat.isDirectory()) {
-        return Err("Clone destination parent directory is not a directory");
-      }
-
-      let destinationStat: Stats | null = null;
-      try {
-        destinationStat = await fsPromises.stat(normalizedPath);
-      } catch (error) {
-        const err = error as NodeJS.ErrnoException;
-        if (err.code !== "ENOENT") {
-          throw error;
-        }
-      }
-
-      if (destinationStat) {
-        return Err(`Destination already exists: ${normalizedPath}`);
-      }
-      destinationVerifiedEmpty = true;
-
-      await fsPromises.mkdir(cloneParentDir, { recursive: true });
-
-      // Use -- to terminate options so user-supplied URLs starting with "-" are
-      // never interpreted as git flags.
-      using cloneProc = execFileAsync("git", ["clone", "--", cloneUrl, normalizedPath], {
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-      });
-      await cloneProc.result;
-      cloneSucceeded = true;
-
-      // Use editConfig to do an atomic read-modify-write, avoiding overwriting
-      // unrelated config changes that may have occurred during the clone.
-      // Re-check inside the callback to avoid overwriting a project entry that
-      // was concurrently added by another process/window during clone.
-      const projectConfig: ProjectConfig = { workspaces: [] };
-      await this.config.editConfig((freshConfig) => {
-        if (freshConfig.projects.has(normalizedPath)) {
-          return freshConfig; // Already registered — don't overwrite
-        }
-        const updatedProjects = new Map(freshConfig.projects);
-        updatedProjects.set(normalizedPath, projectConfig);
-        return { ...freshConfig, projects: updatedProjects };
-      });
-
-      return Ok({ projectConfig, normalizedPath });
-    } catch (error) {
-      // Best-effort cleanup of partial clone directory so the user can retry
-      // without hitting "Destination already exists". Only clean up if:
-      // 1. We verified the path didn't exist before cloning (so we own it)
-      // 2. The clone itself failed (not a post-clone config save error)
-      if (destinationVerifiedEmpty && !cloneSucceeded) {
-        try {
-          await fsPromises.rm(normalizedPath, { recursive: true, force: true });
-        } catch {
-          // Ignore cleanup errors — the original error is more important.
-        }
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      return Err(`Failed to clone repository: ${message}`);
-    }
+    return Err("Clone did not return a completion event");
   }
 
   async remove(projectPath: string): Promise<Result<void>> {
