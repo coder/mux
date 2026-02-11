@@ -543,6 +543,12 @@ export class ProjectService {
         return;
       }
 
+      if (signal?.aborted) {
+        await cleanupPartialClone();
+        yield { type: "error", error: "Clone cancelled" };
+        return;
+      }
+
       try {
         await fsPromises.rename(cloneWorkPath, normalizedPath);
       } catch (error) {
@@ -555,7 +561,17 @@ export class ProjectService {
         throw error;
       }
 
-      cloneSucceeded = true;
+      if (signal?.aborted) {
+        // Abort won the race after rename but before config mutation.
+        // Remove the newly materialized destination so cancellation remains authoritative.
+        try {
+          await fsPromises.rm(normalizedPath, { recursive: true, force: true });
+        } catch {
+          // Best-effort cleanup only.
+        }
+        yield { type: "error", error: "Clone cancelled" };
+        return;
+      }
 
       const projectConfig: ProjectConfig = { workspaces: [] };
       await this.config.editConfig((freshConfig) => {
@@ -567,6 +583,7 @@ export class ProjectService {
         return { ...freshConfig, projects: updatedProjects };
       });
 
+      cloneSucceeded = true;
       yield { type: "success", projectConfig, normalizedPath };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
