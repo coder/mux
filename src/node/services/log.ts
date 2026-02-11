@@ -79,12 +79,53 @@ function getDefaultLogLevel(): LogLevel {
   return isElectron ? "info" : "error";
 }
 
-let logFileStream: fs.WriteStream | null = null;
-let logFilePath: string | null = null;
-let logFileSize = 0;
+type FileSinkState =
+  | { status: "idle" }
+  | { status: "open"; stream: fs.WriteStream; path: string; size: number }
+  | { status: "degraded"; reason: string; retryAfterMs: number }
+  | { status: "closed" };
+
+let fileSinkState: FileSinkState = { status: "idle" };
 
 const MAX_LOG_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const MAX_LOG_FILES = 3;
+const LOG_FILE_RETRY_BACKOFF_MS = 30_000;
+
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function createSafeStream(filePath: string): fs.WriteStream {
+  const stream = fs.createWriteStream(filePath, { flags: "a" });
+  stream.on("error", (error) => {
+    // Ignore stale stream errors after rotation/clear/close; only active stream
+    // failures should flip the sink into degraded mode.
+    if (fileSinkState.status !== "open" || fileSinkState.stream !== stream) {
+      return;
+    }
+
+    fileSinkState = {
+      status: "degraded",
+      reason: toErrorMessage(error),
+      retryAfterMs: Date.now() + LOG_FILE_RETRY_BACKOFF_MS,
+    };
+
+    try {
+      stream.destroy();
+    } catch {
+      // logger must fail silently
+    }
+  });
+  return stream;
+}
+
+function setDegradedState(error: unknown): void {
+  fileSinkState = {
+    status: "degraded",
+    reason: toErrorMessage(error),
+    retryAfterMs: Date.now() + LOG_FILE_RETRY_BACKOFF_MS,
+  };
+}
 
 function stripAnsi(text: string): string {
   // Matches standard ANSI escape codes for colors/styles.
@@ -92,39 +133,47 @@ function stripAnsi(text: string): string {
   return text.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
-function initLogFile(): void {
-  if (logFileStream) {
+function ensureSinkOpen(): void {
+  if (fileSinkState.status === "open" || fileSinkState.status === "closed") {
+    return;
+  }
+
+  if (fileSinkState.status === "degraded" && Date.now() < fileSinkState.retryAfterMs) {
     return;
   }
 
   try {
     const logsDir = getMuxLogsDir();
+    const activeLogPath = path.join(logsDir, "mux.log");
+
     fs.mkdirSync(logsDir, { recursive: true });
 
-    logFilePath = path.join(logsDir, "mux.log");
-
+    let fileSize = 0;
     try {
-      logFileSize = fs.statSync(logFilePath).size;
+      fileSize = fs.statSync(activeLogPath).size;
     } catch {
-      logFileSize = 0;
+      fileSize = 0;
     }
 
-    logFileStream = fs.createWriteStream(logFilePath, { flags: "a" });
-  } catch {
-    // Silent failure — never crash the app for logging.
+    const stream = createSafeStream(activeLogPath);
+    fileSinkState = { status: "open", stream, path: activeLogPath, size: fileSize };
+  } catch (error) {
+    // Never throw from the logger; enter degraded mode and retry later.
+    setDegradedState(error);
   }
 }
 
-function rotateLogFile(): void {
-  if (!logFilePath) {
+function rotateSink(): void {
+  if (fileSinkState.status !== "open") {
     return;
   }
 
-  try {
-    logFileStream?.end();
-    logFileStream = null;
+  const openSink = fileSinkState;
 
-    const logsDir = path.dirname(logFilePath);
+  try {
+    openSink.stream.end();
+
+    const logsDir = path.dirname(openSink.path);
 
     // Shift: mux.3.log → deleted, mux.2.log → mux.3.log, etc.
     for (let i = MAX_LOG_FILES; i >= 1; i--) {
@@ -137,26 +186,36 @@ function rotateLogFile(): void {
       }
     }
 
-    logFileSize = 0;
-    logFileStream = fs.createWriteStream(logFilePath, { flags: "a" });
-  } catch {
-    // Silent failure.
+    const stream = createSafeStream(openSink.path);
+    fileSinkState = { status: "open", stream, path: openSink.path, size: 0 };
+  } catch (error) {
+    setDegradedState(error);
   }
 }
 
-function writeToFile(cleanLineWithNewline: string): void {
-  initLogFile();
-  if (!logFileStream) {
-    return;
-  }
-
+function writeSink(cleanLineWithNewline: string): void {
   try {
-    const bytes = Buffer.byteLength(cleanLineWithNewline, "utf-8");
-    logFileStream.write(cleanLineWithNewline);
-    logFileSize += bytes;
+    ensureSinkOpen();
+    if (fileSinkState.status !== "open") {
+      return;
+    }
 
-    if (logFileSize >= MAX_LOG_FILE_SIZE) {
-      rotateLogFile();
+    const openSink = fileSinkState;
+    const bytes = Buffer.byteLength(cleanLineWithNewline, "utf-8");
+
+    openSink.stream.write(cleanLineWithNewline);
+
+    // Stream writes are async and can error out-of-band. Only update size
+    // when this sink instance is still active.
+    if (fileSinkState.status !== "open" || fileSinkState.stream !== openSink.stream) {
+      return;
+    }
+
+    const nextSize = openSink.size + bytes;
+    fileSinkState = { ...openSink, size: nextSize };
+
+    if (nextSize >= MAX_LOG_FILE_SIZE) {
+      rotateSink();
     }
   } catch {
     // Silent failure.
@@ -167,9 +226,19 @@ export function getLogFilePath(): string {
   return path.join(getMuxLogsDir(), "mux.log");
 }
 
-export function clearLogFiles(): void {
+function clearSink(): void {
   const logsDir = getMuxLogsDir();
   const activeLogPath = path.join(logsDir, "mux.log");
+
+  const openSink = fileSinkState.status === "open" ? fileSinkState : null;
+  if (openSink) {
+    try {
+      openSink.stream.end();
+    } catch {
+      // logger must fail silently
+    }
+    fileSinkState = { status: "idle" };
+  }
 
   fs.mkdirSync(logsDir, { recursive: true });
 
@@ -187,18 +256,36 @@ export function clearLogFiles(): void {
     }
   }
 
-  logFilePath = activeLogPath;
-  logFileSize = 0;
+  if (!openSink) {
+    return;
+  }
+
+  try {
+    const stream = createSafeStream(activeLogPath);
+    fileSinkState = { status: "open", stream, path: activeLogPath, size: 0 };
+  } catch (error) {
+    setDegradedState(error);
+  }
+}
+
+export function clearLogFiles(): void {
+  clearSink();
+}
+
+function closeSink(): void {
+  if (fileSinkState.status === "open") {
+    try {
+      fileSinkState.stream.end();
+    } catch {
+      // ignore
+    }
+  }
+
+  fileSinkState = { status: "closed" };
 }
 
 export function closeLogFile(): void {
-  try {
-    logFileStream?.end();
-  } catch {
-    // ignore
-  } finally {
-    logFileStream = null;
-  }
+  closeSink();
 }
 
 let currentLogLevel: LogLevel = getDefaultLogLevel();
@@ -472,7 +559,7 @@ function safePipeLog(level: LogLevel, ...args: unknown[]): void {
   const formattedLine = `${prefix} ${message}`;
   const cleanLine = stripAnsi(formattedLine);
 
-  writeToFile(`${cleanLine}\n`);
+  writeSink(`${cleanLine}\n`);
 
   pushLogEntry({
     timestamp: Date.now(),
