@@ -39,7 +39,7 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import { AgentIdSchema } from "@/common/orpc/schemas";
 import { GitPatchArtifactService } from "@/node/services/gitPatchArtifactService";
 import type { ThinkingLevel } from "@/common/types/thinking";
-import type { ToolCallEndEvent, StreamAbortEvent, StreamEndEvent } from "@/common/types/stream";
+import type { StreamAbortEvent, StreamEndEvent } from "@/common/types/stream";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
 import {
   AgentReportToolArgsSchema,
@@ -150,10 +150,6 @@ function isTypedWorkspaceEvent(value: unknown, type: string): boolean {
   );
 }
 
-function isToolCallEndEvent(value: unknown): value is ToolCallEndEvent {
-  return isTypedWorkspaceEvent(value, "tool-call-end");
-}
-
 function isStreamEndEvent(value: unknown): value is StreamEndEvent {
   return isTypedWorkspaceEvent(value, "stream-end");
 }
@@ -209,8 +205,8 @@ function getIsoNow(): string {
 }
 
 export class TaskService {
-  // Serialize stream-end/tool-call-end processing per workspace to avoid races (e.g.
-  // stream-end observing awaiting_report before agent_report handling flips the status).
+  // Serialize stream-end/stream-abort processing per workspace to avoid races when
+  // finalizing reported tasks and cleanup state transitions.
   private readonly workspaceEventLocks = new MutexMap<string>();
   private readonly mutex = new AsyncMutex();
   private readonly pendingWaitersByTaskId = new Map<string, PendingTaskWaiter[]>();
@@ -235,21 +231,6 @@ export class TaskService {
     private readonly initStateManager: InitStateManager
   ) {
     this.gitPatchArtifactService = new GitPatchArtifactService(config);
-
-    this.aiService.on("tool-call-end", (payload: unknown) => {
-      if (!isToolCallEndEvent(payload)) return;
-      if (payload.toolName !== "agent_report") return;
-      // Ignore failed agent_report attempts (e.g. tool rejected due to active descendants).
-      if (!isSuccessfulToolResult(payload.result)) return;
-
-      void this.workspaceEventLocks
-        .withLock(payload.workspaceId, async () => {
-          await this.handleAgentReport(payload);
-        })
-        .catch((error: unknown) => {
-          log.error("TaskService.handleAgentReport failed", { error });
-        });
-    });
 
     this.aiService.on("stream-end", (payload: unknown) => {
       if (!isStreamEndEvent(payload)) return;
@@ -1531,9 +1512,9 @@ export class TaskService {
         continue;
       }
 
-      // Defensive: a task may still be streaming even after it transitioned to another status
-      // (e.g. tool-call-end happened but the stream hasn't ended yet). Count it as active so we
-      // never exceed the configured parallel limit.
+      // Defensive: task status and runtime stream state can be briefly out of sync during
+      // termination/cleanup boundaries. Count streaming tasks as active so we never exceed
+      // the configured parallel limit.
       if (task.id && this.aiService.isStreaming(task.id)) {
         activeCount += 1;
       }
@@ -2129,7 +2110,7 @@ export class TaskService {
 
   /**
    * Clean up reported tasks whose stream was aborted before ending naturally.
-   * Only acts on tasks already in "reported" state (handleAgentReport ran).
+   * Only acts on tasks already in "reported" state.
    */
   private async handleStreamAbort(event: StreamAbortEvent): Promise<void> {
     const cfg = this.config.loadConfigOrDefault();
@@ -2147,7 +2128,6 @@ export class TaskService {
       "finalizeTerminationPhaseForReportedTask: workspaceId must be non-empty"
     );
 
-    await this.maybeStartPatchGenerationForReportedTask(workspaceId);
     await this.cleanupReportedLeafTask(workspaceId);
   }
 
@@ -2252,37 +2232,6 @@ export class TaskService {
     return combined;
   }
 
-  private async handleAgentReport(event: ToolCallEndEvent): Promise<void> {
-    const childWorkspaceId = event.workspaceId;
-
-    if (!isSuccessfulToolResult(event.result)) {
-      return;
-    }
-
-    const cfgBeforeReport = this.config.loadConfigOrDefault();
-    const childEntryBeforeReport = findWorkspaceEntry(cfgBeforeReport, childWorkspaceId);
-    if (childEntryBeforeReport?.workspace.taskStatus === "reported") {
-      return;
-    }
-
-    if (this.hasActiveDescendantAgentTasks(cfgBeforeReport, childWorkspaceId)) {
-      log.error("agent_report called while task has active descendants; ignoring", {
-        childWorkspaceId,
-      });
-      return;
-    }
-
-    // Read report payload from the tool-call input (persisted in partial/history).
-    const reportArgs = await this.readLatestAgentReportArgs(childWorkspaceId);
-    if (!reportArgs) {
-      log.error("agent_report tool-call args not found", { childWorkspaceId });
-      return;
-    }
-
-    await this.finalizeAgentTaskReport(childWorkspaceId, childEntryBeforeReport, reportArgs);
-    // Cleanup deferred to handleStreamEnd/handleStreamAbort — stream is still running.
-  }
-
   private async finalizeAgentTaskReport(
     childWorkspaceId: string,
     childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined,
@@ -2370,6 +2319,8 @@ export class TaskService {
         });
       }
     }
+
+    await this.maybeStartPatchGenerationForReportedTask(childWorkspaceId);
 
     await this.deliverReportToParent(
       parentWorkspaceId,
@@ -2465,34 +2416,6 @@ export class TaskService {
     }
   }
 
-  private async readLatestAgentReportArgs(
-    workspaceId: string
-  ): Promise<{ reportMarkdown: string; title?: string } | null> {
-    const partial = await this.historyService.readPartial(workspaceId);
-    if (partial) {
-      const args = this.findAgentReportArgsInMessage(partial);
-      if (args) return args;
-    }
-
-    // Only need recent messages to find agent_report — avoid full-file read.
-    // getLastMessages returns chronological order; scan in reverse for newest-first.
-    const historyResult = await this.historyService.getLastMessages(workspaceId, 20);
-    if (!historyResult.success) {
-      log.error("Failed to read history for agent_report args", {
-        workspaceId,
-        error: historyResult.error,
-      });
-      return null;
-    }
-
-    for (let i = historyResult.data.length - 1; i >= 0; i--) {
-      const args = this.findAgentReportArgsInMessage(historyResult.data[i]);
-      if (args) return args;
-    }
-
-    return null;
-  }
-
   private findAgentReportArgsInParts(
     parts: readonly unknown[]
   ): { reportMarkdown: string; title?: string } | null {
@@ -2509,12 +2432,6 @@ export class TaskService {
       return { reportMarkdown: parsed.data.reportMarkdown, title: parsed.data.title ?? undefined };
     }
     return null;
-  }
-
-  private findAgentReportArgsInMessage(
-    msg: MuxMessage
-  ): { reportMarkdown: string; title?: string } | null {
-    return this.findAgentReportArgsInParts(msg.parts);
   }
 
   private async deliverReportToParent(

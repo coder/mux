@@ -1971,59 +1971,20 @@ describe("TaskService", () => {
     expect(writeChildPartial.success).toBe(true);
 
     const internal = taskService as unknown as {
-      handleAgentReport: (event: {
-        type: "tool-call-end";
-        workspaceId: string;
-        messageId: string;
-        toolCallId: string;
-        toolName: string;
-        result: unknown;
-        timestamp: number;
-      }) => Promise<void>;
       handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
     };
-    await internal.handleAgentReport({
-      type: "tool-call-end",
-      workspaceId: childId,
-      messageId: "assistant-child-partial",
-      toolCallId: "agent-report-call-1",
-      toolName: "agent_report",
-      result: { success: true },
-      timestamp: Date.now(),
-    });
 
-    // Simulate stream manager committing the final partial at natural stream end.
+    // Simulate stream manager committing the final partial right before natural stream end.
     const commitChildPartial = await partialService.commitPartial(childId);
     expect(commitChildPartial.success).toBe(true);
 
-    const childMessages = await collectFullHistory(historyService, childId);
-    // Ensure the in-flight assistant message (tool calls + agent_report) was committed to history
-    // before workspace cleanup archives the transcript.
-    expect(childMessages.length).toBeGreaterThan(1);
-
-    const assistantMsg = childMessages.find((m) => m.id === "assistant-child-partial") ?? null;
-    expect(assistantMsg).not.toBeNull();
-    if (assistantMsg) {
-      const toolPart = assistantMsg.parts.find(
-        (p) =>
-          p &&
-          typeof p === "object" &&
-          "type" in p &&
-          (p as { type?: unknown }).type === "dynamic-tool" &&
-          "toolName" in p &&
-          (p as { toolName?: unknown }).toolName === "agent_report"
-      ) as unknown as
-        | {
-            toolName: string;
-            state: string;
-            input?: unknown;
-          }
-        | undefined;
-
-      expect(toolPart?.toolName).toBe("agent_report");
-      expect(toolPart?.state).toBe("output-available");
-      expect(JSON.stringify(toolPart?.input)).toContain("Hello from child");
-    }
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-partial",
+      metadata: { model: "test-model" },
+      parts: childPartial.parts as StreamEndEvent["parts"],
+    });
 
     const updatedChildPartial = await partialService.readPartial(childId);
     expect(updatedChildPartial).toBeNull();
@@ -2064,18 +2025,7 @@ describe("TaskService", () => {
       expect.objectContaining({ workspaceId: childId })
     );
 
-    expect(remove).not.toHaveBeenCalled(); // Cleanup deferred to stream-end
-
-    // Simulate stream ending naturally — cleanup runs now
-    await internal.handleStreamEnd({
-      type: "stream-end",
-      workspaceId: childId,
-      messageId: "assistant-child-partial",
-      metadata: { model: "test-model" },
-      parts: childPartial.parts as StreamEndEvent["parts"],
-    });
-
-    expect(remove).toHaveBeenCalled(); // NOW cleanup runs
+    expect(remove).toHaveBeenCalled();
     expect(sendMessage).toHaveBeenCalledWith(
       parentId,
       expect.stringContaining("sub-agent task(s) have completed"),
@@ -2137,8 +2087,7 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
     });
 
-    const isStreaming = mock(() => true);
-    const { aiService } = createAIServiceMocks(config, { isStreaming });
+    const { aiService } = createAIServiceMocks(config);
     const { workspaceService, remove } = createWorkspaceServiceMocks();
     const { partialService, taskService } = createTaskServiceHarness(config, {
       aiService,
@@ -2183,15 +2132,6 @@ describe("TaskService", () => {
     expect(writeChildPartial.success).toBe(true);
 
     const internal = taskService as unknown as {
-      handleAgentReport: (event: {
-        type: "tool-call-end";
-        workspaceId: string;
-        messageId: string;
-        toolCallId: string;
-        toolName: string;
-        result: unknown;
-        timestamp: number;
-      }) => Promise<void>;
       handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
     };
 
@@ -2203,26 +2143,6 @@ describe("TaskService", () => {
       requestingWorkspaceId: parentId,
     });
 
-    await internal.handleAgentReport({
-      type: "tool-call-end",
-      workspaceId: childId,
-      messageId: "assistant-child-partial",
-      toolCallId: "agent-report-call-1",
-      toolName: "agent_report",
-      result: { success: true },
-      timestamp: Date.now(),
-    });
-
-    const report = await waiter;
-    expect(report).toEqual({ reportMarkdown: "Hello from child", title: "Result" });
-
-    // Report handling is purely logical now; patch generation/cleanup start at stream termination.
-    expect(remove).not.toHaveBeenCalled();
-    const artifactAfterReport = await readSubagentGitPatchArtifact(parentSessionDir, childId);
-    expect(artifactAfterReport).toBeNull();
-
-    isStreaming.mockImplementation(() => false);
-
     await internal.handleStreamEnd({
       type: "stream-end",
       workspaceId: childId,
@@ -2230,6 +2150,14 @@ describe("TaskService", () => {
       metadata: { model: "test-model" },
       parts: childPartial.parts as StreamEndEvent["parts"],
     });
+
+    const report = await waiter;
+    expect(report).toEqual({ reportMarkdown: "Hello from child", title: "Result" });
+
+    const artifactAfterStreamEnd = await readSubagentGitPatchArtifact(parentSessionDir, childId);
+    expect(
+      artifactAfterStreamEnd?.status === "pending" || artifactAfterStreamEnd?.status === "ready"
+    ).toBe(true);
 
     const start = Date.now();
     let lastArtifact: unknown = null;
@@ -2329,8 +2257,7 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
     });
 
-    const isStreaming = mock(() => true);
-    const { aiService } = createAIServiceMocks(config, { isStreaming });
+    const { aiService } = createAIServiceMocks(config);
     const { workspaceService, remove } = createWorkspaceServiceMocks();
     const { partialService, taskService } = createTaskServiceHarness(config, {
       aiService,
@@ -2375,15 +2302,6 @@ describe("TaskService", () => {
     expect(writeChildPartial.success).toBe(true);
 
     const internal = taskService as unknown as {
-      handleAgentReport: (event: {
-        type: "tool-call-end";
-        workspaceId: string;
-        messageId: string;
-        toolCallId: string;
-        toolName: string;
-        result: unknown;
-        timestamp: number;
-      }) => Promise<void>;
       handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
     };
 
@@ -2395,26 +2313,6 @@ describe("TaskService", () => {
       requestingWorkspaceId: parentId,
     });
 
-    await internal.handleAgentReport({
-      type: "tool-call-end",
-      workspaceId: childId,
-      messageId: "assistant-child-partial",
-      toolCallId: "agent-report-call-1",
-      toolName: "agent_report",
-      result: { success: true },
-      timestamp: Date.now(),
-    });
-
-    const report = await waiter;
-    expect(report).toEqual({ reportMarkdown: "Hello from child", title: "Result" });
-
-    // Report handling is purely logical now; patch generation/cleanup start at stream termination.
-    expect(remove).not.toHaveBeenCalled();
-    const artifactAfterReport = await readSubagentGitPatchArtifact(parentSessionDir, childId);
-    expect(artifactAfterReport).toBeNull();
-
-    isStreaming.mockImplementation(() => false);
-
     await internal.handleStreamEnd({
       type: "stream-end",
       workspaceId: childId,
@@ -2422,6 +2320,14 @@ describe("TaskService", () => {
       metadata: { model: "test-model" },
       parts: childPartial.parts as StreamEndEvent["parts"],
     });
+
+    const report = await waiter;
+    expect(report).toEqual({ reportMarkdown: "Hello from child", title: "Result" });
+
+    const artifactAfterStreamEnd = await readSubagentGitPatchArtifact(parentSessionDir, childId);
+    expect(
+      artifactAfterStreamEnd?.status === "pending" || artifactAfterStreamEnd?.status === "ready"
+    ).toBe(true);
 
     const start = Date.now();
     let lastArtifact: unknown = null;
@@ -2541,25 +2447,15 @@ describe("TaskService", () => {
     expect(writeChildPartial.success).toBe(true);
 
     const internal = taskService as unknown as {
-      handleAgentReport: (event: {
-        type: "tool-call-end";
-        workspaceId: string;
-        messageId: string;
-        toolCallId: string;
-        toolName: string;
-        result: unknown;
-        timestamp: number;
-      }) => Promise<void>;
       handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
     };
-    await internal.handleAgentReport({
-      type: "tool-call-end",
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
       workspaceId: childId,
       messageId: "assistant-child-partial",
-      toolCallId: "agent-report-call-1",
-      toolName: "agent_report",
-      result: { success: true },
-      timestamp: Date.now(),
+      metadata: { model: "test-model" },
+      parts: childPartial.parts as StreamEndEvent["parts"],
     });
 
     const parentMessages = await collectFullHistory(historyService, parentId);
@@ -2592,16 +2488,6 @@ describe("TaskService", () => {
       expect(text).toContain(childId);
     }
 
-    expect(remove).not.toHaveBeenCalled(); // Cleanup deferred to stream-end
-
-    await internal.handleStreamEnd({
-      type: "stream-end",
-      workspaceId: childId,
-      messageId: "assistant-child-partial",
-      metadata: { model: "test-model" },
-      parts: childPartial.parts as StreamEndEvent["parts"],
-    });
-
     expect(remove).toHaveBeenCalled();
     expect(sendMessageMock).toHaveBeenCalledWith(
       parentId,
@@ -2611,7 +2497,7 @@ describe("TaskService", () => {
     );
   });
 
-  test("uses agent_report from stream-end parts instead of fallback", async () => {
+  test("stream-end with agent_report parts finalizes report and triggers cleanup", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -2731,9 +2617,7 @@ describe("TaskService", () => {
     expect(ws?.taskStatus).toBe("reported");
 
     expect(remove).toHaveBeenCalled();
-    // sendMessage is called once for the "ended without agent_report" reminder
-    // and NOT for resumeStream (since "second attempt" was already simulated).
-    // The parent auto-resume sendMessage also fires since no active descendants remain.
+    // Parent auto-resume fires after the child report is finalized at stream-end.
     expect(sendMessage).toHaveBeenCalled();
   });
 
