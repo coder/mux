@@ -103,6 +103,11 @@ if (typeof globalFetchWithExtras.certificate === "function") {
  * Strip the mcp_ prefix from tool names in Anthropic streaming responses.
  * Anthropic's OAuth API requires tool names to be prefixed with "mcp_" in
  * requests; we strip them from responses so the SDK sees the original names.
+ *
+ * Uses a carry-over buffer to handle chunk boundaries: if a chunk ends with
+ * a partial match (e.g. `"name":"mcp_` split across two reads), the trailing
+ * fragment is held back and prepended to the next chunk before applying the
+ * regex, preventing missed replacements.
  */
 function stripAnthropicOauthToolPrefix(response: Response): Response {
   const body = response.body;
@@ -112,18 +117,54 @@ function stripAnthropicOauthToolPrefix(response: Response): Response {
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
 
+  // Maximum number of bytes a partial match can span. The longest pattern
+  // we need to match is `"name" : "mcp_<toolname>"`. A conservative upper
+  // bound for the non-toolname portion is ~20 chars (`"name" : "mcp_`).
+  const CARRY_LIMIT = 30;
+  let carry = "";
+
   const stream = new ReadableStream<Uint8Array>({
     async pull(controller) {
       const { done, value } = await reader.read();
       if (done) {
+        // Flush any remaining carry buffer on stream end.
+        if (carry.length > 0) {
+          controller.enqueue(encoder.encode(carry));
+          carry = "";
+        }
         controller.close();
         return;
       }
 
-      let text = decoder.decode(value, { stream: true });
+      const chunk = carry + decoder.decode(value, { stream: true });
+      carry = "";
+
       // Strip mcp_ prefix from tool name fields in SSE JSON payloads.
-      text = text.replace(/"name"\s*:\s*"mcp_([^"]+)"/g, '"name":"$1"');
-      controller.enqueue(encoder.encode(text));
+      const replaced = chunk.replace(/"name"\s*:\s*"mcp_([^"]+)"/g, '"name":"$1"');
+
+      // Hold back a trailing fragment that could be a partial match split
+      // across chunks. We only carry if the tail looks like it could be the
+      // start of a `"name"` JSON key (i.e. contains an unmatched `"`).
+      const lastQuote = replaced.lastIndexOf('"');
+      if (lastQuote >= 0 && replaced.length - lastQuote <= CARRY_LIMIT) {
+        // Check if there's an unclosed string at the tail by counting quotes
+        // after the last newline (SSE is line-delimited, so newlines are safe
+        // flush points).
+        const lastNewline = replaced.lastIndexOf("\n");
+        const tail = lastNewline >= 0 ? replaced.slice(lastNewline + 1) : replaced;
+        const quoteCount = (tail.match(/"/g) || []).length;
+        if (quoteCount % 2 !== 0) {
+          // Odd number of quotes means an unclosed string -- carry the tail.
+          const emit = lastNewline >= 0 ? replaced.slice(0, lastNewline + 1) : "";
+          carry = lastNewline >= 0 ? replaced.slice(lastNewline + 1) : replaced;
+          if (emit.length > 0) {
+            controller.enqueue(encoder.encode(emit));
+          }
+          return;
+        }
+      }
+
+      controller.enqueue(encoder.encode(replaced));
     },
   });
 
@@ -652,6 +693,19 @@ export class ProviderModelFactory {
                         }
                       }
                     }
+                  }
+
+                  // Prefix tool_choice.name when a specific tool is forced.
+                  // The SDK sends { type: "tool", name: "bash" } but the tool
+                  // definition is now mcp_bash, so the name must match.
+                  const tc = json.tool_choice as Record<string, unknown> | undefined;
+                  if (
+                    tc?.type === "tool" &&
+                    typeof tc.name === "string" &&
+                    !tc.name.startsWith(ANTHROPIC_OAUTH_TOOL_PREFIX) &&
+                    !builtInToolNames.has(tc.name)
+                  ) {
+                    tc.name = `${ANTHROPIC_OAUTH_TOOL_PREFIX}${tc.name}`;
                   }
 
                   const newBody = JSON.stringify(json);
