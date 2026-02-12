@@ -245,8 +245,22 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
       setTimeout(() => applyDomSelection(newState), 0);
     };
 
+    // Screen-reader announcement for vim mode changes (visually hidden)
+    const srModeLabel =
+      vimEnabled && vimMode !== "insert"
+        ? vimMode === "normal"
+          ? "normal mode"
+          : vimMode === "visual"
+            ? "visual mode"
+            : "visual line mode"
+        : "";
+
     return (
       <div style={{ width: "100%" }} data-component="VimTextAreaContainer">
+        {/* Visually hidden live region — announces vim mode changes to screen readers */}
+        <div className="sr-only" aria-live="polite">
+          {srModeLabel}
+        </div>
         <div style={{ position: "relative" }} data-component="VimTextAreaWrapper">
           <textarea
             ref={textareaRef}
