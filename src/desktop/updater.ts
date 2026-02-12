@@ -2,6 +2,10 @@ import { autoUpdater } from "electron-updater";
 import type { UpdateInfo } from "electron-updater";
 import { log } from "@/node/services/log";
 import { parseDebugUpdater } from "@/common/utils/env";
+import {
+  clearUpdateInstallInProgress,
+  markUpdateInstallInProgress,
+} from "@/desktop/updateInstallState";
 
 // Update check timeout in milliseconds (30 seconds)
 const UPDATE_CHECK_TIMEOUT_MS = 30_000;
@@ -417,8 +421,10 @@ export class UpdaterService {
     }
 
     try {
+      markUpdateInstallInProgress();
       autoUpdater.quitAndInstall();
     } catch (error) {
+      clearUpdateInstallInProgress();
       const message = error instanceof Error ? error.message : "Install failed";
       this.updateStatus = { type: "error", phase: "install", message };
       this.notifyRenderer();

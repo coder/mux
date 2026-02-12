@@ -13,9 +13,22 @@ const mockAutoUpdater = Object.assign(new EventEmitter(), {
   }),
 });
 
+let mockUpdateInstallInProgress = false;
+
 // Mock electron-updater module
 void mock.module("electron-updater", () => ({
   autoUpdater: mockAutoUpdater,
+}));
+
+// Mock update install state module
+void mock.module("@/desktop/updateInstallState", () => ({
+  markUpdateInstallInProgress: mock(() => {
+    mockUpdateInstallInProgress = true;
+  }),
+  clearUpdateInstallInProgress: mock(() => {
+    mockUpdateInstallInProgress = false;
+  }),
+  isUpdateInstallInProgress: () => mockUpdateInstallInProgress,
 }));
 
 describe("UpdaterService", () => {
@@ -30,6 +43,8 @@ describe("UpdaterService", () => {
     mockAutoUpdater.downloadUpdate.mockClear();
     mockAutoUpdater.quitAndInstall.mockClear();
     mockAutoUpdater.removeAllListeners();
+
+    mockUpdateInstallInProgress = false;
 
     // Save and clear debug updater env vars to ensure clean test environment
     originalDebugUpdater = process.env.DEBUG_UPDATER;
@@ -587,6 +602,26 @@ describe("UpdaterService", () => {
 
       expect(() => service.installUpdate()).not.toThrow();
       expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledTimes(2);
+    });
+
+    it("should mark update install in progress before quitAndInstall", () => {
+      mockAutoUpdater.emit("update-downloaded", { version: "2.0.0" });
+
+      service.installUpdate();
+
+      expect(mockUpdateInstallInProgress).toBe(true);
+    });
+
+    it("should clear update install flag when quitAndInstall throws", () => {
+      mockAutoUpdater.emit("update-downloaded", { version: "2.0.0" });
+
+      mockAutoUpdater.quitAndInstall.mockImplementationOnce(() => {
+        throw new Error("Install failed due to permission error");
+      });
+
+      service.installUpdate();
+
+      expect(mockUpdateInstallInProgress).toBe(false);
     });
   });
 
