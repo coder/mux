@@ -83,15 +83,15 @@ If **any** of these fail:
 
 ### Story → Screenshot Mapping
 
-| Story Export Name                | Output File                     | Has Interaction         | Has Post-Processing          |
-| :------------------------------- | :------------------------------ | :---------------------- | :--------------------------- |
-| `CodeReview`                     | `code-review.webp`              | No                      | No                           |
-| `AgentStatusSidebar`             | `agent-status.webp`             | No                      | Yes (sidebar crop + upscale) |
-| `GitStatusPopover`               | `git-status.webp`               | Yes (hover + tab click) | Yes (left 40% crop)          |
-| `PlanMermaidWithCosts`           | `plan-mermaid.webp`             | No                      | No                           |
-| `ProjectSecretsModal`            | `project-secrets.webp`          | Yes (force-click modal) | No                           |
-| `CostsTabRich`                   | `costs-tab.webp`                | No                      | No                           |
-| `OpportunisticCompactionTooltip` | `opportunistic-compaction.webp` | Yes (hover tooltip)     | No                           |
+| Story Export Name                | Output File                     | Has Interaction         |
+| :------------------------------- | :------------------------------ | :---------------------- |
+| `CodeReview`                     | `code-review.webp`              | No                      |
+| `AgentStatusSidebar`             | `agent-status.webp`             | No                      |
+| `GitStatusPopover`               | `git-status.webp`               | Yes (hover + tab click) |
+| `PlanMermaidWithCosts`           | `plan-mermaid.webp`             | No                      |
+| `ProjectSecretsModal`            | `project-secrets.webp`          | Yes (force-click modal) |
+| `CostsTabRich`                   | `costs-tab.webp`                | No                      |
+| `OpportunisticCompactionTooltip` | `opportunistic-compaction.webp` | Yes (hover tooltip)     |
 
 ### Key Files
 
@@ -201,8 +201,10 @@ The retry logic handles most cases. If persistent:
 ### Images look wrong (clipped, misaligned)
 
 - Check viewport constants in `capture-readme-screenshots.ts` (1900×1188, DPR 2)
-- Stories with `postProcess` (AgentStatusSidebar, GitStatusPopover) have custom
-  crop regions — verify the crop math if the source layout changed
+- Screenshots use viewport-only capture (not `fullPage`) — if content overflows the
+  viewport, the story layout needs adjustment, not the capture script
+- The `StoryDef` interface supports a `postProcess` hook for custom Sharp pipelines
+  if a future story needs cropping/compositing, but no current stories use it
 
 ### ProductHero is missing from captures
 
