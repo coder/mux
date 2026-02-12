@@ -20,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { Loader2, Wand2, X } from "lucide-react";
+import { GitBranch, Loader2, Wand2, X } from "lucide-react";
 import { PlatformPaths } from "@/common/utils/paths";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useSettings } from "@/browser/contexts/SettingsContext";
@@ -450,7 +450,6 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
           isModeDisabled,
           isPolicyDisabled,
           disabledReason: resolvedDisabledReason,
-          isDefault,
         } = resolveRuntimeButtonState(
           option.value,
           availabilityMap,
@@ -465,10 +464,6 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
         const showDisabledReason = isModeDisabled || isPolicyDisabled;
 
         const Icon = option.Icon;
-
-        const handleSetDefault = () => {
-          props.onSetDefault(option.value);
-        };
 
         return (
           <Tooltip key={option.value}>
@@ -498,19 +493,10 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
                 <span>{option.description}</span>
                 <DocsLink path={option.docsPath} />
               </div>
+              {/* User request: remove default-runtime toggle from creation tooltip. */}
               {showDisabledReason ? (
                 <p className="mt-1 text-yellow-500">{disabledReason ?? "Unavailable"}</p>
-              ) : (
-                <label className="mt-1.5 flex cursor-pointer items-center gap-1.5 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={isDefault}
-                    onChange={handleSetDefault}
-                    className="accent-accent h-3 w-3"
-                  />
-                  <span className="text-muted">Default for project</span>
-                </label>
-              )}
+              ) : null}
             </TooltipContent>
           </Tooltip>
         );
@@ -561,6 +547,13 @@ export function CreationControls(props: CreationControlsProps) {
     (availabilityMap?.worktree?.available === false &&
       availabilityMap.worktree.reason === "Requires git repository") ||
     (props.branchesLoaded && props.branches.length === 0);
+
+  const branchOptions =
+    props.trunkBranch && !props.branches.includes(props.trunkBranch)
+      ? [props.trunkBranch, ...props.branches]
+      : props.branches;
+  const isBranchSelectorDisabled =
+    Boolean(props.disabled) || isNonGitRepo || branchOptions.length === 0;
 
   // Keep selected runtime aligned with availability + Settings enablement constraints.
   useEffect(() => {
@@ -798,14 +791,14 @@ export function CreationControls(props: CreationControlsProps) {
 
       {/* Runtime type - button group */}
       <div className="flex flex-col gap-1.5" data-component="RuntimeTypeGroup">
-        {/* User request: add a quick "configure" shortcut to runtime settings. */}
+        {/* User request: keep the configure shortcut but render it in muted gray. */}
         <div className="flex items-center gap-1">
           <label className="text-muted-foreground text-xs font-medium">Workspace Type</label>
           <span className="text-muted-foreground text-xs">-</span>
           <button
             type="button"
             onClick={() => settings.open("runtimes")}
-            className="text-accent cursor-pointer text-xs font-medium hover:underline"
+            className="text-muted-foreground hover:text-foreground cursor-pointer text-xs font-medium hover:underline"
           >
             configure
           </button>
@@ -885,7 +878,33 @@ export function CreationControls(props: CreationControlsProps) {
             allowSshCoder={props.allowSshCoder}
           />
 
-          {/* User request: hide the trunk branch selector for now. */}
+          {/* User request: restore the branch selector with a git icon label. */}
+          <div className="flex items-center gap-2" data-component="BranchSelector">
+            <label className="text-muted-foreground flex items-center gap-1 text-xs">
+              <GitBranch className="h-3.5 w-3.5" />
+              Branch
+            </label>
+            {props.branchesLoaded ? (
+              <RadixSelect
+                value={props.trunkBranch}
+                onValueChange={props.onTrunkBranchChange}
+                disabled={isBranchSelectorDisabled}
+              >
+                <SelectTrigger className={INLINE_CONTROL_CLASSES} aria-label="Select branch">
+                  <SelectValue placeholder="Select branch" />
+                </SelectTrigger>
+                <SelectContent className="border-border-medium">
+                  {branchOptions.map((branch) => (
+                    <SelectItem key={branch} value={branch}>
+                      {branch}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </RadixSelect>
+            ) : (
+              <Skeleton className="h-7 w-[140px] rounded" />
+            )}
+          </div>
 
           {/* SSH Host Input - hidden when Coder runtime is selected */}
           {selectedRuntime.mode === "ssh" &&
