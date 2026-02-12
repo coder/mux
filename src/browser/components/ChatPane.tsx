@@ -114,6 +114,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   const { clearError: clearBackgroundBashError } = useBackgroundBashError();
 
   const meta = workspaceMetadata.get(workspaceId);
+  const workspaceTitle = meta?.title ?? meta?.name ?? workspaceName;
   const isQueuedAgentTask = Boolean(meta?.parentWorkspaceId) && meta?.taskStatus === "queued";
   const queuedAgentTaskPrompt =
     isQueuedAgentTask && typeof meta?.taskPrompt === "string" && meta.taskPrompt.trim().length > 0
@@ -561,6 +562,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
         projectName={projectName}
         projectPath={projectPath}
         workspaceName={workspaceName}
+        workspaceTitle={workspaceTitle}
         leftSidebarCollapsed={leftSidebarCollapsed}
         onToggleLeftSidebarCollapsed={onToggleLeftSidebarCollapsed}
         namedWorkspacePath={namedWorkspacePath}

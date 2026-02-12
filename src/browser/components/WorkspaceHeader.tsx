@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Bell, BellOff, Menu, Pencil, Server } from "lucide-react";
+import { Bell, BellOff, Ellipsis, Link2, Menu, Pencil, Server } from "lucide-react";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { cn } from "@/common/lib/utils";
 
 import {
@@ -26,6 +27,7 @@ import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import {
   getTitlebarRightInset,
   isDesktopMode,
@@ -33,10 +35,16 @@ import {
 } from "@/browser/hooks/useDesktopTitlebar";
 import { DebugLlmRequestModal } from "./DebugLlmRequestModal";
 import { WorkspaceLinks } from "./WorkspaceLinks";
+import { ShareTranscriptDialog } from "./ShareTranscriptDialog";
+import { ArchiveIcon } from "./icons/ArchiveIcon";
+import { ConfirmationModal } from "./ConfirmationModal";
+import { PopoverError } from "./PopoverError";
 
 import { SkillIndicator } from "./SkillIndicator";
 import { useAPI } from "@/browser/contexts/API";
 import { useAgent } from "@/browser/contexts/AgentContext";
+import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
+import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
 import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
 
 interface WorkspaceHeaderProps {
@@ -44,6 +52,7 @@ interface WorkspaceHeaderProps {
   projectName: string;
   projectPath: string;
   workspaceName: string;
+  workspaceTitle?: string;
   namedWorkspacePath: string;
   runtimeConfig?: RuntimeConfig;
   leftSidebarCollapsed: boolean;
@@ -57,6 +66,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   projectName,
   projectPath,
   workspaceName,
+  workspaceTitle,
   namedWorkspacePath,
   runtimeConfig,
   leftSidebarCollapsed,
@@ -65,6 +75,9 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
 }) => {
   const { api } = useAPI();
   const { disableWorkspaceAgents } = useAgent();
+  const linkSharingEnabled = useLinkSharingEnabled();
+  const { archiveWorkspace } = useWorkspaceActions();
+  const isMuxHelpChat = workspaceId === MUX_HELP_CHAT_WORKSPACE_ID;
   const openTerminalPopout = useOpenTerminal();
   const openInEditor = useOpenInEditor();
   const gitStatus = useGitStatus(workspaceId);
@@ -77,6 +90,10 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
   const [availableSkills, setAvailableSkills] = useState<AgentSkillDescriptor[]>([]);
   const [invalidSkills, setInvalidSkills] = useState<AgentSkillIssue[]>([]);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [shareTranscriptOpen, setShareTranscriptOpen] = useState(false);
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  const archiveError = usePopoverError();
 
   const [rightSidebarCollapsed] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false, {
     // This state is toggled from RightSidebar, so we need cross-component updates.
@@ -118,6 +135,22 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
       setTimeout(() => setEditorError(null), 3000);
     }
   }, [workspaceId, namedWorkspacePath, openInEditor, runtimeConfig]);
+
+  // Mirror sidebar archive behavior so the titlebar matches existing workspace actions.
+  const handleArchiveChat = useCallback(
+    async (anchorEl?: HTMLElement) => {
+      const res = await archiveWorkspace(workspaceId);
+      if (!res.success) {
+        const rect = anchorEl?.getBoundingClientRect();
+        archiveError.showError(
+          workspaceId,
+          res.error ?? "Failed to archive chat",
+          rect ? { top: rect.top + window.scrollY, left: rect.right + 10 } : undefined
+        );
+      }
+    },
+    [workspaceId, archiveWorkspace, archiveError]
+  );
 
   // Start workspace tutorial on first entry
   useEffect(() => {
@@ -407,6 +440,78 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             New terminal ({formatKeybind(KEYBINDS.OPEN_TERMINAL)})
           </TooltipContent>
         </Tooltip>
+        {/* Mirror sidebar share/archive actions in the titlebar for quick access. */}
+        <Popover open={moreMenuOpen} onOpenChange={setMoreMenuOpen}>
+          <Tooltip {...(moreMenuOpen ? { open: false } : {})}>
+            <TooltipTrigger asChild>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-muted hover:text-foreground ml-1 h-6 w-6 shrink-0"
+                  aria-label="Workspace actions"
+                  data-testid="workspace-more-actions"
+                >
+                  <Ellipsis className="h-3.5 w-3.5" />
+                </Button>
+              </PopoverTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="end">
+              More actions
+            </TooltipContent>
+          </Tooltip>
+
+          <PopoverContent
+            side="bottom"
+            align="end"
+            sideOffset={6}
+            className="w-[240px] !min-w-0 p-1"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {linkSharingEnabled === true && !isMuxHelpChat && (
+              <button
+                type="button"
+                className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMoreMenuOpen(false);
+                  setShareTranscriptOpen(true);
+                }}
+              >
+                <span className="flex items-center gap-2">
+                  <Link2 className="h-3 w-3 shrink-0" />
+                  Share a transcript{" "}
+                  <span className="text-muted text-[10px]">
+                    ({formatKeybind(KEYBINDS.SHARE_TRANSCRIPT)})
+                  </span>
+                </span>
+              </button>
+            )}
+            {!isMuxHelpChat && (
+              <button
+                type="button"
+                className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMoreMenuOpen(false);
+                  if (isWorking) {
+                    setArchiveConfirmOpen(true);
+                  } else {
+                    void handleArchiveChat(e.currentTarget);
+                  }
+                }}
+              >
+                <span className="flex items-center gap-2">
+                  <ArchiveIcon className="h-3 w-3 shrink-0" />
+                  Archive chat{" "}
+                  <span className="text-muted text-[10px]">
+                    ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
+                  </span>
+                </span>
+              </button>
+            )}
+          </PopoverContent>
+        </Popover>
       </div>
       <WorkspaceMCPModal
         workspaceId={workspaceId}
@@ -418,6 +523,33 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
         workspaceId={workspaceId}
         open={debugLlmRequestOpen}
         onOpenChange={setDebugLlmRequestOpen}
+      />
+      {linkSharingEnabled === true && !isMuxHelpChat && (
+        <ShareTranscriptDialog
+          workspaceId={workspaceId}
+          workspaceName={workspaceName}
+          workspaceTitle={workspaceTitle}
+          open={shareTranscriptOpen}
+          onOpenChange={setShareTranscriptOpen}
+        />
+      )}
+      {/* Confirm archives that would interrupt an active stream. */}
+      <ConfirmationModal
+        isOpen={archiveConfirmOpen}
+        title={workspaceTitle ? `Archive "${workspaceTitle}" while streaming?` : "Archive chat?"}
+        description="This workspace is currently streaming a response."
+        warning="Archiving will interrupt the active stream."
+        confirmLabel="Archive"
+        onConfirm={() => {
+          setArchiveConfirmOpen(false);
+          void handleArchiveChat();
+        }}
+        onCancel={() => setArchiveConfirmOpen(false)}
+      />
+      <PopoverError
+        error={archiveError.error}
+        prefix="Failed to archive chat"
+        onDismiss={archiveError.clearError}
       />
     </div>
   );
