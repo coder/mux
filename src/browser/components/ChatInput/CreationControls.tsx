@@ -574,6 +574,12 @@ export function CreationControls(props: CreationControlsProps) {
       return;
     }
 
+    // Build a policy set matching RuntimeButtonGroup's eligibility logic so the
+    // auto-switch fallback never lands on a policy-forbidden runtime.
+    const allowedModes = props.allowedRuntimeModes
+      ? new Set<RuntimeMode>(props.allowedRuntimeModes)
+      : null;
+
     const firstEnabled = RUNTIME_CHOICE_ORDER.find((mode) => {
       if (runtimeEnablement?.[mode] === false) {
         return false;
@@ -587,6 +593,18 @@ export function CreationControls(props: CreationControlsProps) {
       }
       if (isNonGitRepo && mode === RUNTIME_MODE.WORKTREE) {
         return false;
+      }
+      // Filter by policy constraints to avoid selecting a blocked runtime.
+      if (allowedModes) {
+        if (mode === "coder" && !(props.allowSshCoder ?? true)) {
+          return false;
+        }
+        if (mode === RUNTIME_MODE.SSH && !(props.allowSshHost ?? true)) {
+          return false;
+        }
+        if (mode !== "coder" && mode !== RUNTIME_MODE.SSH && !allowedModes.has(mode)) {
+          return false;
+        }
       }
       return true;
     });
@@ -658,6 +676,9 @@ export function CreationControls(props: CreationControlsProps) {
     props.coderProps,
     props.runtimeEnablement,
     props.sshHostFallback,
+    props.allowedRuntimeModes,
+    props.allowSshHost,
+    props.allowSshCoder,
     runtimeAvailabilityState,
     runtimeChoice,
     selectedRuntime,
