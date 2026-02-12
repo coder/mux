@@ -1607,6 +1607,7 @@ export const config = {
         projectPath: z.string().nullish(),
         runtimeEnablement: z.record(z.string(), z.boolean()).nullish(),
         defaultRuntime: RuntimeEnablementIdSchema.nullish(),
+        runtimeOverridesEnabled: z.boolean().nullish(),
       })
       .strict(),
     output: z.void(),
