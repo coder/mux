@@ -1258,7 +1258,7 @@ export const nameGeneration = {
   generate: {
     input: z.object({
       message: z.string(),
-      /** Ordered list of model candidates to try (frontend applies gateway prefs) */
+      /** Ordered list of model candidates to try (backend resolves gateway routing in createModel) */
       candidates: z.array(z.string()),
     }),
     output: ResultSchema(

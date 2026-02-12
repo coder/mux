@@ -33,7 +33,7 @@ import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFil
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
-import { getKnownModel } from "@/common/constants/knownModels";
+import { NAME_GEN_PREFERRED_MODELS } from "@/common/constants/nameGeneration";
 import type { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
 import { getDevcontainerContainerName } from "@/node/runtime/devcontainerCli";
 import { expandTilde, expandTildeForSSH } from "@/node/runtime/tildeExpansion";
@@ -113,8 +113,6 @@ import {
 
 /** Maximum number of retry attempts when workspace name collides */
 const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
-/** Small/fast models preferred for auto-naming forked workspaces */
-const AUTO_NAME_PREFERRED_MODELS = [getKnownModel("HAIKU").id, getKnownModel("GPT_MINI").id];
 
 // Keep short to feel instant, but debounce bursts of file_edit_* tool calls.
 
@@ -2065,7 +2063,7 @@ export class WorkspaceService extends EventEmitter {
           .join("\n") ?? undefined;
     }
 
-    const candidates: string[] = [...AUTO_NAME_PREFERRED_MODELS];
+    const candidates: string[] = [...NAME_GEN_PREFERRED_MODELS];
     const result = await generateWorkspaceIdentity(
       userText,
       candidates,

@@ -397,8 +397,17 @@ export class ProviderModelFactory {
     muxProviderOptions?: MuxProviderOptions
   ): Promise<Result<LanguageModel, SendMessageError>> {
     try {
+      // Gateway routing is resolved here so every caller gets correct behavior
+      // automatically. resolveGatewayModelString is idempotent — already-resolved
+      // strings (e.g. "mux-gateway:anthropic/model") pass through unchanged.
+      const explicitlyRequestedGateway = modelString.trim().startsWith("mux-gateway:");
+      modelString = this.resolveGatewayModelString(
+        modelString,
+        undefined,
+        explicitlyRequestedGateway
+      );
+
       // Parse model string (format: "provider:model-id")
-      // Parse provider and model ID from model string
       const [providerName, modelId] = parseModelString(modelString);
 
       if (!providerName || !modelId) {

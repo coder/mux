@@ -923,8 +923,6 @@ export class AIService extends EventEmitter {
               runtimeTempDir,
               runtime,
               agentDiscoveryPath,
-              resolveGatewayModelString: (ms, dm, eg) =>
-                this.providerModelFactory.resolveGatewayModelString(ms, dm, eg),
               createModel: (ms, o) => this.createModel(ms, o),
               emitBashOutput: (ev) => this.emit("bash-output", ev),
               sessionUsageService: this.sessionUsageService,
