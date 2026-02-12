@@ -1,8 +1,8 @@
-import React from "react";
+import React, { useState } from "react";
 import { AlertTriangle, Check, EyeOff, XCircle } from "lucide-react";
-import { cn } from "@/common/lib/utils";
 import { SkillIcon } from "@/browser/components/icons/SkillIcon";
-import { HoverClickPopover } from "@/browser/components/ui/hover-click-popover";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/browser/components/ui/dialog";
+import { cn } from "@/common/lib/utils";
 import type {
   LoadedSkill,
   SkillLoadError,
@@ -171,7 +171,7 @@ const SkillsPopoverContent: React.FC<SkillsPopoverContentProps> = (props) => {
 /**
  * Indicator showing loaded and available skills in a workspace.
  * Displays in the project sidebar row for the active workspace.
- * Hover to preview skills organized by scope (Project, Global, Built-in); click to pin the list open.
+ * Click to open a dialog listing skills organized by scope (Project, Global, Built-in).
  */
 export const SkillIndicator: React.FC<SkillIndicatorProps> = (props) => {
   const loadedCount = props.loadedSkills.length;
@@ -179,6 +179,8 @@ export const SkillIndicator: React.FC<SkillIndicatorProps> = (props) => {
   const invalidCount = props.invalidSkills?.length ?? 0;
   const loadErrorCount = props.skillLoadErrors?.length ?? 0;
   const errorCount = invalidCount + loadErrorCount;
+
+  const [open, setOpen] = useState(false);
 
   // Don't render if there's nothing to show.
   if (totalCount === 0 && errorCount === 0) {
@@ -199,31 +201,9 @@ export const SkillIndicator: React.FC<SkillIndicatorProps> = (props) => {
   }
   const ariaLabel = ariaLabelParts.join(", ");
 
-  // Hover previews skills; click pins the list open to match the context indicator behavior.
+  // Use a dialog for the skills list so it opens on click instead of hover.
   return (
-    <HoverClickPopover
-      content={
-        <SkillsPopoverContent
-          loadedSkills={props.loadedSkills}
-          availableSkills={props.availableSkills}
-          invalidSkills={props.invalidSkills ?? []}
-          skillLoadErrors={props.skillLoadErrors ?? []}
-        />
-      }
-      side="bottom"
-      align="end"
-      sideOffset={8}
-      contentClassName={cn(
-        "bg-modal-bg text-foreground z-[9999] rounded px-[10px] py-[6px]",
-        "text-[11px] font-normal font-sans text-left",
-        "border border-separator-light shadow-[0_2px_8px_rgba(0,0,0,0.4)]",
-        "animate-in fade-in-0 zoom-in-95",
-        "data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
-        "data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2",
-        "data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
-        "max-w-[280px] w-auto min-w-0"
-      )}
-    >
+    <>
       <button
         type="button"
         className={cn(
@@ -232,6 +212,7 @@ export const SkillIndicator: React.FC<SkillIndicatorProps> = (props) => {
           props.className
         )}
         aria-label={ariaLabel}
+        onClick={() => setOpen(true)}
       >
         <span className="relative flex h-6 w-6 items-center justify-center">
           <SkillIcon className="h-4.5 w-4.5" />
@@ -249,6 +230,22 @@ export const SkillIndicator: React.FC<SkillIndicatorProps> = (props) => {
           </span>
         </span>
       </button>
-    </HoverClickPopover>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-h-[80vh] max-w-sm overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <SkillIcon className="h-5 w-5" />
+              Skills
+            </DialogTitle>
+          </DialogHeader>
+          <SkillsPopoverContent
+            loadedSkills={props.loadedSkills}
+            availableSkills={props.availableSkills}
+            invalidSkills={props.invalidSkills ?? []}
+            skillLoadErrors={props.skillLoadErrors ?? []}
+          />
+        </DialogContent>
+      </Dialog>
+    </>
   );
 };
