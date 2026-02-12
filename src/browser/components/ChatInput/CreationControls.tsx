@@ -419,9 +419,9 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
       return false;
     }
 
-    // User request: hide Settings-disabled runtimes unless already selected.
+    // User request: hide Settings-disabled runtimes (selection auto-switches elsewhere).
     const isEnablementDisabled = runtimeEnablement?.[option.value] === false;
-    if (isEnablementDisabled && props.value !== option.value) {
+    if (isEnablementDisabled) {
       return false;
     }
 
@@ -446,7 +446,6 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
     <div className="flex flex-wrap gap-1 " role="group" aria-label="Runtime type">
       {runtimeOptions.map((option) => {
         const isActive = props.value === option.value;
-        const isEnablementDisabled = runtimeEnablement?.[option.value] === false;
         const {
           isModeDisabled,
           isPolicyDisabled,
@@ -461,12 +460,9 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
           allowSshHost,
           allowSshCoder
         );
-        const disabledReason = isEnablementDisabled
-          ? "Disabled in Settings"
-          : resolvedDisabledReason;
-        const isDisabled =
-          Boolean(props.disabled) || isModeDisabled || isPolicyDisabled || isEnablementDisabled;
-        const showDisabledReason = isModeDisabled || isPolicyDisabled || isEnablementDisabled;
+        const disabledReason = resolvedDisabledReason;
+        const isDisabled = Boolean(props.disabled) || isModeDisabled || isPolicyDisabled;
+        const showDisabledReason = isModeDisabled || isPolicyDisabled;
 
         const Icon = option.Icon;
 
@@ -566,7 +562,7 @@ export function CreationControls(props: CreationControlsProps) {
       availabilityMap.worktree.reason === "Requires git repository") ||
     (props.branchesLoaded && props.branches.length === 0);
 
-  // Keep selected runtime aligned with availability constraints
+  // Keep selected runtime aligned with availability + Settings enablement constraints.
   useEffect(() => {
     if (isNonGitRepo) {
       if (selectedRuntime.mode !== RUNTIME_MODE.LOCAL) {
@@ -577,8 +573,95 @@ export function CreationControls(props: CreationControlsProps) {
 
     if (isDevcontainerMissing && selectedRuntime.mode === RUNTIME_MODE.DEVCONTAINER) {
       onSelectedRuntimeChange({ mode: "worktree" });
+      return;
     }
-  }, [isDevcontainerMissing, isNonGitRepo, selectedRuntime.mode, onSelectedRuntimeChange]);
+
+    const runtimeEnablement = props.runtimeEnablement;
+    if (runtimeEnablement?.[runtimeChoice] !== false) {
+      return;
+    }
+
+    const firstEnabled = RUNTIME_CHOICE_ORDER.find((mode) => {
+      if (runtimeEnablement?.[mode] === false) {
+        return false;
+      }
+      if (mode === "coder" && !props.coderProps) {
+        return false;
+      }
+      return true;
+    });
+    if (!firstEnabled || firstEnabled === runtimeChoice) {
+      return;
+    }
+
+    // User request: auto-switch away from Settings-disabled runtimes.
+    if (firstEnabled === "coder") {
+      if (!props.coderProps) {
+        return;
+      }
+      onSelectedRuntimeChange({
+        mode: "ssh",
+        host: CODER_RUNTIME_PLACEHOLDER,
+        coder: props.coderConfigFallback,
+      });
+      return;
+    }
+
+    switch (firstEnabled) {
+      case RUNTIME_MODE.SSH: {
+        const sshHost =
+          selectedRuntime.mode === RUNTIME_MODE.SSH &&
+          selectedRuntime.host !== CODER_RUNTIME_PLACEHOLDER
+            ? selectedRuntime.host
+            : props.sshHostFallback;
+        onSelectedRuntimeChange({
+          mode: "ssh",
+          host: sshHost,
+        });
+        return;
+      }
+      case RUNTIME_MODE.DOCKER:
+        onSelectedRuntimeChange({
+          mode: "docker",
+          image: selectedRuntime.mode === "docker" ? selectedRuntime.image : "",
+        });
+        return;
+      case RUNTIME_MODE.DEVCONTAINER: {
+        const initialSelection = resolveDevcontainerSelection({
+          selectedRuntime: { mode: "devcontainer", configPath: "" },
+          availabilityState: runtimeAvailabilityState,
+        });
+        onSelectedRuntimeChange({
+          mode: "devcontainer",
+          configPath:
+            selectedRuntime.mode === "devcontainer"
+              ? selectedRuntime.configPath
+              : initialSelection.configPath,
+          shareCredentials:
+            selectedRuntime.mode === "devcontainer" ? selectedRuntime.shareCredentials : false,
+        });
+        return;
+      }
+      case RUNTIME_MODE.LOCAL:
+        onSelectedRuntimeChange({ mode: "local" });
+        return;
+      case RUNTIME_MODE.WORKTREE:
+      default:
+        onSelectedRuntimeChange({ mode: "worktree" });
+        return;
+    }
+  }, [
+    isDevcontainerMissing,
+    isNonGitRepo,
+    onSelectedRuntimeChange,
+    props.coderConfigFallback,
+    props.coderProps,
+    props.runtimeEnablement,
+    props.sshHostFallback,
+    runtimeAvailabilityState,
+    runtimeChoice,
+    selectedRuntime,
+  ]);
 
   const handleNameChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
