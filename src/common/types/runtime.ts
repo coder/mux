@@ -4,7 +4,7 @@
 
 import type { z } from "zod";
 import type { RuntimeConfigSchema } from "../orpc/schemas";
-import { RuntimeModeSchema } from "../orpc/schemas";
+import { RuntimeEnablementIdSchema, RuntimeModeSchema } from "../orpc/schemas";
 import type { CoderWorkspaceConfig } from "../orpc/schemas/coder";
 
 // Re-export CoderWorkspaceConfig type from schema (single source of truth)
@@ -26,16 +26,9 @@ export const RUNTIME_MODE = {
  * Runtime IDs that can be enabled/disabled in Settings → Runtimes.
  * Note: includes "coder" which is a UI-level choice (not a RuntimeMode).
  */
-export const RUNTIME_ENABLEMENT_IDS = [
-  "local",
-  "worktree",
-  "ssh",
-  "coder",
-  "docker",
-  "devcontainer",
-] as const;
+export const RUNTIME_ENABLEMENT_IDS = RuntimeEnablementIdSchema.options;
 
-export type RuntimeEnablementId = (typeof RUNTIME_ENABLEMENT_IDS)[number];
+export type RuntimeEnablementId = z.infer<typeof RuntimeEnablementIdSchema>;
 
 export type RuntimeEnablement = Record<RuntimeEnablementId, boolean>;
 

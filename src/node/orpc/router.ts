@@ -514,6 +514,7 @@ export const router = (authToken?: string) => {
             preferredCompactionModel: config.preferredCompactionModel,
             stopCoderWorkspaceOnArchive: config.stopCoderWorkspaceOnArchive !== false,
             runtimeEnablement: normalizeRuntimeEnablement(config.runtimeEnablement),
+            defaultRuntime: config.defaultRuntime ?? null,
             agentAiDefaults: config.agentAiDefaults ?? {},
             // Legacy fields (downgrade compatibility)
             subagentAiDefaults: config.subagentAiDefaults ?? {},
@@ -632,20 +633,72 @@ export const router = (authToken?: string) => {
         .output(schemas.config.updateRuntimeEnablement.output)
         .handler(async ({ context, input }) => {
           await context.config.editConfig((config) => {
-            const normalized = normalizeRuntimeEnablement(input.runtimeEnablement);
-            const disabled: Partial<Record<RuntimeEnablementId, false>> = {};
+            const shouldUpdateRuntimeEnablement = input.runtimeEnablement !== undefined;
+            const shouldUpdateDefaultRuntime = input.defaultRuntime !== undefined;
+            const projectPath = input.projectPath?.trim();
 
-            for (const runtimeId of RUNTIME_ENABLEMENT_IDS) {
-              if (!normalized[runtimeId]) {
-                disabled[runtimeId] = false;
-              }
+            if (!shouldUpdateRuntimeEnablement && !shouldUpdateDefaultRuntime) {
+              return config;
             }
 
-            return {
-              ...config,
-              // Default ON: store `false` only so config.json stays minimal.
-              runtimeEnablement: Object.keys(disabled).length > 0 ? disabled : undefined,
-            };
+            const runtimeEnablementOverrides =
+              input.runtimeEnablement == null
+                ? undefined
+                : (() => {
+                    const normalized = normalizeRuntimeEnablement(input.runtimeEnablement);
+                    const disabled: Partial<Record<RuntimeEnablementId, false>> = {};
+
+                    for (const runtimeId of RUNTIME_ENABLEMENT_IDS) {
+                      if (!normalized[runtimeId]) {
+                        disabled[runtimeId] = false;
+                      }
+                    }
+
+                    return Object.keys(disabled).length > 0 ? disabled : undefined;
+                  })();
+
+            const defaultRuntime = input.defaultRuntime ?? undefined;
+
+            if (projectPath) {
+              const project = config.projects.get(projectPath);
+              if (!project) {
+                log.warn("Runtime settings update requested for missing project", { projectPath });
+                return config;
+              }
+
+              const nextProject = { ...project };
+
+              if (shouldUpdateRuntimeEnablement) {
+                if (runtimeEnablementOverrides) {
+                  nextProject.runtimeEnablement = runtimeEnablementOverrides;
+                } else {
+                  delete nextProject.runtimeEnablement;
+                }
+              }
+
+              if (shouldUpdateDefaultRuntime) {
+                if (defaultRuntime !== undefined) {
+                  nextProject.defaultRuntime = defaultRuntime;
+                } else {
+                  delete nextProject.defaultRuntime;
+                }
+              }
+
+              const nextProjects = new Map(config.projects);
+              nextProjects.set(projectPath, nextProject);
+              return { ...config, projects: nextProjects };
+            }
+
+            const next = { ...config };
+            if (shouldUpdateRuntimeEnablement) {
+              next.runtimeEnablement = runtimeEnablementOverrides;
+            }
+
+            if (shouldUpdateDefaultRuntime) {
+              next.defaultRuntime = defaultRuntime;
+            }
+
+            return next;
           });
         }),
       saveConfig: t

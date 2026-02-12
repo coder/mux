@@ -6,7 +6,11 @@ import { SendMessageErrorSchema } from "./errors";
 import { BranchListResultSchema, FilePartSchema, MuxMessageSchema } from "./message";
 import { ProjectConfigSchema, SectionConfigSchema } from "./project";
 import { ResultSchema } from "./result";
-import { RuntimeConfigSchema, RuntimeAvailabilitySchema } from "./runtime";
+import {
+  RuntimeConfigSchema,
+  RuntimeAvailabilitySchema,
+  RuntimeEnablementIdSchema,
+} from "./runtime";
 import { SecretSchema } from "./secrets";
 import {
   CompletedMessagePartSchema,
@@ -1433,6 +1437,7 @@ export const config = {
       preferredCompactionModel: z.string().optional(),
       stopCoderWorkspaceOnArchive: z.boolean(),
       runtimeEnablement: z.record(z.string(), z.boolean()),
+      defaultRuntime: z.string().nullable(),
       agentAiDefaults: AgentAiDefaultsSchema,
       // Legacy fields (downgrade compatibility)
       subagentAiDefaults: SubagentAiDefaultsSchema,
@@ -1491,7 +1496,9 @@ export const config = {
   updateRuntimeEnablement: {
     input: z
       .object({
-        runtimeEnablement: z.record(z.string(), z.boolean()),
+        projectPath: z.string().nullish(),
+        runtimeEnablement: z.record(z.string(), z.boolean()).nullish(),
+        defaultRuntime: RuntimeEnablementIdSchema.nullish(),
       })
       .strict(),
     output: z.void(),

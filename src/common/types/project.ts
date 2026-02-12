@@ -110,6 +110,9 @@ export interface ProjectsConfig {
    */
   stopCoderWorkspaceOnArchive?: boolean;
 
+  /** Global default runtime for new workspaces. */
+  defaultRuntime?: RuntimeEnablementId;
+
   /**
    * Runtime enablement overrides (shared via ~/.mux/config.json).
    * Defaults to enabled; store `false` only to keep config.json minimal.
