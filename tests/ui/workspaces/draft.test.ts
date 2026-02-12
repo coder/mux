@@ -10,7 +10,6 @@ import "../dom";
 import { fireEvent, waitFor } from "@testing-library/react";
 import * as path from "node:path";
 
-import { shouldRunIntegrationTests } from "../../testUtils";
 import {
   cleanupSharedRepo,
   createSharedRepo,
@@ -23,8 +22,6 @@ import { renderApp } from "../renderReviewPanel";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 
 import { WORKSPACE_DRAFTS_BY_PROJECT_KEY } from "@/common/constants/storage";
-
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 /** Wait for a specific number of drafts to exist */
 async function waitForDraftCount(projectPath: string, count: number): Promise<string[]> {
@@ -40,7 +37,7 @@ async function waitForDraftCount(projectPath: string, count: number): Promise<st
   );
 }
 
-describeIntegration("Draft workspace behavior", () => {
+describe("Draft workspace behavior", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });

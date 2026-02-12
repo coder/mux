@@ -1,11 +1,4 @@
-import {
-  shouldRunIntegrationTests,
-  createTestEnvironment,
-  cleanupTestEnvironment,
-  validateApiKeys,
-  getApiKey,
-  setupProviders,
-} from "../setup";
+import { createTestEnvironment, cleanupTestEnvironment, getApiKey, setupProviders } from "../setup";
 import {
   generateBranchName,
   createWorkspace,
@@ -32,13 +25,9 @@ import type { RuntimeConfig } from "../../../src/common/types/runtime";
 import { sshConnectionPool } from "../../../src/node/runtime/sshConnectionPool";
 import { ssh2ConnectionPool } from "../../../src/node/runtime/SSH2ConnectionPool";
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
+jest.setTimeout(600_000);
 
 // Validate API keys for AI tests
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["ANTHROPIC_API_KEY"]);
-}
 
 /**
  * Create a temp git repo with a .mux/init hook that writes to stdout/stderr and exits with a given code
@@ -118,7 +107,7 @@ async function cleanupTempGitRepo(repoPath: string): Promise<void> {
   console.warn(`Failed to cleanup temp git repo after ${maxRetries} attempts:`, lastError);
 }
 
-describeIntegration("Workspace init hook", () => {
+describe("Workspace init hook", () => {
   test.concurrent(
     "should stream init hook output and allow workspace usage on hook success",
     async () => {
@@ -385,7 +374,7 @@ describeIntegration("Workspace init hook", () => {
 // TODO: This test relies on timestamp-based event capture (sentEvents with timestamps)
 // which isn't available in the ORPC subscription model. The test verified real-time
 // streaming timing behavior. Consider reimplementing with StreamCollector timestamp tracking.
-describeIntegration("Init timing behavior", () => {
+describe("Init timing behavior", () => {
   test("should receive init events with natural timing (not batched)", async () => {
     const env = await createTestEnvironment();
     // Create a repo with an init hook that outputs lines with delays
@@ -450,7 +439,7 @@ let sshConfig: SSHServerConfig | undefined;
 // Runtime Matrix Tests - Init Queue Behavior
 // ============================================================================
 
-describeIntegration("Init Queue - Runtime Matrix", () => {
+describe("Init Queue - Runtime Matrix", () => {
   beforeAll(async () => {
     // Only start SSH server if Docker is available
     if (await isDockerAvailable()) {

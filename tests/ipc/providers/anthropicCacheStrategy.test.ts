@@ -1,18 +1,19 @@
-import { setupWorkspace, shouldRunIntegrationTests } from "../setup";
+import { setupWorkspace } from "../setup";
 import { sendMessageWithModel, createStreamCollector } from "../helpers";
 
-// Skip tests unless TEST_INTEGRATION=1 AND required API keys are present
+// Skip tests unless ANTHROPIC_API_KEY is present
 const hasAnthropicKey = Boolean(process.env.ANTHROPIC_API_KEY);
-const shouldRunSuite = shouldRunIntegrationTests() && hasAnthropicKey;
-const describeIntegration = shouldRunSuite ? describe : describe.skip;
+const describeSuite = hasAnthropicKey ? describe : describe.skip;
 const TEST_TIMEOUT_MS = 45000; // 45s total: setup + 2 messages at 15s each
 
-if (shouldRunIntegrationTests() && !shouldRunSuite) {
+if (!hasAnthropicKey) {
   // eslint-disable-next-line no-console
   console.warn("Skipping Anthropic cache strategy integration tests: missing ANTHROPIC_API_KEY");
 }
 
-describeIntegration("Anthropic cache strategy integration", () => {
+jest.setTimeout(600_000);
+
+describeSuite("Anthropic cache strategy integration", () => {
   test(
     "should apply cache control to messages, system prompt, and tools for Anthropic models",
     async () => {

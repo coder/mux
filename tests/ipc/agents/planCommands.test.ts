@@ -9,7 +9,7 @@
 
 import * as fs from "fs/promises";
 import * as path from "path";
-import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "../setup";
+import { createTestEnvironment, cleanupTestEnvironment } from "../setup";
 import type { TestEnvironment } from "../setup";
 import { createTempGitRepo, cleanupTempGitRepo, generateBranchName } from "../helpers";
 import { detectDefaultTrunkBranch } from "../../../src/node/git";
@@ -17,10 +17,7 @@ import { getPlanFilePath } from "../../../src/common/utils/planStorage";
 import { createMuxMessage } from "../../../src/common/types/message";
 import { expandTilde } from "../../../src/node/runtime/tildeExpansion";
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
-describeIntegration("Plan Commands Integration", () => {
+describe("Plan Commands Integration", () => {
   let env: TestEnvironment;
   let repoPath: string;
 

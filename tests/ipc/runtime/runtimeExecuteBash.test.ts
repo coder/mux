@@ -1,3 +1,5 @@
+jest.setTimeout(600_000);
+
 /**
  * Integration tests for bash execution across Local and SSH runtimes
  *
@@ -6,14 +8,7 @@
  * Reuses test infrastructure from runtimeFileEditing.test.ts
  */
 
-import {
-  createTestEnvironment,
-  cleanupTestEnvironment,
-  shouldRunIntegrationTests,
-  validateApiKeys,
-  getApiKey,
-  setupProviders,
-} from "../setup";
+import { createTestEnvironment, cleanupTestEnvironment, getApiKey, setupProviders } from "../setup";
 import {
   createTempGitRepo,
   cleanupTempGitRepo,
@@ -90,23 +85,17 @@ function getToolDuration(events: WorkspaceChatMessage[], toolName: string): numb
   return -1;
 }
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
 // Validate API keys before running tests
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["ANTHROPIC_API_KEY"]);
-}
 
 // SSH server config (shared across all SSH tests)
 let sshConfig: SSHServerConfig | undefined;
 
-describeIntegration("Runtime Bash Execution", () => {
+describe("Runtime Bash Execution", () => {
   beforeAll(async () => {
     // Check if Docker is available (required for SSH tests)
     if (!(await isDockerAvailable())) {
       throw new Error(
-        "Docker is required for SSH runtime tests. Please install Docker or skip tests by unsetting TEST_INTEGRATION."
+        "Docker is required for SSH runtime tests. Please install Docker or skip this test suite."
       );
     }
 

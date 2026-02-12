@@ -10,17 +10,13 @@ import { spawn } from "child_process";
 import * as path from "path";
 import * as fs from "fs/promises";
 import * as os from "os";
-import { shouldRunIntegrationTests, validateApiKeys } from "../testUtils";
+import { validateApiKeys } from "../testUtils";
 
 const RUN_PATH = path.resolve(__dirname, "../../src/cli/run.ts");
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
+validateApiKeys(["ANTHROPIC_API_KEY"]);
 
-// Validate API keys before running tests
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["ANTHROPIC_API_KEY"]);
-}
+jest.setTimeout(600_000);
 
 interface ExecResult {
   stdout: string;
@@ -76,7 +72,7 @@ async function runMuxRun(
   });
 }
 
-describeIntegration("mux run smoke tests", () => {
+describe("mux run smoke tests", () => {
   let testDir: string;
   let muxRoot: string;
 

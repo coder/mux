@@ -1,5 +1,4 @@
 import "../dom";
-import { shouldRunIntegrationTests } from "../../testUtils";
 import {
   cleanupSharedRepo,
   createSharedRepo,
@@ -23,8 +22,6 @@ import {
 } from "../helpers";
 import { invalidateGitStatus } from "@/browser/stores/GitStatusStore";
 
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
 /**
  * Trigger git status refresh directly via store invalidation.
  * Window focus events don't work reliably in happy-dom, so we bypass
@@ -34,7 +31,7 @@ function triggerGitStatusRefresh(workspaceId: string): void {
   invalidateGitStatus(workspaceId);
 }
 
-describeIntegration("GitStatus (UI + ORPC)", () => {
+describe("GitStatus (UI + ORPC)", () => {
   beforeAll(async () => {
     await createSharedRepo();
     // Add fake origin for ahead/behind status tests

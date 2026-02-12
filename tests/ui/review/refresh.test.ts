@@ -1,7 +1,6 @@
 import "../dom";
 import { fireEvent, waitFor } from "@testing-library/react";
 
-import { shouldRunIntegrationTests, validateApiKeys } from "../../testUtils";
 import { STORAGE_KEYS } from "@/constants/workspaceDefaults";
 import { getReviewsKey } from "@/common/constants/storage";
 import {
@@ -26,10 +25,9 @@ import {
 import type { APIClient } from "@/browser/contexts/API";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { validateApiKeys } from "../../testUtils";
 
 configureTestRetries(2);
-
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 validateApiKeys(["ANTHROPIC_API_KEY"]);
 
@@ -72,7 +70,7 @@ function renderReviewPanelForRefreshTests(params: {
   });
 }
 
-describeIntegration("ReviewPanel manual refresh (UI + ORPC)", () => {
+describe("ReviewPanel manual refresh (UI + ORPC)", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });
@@ -278,7 +276,7 @@ describeIntegration("ReviewPanel manual refresh (UI + ORPC)", () => {
 // SIMULATED TOOL COMPLETION TEST (fast, no LLM)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describeIntegration("ReviewPanel simulated tool refresh (UI + ORPC, no LLM)", () => {
+describe("ReviewPanel simulated tool refresh (UI + ORPC, no LLM)", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });
@@ -428,7 +426,7 @@ describeIntegration("ReviewPanel simulated tool refresh (UI + ORPC, no LLM)", ()
 // AUTO REFRESH TEST (slow, requires LLM)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describeIntegration("ReviewPanel auto refresh (UI + ORPC + live LLM)", () => {
+describe("ReviewPanel auto refresh (UI + ORPC + live LLM)", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });

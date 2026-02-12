@@ -1,3 +1,5 @@
+jest.setTimeout(600_000);
+
 /**
  * Stream Error Recovery Integration Tests
  *
@@ -16,7 +18,7 @@
  * test the recovery path without relying on actual network failures.
  */
 
-import { setupWorkspace, shouldRunIntegrationTests, validateApiKeys } from "../setup";
+import { setupWorkspace } from "../setup";
 import {
   sendMessageWithModel,
   createStreamCollector,
@@ -27,13 +29,7 @@ import {
 } from "../helpers";
 import type { StreamCollector } from "../streamCollector";
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
 // Validate API keys before running tests
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["ANTHROPIC_API_KEY"]);
-}
 
 // Use Haiku 4.5 for speed
 const PROVIDER = "anthropic";
@@ -195,8 +191,7 @@ async function collectStreamUntil(
 }
 
 // TODO: This test requires a debug IPC method (triggerStreamError) that is exposed via ORPC
-// Using describeIntegration to enable when TEST_INTEGRATION=1
-describeIntegration("Stream Error Recovery (No Amnesia)", () => {
+describe("Stream Error Recovery (No Amnesia)", () => {
   // Enable retries in CI for flaky API tests
   configureTestRetries(3);
 

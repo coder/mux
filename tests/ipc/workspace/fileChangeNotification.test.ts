@@ -16,7 +16,6 @@ import {
   setupProviders,
   preloadTestModules,
   type TestEnvironment,
-  shouldRunIntegrationTests,
 } from "../setup";
 import {
   createTempGitRepo,
@@ -32,17 +31,11 @@ import { getPlanFilePath } from "../../../src/common/utils/planStorage";
 import { log } from "../../../src/node/services/log";
 import { getMuxHome } from "../../../src/common/constants/paths";
 
-// Skip tests if integration tests are disabled or API keys are missing
-const runTests = shouldRunIntegrationTests();
+validateApiKeys(["ANTHROPIC_API_KEY"]);
 
-// Validate API keys are available
-if (runTests) {
-  validateApiKeys(["ANTHROPIC_API_KEY"]);
-}
+jest.setTimeout(600_000);
 
-const describeIntegration = runTests ? describe : describe.skip;
-
-describeIntegration("File Change Notification Integration", () => {
+describe("File Change Notification Integration", () => {
   let env: TestEnvironment;
   let repoPath: string;
   let originalLogLevel: ReturnType<typeof log.getLevel>;

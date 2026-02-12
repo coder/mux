@@ -10,15 +10,12 @@ import "../dom";
 import { fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { shouldRunIntegrationTests } from "../../testUtils";
 import { installDom } from "../dom";
 import { renderApp } from "../renderReviewPanel";
 import { cleanupView, openProjectCreationView } from "../helpers";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { expandProjects } from "@/browser/stories/storyHelpers";
 import type { ProjectConfig } from "@/node/config";
-
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 /** Helper to create a project config for a path with no workspaces */
 function projectWithNoWorkspaces(path: string): [string, ProjectConfig] {
@@ -38,7 +35,7 @@ function findRuntimeButton(container: HTMLElement, label: string): HTMLButtonEle
   return (button ?? null) as HTMLButtonElement | null;
 }
 
-describeIntegration("Docker runtime selection (UI)", () => {
+describe("Docker runtime selection (UI)", () => {
   test("selecting Docker shows image input", async () => {
     const cleanupDom = installDom();
 

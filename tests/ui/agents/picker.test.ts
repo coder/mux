@@ -15,7 +15,6 @@ import userEvent from "@testing-library/user-event";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import { shouldRunIntegrationTests } from "../../testUtils";
 import {
   cleanupSharedRepo,
   createSharedRepo,
@@ -32,8 +31,6 @@ import {
   setupTestDom,
   setupWorkspaceView,
 } from "../helpers";
-
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
@@ -170,7 +167,7 @@ async function removeAgentFile(workspacePath: string, agentId: string): Promise<
 // TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describeIntegration("Agent Picker (UI)", () => {
+describe("Agent Picker (UI)", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });

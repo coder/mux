@@ -8,12 +8,7 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
-import {
-  createTestEnvironment,
-  cleanupTestEnvironment,
-  shouldRunIntegrationTests,
-  type TestEnvironment,
-} from "../setup";
+import { createTestEnvironment, cleanupTestEnvironment, type TestEnvironment } from "../setup";
 import {
   createTempGitRepo,
   cleanupTempGitRepo,
@@ -37,9 +32,6 @@ import type { RuntimeConfig } from "../../../src/common/types/runtime";
 import { sshConnectionPool } from "../../../src/node/runtime/sshConnectionPool";
 import { ssh2ConnectionPool } from "../../../src/node/runtime/SSH2ConnectionPool";
 import { execAsync } from "../../../src/node/utils/disposableExec";
-
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 // SSH server config (shared across all SSH tests)
 let sshConfig: SSHServerConfig | undefined;
@@ -164,12 +156,12 @@ async function markerFileExists(
 // Test Suite
 // ============================================================================
 
-describeIntegration("Workspace deletion integration tests", () => {
+describe("Workspace deletion integration tests", () => {
   beforeAll(async () => {
     // Check if Docker is available (required for SSH tests)
     if (!(await isDockerAvailable())) {
       throw new Error(
-        "Docker is required for SSH runtime tests. Please install Docker or skip tests by unsetting TEST_INTEGRATION."
+        "Docker is required for SSH runtime tests. Please install Docker or skip this test suite."
       );
     }
 

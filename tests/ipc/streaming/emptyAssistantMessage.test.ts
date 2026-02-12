@@ -1,3 +1,5 @@
+jest.setTimeout(600_000);
+
 /**
  * Test that corrupted chat history with empty assistant messages
  * does not brick the workspace (self-healing behavior).
@@ -5,20 +7,14 @@
  * Reproduction of: "messages.95: all messages must have non-empty content
  * except for the optional final assistant message"
  */
-import { setupWorkspace, shouldRunIntegrationTests, validateApiKeys } from "../setup";
+import { setupWorkspace } from "../setup";
 import { sendMessageWithModel, createStreamCollector, HAIKU_MODEL } from "../helpers";
 import { HistoryService } from "../../../src/node/services/historyService";
 import { createMuxMessage } from "../../../src/common/types/message";
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
 // Validate API keys before running tests
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["ANTHROPIC_API_KEY"]);
-}
 
-describeIntegration("empty assistant message self-healing", () => {
+describe("empty assistant message self-healing", () => {
   test.concurrent(
     "should handle corrupted history with empty assistant parts array",
     async () => {

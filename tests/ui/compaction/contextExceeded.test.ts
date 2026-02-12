@@ -8,7 +8,6 @@
 import "../dom";
 import { waitFor } from "@testing-library/react";
 
-import { shouldRunIntegrationTests } from "../../testUtils";
 import {
   cleanupSharedRepo,
   createSharedRepo,
@@ -23,9 +22,7 @@ import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { setupProviders } from "../../ipc/setup";
 
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
-describeIntegration("Context exceeded compaction suggestion (UI)", () => {
+describe("Context exceeded compaction suggestion (UI)", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });

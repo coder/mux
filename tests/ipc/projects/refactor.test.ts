@@ -1,12 +1,10 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
-import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "../setup";
+import { createTestEnvironment, cleanupTestEnvironment } from "../setup";
 import { resolveOrpcClient } from "../helpers";
 
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
-describeIntegration("ProjectService IPC Handlers", () => {
+describe("ProjectService IPC Handlers", () => {
   test.concurrent("should list projects including the created one", async () => {
     const env = await createTestEnvironment();
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-project-service-test-"));

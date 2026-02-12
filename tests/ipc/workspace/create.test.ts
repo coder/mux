@@ -14,7 +14,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { exec } from "child_process";
 import { promisify } from "util";
-import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "../setup";
+import { createTestEnvironment, cleanupTestEnvironment } from "../setup";
 import type { TestEnvironment } from "../setup";
 import {
   createTempGitRepo,
@@ -62,9 +62,6 @@ const INIT_HOOK_FILENAME = "init";
 // Event type constants
 const EVENT_TYPE_INIT_OUTPUT = "init-output";
 const EVENT_TYPE_INIT_END = "init-end";
-
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 // SSH server config (shared across all SSH tests)
 let sshConfig: SSHServerConfig | undefined;
@@ -152,12 +149,12 @@ async function createWorkspaceWithCleanup(
   return { result, cleanup };
 }
 
-describeIntegration("WORKSPACE_CREATE with both runtimes", () => {
+describe("WORKSPACE_CREATE with both runtimes", () => {
   beforeAll(async () => {
     // Check if Docker is available (required for SSH tests)
     if (!(await isDockerAvailable())) {
       throw new Error(
-        "Docker is required for SSH runtime tests. Please install Docker or skip tests by unsetting TEST_INTEGRATION."
+        "Docker is required for SSH runtime tests. Please install Docker or skip this test suite."
       );
     }
 

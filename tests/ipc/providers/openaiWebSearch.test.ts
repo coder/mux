@@ -1,4 +1,4 @@
-import { setupWorkspace, shouldRunIntegrationTests, validateApiKeys } from "../setup";
+import { setupWorkspace } from "../setup";
 import {
   sendMessageWithModel,
   createStreamCollector,
@@ -7,15 +7,11 @@ import {
   configureTestRetries,
 } from "../helpers";
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
+jest.setTimeout(600_000);
 
 // Validate API keys before running tests
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["OPENAI_API_KEY"]);
-}
 
-describeIntegration("OpenAI web_search integration tests", () => {
+describe("OpenAI web_search integration tests", () => {
   // Enable retries in CI for flaky API tests
   configureTestRetries(3);
 

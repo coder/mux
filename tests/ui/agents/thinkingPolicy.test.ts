@@ -14,10 +14,7 @@ import {
   PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
 } from "@/common/constants/storage";
 
-import { shouldRunIntegrationTests } from "../../testUtils";
 import { createAppHarness } from "../harness";
-
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 const GEMINI_FLASH_PREVIEW = "google:gemini-3-flash-preview";
 
@@ -32,7 +29,7 @@ const GEMINI_FLASH_PREVIEW = "google:gemini-3-flash-preview";
  * - UI clamps display to "high"
  * - Dropdown does not include "xhigh"
  */
-describeIntegration("System 1 reasoning policy", () => {
+describe("System 1 reasoning policy", () => {
   test("clamps and filters unsupported thinking levels for the selected model", async () => {
     const harness = await createAppHarness({
       branchPrefix: "system1",
