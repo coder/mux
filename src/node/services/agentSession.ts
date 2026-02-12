@@ -1962,8 +1962,7 @@ export class AgentSession {
       const displayText = this.messageQueue.getDisplayText();
       const fileParts = this.messageQueue.getFileParts();
       const reviews = this.messageQueue.getReviews();
-      this.messageQueue.clear();
-      this.emitQueuedMessageChanged();
+      this.clearQueue();
 
       this.emitChatEvent({
         type: "restore-to-input",
