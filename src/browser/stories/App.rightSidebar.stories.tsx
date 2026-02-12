@@ -1322,3 +1322,146 @@ export const CostsTabCompactionModelWarning: AppStory = {
     },
   },
 };
+
+/**
+ * Helper to create realistic output log entries with mixed levels and locations.
+ */
+function createOutputLogEntries() {
+  const now = Date.now();
+
+  return [
+    {
+      timestamp: now - 5 * 60_000,
+      level: "info" as const,
+      message: "Server bootstrap complete on http://localhost:3000",
+      location: "src/node/server.ts:42",
+    },
+    {
+      timestamp: now - 4 * 60_000,
+      level: "debug" as const,
+      message: "Loaded 18 routes from API manifest",
+      location: "src/node/router.ts:88",
+    },
+    {
+      timestamp: now - 3 * 60_000,
+      level: "warn" as const,
+      message: "Deprecated endpoint /v1/users called by legacy client",
+      location: "src/node/api/users.ts:133",
+    },
+    {
+      timestamp: now - 2 * 60_000,
+      level: "info" as const,
+      message: "Redis cache warmup finished with 243 keys",
+      location: "src/node/cache/warmup.ts:57",
+    },
+    {
+      timestamp: now - 90_000,
+      level: "error" as const,
+      message: "Database connection timeout after 5000ms",
+      location: "src/node/db/pool.ts:219",
+    },
+    {
+      timestamp: now - 60_000,
+      level: "debug" as const,
+      message: "Cache hit for user profile query",
+      location: "src/node/cache/queryCache.ts:74",
+    },
+    {
+      timestamp: now - 45_000,
+      level: "warn" as const,
+      message: "Retrying webhook delivery (attempt 2/3)",
+      location: "src/node/webhooks/sender.ts:161",
+    },
+    {
+      timestamp: now - 30_000,
+      level: "error" as const,
+      message: "Failed to parse JSON payload from upstream service",
+      location: "src/node/integrations/partnerClient.ts:204",
+    },
+    {
+      timestamp: now - 15_000,
+      level: "info" as const,
+      message: "Background cleanup job completed successfully",
+      location: "src/node/jobs/cleanup.ts:96",
+    },
+  ];
+}
+
+/**
+ * Output tab selected with an empty log feed.
+ */
+export const OutputTabEmpty: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("output"));
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "400");
+        localStorage.removeItem(getRightSidebarLayoutKey("ws-output-empty"));
+        localStorage.removeItem("output-tab-level");
+
+        const client = setupSimpleChatStory({
+          workspaceId: "ws-output-empty",
+          workspaceName: "feature/logging",
+          projectName: "my-app",
+          messages: [createUserMessage("msg-1", "Hello", { historySequence: 1 })],
+          logEntries: [],
+        });
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+};
+
+/**
+ * Output tab selected with mixed log entries.
+ */
+export const OutputTabWithLogs: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("output"));
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "400");
+        localStorage.removeItem(getRightSidebarLayoutKey("ws-output-logs"));
+        localStorage.removeItem("output-tab-level");
+
+        const client = setupSimpleChatStory({
+          workspaceId: "ws-output-logs",
+          workspaceName: "feature/logging",
+          projectName: "my-app",
+          messages: [createUserMessage("msg-1", "Show logs", { historySequence: 1 })],
+          logEntries: createOutputLogEntries(),
+        });
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+};
+
+/**
+ * Output tab with persisted level filter set to "error".
+ */
+export const OutputTabErrorsOnly: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("output"));
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "400");
+        localStorage.removeItem(getRightSidebarLayoutKey("ws-output-errors"));
+        // Persist the level filter to "error" so only error entries display.
+        localStorage.setItem("output-tab-level", JSON.stringify("error"));
+
+        const client = setupSimpleChatStory({
+          workspaceId: "ws-output-errors",
+          workspaceName: "feature/logging",
+          projectName: "my-app",
+          messages: [createUserMessage("msg-1", "Check errors", { historySequence: 1 })],
+          logEntries: createOutputLogEntries(),
+        });
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+};

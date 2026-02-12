@@ -213,6 +213,15 @@ export interface MockORPCClientOptions {
     status: { state: "disabled" | "enforced" | "blocked"; reason?: string };
     policy: unknown;
   };
+  /** Mock log entries for Output tab (subscribeLogs snapshot) */
+  logEntries?: Array<{
+    timestamp: number;
+    level: "error" | "warn" | "info" | "debug";
+    message: string;
+    location: string;
+  }>;
+  /** Mock clearLogs result (default: { success: true, error: null }) */
+  clearLogsResult?: { success: boolean; error?: string | null };
 }
 
 interface MockBackgroundProcess {
@@ -303,6 +312,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       status: { state: "disabled" as const },
       policy: null,
     },
+    logEntries = [],
+    clearLogsResult = { success: true, error: null },
   } = options;
 
   // Feature flags
@@ -636,6 +647,21 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         yield* [];
         await new Promise<void>(() => undefined);
       },
+      subscribeLogs: async function* (input: { level?: string | null }) {
+        const LOG_LEVEL_PRIORITY: Record<string, number> = {
+          error: 0,
+          warn: 1,
+          info: 2,
+          debug: 3,
+        };
+        const minPriority = input.level != null ? (LOG_LEVEL_PRIORITY[input.level] ?? 3) : 3;
+        const filtered = logEntries.filter(
+          (entry) => (LOG_LEVEL_PRIORITY[entry.level] ?? 3) <= minPriority
+        );
+        yield { type: "snapshot" as const, epoch: 1, entries: filtered };
+        await new Promise<void>(() => undefined);
+      },
+      clearLogs: () => Promise.resolve(clearLogsResult),
     },
     secrets: {
       get: (input?: { projectPath?: string }) => {
