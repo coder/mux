@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Command } from "cmdk";
 import { useCommandRegistry } from "@/browser/contexts/CommandRegistryContext";
 import { useAPI } from "@/browser/contexts/API";
@@ -56,7 +56,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
 
   const [agentSkills, setAgentSkills] = useState<AgentSkillDescriptor[]>([]);
   const agentSkillsCacheRef = useRef<Map<string, AgentSkillDescriptor[]>>(new Map());
-  const { isOpen, close, getActions, addRecent, recent } = useCommandRegistry();
+  const { isOpen, initialQuery, close, getActions, addRecent, recent } = useCommandRegistry();
   const [query, setQuery] = useState("");
   const [activePrompt, setActivePrompt] = useState<null | {
     title?: string;
@@ -89,15 +89,16 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
     return () => window.removeEventListener("keydown", onKey, { capture: true });
   }, [isOpen, close, resetPaletteState]);
 
-  // Reset state whenever palette visibility changes
-  useEffect(() => {
-    if (!isOpen) {
-      resetPaletteState();
+  // useLayoutEffect fires after DOM commit but before browser paint —
+  // ensures ">" appears in the input on the very first visible frame
+  // when opening via F1, with no flash.
+  useLayoutEffect(() => {
+    if (isOpen) {
+      setQuery(initialQuery);
     } else {
-      setPromptError(null);
-      setQuery("");
+      resetPaletteState();
     }
-  }, [isOpen, resetPaletteState]);
+  }, [isOpen, initialQuery, resetPaletteState]);
 
   useEffect(() => {
     if (!isOpen || !api || !slashWorkspaceId) {
