@@ -22,7 +22,7 @@ import { Shimmer } from "./ai-elements/shimmer";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
 import { WORKSPACE_DRAG_TYPE, type WorkspaceDragItem } from "./WorkspaceSectionDropZone";
 import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
-import { formatKeybind, matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ShareTranscriptDialog } from "./ShareTranscriptDialog";
 
 const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
@@ -403,20 +403,8 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     };
   }, []);
 
-  // Keybind for opening transcript share popover (only for the selected workspace)
-  useEffect(() => {
-    if (!isSelected || linkSharingEnabled !== true) return;
-
-    const handler = (e: KeyboardEvent) => {
-      if (matchesKeybind(e, KEYBINDS.SHARE_TRANSCRIPT)) {
-        e.preventDefault();
-        setShareTranscriptOpen(true);
-      }
-    };
-
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [isSelected, linkSharingEnabled]);
+  // SHARE_TRANSCRIPT keybind is handled in WorkspaceHeader (always mounted),
+  // so it works even when the sidebar is collapsed and list items are unmounted.
 
   const startEditing = () => {
     if (requestRename(workspaceId, displayTitle)) {

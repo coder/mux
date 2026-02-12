@@ -192,6 +192,21 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
+  // Keybind for sharing transcript — lives here (not WorkspaceListItem) so it
+  // works even when the left sidebar is collapsed and list items are unmounted.
+  useEffect(() => {
+    if (linkSharingEnabled !== true || isMuxHelpChat) return;
+
+    const handler = (e: KeyboardEvent) => {
+      if (matchesKeybind(e, KEYBINDS.SHARE_TRANSCRIPT)) {
+        e.preventDefault();
+        setShareTranscriptOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [linkSharingEnabled, isMuxHelpChat]);
+
   // Fetch available skills + diagnostics for this workspace
   useEffect(() => {
     if (!api) {
