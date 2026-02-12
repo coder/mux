@@ -177,15 +177,23 @@ function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectC
   const record = projectConfig as ProjectConfig & {
     runtimeEnablement?: unknown;
     defaultRuntime?: unknown;
+    runtimeOverridesEnabled?: unknown;
   };
   const runtimeEnablement = normalizeRuntimeEnablementOverrides(record.runtimeEnablement);
   const defaultRuntime = normalizeRuntimeEnablementId(record.defaultRuntime);
+  const runtimeOverridesEnabled = record.runtimeOverridesEnabled === true ? true : undefined;
 
   const next = { ...record };
   if (runtimeEnablement) {
     next.runtimeEnablement = runtimeEnablement;
   } else {
     delete next.runtimeEnablement;
+  }
+
+  if (runtimeOverridesEnabled) {
+    next.runtimeOverridesEnabled = runtimeOverridesEnabled;
+  } else {
+    delete next.runtimeOverridesEnabled;
   }
 
   if (defaultRuntime) {

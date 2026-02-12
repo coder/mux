@@ -81,7 +81,7 @@ function getFallbackRuntime(enablement: RuntimeEnablement): RuntimeEnablementId 
 
 export function RuntimesSection() {
   const { api } = useAPI();
-  const { projects } = useProjectContext();
+  const { projects, refreshProjects } = useProjectContext();
   const { enablement, setRuntimeEnabled, defaultRuntime, setDefaultRuntime } =
     useRuntimeEnablement();
 
@@ -102,6 +102,12 @@ export function RuntimesSection() {
   const selectedProjectPath = selectedScope === ALL_SCOPE_VALUE ? null : selectedScope;
   const isProjectScope = Boolean(selectedProjectPath);
   const isProjectOverrideActive = isProjectScope && projectOverrideEnabled;
+
+  const syncProjects = () => {
+    refreshProjects().catch(() => {
+      // Best-effort only.
+    });
+  };
 
   useEffect(() => {
     if (selectedScope === ALL_SCOPE_VALUE) {
@@ -132,7 +138,9 @@ export function RuntimesSection() {
 
     const projectConfig = projects.get(selectedProjectPath);
     const hasOverrides =
-      Boolean(projectConfig?.runtimeEnablement) || projectConfig?.defaultRuntime !== undefined;
+      projectConfig?.runtimeOverridesEnabled === true ||
+      Boolean(projectConfig?.runtimeEnablement) ||
+      projectConfig?.defaultRuntime !== undefined;
 
     setProjectOverrideEnabled(hasOverrides);
     setProjectEnablement(mergeRuntimeEnablement(enablement, projectConfig?.runtimeEnablement));
@@ -229,6 +237,10 @@ export function RuntimesSection() {
           projectPath: selectedProjectPath,
           runtimeEnablement: null,
           defaultRuntime: null,
+          runtimeOverridesEnabled: null,
+        })
+        .then(() => {
+          syncProjects();
         })
         .catch(() => {
           // Best-effort only.
@@ -250,6 +262,10 @@ export function RuntimesSection() {
         projectPath: selectedProjectPath,
         runtimeEnablement: nextEnablement,
         defaultRuntime: defaultRuntime ?? null,
+        runtimeOverridesEnabled: true,
+      })
+      .then(() => {
+        syncProjects();
       })
       .catch(() => {
         // Best-effort only.
@@ -300,18 +316,25 @@ export function RuntimesSection() {
       projectPath: string;
       runtimeEnablement: RuntimeEnablement;
       defaultRuntime?: RuntimeEnablementId | null;
+      runtimeOverridesEnabled?: boolean;
     } = {
       projectPath: selectedProjectPath,
       runtimeEnablement: nextEnablement,
+      runtimeOverridesEnabled: true,
     };
 
     if (nextDefaultRuntime !== projectDefaultRuntime) {
       updatePayload.defaultRuntime = nextDefaultRuntime ?? null;
     }
 
-    api?.config?.updateRuntimeEnablement(updatePayload).catch(() => {
-      // Best-effort only.
-    });
+    api?.config
+      ?.updateRuntimeEnablement(updatePayload)
+      .then(() => {
+        syncProjects();
+      })
+      .catch(() => {
+        // Best-effort only.
+      });
   };
 
   const handleDefaultRuntimeChange = (value: string) => {
@@ -335,6 +358,10 @@ export function RuntimesSection() {
       ?.updateRuntimeEnablement({
         projectPath: selectedProjectPath,
         defaultRuntime: runtimeId,
+        runtimeOverridesEnabled: true,
+      })
+      .then(() => {
+        syncProjects();
       })
       .catch(() => {
         // Best-effort only.

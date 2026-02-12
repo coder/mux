@@ -600,9 +600,11 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         projectPath?: string | null;
         runtimeEnablement?: Record<string, boolean> | null;
         defaultRuntime?: RuntimeEnablementId | null;
+        runtimeOverridesEnabled?: boolean | null;
       }) => {
         const shouldUpdateRuntimeEnablement = input.runtimeEnablement !== undefined;
         const shouldUpdateDefaultRuntime = input.defaultRuntime !== undefined;
+        const shouldUpdateOverridesEnabled = input.runtimeOverridesEnabled !== undefined;
         const projectPath = input.projectPath?.trim();
 
         const runtimeEnablementOverrides =
@@ -620,6 +622,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
 
                 return Object.keys(disabled).length > 0 ? disabled : undefined;
               })();
+
+        const runtimeOverridesEnabled = input.runtimeOverridesEnabled === true ? true : undefined;
 
         if (projectPath) {
           const project = projects.get(projectPath);
@@ -641,6 +645,13 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
               }
             }
 
+            if (shouldUpdateOverridesEnabled) {
+              if (runtimeOverridesEnabled) {
+                nextProject.runtimeOverridesEnabled = true;
+              } else {
+                delete nextProject.runtimeOverridesEnabled;
+              }
+            }
             projects.set(projectPath, nextProject);
           }
 

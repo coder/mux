@@ -635,9 +635,14 @@ export const router = (authToken?: string) => {
           await context.config.editConfig((config) => {
             const shouldUpdateRuntimeEnablement = input.runtimeEnablement !== undefined;
             const shouldUpdateDefaultRuntime = input.defaultRuntime !== undefined;
+            const shouldUpdateOverridesEnabled = input.runtimeOverridesEnabled !== undefined;
             const projectPath = input.projectPath?.trim();
 
-            if (!shouldUpdateRuntimeEnablement && !shouldUpdateDefaultRuntime) {
+            if (
+              !shouldUpdateRuntimeEnablement &&
+              !shouldUpdateDefaultRuntime &&
+              !shouldUpdateOverridesEnabled
+            ) {
               return config;
             }
 
@@ -658,6 +663,8 @@ export const router = (authToken?: string) => {
                   })();
 
             const defaultRuntime = input.defaultRuntime ?? undefined;
+            const runtimeOverridesEnabled =
+              input.runtimeOverridesEnabled === true ? true : undefined;
 
             if (projectPath) {
               const project = config.projects.get(projectPath);
@@ -684,6 +691,13 @@ export const router = (authToken?: string) => {
                 }
               }
 
+              if (shouldUpdateOverridesEnabled) {
+                if (runtimeOverridesEnabled) {
+                  nextProject.runtimeOverridesEnabled = true;
+                } else {
+                  delete nextProject.runtimeOverridesEnabled;
+                }
+              }
               const nextProjects = new Map(config.projects);
               nextProjects.set(projectPath, nextProject);
               return { ...config, projects: nextProjects };

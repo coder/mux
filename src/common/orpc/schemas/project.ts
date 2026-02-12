@@ -134,6 +134,9 @@ export const ProjectConfigSchema = z.object({
   runtimeEnablement: RuntimeEnablementOverridesSchema.optional().meta({
     description: "Runtime enablement overrides (store `false` only to keep config.json minimal)",
   }),
+  runtimeOverridesEnabled: z.boolean().optional().meta({
+    description: "Whether this project uses runtime overrides, even if no overrides are set",
+  }),
   defaultRuntime: RuntimeEnablementIdSchema.optional().meta({
     description: "Default runtime override for new workspaces in this project",
   }),
