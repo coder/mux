@@ -53,7 +53,7 @@ import type { Secret } from "@/common/types/secrets";
 
 import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
-import { RenameProvider, useRename } from "@/browser/contexts/WorkspaceRenameContext";
+import { TitleEditProvider, useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { ChevronRight, CircleHelp, KeyRound } from "lucide-react";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
@@ -326,14 +326,14 @@ function MuxChatStatusIndicator() {
 }
 
 /**
- * Handles F2 (rename) and Shift+F2 (regenerate title) keybinds.
- * Rendered inside RenameProvider so it can access useRename().
+ * Handles F2 (edit title) and Shift+F2 (generate new title) keybinds.
+ * Rendered inside TitleEditProvider so it can access useTitleEdit().
  */
-function SidebarRenameKeybinds(props: {
+function SidebarTitleEditKeybinds(props: {
   selectedWorkspace: WorkspaceSelection | undefined;
   sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>;
 }) {
-  const { requestRename } = useRename();
+  const { requestEdit } = useTitleEdit();
   const { api } = useAPI();
 
   useEffect(() => {
@@ -343,21 +343,21 @@ function SidebarRenameKeybinds(props: {
       const wsId = props.selectedWorkspace.workspaceId;
       if (wsId === MUX_HELP_CHAT_WORKSPACE_ID) return;
 
-      if (matchesKeybind(e, KEYBINDS.RENAME_WORKSPACE)) {
+      if (matchesKeybind(e, KEYBINDS.EDIT_WORKSPACE_TITLE)) {
         e.preventDefault();
         const meta = props.sortedWorkspacesByProject
           .get(props.selectedWorkspace.projectPath)
           ?.find((m) => m.id === wsId);
         const displayTitle = meta?.title ?? meta?.name ?? "";
-        requestRename(wsId, displayTitle);
-      } else if (matchesKeybind(e, KEYBINDS.REGENERATE_WORKSPACE_NAME)) {
+        requestEdit(wsId, displayTitle);
+      } else if (matchesKeybind(e, KEYBINDS.GENERATE_WORKSPACE_TITLE)) {
         e.preventDefault();
         void api?.workspace.regenerateTitle({ workspaceId: wsId });
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [props.selectedWorkspace, props.sortedWorkspacesByProject, requestRename, api]);
+  }, [props.selectedWorkspace, props.sortedWorkspacesByProject, requestEdit, api]);
 
   return null;
 }
@@ -387,7 +387,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     setSelectedWorkspace: onSelectWorkspace,
     archiveWorkspace: onArchiveWorkspace,
     removeWorkspace,
-    renameWorkspace: onRenameWorkspace,
+    updateWorkspaceTitle: onUpdateTitle,
     refreshWorkspaceMetadata,
     pendingNewWorkspaceProject,
     pendingNewWorkspaceDraftId,
@@ -783,8 +783,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   }, [selectedWorkspace, handleAddWorkspace, handleArchiveWorkspace]);
 
   return (
-    <RenameProvider onRenameWorkspace={onRenameWorkspace}>
-      <SidebarRenameKeybinds
+    <TitleEditProvider onUpdateTitle={onUpdateTitle}>
+      <SidebarTitleEditKeybinds
         selectedWorkspace={selectedWorkspace ?? undefined}
         sortedWorkspacesByProject={sortedWorkspacesByProject}
       />
@@ -1441,7 +1441,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           />
         </div>
       </DndProvider>
-    </RenameProvider>
+    </TitleEditProvider>
   );
 };
 

@@ -1982,8 +1982,8 @@ export class WorkspaceService extends EventEmitter {
             projectConfig.workspaces.find((w) => w.path === workspacePath);
           if (workspaceEntry) {
             workspaceEntry.title = title;
-            // Exit auto-name state on any title update (manual rename or auto-generated).
-            delete workspaceEntry.autoName;
+            // Exit auto-title state on any title update (manual edit or auto-generated).
+            delete workspaceEntry.autoTitle;
           }
         }
         return config;
@@ -2018,13 +2018,12 @@ export class WorkspaceService extends EventEmitter {
    */
   private async autoGenerateTitle(workspaceId: string, userMessage: string): Promise<void> {
     try {
-      // Atomically clear autoName first — prevents double-fire on rapid sends
-      // (replaces the frontend autoNameTriggeredRef guard).
+      // Atomically clear autoTitle first — prevents double-fire on rapid sends.
       await this.config.editConfig((config) => {
         for (const [, project] of config.projects) {
           const ws = project.workspaces.find((w) => w.id === workspaceId);
           if (ws) {
-            delete ws.autoName;
+            delete ws.autoTitle;
             break;
           }
         }
@@ -2845,9 +2844,9 @@ export class WorkspaceService extends EventEmitter {
         namedWorkspacePath,
         // Preserve workspace organization when forking via /fork.
         sectionId: sourceMetadata.sectionId,
-        // Seamless fork: inherit parent title as placeholder, mark for auto-naming on first message.
+        // Seamless fork: inherit parent title as placeholder, mark for auto-title on first message.
         ...(isAutoName
-          ? { title: sourceMetadata.title ?? sourceMetadata.name, autoName: true }
+          ? { title: sourceMetadata.title ?? sourceMetadata.name, autoTitle: true }
           : {}),
       };
 
@@ -2958,7 +2957,7 @@ export class WorkspaceService extends EventEmitter {
             .loadConfigOrDefault()
             .projects.get(found.projectPath)
             ?.workspaces.find((w) => w.id === workspaceId);
-          if (wsConfig?.autoName) {
+          if (wsConfig?.autoTitle) {
             void this.autoGenerateTitle(workspaceId, message);
           }
         }
