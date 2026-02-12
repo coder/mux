@@ -10,6 +10,7 @@ import {
   Bot,
   Keyboard,
   Layout,
+  Container,
   BrainCircuit,
   Shield,
   ShieldCheck,
@@ -31,6 +32,7 @@ import { Button } from "@/browser/components/ui/button";
 import { MCPSettingsSection } from "./sections/MCPSettingsSection";
 import { SecretsSection } from "./sections/SecretsSection";
 import { LayoutsSection } from "./sections/LayoutsSection";
+import { RuntimesSection } from "./sections/RuntimesSection";
 import { ExperimentsSection } from "./sections/ExperimentsSection";
 import { ServerAccessSection } from "./sections/ServerAccessSection";
 import { KeybindsSection } from "./sections/KeybindsSection";
@@ -84,6 +86,12 @@ const BASE_SECTIONS: SettingsSection[] = [
     label: "Layouts",
     icon: <Layout className="h-4 w-4" />,
     component: LayoutsSection,
+  },
+  {
+    id: "runtimes",
+    label: "Runtimes",
+    icon: <Container className="h-4 w-4" />,
+    component: RuntimesSection,
   },
   {
     id: "experiments",
