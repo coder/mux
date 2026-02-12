@@ -13,7 +13,6 @@ import {
   resolveDevcontainerSelection,
   DEFAULT_DEVCONTAINER_CONFIG_PATH,
 } from "@/browser/utils/devcontainerSelection";
-import { Select } from "../Select";
 import {
   Select as RadixSelect,
   SelectContent,
@@ -24,6 +23,7 @@ import {
 import { Loader2, Wand2, X } from "lucide-react";
 import { PlatformPaths } from "@/common/utils/paths";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
+import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
@@ -529,6 +529,7 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
  */
 export function CreationControls(props: CreationControlsProps) {
   const { projects } = useProjectContext();
+  const settings = useSettings();
   const { beginWorkspaceCreation } = useWorkspaceContext();
   const { nameState, runtimeAvailabilityState } = props;
 
@@ -546,12 +547,8 @@ export function CreationControls(props: CreationControlsProps) {
   const coderDeploymentUrl =
     props.coderProps?.coderInfo?.state === "available" ? props.coderProps.coderInfo.url : undefined;
 
-  // Local runtime doesn't need a trunk branch selector (uses project dir as-is)
   const availabilityMap =
     runtimeAvailabilityState.status === "loaded" ? runtimeAvailabilityState.data : null;
-  const showTrunkBranchSelector = props.branches.length > 0 && runtimeMode !== RUNTIME_MODE.LOCAL;
-  // Show loading skeleton while branches are loading to avoid layout flash
-  const showBranchLoadingPlaceholder = !props.branchesLoaded && runtimeMode !== RUNTIME_MODE.LOCAL;
 
   // Centralized devcontainer selection logic
   const devcontainerSelection = resolveDevcontainerSelection({
@@ -718,7 +715,18 @@ export function CreationControls(props: CreationControlsProps) {
 
       {/* Runtime type - button group */}
       <div className="flex flex-col gap-1.5" data-component="RuntimeTypeGroup">
-        <label className="text-muted-foreground text-xs font-medium">Workspace Type</label>
+        {/* User request: add a quick "configure" shortcut to runtime settings. */}
+        <div className="flex items-center gap-1">
+          <label className="text-muted-foreground text-xs font-medium">Workspace Type</label>
+          <span className="text-muted-foreground text-xs">-</span>
+          <button
+            type="button"
+            onClick={() => settings.open("runtimes")}
+            className="text-accent cursor-pointer text-xs font-medium hover:underline"
+          >
+            configure
+          </button>
+        </div>
         <div className="flex flex-col gap-2">
           <RuntimeButtonGroup
             value={runtimeChoice}
@@ -794,33 +802,7 @@ export function CreationControls(props: CreationControlsProps) {
             allowSshCoder={props.allowSshCoder}
           />
 
-          {/* Branch selector - shown for worktree/SSH */}
-          {showTrunkBranchSelector && (
-            <div
-              className="flex items-center gap-2"
-              data-component="TrunkBranchGroup"
-              data-tutorial="trunk-branch"
-            >
-              <label htmlFor="trunk-branch" className="text-muted-foreground text-xs">
-                from
-              </label>
-              <Select
-                id="trunk-branch"
-                value={props.trunkBranch}
-                options={props.branches}
-                onChange={props.onTrunkBranchChange}
-                disabled={props.disabled}
-                className={INLINE_CONTROL_CLASSES}
-              />
-            </div>
-          )}
-          {/* Loading placeholder - reserves space while branches load to avoid layout flash */}
-          {showBranchLoadingPlaceholder && (
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground text-xs">from</span>
-              <div className="border-border-medium bg-separator/50 h-7 w-[140px] animate-pulse rounded border" />
-            </div>
-          )}
+          {/* User request: hide the trunk branch selector for now. */}
 
           {/* SSH Host Input - hidden when Coder runtime is selected */}
           {selectedRuntime.mode === "ssh" &&
