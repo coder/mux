@@ -49,25 +49,31 @@ describeIntegration("System 1 reasoning policy", () => {
 
       const canvas = within(harness.view.container);
       const settingsButton = await canvas.findByTestId("settings-button", {}, { timeout: 10_000 });
-      settingsButton.click();
+      await user.click(settingsButton);
 
+      // Settings now render as a route page in the main pane (not a modal dialog).
+      const settingsCanvas = within(harness.view.container);
       const body = within(harness.view.container.ownerDocument.body);
-      const dialog = await body.findByRole("dialog", {}, { timeout: 10_000 });
-      const dialogCanvas = within(dialog);
 
-      const system1TabButton = await dialogCanvas.findByRole(
+      const system1TabButtons = await settingsCanvas.findAllByRole(
         "button",
         {
           name: /system 1/i,
         },
         { timeout: 10_000 }
       );
+      const system1TabButton = system1TabButtons[0];
+      if (!system1TabButton) {
+        throw new Error("System 1 tab button not found");
+      }
       await user.click(system1TabButton);
 
-      await dialogCanvas.findByText(/System 1 Reasoning/i);
+      await settingsCanvas.findByText(/System 1 Reasoning/i);
 
       const reasoningSelect = await waitFor(() => {
-        const el = dialog.querySelector('button[role="combobox"]') as HTMLButtonElement | null;
+        const el = harness.view.container.querySelector(
+          'button[role="combobox"]'
+        ) as HTMLButtonElement | null;
         if (!el) {
           throw new Error("System 1 Reasoning select not found");
         }
