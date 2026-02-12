@@ -14,6 +14,8 @@ import type {
   CodeExecutionResult,
   NestedToolCall,
 } from "@/browser/features/Tools/Shared/codeExecutionTypes";
+import { TodoList } from "@/browser/components/TodoList/TodoList";
+import type { TodoItem } from "@/common/types/tools";
 import { lightweightMeta } from "./meta.js";
 
 const meta = {
@@ -76,6 +78,33 @@ function renderCodeExecutionCard(props: ComponentProps<typeof CodeExecutionToolC
       <div className="bg-background flex min-h-screen items-start p-6">
         <div className="w-full max-w-3xl">
           <CodeExecutionToolCallCard {...props} />
+        </div>
+      </div>
+    </BackgroundBashProvider>
+  );
+}
+
+const executingTodos: TodoItem[] = [
+  { content: "Updated config defaults", status: "completed" },
+  { content: "Running integration tests", status: "in_progress" },
+  { content: "Update documentation", status: "pending" },
+];
+
+function renderCodeExecutionCardWithTodos(
+  props: ComponentProps<typeof CodeExecutionToolCallCard>,
+  todos: TodoItem[]
+) {
+  return (
+    <BackgroundBashProvider workspaceId={STORYBOOK_WORKSPACE_ID}>
+      <div className="bg-background flex min-h-screen items-start p-6">
+        <div className="w-full max-w-3xl">
+          <CodeExecutionToolCallCard {...props} />
+          <div className="bg-panel-background mt-2 max-h-[300px] overflow-y-auto border-t border-dashed border-[hsl(0deg_0%_28.64%)]">
+            <div className="text-secondary flex items-center gap-1 px-2 pt-1 pb-0.5 font-mono text-[10px] font-semibold tracking-wider select-none">
+              TODO:
+            </div>
+            <TodoList todos={todos} />
+          </div>
         </div>
       </div>
     </BackgroundBashProvider>
@@ -219,37 +248,40 @@ export const Completed: Story = {
   },
 };
 
-/** Code execution in progress with some completed nested tools */
+/** Code execution in progress with completed/pending nested tools and TODOs below */
 export const Executing: Story = {
   render: () =>
-    renderCodeExecutionCard({
-      args: { code: SAMPLE_CODE },
-      status: "executing",
-      nestedCalls: [
-        {
-          toolCallId: "nested-1",
-          toolName: "file_read",
-          input: { path: "src/config.ts" },
-          output: {
-            success: true,
-            file_size: 1024,
-            lines_read: 42,
-            content: "export const config = {...};",
+    renderCodeExecutionCardWithTodos(
+      {
+        args: { code: SAMPLE_CODE },
+        status: "executing",
+        nestedCalls: [
+          {
+            toolCallId: "nested-1",
+            toolName: "file_read",
+            input: { path: "src/config.ts" },
+            output: {
+              success: true,
+              file_size: 1024,
+              lines_read: 42,
+              content: "export const config = {...};",
+            },
+            state: "output-available",
           },
-          state: "output-available",
-        },
-        {
-          toolCallId: "nested-2",
-          toolName: "file_edit_replace_string",
-          input: {
-            path: "src/config.ts",
-            old_string: "debug: false",
-            new_string: "debug: true",
+          {
+            toolCallId: "nested-2",
+            toolName: "file_edit_replace_string",
+            input: {
+              path: "src/config.ts",
+              old_string: "debug: false",
+              new_string: "debug: true",
+            },
+            state: "input-available",
           },
-          state: "input-available",
-        },
-      ],
-    }),
+        ],
+      },
+      executingTodos
+    ),
 };
 
 /** Code execution with no nested tools yet (just started) */

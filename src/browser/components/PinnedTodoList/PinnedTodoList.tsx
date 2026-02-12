@@ -34,7 +34,7 @@ export const PinnedTodoList: React.FC<PinnedTodoListProps> = ({ workspaceId }) =
   }
 
   return (
-    <div className="bg-panel-background m-0 max-h-[300px] overflow-y-auto border-t border-dashed border-[hsl(0deg_0%_28.64%)]">
+    <div className="bg-panel-background mt-2 max-h-[300px] overflow-y-auto border-t border-dashed border-[hsl(0deg_0%_28.64%)]">
       <div
         className="text-secondary flex cursor-pointer items-center gap-1 px-2 pt-1 pb-0.5 font-mono text-[10px] font-semibold tracking-wider select-none hover:opacity-80"
         onClick={() => setExpanded(!expanded)}
