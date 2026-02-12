@@ -190,7 +190,7 @@ describeIntegration("sendMessage basic integration tests", () => {
         await collector.waitForEvent("stream-end", 15000);
 
         // Setup Anthropic provider
-        const { setupProviders } = await import("./setup");
+        const { setupProviders } = await import("../setup");
         const { getApiKey } = await import("../../testUtils");
         await setupProviders(env, {
           anthropic: { apiKey: getApiKey("ANTHROPIC_API_KEY") },

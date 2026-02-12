@@ -26,6 +26,7 @@ const CHROME_DEVTOOLS_MCP_NPX = `npx -y chrome-devtools-mcp@${CHROME_DEVTOOLS_MC
 
 const TEST_SCREENSHOT_MCP_SERVER_PATH = path.join(
   __dirname,
+  "..",
   "fixtures",
   "mcp-screenshot-server.js"
 );

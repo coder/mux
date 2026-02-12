@@ -293,7 +293,7 @@ jobs:
             exit 0
           }
 
-          bun x jest --silent tests/ipc/backgroundBashDirect.test.ts tests/ipc/executeBash.test.ts tests/ipc/projectCreate.test.ts tests/ipc/planCommands.test.ts
+          bun x jest --silent tests/ipc/runtime/backgroundBashDirect.test.ts tests/ipc/runtime/executeBash.test.ts tests/ipc/projects/create.test.ts tests/ipc/agents/planCommands.test.ts
         env:
           BACKEND: ${{ needs.changes.outputs.backend }}
           TEST_INTEGRATION: "1"
