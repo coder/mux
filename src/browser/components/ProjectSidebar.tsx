@@ -781,7 +781,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                   className="text-secondary hover:bg-hover hover:border-border-light flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded border border-transparent bg-transparent px-1.5 text-xs transition-all duration-200"
                 >
                   <span className="text-base leading-none">+</span>
-                  <span>New Project</span>
+                  <span>Add Project</span>
                 </button>
               </div>
               <div className="flex-1 overflow-y-auto">

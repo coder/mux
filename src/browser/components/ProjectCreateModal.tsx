@@ -779,11 +779,11 @@ export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddF
             disabled={isCreating}
             className="h-9 bg-transparent"
           >
-            <ToggleGroupItem value="pick-folder" size="sm" className="h-7 px-3 text-[13px]">
+            <ToggleGroupItem value="pick-folder" size="sm" className="h-7 gap-1.5 px-3 text-[13px]">
               <FolderOpen className="h-3.5 w-3.5" />
               Local folder
             </ToggleGroupItem>
-            <ToggleGroupItem value="clone" size="sm" className="h-7 px-3 text-[13px]">
+            <ToggleGroupItem value="clone" size="sm" className="h-7 gap-1.5 px-3 text-[13px]">
               <Github className="h-3.5 w-3.5" />
               Clone repo
             </ToggleGroupItem>
