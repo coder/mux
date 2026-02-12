@@ -2404,9 +2404,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   }
                   className={variant === "creation" ? "min-h-28" : "min-h-16"}
                 />
-                {/* Keep cycle shortcuts visible in both creation + workspace without bloating the footer or crowding it. */}
+                {/* Keep shortcuts visible in both creation + workspace without bloating the footer or crowding it. */}
                 {input.trim() === "" && !editingMessage && (
                   <div className="text-muted pointer-events-none absolute right-12 bottom-3 left-2 flex items-center gap-4 text-[11px]">
+                    <span>
+                      <span className="font-mono">{formatKeybind(KEYBINDS.FOCUS_CHAT)}</span>
+                      <span> - focus chat</span>
+                    </span>
                     <span>
                       <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_MODEL)}</span>
                       <span> - change model</span>
