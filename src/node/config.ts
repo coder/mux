@@ -20,6 +20,7 @@ import {
 } from "@/common/types/tasks";
 import { isLayoutPresetsConfigEmpty, normalizeLayoutPresetsConfig } from "@/common/types/uiLayouts";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
+import { RUNTIME_ENABLEMENT_IDS, type RuntimeEnablementId } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { getMuxHome } from "@/common/constants/paths";
@@ -196,6 +197,7 @@ export class Config {
           stopCoderWorkspaceOnArchive?: unknown;
           terminalDefaultShell?: unknown;
           updateChannel?: unknown;
+          runtimeEnablement?: unknown;
         };
 
         // Config is stored as array of [path, config] pairs
@@ -233,6 +235,21 @@ export class Config {
           const stopCoderWorkspaceOnArchive =
             parseOptionalBoolean(parsed.stopCoderWorkspaceOnArchive) === false ? false : undefined;
           const updateChannel = parseUpdateChannel(parsed.updateChannel);
+
+          const runtimeEnablementOverrides: Partial<Record<RuntimeEnablementId, false>> = {};
+          if (parsed.runtimeEnablement && typeof parsed.runtimeEnablement === "object") {
+            const record = parsed.runtimeEnablement as Record<string, unknown>;
+            for (const runtimeId of RUNTIME_ENABLEMENT_IDS) {
+              // Default ON: store `false` only so config.json stays minimal.
+              if (record[runtimeId] === false) {
+                runtimeEnablementOverrides[runtimeId] = false;
+              }
+            }
+          }
+          const runtimeEnablement =
+            Object.keys(runtimeEnablementOverrides).length > 0
+              ? runtimeEnablementOverrides
+              : undefined;
 
           const agentAiDefaults =
             parsed.agentAiDefaults !== undefined
@@ -274,6 +291,7 @@ export class Config {
             stopCoderWorkspaceOnArchive,
             terminalDefaultShell: parseOptionalNonEmptyString(parsed.terminalDefaultShell),
             updateChannel,
+            runtimeEnablement,
           };
         }
       }
@@ -323,6 +341,7 @@ export class Config {
         stopCoderWorkspaceOnArchive?: boolean;
         terminalDefaultShell?: string;
         updateChannel?: UpdateChannel;
+        runtimeEnablement?: ProjectsConfig["runtimeEnablement"];
       } = {
         projects: Array.from(config.projects.entries()),
         taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
@@ -447,6 +466,17 @@ export class Config {
       const updateChannel = parseUpdateChannel(config.updateChannel);
       if (updateChannel) {
         data.updateChannel = updateChannel;
+      }
+
+      const runtimeEnablement: Partial<Record<RuntimeEnablementId, false>> = {};
+      for (const runtimeId of RUNTIME_ENABLEMENT_IDS) {
+        // Default ON: persist `false` only so config.json stays minimal.
+        if (config.runtimeEnablement?.[runtimeId] === false) {
+          runtimeEnablement[runtimeId] = false;
+        }
+      }
+      if (Object.keys(runtimeEnablement).length > 0) {
+        data.runtimeEnablement = runtimeEnablement;
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
