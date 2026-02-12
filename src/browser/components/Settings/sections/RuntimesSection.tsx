@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 
 import { resolveCoderAvailability } from "@/browser/components/ChatInput/CoderControls";
 import {
@@ -10,16 +10,20 @@ import {
   SelectValue,
 } from "@/browser/components/ui/select";
 import { Switch } from "@/browser/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
 import { useAPI } from "@/browser/contexts/API";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useRuntimeEnablement } from "@/browser/hooks/useRuntimeEnablement";
 import { RUNTIME_CHOICE_UI, type RuntimeUiSpec } from "@/browser/utils/runtimeUi";
+import { cn } from "@/common/lib/utils";
 import type { CoderInfo } from "@/common/orpc/schemas/coder";
 import type {
   RuntimeAvailabilityStatus,
+  RuntimeEnablement,
   RuntimeEnablementId,
   RuntimeMode,
 } from "@/common/types/runtime";
+import { RUNTIME_ENABLEMENT_IDS } from "@/common/types/runtime";
 
 type RuntimeAvailabilityMap = Record<RuntimeMode, RuntimeAvailabilityStatus>;
 
@@ -31,38 +35,96 @@ type RuntimeAvailabilityState =
   | { status: "failed" }
   | { status: "loaded"; data: RuntimeAvailabilityMap };
 
+const ALL_SCOPE_VALUE = "__all__";
+
+const RUNTIME_ROWS: RuntimeRow[] = [
+  { id: "local", ...RUNTIME_CHOICE_UI.local },
+  { id: "worktree", ...RUNTIME_CHOICE_UI.worktree },
+  { id: "ssh", ...RUNTIME_CHOICE_UI.ssh },
+  { id: "coder", ...RUNTIME_CHOICE_UI.coder },
+  { id: "docker", ...RUNTIME_CHOICE_UI.docker },
+  { id: "devcontainer", ...RUNTIME_CHOICE_UI.devcontainer },
+];
+
+function getProjectLabel(path: string) {
+  return path.split(/[\\/]/).pop() ?? path;
+}
+
+function mergeRuntimeEnablement(
+  base: RuntimeEnablement,
+  overrides?: Partial<Record<RuntimeEnablementId, false>>
+): RuntimeEnablement {
+  const merged: RuntimeEnablement = { ...base };
+
+  if (!overrides) {
+    return merged;
+  }
+
+  // Project configs store only disabled runtimes; merge so the UI reflects the effective values.
+  for (const runtimeId of RUNTIME_ENABLEMENT_IDS) {
+    if (overrides[runtimeId] === false) {
+      merged[runtimeId] = false;
+    }
+  }
+
+  return merged;
+}
+
+function getFallbackRuntime(enablement: RuntimeEnablement): RuntimeEnablementId | null {
+  return RUNTIME_ROWS.find((runtime) => enablement[runtime.id])?.id ?? null;
+}
+
 export function RuntimesSection() {
   const { api } = useAPI();
   const { projects } = useProjectContext();
-  const { enablement, setRuntimeEnabled } = useRuntimeEnablement();
+  const { enablement, setRuntimeEnabled, defaultRuntime, setDefaultRuntime } =
+    useRuntimeEnablement();
 
   const projectList = Array.from(projects.keys());
-  const hasProjects = projectList.length > 0;
 
-  const [selectedProject, setSelectedProject] = useState("");
+  const [selectedScope, setSelectedScope] = useState(ALL_SCOPE_VALUE);
+  const [projectOverrideEnabled, setProjectOverrideEnabled] = useState(false);
+  const [projectEnablement, setProjectEnablement] = useState<RuntimeEnablement>(enablement);
+  const [projectDefaultRuntime, setProjectDefaultRuntime] = useState<RuntimeEnablementId | null>(
+    defaultRuntime
+  );
   const [runtimeAvailabilityState, setRuntimeAvailabilityState] =
     useState<RuntimeAvailabilityState>({ status: "idle" });
   const [coderInfo, setCoderInfo] = useState<CoderInfo | null>(null);
 
-  // Runtime availability is project-scoped, so keep the selection aligned with known projects.
+  const selectedProjectPath = selectedScope === ALL_SCOPE_VALUE ? null : selectedScope;
+  const isProjectScope = Boolean(selectedProjectPath);
+  const isProjectOverrideActive = isProjectScope && projectOverrideEnabled;
+
   useEffect(() => {
-    if (projects.size === 0) {
-      if (selectedProject) {
-        setSelectedProject("");
-      }
+    if (selectedScope === ALL_SCOPE_VALUE) {
       return;
     }
 
-    if (!selectedProject || !projects.has(selectedProject)) {
-      const firstProject = Array.from(projects.keys())[0] ?? "";
-      if (firstProject && firstProject !== selectedProject) {
-        setSelectedProject(firstProject);
-      }
+    if (!projects.has(selectedScope)) {
+      setSelectedScope(ALL_SCOPE_VALUE);
     }
-  }, [projects, selectedProject]);
+  }, [projects, selectedScope]);
 
   useEffect(() => {
-    if (!api || !selectedProject) {
+    if (!selectedProjectPath) {
+      setProjectOverrideEnabled(false);
+      setProjectEnablement(enablement);
+      setProjectDefaultRuntime(defaultRuntime ?? null);
+      return;
+    }
+
+    const projectConfig = projects.get(selectedProjectPath);
+    const hasOverrides =
+      Boolean(projectConfig?.runtimeEnablement) || projectConfig?.defaultRuntime !== undefined;
+
+    setProjectOverrideEnabled(hasOverrides);
+    setProjectEnablement(mergeRuntimeEnablement(enablement, projectConfig?.runtimeEnablement));
+    setProjectDefaultRuntime(projectConfig?.defaultRuntime ?? defaultRuntime ?? null);
+  }, [defaultRuntime, enablement, projects, selectedProjectPath]);
+
+  useEffect(() => {
+    if (!api || !selectedProjectPath) {
       setRuntimeAvailabilityState({ status: "idle" });
       return;
     }
@@ -71,7 +133,7 @@ export function RuntimesSection() {
     setRuntimeAvailabilityState({ status: "loading" });
 
     api.projects
-      .runtimeAvailability({ projectPath: selectedProject })
+      .runtimeAvailability({ projectPath: selectedProjectPath })
       .then((availability) => {
         if (active) {
           setRuntimeAvailabilityState({ status: "loaded", data: availability });
@@ -86,7 +148,7 @@ export function RuntimesSection() {
     return () => {
       active = false;
     };
-  }, [api, selectedProject]);
+  }, [api, selectedProjectPath]);
 
   useEffect(() => {
     if (!api) {
@@ -120,94 +182,265 @@ export function RuntimesSection() {
   const coderAvailability = resolveCoderAvailability(coderInfo);
   const availabilityMap =
     runtimeAvailabilityState.status === "loaded" ? runtimeAvailabilityState.data : null;
-  const showAvailabilityLoading =
-    runtimeAvailabilityState.status === "loading" || coderAvailability.state === "loading";
 
-  const RUNTIME_ROWS: RuntimeRow[] = [
-    { id: "local", ...RUNTIME_CHOICE_UI.local },
-    { id: "worktree", ...RUNTIME_CHOICE_UI.worktree },
-    { id: "ssh", ...RUNTIME_CHOICE_UI.ssh },
-    { id: "coder", ...RUNTIME_CHOICE_UI.coder },
-    { id: "docker", ...RUNTIME_CHOICE_UI.docker },
-    { id: "devcontainer", ...RUNTIME_CHOICE_UI.devcontainer },
-  ];
+  const effectiveEnablement = isProjectOverrideActive ? projectEnablement : enablement;
+  const effectiveDefaultRuntime = isProjectOverrideActive ? projectDefaultRuntime : defaultRuntime;
+
+  const enabledRuntimeOptions = RUNTIME_ROWS.filter((runtime) => effectiveEnablement[runtime.id]);
+  const defaultRuntimeValue =
+    effectiveDefaultRuntime && effectiveEnablement[effectiveDefaultRuntime]
+      ? effectiveDefaultRuntime
+      : "";
+  const defaultRuntimePlaceholder =
+    enabledRuntimeOptions.length === 0 ? "No runtimes enabled" : "Select default runtime";
+  const defaultRuntimeDisabled =
+    enabledRuntimeOptions.length === 0 || (isProjectScope && !projectOverrideEnabled);
+
+  const handleOverrideToggle = (checked: boolean) => {
+    if (!selectedProjectPath) {
+      return;
+    }
+
+    if (!checked) {
+      setProjectOverrideEnabled(false);
+      setProjectEnablement(enablement);
+      setProjectDefaultRuntime(defaultRuntime ?? null);
+      api?.config
+        ?.updateRuntimeEnablement({
+          projectPath: selectedProjectPath,
+          runtimeEnablement: null,
+          defaultRuntime: null,
+        })
+        .catch(() => {
+          // Best-effort only.
+        });
+      return;
+    }
+
+    const nextEnablement = { ...enablement };
+    setProjectOverrideEnabled(true);
+    setProjectEnablement(nextEnablement);
+    setProjectDefaultRuntime(defaultRuntime ?? null);
+
+    api?.config
+      ?.updateRuntimeEnablement({
+        projectPath: selectedProjectPath,
+        runtimeEnablement: nextEnablement,
+        defaultRuntime: defaultRuntime ?? null,
+      })
+      .catch(() => {
+        // Best-effort only.
+      });
+  };
+
+  const handleRuntimeToggle = (runtimeId: RuntimeEnablementId, enabled: boolean) => {
+    const nextEnablement: RuntimeEnablement = {
+      ...effectiveEnablement,
+      [runtimeId]: enabled,
+    };
+
+    if (!isProjectScope) {
+      setRuntimeEnabled(runtimeId, enabled);
+      if (defaultRuntime && !nextEnablement[defaultRuntime]) {
+        setDefaultRuntime(getFallbackRuntime(nextEnablement));
+      }
+      return;
+    }
+
+    if (!selectedProjectPath || !projectOverrideEnabled) {
+      return;
+    }
+
+    setProjectEnablement(nextEnablement);
+
+    let nextDefaultRuntime = projectDefaultRuntime ?? null;
+    if (nextDefaultRuntime && !nextEnablement[nextDefaultRuntime]) {
+      nextDefaultRuntime = getFallbackRuntime(nextEnablement);
+      setProjectDefaultRuntime(nextDefaultRuntime);
+    }
+
+    const updatePayload: {
+      projectPath: string;
+      runtimeEnablement: RuntimeEnablement;
+      defaultRuntime?: RuntimeEnablementId | null;
+    } = {
+      projectPath: selectedProjectPath,
+      runtimeEnablement: nextEnablement,
+    };
+
+    if (nextDefaultRuntime !== projectDefaultRuntime) {
+      updatePayload.defaultRuntime = nextDefaultRuntime ?? null;
+    }
+
+    api?.config?.updateRuntimeEnablement(updatePayload).catch(() => {
+      // Best-effort only.
+    });
+  };
+
+  const handleDefaultRuntimeChange = (value: string) => {
+    const runtimeId = value as RuntimeEnablementId;
+
+    if (!isProjectScope) {
+      setDefaultRuntime(runtimeId);
+      return;
+    }
+
+    if (!selectedProjectPath || !projectOverrideEnabled) {
+      return;
+    }
+
+    setProjectDefaultRuntime(runtimeId);
+    api?.config
+      ?.updateRuntimeEnablement({
+        projectPath: selectedProjectPath,
+        defaultRuntime: runtimeId,
+      })
+      .catch(() => {
+        // Best-effort only.
+      });
+  };
 
   return (
     <div className="space-y-6">
-      <div>
-        <h3 className="text-foreground mb-4 text-sm font-medium">Runtime availability</h3>
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <div className="text-foreground text-sm">Project</div>
-              <div className="text-muted text-xs">Select a project to check availability</div>
-            </div>
-            <Select
-              value={selectedProject}
-              onValueChange={setSelectedProject}
-              disabled={!hasProjects}
-            >
-              <SelectTrigger
-                className="border-border-medium bg-background-secondary hover:bg-hover h-9 w-auto min-w-[160px] cursor-pointer rounded-md border px-3 text-sm transition-colors"
-                aria-label="Project"
-              >
-                <SelectValue placeholder="Select project" />
-              </SelectTrigger>
-              <SelectContent>
-                {projectList.map((path) => (
-                  <SelectItem key={path} value={path}>
-                    {path.split(/[\\/]/).pop() ?? path}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <div className="text-foreground text-sm">Scope</div>
+            <div className="text-muted text-xs">Manage runtimes globally or per project.</div>
           </div>
-
-          {!hasProjects ? (
-            <div className="text-muted text-sm">Add a project to see runtime availability.</div>
-          ) : null}
-
-          {showAvailabilityLoading ? (
-            <div className="text-muted flex items-center gap-2 text-sm">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Checking runtime availability…
-            </div>
-          ) : null}
+          <Select value={selectedScope} onValueChange={setSelectedScope}>
+            <SelectTrigger
+              className="border-border-medium bg-background-secondary hover:bg-hover h-9 w-auto min-w-[160px] cursor-pointer rounded-md border px-3 text-sm transition-colors"
+              aria-label="Scope"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_SCOPE_VALUE}>All</SelectItem>
+              {projectList.map((path) => (
+                <SelectItem key={path} value={path}>
+                  {getProjectLabel(path)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
+
+        {isProjectScope ? (
+          <div className="border-border-light bg-background-secondary flex items-center justify-between gap-4 rounded-md border px-3 py-2">
+            <div>
+              <div className="text-foreground text-sm">Override project settings</div>
+              <div className="text-muted text-xs">
+                Keep global defaults or customize enabled runtimes for this project.
+              </div>
+            </div>
+            <Switch
+              checked={projectOverrideEnabled}
+              onCheckedChange={handleOverrideToggle}
+              aria-label="Override project runtime settings"
+            />
+          </div>
+        ) : null}
       </div>
 
-      <div>
-        <h3 className="text-foreground mb-4 text-sm font-medium">Enabled runtimes</h3>
+      <div className="space-y-4">
+        <div
+          className={cn(
+            "flex items-center justify-between gap-4",
+            isProjectScope && !projectOverrideEnabled && "opacity-60"
+          )}
+        >
+          <div>
+            <div className="text-foreground text-sm">Default runtime</div>
+            <div className="text-muted text-xs">
+              {isProjectScope
+                ? "Applied to new workspaces in this project."
+                : "Applied to new workspaces by default."}
+            </div>
+          </div>
+          <Select
+            value={defaultRuntimeValue}
+            onValueChange={handleDefaultRuntimeChange}
+            disabled={defaultRuntimeDisabled}
+          >
+            <SelectTrigger className="border-border-medium bg-background-secondary hover:bg-hover h-9 w-auto min-w-[180px] cursor-pointer rounded-md border px-3 text-sm transition-colors">
+              <SelectValue placeholder={defaultRuntimePlaceholder} />
+            </SelectTrigger>
+            <SelectContent>
+              {enabledRuntimeOptions.map((runtime) => (
+                <SelectItem key={runtime.id} value={runtime.id}>
+                  {runtime.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
         <div className="divide-border-light divide-y">
           {RUNTIME_ROWS.map((runtime) => {
             const Icon = runtime.Icon;
             const isCoder = runtime.id === "coder";
-            const availability = isCoder ? null : availabilityMap?.[runtime.id as RuntimeMode];
-            const availabilityReason = isCoder
-              ? coderAvailability.state !== "available" && coderAvailability.state !== "loading"
-                ? coderAvailability.reason
-                : null
-              : availability && !availability.available
-                ? availability.reason
-                : null;
+            const availability = isCoder
+              ? null
+              : (availabilityMap?.[runtime.id as RuntimeMode] ?? null);
+            const availabilityReason = isProjectScope
+              ? isCoder
+                ? coderAvailability.state !== "available" && coderAvailability.state !== "loading"
+                  ? coderAvailability.reason
+                  : null
+                : availability && !availability.available
+                  ? availability.reason
+                  : null
+              : null;
+            const showLoading = isProjectScope
+              ? isCoder
+                ? coderAvailability.state === "loading"
+                : runtimeAvailabilityState.status === "loading"
+              : false;
+            const rowDisabled = isProjectScope && !projectOverrideEnabled;
 
+            // Inline status indicators keep availability feedback from shifting row layout.
             return (
-              <div key={runtime.id} className="flex items-start justify-between gap-4 py-3">
+              <div
+                key={runtime.id}
+                className={cn(
+                  "flex items-start justify-between gap-4 py-3",
+                  rowDisabled && "opacity-60"
+                )}
+              >
                 <div className="flex flex-1 gap-3 pr-4">
                   <Icon size={16} className="text-muted mt-0.5" />
                   <div className="flex-1">
-                    <div className="text-foreground text-sm">{runtime.label}</div>
+                    <div className="flex items-center gap-2">
+                      <div className="text-foreground text-sm">{runtime.label}</div>
+                      {availabilityReason ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="bg-warning/10 text-warning border-warning/30 inline-flex cursor-help items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px]">
+                              <AlertTriangle className="h-3 w-3" />
+                              Unavailable
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent align="start" className="max-w-64 whitespace-normal">
+                            {availabilityReason}
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : null}
+                    </div>
                     <div className="text-muted text-xs">{runtime.description}</div>
-                    {availabilityReason ? (
-                      <p className="mt-1 text-xs text-yellow-500">{availabilityReason}</p>
-                    ) : null}
                   </div>
                 </div>
-                <Switch
-                  checked={enablement[runtime.id]}
-                  onCheckedChange={(checked) => setRuntimeEnabled(runtime.id, checked)}
-                  aria-label={`Toggle ${runtime.label} runtime`}
-                />
+                <div className="flex items-center gap-3">
+                  <div className="flex h-4 w-4 items-center justify-center">
+                    {showLoading ? <Loader2 className="text-muted h-4 w-4 animate-spin" /> : null}
+                  </div>
+                  <Switch
+                    checked={effectiveEnablement[runtime.id]}
+                    disabled={rowDisabled}
+                    onCheckedChange={(checked) => handleRuntimeToggle(runtime.id, checked)}
+                    aria-label={`Toggle ${runtime.label} runtime`}
+                  />
+                </div>
               </div>
             );
           })}
