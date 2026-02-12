@@ -3,6 +3,7 @@
  * Used to create/manage Coder workspaces as SSH targets for Mux workspaces.
  */
 import { shescape } from "@/node/runtime/streamUtils";
+import { hasHostPatternInSSHConfig } from "@/node/runtime/sshConfigParser";
 import { execAsync } from "@/node/utils/disposableExec";
 import { getBashPath } from "@/node/utils/main/bashPath";
 import { log } from "@/node/services/log";
@@ -1460,6 +1461,12 @@ export class CoderService {
    * Run before every Coder workspace connection (idempotent).
    */
   async ensureSSHConfig(): Promise<void> {
+    // Respect existing user-managed Coder SSH config; avoid rewriting when Host *.coder exists.
+    if (await hasHostPatternInSSHConfig("*.coder")) {
+      log.debug("Skipping coder config-ssh because Host *.coder already exists");
+      return;
+    }
+
     log.debug("Ensuring Coder SSH config");
     using proc = execAsync("coder config-ssh --yes");
     await proc.result;

@@ -1,7 +1,7 @@
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
-import { resolveSSHConfig } from "./sshConfigParser";
+import { hasHostPatternInSSHConfig, resolveSSHConfig } from "./sshConfigParser";
 
 describe("resolveSSHConfig", () => {
   test("applies Host + Match host proxy rules", async () => {
@@ -73,6 +73,101 @@ describe("resolveSSHConfig", () => {
       expect(resolved.proxyCommand).toBe("/usr/bin/proxy --user %r");
       // user should be undefined since no User directive
       expect(resolved.user).toBeUndefined();
+    } finally {
+      if (previousUserProfile === undefined) {
+        delete process.env.USERPROFILE;
+      } else {
+        process.env.USERPROFILE = previousUserProfile;
+      }
+
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("hasHostPatternInSSHConfig", () => {
+  test("returns true when Host *.coder exists", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-ssh-config-"));
+    const previousUserProfile = process.env.USERPROFILE;
+
+    process.env.USERPROFILE = tempDir;
+
+    try {
+      await fs.mkdir(path.join(tempDir, ".ssh"), { recursive: true });
+      await fs.writeFile(path.join(tempDir, ".ssh", "config"), "Host *.coder\n", "utf8");
+
+      await expect(hasHostPatternInSSHConfig("*.coder")).resolves.toBe(true);
+    } finally {
+      if (previousUserProfile === undefined) {
+        delete process.env.USERPROFILE;
+      } else {
+        process.env.USERPROFILE = previousUserProfile;
+      }
+
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("returns true when Host line includes multiple patterns", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-ssh-config-"));
+    const previousUserProfile = process.env.USERPROFILE;
+
+    process.env.USERPROFILE = tempDir;
+
+    try {
+      await fs.mkdir(path.join(tempDir, ".ssh"), { recursive: true });
+      await fs.writeFile(
+        path.join(tempDir, ".ssh", "config"),
+        "Host github.com *.coder internal\n",
+        "utf8"
+      );
+
+      await expect(hasHostPatternInSSHConfig("*.coder")).resolves.toBe(true);
+    } finally {
+      if (previousUserProfile === undefined) {
+        delete process.env.USERPROFILE;
+      } else {
+        process.env.USERPROFILE = previousUserProfile;
+      }
+
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("returns false when only non-matching Host patterns exist", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-ssh-config-"));
+    const previousUserProfile = process.env.USERPROFILE;
+
+    process.env.USERPROFILE = tempDir;
+
+    try {
+      await fs.mkdir(path.join(tempDir, ".ssh"), { recursive: true });
+      await fs.writeFile(
+        path.join(tempDir, ".ssh", "config"),
+        "Host github.com gitlab.com\n",
+        "utf8"
+      );
+
+      await expect(hasHostPatternInSSHConfig("*.coder")).resolves.toBe(false);
+    } finally {
+      if (previousUserProfile === undefined) {
+        delete process.env.USERPROFILE;
+      } else {
+        process.env.USERPROFILE = previousUserProfile;
+      }
+
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("returns false when SSH config file is absent", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-ssh-config-"));
+    const previousUserProfile = process.env.USERPROFILE;
+
+    process.env.USERPROFILE = tempDir;
+
+    try {
+      await expect(hasHostPatternInSSHConfig("*.coder")).resolves.toBe(false);
     } finally {
       if (previousUserProfile === undefined) {
         delete process.env.USERPROFILE;

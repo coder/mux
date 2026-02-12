@@ -3,6 +3,7 @@ import { Readable } from "stream";
 import { describe, it, expect, vi, beforeEach, afterEach, spyOn } from "bun:test";
 import { CoderService, compareVersions } from "./coderService";
 import * as childProcess from "child_process";
+import * as sshConfigParser from "@/node/runtime/sshConfigParser";
 import * as disposableExec from "@/node/utils/disposableExec";
 
 // eslint-disable-next-line @typescript-eslint/no-empty-function
@@ -1063,6 +1064,33 @@ describe("CoderService", () => {
 
       expect(thrown).toBeTruthy();
       expect(thrown instanceof Error ? thrown.message : String(thrown)).toContain("required-param");
+    });
+  });
+
+  describe("ensureSSHConfig", () => {
+    it("skips coder config-ssh when Host *.coder is already present", async () => {
+      const hasHostPatternSpy = spyOn(
+        sshConfigParser,
+        "hasHostPatternInSSHConfig"
+      ).mockResolvedValue(true);
+
+      await service.ensureSSHConfig();
+
+      expect(hasHostPatternSpy).toHaveBeenCalledWith("*.coder");
+      expect(execAsyncSpy).not.toHaveBeenCalled();
+    });
+
+    it("runs coder config-ssh when Host *.coder is missing", async () => {
+      const hasHostPatternSpy = spyOn(
+        sshConfigParser,
+        "hasHostPatternInSSHConfig"
+      ).mockResolvedValue(false);
+      mockExecOk("");
+
+      await service.ensureSSHConfig();
+
+      expect(hasHostPatternSpy).toHaveBeenCalledWith("*.coder");
+      expect(execAsyncSpy).toHaveBeenCalledWith("coder config-ssh --yes");
     });
   });
 });

@@ -247,7 +247,18 @@ function toStringArray(value: ComputedConfigValue | undefined): string[] {
   return [];
 }
 
-async function loadSSHConfig(): Promise<SSHConfig | null> {
+function hostDirectiveIncludesPattern(
+  value: string | ParsedValueToken[],
+  expectedPattern: string
+): boolean {
+  if (typeof value === "string") {
+    return value.split(/\s+/).some((part) => part === expectedPattern);
+  }
+
+  return value.some((token) => token.val === expectedPattern);
+}
+
+export async function loadSSHConfig(): Promise<SSHConfig | null> {
   const homeDir = getHomeDir();
   const configPath = path.join(homeDir, ".ssh", "config");
 
@@ -264,6 +275,30 @@ async function loadSSHConfig(): Promise<SSHConfig | null> {
     }
     return null;
   }
+}
+
+/**
+ * Check whether ~/.ssh/config contains a Host block matching the given
+ * pattern string (e.g. "*.coder"). Returns false when the config file
+ * is missing or unreadable.
+ */
+export async function hasHostPatternInSSHConfig(pattern: string): Promise<boolean> {
+  const config = await loadSSHConfig();
+  if (!config) {
+    return false;
+  }
+
+  for (const line of config) {
+    if (line.type !== SSHConfig.DIRECTIVE || line.param.toLowerCase() !== "host") {
+      continue;
+    }
+
+    if (hostDirectiveIncludesPattern(line.value as string | ParsedValueToken[], pattern)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export async function resolveSSHConfig(host: string): Promise<ResolvedSSHConfig> {
