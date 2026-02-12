@@ -908,7 +908,11 @@ export function CreationControls(props: CreationControlsProps) {
           />
 
           {/* User request: restore the branch selector with a git icon label. */}
-          <div className="flex items-center gap-2" data-component="BranchSelector">
+          <div
+            className="flex items-center gap-2"
+            data-component="BranchSelector"
+            data-tutorial="trunk-branch"
+          >
             <label className="text-muted-foreground flex items-center gap-1 text-xs">
               <GitBranch className="h-3.5 w-3.5" />
               Branch
