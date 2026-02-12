@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
+import { RouterProvider } from "@/browser/contexts/RouterContext";
 import { SettingsProvider } from "@/browser/contexts/SettingsContext";
 import { cleanup, render, waitFor } from "@testing-library/react";
 
@@ -93,9 +94,11 @@ describe("ProjectPage", () => {
     };
 
     const { rerender } = render(
-      <SettingsProvider>
-        <ProjectPage {...baseProps} />
-      </SettingsProvider>
+      <RouterProvider>
+        <SettingsProvider>
+          <ProjectPage {...baseProps} />
+        </SettingsProvider>
+      </RouterProvider>
     );
 
     await waitFor(() => expect(readyCalls).toBe(1));
@@ -103,9 +106,11 @@ describe("ProjectPage", () => {
 
     // Simulate an unrelated App re-render that changes an inline callback identity.
     rerender(
-      <SettingsProvider>
-        <ProjectPage {...baseProps} onWorkspaceCreated={() => undefined} />
-      </SettingsProvider>
+      <RouterProvider>
+        <SettingsProvider>
+          <ProjectPage {...baseProps} onWorkspaceCreated={() => undefined} />
+        </SettingsProvider>
+      </RouterProvider>
     );
 
     await waitFor(() => expect(readyCalls).toBe(2));
