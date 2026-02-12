@@ -1,9 +1,21 @@
-import "./dom";
-import { describe, test, expect, beforeEach } from "bun:test";
-import {
-  findAdjacentWorkspaceId,
-  getVisibleWorkspaceIds,
-} from "@/browser/utils/ui/workspaceDomNav";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { GlobalWindow } from "happy-dom";
+import { findAdjacentWorkspaceId, getVisibleWorkspaceIds } from "./workspaceDomNav";
+
+// Install a minimal happy-dom environment so `document` is available.
+let win: InstanceType<typeof GlobalWindow>;
+const origDocument = globalThis.document;
+
+beforeAll(() => {
+  win = new GlobalWindow();
+  // @ts-expect-error -- happy-dom's Document is close enough for our DOM queries
+  globalThis.document = win.document;
+});
+
+afterAll(() => {
+  globalThis.document = origDocument;
+  void win.close();
+});
 
 /** Create a fake workspace row element in the DOM. */
 function addWorkspaceRow(id: string, path: string = `/repo/${id}`): void {
