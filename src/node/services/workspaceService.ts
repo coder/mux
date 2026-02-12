@@ -166,6 +166,27 @@ export function generateForkBranchName(parentName: string, existingNames: string
   return `${prefix}${max + 1}`;
 }
 
+/**
+ * Generate a forked workspace title by appending a " (N)" suffix to the parent title.
+ * Scans existing titles in the same project to pick the next available number.
+ */
+export function generateForkTitle(parentTitle: string, existingTitles: string[]): string {
+  // Strip any existing " (N)" suffix from the parent title to get the base
+  const base = parentTitle.replace(/ \(\d+\)$/, "");
+  const prefix = `${base} (`;
+
+  let max = 0;
+  for (const title of existingTitles) {
+    if (title.startsWith(prefix) && title.endsWith(")")) {
+      const n = parseInt(title.slice(prefix.length, -1), 10);
+      if (!isNaN(n) && n > max) max = n;
+    }
+  }
+  // If parent title itself exists in the list (without suffix), start at (1)
+  // Otherwise continue from the highest found suffix
+  return `${base} (${max + 1})`;
+}
+
 function isErrnoWithCode(error: unknown, code: string): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
 }
@@ -1982,8 +2003,6 @@ export class WorkspaceService extends EventEmitter {
             projectConfig.workspaces.find((w) => w.path === workspacePath);
           if (workspaceEntry) {
             workspaceEntry.title = title;
-            // Exit auto-title state on any title update (manual edit or auto-generated).
-            delete workspaceEntry.autoTitle;
           }
         }
         return config;
@@ -2006,61 +2025,6 @@ export class WorkspaceService extends EventEmitter {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Err(`Failed to update workspace title: ${message}`);
-    }
-  }
-
-  /**
-   * Fire-and-forget: generate a semantic title for a workspace whose name
-   * was auto-generated during fork. Reads the current user message plus
-   * the prior assistant message from history (forked from parent) for context.
-   * Matches the draft-chat naming behavior: triggers on user send, not after
-   * the assistant replies.
-   */
-  private async autoGenerateTitle(workspaceId: string, userMessage: string): Promise<void> {
-    try {
-      // Atomically clear autoTitle first — prevents double-fire on rapid sends.
-      await this.config.editConfig((config) => {
-        for (const [, project] of config.projects) {
-          const ws = project.workspaces.find((w) => w.id === workspaceId);
-          if (ws) {
-            delete ws.autoTitle;
-            break;
-          }
-        }
-        return config;
-      });
-
-      // Read prior assistant message from forked history for additional context.
-      // The fork copies chat.jsonl from the parent, so the last assistant message
-      // is the one the user was reading when they decided to fork.
-      let priorAssistantText: string | undefined;
-      const lastMsgResult = await this.historyService.getLastMessages(workspaceId, 1);
-      if (lastMsgResult.success) {
-        const lastMsg = lastMsgResult.data[0];
-        if (lastMsg?.role === "assistant") {
-          priorAssistantText =
-            lastMsg.parts
-              ?.filter((p) => p.type === "text")
-              .map((p) => p.text)
-              .join("\n") ?? undefined;
-        }
-      }
-
-      const candidates: string[] = [...AUTO_NAME_PREFERRED_MODELS];
-      // No gateway transforms needed — aiService.createModel() handles resolution
-
-      const result = await generateWorkspaceIdentity(
-        userMessage,
-        candidates,
-        this.aiService,
-        priorAssistantText
-      );
-      if (result.success) {
-        await this.updateTitle(workspaceId, result.data.title);
-      }
-    } catch (error) {
-      // Best-effort — don't let naming failures affect the user's workflow
-      log.warn("Auto-generate title failed", { workspaceId, error });
     }
   }
 
@@ -2090,7 +2054,7 @@ export class WorkspaceService extends EventEmitter {
       return Err("First user message has no text content");
     }
 
-    // Use the first assistant reply for richer context (same pattern as autoGenerateTitle)
+    // Use the first assistant reply for richer context
     let assistantContext: string | undefined;
     const firstAssistantMsg = historyResult.data.find((m) => m.role === "assistant");
     if (firstAssistantMsg) {
@@ -2684,12 +2648,13 @@ export class WorkspaceService extends EventEmitter {
         return Err("Forking Docker workspaces is not supported. Create a new workspace instead.");
       }
 
-      // Auto-generate branch name when user omits one (seamless fork).
-      // Uses pattern: {parentName}-fork-{N}, scanning existing names to avoid collisions.
+      // Auto-generate branch name (and title) when user omits one (seamless fork).
+      // Uses pattern: {parentName}-fork-{N} for branch, "{parentTitle} (N)" for title.
       const isAutoName = newName == null;
+      // Fetch all metadata upfront for both branch name and title collision checks.
+      const allMetadata = isAutoName ? await this.config.getAllWorkspaceMetadata() : [];
       let resolvedName: string;
       if (isAutoName) {
-        const allMetadata = await this.config.getAllWorkspaceMetadata();
         const existingNames = allMetadata
           .filter((m) => m.projectPath === foundProjectPath)
           .map((m) => m.name);
@@ -2844,9 +2809,16 @@ export class WorkspaceService extends EventEmitter {
         namedWorkspacePath,
         // Preserve workspace organization when forking via /fork.
         sectionId: sourceMetadata.sectionId,
-        // Seamless fork: inherit parent title as placeholder, mark for auto-title on first message.
+        // Seamless fork: generate a numbered title like "Parent Title (1)".
         ...(isAutoName
-          ? { title: sourceMetadata.title ?? sourceMetadata.name, autoTitle: true }
+          ? {
+              title: generateForkTitle(
+                sourceMetadata.title ?? sourceMetadata.name,
+                allMetadata
+                  .filter((m) => m.projectPath === foundProjectPath)
+                  .map((m) => m.title ?? m.name)
+              ),
+            }
           : {}),
       };
 
@@ -2945,22 +2917,6 @@ export class WorkspaceService extends EventEmitter {
       const messageTimestamp = Date.now();
       if (!isIdleCompaction) {
         void this.updateRecencyTimestamp(workspaceId, messageTimestamp);
-      }
-
-      // Auto-name: generate title from first user message if workspace has placeholder title.
-      // Matches draft-chat behavior: triggers on send, includes prior assistant context from
-      // forked history. Follows the same fire-and-forget pattern as updateRecencyTimestamp.
-      if (!isIdleCompaction) {
-        const found = this.config.findWorkspace(workspaceId);
-        if (found) {
-          const wsConfig = this.config
-            .loadConfigOrDefault()
-            .projects.get(found.projectPath)
-            ?.workspaces.find((w) => w.id === workspaceId);
-          if (wsConfig?.autoTitle) {
-            void this.autoGenerateTitle(workspaceId, message);
-          }
-        }
       }
 
       // Experiments: resolve flags respecting userOverridable setting.

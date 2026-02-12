@@ -813,7 +813,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                     className={cn(
                       "text-foreground block truncate text-left text-[13px] transition-colors duration-200",
                       !isDisabled && "cursor-pointer",
-                      (metadata.autoTitle ?? isGeneratingTitle) && "italic"
+                      isGeneratingTitle && "italic"
                     )}
                     onDoubleClick={(e) => {
                       if (isDisabled) return;

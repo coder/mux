@@ -1884,7 +1884,7 @@ describe("WorkspaceService init cancellation", () => {
 
 // --- Pure helper tests (no mocks needed) ---
 
-import { generateForkBranchName } from "./workspaceService";
+import { generateForkBranchName, generateForkTitle } from "./workspaceService";
 
 describe("generateForkBranchName", () => {
   test("returns -fork-1 when no existing forks", () => {
@@ -1915,3 +1915,39 @@ describe("generateForkBranchName", () => {
     expect(generateForkBranchName("ws", ["ws-fork-abc", "ws-fork-"])).toBe("ws-fork-1");
   });
 });
+
+describe("generateForkTitle", () => {
+  test("returns (1) when no existing forks", () => {
+    expect(generateForkTitle("Fix sidebar layout", [])).toBe("Fix sidebar layout (1)");
+  });
+
+  test("increments past the highest existing suffix", () => {
+    expect(
+      generateForkTitle("Fix sidebar layout", [
+        "Fix sidebar layout",
+        "Fix sidebar layout (1)",
+        "Fix sidebar layout (3)",
+      ])
+    ).toBe("Fix sidebar layout (4)");
+  });
+
+  test("strips existing suffix from parent before computing base", () => {
+    // Forking "Fix sidebar (2)" should produce "Fix sidebar (3)", not "Fix sidebar (2) (1)"
+    expect(
+      generateForkTitle("Fix sidebar (2)", ["Fix sidebar (1)", "Fix sidebar (2)"])
+    ).toBe("Fix sidebar (3)");
+  });
+
+  test("ignores non-matching titles", () => {
+    expect(
+      generateForkTitle("Refactor auth", ["Fix sidebar layout (1)", "Other task (2)"])
+    ).toBe("Refactor auth (1)");
+  });
+
+  test("handles gaps in numbering", () => {
+    expect(
+      generateForkTitle("Task", ["Task (1)", "Task (5)"])
+    ).toBe("Task (6)");
+  });
+});
+
