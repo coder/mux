@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, FolderX, RefreshCw } from "lucide-react";
+import { ChevronDown, FolderX, Loader2, RefreshCw } from "lucide-react";
 
 import { useAgent } from "@/browser/contexts/AgentContext";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
@@ -176,6 +176,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     agentId,
     setAgentId,
     agents,
+    loaded,
     refresh,
     refreshing,
     disableWorkspaceAgents,
@@ -537,7 +538,16 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
           <div className="max-h-[220px] overflow-y-auto">
             {filteredOptions.length === 0 ? (
-              <div className="text-muted-light px-2.5 py-2 text-[11px]">No matching agents</div>
+              <div className="text-muted-light px-2.5 py-2 text-[11px]">
+                {!loaded ? (
+                  <span className="flex items-center gap-1.5">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Loading agents…
+                  </span>
+                ) : (
+                  "No matching agents"
+                )}
+              </div>
             ) : (
               filteredOptions.map((opt, index) => {
                 const isHighlighted = index === highlightedIndex;
