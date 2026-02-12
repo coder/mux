@@ -39,6 +39,7 @@ import { ShareTranscriptDialog } from "./ShareTranscriptDialog";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
 import { ConfirmationModal } from "./ConfirmationModal";
 import { PopoverError } from "./PopoverError";
+import { ActiveProjectSkillIndicator } from "./ActiveProjectSkillIndicator";
 
 import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
 interface WorkspaceHeaderProps {
@@ -265,6 +266,10 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
         </div>
       </div>
       <div className={cn("flex items-center gap-2", isDesktop && "titlebar-no-drag")}>
+        {/* Keep skills discoverable when the sidebar is collapsed (mobile/desktop). */}
+        {leftSidebarCollapsed && (
+          <ActiveProjectSkillIndicator workspaceId={workspaceId} projectPath={projectPath} />
+        )}
         <WorkspaceLinks workspaceId={workspaceId} />
         <Popover open={notificationPopoverOpen} onOpenChange={setNotificationPopoverOpen}>
           <Tooltip {...(notificationPopoverOpen ? { open: false } : {})}>
