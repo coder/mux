@@ -581,6 +581,13 @@ export function CreationControls(props: CreationControlsProps) {
       if (mode === "coder" && !props.coderProps) {
         return false;
       }
+      // Filter by availability to avoid oscillation (e.g., devcontainer enabled but missing).
+      if (isDevcontainerMissing && mode === RUNTIME_MODE.DEVCONTAINER) {
+        return false;
+      }
+      if (isNonGitRepo && mode === RUNTIME_MODE.WORKTREE) {
+        return false;
+      }
       return true;
     });
     if (!firstEnabled || firstEnabled === runtimeChoice) {
