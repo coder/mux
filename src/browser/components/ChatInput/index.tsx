@@ -2415,6 +2415,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   }
                   className={variant === "creation" ? "min-h-24" : undefined}
                 />
+                {/* Keep cycle shortcuts visible in both creation + workspace without bloating the footer. */}
+                {input.trim() === "" && !editingMessage && (
+                  <div className="text-muted pointer-events-none absolute right-12 bottom-2 left-2 text-[11px]">
+                    <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_MODEL)}</span>
+                    <span> - change model | </span>
+                    <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_AGENT)}</span>
+                    <span> - change agent mode</span>
+                  </div>
+                )}
+
                 {/* Floating voice input button inside textarea */}
                 <div className="absolute right-2 bottom-2">
                   <VoiceInputButton
