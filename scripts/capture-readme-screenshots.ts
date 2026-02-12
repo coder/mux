@@ -80,34 +80,6 @@ const STORIES: StoryDef[] = [
     exportName: "AgentStatusSidebar",
     storyId: `${STORY_ID_PREFIX}agent-status-sidebar`,
     outputFile: "agent-status.webp",
-    // Clip the left sidebar region and upscale to the target output dimensions.
-    postProcess: async (pngBuffer: Buffer) => {
-      // At 2× DPR the sidebar's 288 CSS-px width becomes 576 device pixels.
-      const SIDEBAR_WIDTH_PX = 576;
-      // Skip the top window-controls region (~95 CSS-px → 190 device pixels).
-      const TOP_OFFSET_PX = 190;
-      const metadata = await sharp(pngBuffer).metadata();
-      const fullHeight = metadata.height ?? VIEWPORT.height * DEVICE_SCALE_FACTOR;
-
-      // Maintain the aspect ratio of the cropped region when upscaling.
-      const cropHeight = fullHeight - TOP_OFFSET_PX;
-      const targetHeight = Math.round((TARGET_WIDTH / SIDEBAR_WIDTH_PX) * cropHeight);
-
-      return sharp(pngBuffer)
-        .extract({
-          left: 0,
-          top: TOP_OFFSET_PX,
-          width: SIDEBAR_WIDTH_PX,
-          height: cropHeight,
-        })
-        .resize({
-          width: TARGET_WIDTH,
-          height: targetHeight,
-          kernel: "lanczos3",
-        })
-        .webp({ quality: WEBP_QUALITY })
-        .toBuffer();
-    },
   },
   {
     exportName: "GitStatusPopover",
@@ -117,7 +89,7 @@ const STORIES: StoryDef[] = [
       // Wait for git status to render in the ws-diverged row.
       const row = page.locator('[data-workspace-id="ws-diverged"]');
       const plusText = row.getByText("+12.3k");
-      await plusText.waitFor({ timeout: 15_000 });
+      await plusText.waitFor({ timeout: 30_000 });
 
       // Hover to open tooltip.
       await plusText.hover();
@@ -133,28 +105,6 @@ const STORIES: StoryDef[] = [
       await row.getByText("↑3").waitFor({ timeout: 5_000 });
       await row.getByText("↓2").waitFor({ timeout: 5_000 });
     },
-    // Crop to the sidebar region around the divergence tooltip for a focused shot.
-    postProcess: async (pngBuffer: Buffer) => {
-      const metadata = await sharp(pngBuffer).metadata();
-      const fullWidth = metadata.width ?? VIEWPORT.width * DEVICE_SCALE_FACTOR;
-      const fullHeight = metadata.height ?? VIEWPORT.height * DEVICE_SCALE_FACTOR;
-
-      // Crop to the left 40% of the screen (sidebar + tooltip area) and center vertically.
-      const cropWidth = Math.round(fullWidth * 0.4);
-      const cropTop = Math.round(fullHeight * 0.15);
-      const cropHeight = Math.round(fullHeight * 0.65);
-
-      return sharp(pngBuffer)
-        .extract({
-          left: 0,
-          top: cropTop,
-          width: cropWidth,
-          height: cropHeight,
-        })
-        .resize({ width: TARGET_WIDTH, kernel: "lanczos3" })
-        .webp({ quality: WEBP_QUALITY })
-        .toBuffer();
-    },
   },
   {
     exportName: "PlanMermaidWithCosts",
@@ -169,7 +119,7 @@ const STORIES: StoryDef[] = [
       // The "Manage secrets" button is hidden until hover. Target the button directly
       // by its aria-label (which is unique) and force-click to bypass visibility.
       const manageBtn = page.getByRole("button", { name: "Manage secrets for mux" });
-      await manageBtn.waitFor({ timeout: 10_000 });
+      await manageBtn.waitFor({ timeout: 30_000 });
       await manageBtn.click({ force: true });
 
       // Wait for the modal to appear with secrets content.
@@ -278,8 +228,9 @@ async function main() {
           timeout: 30_000,
         });
 
-        // Brief stabilization delay for async renders (git status polling, mermaid, etc.).
-        await page.waitForTimeout(2_000);
+        // Stabilization delay for async renders (git status polling, mermaid,
+        // Radix portals). 3s handles slower static servers in batch mode.
+        await page.waitForTimeout(3_000);
 
         // Run play-function interactions if the story requires them.
         if (story.playInteraction) {
@@ -288,8 +239,10 @@ async function main() {
           await page.waitForTimeout(500);
         }
 
-        // Capture full-page screenshot as PNG buffer.
-        const pngBuffer = await page.screenshot({ type: "png", fullPage: true });
+        // Capture the visible viewport only — fullPage would include off-screen
+        // scrollable content, producing absurdly tall images for stories with
+        // long sidebars or chat histories.
+        const pngBuffer = await page.screenshot({ type: "png" });
 
         // Convert to WebP (or run custom post-processing).
         // The default pipeline resizes from native DPR resolution to TARGET_WIDTH.
