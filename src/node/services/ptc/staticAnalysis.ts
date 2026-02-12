@@ -3,10 +3,10 @@
  *
  * Analyzes agent-generated JavaScript code before execution to catch:
  * - Syntax errors (via QuickJS parser)
- * - Unavailable constructs (import(), require())
- * - Unavailable globals (process, window, etc.)
+ * - Forbidden constructs (import(), require())
+ * - Unavailable globals (process, window, fetch, etc.)
  *
- * The runtime also wraps ReferenceErrors with friendlier messages as a backstop.
+ * Runtime still wraps real ReferenceErrors with friendlier messages as a backstop.
  */
 
 import ts from "typescript";
@@ -19,7 +19,7 @@ import { validateTypes, WRAPPER_PREFIX } from "./typeValidator";
 
 /**
  * Identifiers that don't exist in QuickJS and will cause ReferenceError.
- * Used by static analysis to block execution, and by runtime for friendly error messages.
+ * Exported for runtime backstop error enhancement.
  */
 export const UNAVAILABLE_IDENTIFIERS = new Set([
   // Node.js globals
@@ -65,7 +65,7 @@ export interface AnalysisResult {
 // because those can appear inside string literals and cause false positives.
 //
 // Instead, we use the TypeScript AST in detectUnavailableGlobals() to detect actual
-// call expressions (require(), import()) and real global references.
+// call expressions (require(), import()) and unavailable global identifier references.
 
 // ============================================================================
 // QuickJS Context Management
@@ -157,8 +157,8 @@ async function validateSyntax(code: string): Promise<AnalysisError | null> {
 }
 
 /**
- * Detect references to unavailable globals (process, window, fetch, etc.)
- * using TypeScript AST to avoid false positives on object keys and string literals.
+ * Detect forbidden constructs (import(), require()) and unavailable globals
+ * using TypeScript AST to avoid false positives inside string literals.
  */
 function detectUnavailableGlobals(code: string, sourceFile?: ts.SourceFile): AnalysisError[] {
   const errors: AnalysisError[] = [];
@@ -169,6 +169,98 @@ function detectUnavailableGlobals(code: string, sourceFile?: ts.SourceFile): Ana
   const codeStartOffset = sourceFile ? WRAPPER_PREFIX.length : 0;
   const codeEnd = codeStartOffset + code.length;
   const lineOffset = sourceFile ? WRAPPER_LINE_OFFSET : 0;
+
+  // Pre-scan: collect declarations that shadow unavailable globals, tracking their
+  // lexical scope. A reference is only suppressed when the declaration is visible
+  // at the reference site — this avoids false positives (`const fetch = mux.bash(...);
+  // fetch.output`) while still catching out-of-scope references
+  // (`if (true) { const process = {}; } process.env;`).
+  const declarationScopes = new Map<string, Set<ts.Node>>();
+
+  function addDeclScope(declName: string, scope: ts.Node): void {
+    let scopes = declarationScopes.get(declName);
+    if (!scopes) {
+      scopes = new Set();
+      declarationScopes.set(declName, scopes);
+    }
+    scopes.add(scope);
+  }
+
+  // Nearest enclosing Block or SourceFile.
+  function findBlockScope(node: ts.Node): ts.Node {
+    let current = node.parent;
+    while (current) {
+      if (ts.isBlock(current) || ts.isSourceFile(current)) return current;
+      current = current.parent;
+    }
+    return parsedSourceFile;
+  }
+
+  // Determine the scope container a declaration is visible in.
+  function findDeclScope(declNode: ts.Node): ts.Node {
+    let current: ts.Node | undefined = declNode;
+    while (current) {
+      // Parameter → visible in function scope
+      if (ts.isParameter(current) && current.parent) {
+        const func = current.parent;
+        if (
+          ts.isFunctionDeclaration(func) ||
+          ts.isFunctionExpression(func) ||
+          ts.isArrowFunction(func)
+        ) {
+          return func;
+        }
+        break;
+      }
+      // Catch clause variable → visible in catch block
+      if (
+        current.parent &&
+        ts.isCatchClause(current.parent) &&
+        current === current.parent.variableDeclaration
+      ) {
+        return current.parent.block;
+      }
+      // For-loop initializer → visible in loop body
+      if (current.parent && ts.isVariableDeclarationList(current.parent)) {
+        const gp = current.parent.parent;
+        if (gp && (ts.isForInStatement(gp) || ts.isForOfStatement(gp) || ts.isForStatement(gp))) {
+          return ts.isBlock(gp.statement) ? gp.statement : gp;
+        }
+      }
+      current = current.parent;
+    }
+    return findBlockScope(declNode);
+  }
+
+  function collectDeclarations(node: ts.Node): void {
+    let name: string | undefined;
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      name = node.name.text;
+    } else if (ts.isBindingElement(node) && ts.isIdentifier(node.name)) {
+      name = node.name.text;
+    } else if (ts.isFunctionDeclaration(node) && node.name) {
+      name = node.name.text;
+    } else if (ts.isParameter(node) && ts.isIdentifier(node.name)) {
+      name = node.name.text;
+    }
+    if (name && UNAVAILABLE_IDENTIFIERS.has(name)) {
+      addDeclScope(name, findDeclScope(node));
+    }
+    ts.forEachChild(node, collectDeclarations);
+  }
+  collectDeclarations(parsedSourceFile);
+
+  // Check whether a name has a visible declaration at the reference site.
+  function isDeclaredInScope(name: string, refNode: ts.Node): boolean {
+    const scopes = declarationScopes.get(name);
+    if (!scopes) return false;
+    let current: ts.Node | undefined = refNode;
+    while (current) {
+      if (scopes.has(current)) return true;
+      current = current.parent;
+    }
+    return false;
+  }
 
   function visit(node: ts.Node): void {
     // If the node isn't within the user-authored code region (e.g., inside the wrapper prefix),
@@ -218,6 +310,8 @@ function detectUnavailableGlobals(code: string, sourceFile?: ts.SourceFile): Ana
       }
     }
 
+    // --- Unavailable global identifier detection ---
+
     // Only check identifier nodes
     if (!ts.isIdentifier(node)) {
       ts.forEachChild(node, visit);
@@ -227,8 +321,7 @@ function detectUnavailableGlobals(code: string, sourceFile?: ts.SourceFile): Ana
     const start = nodeStart;
     const name = node.text;
 
-    // Skip 'require' identifier references - we only want to error on require() calls.
-    // (Keyword substrings inside strings should never trigger any error.)
+    // Skip 'require' identifier references — we only want to error on require() calls.
     if (name === "require") {
       return;
     }
@@ -245,31 +338,19 @@ function detectUnavailableGlobals(code: string, sourceFile?: ts.SourceFile): Ana
 
     const parent = node.parent;
 
-    // Skip property access on RHS (e.g., obj.process)
+    // Skip identifiers used as property names, not variable references.
+    // e.g., obj.process (property access RHS), { process: ... } (object key)
     if (parent && ts.isPropertyAccessExpression(parent) && parent.name === node) {
       return;
     }
-
-    // Skip object literal property keys (e.g., { process: ... })
     if (parent && ts.isPropertyAssignment(parent) && parent.name === node) {
       return;
     }
 
-    // Skip shorthand property assignments (e.g., { process } where process is a variable)
-    // This is actually a reference, so we don't skip it
-
-    // Skip variable declarations (e.g., const process = ...)
-    if (parent && ts.isVariableDeclaration(parent) && parent.name === node) {
-      return;
-    }
-
-    // Skip function declarations (e.g., function process() {})
-    if (parent && ts.isFunctionDeclaration(parent) && parent.name === node) {
-      return;
-    }
-
-    // Skip parameter declarations
-    if (parent && ts.isParameter(parent) && parent.name === node) {
+    // Skip if a local declaration shadows this name at the reference site.
+    // Covers both declaration-site identifiers (const fetch = ..., function process() {},
+    // parameters) and references to those locally-declared variables (fetch.output).
+    if (isDeclaredInScope(name, node)) {
       return;
     }
 
@@ -279,7 +360,7 @@ function detectUnavailableGlobals(code: string, sourceFile?: ts.SourceFile): Ana
     errors.push({
       type: "unavailable_global",
       message: `'${name}' is not available in the sandbox`,
-      line: line - lineOffset + 1, // 1-indexed
+      line: line - lineOffset + 1,
     });
   }
 
@@ -296,7 +377,7 @@ function detectUnavailableGlobals(code: string, sourceFile?: ts.SourceFile): Ana
  *
  * Performs:
  * 1. Syntax validation via QuickJS parser
- * 2. Forbidden construct + unavailable global detection via TypeScript AST (require(), import(), process, window, etc.)
+ * 2. Forbidden construct and unavailable global detection via TypeScript AST
  * 3. TypeScript type validation (if muxTypes provided)
  *
  * @param code - JavaScript code to analyze
@@ -319,7 +400,7 @@ export async function analyzeCode(code: string, muxTypes?: string): Promise<Anal
     typeResult = validateTypes(code, muxTypes);
   }
 
-  // 2. Forbidden construct + unavailable global detection (process, window, require(), import(), etc.)
+  // 2. Forbidden construct and unavailable global detection
   errors.push(...detectUnavailableGlobals(code, typeResult?.sourceFile));
 
   // 3. TypeScript type validation (if muxTypes provided)

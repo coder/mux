@@ -83,6 +83,15 @@ describe("staticAnalysis", () => {
       expect(result.valid).toBe(false);
       expect(result.errors.some((e) => e.message.includes("require()"))).toBe(true);
     });
+
+    test("reports line number for unavailable pattern", async () => {
+      const result = await analyzeCode(`const x = 1;
+const y = 2;
+require("fs");
+const z = 3;`);
+      const requireError = result.errors.find((e) => e.message.includes("require"));
+      expect(requireError?.line).toBe(3);
+    });
   });
 
   describe("unavailable globals", () => {
@@ -108,6 +117,20 @@ describe("staticAnalysis", () => {
       `);
       expect(result.valid).toBe(false);
       expect(result.errors.some((e) => e.message.includes("fetch"))).toBe(true);
+    });
+
+    test("try/catch around fetch still errors", async () => {
+      const result = await analyzeCode(`
+        try {
+          fetch("https://example.com");
+        } catch (e) {
+          console.error(e);
+        }
+      `);
+      expect(result.valid).toBe(false);
+      expect(
+        result.errors.some((e) => e.type === "unavailable_global" && e.message.includes("fetch"))
+      ).toBe(true);
     });
 
     test("document is unavailable", async () => {
@@ -146,21 +169,65 @@ describe("staticAnalysis", () => {
       expect(result.errors).toHaveLength(0);
     });
 
-    test("object key like { process: ... } does NOT error (AST-based detection)", async () => {
+    test("object key like { process: ... } does NOT error", async () => {
       const result = await analyzeCode(`
         const obj = { process: "running" };
       `);
-      // AST-based detection correctly identifies this as an object key, not a reference
       expect(result.valid).toBe(true);
       expect(result.errors).toHaveLength(0);
     });
 
     test("error includes line number", async () => {
-      const result = await analyzeCode(`const x = 1;
-const y = 2;
-const env = process.env;`);
+      const result = await analyzeCode(`const x = 1;\nconst y = 2;\nconst env = process.env;`);
       const processError = result.errors.find((e) => e.message.includes("process"));
       expect(processError?.line).toBe(3);
+    });
+
+    test("locally declared variable shadowing 'fetch' does NOT error", async () => {
+      const result = await analyzeCode(`
+        const fetch = mux.bash({script: "git fetch origin main", timeout_secs: 30, display_name: "Fetch"});
+        console.log("FETCH:", fetch.output);
+      `);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    test("locally declared variable shadowing 'process' does NOT error", async () => {
+      const result = await analyzeCode(`
+        const process = { env: "test" };
+        return process.env;
+      `);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    test("function parameter shadowing blocked name does NOT error", async () => {
+      const result = await analyzeCode(`
+        function run(process) { return process.pid; }
+      `);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    test("block-scoped shadow does not suppress outer reference", async () => {
+      const result = await analyzeCode(`
+        if (true) { const process = { env: "x" }; }
+        const env = process.env;
+      `);
+      expect(result.valid).toBe(false);
+      expect(
+        result.errors.some((e) => e.type === "unavailable_global" && e.message.includes("process"))
+      ).toBe(true);
+    });
+
+    test("destructured binding shadowing 'fetch' does NOT error", async () => {
+      const result = await analyzeCode(`
+        const obj = { fetch: { output: "ok" } };
+        const { fetch } = obj;
+        console.log(fetch.output);
+      `);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
     });
   });
 
@@ -198,17 +265,6 @@ const env = process.env;`);
         const x = Reflect.get({a: 1}, "a");
       `);
       expect(result.valid).toBe(true);
-    });
-  });
-
-  describe("line number reporting", () => {
-    test("reports line number for unavailable pattern", async () => {
-      const result = await analyzeCode(`const x = 1;
-const y = 2;
-require("fs");
-const z = 3;`);
-      const requireError = result.errors.find((e) => e.message.includes("require"));
-      expect(requireError?.line).toBe(3);
     });
   });
 
