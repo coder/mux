@@ -80,26 +80,31 @@ function setupSettingsStory(options: {
   });
 }
 
-/** Open settings modal and optionally navigate to a section */
+/** Open settings route page and optionally navigate to a section. */
 async function openSettingsToSection(canvasElement: HTMLElement, section?: string): Promise<void> {
   const canvas = within(canvasElement);
-  // Use ownerDocument.body to scope to iframe, not parent Storybook UI
-  const body = within(canvasElement.ownerDocument.body);
 
-  // Wait for app to fully load (sidebar with settings button should appear)
+  // Wait for app to fully load (sidebar with settings button should appear).
   const settingsButton = await canvas.findByTestId("settings-button", {}, { timeout: 10000 });
   await userEvent.click(settingsButton);
 
-  // Wait for dialog to appear (portal renders outside canvasElement but inside iframe body)
-  await body.findByRole("dialog");
+  // Settings now render in the main pane (route-based), not in a modal dialog.
+  const generalSectionButtons = await canvas.findAllByRole("button", { name: /^General$/i });
+  if (generalSectionButtons.length === 0) {
+    throw new Error("Settings page did not render the section navigation");
+  }
 
-  // Navigate to specific section if requested
+  // Navigate to specific section if requested.
   if (section && section !== "general") {
-    // Capitalize first letter to match the button text (e.g., "experiments" -> "Experiments")
+    // Capitalize first letter to match nav labels (e.g., "experiments" -> "Experiments").
     const sectionLabel = section.charAt(0).toUpperCase() + section.slice(1);
-    const sectionButton = await body.findByRole("button", {
+    const sectionButtons = await canvas.findAllByRole("button", {
       name: new RegExp(sectionLabel, "i"),
     });
+    const sectionButton = sectionButtons[0];
+    if (!sectionButton) {
+      throw new Error(`Settings section button not found for ${sectionLabel}`);
+    }
     await userEvent.click(sectionButton);
   }
 }
@@ -114,13 +119,11 @@ export const General: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSection(canvasElement, "general");
 
-    const body = within(canvasElement.ownerDocument.body);
-    const dialog = await body.findByRole("dialog");
-    const dialogCanvas = within(dialog);
+    const settingsCanvas = within(canvasElement);
 
-    await dialogCanvas.findByText(/^Theme$/i);
-    await dialogCanvas.findByText(/^Terminal Font$/i);
-    await dialogCanvas.findByText(/^Terminal Font Size$/i);
+    await settingsCanvas.findByText(/^Theme$/i);
+    await settingsCanvas.findByText(/^Terminal Font$/i);
+    await settingsCanvas.findByText(/^Terminal Font Size$/i);
   },
 };
 
@@ -138,25 +141,23 @@ export const Tasks: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSection(canvasElement, "agents");
 
-    const body = within(canvasElement.ownerDocument.body);
-    const dialog = await body.findByRole("dialog");
-    const dialogCanvas = within(dialog);
+    const settingsCanvas = within(canvasElement);
 
-    await dialogCanvas.findByText(/Max Parallel Agent Tasks/i);
-    await dialogCanvas.findByText(/Max Task Nesting Depth/i);
-    await dialogCanvas.findByText(/Agent Defaults/i);
-    await dialogCanvas.findByRole("heading", { name: /UI agents/i });
-    await dialogCanvas.findByRole("heading", { name: /Sub-agents/i });
-    await dialogCanvas.findByRole("heading", { name: /Internal/i });
+    await settingsCanvas.findByText(/Max Parallel Agent Tasks/i);
+    await settingsCanvas.findByText(/Max Task Nesting Depth/i);
+    await settingsCanvas.findByText(/Agent Defaults/i);
+    await settingsCanvas.findByRole("heading", { name: /UI agents/i });
+    await settingsCanvas.findByRole("heading", { name: /Sub-agents/i });
+    await settingsCanvas.findByRole("heading", { name: /Internal/i });
 
-    await dialogCanvas.findByText(/^Plan$/i);
-    await dialogCanvas.findByText(/^Exec$/i);
-    await dialogCanvas.findByText(/^Explore$/i);
-    await dialogCanvas.findByText(/^Compact$/i);
+    await settingsCanvas.findAllByText(/^Plan$/i);
+    await settingsCanvas.findAllByText(/^Exec$/i);
+    await settingsCanvas.findAllByText(/^Explore$/i);
+    await settingsCanvas.findAllByText(/^Compact$/i);
 
     // Re-query spinbuttons inside waitFor to avoid stale DOM refs after React re-renders.
     await waitFor(() => {
-      const inputs = dialogCanvas.queryAllByRole("spinbutton");
+      const inputs = settingsCanvas.queryAllByRole("spinbutton");
       if (inputs.length !== 2) {
         throw new Error(`Expected 2 task settings inputs, got ${inputs.length}`);
       }
@@ -230,15 +231,13 @@ export const LayoutsEmpty: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSection(canvasElement, "layouts");
 
-    const body = within(canvasElement.ownerDocument.body);
-    const dialog = await body.findByRole("dialog");
-    const dialogCanvas = within(dialog);
+    const settingsCanvas = within(canvasElement);
 
-    await dialogCanvas.findByRole("heading", { name: /layout slots/i });
+    await settingsCanvas.findByRole("heading", { name: /layout slots/i });
 
     // Empty state should render no slot rows.
-    await dialogCanvas.findByText(/^Add layout$/i);
-    if (dialogCanvas.queryByText(/Slot 1/i)) {
+    await settingsCanvas.findByText(/^Add layout$/i);
+    if (settingsCanvas.queryByText(/Slot 1/i)) {
       throw new Error("Expected no slot rows to be rendered in the empty state");
     }
   },
@@ -308,20 +307,18 @@ export const LayoutsConfigured: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSection(canvasElement, "layouts");
 
-    const body = within(canvasElement.ownerDocument.body);
-    const dialog = await body.findByRole("dialog");
-    const dialogCanvas = within(dialog);
+    const settingsCanvas = within(canvasElement);
 
-    await dialogCanvas.findByRole("heading", { name: /layout slots/i });
+    await settingsCanvas.findByRole("heading", { name: /layout slots/i });
 
     // Wait for the async config load from the UILayoutsProvider.
-    await dialogCanvas.findByText(/My Layout/i);
-    await dialogCanvas.findByText(/Extra Layout/i);
-    await dialogCanvas.findByText(/^Slot 1$/i);
-    await dialogCanvas.findByText(/^Slot 10$/i);
-    await dialogCanvas.findByText(/^Add layout$/i);
+    await settingsCanvas.findByText(/My Layout/i);
+    await settingsCanvas.findByText(/Extra Layout/i);
+    await settingsCanvas.findByText(/^Slot 1$/i);
+    await settingsCanvas.findByText(/^Slot 10$/i);
+    await settingsCanvas.findByText(/^Add layout$/i);
 
-    if (dialogCanvas.queryByText(/Slot 2/i)) {
+    if (settingsCanvas.queryByText(/Slot 2/i)) {
       throw new Error("Expected only configured layouts to render");
     }
   },
@@ -344,16 +341,14 @@ export const ProvidersExpanded: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSection(canvasElement, "providers");
 
-    const body = within(canvasElement.ownerDocument.body);
-    const dialog = await body.findByRole("dialog");
-    const dialogCanvas = within(dialog);
+    const settingsCanvas = within(canvasElement);
 
-    // Click on a provider to expand it and reveal the API key link
-    const openaiButton = await dialogCanvas.findByRole("button", { name: /openai/i });
+    // Click on a provider to expand it and reveal the API key link.
+    const openaiButton = await settingsCanvas.findByRole("button", { name: /openai/i });
     await userEvent.click(openaiButton);
 
-    // Verify "Get API Key" link is visible
-    await dialogCanvas.findByRole("link", { name: /get api key/i });
+    // Verify "Get API Key" link is visible.
+    await settingsCanvas.findByRole("link", { name: /get api key/i });
   },
 };
 
@@ -467,17 +462,15 @@ export const System1: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSection(canvasElement, "system 1");
 
-    const body = within(canvasElement.ownerDocument.body);
-    const dialog = await body.findByRole("dialog");
-    const dialogCanvas = within(dialog);
+    const settingsCanvas = within(canvasElement);
 
-    await dialogCanvas.findByText(/System 1 Model/i);
-    await dialogCanvas.findByText(/System 1 Reasoning/i);
-    await dialogCanvas.findByRole("heading", { name: /bash output compaction/i });
+    await settingsCanvas.findByText(/System 1 Model/i);
+    await settingsCanvas.findByText(/System 1 Reasoning/i);
+    await settingsCanvas.findByRole("heading", { name: /bash output compaction/i });
 
     // Re-query spinbuttons inside waitFor to avoid stale DOM refs after React re-renders.
     await waitFor(() => {
-      const inputs = dialogCanvas.queryAllByRole("spinbutton");
+      const inputs = settingsCanvas.queryAllByRole("spinbutton");
       if (inputs.length !== 4) {
         throw new Error(`Expected 4 System 1 inputs, got ${inputs.length}`);
       }

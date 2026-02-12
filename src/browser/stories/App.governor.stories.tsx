@@ -68,20 +68,20 @@ function setupGovernorStory(options: GovernorStoryOptions = {}): APIClient {
   });
 }
 
-/** Open settings modal and navigate to Governor section */
+/** Open settings page and navigate to Governor section. */
 async function openSettingsToGovernor(canvasElement: HTMLElement): Promise<void> {
   const canvas = within(canvasElement);
-  const body = within(canvasElement.ownerDocument.body);
 
-  // Wait for app to fully load
+  // Wait for app to fully load.
   const settingsButton = await canvas.findByTestId("settings-button", {}, { timeout: 10000 });
   await userEvent.click(settingsButton);
 
-  // Wait for dialog to appear
-  await body.findByRole("dialog");
-
-  // Navigate to Governor section
-  const governorButton = await body.findByRole("button", { name: /governor/i });
+  // Navigate to Governor section (desktop + mobile nav are both in DOM during tests).
+  const governorButtons = await canvas.findAllByRole("button", { name: /governor/i });
+  const governorButton = governorButtons[0];
+  if (!governorButton) {
+    throw new Error("Governor settings button not found");
+  }
   await userEvent.click(governorButton);
 }
 

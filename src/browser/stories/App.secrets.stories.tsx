@@ -63,14 +63,16 @@ function setupSecretsStory(options: SecretsStoryOptions = {}): APIClient {
 
 async function openSettingsToSecrets(canvasElement: HTMLElement): Promise<void> {
   const canvas = within(canvasElement);
-  const body = within(canvasElement.ownerDocument.body);
 
   const settingsButton = await canvas.findByTestId("settings-button", {}, { timeout: 10000 });
   await userEvent.click(settingsButton);
 
-  await body.findByRole("dialog", {}, { timeout: 10000 });
-
-  const secretsButton = await body.findByRole("button", { name: /^Secrets$/i });
+  // Desktop + mobile settings nav are both present in the test DOM.
+  const secretsButtons = await canvas.findAllByRole("button", { name: /^Secrets$/i });
+  const secretsButton = secretsButtons[0];
+  if (!secretsButton) {
+    throw new Error("Secrets settings button not found");
+  }
   await userEvent.click(secretsButton);
 }
 
@@ -79,12 +81,10 @@ export const SecretsGlobal: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSecrets(canvasElement);
 
-    const body = within(canvasElement.ownerDocument.body);
-    const dialog = await body.findByRole("dialog", {}, { timeout: 10000 });
-    const dialogCanvas = within(dialog);
+    const settingsCanvas = within(canvasElement);
 
-    await dialogCanvas.findByText(/secrets are stored in/i);
-    await dialogCanvas.findByDisplayValue("GLOBAL_TOKEN");
+    await settingsCanvas.findByText(/secrets are stored in/i);
+    await settingsCanvas.findByDisplayValue("GLOBAL_TOKEN");
   },
 };
 
@@ -106,19 +106,17 @@ export const SecretsGlobalPopulated: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSecrets(canvasElement);
 
-    const body = within(canvasElement.ownerDocument.body);
-    const dialog = await body.findByRole("dialog", {}, { timeout: 10000 });
-    const dialogCanvas = within(dialog);
+    const settingsCanvas = within(canvasElement);
 
     // Radix ToggleGroup (type="single") items render with role="radio".
-    const globalScopeToggle = await dialogCanvas.findByRole("radio", { name: /^Global$/i });
+    const globalScopeToggle = await settingsCanvas.findByRole("radio", { name: /^Global$/i });
     await userEvent.click(globalScopeToggle);
 
-    await dialogCanvas.findByText(/secrets are stored in/i);
-    await dialogCanvas.findByDisplayValue("OPENAI_API_KEY");
-    await dialogCanvas.findByDisplayValue("ANTHROPIC_API_KEY");
-    await dialogCanvas.findByDisplayValue("GITHUB_TOKEN");
-    await dialogCanvas.findByDisplayValue("SENTRY_AUTH_TOKEN");
+    await settingsCanvas.findByText(/secrets are stored in/i);
+    await settingsCanvas.findByDisplayValue("OPENAI_API_KEY");
+    await settingsCanvas.findByDisplayValue("ANTHROPIC_API_KEY");
+    await settingsCanvas.findByDisplayValue("GITHUB_TOKEN");
+    await settingsCanvas.findByDisplayValue("SENTRY_AUTH_TOKEN");
   },
 };
 
@@ -127,16 +125,14 @@ export const SecretsProject: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSecrets(canvasElement);
 
-    const body = within(canvasElement.ownerDocument.body);
-    const dialog = await body.findByRole("dialog", {}, { timeout: 10000 });
-    const dialogCanvas = within(dialog);
+    const settingsCanvas = within(canvasElement);
 
     // Radix ToggleGroup (type="single") items render with role="radio".
-    const projectScopeToggle = await dialogCanvas.findByRole("radio", { name: /^Project$/i });
+    const projectScopeToggle = await settingsCanvas.findByRole("radio", { name: /^Project$/i });
     await userEvent.click(projectScopeToggle);
 
-    await dialogCanvas.findByText(/Select a project to configure/i);
-    await dialogCanvas.findByDisplayValue("PROJECT_TOKEN");
+    await settingsCanvas.findByText(/Select a project to configure/i);
+    await settingsCanvas.findByDisplayValue("PROJECT_TOKEN");
   },
 };
 
@@ -163,18 +159,16 @@ export const SecretsLightModeFilled: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSecrets(canvasElement);
 
-    const body = within(canvasElement.ownerDocument.body);
-    const dialog = await body.findByRole("dialog", {}, { timeout: 10000 });
-    const dialogCanvas = within(dialog);
+    const settingsCanvas = within(canvasElement);
 
-    await dialogCanvas.findByDisplayValue("OPENAI_API_KEY");
+    await settingsCanvas.findByDisplayValue("OPENAI_API_KEY");
 
-    const showSecretButton = await dialogCanvas.findByRole("button", { name: /^Show secret$/i });
+    const showSecretButton = await settingsCanvas.findByRole("button", { name: /^Show secret$/i });
     await userEvent.click(showSecretButton);
 
     // Ensure the secret value is revealed so text color regressions (e.g. text-white) are visible.
     await waitFor(() => {
-      const valueInput = dialogCanvas.getByDisplayValue("sk-openai-visible");
+      const valueInput = settingsCanvas.getByDisplayValue("sk-openai-visible");
       if (!(valueInput instanceof HTMLInputElement)) {
         throw new Error("Expected secret value to be shown in an input");
       }

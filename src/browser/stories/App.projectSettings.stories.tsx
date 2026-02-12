@@ -155,20 +155,22 @@ function setupMCPStory(options: MCPStoryOptions = {}): APIClient {
   });
 }
 
-/** Open settings modal and navigate to MCP section */
+/** Open settings page and navigate to MCP section. */
 async function openProjectSettings(canvasElement: HTMLElement): Promise<void> {
   const canvas = within(canvasElement);
-  const body = within(canvasElement.ownerDocument.body);
 
   const settingsButton = await canvas.findByTestId("settings-button", {}, { timeout: 10000 });
   await userEvent.click(settingsButton);
 
-  await body.findByRole("dialog", {}, { timeout: 10000 });
-
-  const mcpButton = await body.findByRole("button", { name: /^MCP$/i });
+  // Desktop + mobile settings nav are both present in the test DOM.
+  const mcpButtons = await canvas.findAllByRole("button", { name: /^MCP$/i });
+  const mcpButton = mcpButtons[0];
+  if (!mcpButton) {
+    throw new Error("MCP settings button not found");
+  }
   await userEvent.click(mcpButton);
 
-  const mcpHeading = await body.findByText("MCP Servers");
+  const mcpHeading = await canvas.findByText("MCP Servers");
   mcpHeading.scrollIntoView({ block: "start" });
 }
 
@@ -235,12 +237,12 @@ function createWorkspaceMCPModalScope(canvasElement: HTMLElement) {
   };
 }
 
-/** Open the workspace MCP modal via the "More actions" menu */
+/** Open the workspace MCP modal via the "More actions" menu. */
 async function openWorkspaceMCPModal(canvasElement: HTMLElement): Promise<void> {
   const canvas = within(canvasElement);
   const body = within(canvasElement.ownerDocument.body);
 
-  // Wait for workspace header to load
+  // Wait for workspace header to load.
   await canvas.findByTestId("workspace-header", {}, { timeout: 10000 });
 
   // The popover-to-dialog transition can race in CI when the menu closes before
