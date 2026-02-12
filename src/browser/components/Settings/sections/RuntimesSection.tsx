@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Loader2 } from "lucide-react";
 
 import { resolveCoderAvailability } from "@/browser/components/ChatInput/CoderControls";
@@ -34,6 +34,11 @@ type RuntimeAvailabilityState =
   | { status: "loading" }
   | { status: "failed" }
   | { status: "loaded"; data: RuntimeAvailabilityMap };
+
+interface RuntimeOverrideCacheEntry {
+  enablement: RuntimeEnablement;
+  defaultRuntime: RuntimeEnablementId | null;
+}
 
 const ALL_SCOPE_VALUE = "__all__";
 
@@ -91,6 +96,8 @@ export function RuntimesSection() {
   const [runtimeAvailabilityState, setRuntimeAvailabilityState] =
     useState<RuntimeAvailabilityState>({ status: "idle" });
   const [coderInfo, setCoderInfo] = useState<CoderInfo | null>(null);
+  // Cache per-project overrides locally because config writes don't refresh the project context.
+  const overrideCacheRef = useRef(new Map<string, RuntimeOverrideCacheEntry>());
 
   const selectedProjectPath = selectedScope === ALL_SCOPE_VALUE ? null : selectedScope;
   const isProjectScope = Boolean(selectedProjectPath);
@@ -111,6 +118,15 @@ export function RuntimesSection() {
       setProjectOverrideEnabled(false);
       setProjectEnablement(enablement);
       setProjectDefaultRuntime(defaultRuntime ?? null);
+      return;
+    }
+
+    // Check local cache first (backend writes aren't reflected in context until reload).
+    const cached = overrideCacheRef.current.get(selectedProjectPath);
+    if (cached) {
+      setProjectOverrideEnabled(true);
+      setProjectEnablement(cached.enablement);
+      setProjectDefaultRuntime(cached.defaultRuntime);
       return;
     }
 
@@ -187,6 +203,8 @@ export function RuntimesSection() {
   const effectiveDefaultRuntime = isProjectOverrideActive ? projectDefaultRuntime : defaultRuntime;
 
   const enabledRuntimeOptions = RUNTIME_ROWS.filter((runtime) => effectiveEnablement[runtime.id]);
+  const enabledRuntimeCount = enabledRuntimeOptions.length;
+
   const defaultRuntimeValue =
     effectiveDefaultRuntime && effectiveEnablement[effectiveDefaultRuntime]
       ? effectiveDefaultRuntime
@@ -205,6 +223,7 @@ export function RuntimesSection() {
       setProjectOverrideEnabled(false);
       setProjectEnablement(enablement);
       setProjectDefaultRuntime(defaultRuntime ?? null);
+      overrideCacheRef.current.delete(selectedProjectPath);
       api?.config
         ?.updateRuntimeEnablement({
           projectPath: selectedProjectPath,
@@ -221,6 +240,10 @@ export function RuntimesSection() {
     setProjectOverrideEnabled(true);
     setProjectEnablement(nextEnablement);
     setProjectDefaultRuntime(defaultRuntime ?? null);
+    overrideCacheRef.current.set(selectedProjectPath, {
+      enablement: nextEnablement,
+      defaultRuntime: defaultRuntime ?? null,
+    });
 
     api?.config
       ?.updateRuntimeEnablement({
@@ -234,6 +257,16 @@ export function RuntimesSection() {
   };
 
   const handleRuntimeToggle = (runtimeId: RuntimeEnablementId, enabled: boolean) => {
+    if (!enabled) {
+      // Keep at least one runtime enabled to avoid leaving users without a fallback.
+      const currentEnabledCount = RUNTIME_ROWS.filter(
+        (runtime) => effectiveEnablement[runtime.id]
+      ).length;
+      if (currentEnabledCount <= 1) {
+        return;
+      }
+    }
+
     const nextEnablement: RuntimeEnablement = {
       ...effectiveEnablement,
       [runtimeId]: enabled,
@@ -258,6 +291,10 @@ export function RuntimesSection() {
       nextDefaultRuntime = getFallbackRuntime(nextEnablement);
       setProjectDefaultRuntime(nextDefaultRuntime);
     }
+    overrideCacheRef.current.set(selectedProjectPath, {
+      enablement: nextEnablement,
+      defaultRuntime: nextDefaultRuntime,
+    });
 
     const updatePayload: {
       projectPath: string;
@@ -290,6 +327,10 @@ export function RuntimesSection() {
     }
 
     setProjectDefaultRuntime(runtimeId);
+    overrideCacheRef.current.set(selectedProjectPath, {
+      enablement: projectEnablement,
+      defaultRuntime: runtimeId,
+    });
     api?.config
       ?.updateRuntimeEnablement({
         projectPath: selectedProjectPath,
@@ -398,6 +439,27 @@ export function RuntimesSection() {
                 : runtimeAvailabilityState.status === "loading"
               : false;
             const rowDisabled = isProjectScope && !projectOverrideEnabled;
+            const isLastEnabled = effectiveEnablement[runtime.id] && enabledRuntimeCount <= 1;
+            const switchDisabled = rowDisabled || isLastEnabled;
+            const switchControl = (
+              <Switch
+                checked={effectiveEnablement[runtime.id]}
+                disabled={switchDisabled}
+                onCheckedChange={(checked) => handleRuntimeToggle(runtime.id, checked)}
+                aria-label={`Toggle ${runtime.label} runtime`}
+              />
+            );
+            const switchNode =
+              isLastEnabled && !rowDisabled ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex">{switchControl}</span>
+                  </TooltipTrigger>
+                  <TooltipContent align="end">At least one runtime must be enabled.</TooltipContent>
+                </Tooltip>
+              ) : (
+                switchControl
+              );
 
             // Inline status indicators keep availability feedback from shifting row layout.
             return (
@@ -434,12 +496,7 @@ export function RuntimesSection() {
                   <div className="flex h-4 w-4 items-center justify-center">
                     {showLoading ? <Loader2 className="text-muted h-4 w-4 animate-spin" /> : null}
                   </div>
-                  <Switch
-                    checked={effectiveEnablement[runtime.id]}
-                    disabled={rowDisabled}
-                    onCheckedChange={(checked) => handleRuntimeToggle(runtime.id, checked)}
-                    aria-label={`Toggle ${runtime.label} runtime`}
-                  />
+                  {switchNode}
                 </div>
               </div>
             );
