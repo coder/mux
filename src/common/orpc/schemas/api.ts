@@ -440,11 +440,11 @@ export const projects = {
       z.string()
     ),
   },
-  getDefaultCloneDir: {
+  getDefaultProjectDir: {
     input: z.void(),
     output: z.string(),
   },
-  setDefaultCloneDir: {
+  setDefaultProjectDir: {
     input: z.object({ path: z.string() }),
     output: z.void(),
   },

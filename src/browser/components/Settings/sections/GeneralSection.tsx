@@ -153,7 +153,7 @@ export function GeneralSection() {
   const editorConfig = normalizeEditorConfig(rawEditorConfig);
   const [sshHost, setSshHost] = useState<string>("");
   const [sshHostLoaded, setSshHostLoaded] = useState(false);
-  const [defaultCloneDir, setDefaultCloneDir] = useState("");
+  const [defaultProjectDir, setDefaultProjectDir] = useState("");
   const [cloneDirLoaded, setCloneDirLoaded] = useState(false);
   // Track whether the initial load succeeded to prevent saving empty string
   // (which would clear the config) when the initial fetch failed.
@@ -257,9 +257,9 @@ export function GeneralSection() {
     }
 
     void api.projects
-      .getDefaultCloneDir()
+      .getDefaultProjectDir()
       .then((dir) => {
-        setDefaultCloneDir(dir);
+        setDefaultProjectDir(dir);
         setCloneDirLoaded(true);
         setCloneDirLoadedOk(true);
       })
@@ -307,22 +307,22 @@ export function GeneralSection() {
       return;
     }
 
-    const trimmedCloneDir = defaultCloneDir.trim();
-    if (!cloneDirLoadedOk && !trimmedCloneDir) {
+    const trimmedProjectDir = defaultProjectDir.trim();
+    if (!cloneDirLoadedOk && !trimmedProjectDir) {
       return;
     }
 
     void api.projects
-      .setDefaultCloneDir({ path: defaultCloneDir })
+      .setDefaultProjectDir({ path: defaultProjectDir })
       .then(() => {
         // A successful save means subsequent clears are safe, even if the
-        // initial getDefaultCloneDir() request failed earlier in this session.
+        // initial getDefaultProjectDir() request failed earlier in this session.
         setCloneDirLoadedOk(true);
       })
       .catch(() => {
         // Best-effort save: keep current UI state on failure.
       });
-  }, [api, cloneDirLoaded, cloneDirLoadedOk, defaultCloneDir]);
+  }, [api, cloneDirLoaded, cloneDirLoadedOk, defaultProjectDir]);
 
   return (
     <div className="space-y-6">
@@ -493,13 +493,15 @@ export function GeneralSection() {
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1">
-              <div className="text-foreground text-sm">Default clone directory</div>
-              <div className="text-muted text-xs">Parent folder used when cloning repositories</div>
+              <div className="text-foreground text-sm">Default project directory</div>
+              <div className="text-muted text-xs">
+                Parent folder for new projects and cloned repositories
+              </div>
             </div>
             <Input
-              value={defaultCloneDir}
+              value={defaultProjectDir}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                setDefaultCloneDir(e.target.value)
+                setDefaultProjectDir(e.target.value)
               }
               onBlur={handleCloneDirBlur}
               placeholder="~/.mux/projects"

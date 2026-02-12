@@ -280,7 +280,7 @@ interface ProjectCloneFormProps {
   onSuccess: (normalizedPath: string, projectConfig: ProjectConfig) => void;
   onClose?: () => void;
   isOpen: boolean;
-  defaultCloneDir: string;
+  defaultProjectDir: string;
   onIsCreatingChange?: (isCreating: boolean) => void;
   hideFooter?: boolean;
   autoFocus?: boolean;
@@ -326,7 +326,7 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
   function ProjectCloneForm(props, ref) {
     const { api } = useAPI();
     const [repoUrl, setRepoUrl] = useState("");
-    const [cloneParentDir, setCloneParentDir] = useState(props.defaultCloneDir);
+    const [cloneParentDir, setCloneParentDir] = useState(props.defaultProjectDir);
     const [hasEditedCloneParentDir, setHasEditedCloneParentDir] = useState(false);
     const [error, setError] = useState("");
     const [isCreating, setIsCreating] = useState(false);
@@ -344,11 +344,11 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
 
     const reset = useCallback(() => {
       setRepoUrl("");
-      setCloneParentDir(props.defaultCloneDir);
+      setCloneParentDir(props.defaultProjectDir);
       setHasEditedCloneParentDir(false);
       setError("");
       setProgressLines([]);
-    }, [props.defaultCloneDir]);
+    }, [props.defaultProjectDir]);
 
     const abortInFlightClone = useCallback(() => {
       if (!abortControllerRef.current) {
@@ -372,8 +372,8 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
         return;
       }
 
-      setCloneParentDir(props.defaultCloneDir);
-    }, [props.defaultCloneDir, props.isOpen, hasEditedCloneParentDir]);
+      setCloneParentDir(props.defaultProjectDir);
+    }, [props.defaultProjectDir, props.isOpen, hasEditedCloneParentDir]);
 
     useEffect(() => {
       progressEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -389,7 +389,7 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
 
     const { canBrowse, browse, directoryPickerModal } = useDirectoryPicker({
       api,
-      initialPath: cloneParentDir || props.defaultCloneDir || "~",
+      initialPath: cloneParentDir || props.defaultProjectDir || "~",
       onSelectPath: (selectedPath) => {
         setCloneParentDir(selectedPath);
         setHasEditedCloneParentDir(true);
@@ -559,7 +559,7 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
                     setError("");
                   }}
                   onKeyDown={handleKeyDown}
-                  placeholder={props.defaultCloneDir || "Select clone location"}
+                  placeholder={props.defaultProjectDir || "Select clone location"}
                   disabled={isCreating}
                   className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
                 />
@@ -582,10 +582,6 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
                 <span className="text-foreground font-mono">{destinationPreview}</span>
               </p>
             )}
-
-            <p className="text-muted text-xs">
-              Default location can be changed in <span className="text-foreground">Settings</span>.
-            </p>
           </div>
         )}
 
@@ -669,7 +665,7 @@ export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddF
     const { api } = useAPI();
     const [mode, setMode] = useState<ProjectCreateMode>("pick-folder");
     const [isCreating, setIsCreating] = useState(false);
-    const [defaultCloneDir, setDefaultCloneDir] = useState("");
+    const [defaultProjectDir, setDefaultProjectDir] = useState("");
     const [isLoadingDefaultCloneDir, setIsLoadingDefaultCloneDir] = useState(false);
     const [hasLoadedDefaultCloneDir, setHasLoadedDefaultCloneDir] = useState(false);
     const cloneDirLoadNonceRef = useRef(0);
@@ -693,13 +689,13 @@ export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddF
       const nonce = cloneDirLoadNonceRef.current;
 
       try {
-        const cloneDir = await api.projects.getDefaultCloneDir();
+        const projectDir = await api.projects.getDefaultProjectDir();
         if (nonce !== cloneDirLoadNonceRef.current) {
           return; // Parent was closed/reopened while loading — discard stale result
         }
-        setDefaultCloneDir(cloneDir);
+        setDefaultProjectDir(projectDir);
       } catch (err) {
-        console.error("Failed to fetch default clone directory:", err);
+        console.error("Failed to fetch default project directory:", err);
       } finally {
         if (nonce === cloneDirLoadNonceRef.current) {
           // Mark as loaded even on failure to prevent infinite retry loops
@@ -715,7 +711,7 @@ export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddF
         cloneDirLoadNonceRef.current++;
         setMode("pick-folder");
         setCreating(false);
-        setDefaultCloneDir("");
+        setDefaultProjectDir("");
         setHasLoadedDefaultCloneDir(false);
         setIsLoadingDefaultCloneDir(false);
         return;
@@ -805,7 +801,7 @@ export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddF
               onSuccess={props.onSuccess}
               onClose={props.onClose ?? NOOP}
               isOpen={props.isOpen}
-              defaultCloneDir={defaultCloneDir}
+              defaultProjectDir={defaultProjectDir}
               onIsCreatingChange={setCreating}
               hideFooter
               autoFocus={props.autoFocus}

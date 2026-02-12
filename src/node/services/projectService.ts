@@ -80,15 +80,15 @@ function resolvePathWithTilde(inputPath: string): string {
   return path.resolve(expanded);
 }
 
-function resolveCloneParentDir(
-  cloneParentDir: string | null | undefined,
-  defaultCloneDir: string | undefined
+function resolveProjectParentDir(
+  parentDir: string | null | undefined,
+  defaultProjectDir: string | undefined
 ): string {
-  const rawParentDir = cloneParentDir ?? defaultCloneDir ?? getMuxProjectsDir();
+  const rawParentDir = parentDir ?? defaultProjectDir ?? getMuxProjectsDir();
   const trimmedParentDir = rawParentDir.trim();
 
   if (!trimmedParentDir) {
-    throw new Error("Clone destination parent directory cannot be empty");
+    throw new Error("Project parent directory cannot be empty");
   }
 
   return resolvePathWithTilde(trimmedParentDir);
@@ -227,10 +227,12 @@ export class ProjectService {
         !projectPath.includes("\\") &&
         !projectPath.startsWith("~");
 
+      const config = this.config.loadConfigOrDefault();
       let normalizedPath: string;
       if (isBareProjectName) {
         // Bare project name - put in default projects directory
-        normalizedPath = path.join(getMuxProjectsDir(), projectPath);
+        const parentDir = resolveProjectParentDir(undefined, config.defaultProjectDir);
+        normalizedPath = path.join(parentDir, projectPath);
       } else if (
         projectPath === "~" ||
         projectPath.startsWith("~/") ||
@@ -256,8 +258,6 @@ export class ProjectService {
         return Err("Project path is not a directory");
       }
 
-      const config = this.config.loadConfigOrDefault();
-
       if (config.projects.has(normalizedPath)) {
         return Err("Project already exists");
       }
@@ -276,16 +276,16 @@ export class ProjectService {
     }
   }
 
-  getDefaultCloneDir(): string {
+  getDefaultProjectDir(): string {
     const config = this.config.loadConfigOrDefault();
-    return resolveCloneParentDir(undefined, config.defaultProjectCloneDir);
+    return resolveProjectParentDir(undefined, config.defaultProjectDir);
   }
 
-  async setDefaultCloneDir(dirPath: string): Promise<void> {
+  async setDefaultProjectDir(dirPath: string): Promise<void> {
     const trimmed = dirPath.trim();
     await this.config.editConfig((config) => ({
       ...config,
-      defaultProjectCloneDir: trimmed || undefined,
+      defaultProjectDir: trimmed || undefined,
     }));
   }
 
@@ -299,9 +299,9 @@ export class ProjectService {
       }
 
       const config = this.config.loadConfigOrDefault();
-      const cloneParentDir = resolveCloneParentDir(
+      const cloneParentDir = resolveProjectParentDir(
         input.cloneParentDir,
-        config.defaultProjectCloneDir
+        config.defaultProjectDir
       );
       const repoFolderName = deriveRepoFolderName(repoUrl);
       const normalizedPath = path.join(cloneParentDir, repoFolderName);

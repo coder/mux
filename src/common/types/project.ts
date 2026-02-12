@@ -53,11 +53,11 @@ export interface ProjectsConfig {
   /** SSH hostname/alias for this machine (used for editor deep links in browser mode) */
   serverSshHost?: string;
   /**
-   * Default parent directory used for cloning repositories into projects.
+   * Default parent directory for new projects (cloning and bare-name creation).
    *
-   * When unset, clone defaults to getMuxProjectsDir().
+   * When unset, falls back to getMuxProjectsDir() (~/.mux/projects).
    */
-  defaultProjectCloneDir?: string;
+  defaultProjectDir?: string;
   /** IDs of splash screens that have been viewed */
   viewedSplashScreens?: string[];
   /** Cross-client feature flag overrides (shared via ~/.mux/config.json). */

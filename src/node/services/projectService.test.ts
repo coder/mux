@@ -190,7 +190,7 @@ describe("ProjectService", () => {
 
       const loadedConfig = config.loadConfigOrDefault();
       expect(loadedConfig.projects.has(expectedProjectPath)).toBe(true);
-      expect(loadedConfig.defaultProjectCloneDir).toBeUndefined();
+      expect(loadedConfig.defaultProjectDir).toBeUndefined();
     });
 
     it("normalizes trailing-slash owner/repo shorthand to GitHub HTTPS when SSH agent is unavailable", async () => {
