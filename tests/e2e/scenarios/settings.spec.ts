@@ -5,16 +5,15 @@ test.skip(
   "Electron scenario runs on chromium only"
 );
 
-test.describe("Settings Modal", () => {
-  test("opens settings modal via gear button", async ({ ui, page }) => {
+test.describe("Settings", () => {
+  test("opens settings via gear button", async ({ ui, page }) => {
     await ui.projects.openFirstWorkspace();
 
     // Open settings
     await ui.settings.open();
 
-    // Verify modal is open with correct structure
-    const dialog = page.getByRole("dialog", { name: "Settings" });
-    await expect(dialog).toBeVisible();
+    // Verify settings page is open with correct structure.
+    await expect(page.getByRole("button", { name: /close settings/i })).toBeVisible();
 
     // Verify sidebar sections are present
     await expect(page.getByRole("button", { name: "General", exact: true })).toBeVisible();
@@ -42,39 +41,24 @@ test.describe("Settings Modal", () => {
     await expect(page.getByText("Theme", { exact: true })).toBeVisible();
   });
 
-  test("closes settings with Escape key", async ({ ui }) => {
+  test("closes settings with close button", async ({ ui, page }) => {
     await ui.projects.openFirstWorkspace();
     await ui.settings.open();
 
-    // Close via Escape
-    await ui.settings.close();
-
-    // Verify closed
-    await ui.settings.expectClosed();
-  });
-
-  test("closes settings with X button", async ({ ui, page }) => {
-    await ui.projects.openFirstWorkspace();
-    await ui.settings.open();
-
-    // Click close button
     const closeButton = page.getByRole("button", { name: /close settings/i });
     await closeButton.click();
 
-    // Verify closed
     await ui.settings.expectClosed();
   });
 
-  test("closes settings by clicking overlay", async ({ ui, page }) => {
+  test("returns to previous page when closing settings", async ({ ui, page }) => {
     await ui.projects.openFirstWorkspace();
     await ui.settings.open();
+    await ui.settings.selectSection("Providers");
 
-    // Click overlay (outside modal content) - Radix Dialog uses data-state attribute
-    const overlay = page.locator('[data-state="open"].fixed.inset-0');
-    await overlay.click({ position: { x: 10, y: 10 }, force: true });
+    await ui.settings.close();
 
-    // Verify closed
-    await ui.settings.expectClosed();
+    await expect(page.getByRole("textbox", { name: /message/i })).toBeVisible();
   });
 
   test("expands provider accordion in Providers section", async ({ ui, page }) => {

@@ -621,16 +621,20 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
 
   const settings = {
     async open(): Promise<void> {
-      // Click the settings gear button in the title bar
-      const settingsButton = page.getByRole("button", { name: /settings/i });
+      // Click the settings gear button in the title bar.
+      const settingsButton = page.getByTestId("settings-button");
       await expect(settingsButton).toBeVisible();
       await settingsButton.click();
       await settings.expectOpen();
     },
 
     async close(): Promise<void> {
-      // Press Escape to close
-      await page.keyboard.press("Escape");
+      const closeControl = page
+        .getByRole("button", { name: /Close settings|Back to previous page/i })
+        .first();
+
+      await expect(closeControl).toBeVisible({ timeout: 5000 });
+      await closeControl.click();
       await settings.expectClosed();
     },
 
