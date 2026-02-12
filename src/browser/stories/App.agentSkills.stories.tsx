@@ -57,6 +57,37 @@ async function expandFirstToolCall(canvasElement: HTMLElement) {
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 }
 
+async function openSkillDialog(canvasElement: HTMLElement): Promise<HTMLElement> {
+  await waitForChatMessagesLoaded(canvasElement);
+
+  const doc = canvasElement.ownerDocument;
+  const storyRoot = doc.getElementById("storybook-root") ?? canvasElement;
+
+  await waitFor(() => {
+    const skillButton = storyRoot.querySelector('button[aria-label*="skill"]');
+    if (!skillButton) throw new Error("Skill indicator not found");
+  });
+
+  const skillButton = storyRoot.querySelector('button[aria-label*="skill"]');
+  if (!(skillButton instanceof HTMLElement)) {
+    throw new Error("Skill indicator not found");
+  }
+
+  await userEvent.click(skillButton);
+
+  await waitFor(() => {
+    const dialog = doc.querySelector('[role="dialog"]');
+    if (!dialog) throw new Error("Dialog not visible");
+  });
+
+  const dialog = doc.querySelector('[role="dialog"]');
+  if (!(dialog instanceof HTMLElement)) {
+    throw new Error("Dialog not visible");
+  }
+
+  return dialog;
+}
+
 const SKILL_PACKAGE = {
   scope: "project",
   directoryName: "react-effects",
@@ -101,7 +132,7 @@ const SKILL_FILE_CONTENT = [
 ].join("\n");
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SKILL INDICATOR (hover tooltip showing available skills)
+// SKILL INDICATOR (dialog showing available skills)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const ALL_SKILLS: AgentSkillDescriptor[] = [
@@ -174,7 +205,7 @@ const INVALID_SKILLS: AgentSkillIssue[] = [
   },
 ];
 
-/** Shows the SkillIndicator popover with all skill scopes (project, global, built-in) */
+/** Shows the SkillIndicator dialog with all skill scopes (project, global, built-in) */
 export const SkillIndicator_AllScopes: AppStory = {
   render: () => (
     <AppWithMocks
@@ -188,31 +219,14 @@ export const SkillIndicator_AllScopes: AppStory = {
     />
   ),
   play: async ({ canvasElement }) => {
-    await waitForChatMessagesLoaded(canvasElement);
-
-    // Find the skill indicator button by its aria-label
-    const doc = canvasElement.ownerDocument;
-    const storyRoot = doc.getElementById("storybook-root") ?? canvasElement;
-    await waitFor(() => {
-      const skillButton = storyRoot.querySelector('button[aria-label*="skill"]');
-      if (!skillButton) throw new Error("Skill indicator not found");
-    });
-
-    const skillButton = storyRoot.querySelector('button[aria-label*="skill"]')!;
-    await userEvent.hover(skillButton);
-
-    // Wait for popover to appear (hover triggers open)
-    await waitFor(() => {
-      const popover = doc.querySelector("[data-radix-popper-content-wrapper]");
-      if (!popover) throw new Error("Popover not visible");
-    });
+    await openSkillDialog(canvasElement);
 
     await waitForChatInputAutofocusDone(canvasElement);
     blurActiveElement();
   },
 };
 
-/** Shows unadvertised skills (advertise: false) with EyeOff icon in the popover */
+/** Shows unadvertised skills (advertise: false) with EyeOff icon in the dialog */
 export const SkillIndicator_UnadvertisedSkills: AppStory = {
   render: () => (
     <AppWithMocks
@@ -226,24 +240,10 @@ export const SkillIndicator_UnadvertisedSkills: AppStory = {
     />
   ),
   play: async ({ canvasElement }) => {
-    await waitForChatMessagesLoaded(canvasElement);
+    const dialog = await openSkillDialog(canvasElement);
 
-    const doc = canvasElement.ownerDocument;
-    const storyRoot = doc.getElementById("storybook-root") ?? canvasElement;
     await waitFor(() => {
-      const skillButton = storyRoot.querySelector('button[aria-label*="skill"]');
-      if (!skillButton) throw new Error("Skill indicator not found");
-    });
-
-    const skillButton = storyRoot.querySelector('button[aria-label*="skill"]')!;
-    await userEvent.hover(skillButton);
-
-    // Wait for popover to appear with EyeOff icons for unadvertised skills
-    await waitFor(() => {
-      const popover = doc.querySelector("[data-radix-popper-content-wrapper]");
-      if (!popover) throw new Error("Popover not visible");
-      // Verify EyeOff icon is present (aria-label for unadvertised skills)
-      const eyeOffIcon = popover.querySelector('[aria-label="Not advertised in system prompt"]');
+      const eyeOffIcon = dialog.querySelector('[aria-label="Not advertised in system prompt"]');
       if (!eyeOffIcon) throw new Error("EyeOff icon not found for unadvertised skill");
     });
 
@@ -252,7 +252,7 @@ export const SkillIndicator_UnadvertisedSkills: AppStory = {
   },
 };
 
-/** Shows invalid skills in the SkillIndicator popover ("Invalid skills" section) */
+/** Shows invalid skills in the SkillIndicator dialog ("Invalid skills" section) */
 export const SkillIndicator_InvalidSkills: AppStory = {
   render: () => (
     <AppWithMocks
@@ -267,25 +267,13 @@ export const SkillIndicator_InvalidSkills: AppStory = {
     />
   ),
   play: async ({ canvasElement }) => {
-    await waitForChatMessagesLoaded(canvasElement);
-
-    const doc = canvasElement.ownerDocument;
-    const storyRoot = doc.getElementById("storybook-root") ?? canvasElement;
-    await waitFor(() => {
-      const skillButton = storyRoot.querySelector('button[aria-label*="skill"]');
-      if (!skillButton) throw new Error("Skill indicator not found");
-    });
-
-    const skillButton = storyRoot.querySelector('button[aria-label*="skill"]')!;
-    await userEvent.hover(skillButton);
+    const dialog = await openSkillDialog(canvasElement);
 
     await waitFor(() => {
-      const popover = doc.querySelector("[data-radix-popper-content-wrapper]");
-      if (!popover) throw new Error("Popover not visible");
-      if (!popover.textContent?.includes("Invalid skills")) {
+      if (!dialog.textContent?.includes("Invalid skills")) {
         throw new Error("Invalid skills section not visible");
       }
-      if (!popover.textContent?.includes("Bad_Skill")) {
+      if (!dialog.textContent?.includes("Bad_Skill")) {
         throw new Error("Invalid skill name not visible");
       }
     });
@@ -295,7 +283,7 @@ export const SkillIndicator_InvalidSkills: AppStory = {
   },
 };
 
-/** Shows runtime skill load errors in the SkillIndicator popover ("Load errors" section) */
+/** Shows runtime skill load errors in the SkillIndicator dialog ("Load errors" section) */
 export const SkillIndicator_LoadErrors: AppStory = {
   render: () => (
     <AppWithMocks
@@ -340,25 +328,13 @@ export const SkillIndicator_LoadErrors: AppStory = {
     />
   ),
   play: async ({ canvasElement }) => {
-    await waitForChatMessagesLoaded(canvasElement);
-
-    const doc = canvasElement.ownerDocument;
-    const storyRoot = doc.getElementById("storybook-root") ?? canvasElement;
-    await waitFor(() => {
-      const skillButton = storyRoot.querySelector('button[aria-label*="skill"]');
-      if (!skillButton) throw new Error("Skill indicator not found");
-    });
-
-    const skillButton = storyRoot.querySelector('button[aria-label*="skill"]')!;
-    await userEvent.hover(skillButton);
+    const dialog = await openSkillDialog(canvasElement);
 
     await waitFor(() => {
-      const popover = doc.querySelector("[data-radix-popper-content-wrapper]");
-      if (!popover) throw new Error("Popover not visible");
-      if (!popover.textContent?.includes("Load errors")) {
+      if (!dialog.textContent?.includes("Load errors")) {
         throw new Error("Load errors section not visible");
       }
-      if (!popover.textContent?.includes("deployment")) {
+      if (!dialog.textContent?.includes("deployment")) {
         throw new Error("Failed skill name not visible");
       }
     });
@@ -368,7 +344,7 @@ export const SkillIndicator_LoadErrors: AppStory = {
   },
 };
 
-/** Shows both invalid skills and runtime load errors together in the popover */
+/** Shows both invalid skills and runtime load errors together in the dialog */
 export const SkillIndicator_AllErrors: AppStory = {
   render: () => (
     <AppWithMocks
@@ -403,26 +379,14 @@ export const SkillIndicator_AllErrors: AppStory = {
     />
   ),
   play: async ({ canvasElement }) => {
-    await waitForChatMessagesLoaded(canvasElement);
-
-    const doc = canvasElement.ownerDocument;
-    const storyRoot = doc.getElementById("storybook-root") ?? canvasElement;
-    await waitFor(() => {
-      const skillButton = storyRoot.querySelector('button[aria-label*="skill"]');
-      if (!skillButton) throw new Error("Skill indicator not found");
-    });
-
-    const skillButton = storyRoot.querySelector('button[aria-label*="skill"]')!;
-    await userEvent.hover(skillButton);
+    const dialog = await openSkillDialog(canvasElement);
 
     await waitFor(() => {
-      const popover = doc.querySelector("[data-radix-popper-content-wrapper]");
-      if (!popover) throw new Error("Popover not visible");
       // Both sections should be visible
-      if (!popover.textContent?.includes("Invalid skills")) {
+      if (!dialog.textContent?.includes("Invalid skills")) {
         throw new Error("Invalid skills section not visible");
       }
-      if (!popover.textContent?.includes("Load errors")) {
+      if (!dialog.textContent?.includes("Load errors")) {
         throw new Error("Load errors section not visible");
       }
     });
