@@ -61,11 +61,6 @@ export interface System1WrapOptions {
   runtime: Runtime;
   agentDiscoveryPath: string;
   /** Callbacks to break the dependency on AIService / StreamManager. */
-  resolveGatewayModelString: (
-    modelString: string,
-    defaultModel?: string,
-    explicitGateway?: boolean
-  ) => string;
   createModel: (
     modelString: string,
     opts?: MuxProviderOptions
@@ -105,12 +100,8 @@ export function wrapToolsWithSystem1(opts: System1WrapOptions): Record<string, T
     if (cachedSystem1Model) return cachedSystem1Model;
     if (cachedSystem1ModelFailed) return undefined;
 
-    const resolvedModelString = opts.resolveGatewayModelString(
-      system1Ctx.modelString,
-      undefined,
-      system1Ctx.explicitGateway
-    );
-    const created = await opts.createModel(resolvedModelString, opts.muxProviderOptions);
+    // createModel handles gateway routing automatically — pass the raw string.
+    const created = await opts.createModel(system1Ctx.modelString, opts.muxProviderOptions);
     if (!created.success) {
       cachedSystem1ModelFailed = true;
       log.debug("[system1] Failed to create System 1 model", {
@@ -121,7 +112,7 @@ export function wrapToolsWithSystem1(opts: System1WrapOptions): Record<string, T
       return undefined;
     }
 
-    cachedSystem1Model = { modelString: resolvedModelString, model: created.data };
+    cachedSystem1Model = { modelString: system1Ctx.modelString, model: created.data };
     return cachedSystem1Model;
   };
 
@@ -184,21 +175,22 @@ function getExecuteFn(tool: Tool | undefined): ExecuteFn | undefined {
 }
 
 interface System1ModelContext {
+  /** Raw model string (may include mux-gateway: prefix). Passed to createModel which resolves gateway routing internally. */
   modelString: string;
-  explicitGateway: boolean;
   thinkingLevel: ThinkingLevel;
 }
 
 function buildSystem1ModelContext(opts: System1WrapOptions): System1ModelContext {
   const raw = typeof opts.system1Model === "string" ? opts.system1Model.trim() : "";
-  const modelString = raw ? normalizeGatewayModel(raw) : "";
-  const explicitGateway = raw.startsWith("mux-gateway:");
-  const effectiveModelForThinking = modelString || opts.modelString;
+  // Canonical form (gateway prefix stripped) for provider checks like thinking level.
+  const canonical = raw ? normalizeGatewayModel(raw) : "";
+  const effectiveModelForThinking = canonical || opts.modelString;
   const thinkingLevel = enforceThinkingPolicy(
     effectiveModelForThinking,
     opts.system1ThinkingLevel ?? "off"
   );
-  return { modelString, explicitGateway, thinkingLevel };
+  // Store the raw string so createModel can detect explicit mux-gateway: prefix.
+  return { modelString: raw, thinkingLevel };
 }
 
 // ---------------------------------------------------------------------------

@@ -3,38 +3,19 @@ import { z } from "zod";
 import { useAPI } from "@/browser/contexts/API";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getWorkspaceNameStateKey } from "@/common/constants/storage";
-import { useGateway, formatAsGatewayModel } from "./useGatewayModels";
-import { getKnownModel } from "@/common/constants/knownModels";
+import { NAME_GEN_PREFERRED_MODELS } from "@/common/constants/nameGeneration";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 
-/** Small/fast models preferred for name generation */
-const NAME_GEN_PREFERRED_MODELS = [getKnownModel("HAIKU").id, getKnownModel("GPT_MINI").id];
-
 /**
- * Build ordered candidate list for name generation, respecting gateway prefs.
- * Takes primitive/stable values to avoid re-computation on every render.
+ * Build ordered candidate list for name generation.
+ * Gateway routing is resolved automatically by createModel on the backend,
+ * so candidates are sent as canonical model IDs.
  */
-function buildNameGenCandidates(
-  isGatewayActive: boolean,
-  modelUsesGateway: (modelId: string) => boolean,
-  userModel: string | undefined
-): string[] {
-  const candidates: string[] = [];
-
-  // 1. Preferred models with gateway prefs applied
-  for (const modelId of NAME_GEN_PREFERRED_MODELS) {
-    const transformed =
-      isGatewayActive && modelUsesGateway(modelId) ? formatAsGatewayModel(modelId) : modelId;
-    if (!candidates.includes(transformed)) {
-      candidates.push(transformed);
-    }
-  }
-
-  // 2. User's selected model (already gateway-transformed by caller)
+function buildNameGenCandidates(userModel: string | undefined): string[] {
+  const candidates: string[] = [...NAME_GEN_PREFERRED_MODELS];
   if (userModel && !candidates.includes(userModel)) {
     candidates.push(userModel);
   }
-
   return candidates;
 }
 
@@ -140,13 +121,7 @@ export function getDisplayTitleFromPersistedState(state: unknown): string {
 export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspaceNameReturn {
   const { message, debounceMs = 500, userModel, scopeId } = options;
   const { api } = useAPI();
-  const { isActive: isGatewayActive, modelUsesGateway } = useGateway();
-  // Memoize candidates with stable dependencies (isGatewayActive is primitive,
-  // modelUsesGateway is a useCallback that only changes when enabledModels changes)
-  const candidates = useMemo(
-    () => buildNameGenCandidates(isGatewayActive, modelUsesGateway, userModel),
-    [isGatewayActive, modelUsesGateway, userModel]
-  );
+  const candidates = useMemo(() => buildNameGenCandidates(userModel), [userModel]);
 
   // Always call usePersistedState, but only *use* it when scopeId is provided.
   // This prevents draft switching from leaking name state across different creation drafts.

@@ -2314,7 +2314,7 @@ export const router = (authToken?: string) => {
         .input(schemas.nameGeneration.generate.input)
         .output(schemas.nameGeneration.generate.output)
         .handler(async ({ context, input }) => {
-          // Frontend provides ordered candidate list with gateway prefs applied.
+          // Frontend provides ordered candidate list; gateway routing resolved by createModel.
           // Backend tries candidates in order with retry on API errors.
           const result = await generateWorkspaceIdentity(
             input.message,
