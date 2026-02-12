@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
-import { useAgent } from "@/browser/contexts/AgentContext";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
+import { getDisableWorkspaceAgentsKey } from "@/common/constants/storage";
 import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
 import { SkillIndicator } from "./SkillIndicator";
 
@@ -11,7 +12,12 @@ interface ActiveProjectSkillIndicatorProps {
 
 export const ActiveProjectSkillIndicator: React.FC<ActiveProjectSkillIndicatorProps> = (props) => {
   const { api } = useAPI();
-  const { disableWorkspaceAgents } = useAgent();
+  // Read persisted state directly because the sidebar is not wrapped in AgentProvider.
+  const [disableWorkspaceAgents] = usePersistedState<boolean>(
+    getDisableWorkspaceAgentsKey(props.workspaceId),
+    false,
+    { listener: true }
+  );
   const { loadedSkills, skillLoadErrors } = useWorkspaceSidebarState(props.workspaceId);
   const [availableSkills, setAvailableSkills] = useState<AgentSkillDescriptor[]>([]);
   const [invalidSkills, setInvalidSkills] = useState<AgentSkillIssue[]>([]);
