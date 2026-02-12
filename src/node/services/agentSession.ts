@@ -585,6 +585,11 @@ export class AgentSession {
         }
       }
 
+      // The edit is about to truncate and rewrite history. Any queued content from
+      // the previous turn was written in the old context — return it to the input
+      // so the user can re-evaluate, and start the edit stream with an empty queue.
+      this.restoreQueueToInput();
+
       // Find the truncation target: the edited message or any immediately-preceding snapshots.
       // (snapshots are persisted immediately before their corresponding user message)
       // Only search the current compaction epoch — truncating past a compaction boundary
@@ -1043,11 +1048,7 @@ export class AgentSession {
       system1Model: options?.system1Model,
       system1ThinkingLevel: options?.system1ThinkingLevel,
       disableWorkspaceAgents: options?.disableWorkspaceAgents,
-      // Edit turns suppress the queued-message stop condition. The defer path may intentionally
-      // leave messageQueue populated so the edit can truncate first; we must not let that stale
-      // queue cut the edit's stream short at a step boundary. The edit's own stream-end will
-      // drain the queue via sendQueuedMessages().
-      hasQueuedMessage: options?.editMessageId ? undefined : () => !this.messageQueue.isEmpty(),
+      hasQueuedMessage: () => !this.messageQueue.isEmpty(),
       openaiTruncationModeOverride,
     });
 

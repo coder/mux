@@ -9,7 +9,7 @@ import {
   HAIKU_MODEL,
   createStreamCollector,
 } from "./helpers";
-import { isMuxMessage, isQueuedMessageChanged } from "@/common/orpc/types";
+import { isMuxMessage, isQueuedMessageChanged, isRestoreToInput } from "@/common/orpc/types";
 import type { HistoryService } from "@/node/services/historyService";
 
 function createDeferred<T>(): {
@@ -649,11 +649,18 @@ describe("Queued messages during stream completion", () => {
       const editSendResult = await editSendPromise;
       expect(editSendResult.success).toBe(true);
 
-      // Wait for all streams (original + edit + queued).
-      const finalStreamEnd = await collector.waitForEventN("stream-end", 3, 15000);
+      // Wait for edit stream to complete (original + edit = 2 stream-ends).
+      const finalStreamEnd = await collector.waitForEventN("stream-end", 2, 15000);
       if (!finalStreamEnd) {
-        throw new Error("Queued message stream never finished after edit");
+        throw new Error("Edit stream never finished after releasing completion");
       }
+
+      // The queued message should have been restored to input (not auto-sent) because
+      // the edit rewrites history — the user should re-evaluate the queued content in
+      // the new context.
+      const restoreEvent = collector.getEvents().find(isRestoreToInput);
+      expect(restoreEvent).toBeDefined();
+      expect(restoreEvent!.text).toBe(queuedText);
 
       const historyResult = await historyService.getHistoryFromLatestBoundary(workspaceId);
       if (!historyResult.success) {
@@ -669,13 +676,11 @@ describe("Queued messages during stream completion", () => {
             .join("")
         );
 
-      // Regression: the queued message should run AFTER the edit truncates + replays history.
-      // Without the defer latch, the queued message runs first and is truncated out by the edit.
-      const editedIndex = userTexts.indexOf(editedText);
-      const queuedIndex = userTexts.indexOf(queuedText);
-      expect(editedIndex).toBeGreaterThanOrEqual(0);
-      expect(queuedIndex).toBeGreaterThan(editedIndex);
+      // The edit should have truncated the original message.
+      expect(userTexts).toContain(editedText);
       expect(userTexts).not.toContain(firstMessageText);
+      // The queued message was restored to input, not auto-sent.
+      expect(userTexts).not.toContain(queuedText);
     } finally {
       // Ensure we never leave the completion handler blocked (otherwise workspace.remove can hang).
       releaseCompletion.resolve();
