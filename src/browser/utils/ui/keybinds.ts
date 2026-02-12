@@ -306,6 +306,10 @@ export const KEYBINDS = {
   // macOS: Cmd+Shift+L, Win/Linux: Ctrl+Shift+L
   SHARE_TRANSCRIPT: { key: "L", ctrl: true, shift: true },
 
+  /** Configure MCP servers for current workspace */
+  // macOS: Cmd+Shift+M, Win/Linux: Ctrl+Shift+M
+  CONFIGURE_MCP: { key: "M", ctrl: true, shift: true },
+
   /** Open Command Palette */
   // VS Code-style palette
   // macOS: Cmd+Shift+P, Win/Linux: Ctrl+Shift+P

@@ -180,6 +180,18 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     return () => window.removeEventListener("keydown", handler);
   }, [setNotifyOnResponse]);
 
+  // Keybind for opening MCP configuration
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (matchesKeybind(e, KEYBINDS.CONFIGURE_MCP)) {
+        e.preventDefault();
+        setMcpModalOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
   // Fetch available skills + diagnostics for this workspace
   useEffect(() => {
     if (!api) {
@@ -389,22 +401,6 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           skillLoadErrors={skillLoadErrors}
         />
         {editorError && <span className="text-danger-soft text-xs">{editorError}</span>}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setMcpModalOpen(true)}
-              className="text-muted hover:text-foreground h-6 w-6 shrink-0"
-              data-testid="workspace-mcp-button"
-            >
-              <Server className="h-3.5 w-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" align="center">
-            Configure MCP servers for this workspace
-          </TooltipContent>
-        </Tooltip>
         <div className="max-[480px]:hidden">
           <Tooltip>
             <TooltipTrigger asChild>
@@ -468,6 +464,25 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             className="w-[240px] !min-w-0 p-1"
             onClick={(e) => e.stopPropagation()}
           >
+            {/* Keep MCP configuration in the more actions menu to keep the titlebar lean. */}
+            <button
+              type="button"
+              className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
+              onClick={(e) => {
+                e.stopPropagation();
+                setMoreMenuOpen(false);
+                setMcpModalOpen(true);
+              }}
+              data-testid="workspace-mcp-button"
+            >
+              <span className="flex items-center gap-2">
+                <Server className="h-3 w-3 shrink-0" />
+                Configure MCP servers{" "}
+                <span className="text-muted text-[10px]">
+                  ({formatKeybind(KEYBINDS.CONFIGURE_MCP)})
+                </span>
+              </span>
+            </button>
             {linkSharingEnabled === true && !isMuxHelpChat && (
               <button
                 type="button"
