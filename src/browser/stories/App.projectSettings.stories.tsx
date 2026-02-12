@@ -787,12 +787,17 @@ export const ToolSelectorInteraction: AppStory = {
     await openWorkspaceMCPModal(canvasElement);
     const modal = createWorkspaceMCPModalScope(canvasElement);
 
-    // Wait for the modal's data loading to settle — all tools allowed by
-    // default so "All" is disabled.
+    // Normalize to the "all selected" baseline before testing None→All.
+    // This story can inherit transient state from remount retries, where "All"
+    // starts enabled; clicking it first makes the transition deterministic.
+    const initialAllButton = await (
+      await modal.find(10000)
+    ).findByRole("button", { name: /^All$/i }, { timeout: 10000 });
+    if (!initialAllButton.hasAttribute("disabled")) {
+      await userEvent.click(initialAllButton);
+    }
     await modal.assert(async (scope) => {
-      const allBtn = scope.queryByRole("button", { name: /^All$/i });
-      if (!allBtn) throw new Error("All button not found — modal still loading");
-      await expect(allBtn).toBeDisabled();
+      await expect(scope.getByRole("button", { name: /^All$/i })).toBeDisabled();
     });
 
     // Click "None" to deselect all tools.

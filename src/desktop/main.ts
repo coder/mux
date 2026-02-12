@@ -705,7 +705,8 @@ async function loadServices(): Promise<void> {
     if (!win) return null;
 
     const res = await dialog.showOpenDialog(win, {
-      properties: ["openDirectory", "createDirectory", "showHiddenFiles"],
+      // Hide hidden entries so the new-project picker stays focused on visible folders.
+      properties: ["openDirectory", "createDirectory"],
       title: "Select Project Directory",
       buttonLabel: "Select Project",
     });
