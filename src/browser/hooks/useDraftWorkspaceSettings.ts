@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { readPersistedState, usePersistedState } from "./usePersistedState";
 import { useThinkingLevel } from "./useThinkingLevel";
 import { migrateGatewayModel } from "./useGatewayModels";
+import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import {
   type RuntimeMode,
   type ParsedRuntime,
@@ -14,6 +15,7 @@ import {
 import type { RuntimeChoice } from "@/browser/utils/runtimeUi";
 import {
   DEFAULT_MODEL_KEY,
+  DEFAULT_RUNTIME_KEY,
   getAgentIdKey,
   getModelKey,
   getRuntimeKey,
@@ -96,6 +98,38 @@ const buildRuntimeForMode = (
   }
 };
 
+const normalizeRuntimeChoice = (value: unknown): RuntimeChoice | null => {
+  if (
+    value === "coder" ||
+    value === RUNTIME_MODE.LOCAL ||
+    value === RUNTIME_MODE.WORKTREE ||
+    value === RUNTIME_MODE.SSH ||
+    value === RUNTIME_MODE.DOCKER ||
+    value === RUNTIME_MODE.DEVCONTAINER
+  ) {
+    return value;
+  }
+
+  return null;
+};
+
+const buildRuntimeFromChoice = (choice: RuntimeChoice): ParsedRuntime => {
+  switch (choice) {
+    case "coder":
+      return { mode: RUNTIME_MODE.SSH, host: CODER_RUNTIME_PLACEHOLDER };
+    case RUNTIME_MODE.LOCAL:
+      return { mode: RUNTIME_MODE.LOCAL };
+    case RUNTIME_MODE.WORKTREE:
+      return { mode: RUNTIME_MODE.WORKTREE };
+    case RUNTIME_MODE.SSH:
+      return { mode: RUNTIME_MODE.SSH, host: "" };
+    case RUNTIME_MODE.DOCKER:
+      return { mode: RUNTIME_MODE.DOCKER, image: "" };
+    case RUNTIME_MODE.DEVCONTAINER:
+      return { mode: RUNTIME_MODE.DEVCONTAINER, configPath: "" };
+  }
+};
+
 /**
  * Hook to manage all draft workspace settings with centralized persistence
  * Loads saved preferences when projectPath changes, persists all changes automatically
@@ -126,6 +160,8 @@ export function useDraftWorkspaceSettings(
   const [thinkingLevel] = useThinkingLevel();
 
   const projectScopeId = getProjectScopeId(projectPath);
+  const { projects } = useProjectContext();
+  const projectConfig = projects.get(projectPath);
 
   const [agentId] = usePersistedState<string>(
     getAgentIdKey(projectScopeId),
@@ -153,15 +189,29 @@ export function useDraftWorkspaceSettings(
       : defaultModel
   );
 
-  // Project-scoped default runtime (worktree by default, only changed via checkbox)
+  const [rawGlobalDefaultRuntime] = usePersistedState<unknown>(DEFAULT_RUNTIME_KEY, null, {
+    listener: true,
+  });
+  const globalDefaultRuntime = normalizeRuntimeChoice(rawGlobalDefaultRuntime);
+
+  // Project-scoped default runtime (persisted when the creation tooltip checkbox is used).
   const [defaultRuntimeString, setDefaultRuntimeString] = usePersistedState<string | undefined>(
     getRuntimeKey(projectPath),
-    undefined, // undefined means worktree (the app default)
+    undefined,
     { listener: true }
   );
 
-  // Parse default runtime string into structured form (worktree when undefined or invalid)
-  const parsedDefault = parseRuntimeModeAndHost(defaultRuntimeString);
+  const settingsDefaultRuntime: RuntimeChoice =
+    projectConfig?.runtimeOverridesEnabled === true
+      ? (projectConfig.defaultRuntime ?? globalDefaultRuntime ?? RUNTIME_MODE.WORKTREE)
+      : (globalDefaultRuntime ?? RUNTIME_MODE.WORKTREE);
+
+  // Respect prior per-project draft selections first; only fall back to Settings defaults
+  // when there is no persisted runtime string for this project yet.
+  const parsedDefault =
+    defaultRuntimeString === undefined
+      ? buildRuntimeFromChoice(settingsDefaultRuntime)
+      : parseRuntimeModeAndHost(defaultRuntimeString);
   const defaultRuntimeMode: RuntimeMode = parsedDefault?.mode ?? RUNTIME_MODE.WORKTREE;
 
   // Project-scoped trunk branch preference (persisted per project)

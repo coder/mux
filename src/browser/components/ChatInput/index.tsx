@@ -637,6 +637,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { projects } = useProjectContext();
   const pendingSectionId = variant === "creation" ? (props.pendingSectionId ?? null) : null;
   const creationProject = variant === "creation" ? projects.get(props.projectPath) : undefined;
+  // Keep workspace creation in sync with Settings → Runtimes project overrides.
+  const creationRuntimeEnablement =
+    variant === "creation" && creationProject?.runtimeOverridesEnabled
+      ? normalizeRuntimeEnablement(creationProject.runtimeEnablement)
+      : runtimeEnablement;
   const creationSections = creationProject?.sections ?? [];
 
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(() => pendingSectionId);
@@ -779,7 +784,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           projectName: props.projectName,
           nameState: creationState.nameState,
           runtimeAvailabilityState: creationState.runtimeAvailabilityState,
-          runtimeEnablement,
+          runtimeEnablement: creationRuntimeEnablement,
           sections: creationSections,
           selectedSectionId,
           onSectionChange: handleCreationSectionChange,
