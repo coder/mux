@@ -72,18 +72,6 @@ export function clearLogEntries(): void {
   }
 }
 
-export function onLogEntry(listener: LogListener, requestedLevel?: LogLevel): () => void {
-  listeners.add(listener);
-  if (requestedLevel) {
-    subscriberLevels.set(listener, requestedLevel);
-  }
-
-  return () => {
-    listeners.delete(listener);
-    subscriberLevels.delete(listener);
-  };
-}
-
 export function hasDebugSubscriber(): boolean {
   for (const level of subscriberLevels.values()) {
     if (level === "debug") {
