@@ -558,26 +558,18 @@ export function CreationControls(props: CreationControlsProps) {
     Boolean(props.disabled) || isNonGitRepo || branchOptions.length === 0;
 
   // Keep selected runtime aligned with availability + Settings enablement constraints.
+  // All constraint checks (non-git, devcontainer missing, enablement, policy) are unified
+  // into a single firstEnabled fallback so every edge combination is handled consistently.
   useEffect(() => {
-    if (isNonGitRepo) {
-      // Only force Local if it's actually enabled; otherwise leave the selection alone
-      // so the UI doesn't select an invisible (disabled) runtime.
-      if (
-        selectedRuntime.mode !== RUNTIME_MODE.LOCAL &&
-        props.runtimeEnablement?.[RUNTIME_MODE.LOCAL] !== false
-      ) {
-        onSelectedRuntimeChange({ mode: "local" });
-      }
-      return;
-    }
-
-    if (isDevcontainerMissing && selectedRuntime.mode === RUNTIME_MODE.DEVCONTAINER) {
-      onSelectedRuntimeChange({ mode: "worktree" });
-      return;
-    }
-
     const runtimeEnablement = props.runtimeEnablement;
-    if (runtimeEnablement?.[runtimeChoice] !== false) {
+
+    // Determine if the current selection needs correction.
+    const isCurrentDisabledBySettings = runtimeEnablement?.[runtimeChoice] === false;
+    const isCurrentUnavailable =
+      (isNonGitRepo && selectedRuntime.mode === RUNTIME_MODE.WORKTREE) ||
+      (isDevcontainerMissing && selectedRuntime.mode === RUNTIME_MODE.DEVCONTAINER);
+
+    if (!isCurrentDisabledBySettings && !isCurrentUnavailable) {
       return;
     }
 
