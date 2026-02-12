@@ -40,13 +40,7 @@ import { ArchiveIcon } from "./icons/ArchiveIcon";
 import { ConfirmationModal } from "./ConfirmationModal";
 import { PopoverError } from "./PopoverError";
 
-import { SkillIndicator } from "./SkillIndicator";
-import { useAPI } from "@/browser/contexts/API";
-import { useAgent } from "@/browser/contexts/AgentContext";
-
 import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
-import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
-
 interface WorkspaceHeaderProps {
   workspaceId: string;
   projectName: string;
@@ -73,22 +67,17 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   onToggleLeftSidebarCollapsed,
   onOpenTerminal,
 }) => {
-  const { api } = useAPI();
-  const { disableWorkspaceAgents } = useAgent();
   const { archiveWorkspace } = useWorkspaceActions();
   const isMuxHelpChat = workspaceId === MUX_HELP_CHAT_WORKSPACE_ID;
   const openTerminalPopout = useOpenTerminal();
   const openInEditor = useOpenInEditor();
   const gitStatus = useGitStatus(workspaceId);
-  const { canInterrupt, isStarting, awaitingUserQuestion, loadedSkills, skillLoadErrors } =
-    useWorkspaceSidebarState(workspaceId);
+  const { canInterrupt, isStarting, awaitingUserQuestion } = useWorkspaceSidebarState(workspaceId);
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
   const { startSequence: startTutorial } = useTutorial();
   const [editorError, setEditorError] = useState<string | null>(null);
   const [debugLlmRequestOpen, setDebugLlmRequestOpen] = useState(false);
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
-  const [availableSkills, setAvailableSkills] = useState<AgentSkillDescriptor[]>([]);
-  const [invalidSkills, setInvalidSkills] = useState<AgentSkillIssue[]>([]);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [shareTranscriptOpen, setShareTranscriptOpen] = useState(false);
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
@@ -213,42 +202,6 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [isMuxHelpChat]);
-
-  // Fetch available skills + diagnostics for this workspace
-  useEffect(() => {
-    if (!api) {
-      setAvailableSkills([]);
-      setInvalidSkills([]);
-      return;
-    }
-
-    let isMounted = true;
-
-    const loadSkills = async () => {
-      try {
-        const diagnostics = await api.agentSkills.listDiagnostics({
-          workspaceId,
-          disableWorkspaceAgents: disableWorkspaceAgents || undefined,
-        });
-        if (!isMounted) return;
-        setAvailableSkills(Array.isArray(diagnostics.skills) ? diagnostics.skills : []);
-        setInvalidSkills(Array.isArray(diagnostics.invalidSkills) ? diagnostics.invalidSkills : []);
-      } catch (error) {
-        console.error("Failed to load available skills:", error);
-        if (isMounted) {
-          setAvailableSkills([]);
-          setInvalidSkills([]);
-        }
-      }
-    };
-
-    void loadSkills();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [api, workspaceId, disableWorkspaceAgents]);
-
   // On Windows/Linux, the native window controls overlay the top-right of the app.
   // When the right sidebar is collapsed (20px), this header stretches underneath
   // those controls and the MCP/editor/terminal buttons become unclickable.
@@ -416,12 +369,6 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             </div>
           </PopoverContent>
         </Popover>
-        <SkillIndicator
-          loadedSkills={loadedSkills}
-          availableSkills={availableSkills}
-          invalidSkills={invalidSkills}
-          skillLoadErrors={skillLoadErrors}
-        />
         {editorError && <span className="text-danger-soft text-xs">{editorError}</span>}
         <div className="max-[480px]:hidden">
           <Tooltip>

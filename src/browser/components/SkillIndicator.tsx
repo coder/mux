@@ -170,7 +170,7 @@ const SkillsPopoverContent: React.FC<SkillsPopoverContentProps> = (props) => {
 
 /**
  * Indicator showing loaded and available skills in a workspace.
- * Displays in the WorkspaceHeader to the right of the notification bell.
+ * Displays in the project sidebar row for the active workspace.
  * Hover to preview skills organized by scope (Project, Global, Built-in); click to pin the list open.
  */
 export const SkillIndicator: React.FC<SkillIndicatorProps> = (props) => {

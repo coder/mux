@@ -47,6 +47,7 @@ import type { Secret } from "@/common/types/secrets";
 
 import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
+import { ActiveProjectSkillIndicator } from "./ActiveProjectSkillIndicator";
 import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { ChevronRight, CircleHelp, KeyRound } from "lucide-react";
@@ -102,6 +103,18 @@ const MuxChatHelpButton: React.FC<{
     </Tooltip>
   );
 };
+
+function ProjectRowSkillsSlot(props: { projectPath: string }) {
+  const { selectedWorkspace } = useWorkspaceActions();
+
+  // DraggableProjectItem ignores children in its memo comparator, so subscribe here and
+  // only render the skill indicator for the active workspace to avoid O(n) diagnostics calls.
+  if (!selectedWorkspace || selectedWorkspace.projectPath !== props.projectPath) {
+    return null;
+  }
+
+  return <ActiveProjectSkillIndicator workspaceId={selectedWorkspace.workspaceId} />;
+}
 
 // Keep the project header visible while scrolling through long workspace lists.
 const PROJECT_ITEM_BASE_CLASS =
@@ -906,6 +919,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             </TooltipTrigger>
                             <TooltipContent align="end">Remove project</TooltipContent>
                           </Tooltip>
+                          <ProjectRowSkillsSlot projectPath={projectPath} />
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <button
