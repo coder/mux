@@ -1953,6 +1953,12 @@ pre code {
   isolation: isolate;
 }
 
+.streaming-activity-icon > svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
 .shimmer-surface::after {
   --shimmer-overlay: color-mix(in srgb, var(--shimmer-color, var(--color-muted-foreground)) 35%, black);
   content: "";
