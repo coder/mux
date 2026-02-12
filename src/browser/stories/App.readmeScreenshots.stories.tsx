@@ -33,12 +33,7 @@ import {
   expandRightSidebar,
   collapseRightSidebar,
 } from "./storyHelpers";
-import {
-  createMockORPCClient,
-  type MockSessionUsage,
-  type MockTerminalSession,
-} from "./mocks/orpc";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { createMockORPCClient, type MockSessionUsage } from "./mocks/orpc";
 import {
   GIT_STATUS_INDICATOR_MODE_KEY,
   LEFT_SIDEBAR_COLLAPSED_KEY,
@@ -46,45 +41,7 @@ import {
   RIGHT_SIDEBAR_WIDTH_KEY,
   getRightSidebarLayoutKey,
 } from "@/common/constants/storage";
-import type { RightSidebarLayoutState } from "@/browser/utils/rightSidebarLayout";
 import { within, userEvent, waitFor, expect } from "@storybook/test";
-
-/** Mock macOS window controls for screenshot fidelity. */
-function MacTrafficLights() {
-  const size = 12;
-  const gap = 8;
-
-  // Vertically centered in the 36px desktop titlebar, inset ~20px from left
-  return (
-    <div
-      style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        width: 80,
-        height: 36,
-        display: "flex",
-        alignItems: "center",
-        paddingLeft: 20,
-        gap,
-        zIndex: 9999,
-        pointerEvents: "none",
-      }}
-    >
-      {["#FF5F57", "#FEBC2E", "#28C840"].map((color) => (
-        <div
-          key={color}
-          style={{
-            width: size,
-            height: size,
-            borderRadius: "50%",
-            backgroundColor: color,
-          }}
-        />
-      ))}
-    </div>
-  );
-}
 
 export default {
   ...appMeta,
@@ -113,7 +70,6 @@ export default {
 
       return (
         <div style={{ width: 1900, height: "100dvh", position: "relative" }}>
-          <MacTrafficLights />
           <Story />
         </div>
       );
@@ -133,64 +89,6 @@ export default {
 
 const README_PROJECT_NAME = "mux";
 const README_PROJECT_PATH = "/home/user/projects/mux";
-
-const SAMPLE_DIFF_OUTPUT = `diff --git a/src/browser/components/WorkspaceShell.tsx b/src/browser/components/WorkspaceShell.tsx
-index aaa1111..bbb2222 100644
---- a/src/browser/components/WorkspaceShell.tsx
-+++ b/src/browser/components/WorkspaceShell.tsx
-@@ -1,8 +1,14 @@
- import React from 'react';
- 
- export function WorkspaceShell() {
--  return <div className="shell" />;
-+  return (
-+    <div className="shell">
-+      <header className="shell-header">Mux</header>
-+      <main className="shell-content" />
-+    </div>
-+  );
- }
-
-diff --git a/src/browser/utils/layout.ts b/src/browser/utils/layout.ts
-new file mode 100644
-index 0000000..abc1234
---- /dev/null
-+++ b/src/browser/utils/layout.ts
-@@ -0,0 +1,12 @@
-+export function clamp(n: number, min: number, max: number) {
-+  return Math.max(min, Math.min(max, n));
-+}
-+
-+export function px(value: number) {
-+  return value + "px";
-+}
-`;
-
-const SAMPLE_NUMSTAT_OUTPUT = `14\t2\tsrc/browser/components/WorkspaceShell.tsx
-12\t0\tsrc/browser/utils/layout.ts`;
-
-const HERO_TERMINAL_SCREEN_STATE = [
-  "\u001b[2J\u001b[H", // clear + home
-  "\u001b[1;36m❯\u001b[0m bun test",
-  "",
-  " \u001b[32m✓\u001b[0m tests/ui/sidebar.test.tsx \u001b[90m(12 tests)\u001b[0m",
-  " \u001b[32m✓\u001b[0m tests/ui/rightSidebar.test.tsx \u001b[90m(8 tests)\u001b[0m",
-  " \u001b[32m✓\u001b[0m tests/ui/chat.test.tsx \u001b[90m(15 tests)\u001b[0m",
-  " \u001b[32m✓\u001b[0m tests/ui/workspaceStore.test.tsx \u001b[90m(7 tests)\u001b[0m",
-  "",
-  " \u001b[1;32mTest Suites:\u001b[0m 4 passed, 4 total",
-  " \u001b[1;32mTests:\u001b[0m       42 passed, 42 total",
-  " \u001b[90mTime:\u001b[0m        4.21s",
-  "",
-  "\u001b[1;36m❯\u001b[0m make lint",
-  "\u001b[32m✔\u001b[0m No lint errors found",
-  "",
-  "\u001b[1;36m❯\u001b[0m make typecheck",
-  "\u001b[90mChecking 284 files...\u001b[0m",
-  "\u001b[32m✔\u001b[0m No type errors found",
-  "",
-  "\u001b[1;36m❯\u001b[0m \u001b[7m \u001b[0m",
-].join("\r\n");
 
 function createMultiModelSessionUsage(totalUsd: number): MockSessionUsage {
   // Split cost into model rows to make the Costs tab look realistic (cached + cacheCreate present).
@@ -235,448 +133,122 @@ function createMultiModelSessionUsage(totalUsd: number): MockSessionUsage {
   };
 }
 
-// Comprehensive "hero" demo state — not referenced in README (replaced by mux-demo.gif)
-// but kept for Storybook browsing and Chromatic regression.
-export const ProductHero: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() => {
-        window.localStorage.setItem(GIT_STATUS_INDICATOR_MODE_KEY, JSON.stringify("line-delta"));
-        window.localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "620");
+function createReadmeGitDivergenceExecutor(gitStatus: Map<string, GitStatusFixture>) {
+  const baseExecutor = createGitStatusExecutor(gitStatus);
 
-        const workspaceId = "ws-hero";
-        const terminalSessionId = "term-hero";
+  const buildBranchDetailsOutput = (status: GitStatusFixture): string => {
+    const ahead = status.ahead ?? 0;
+    const behind = status.behind ?? 0;
+    const dirtyCount = status.dirty ?? 0;
+    const headCommit = status.headCommit ?? "refactor(db): split migration planner from executor";
+    const originCommit = status.originCommit ?? "fix(db): rollback after partial apply";
 
-        const TERMINAL_BENCH_PROJECT_NAME = "terminal-bench";
-        const TERMINAL_BENCH_PROJECT_PATH = `/home/user/projects/${TERMINAL_BENCH_PROJECT_NAME}`;
-        const DOCS_PROJECT_NAME = "mux-docs";
-        const DOCS_PROJECT_PATH = `/home/user/projects/${DOCS_PROJECT_NAME}`;
-        const INFRA_PROJECT_NAME = "mux-infra";
-        const INFRA_PROJECT_PATH = `/home/user/projects/${INFRA_PROJECT_NAME}`;
+    let hashIndex = 0;
+    const nextHash = () => {
+      hashIndex++;
+      return hashIndex.toString(16).padStart(7, "0");
+    };
 
-        const SECTION_FEATURES = "f00dbabe";
-        const SECTION_REFACTORS = "c0ffeec0";
-        const SECTION_DEPLOY = "d15ea5ed";
+    const localSummaries = [
+      "refactor(db): split migration planner from executor",
+      "perf(db): cache schema snapshots during migration planning",
+      "fix(db): keep lock handle alive while dry-run checks execute",
+      "feat(db): add migration preview summary for review mode",
+      "chore(db): collapse duplicate migration warning paths",
+      "test(db): add coverage for conflicting column drops",
+    ];
+    const originSummaries = [
+      "fix(db): rollback after partial apply",
+      "feat(metrics): emit advisory lock wait timing",
+      "refactor(ci): run migration smoke tests post-merge",
+      "docs(db): add zero-downtime migration checklist",
+      "fix(db): preserve default values in enum backfills",
+      "chore(db): update migration template comments",
+    ];
+    const sharedSummaries = [
+      "merge-base: stabilize migration state machine",
+      "feat(db): add explicit transaction boundaries",
+      "fix(db): guard against stale migration snapshots",
+      "refactor(db): isolate schema diff serialization",
+      "test(db): assert lock release on interrupt",
+      "docs(db): clarify manual recovery steps",
+      "chore(db): normalize migration log formatting",
+      "perf(db): avoid redundant query planner warmups",
+    ];
 
-        const wsHero = createWorkspace({
-          id: workspaceId,
-          name: "readme/product-hero",
-          projectName: README_PROJECT_NAME,
-          projectPath: README_PROJECT_PATH,
-          createdAt: new Date(NOW - 30 * 60_000).toISOString(),
-        });
+    const showBranchLines: string[] = [
+      `! [HEAD] ${headCommit}`,
+      ` ! [origin/main] ${originCommit}`,
+      "--",
+    ];
+    const commitHashes: string[] = [];
 
-        const wsReview = createWorkspace({
-          id: "ws-review",
-          name: "feature/right-sidebar",
-          projectName: README_PROJECT_NAME,
-          projectPath: README_PROJECT_PATH,
-          createdAt: new Date(NOW - 2 * 60 * 60_000).toISOString(),
-        });
-        wsReview.sectionId = SECTION_FEATURES;
+    for (let i = 0; i < ahead; i++) {
+      const hash = nextHash();
+      commitHashes.push(hash);
+      const summary = localSummaries[i] ?? `local commit ${i + 1}`;
+      showBranchLines.push(`+  [${hash}] ${summary}`);
+    }
 
-        const wsAhead = createWorkspace({
-          id: "ws-ahead",
-          name: "feature/tooling",
-          projectName: README_PROJECT_NAME,
-          projectPath: README_PROJECT_PATH,
-          createdAt: new Date(NOW - 3 * 60 * 60_000).toISOString(),
-        });
-        wsAhead.sectionId = SECTION_FEATURES;
+    for (let i = 0; i < behind; i++) {
+      const hash = nextHash();
+      commitHashes.push(hash);
+      const summary = originSummaries[i] ?? `origin commit ${i + 1}`;
+      showBranchLines.push(` + [${hash}] ${summary}`);
+    }
 
-        const wsDirty = createWorkspace({
-          id: "ws-dirty",
-          name: "bugfix/sidebar-scroll",
-          projectName: README_PROJECT_NAME,
-          projectPath: README_PROJECT_PATH,
-          createdAt: new Date(NOW - 4 * 60 * 60_000).toISOString(),
-        });
-        wsDirty.sectionId = SECTION_FEATURES;
+    const sharedCount = Math.max(5, Math.min(8, ahead + behind + 1));
+    for (let i = 0; i < sharedCount; i++) {
+      const hash = nextHash();
+      commitHashes.push(hash);
+      const summary = sharedSummaries[i] ?? `shared commit ${i + 1}`;
+      showBranchLines.push(`++ [${hash}] ${summary}`);
+    }
 
-        const wsDiverged = createWorkspace({
-          id: "ws-diverged",
-          name: "refactor/workspace-store",
-          projectName: README_PROJECT_NAME,
-          projectPath: README_PROJECT_PATH,
-          createdAt: new Date(NOW - 5 * 60 * 60_000).toISOString(),
-        });
-        wsDiverged.sectionId = SECTION_REFACTORS;
+    const dates = commitHashes
+      .map(
+        (hash, index) =>
+          `${hash}|Nov 14 ${String((index % 11) + 1).padStart(2, "0")}:${String((index % 6) * 10).padStart(2, "0")} PM`
+      )
+      .join("\n");
 
-        const wsSsh = createSSHWorkspace({
-          id: "ws-ssh",
-          name: "deploy/staging",
-          projectName: README_PROJECT_NAME,
-          projectPath: README_PROJECT_PATH,
-          host: "staging.example.com",
-          createdAt: new Date(NOW - 6 * 60 * 60_000).toISOString(),
-        });
-        wsSsh.sectionId = SECTION_DEPLOY;
+    const dirtyFileCandidates = [
+      " M src/node/services/migrations/runner.ts",
+      " M src/node/services/migrations/planner.ts",
+      " M src/node/services/migrations/lock.ts",
+      " M src/common/utils/migrations/formatDiff.ts",
+      " M tests/ipc/migrations.integration.test.ts",
+      "?? docs/migrations/rollback-playbook.md",
+    ];
+    const dirtyFiles =
+      dirtyCount > 0
+        ? dirtyFileCandidates
+            .slice(0, Math.max(2, Math.min(dirtyCount + 1, dirtyFileCandidates.length)))
+            .join("\n")
+        : "";
 
-        const wsClean = createWorkspace({
-          id: "ws-clean",
-          name: "main",
-          projectName: README_PROJECT_NAME,
-          projectPath: README_PROJECT_PATH,
-          createdAt: new Date(NOW - 7 * 60 * 60_000).toISOString(),
-        });
+    return [
+      "__MUX_BRANCH_DATA__BEGIN_SHOW_BRANCH__",
+      showBranchLines.join("\n"),
+      "__MUX_BRANCH_DATA__END_SHOW_BRANCH__",
+      "__MUX_BRANCH_DATA__BEGIN_DATES__",
+      dates,
+      "__MUX_BRANCH_DATA__END_DATES__",
+      "__MUX_BRANCH_DATA__BEGIN_DIRTY_FILES__",
+      dirtyFiles,
+      "__MUX_BRANCH_DATA__END_DIRTY_FILES__",
+    ].join("\n");
+  };
 
-        const terminalBenchWorkspaces = [
-          createWorkspace({
-            id: "ws-tb-main",
-            name: "main",
-            projectName: TERMINAL_BENCH_PROJECT_NAME,
-            projectPath: TERMINAL_BENCH_PROJECT_PATH,
-            createdAt: new Date(NOW - 8 * 60 * 60_000).toISOString(),
-          }),
-          createWorkspace({
-            id: "ws-tb-flakes",
-            name: "bugfix/flakes",
-            projectName: TERMINAL_BENCH_PROJECT_NAME,
-            projectPath: TERMINAL_BENCH_PROJECT_PATH,
-            createdAt: new Date(NOW - 9 * 60 * 60_000).toISOString(),
-          }),
-          createWorkspace({
-            id: "ws-tb-profiles",
-            name: "perf/profiles",
-            projectName: TERMINAL_BENCH_PROJECT_NAME,
-            projectPath: TERMINAL_BENCH_PROJECT_PATH,
-            createdAt: new Date(NOW - 10 * 60 * 60_000).toISOString(),
-          }),
-          createWorkspace({
-            id: "ws-tb-ci",
-            name: "chore/ci",
-            projectName: TERMINAL_BENCH_PROJECT_NAME,
-            projectPath: TERMINAL_BENCH_PROJECT_PATH,
-            createdAt: new Date(NOW - 11 * 60 * 60_000).toISOString(),
-          }),
-        ];
+  return (workspaceId: string, script: string) => {
+    if (script.includes("__MUX_BRANCH_DATA__BEGIN_SHOW_BRANCH__")) {
+      const output = buildBranchDetailsOutput(gitStatus.get(workspaceId) ?? {});
+      return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
+    }
 
-        const docsWorkspaces = [
-          createWorkspace({
-            id: "ws-docs-main",
-            name: "main",
-            projectName: DOCS_PROJECT_NAME,
-            projectPath: DOCS_PROJECT_PATH,
-            createdAt: new Date(NOW - 12 * 60 * 60_000).toISOString(),
-          }),
-          createWorkspace({
-            id: "ws-docs-readme",
-            name: "docs/readme-refresh",
-            projectName: DOCS_PROJECT_NAME,
-            projectPath: DOCS_PROJECT_PATH,
-            createdAt: new Date(NOW - 13 * 60 * 60_000).toISOString(),
-          }),
-          createWorkspace({
-            id: "ws-docs-site",
-            name: "feature/site-nav",
-            projectName: DOCS_PROJECT_NAME,
-            projectPath: DOCS_PROJECT_PATH,
-            createdAt: new Date(NOW - 14 * 60 * 60_000).toISOString(),
-          }),
-        ];
-
-        const infraWorkspaces = [
-          createWorkspace({
-            id: "ws-infra-main",
-            name: "main",
-            projectName: INFRA_PROJECT_NAME,
-            projectPath: INFRA_PROJECT_PATH,
-            createdAt: new Date(NOW - 15 * 60 * 60_000).toISOString(),
-          }),
-          createWorkspace({
-            id: "ws-infra-terraform",
-            name: "feature/terraform",
-            projectName: INFRA_PROJECT_NAME,
-            projectPath: INFRA_PROJECT_PATH,
-            createdAt: new Date(NOW - 16 * 60 * 60_000).toISOString(),
-          }),
-          createWorkspace({
-            id: "ws-infra-alerts",
-            name: "chore/alerts",
-            projectName: INFRA_PROJECT_NAME,
-            projectPath: INFRA_PROJECT_PATH,
-            createdAt: new Date(NOW - 17 * 60 * 60_000).toISOString(),
-          }),
-        ];
-
-        const workspaces = [
-          wsHero,
-          wsReview,
-          wsAhead,
-          wsDirty,
-          wsDiverged,
-          wsSsh,
-          wsClean,
-          ...terminalBenchWorkspaces,
-          ...docsWorkspaces,
-          ...infraWorkspaces,
-        ];
-
-        const projects = groupWorkspacesByProject(workspaces);
-        const muxConfig = projects.get(README_PROJECT_PATH);
-        if (muxConfig) {
-          projects.set(README_PROJECT_PATH, {
-            ...muxConfig,
-            sections: [
-              {
-                id: SECTION_FEATURES,
-                name: "Features",
-                color: "#4dabf7",
-                nextId: SECTION_REFACTORS,
-              },
-              {
-                id: SECTION_REFACTORS,
-                name: "Refactors",
-                color: "#ff6b6b",
-                nextId: SECTION_DEPLOY,
-              },
-              {
-                id: SECTION_DEPLOY,
-                name: "Deploy",
-                color: "#51cf66",
-                nextId: null,
-              },
-            ],
-          });
-        }
-
-        const gitStatus = new Map<string, GitStatusFixture>([
-          [workspaceId, { dirty: 2, outgoingAdditions: 420, outgoingDeletions: 18 }],
-          ["ws-review", { ahead: 1, outgoingAdditions: 120, outgoingDeletions: 12 }],
-          ["ws-ahead", { ahead: 3, outgoingAdditions: 911, outgoingDeletions: 74 }],
-          ["ws-dirty", { dirty: 6, outgoingAdditions: 64, outgoingDeletions: 9 }],
-          [
-            "ws-diverged",
-            { ahead: 2, behind: 1, dirty: 1, outgoingAdditions: 1520, outgoingDeletions: 180 },
-          ],
-          ["ws-ssh", { behind: 4, originCommit: "Update deployment" }],
-          ["ws-clean", {}],
-
-          // Extra workspaces/projects for a busier sidebar.
-          ["ws-tb-flakes", { dirty: 3 }],
-          ["ws-tb-profiles", { ahead: 2, dirty: 1 }],
-          ["ws-docs-readme", { ahead: 1, dirty: 1 }],
-          ["ws-infra-terraform", { behind: 2 }],
-        ]);
-
-        const gitDiff = new Map([
-          [
-            workspaceId,
-            {
-              diffOutput: SAMPLE_DIFF_OUTPUT,
-              numstatOutput: SAMPLE_NUMSTAT_OUTPUT,
-            },
-          ],
-        ]);
-
-        const chatHandlers = new Map([
-          [
-            workspaceId,
-            createStaticChatHandler([
-              createUserMessage(
-                "msg-1",
-                "Add a right sidebar split layout showing both the review diff and terminal output.",
-                {
-                  historySequence: 1,
-                  timestamp: STABLE_TIMESTAMP - 50_000,
-                }
-              ),
-              createAssistantMessage("msg-2", "Let me check the current layout implementation.", {
-                historySequence: 2,
-                timestamp: STABLE_TIMESTAMP - 40_000,
-                toolCalls: [
-                  createFileReadTool(
-                    "call-read-1",
-                    "src/browser/utils/rightSidebarLayout.ts",
-                    'export type SplitDirection = "horizontal" | "vertical";\nexport interface RightSidebarLayoutState {\n  version: number;\n  root: LayoutNode;\n}'
-                  ),
-                ],
-              }),
-              createAssistantMessage(
-                "msg-3",
-                "I've updated the layout to support vertical splits. Running tests now.",
-                {
-                  historySequence: 3,
-                  timestamp: STABLE_TIMESTAMP - 30_000,
-                  toolCalls: [
-                    createFileEditTool(
-                      "call-edit-1",
-                      "src/browser/utils/rightSidebarLayout.ts",
-                      '@@ -12,6 +12,8 @@\n+  sizes: [0.62, 0.38],\n+  children: [{ type: "tabset", tabs: ["review"] }, { type: "tabset", tabs: ["terminal"] }]'
-                    ),
-                    createBashTool(
-                      "call-bash-1",
-                      "bun test -- rightSidebarLayout",
-                      "✓ 4 tests passed"
-                    ),
-                  ],
-                }
-              ),
-              createUserMessage(
-                "msg-4",
-                "Looks good, now make sure the terminal shows the test output.",
-                {
-                  historySequence: 4,
-                  timestamp: STABLE_TIMESTAMP - 20_000,
-                }
-              ),
-              createAssistantMessage(
-                "msg-5",
-                "Done! The terminal now shows test results by default when the split layout is active.",
-                {
-                  historySequence: 5,
-                  timestamp: STABLE_TIMESTAMP - 10_000,
-                  toolCalls: [createStatusTool("call-status-1", "✅", "Tests passing")],
-                }
-              ),
-            ]),
-          ],
-          // Agent statuses on other workspaces to show sidebar activity indicators.
-          [
-            "ws-review",
-            createStaticChatHandler([
-              createAssistantMessage("msg-1", "Reviewing sidebar component performance.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 20_000,
-                toolCalls: [createStatusTool("call-1", "🔍", "Reviewing perf regressions")],
-              }),
-            ]),
-          ],
-          [
-            "ws-ahead",
-            createStaticChatHandler([
-              createAssistantMessage("msg-1", "Running integration tests.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 15_000,
-                toolCalls: [createStatusTool("call-1", "🧪", "Running test suite")],
-              }),
-            ]),
-          ],
-          [
-            "ws-dirty",
-            createStaticChatHandler([
-              createAssistantMessage("msg-1", "Fixing scroll position restoration.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 12_000,
-                toolCalls: [createStatusTool("call-1", "📝", "Editing scroll logic")],
-              }),
-            ]),
-          ],
-          [
-            "ws-diverged",
-            createStaticChatHandler([
-              createAssistantMessage("msg-1", "Refactoring store subscriptions.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 10_000,
-                toolCalls: [createStatusTool("call-1", "🔄", "Cleaning up state")],
-              }),
-            ]),
-          ],
-          [
-            "ws-ssh",
-            createStaticChatHandler([
-              createAssistantMessage("msg-1", "Deploying staging.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 8_000,
-                toolCalls: [createStatusTool("call-1", "🚀", "Deploying to staging")],
-              }),
-            ]),
-          ],
-          [
-            "ws-tb-flakes",
-            createStaticChatHandler([
-              createAssistantMessage("msg-1", "Investigating flaky tests.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 6_000,
-                toolCalls: [createStatusTool("call-1", "🧪", "Reproducing flakes")],
-              }),
-            ]),
-          ],
-          [
-            "ws-docs-readme",
-            createStaticChatHandler([
-              createAssistantMessage("msg-1", "Updating README screenshots.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 4_000,
-                toolCalls: [createStatusTool("call-1", "📝", "Refreshing docs")],
-              }),
-            ]),
-          ],
-        ]);
-
-        // Make the sidebar look expanded/busy, matching the README hero composition.
-        // Expand all projects so the sidebar is densely populated with workspaces.
-        expandProjects([
-          README_PROJECT_PATH,
-          TERMINAL_BENCH_PROJECT_PATH,
-          DOCS_PROJECT_PATH,
-          INFRA_PROJECT_PATH,
-        ]);
-        selectWorkspace(wsHero);
-
-        // Force a split layout: Review (top) + Terminal (bottom).
-        const layout: RightSidebarLayoutState = {
-          version: 1,
-          nextId: 3,
-          focusedTabsetId: "tabset-1",
-          root: {
-            type: "split",
-            id: "split-1",
-            direction: "vertical",
-            sizes: [0.62, 0.38],
-            children: [
-              {
-                type: "tabset",
-                id: "tabset-1",
-                tabs: ["review", "costs", "explorer"],
-                activeTab: "review",
-              },
-              {
-                type: "tabset",
-                id: "tabset-2",
-                tabs: [`terminal:${terminalSessionId}`],
-                activeTab: `terminal:${terminalSessionId}`,
-              },
-            ],
-          },
-        };
-
-        window.localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        updatePersistedState(getRightSidebarLayoutKey(workspaceId), layout);
-        expandRightSidebar();
-
-        const terminalSessions: MockTerminalSession[] = [
-          {
-            sessionId: terminalSessionId,
-            workspaceId,
-            cols: 80,
-            rows: 24,
-            screenState: HERO_TERMINAL_SCREEN_STATE,
-          },
-        ];
-
-        return createMockORPCClient({
-          projects,
-          workspaces,
-          onChat: createOnChatAdapter(chatHandlers),
-          executeBash: createGitStatusExecutor(gitStatus, gitDiff),
-          terminalSessions,
-        });
-      }}
-    />
-  ),
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-
-    // Wait for the Review panel hunks to render (diff data is fetched async).
-    await waitFor(
-      () => {
-        canvas.getAllByText(/WorkspaceShell\.tsx/i);
-      },
-      { timeout: 10_000 }
-    );
-  },
-};
+    return baseExecutor(workspaceId, script);
+  };
+}
 
 // README: docs/img/code-review.webp
 // Left sidebar collapsed, 50/50 split between chat and review pane, rich multi-turn chat.
@@ -928,12 +500,15 @@ index 0000000..def5678
 };
 
 // README: docs/img/agent-status.webp
-// This story renders the full app. The screenshot is produced by Playwright
-// clipping the left sidebar region and then upscaling to a 3800px-wide output with sharp.
+// This story keeps the left sidebar expanded and seeds varied status_set tool calls
+// so workspace rows show realistic in-progress agent activity.
 export const AgentStatusSidebar: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
+        // This screenshot should explicitly show the expanded projects sidebar.
+        window.localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(false));
+
         const workspaces = [
           createWorkspace({
             id: "ws-status-1",
@@ -990,11 +565,41 @@ export const AgentStatusSidebar: AppStory = {
           [
             "ws-status-1",
             createStaticChatHandler([
-              createAssistantMessage("msg-1", "Working on README screenshot stories.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 100_000,
-                toolCalls: [createStatusTool("call-1", "📝", "Building Storybook states")],
+              createUserMessage(
+                "msg-1",
+                "Chromatic flagged Docs/README Screenshots differences. Can you regenerate the images and verify the sidebar + git divergence stories?",
+                {
+                  historySequence: 1,
+                  timestamp: STABLE_TIMESTAMP - 120_000,
+                }
+              ),
+              createAssistantMessage("msg-2", "On it. I am reproducing the visual diffs now.", {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 110_000,
+                toolCalls: [
+                  createStatusTool(
+                    "call-1",
+                    "📸",
+                    "Regenerating README screenshots and validating Chromatic diffs",
+                    "https://github.com/coder/mux/pull/2035"
+                  ),
+                ],
               }),
+              createAssistantMessage(
+                "msg-3",
+                "Capture run is active. I widened the viewport and I am checking the git divergence + agent status stories for regressions.",
+                {
+                  historySequence: 3,
+                  timestamp: STABLE_TIMESTAMP - 100_000,
+                  toolCalls: [
+                    createStatusTool(
+                      "call-2",
+                      "🔍",
+                      "Comparing refreshed screenshots against Chromatic baseline"
+                    ),
+                  ],
+                }
+              ),
             ]),
           ],
           [
@@ -1064,7 +669,26 @@ export const AgentStatusSidebar: AppStory = {
               }),
             ]),
           ],
-          ["ws-status-7", createStaticChatHandler([])],
+          [
+            "ws-status-7",
+            createStaticChatHandler([
+              createAssistantMessage(
+                "msg-1",
+                "Monitoring queue health and waiting for follow-up tasks.",
+                {
+                  historySequence: 1,
+                  timestamp: STABLE_TIMESTAMP - 60_000,
+                  toolCalls: [
+                    createStatusTool(
+                      "call-1",
+                      "⏳",
+                      "Idle: waiting for next screenshot refresh request"
+                    ),
+                  ],
+                }
+              ),
+            ]),
+          ],
         ]);
 
         expandProjects([README_PROJECT_PATH]);
@@ -1091,6 +715,7 @@ export const GitStatusPopover: AppStory = {
     <AppWithMocks
       setup={() => {
         window.localStorage.setItem(GIT_STATUS_INDICATOR_MODE_KEY, JSON.stringify("line-delta"));
+        window.localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(false));
 
         const workspaces = [
           createWorkspace({
@@ -1120,18 +745,124 @@ export const GitStatusPopover: AppStory = {
           ["ws-clean", {}],
           [
             "ws-diverged",
-            { ahead: 3, behind: 2, dirty: 5, outgoingAdditions: 12_313, outgoingDeletions: 1_231 },
+            {
+              ahead: 3,
+              behind: 2,
+              dirty: 5,
+              outgoingAdditions: 12_313,
+              outgoingDeletions: 1_231,
+              headCommit: "refactor(db): split migration planner from executor",
+              originCommit: "fix(db): rollback after partial apply",
+            },
           ],
           ["ws-dirty", { dirty: 3, outgoingAdditions: 42, outgoingDeletions: 8 }],
         ]);
 
+        const remoteLog = `* 4fb13bc (origin/main) fix(db): rollback after partial apply
+* d0a9a44 feat(metrics): emit advisory lock wait timing
+* b4f71de refactor(ci): run migration smoke tests post-merge
+* 7e3ab22 docs(db): add zero-downtime migration checklist
+* 331af90 fix(db): preserve default values in enum backfills
+* 21db5cb chore(db): update migration template comments
+* 09cc2ad perf(db): speed up migration status snapshots`;
+
+        const localLog = `* e8b2f47 (HEAD -> refactor/db) refactor(db): split migration planner from executor
+* c49dbf1 perf(db): cache schema snapshots during migration planning
+* a1f27de fix(db): keep lock handle alive while dry-run checks execute
+* 8e6c12b feat(db): add migration preview summary for review mode
+* 7a97ed5 chore(db): collapse duplicate migration warning paths
+* 5c1130d test(db): add coverage for conflicting column drops
+* 2dbf2a1 refactor(db): isolate schema diff serialization
+* 0f44a89 docs(db): clarify manual recovery steps`;
+
+        const chatHandlers = new Map([
+          [
+            "ws-diverged",
+            createStaticChatHandler([
+              createUserMessage(
+                "msg-1",
+                "Can you investigate why refactor/db diverged from origin/main and tell me whether we should rebase or merge?",
+                {
+                  historySequence: 1,
+                  timestamp: STABLE_TIMESTAMP - 140_000,
+                }
+              ),
+              createAssistantMessage("msg-2", "Checking branch divergence now.", {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 130_000,
+                toolCalls: [
+                  createStatusTool(
+                    "call-status-1",
+                    "🔍",
+                    "Inspecting local vs origin commits to prepare a safe rebase plan"
+                  ),
+                ],
+              }),
+              createAssistantMessage("msg-3", "Fetched latest remote refs.", {
+                historySequence: 3,
+                timestamp: STABLE_TIMESTAMP - 120_000,
+                toolCalls: [
+                  createBashTool(
+                    "call-bash-1",
+                    "git fetch --prune origin",
+                    "From github.com:coder/mux\n   18f2a3d..4fb13bc  main       -> origin/main"
+                  ),
+                ],
+              }),
+              createAssistantMessage("msg-4", "Remote-only commits:", {
+                historySequence: 4,
+                timestamp: STABLE_TIMESTAMP - 110_000,
+                toolCalls: [
+                  createBashTool(
+                    "call-bash-2",
+                    "git log --graph --oneline --decorate HEAD..origin/main",
+                    remoteLog
+                  ),
+                ],
+              }),
+              createAssistantMessage("msg-5", "Local-only commits:", {
+                historySequence: 5,
+                timestamp: STABLE_TIMESTAMP - 100_000,
+                toolCalls: [
+                  createBashTool(
+                    "call-bash-3",
+                    "git log --graph --oneline --decorate origin/main..HEAD",
+                    localLog
+                  ),
+                ],
+              }),
+              createAssistantMessage("msg-6", "Dirty working tree summary:", {
+                historySequence: 6,
+                timestamp: STABLE_TIMESTAMP - 90_000,
+                toolCalls: [
+                  createBashTool(
+                    "call-bash-4",
+                    "git status --short",
+                    " M src/node/services/migrations/runner.ts\n M src/node/services/migrations/planner.ts\n M src/node/services/migrations/lock.ts\n M src/common/utils/migrations/formatDiff.ts\n M tests/ipc/migrations.integration.test.ts\n?? docs/migrations/rollback-playbook.md"
+                  ),
+                ],
+              }),
+              createAssistantMessage(
+                "msg-7",
+                "Recommendation: stash dirty files, rebase refactor/db onto origin/main, resolve migration planner conflicts, then replay local commits in order.",
+                {
+                  historySequence: 7,
+                  timestamp: STABLE_TIMESTAMP - 80_000,
+                }
+              ),
+            ]),
+          ],
+        ]);
+
         expandProjects([README_PROJECT_PATH]);
-        selectWorkspace(workspaces[0]);
+        selectWorkspace(workspaces[1]);
+        collapseRightSidebar();
 
         return createMockORPCClient({
           projects: groupWorkspacesByProject(workspaces),
           workspaces,
-          executeBash: createGitStatusExecutor(gitStatus),
+          onChat: createOnChatAdapter(chatHandlers),
+          executeBash: createReadmeGitDivergenceExecutor(gitStatus),
         });
       }}
     />
@@ -1281,7 +1012,7 @@ graph TD
                     historySequence: 5,
                     timestamp: STABLE_TIMESTAMP - 5_000,
                     toolCalls: [
-                      createStatusTool("call-status-1", "📝", "Building ProductHero story"),
+                      createStatusTool("call-status-1", "📝", "Building README screenshot stories"),
                     ],
                   }),
                 ]),

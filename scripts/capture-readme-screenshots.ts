@@ -9,7 +9,7 @@
  * Usage:
  *   bun run scripts/capture-readme-screenshots.ts
  *   bun run scripts/capture-readme-screenshots.ts --storybook-url http://localhost:6006
- *   bun run scripts/capture-readme-screenshots.ts --story ProductHero
+ *   bun run scripts/capture-readme-screenshots.ts --story CodeReview
  */
 
 import { parseArgs } from "node:util";
@@ -55,8 +55,7 @@ const STORY_ID_PREFIX = "docs-readme-screenshots--";
 /**
  * Story definitions. `playInteraction` is a Playwright callback that replicates
  * the Storybook play function for stories that require user interaction before
- * the screenshot is taken. `postProcess` allows custom Sharp pipelines (e.g.
- * clipping + upscaling for AgentStatusSidebar).
+ * the screenshot is taken.
  */
 interface StoryDef {
   exportName: string;
@@ -69,8 +68,7 @@ interface StoryDef {
 }
 
 const STORIES: StoryDef[] = [
-  // ProductHero is not in the capture list — the README hero is now mux-demo.gif.
-  // The story is kept for Storybook browsing and Chromatic regression.
+  // README hero uses mux-demo.gif; screenshot captures start at code-review.webp.
   {
     exportName: "CodeReview",
     storyId: `${STORY_ID_PREFIX}code-review`,

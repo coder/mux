@@ -206,7 +206,8 @@ The retry logic handles most cases. If persistent:
 - The `StoryDef` interface supports a `postProcess` hook for custom Sharp pipelines
   if a future story needs cropping/compositing, but no current stories use it
 
-### ProductHero is missing from captures
+### Why there is no ProductHero screenshot story
 
-Intentional — `product-hero.webp` was replaced by `mux-demo.gif` in README. The
-story is kept in Storybook for regression testing but excluded from the capture list.
+Intentional — README now uses `mux-demo.gif` as the hero media. The README
+screenshot pipeline covers only the 7 `docs/img/*.webp` assets that remain in
+README, starting with `code-review.webp`.
