@@ -558,7 +558,12 @@ export function CreationControls(props: CreationControlsProps) {
   // Keep selected runtime aligned with availability + Settings enablement constraints.
   useEffect(() => {
     if (isNonGitRepo) {
-      if (selectedRuntime.mode !== RUNTIME_MODE.LOCAL) {
+      // Only force Local if it's actually enabled; otherwise leave the selection alone
+      // so the UI doesn't select an invisible (disabled) runtime.
+      if (
+        selectedRuntime.mode !== RUNTIME_MODE.LOCAL &&
+        props.runtimeEnablement?.[RUNTIME_MODE.LOCAL] !== false
+      ) {
         onSelectedRuntimeChange({ mode: "local" });
       }
       return;

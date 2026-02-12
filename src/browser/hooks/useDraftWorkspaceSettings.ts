@@ -399,13 +399,15 @@ export function useDraftWorkspaceSettings(
   const [selectedRuntime, setSelectedRuntimeState] = useState<ParsedRuntime>(() => defaultRuntime);
 
   const prevProjectPathRef = useRef<string | null>(null);
-  const prevDefaultRuntimeModeRef = useRef<RuntimeMode | null>(null);
+  // Track settingsDefaultRuntime (RuntimeChoice) instead of defaultRuntimeMode (RuntimeMode)
+  // so that switching between "coder" and "ssh" in Settings is detected as a change.
+  const prevSettingsDefaultRef = useRef<RuntimeChoice | null>(null);
 
   // When switching projects or changing the persisted default mode, reset the selection.
   // Importantly: do NOT reset selection when lastSsh.host/lastDockerImage changes while typing.
   useEffect(() => {
     const projectChanged = prevProjectPathRef.current !== projectPath;
-    const defaultModeChanged = prevDefaultRuntimeModeRef.current !== defaultRuntimeMode;
+    const defaultModeChanged = prevSettingsDefaultRef.current !== settingsDefaultRuntime;
 
     if (projectChanged || defaultModeChanged) {
       setSelectedRuntimeState(
@@ -421,9 +423,10 @@ export function useDraftWorkspaceSettings(
     }
 
     prevProjectPathRef.current = projectPath;
-    prevDefaultRuntimeModeRef.current = defaultRuntimeMode;
+    prevSettingsDefaultRef.current = settingsDefaultRuntime;
   }, [
     projectPath,
+    settingsDefaultRuntime,
     defaultRuntimeMode,
     defaultSshHost,
     defaultDockerImage,
