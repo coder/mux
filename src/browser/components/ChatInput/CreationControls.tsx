@@ -587,8 +587,9 @@ export function CreationControls(props: CreationControlsProps) {
 
     // Determine if the current selection needs correction.
     const isCurrentDisabledBySettings = runtimeEnablement?.[runtimeChoice] === false;
+    // In non-git repos all modes except Local are unavailable (not just Worktree).
     const isCurrentUnavailable =
-      (isNonGitRepo && selectedRuntime.mode === RUNTIME_MODE.WORKTREE) ||
+      (isNonGitRepo && selectedRuntime.mode !== RUNTIME_MODE.LOCAL) ||
       (isDevcontainerMissing && selectedRuntime.mode === RUNTIME_MODE.DEVCONTAINER);
 
     if (!isCurrentDisabledBySettings && !isCurrentUnavailable) {
@@ -612,7 +613,8 @@ export function CreationControls(props: CreationControlsProps) {
       if (isDevcontainerMissing && mode === RUNTIME_MODE.DEVCONTAINER) {
         return false;
       }
-      if (isNonGitRepo && mode === RUNTIME_MODE.WORKTREE) {
+      // In non-git repos, only Local is viable.
+      if (isNonGitRepo && mode !== RUNTIME_MODE.LOCAL) {
         return false;
       }
       // Filter by policy constraints to avoid selecting a blocked runtime.
