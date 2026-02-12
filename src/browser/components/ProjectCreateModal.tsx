@@ -635,7 +635,7 @@ function ProjectAddFormFooter(props: {
   const actionLabel = props.mode === "pick-folder" ? "Add Project" : "Clone Project";
 
   return (
-    <DialogFooter>
+    <DialogFooter className={props.showCancelButton ? "justify-between" : undefined}>
       {props.showCancelButton && (
         <Button variant="secondary" onClick={props.onClose} disabled={props.isCreating}>
           Cancel
