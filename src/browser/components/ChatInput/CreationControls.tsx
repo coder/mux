@@ -587,13 +587,20 @@ export function CreationControls(props: CreationControlsProps) {
       if (mode === "coder" && !props.coderProps) {
         return false;
       }
-      // Filter by availability to avoid oscillation (e.g., devcontainer enabled but missing).
+      // Filter by availability to avoid selecting unavailable runtimes (e.g., Docker
+      // when daemon is down, devcontainer when config missing, non-git projects).
       if (isDevcontainerMissing && mode === RUNTIME_MODE.DEVCONTAINER) {
         return false;
       }
-      // In non-git repos, only Local is viable.
       if (isNonGitRepo && mode !== RUNTIME_MODE.LOCAL) {
         return false;
+      }
+      // Check the general availability map for any other unavailable runtimes.
+      if (mode !== "coder") {
+        const avail = availabilityMap?.[mode];
+        if (avail !== undefined && !avail.available) {
+          return false;
+        }
       }
       // Filter by policy constraints to avoid selecting a blocked runtime.
       if (allowedModes) {
@@ -680,6 +687,7 @@ export function CreationControls(props: CreationControlsProps) {
     props.allowedRuntimeModes,
     props.allowSshHost,
     props.allowSshCoder,
+    availabilityMap,
     runtimeAvailabilityState,
     runtimeChoice,
     selectedRuntime,
