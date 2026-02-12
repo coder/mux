@@ -23,7 +23,7 @@ import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderD
 import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
-import { normalizeGatewayModel, supports1MContext } from "@/common/utils/ai/models";
+import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
 import {
@@ -228,8 +228,9 @@ export function normalizeAnthropicBaseURL(baseURL: string): string {
   return `${trimmed}/v1`;
 }
 
-/** Header value for Anthropic 1M context beta */
-export const ANTHROPIC_1M_CONTEXT_HEADER = "context-1m-2025-08-07";
+// Canonical definition lives in providerOptions; import for local use + re-export for backward compat.
+import { ANTHROPIC_1M_CONTEXT_HEADER } from "@/common/utils/ai/providerOptions";
+export { ANTHROPIC_1M_CONTEXT_HEADER };
 
 /**
  * Build headers for Anthropic provider, optionally including the 1M context beta header.
@@ -485,14 +486,9 @@ export class ProviderModelFactory {
           ? { ...configWithApiKey, baseURL: normalizeAnthropicBaseURL(effectiveBaseURL) }
           : configWithApiKey;
 
-        // Add 1M context beta header if requested and model supports it.
-        // Check both per-model list (use1MContextModels) and legacy global flag (use1MContext).
-        const fullModelId = `anthropic:${modelId}`;
-        const is1MEnabled =
-          ((muxProviderOptions?.anthropic?.use1MContextModels?.includes(fullModelId) ?? false) ||
-            muxProviderOptions?.anthropic?.use1MContext === true) &&
-          supports1MContext(fullModelId);
-        const headers = buildAnthropicHeaders(normalizedConfig.headers, is1MEnabled);
+        // 1M context beta header is injected per-request via buildRequestHeaders() →
+        // streamText({ headers }), not at provider creation time. This avoids duplicating
+        // header logic across direct and gateway handlers.
 
         // Lazy-load Anthropic provider to reduce startup time
         const { createAnthropic } = await PROVIDER_REGISTRY.anthropic();
@@ -503,7 +499,6 @@ export class ProviderModelFactory {
         const fetchWithCacheControl = wrapFetchWithAnthropicCacheControl(baseFetch);
         const provider = createAnthropic({
           ...normalizedConfig,
-          headers,
           fetch: fetchWithCacheControl,
         });
         return Ok(provider(modelId));
@@ -1024,6 +1019,9 @@ export class ProviderModelFactory {
         // Use configured baseURL or fall back to default gateway URL
         const gatewayBaseURL =
           providerConfig.baseURL ?? "https://gateway.mux.coder.com/api/v1/ai-gateway/v1/ai";
+
+        // 1M context beta header is injected per-request via buildRequestHeaders() →
+        // streamText({ headers }), not at provider creation time.
         const gateway = createGateway({
           apiKey: couponCode,
           baseURL: gatewayBaseURL,

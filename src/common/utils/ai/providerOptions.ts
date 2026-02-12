@@ -1,7 +1,9 @@
 /**
- * Provider options builder for AI SDK
+ * Provider-specific request configuration for AI SDK
  *
- * Converts unified thinking levels to provider-specific options
+ * Builds both `providerOptions` (thinking, reasoning) and per-request HTTP
+ * `headers` (e.g. Anthropic 1M context beta) for streamText(). Both builders
+ * share the same gateway-normalization logic and provider branching.
  */
 
 import type { AnthropicProviderOptions } from "@ai-sdk/anthropic";
@@ -19,7 +21,7 @@ import {
 } from "@/common/types/thinking";
 import { log } from "@/node/services/log";
 import type { MuxMessage } from "@/common/types/message";
-import { normalizeGatewayModel } from "./models";
+import { normalizeGatewayModel, supports1MContext } from "./models";
 
 /**
  * OpenRouter reasoning options
@@ -339,4 +341,37 @@ export function buildProviderOptions(
   // No provider-specific options for unsupported providers
   log.debug("buildProviderOptions: Unsupported provider", provider);
   return {};
+}
+
+// ---------------------------------------------------------------------------
+// Per-request HTTP headers
+// ---------------------------------------------------------------------------
+
+/** Header value for Anthropic 1M context beta */
+export const ANTHROPIC_1M_CONTEXT_HEADER = "context-1m-2025-08-07";
+
+/**
+ * Build per-request HTTP headers for provider-specific features.
+ *
+ * These flow through streamText({ headers }) to the provider SDK, which merges
+ * them with provider-creation-time headers via combineHeaders(). This is the
+ * single injection site for features like the Anthropic 1M context beta header,
+ * regardless of whether the model is direct or gateway-routed.
+ */
+export function buildRequestHeaders(
+  modelString: string,
+  muxProviderOptions?: MuxProviderOptions
+): Record<string, string> | undefined {
+  const normalized = normalizeGatewayModel(modelString);
+  const [provider] = normalized.split(":", 2);
+
+  if (provider !== "anthropic") return undefined;
+
+  const is1MEnabled =
+    ((muxProviderOptions?.anthropic?.use1MContextModels?.includes(normalized) ?? false) ||
+      muxProviderOptions?.anthropic?.use1MContext === true) &&
+    supports1MContext(normalized);
+
+  if (!is1MEnabled) return undefined;
+  return { "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER };
 }

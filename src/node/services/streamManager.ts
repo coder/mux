@@ -97,6 +97,8 @@ interface StreamRequestConfig {
   tools?: Record<string, Tool>;
   toolChoice?: StreamToolChoice;
   providerOptions?: Record<string, unknown>;
+  /** Per-request HTTP headers (e.g., anthropic-beta for 1M context). */
+  headers?: Record<string, string | undefined>;
   maxOutputTokens?: number;
   hasQueuedMessage?: () => boolean;
 }
@@ -929,7 +931,8 @@ export class StreamManager extends EventEmitter {
     providerOptions?: Record<string, unknown>,
     maxOutputTokens?: number,
     toolPolicy?: ToolPolicy,
-    hasQueuedMessage?: () => boolean
+    hasQueuedMessage?: () => boolean,
+    headers?: Record<string, string | undefined>
   ): StreamRequestConfig {
     // Determine toolChoice based on toolPolicy.
     //
@@ -1002,6 +1005,7 @@ export class StreamManager extends EventEmitter {
       tools: finalTools,
       toolChoice,
       providerOptions: finalProviderOptions,
+      headers,
       maxOutputTokens: effectiveMaxOutputTokens,
       hasQueuedMessage,
     };
@@ -1049,6 +1053,7 @@ export class StreamManager extends EventEmitter {
       stopWhen: this.createStopWhenCondition(request),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
       providerOptions: request.providerOptions as any, // Pass provider-specific options (thinking/reasoning config)
+      headers: request.headers, // Per-request HTTP headers (e.g., anthropic-beta for 1M context)
       maxOutputTokens: request.maxOutputTokens,
     });
   }
@@ -1075,7 +1080,8 @@ export class StreamManager extends EventEmitter {
     toolPolicy?: ToolPolicy,
     hasQueuedMessage?: () => boolean,
     workspaceName?: string,
-    thinkingLevel?: string
+    thinkingLevel?: string,
+    headers?: Record<string, string | undefined>
   ): WorkspaceStreamInfo {
     // abortController is created and linked to the caller-provided abortSignal in startStream().
 
@@ -1089,7 +1095,8 @@ export class StreamManager extends EventEmitter {
       providerOptions,
       maxOutputTokens,
       toolPolicy,
-      hasQueuedMessage
+      hasQueuedMessage,
+      headers
     );
 
     // Start streaming - this can throw immediately if API key is missing
@@ -2432,7 +2439,8 @@ export class StreamManager extends EventEmitter {
     providedStreamToken?: StreamToken,
     hasQueuedMessage?: () => boolean,
     workspaceName?: string,
-    thinkingLevel?: string
+    thinkingLevel?: string,
+    headers?: Record<string, string | undefined>
   ): Promise<Result<StreamToken, SendMessageError>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
@@ -2507,7 +2515,8 @@ export class StreamManager extends EventEmitter {
           toolPolicy,
           hasQueuedMessage,
           workspaceName,
-          thinkingLevel
+          thinkingLevel,
+          headers
         );
 
         // Guard against a narrow race:

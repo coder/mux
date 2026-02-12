@@ -47,7 +47,7 @@ import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
 import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpServerManager";
 import { WorkspaceMcpOverridesService } from "./workspaceMcpOverridesService";
 import type { TaskService } from "@/node/services/taskService";
-import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
+import { buildProviderOptions, buildRequestHeaders } from "@/common/utils/ai/providerOptions";
 import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
 
 import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
@@ -847,6 +847,11 @@ export class AIService extends EventEmitter {
         truncationMode
       );
 
+      // Build per-request HTTP headers (e.g., anthropic-beta for 1M context).
+      // This is the single injection site for provider-specific headers, handling
+      // both direct and gateway-routed models identically.
+      const requestHeaders = buildRequestHeaders(modelString, effectiveMuxProviderOptions);
+
       // Debug dump: Log the complete LLM request when MUX_DEBUG_LLM_REQUEST is set
       if (process.env.MUX_DEBUG_LLM_REQUEST === "1") {
         log.info(
@@ -951,7 +956,8 @@ export class AIService extends EventEmitter {
         streamToken, // Pass the pre-generated stream token
         hasQueuedMessage,
         metadata.name,
-        effectiveThinkingLevel
+        effectiveThinkingLevel,
+        requestHeaders
       );
 
       if (!streamResult.success) {
