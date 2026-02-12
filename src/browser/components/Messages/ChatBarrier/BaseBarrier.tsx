@@ -2,10 +2,11 @@ import React from "react";
 import { cn } from "@/common/lib/utils";
 
 interface BaseBarrierProps {
-  text: string;
+  text: React.ReactNode;
   color: string;
   animate?: boolean;
   className?: string;
+  leadingElement?: React.ReactNode;
 }
 
 export const BaseBarrier: React.FC<BaseBarrierProps> = ({
@@ -13,6 +14,7 @@ export const BaseBarrier: React.FC<BaseBarrierProps> = ({
   color,
   animate = false,
   className,
+  leadingElement,
 }) => {
   return (
     <div
@@ -29,9 +31,10 @@ export const BaseBarrier: React.FC<BaseBarrierProps> = ({
         }}
       />
       <div
-        className="font-mono text-[10px] tracking-wide whitespace-nowrap uppercase"
+        className="flex items-center gap-1 font-mono text-[10px] tracking-wide whitespace-nowrap uppercase"
         style={{ color }}
       >
+        {leadingElement}
         {text}
       </div>
       <div

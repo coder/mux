@@ -130,6 +130,7 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
       tps={tps}
       cancelText={cancelText}
       className={className}
+      isStreamingPhase={phase === "streaming"}
       hintElement={
         showCompactionHint ? (
           <button

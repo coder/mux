@@ -1945,7 +1945,7 @@ pre code {
   -webkit-box-decoration-break: clone;
 }
 
-/* The streaming animated SVG should shimmer in sync with "Thinking..." text. */
+/* Shared shimmer overlay for non-text surfaces (e.g., streaming status icons). */
 .shimmer-surface {
   position: relative;
   display: inline-flex;

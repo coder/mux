@@ -5,7 +5,6 @@ import { TypewriterMarkdown } from "./TypewriterMarkdown";
 import { normalizeReasoningMarkdown } from "./MarkdownStyles";
 import { cn } from "@/common/lib/utils";
 import { Shimmer } from "../ai-elements/shimmer";
-import ThinkingDots from "@/browser/assets/animations/thinking-dots.svg?react";
 import { Lightbulb } from "lucide-react";
 
 interface ReasoningMessageProps {
@@ -14,13 +13,6 @@ interface ReasoningMessageProps {
 }
 
 const REASONING_FONT_CLASSES = "font-primary text-[12px] leading-[18px]";
-const THINKING_SHIMMER_DURATION_SECONDS = 2;
-type ThinkingShimmerStyle = React.CSSProperties &
-  Record<"--shimmer-duration" | "--shimmer-color", string>;
-const THINKING_SHIMMER_STYLE: ThinkingShimmerStyle = {
-  "--shimmer-duration": `${THINKING_SHIMMER_DURATION_SECONDS}s`,
-  "--shimmer-color": "var(--color-thinking-mode)",
-};
 
 export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, className }) => {
   const [isExpanded, setIsExpanded] = useState(message.isStreaming);
@@ -113,30 +105,11 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
           )}
         >
           <span className="text-xs">
-            {isStreaming ? (
-              <span
-                className={cn(
-                  "shimmer-surface inline-flex size-3.5 items-center justify-center rounded-[2px]",
-                  "text-thinking-mode"
-                )}
-                style={THINKING_SHIMMER_STYLE}
-                aria-hidden
-              >
-                {/* Keep the icon shimmer in lockstep with the text shimmer while streaming. */}
-                <ThinkingDots className="size-full fill-current" />
-              </span>
-            ) : (
-              <Lightbulb className="size-3.5" />
-            )}
+            <Lightbulb className={cn("size-3.5", isStreaming && "animate-pulse")} />
           </span>
           <div className="flex min-w-0 items-center gap-1 truncate">
             {isStreaming ? (
-              <Shimmer
-                duration={THINKING_SHIMMER_DURATION_SECONDS}
-                colorClass="var(--color-thinking-mode)"
-              >
-                Thinking...
-              </Shimmer>
+              <Shimmer colorClass="var(--color-thinking-mode)">Thinking...</Shimmer>
             ) : hasContent ? (
               <MarkdownRenderer
                 content={summaryLine}
