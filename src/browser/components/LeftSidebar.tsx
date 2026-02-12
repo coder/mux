@@ -31,6 +31,14 @@ export function LeftSidebar(props: LeftSidebarProps) {
     typeof window !== "undefined" &&
     window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches;
 
+  const handleBeforeOpenSettings = () => {
+    // Keep settings navigation escapable on touch devices by dismissing the
+    // off-canvas sidebar as soon as the user opens settings from this sidebar.
+    if (!collapsed && isMobileTouch) {
+      onToggleCollapsed();
+    }
+  };
+
   const width = collapsed ? "20px" : `${widthPx ?? 288}px`;
 
   return (
@@ -60,7 +68,7 @@ export function LeftSidebar(props: LeftSidebarProps) {
         )}
         style={{ width }}
       >
-        {!collapsed && <TitleBar />}
+        {!collapsed && <TitleBar onBeforeOpenSettings={handleBeforeOpenSettings} />}
         <ProjectSidebar
           {...projectSidebarProps}
           collapsed={collapsed}

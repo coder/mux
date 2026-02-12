@@ -4,7 +4,11 @@ import { Button } from "@/browser/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 
-export function SettingsButton() {
+interface SettingsButtonProps {
+  onBeforeOpenSettings?: () => void;
+}
+
+export function SettingsButton(props: SettingsButtonProps) {
   const { open } = useSettings();
 
   return (
@@ -13,7 +17,10 @@ export function SettingsButton() {
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => open()}
+          onClick={() => {
+            props.onBeforeOpenSettings?.();
+            open();
+          }}
           className="border-border-light text-muted-foreground hover:border-border-medium/80 hover:bg-toggle-bg/70 h-5 w-5 border"
           aria-label="Open settings"
           data-testid="settings-button"

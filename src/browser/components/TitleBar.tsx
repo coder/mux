@@ -48,7 +48,11 @@ function getGitDescribe(version: unknown): string | undefined {
   return undefined;
 }
 
-export function TitleBar() {
+interface TitleBarProps {
+  onBeforeOpenSettings?: () => void;
+}
+
+export function TitleBar(props: TitleBarProps) {
   const { api } = useAPI();
   const { open: openAboutDialog } = useAboutDialog();
   const policyState = usePolicy();
@@ -235,7 +239,11 @@ export function TitleBar() {
             <TooltipContent align="end">Your settings are controlled by a policy.</TooltipContent>
           </Tooltip>
         )}
-        <SettingsButton />
+        <SettingsButton
+          // On touch/mobile, opening settings from the sidebar should also dismiss the
+          // off-canvas sidebar so users are not stuck with it covering the settings page.
+          onBeforeOpenSettings={props.onBeforeOpenSettings}
+        />
       </div>
     </div>
   );
