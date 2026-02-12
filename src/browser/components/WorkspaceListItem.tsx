@@ -1,4 +1,4 @@
-import { useRename } from "@/browser/contexts/WorkspaceRenameContext";
+import { useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
@@ -363,8 +363,8 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   const { isUnread } = useWorkspaceUnread(workspaceId);
   const gitStatus = useGitStatus(workspaceId);
 
-  // Get title edit context (renamed from rename context since we now edit titles, not names)
-  const { editingWorkspaceId, requestRename, confirmRename, cancelRename } = useRename();
+  // Get title edit context — manages inline title editing state across the sidebar
+  const { editingWorkspaceId, requestEdit, confirmEdit, cancelEdit } = useTitleEdit();
   const { api } = useAPI();
 
   // Local state for title editing
@@ -409,7 +409,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   // so it works even when the sidebar is collapsed and list items are unmounted.
 
   const startEditing = () => {
-    if (requestRename(workspaceId, displayTitle)) {
+    if (requestEdit(workspaceId, displayTitle)) {
       setEditingTitle(displayTitle);
       setTitleError(null);
     }
@@ -421,7 +421,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
       return;
     }
 
-    const result = await confirmRename(workspaceId, editingTitle);
+    const result = await confirmEdit(workspaceId, editingTitle);
     if (!result.success) {
       setTitleError(result.error ?? "Failed to update title");
     } else {
@@ -430,7 +430,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   };
 
   const handleCancelEdit = () => {
-    cancelRename();
+    cancelEdit();
     setEditingTitle("");
     setTitleError(null);
   };
@@ -699,7 +699,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                       <Pencil className="h-3 w-3 shrink-0" />
                       Edit chat title{" "}
                       <span className="text-muted text-[10px]">
-                        ({formatKeybind(KEYBINDS.RENAME_WORKSPACE)})
+                        ({formatKeybind(KEYBINDS.EDIT_WORKSPACE_TITLE)})
                       </span>
                     </span>
                   </button>
@@ -715,7 +715,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                       <Sparkles className="h-3 w-3 shrink-0" />
                       Generate new title{" "}
                       <span className="text-muted text-[10px]">
-                        ({formatKeybind(KEYBINDS.REGENERATE_WORKSPACE_NAME)})
+                        ({formatKeybind(KEYBINDS.GENERATE_WORKSPACE_TITLE)})
                       </span>
                     </span>
                   </button>
@@ -802,7 +802,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                     className={cn(
                       "text-foreground block truncate text-left text-[13px] transition-colors duration-200",
                       !isDisabled && "cursor-pointer",
-                      metadata.autoName && "italic"
+                      metadata.autoTitle && "italic"
                     )}
                     onDoubleClick={(e) => {
                       if (isDisabled) return;

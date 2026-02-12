@@ -404,9 +404,9 @@ export interface WorkspaceContext extends WorkspaceMetadataContextValue {
     workspaceId: string,
     options?: { force?: boolean }
   ) => Promise<{ success: boolean; error?: string }>;
-  renameWorkspace: (
+  updateWorkspaceTitle: (
     workspaceId: string,
-    newName: string
+    newTitle: string
   ) => Promise<{ success: boolean; error?: string }>;
   archiveWorkspace: (workspaceId: string) => Promise<{ success: boolean; error?: string }>;
   unarchiveWorkspace: (workspaceId: string) => Promise<{ success: boolean; error?: string }>;
@@ -1226,7 +1226,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
    * We just reload metadata after the update - no need to update selectedWorkspace
    * since the ID stays the same and the metadata map refresh handles the title update.
    */
-  const renameWorkspace = useCallback(
+  const updateWorkspaceTitle = useCallback(
     async (
       workspaceId: string,
       newTitle: string
@@ -1507,7 +1507,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     () => ({
       createWorkspace,
       removeWorkspace,
-      renameWorkspace,
+      updateWorkspaceTitle,
       archiveWorkspace,
       unarchiveWorkspace,
       refreshWorkspaceMetadata,
@@ -1530,7 +1530,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     [
       createWorkspace,
       removeWorkspace,
-      renameWorkspace,
+      updateWorkspaceTitle,
       archiveWorkspace,
       unarchiveWorkspace,
       refreshWorkspaceMetadata,
