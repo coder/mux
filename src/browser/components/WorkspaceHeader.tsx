@@ -92,6 +92,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [shareTranscriptOpen, setShareTranscriptOpen] = useState(false);
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  const [isArchiving, setIsArchiving] = useState(false);
   const archiveError = usePopoverError();
 
   const [rightSidebarCollapsed] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false, {
@@ -136,19 +137,26 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   }, [workspaceId, namedWorkspacePath, openInEditor, runtimeConfig]);
 
   // Mirror sidebar archive behavior so the titlebar matches existing workspace actions.
+  // Guards with isArchiving to prevent duplicate calls on slow API paths.
   const handleArchiveChat = useCallback(
     async (anchorEl?: HTMLElement) => {
-      const res = await archiveWorkspace(workspaceId);
-      if (!res.success) {
-        const rect = anchorEl?.getBoundingClientRect();
-        archiveError.showError(
-          workspaceId,
-          res.error ?? "Failed to archive chat",
-          rect ? { top: rect.top + window.scrollY, left: rect.right + 10 } : undefined
-        );
+      if (isArchiving) return;
+      setIsArchiving(true);
+      try {
+        const res = await archiveWorkspace(workspaceId);
+        if (!res.success) {
+          const rect = anchorEl?.getBoundingClientRect();
+          archiveError.showError(
+            workspaceId,
+            res.error ?? "Failed to archive chat",
+            rect ? { top: rect.top + window.scrollY, left: rect.right + 10 } : undefined
+          );
+        }
+      } finally {
+        setIsArchiving(false);
       }
     },
-    [workspaceId, archiveWorkspace, archiveError]
+    [workspaceId, archiveWorkspace, archiveError, isArchiving]
   );
 
   // Start workspace tutorial on first entry
@@ -526,6 +534,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                   if (isWorking) {
                     setArchiveConfirmOpen(true);
                   } else {
+                    // isArchiving guard inside handleArchiveChat prevents duplicate calls.
                     void handleArchiveChat(e.currentTarget);
                   }
                 }}
@@ -571,6 +580,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
         confirmLabel="Archive"
         onConfirm={() => {
           setArchiveConfirmOpen(false);
+          // isArchiving guard inside handleArchiveChat prevents duplicate calls.
           void handleArchiveChat();
         }}
         onCancel={() => setArchiveConfirmOpen(false)}

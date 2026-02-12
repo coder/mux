@@ -172,7 +172,7 @@ async function openProjectSettings(canvasElement: HTMLElement): Promise<void> {
   mcpHeading.scrollIntoView({ block: "start" });
 }
 
-/** Open the workspace MCP modal */
+/** Open the workspace MCP modal via the "More actions" menu */
 async function openWorkspaceMCPModal(canvasElement: HTMLElement): Promise<void> {
   const canvas = within(canvasElement);
   const body = within(canvasElement.ownerDocument.body);
@@ -180,20 +180,27 @@ async function openWorkspaceMCPModal(canvasElement: HTMLElement): Promise<void> 
   // Wait for workspace header to load
   await canvas.findByTestId("workspace-header", {}, { timeout: 10000 });
 
-  // Click the MCP server button in the header.
+  // The MCP button now lives inside the "More actions" popover menu.
+  // Open the menu first, then click the MCP item inside it.
   //
-  // DEFENSIVE: In CI we occasionally see the first click not open the modal (Storybook still
+  // DEFENSIVE: In CI we occasionally see the first click not open the popover (Storybook still
   // settling / focus changes). Retry once before failing to avoid flaky test runs.
-  const mcpButton = await canvas.findByTestId("workspace-mcp-button");
-  await userEvent.click(mcpButton);
+  const moreActionsButton = await canvas.findByTestId("workspace-more-actions");
+  await userEvent.click(moreActionsButton);
 
+  // The popover renders in a portal on document.body — search there for the MCP button.
   try {
-    await body.findByRole("dialog");
+    const mcpButton = await body.findByTestId("workspace-mcp-button");
+    await userEvent.click(mcpButton);
   } catch {
-    const retryButton = await canvas.findByTestId("workspace-mcp-button");
-    await userEvent.click(retryButton);
-    await body.findByRole("dialog", {}, { timeout: 10000 });
+    // Retry: re-open the menu if the first click didn't stick.
+    const retryMoreActions = await canvas.findByTestId("workspace-more-actions");
+    await userEvent.click(retryMoreActions);
+    const mcpButton = await body.findByTestId("workspace-mcp-button");
+    await userEvent.click(mcpButton);
   }
+
+  await body.findByRole("dialog", {}, { timeout: 10000 });
 }
 
 const withDesktopWindowApi = [
