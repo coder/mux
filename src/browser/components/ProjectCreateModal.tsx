@@ -614,6 +614,40 @@ ProjectCloneForm.displayName = "ProjectCloneForm";
 
 const NOOP = (): void => undefined;
 
+/** Shared footer for ProjectAddForm — rendered outside the space-y-3 wrapper
+ *  so it sits as a direct DialogContent grid child, aligned with the header. */
+function ProjectAddFormFooter(props: {
+  mode: ProjectCreateMode;
+  isCreating: boolean;
+  showCancelButton: boolean;
+  createFormRef: React.RefObject<ProjectCreateFormHandle | null>;
+  cloneFormRef: React.RefObject<ProjectCloneFormHandle | null>;
+  onClose?: () => void;
+}) {
+  const handleSubmit = () => {
+    if (props.mode === "pick-folder") {
+      void props.createFormRef.current?.submit();
+    } else {
+      void props.cloneFormRef.current?.submit();
+    }
+  };
+
+  const actionLabel = props.mode === "pick-folder" ? "Add Project" : "Clone Project";
+
+  return (
+    <DialogFooter>
+      {props.showCancelButton && (
+        <Button variant="secondary" onClick={props.onClose} disabled={props.isCreating}>
+          Cancel
+        </Button>
+      )}
+      <Button onClick={handleSubmit} disabled={props.isCreating}>
+        {props.isCreating ? (props.mode === "pick-folder" ? "Adding…" : "Cloning…") : actionLabel}
+      </Button>
+    </DialogFooter>
+  );
+}
+
 export interface ProjectAddFormHandle {
   submit: () => Promise<boolean>;
   getTrimmedInput: () => string;
@@ -733,47 +767,65 @@ export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddF
     );
 
     return (
-      <div className="space-y-3">
-        <ToggleGroup
-          type="single"
-          value={mode}
-          onValueChange={handleModeChange}
-          disabled={isCreating}
-          className="h-9 bg-transparent"
-        >
-          <ToggleGroupItem value="pick-folder" size="sm" className="h-7 px-3 text-[13px]">
-            <FolderOpen className="h-3.5 w-3.5" />
-            Local folder
-          </ToggleGroupItem>
-          <ToggleGroupItem value="clone" size="sm" className="h-7 px-3 text-[13px]">
-            <Github className="h-3.5 w-3.5" />
-            Clone repo
-          </ToggleGroupItem>
-        </ToggleGroup>
+      <>
+        {/* ToggleGroup + form content are grouped so space-y-3 keeps them
+            visually cohesive, while DialogFooter renders outside the wrapper
+            as a direct DialogContent grid child for proper edge alignment. */}
+        <div className="space-y-3">
+          <ToggleGroup
+            type="single"
+            value={mode}
+            onValueChange={handleModeChange}
+            disabled={isCreating}
+            className="h-9 bg-transparent"
+          >
+            <ToggleGroupItem value="pick-folder" size="sm" className="h-7 px-3 text-[13px]">
+              <FolderOpen className="h-3.5 w-3.5" />
+              Local folder
+            </ToggleGroupItem>
+            <ToggleGroupItem value="clone" size="sm" className="h-7 px-3 text-[13px]">
+              <Github className="h-3.5 w-3.5" />
+              Clone repo
+            </ToggleGroupItem>
+          </ToggleGroup>
 
-        {mode === "pick-folder" ? (
-          <ProjectCreateForm
-            ref={projectCreateFormRef}
-            onSuccess={props.onSuccess}
-            onClose={props.onClose}
+          {mode === "pick-folder" ? (
+            <ProjectCreateForm
+              ref={projectCreateFormRef}
+              onSuccess={props.onSuccess}
+              onClose={props.onClose}
+              showCancelButton={props.showCancelButton ?? false}
+              autoFocus={props.autoFocus}
+              onIsCreatingChange={setCreating}
+              hideFooter
+            />
+          ) : (
+            <ProjectCloneForm
+              ref={projectCloneFormRef}
+              onSuccess={props.onSuccess}
+              onClose={props.onClose ?? NOOP}
+              isOpen={props.isOpen}
+              defaultCloneDir={defaultCloneDir}
+              onIsCreatingChange={setCreating}
+              hideFooter
+              autoFocus={props.autoFocus}
+            />
+          )}
+        </div>
+
+        {/* Footer renders outside the wrapper so it's a direct child of
+            DialogContent's grid, aligned edge-to-edge with the header. */}
+        {!props.hideFooter && (
+          <ProjectAddFormFooter
+            mode={mode}
+            isCreating={isCreating}
             showCancelButton={props.showCancelButton ?? false}
-            autoFocus={props.autoFocus}
-            onIsCreatingChange={setCreating}
-            hideFooter={props.hideFooter}
-          />
-        ) : (
-          <ProjectCloneForm
-            ref={projectCloneFormRef}
-            onSuccess={props.onSuccess}
-            onClose={props.onClose ?? NOOP}
-            isOpen={props.isOpen}
-            defaultCloneDir={defaultCloneDir}
-            onIsCreatingChange={setCreating}
-            hideFooter={props.hideFooter}
-            autoFocus={props.autoFocus}
+            createFormRef={projectCreateFormRef}
+            cloneFormRef={projectCloneFormRef}
+            onClose={props.onClose}
           />
         )}
-      </div>
+      </>
     );
   }
 );
