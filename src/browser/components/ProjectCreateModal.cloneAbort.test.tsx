@@ -34,7 +34,7 @@ describe("ProjectAddForm", () => {
 
     currentClientMock = {
       projects: {
-        getDefaultCloneDir: () => Promise.resolve("/tmp"),
+        getDefaultProjectDir: () => Promise.resolve("/tmp"),
         clone: (_input, options) => {
           receivedSignal = options?.signal ?? null;
 

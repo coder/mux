@@ -221,30 +221,33 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
 
     return (
       <>
-        <div className="mb-1 flex gap-2">
-          <input
-            type="text"
-            value={path}
-            onChange={(e) => {
-              setPath(e.target.value);
-              setError("");
-            }}
-            onKeyDown={handleKeyDown}
-            placeholder={placeholder}
-            autoFocus={autoFocus}
-            disabled={isCreating}
-            className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
-          />
-          {canBrowse && (
-            <Button
-              variant="outline"
-              onClick={() => void browse()}
+        <div className="space-y-1">
+          <label className="text-muted text-xs">Path</label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={path}
+              onChange={(e) => {
+                setPath(e.target.value);
+                setError("");
+              }}
+              onKeyDown={handleKeyDown}
+              placeholder={placeholder}
+              autoFocus={autoFocus}
               disabled={isCreating}
-              className="shrink-0"
-            >
-              Browse…
-            </Button>
-          )}
+              className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
+            />
+            {canBrowse && (
+              <Button
+                variant="outline"
+                onClick={() => void browse()}
+                disabled={isCreating}
+                className="shrink-0"
+              >
+                Browse…
+              </Button>
+            )}
+          </div>
         </div>
 
         {error && <p className="text-error text-xs">{error}</p>}
@@ -277,7 +280,7 @@ interface ProjectCloneFormProps {
   onSuccess: (normalizedPath: string, projectConfig: ProjectConfig) => void;
   onClose?: () => void;
   isOpen: boolean;
-  defaultCloneDir: string;
+  defaultProjectDir: string;
   onIsCreatingChange?: (isCreating: boolean) => void;
   hideFooter?: boolean;
   autoFocus?: boolean;
@@ -323,7 +326,7 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
   function ProjectCloneForm(props, ref) {
     const { api } = useAPI();
     const [repoUrl, setRepoUrl] = useState("");
-    const [cloneParentDir, setCloneParentDir] = useState(props.defaultCloneDir);
+    const [cloneParentDir, setCloneParentDir] = useState(props.defaultProjectDir);
     const [hasEditedCloneParentDir, setHasEditedCloneParentDir] = useState(false);
     const [error, setError] = useState("");
     const [isCreating, setIsCreating] = useState(false);
@@ -341,11 +344,11 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
 
     const reset = useCallback(() => {
       setRepoUrl("");
-      setCloneParentDir(props.defaultCloneDir);
+      setCloneParentDir(props.defaultProjectDir);
       setHasEditedCloneParentDir(false);
       setError("");
       setProgressLines([]);
-    }, [props.defaultCloneDir]);
+    }, [props.defaultProjectDir]);
 
     const abortInFlightClone = useCallback(() => {
       if (!abortControllerRef.current) {
@@ -369,8 +372,8 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
         return;
       }
 
-      setCloneParentDir(props.defaultCloneDir);
-    }, [props.defaultCloneDir, props.isOpen, hasEditedCloneParentDir]);
+      setCloneParentDir(props.defaultProjectDir);
+    }, [props.defaultProjectDir, props.isOpen, hasEditedCloneParentDir]);
 
     useEffect(() => {
       progressEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -386,7 +389,7 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
 
     const { canBrowse, browse, directoryPickerModal } = useDirectoryPicker({
       api,
-      initialPath: cloneParentDir || props.defaultCloneDir || "~",
+      initialPath: cloneParentDir || props.defaultProjectDir || "~",
       onSelectPath: (selectedPath) => {
         setCloneParentDir(selectedPath);
         setHasEditedCloneParentDir(true);
@@ -505,7 +508,7 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
     return (
       <>
         {showCloneProgress ? (
-          <div className="mb-3 space-y-3">
+          <div className="space-y-3">
             <div className="space-y-1">
               <label className="text-muted text-xs">
                 {hasCloneFailure ? "Clone failed" : "Cloning repository…"}
@@ -525,7 +528,7 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
             )}
           </div>
         ) : (
-          <div className="mb-3 space-y-3">
+          <div className="space-y-3">
             <div className="space-y-1">
               <label className="text-muted text-xs">Repo URL</label>
               <input
@@ -556,7 +559,7 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
                     setError("");
                   }}
                   onKeyDown={handleKeyDown}
-                  placeholder={props.defaultCloneDir || "Select clone location"}
+                  placeholder={props.defaultProjectDir || "Select clone location"}
                   disabled={isCreating}
                   className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
                 />
@@ -579,10 +582,6 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
                 <span className="text-foreground font-mono">{destinationPreview}</span>
               </p>
             )}
-
-            <p className="text-muted text-xs">
-              Default location can be changed in <span className="text-foreground">Settings</span>.
-            </p>
           </div>
         )}
 
@@ -611,6 +610,40 @@ ProjectCloneForm.displayName = "ProjectCloneForm";
 
 const NOOP = (): void => undefined;
 
+/** Shared footer for ProjectAddForm — rendered outside the space-y-3 wrapper
+ *  so it sits as a direct DialogContent grid child, aligned with the header. */
+function ProjectAddFormFooter(props: {
+  mode: ProjectCreateMode;
+  isCreating: boolean;
+  showCancelButton: boolean;
+  createFormRef: React.RefObject<ProjectCreateFormHandle | null>;
+  cloneFormRef: React.RefObject<ProjectCloneFormHandle | null>;
+  onClose?: () => void;
+}) {
+  const handleSubmit = () => {
+    if (props.mode === "pick-folder") {
+      void props.createFormRef.current?.submit();
+    } else {
+      void props.cloneFormRef.current?.submit();
+    }
+  };
+
+  const actionLabel = props.mode === "pick-folder" ? "Add Project" : "Clone Project";
+
+  return (
+    <DialogFooter className={props.showCancelButton ? "justify-between" : undefined}>
+      {props.showCancelButton && (
+        <Button variant="secondary" onClick={props.onClose} disabled={props.isCreating}>
+          Cancel
+        </Button>
+      )}
+      <Button onClick={handleSubmit} disabled={props.isCreating}>
+        {props.isCreating ? (props.mode === "pick-folder" ? "Adding…" : "Cloning…") : actionLabel}
+      </Button>
+    </DialogFooter>
+  );
+}
+
 export interface ProjectAddFormHandle {
   submit: () => Promise<boolean>;
   getTrimmedInput: () => string;
@@ -632,7 +665,7 @@ export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddF
     const { api } = useAPI();
     const [mode, setMode] = useState<ProjectCreateMode>("pick-folder");
     const [isCreating, setIsCreating] = useState(false);
-    const [defaultCloneDir, setDefaultCloneDir] = useState("");
+    const [defaultProjectDir, setDefaultProjectDir] = useState("");
     const [isLoadingDefaultCloneDir, setIsLoadingDefaultCloneDir] = useState(false);
     const [hasLoadedDefaultCloneDir, setHasLoadedDefaultCloneDir] = useState(false);
     const cloneDirLoadNonceRef = useRef(0);
@@ -656,13 +689,13 @@ export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddF
       const nonce = cloneDirLoadNonceRef.current;
 
       try {
-        const cloneDir = await api.projects.getDefaultCloneDir();
+        const projectDir = await api.projects.getDefaultProjectDir();
         if (nonce !== cloneDirLoadNonceRef.current) {
           return; // Parent was closed/reopened while loading — discard stale result
         }
-        setDefaultCloneDir(cloneDir);
+        setDefaultProjectDir(projectDir);
       } catch (err) {
-        console.error("Failed to fetch default clone directory:", err);
+        console.error("Failed to fetch default project directory:", err);
       } finally {
         if (nonce === cloneDirLoadNonceRef.current) {
           // Mark as loaded even on failure to prevent infinite retry loops
@@ -678,7 +711,7 @@ export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddF
         cloneDirLoadNonceRef.current++;
         setMode("pick-folder");
         setCreating(false);
-        setDefaultCloneDir("");
+        setDefaultProjectDir("");
         setHasLoadedDefaultCloneDir(false);
         setIsLoadingDefaultCloneDir(false);
         return;
@@ -731,43 +764,61 @@ export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddF
 
     return (
       <>
-        <ToggleGroup
-          type="single"
-          value={mode}
-          onValueChange={handleModeChange}
-          disabled={isCreating}
-          className="mb-3 h-9 bg-transparent"
-        >
-          <ToggleGroupItem value="pick-folder" size="sm" className="h-7 px-3 text-[13px]">
-            <FolderOpen className="h-3.5 w-3.5" />
-            Local folder
-          </ToggleGroupItem>
-          <ToggleGroupItem value="clone" size="sm" className="h-7 px-3 text-[13px]">
-            <Github className="h-3.5 w-3.5" />
-            Clone repo
-          </ToggleGroupItem>
-        </ToggleGroup>
+        {/* ToggleGroup + form content are grouped so space-y-3 keeps them
+            visually cohesive, while DialogFooter renders outside the wrapper
+            as a direct DialogContent grid child for proper edge alignment. */}
+        <div className="space-y-3">
+          <ToggleGroup
+            type="single"
+            value={mode}
+            onValueChange={handleModeChange}
+            disabled={isCreating}
+            className="h-9 bg-transparent"
+          >
+            <ToggleGroupItem value="pick-folder" size="sm" className="h-7 gap-1.5 px-3 text-[13px]">
+              <FolderOpen className="h-3.5 w-3.5" />
+              Local folder
+            </ToggleGroupItem>
+            <ToggleGroupItem value="clone" size="sm" className="h-7 gap-1.5 px-3 text-[13px]">
+              <Github className="h-3.5 w-3.5" />
+              Clone repo
+            </ToggleGroupItem>
+          </ToggleGroup>
 
-        {mode === "pick-folder" ? (
-          <ProjectCreateForm
-            ref={projectCreateFormRef}
-            onSuccess={props.onSuccess}
-            onClose={props.onClose}
+          {mode === "pick-folder" ? (
+            <ProjectCreateForm
+              ref={projectCreateFormRef}
+              onSuccess={props.onSuccess}
+              onClose={props.onClose}
+              showCancelButton={props.showCancelButton ?? false}
+              autoFocus={props.autoFocus}
+              onIsCreatingChange={setCreating}
+              hideFooter
+            />
+          ) : (
+            <ProjectCloneForm
+              ref={projectCloneFormRef}
+              onSuccess={props.onSuccess}
+              onClose={props.onClose ?? NOOP}
+              isOpen={props.isOpen}
+              defaultProjectDir={defaultProjectDir}
+              onIsCreatingChange={setCreating}
+              hideFooter
+              autoFocus={props.autoFocus}
+            />
+          )}
+        </div>
+
+        {/* Footer renders outside the wrapper so it's a direct child of
+            DialogContent's grid, aligned edge-to-edge with the header. */}
+        {!props.hideFooter && (
+          <ProjectAddFormFooter
+            mode={mode}
+            isCreating={isCreating}
             showCancelButton={props.showCancelButton ?? false}
-            autoFocus={props.autoFocus}
-            onIsCreatingChange={setCreating}
-            hideFooter={props.hideFooter}
-          />
-        ) : (
-          <ProjectCloneForm
-            ref={projectCloneFormRef}
-            onSuccess={props.onSuccess}
-            onClose={props.onClose ?? NOOP}
-            isOpen={props.isOpen}
-            defaultCloneDir={defaultCloneDir}
-            onIsCreatingChange={setCreating}
-            hideFooter={props.hideFooter}
-            autoFocus={props.autoFocus}
+            createFormRef={projectCreateFormRef}
+            cloneFormRef={projectCloneFormRef}
+            onClose={props.onClose}
           />
         )}
       </>

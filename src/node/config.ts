@@ -168,7 +168,7 @@ export class Config {
           mdnsAdvertisementEnabled?: unknown;
           mdnsServiceName?: unknown;
           serverSshHost?: string;
-          defaultProjectCloneDir?: unknown;
+          defaultProjectDir?: unknown;
           viewedSplashScreens?: string[];
           featureFlagOverrides?: Record<string, "default" | "on" | "off">;
           layoutPresets?: unknown;
@@ -241,7 +241,7 @@ export class Config {
             mdnsAdvertisementEnabled: parseOptionalBoolean(parsed.mdnsAdvertisementEnabled),
             mdnsServiceName: parseOptionalNonEmptyString(parsed.mdnsServiceName),
             serverSshHost: parsed.serverSshHost,
-            defaultProjectCloneDir: parseOptionalNonEmptyString(parsed.defaultProjectCloneDir),
+            defaultProjectDir: parseOptionalNonEmptyString(parsed.defaultProjectDir),
             viewedSplashScreens: parsed.viewedSplashScreens,
             layoutPresets,
             taskSettings,
@@ -288,7 +288,7 @@ export class Config {
         mdnsAdvertisementEnabled?: boolean;
         mdnsServiceName?: string;
         serverSshHost?: string;
-        defaultProjectCloneDir?: string;
+        defaultProjectDir?: string;
         viewedSplashScreens?: string[];
         layoutPresets?: ProjectsConfig["layoutPresets"];
         featureFlagOverrides?: ProjectsConfig["featureFlagOverrides"];
@@ -363,9 +363,9 @@ export class Config {
       if (config.serverSshHost) {
         data.serverSshHost = config.serverSshHost;
       }
-      const defaultProjectCloneDir = parseOptionalNonEmptyString(config.defaultProjectCloneDir);
-      if (defaultProjectCloneDir) {
-        data.defaultProjectCloneDir = defaultProjectCloneDir;
+      const defaultProjectDir = parseOptionalNonEmptyString(config.defaultProjectDir);
+      if (defaultProjectDir) {
+        data.defaultProjectDir = defaultProjectDir;
       }
       if (config.featureFlagOverrides) {
         data.featureFlagOverrides = config.featureFlagOverrides;

@@ -1804,17 +1804,17 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.projectService.create(input.projectPath);
         }),
-      getDefaultCloneDir: t
-        .input(schemas.projects.getDefaultCloneDir.input)
-        .output(schemas.projects.getDefaultCloneDir.output)
+      getDefaultProjectDir: t
+        .input(schemas.projects.getDefaultProjectDir.input)
+        .output(schemas.projects.getDefaultProjectDir.output)
         .handler(({ context }) => {
-          return context.projectService.getDefaultCloneDir();
+          return context.projectService.getDefaultProjectDir();
         }),
-      setDefaultCloneDir: t
-        .input(schemas.projects.setDefaultCloneDir.input)
-        .output(schemas.projects.setDefaultCloneDir.output)
+      setDefaultProjectDir: t
+        .input(schemas.projects.setDefaultProjectDir.input)
+        .output(schemas.projects.setDefaultProjectDir.output)
         .handler(async ({ context, input }) => {
-          await context.projectService.setDefaultCloneDir(input.path);
+          await context.projectService.setDefaultProjectDir(input.path);
         }),
       clone: t
         .input(schemas.projects.clone.input)

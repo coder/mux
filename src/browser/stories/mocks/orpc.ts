@@ -881,8 +881,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           data: { projectConfig: { workspaces: [] }, normalizedPath: "/mock/project" },
         }),
       pickDirectory: () => Promise.resolve(null),
-      getDefaultCloneDir: () => Promise.resolve("~/.mux/projects"),
-      setDefaultCloneDir: () => Promise.resolve(),
+      getDefaultProjectDir: () => Promise.resolve("~/.mux/projects"),
+      setDefaultProjectDir: () => Promise.resolve(),
       clone: () =>
         Promise.resolve(
           (function* () {
