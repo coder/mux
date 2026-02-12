@@ -43,7 +43,7 @@ import { PopoverError } from "./PopoverError";
 import { SkillIndicator } from "./SkillIndicator";
 import { useAPI } from "@/browser/contexts/API";
 import { useAgent } from "@/browser/contexts/AgentContext";
-import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
+
 import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
 import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
 
@@ -75,7 +75,6 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
 }) => {
   const { api } = useAPI();
   const { disableWorkspaceAgents } = useAgent();
-  const linkSharingEnabled = useLinkSharingEnabled();
   const { archiveWorkspace } = useWorkspaceActions();
   const isMuxHelpChat = workspaceId === MUX_HELP_CHAT_WORKSPACE_ID;
   const openTerminalPopout = useOpenTerminal();
@@ -195,7 +194,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   // Keybind for sharing transcript — lives here (not WorkspaceListItem) so it
   // works even when the left sidebar is collapsed and list items are unmounted.
   useEffect(() => {
-    if (linkSharingEnabled !== true || isMuxHelpChat) return;
+    if (isMuxHelpChat) return;
 
     const handler = (e: KeyboardEvent) => {
       if (matchesKeybind(e, KEYBINDS.SHARE_TRANSCRIPT)) {
@@ -205,7 +204,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [linkSharingEnabled, isMuxHelpChat]);
+  }, [isMuxHelpChat]);
 
   // Fetch available skills + diagnostics for this workspace
   useEffect(() => {
@@ -498,7 +497,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                 </span>
               </span>
             </button>
-            {linkSharingEnabled === true && !isMuxHelpChat && (
+            {!isMuxHelpChat && (
               <button
                 type="button"
                 className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
@@ -554,7 +553,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
         open={debugLlmRequestOpen}
         onOpenChange={setDebugLlmRequestOpen}
       />
-      {linkSharingEnabled === true && !isMuxHelpChat && (
+      {!isMuxHelpChat && (
         <ShareTranscriptDialog
           workspaceId={workspaceId}
           workspaceName={workspaceName}
