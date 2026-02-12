@@ -42,6 +42,11 @@ import {
   normalizeTaskSettings,
 } from "@/common/types/tasks";
 import {
+  normalizeRuntimeEnablement,
+  RUNTIME_ENABLEMENT_IDS,
+  type RuntimeEnablementId,
+} from "@/common/types/runtime";
+import {
   discoverAgentSkills,
   discoverAgentSkillsDiagnostics,
   readAgentSkill,
@@ -508,6 +513,7 @@ export const router = (authToken?: string) => {
             hiddenModels: config.hiddenModels,
             preferredCompactionModel: config.preferredCompactionModel,
             stopCoderWorkspaceOnArchive: config.stopCoderWorkspaceOnArchive !== false,
+            runtimeEnablement: normalizeRuntimeEnablement(config.runtimeEnablement),
             agentAiDefaults: config.agentAiDefaults ?? {},
             // Legacy fields (downgrade compatibility)
             subagentAiDefaults: config.subagentAiDefaults ?? {},
@@ -618,6 +624,27 @@ export const router = (authToken?: string) => {
               ...config,
               // Default ON: store `false` only.
               stopCoderWorkspaceOnArchive: input.stopCoderWorkspaceOnArchive ? undefined : false,
+            };
+          });
+        }),
+      updateRuntimeEnablement: t
+        .input(schemas.config.updateRuntimeEnablement.input)
+        .output(schemas.config.updateRuntimeEnablement.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const normalized = normalizeRuntimeEnablement(input.runtimeEnablement);
+            const disabled: Partial<Record<RuntimeEnablementId, false>> = {};
+
+            for (const runtimeId of RUNTIME_ENABLEMENT_IDS) {
+              if (!normalized[runtimeId]) {
+                disabled[runtimeId] = false;
+              }
+            }
+
+            return {
+              ...config,
+              // Default ON: store `false` only so config.json stays minimal.
+              runtimeEnablement: Object.keys(disabled).length > 0 ? disabled : undefined,
             };
           });
         }),

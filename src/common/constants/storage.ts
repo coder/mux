@@ -90,6 +90,11 @@ export const GATEWAY_CONFIGURED_KEY = "gateway-available"; // synced from provid
 export const GATEWAY_ENABLED_KEY = "gateway-enabled"; // global on/off toggle
 
 /**
+ * Storage key for runtime enablement settings (shared via ~/.mux/config.json).
+ */
+export const RUNTIME_ENABLEMENT_KEY = "runtimeEnablement";
+
+/**
  * Get the localStorage key for cached MCP server test results (per project)
  * Format: "mcpTestResults:{projectPath}"
  * Stores: Record<serverName, CachedMCPTestResult>

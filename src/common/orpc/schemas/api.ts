@@ -1432,6 +1432,7 @@ export const config = {
       hiddenModels: z.array(z.string()).optional(),
       preferredCompactionModel: z.string().optional(),
       stopCoderWorkspaceOnArchive: z.boolean(),
+      runtimeEnablement: z.record(z.string(), z.boolean()),
       agentAiDefaults: AgentAiDefaultsSchema,
       // Legacy fields (downgrade compatibility)
       subagentAiDefaults: SubagentAiDefaultsSchema,
@@ -1483,6 +1484,14 @@ export const config = {
     input: z
       .object({
         stopCoderWorkspaceOnArchive: z.boolean(),
+      })
+      .strict(),
+    output: z.void(),
+  },
+  updateRuntimeEnablement: {
+    input: z
+      .object({
+        runtimeEnablement: z.record(z.string(), z.boolean()),
       })
       .strict(),
     output: z.void(),

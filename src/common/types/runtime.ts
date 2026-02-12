@@ -22,6 +22,53 @@ export const RUNTIME_MODE = {
   DEVCONTAINER: "devcontainer" as const,
 } as const;
 
+/**
+ * Runtime IDs that can be enabled/disabled in Settings → Runtimes.
+ * Note: includes "coder" which is a UI-level choice (not a RuntimeMode).
+ */
+export const RUNTIME_ENABLEMENT_IDS = [
+  "local",
+  "worktree",
+  "ssh",
+  "coder",
+  "docker",
+  "devcontainer",
+] as const;
+
+export type RuntimeEnablementId = (typeof RUNTIME_ENABLEMENT_IDS)[number];
+
+export type RuntimeEnablement = Record<RuntimeEnablementId, boolean>;
+
+export const DEFAULT_RUNTIME_ENABLEMENT: RuntimeEnablement = {
+  local: true,
+  worktree: true,
+  ssh: true,
+  coder: true,
+  docker: true,
+  devcontainer: true,
+};
+
+/**
+ * Normalize runtime enablement, defaulting missing/invalid keys to true.
+ */
+export function normalizeRuntimeEnablement(value: unknown): RuntimeEnablement {
+  const normalized: RuntimeEnablement = { ...DEFAULT_RUNTIME_ENABLEMENT };
+
+  if (!value || typeof value !== "object") {
+    return normalized;
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const runtimeId of RUNTIME_ENABLEMENT_IDS) {
+    const entry = record[runtimeId];
+    if (typeof entry === "boolean") {
+      normalized[runtimeId] = entry;
+    }
+  }
+
+  return normalized;
+}
+
 /** Runtime string prefix for SSH mode (e.g., "ssh hostname") */
 export const SSH_RUNTIME_PREFIX = "ssh ";
 

@@ -19,6 +19,7 @@ import {
 } from "@/common/types/tasks";
 import { isLayoutPresetsConfigEmpty, normalizeLayoutPresetsConfig } from "@/common/types/uiLayouts";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
+import { RUNTIME_ENABLEMENT_IDS, type RuntimeEnablementId } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { getMuxHome } from "@/common/constants/paths";
@@ -184,6 +185,7 @@ export class Config {
           muxGovernorUrl?: unknown;
           muxGovernorToken?: unknown;
           stopCoderWorkspaceOnArchive?: unknown;
+          runtimeEnablement?: unknown;
         };
 
         // Config is stored as array of [path, config] pairs
@@ -220,6 +222,21 @@ export class Config {
           // Default ON: store `false` only so config.json stays minimal.
           const stopCoderWorkspaceOnArchive =
             parseOptionalBoolean(parsed.stopCoderWorkspaceOnArchive) === false ? false : undefined;
+
+          const runtimeEnablementOverrides: Partial<Record<RuntimeEnablementId, false>> = {};
+          if (parsed.runtimeEnablement && typeof parsed.runtimeEnablement === "object") {
+            const record = parsed.runtimeEnablement as Record<string, unknown>;
+            for (const runtimeId of RUNTIME_ENABLEMENT_IDS) {
+              // Default ON: store `false` only so config.json stays minimal.
+              if (record[runtimeId] === false) {
+                runtimeEnablementOverrides[runtimeId] = false;
+              }
+            }
+          }
+          const runtimeEnablement =
+            Object.keys(runtimeEnablementOverrides).length > 0
+              ? runtimeEnablementOverrides
+              : undefined;
 
           const agentAiDefaults =
             parsed.agentAiDefaults !== undefined
@@ -258,6 +275,7 @@ export class Config {
             muxGovernorUrl: parseOptionalNonEmptyString(parsed.muxGovernorUrl),
             muxGovernorToken: parseOptionalNonEmptyString(parsed.muxGovernorToken),
             stopCoderWorkspaceOnArchive,
+            runtimeEnablement,
           };
         }
       }
@@ -304,6 +322,7 @@ export class Config {
         muxGovernorUrl?: string;
         muxGovernorToken?: string;
         stopCoderWorkspaceOnArchive?: boolean;
+        runtimeEnablement?: ProjectsConfig["runtimeEnablement"];
       } = {
         projects: Array.from(config.projects.entries()),
         taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
@@ -414,6 +433,17 @@ export class Config {
       // Default ON: persist `false` only.
       if (config.stopCoderWorkspaceOnArchive === false) {
         data.stopCoderWorkspaceOnArchive = false;
+      }
+
+      const runtimeEnablement: Partial<Record<RuntimeEnablementId, false>> = {};
+      for (const runtimeId of RUNTIME_ENABLEMENT_IDS) {
+        // Default ON: persist `false` only so config.json stays minimal.
+        if (config.runtimeEnablement?.[runtimeId] === false) {
+          runtimeEnablement[runtimeId] = false;
+        }
+      }
+      if (Object.keys(runtimeEnablement).length > 0) {
+        data.runtimeEnablement = runtimeEnablement;
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
