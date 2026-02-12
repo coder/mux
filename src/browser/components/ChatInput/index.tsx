@@ -180,7 +180,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const editingMessage = variant === "workspace" ? props.editingMessage : undefined;
   const isStreamStarting = variant === "workspace" ? (props.isStreamStarting ?? false) : false;
   const isCompacting = variant === "workspace" ? (props.isCompacting ?? false) : false;
-  const canInterrupt = variant === "workspace" ? (props.canInterrupt ?? false) : false;
   const hasQueuedCompaction =
     variant === "workspace" ? (props.hasQueuedCompaction ?? false) : false;
   // runtimeType for telemetry - defaults to "worktree" if not provided
@@ -2232,9 +2231,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   // Build placeholder text based on current state
   const placeholder = (() => {
-    // Creation variant has simple placeholder
+    // Creation view keeps the onboarding prompt; workspace stays concise for the inline hints.
     if (variant === "creation") {
-      return `Type your first message to create a workspace... (${formatKeybind(KEYBINDS.SEND_MESSAGE)} to send, ${formatKeybind(KEYBINDS.CANCEL)} to cancel)`;
+      return "Type your first message to create a workspace...";
     }
 
     // Workspace variant placeholders
@@ -2257,19 +2256,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return `Compacting... (${formatKeybind(interruptKeybind)} cancel | ${formatKeybind(KEYBINDS.SEND_MESSAGE)} to queue)`;
     }
 
-    // Build hints for normal input
-    const hints: string[] = [];
-    if (canInterrupt) {
-      const interruptKeybind = vimEnabled
-        ? KEYBINDS.INTERRUPT_STREAM_VIM
-        : KEYBINDS.INTERRUPT_STREAM_NORMAL;
-      hints.push(`${formatKeybind(interruptKeybind)} to interrupt`);
-    }
-    hints.push(`${formatKeybind(KEYBINDS.SEND_MESSAGE)} to ${canInterrupt ? "queue" : "send"}`);
-    hints.push(`Click model to choose, ${formatKeybind(KEYBINDS.CYCLE_MODEL)} to cycle`);
-    hints.push(`/vim to toggle Vim mode (${vimEnabled ? "on" : "off"})`);
-
-    return `Type a message... (${hints.join(", ")})`;
+    // Keep placeholder minimal; shortcut hints are rendered below the input.
+    return "Type a message...";
   })();
 
   const activeToast = toast ?? (variant === "creation" ? creationState.toast : null);
@@ -2376,6 +2364,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               />
             ) : (
               <>
+                {/* Give the input more vertical room so the shortcut hints sit above the footer. */}
                 <VimTextArea
                   ref={inputRef}
                   data-escape-interrupts-stream="true"
@@ -2413,15 +2402,19 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     (showCommandSuggestions && commandSuggestions.length > 0) ||
                     (showAtMentionSuggestions && atMentionSuggestions.length > 0)
                   }
-                  className={variant === "creation" ? "min-h-24" : undefined}
+                  className="min-h-28"
                 />
-                {/* Keep cycle shortcuts visible in both creation + workspace without bloating the footer. */}
+                {/* Keep cycle shortcuts visible in both creation + workspace without bloating the footer or crowding it. */}
                 {input.trim() === "" && !editingMessage && (
-                  <div className="text-muted pointer-events-none absolute right-12 bottom-2 left-2 text-[11px]">
-                    <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_MODEL)}</span>
-                    <span> - change model | </span>
-                    <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_AGENT)}</span>
-                    <span> - change agent mode</span>
+                  <div className="text-muted pointer-events-none absolute right-12 bottom-3 left-2 flex items-center gap-4 text-[11px]">
+                    <span>
+                      <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_MODEL)}</span>
+                      <span> - change model</span>
+                    </span>
+                    <span>
+                      <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_AGENT)}</span>
+                      <span> - change agent mode</span>
+                    </span>
                   </div>
                 )}
 
