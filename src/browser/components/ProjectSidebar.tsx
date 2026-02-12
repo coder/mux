@@ -105,15 +105,25 @@ const MuxChatHelpButton: React.FC<{
 };
 
 function ProjectRowSkillsSlot(props: { projectPath: string }) {
-  const { selectedWorkspace } = useWorkspaceActions();
+  const { selectedWorkspace, pendingNewWorkspaceProject } = useWorkspaceActions();
 
   // DraggableProjectItem ignores children in its memo comparator, so subscribe here and
   // only render the skill indicator for the active workspace to avoid O(n) diagnostics calls.
-  if (!selectedWorkspace || selectedWorkspace.projectPath !== props.projectPath) {
-    return null;
+  // When a draft is selected, selectedWorkspace is null — fall back to pendingNewWorkspaceProject.
+  if (selectedWorkspace?.projectPath === props.projectPath) {
+    return (
+      <ActiveProjectSkillIndicator
+        workspaceId={selectedWorkspace.workspaceId}
+        projectPath={props.projectPath}
+      />
+    );
   }
 
-  return <ActiveProjectSkillIndicator workspaceId={selectedWorkspace.workspaceId} />;
+  if (pendingNewWorkspaceProject === props.projectPath) {
+    return <ActiveProjectSkillIndicator projectPath={props.projectPath} />;
+  }
+
+  return null;
 }
 
 // Keep the project header visible while scrolling through long workspace lists.
