@@ -22,6 +22,7 @@ import {
   shouldShowInterruptedBarrier,
   mergeConsecutiveStreamErrors,
   computeBashOutputGroupInfo,
+  shouldBypassDeferredMessages,
 } from "@/browser/utils/messages/messageUtils";
 import { computeTaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
 import { BashOutputCollapsedIndicator } from "./tools/BashOutputCollapsedIndicator";
@@ -188,12 +189,11 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   // useDeferredValue can defer indefinitely if React keeps getting new work (rapid deltas).
   // During active streaming (reasoning, text), we MUST show immediate updates or the UI
   // appears frozen while only the token counter updates (reads aggregator directly).
-  // Only use deferred messages when the stream is idle and no content is changing.
-  const hasActiveStream = transformedMessages.some((m) => "isStreaming" in m && m.isStreaming);
-  const deferredMessages =
-    hasActiveStream || transformedMessages.length !== deferredTransformedMessages.length
-      ? transformedMessages
-      : deferredTransformedMessages;
+  const shouldBypassDeferral = shouldBypassDeferredMessages(
+    transformedMessages,
+    deferredTransformedMessages
+  );
+  const deferredMessages = shouldBypassDeferral ? transformedMessages : deferredTransformedMessages;
 
   const latestMessageId = getLastNonDecorativeMessage(deferredMessages)?.id ?? null;
   const messageListContextValue = useMemo(

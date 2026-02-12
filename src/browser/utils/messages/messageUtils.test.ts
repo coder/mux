@@ -1,7 +1,11 @@
 import { describe, it, expect } from "@jest/globals";
 
-import { shouldShowInterruptedBarrier } from "./messageUtils";
-import { mergeConsecutiveStreamErrors, computeBashOutputGroupInfo } from "./messageUtils";
+import {
+  shouldShowInterruptedBarrier,
+  mergeConsecutiveStreamErrors,
+  computeBashOutputGroupInfo,
+  shouldBypassDeferredMessages,
+} from "./messageUtils";
 import type { DisplayedMessage } from "@/common/types/message";
 
 describe("shouldShowInterruptedBarrier", () => {
@@ -52,6 +56,45 @@ describe("shouldShowInterruptedBarrier", () => {
     expect(shouldShowInterruptedBarrier(msg)).toBe(true);
   });
 });
+describe("shouldBypassDeferredMessages", () => {
+  const executingBash: DisplayedMessage = {
+    type: "tool",
+    id: "t-executing",
+    historyId: "h-tool",
+    toolCallId: "call-1",
+    toolName: "bash",
+    args: { script: "echo hi", timeout_secs: 10, display_name: "test" },
+    status: "executing",
+    isPartial: false,
+    historySequence: 1,
+  };
+
+  const completedBash: DisplayedMessage = {
+    ...executingBash,
+    id: "t-completed",
+    status: "completed",
+    result: { success: true, output: "hi", exitCode: 0, wall_duration_ms: 5 },
+  };
+
+  it("returns true when immediate snapshot has active rows", () => {
+    expect(shouldBypassDeferredMessages([executingBash], [executingBash])).toBe(true);
+  });
+
+  it("returns true when deferred snapshot is stale and still executing", () => {
+    // Regression scenario: immediate list is completed, but deferred list still has
+    // stale executing tool state from the previous render.
+    expect(shouldBypassDeferredMessages([completedBash], [executingBash])).toBe(true);
+  });
+
+  it("returns true when deferred length is out of sync", () => {
+    expect(shouldBypassDeferredMessages([completedBash], [])).toBe(true);
+  });
+
+  it("returns false when both snapshots are settled and in sync", () => {
+    expect(shouldBypassDeferredMessages([completedBash], [completedBash])).toBe(false);
+  });
+});
+
 describe("mergeConsecutiveStreamErrors", () => {
   it("returns empty array for empty input", () => {
     const result = mergeConsecutiveStreamErrors([]);

@@ -113,6 +113,32 @@ export function isStreamingPart(part: unknown): part is { type: "text"; state: "
 }
 
 /**
+ * Returns whether ChatPane should bypass useDeferredValue and render the immediate
+ * message list. We bypass deferral while assistant content is streaming OR while
+ * any tool call is still executing (e.g. live bash output).
+ *
+ * We also bypass when the deferred snapshot appears stale (it still has active
+ * streaming/executing rows after the immediate snapshot is idle), since showing
+ * stale deferred tool state can cause output/layout flash at stream completion.
+ */
+export function shouldBypassDeferredMessages(
+  messages: DisplayedMessage[],
+  deferredMessages: DisplayedMessage[]
+): boolean {
+  const hasActiveRows = (rows: DisplayedMessage[]) =>
+    rows.some(
+      (m) =>
+        ("isStreaming" in m && m.isStreaming) || (m.type === "tool" && m.status === "executing")
+    );
+
+  if (messages.length !== deferredMessages.length) {
+    return true;
+  }
+
+  return hasActiveRows(messages) || hasActiveRows(deferredMessages);
+}
+
+/**
  * Merges consecutive stream-error messages with identical content.
  * Returns a new array where consecutive identical errors are represented as a single message
  * with an errorCount field indicating how many times it occurred.
