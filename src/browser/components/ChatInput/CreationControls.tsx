@@ -420,8 +420,10 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
     }
 
     // User request: hide Settings-disabled runtimes (selection auto-switches elsewhere).
+    // Keep the currently active runtime visible even if disabled to avoid trapping the user
+    // when the fallback can't find a replacement (e.g., non-git repo with Local disabled).
     const isEnablementDisabled = runtimeEnablement?.[option.value] === false;
-    if (isEnablementDisabled) {
+    if (isEnablementDisabled && option.value !== props.value) {
       return false;
     }
 
