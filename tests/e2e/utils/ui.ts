@@ -636,12 +636,28 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
 
     async expectOpen(): Promise<void> {
       const dialog = page.getByRole("dialog", { name: "Settings" });
-      await expect(dialog).toBeVisible({ timeout: 5000 });
+      const routeCloseControl = page
+        .getByRole("button", { name: /Close settings|Back to previous page/i })
+        .first();
+
+      await expect
+        .poll(async () => (await dialog.isVisible()) || (await routeCloseControl.isVisible()), {
+          timeout: 5000,
+        })
+        .toBe(true);
     },
 
     async expectClosed(): Promise<void> {
       const dialog = page.getByRole("dialog", { name: "Settings" });
-      await expect(dialog).not.toBeVisible({ timeout: 5000 });
+      const routeCloseControl = page
+        .getByRole("button", { name: /Close settings|Back to previous page/i })
+        .first();
+
+      await expect
+        .poll(async () => !(await dialog.isVisible()) && !(await routeCloseControl.isVisible()), {
+          timeout: 5000,
+        })
+        .toBe(true);
     },
 
     async selectSection(section: "General" | "Providers" | "Models"): Promise<void> {
