@@ -221,30 +221,33 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
 
     return (
       <>
-        <div className="mb-1 flex gap-2">
-          <input
-            type="text"
-            value={path}
-            onChange={(e) => {
-              setPath(e.target.value);
-              setError("");
-            }}
-            onKeyDown={handleKeyDown}
-            placeholder={placeholder}
-            autoFocus={autoFocus}
-            disabled={isCreating}
-            className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
-          />
-          {canBrowse && (
-            <Button
-              variant="outline"
-              onClick={() => void browse()}
+        <div className="space-y-1">
+          <label className="text-muted text-xs">Path</label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={path}
+              onChange={(e) => {
+                setPath(e.target.value);
+                setError("");
+              }}
+              onKeyDown={handleKeyDown}
+              placeholder={placeholder}
+              autoFocus={autoFocus}
               disabled={isCreating}
-              className="shrink-0"
-            >
-              Browse…
-            </Button>
-          )}
+              className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
+            />
+            {canBrowse && (
+              <Button
+                variant="outline"
+                onClick={() => void browse()}
+                disabled={isCreating}
+                className="shrink-0"
+              >
+                Browse…
+              </Button>
+            )}
+          </div>
         </div>
 
         {error && <p className="text-error text-xs">{error}</p>}
@@ -505,7 +508,7 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
     return (
       <>
         {showCloneProgress ? (
-          <div className="mb-3 space-y-3">
+          <div className="space-y-3">
             <div className="space-y-1">
               <label className="text-muted text-xs">
                 {hasCloneFailure ? "Clone failed" : "Cloning repository…"}
@@ -525,7 +528,7 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
             )}
           </div>
         ) : (
-          <div className="mb-3 space-y-3">
+          <div className="space-y-3">
             <div className="space-y-1">
               <label className="text-muted text-xs">Repo URL</label>
               <input
@@ -730,13 +733,13 @@ export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddF
     );
 
     return (
-      <>
+      <div className="space-y-3">
         <ToggleGroup
           type="single"
           value={mode}
           onValueChange={handleModeChange}
           disabled={isCreating}
-          className="mb-3 h-9 bg-transparent"
+          className="h-9 bg-transparent"
         >
           <ToggleGroupItem value="pick-folder" size="sm" className="h-7 px-3 text-[13px]">
             <FolderOpen className="h-3.5 w-3.5" />
@@ -770,7 +773,7 @@ export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddF
             autoFocus={props.autoFocus}
           />
         )}
-      </>
+      </div>
     );
   }
 );
