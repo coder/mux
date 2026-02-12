@@ -422,18 +422,10 @@ describeIntegration("Workspace Sections", () => {
 
         await user.click(sendButton);
 
-        // Ensure the slash command succeeded.
-        await waitFor(
-          () => {
-            expect(view.container.textContent ?? "").toContain(
-              `Forked to workspace "${forkedName}"`
-            );
-          },
-          { timeout: 30_000 }
-        );
-
-        // Find the forked workspace in the sidebar by its name/title.
-        // Avoid polling the backend (workspace.list) in a UI integration test.
+        // Wait for the forked workspace to appear in the sidebar.
+        // The fork may navigate to the new workspace immediately (navigation
+        // is synchronous / normal priority), so we verify success through the
+        // sidebar rather than checking for a transient chat message.
         await waitFor(
           () => {
             const workspaceRow = findWorkspaceRowByTitle(view.container, forkedName);

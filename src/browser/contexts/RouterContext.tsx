@@ -185,9 +185,14 @@ function RouterContextInner(props: { children: ReactNode }) {
   return <RouterContext.Provider value={value}>{props.children}</RouterContext.Provider>;
 }
 
+// Disable startTransition wrapping for navigation state updates so they
+// batch with other normal-priority React state updates in the same tick.
+// Without this, React processes navigation at transition (lower) priority,
+// causing a flash of stale UI between normal-priority updates (e.g.
+// setIsSending(false)) and the deferred route change.
 export function RouterProvider(props: { children: ReactNode }) {
   return (
-    <MemoryRouter initialEntries={[getInitialRoute()]}>
+    <MemoryRouter initialEntries={[getInitialRoute()]} unstable_useTransitions={false}>
       <RouterContextInner>{props.children}</RouterContextInner>
     </MemoryRouter>
   );
