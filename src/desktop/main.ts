@@ -22,7 +22,7 @@ import { formatOrpcError } from "@/node/orpc/formatOrpcError";
 import { ServerLockfile } from "@/node/services/serverLockfile";
 import "disposablestack/auto";
 
-import type { MenuItemConstructorOptions } from "electron";
+import type { MenuItemConstructorOptions, MessageBoxOptions } from "electron";
 import {
   app,
   BrowserWindow,
@@ -49,6 +49,7 @@ import type { ServiceContainer } from "@/node/services/serviceContainer";
 import { VERSION } from "@/version";
 import { getMuxHome, migrateLegacyMuxHome } from "@/common/constants/paths";
 import type { MuxDeepLinkPayload } from "@/common/types/deepLink";
+import type { UpdateStatus } from "@/common/orpc/types";
 import { parseMuxDeepLink } from "@/common/utils/deepLink";
 
 import assert from "@/common/utils/assert";
@@ -56,6 +57,7 @@ import { loadTokenizerModules } from "@/node/utils/main/tokenizer";
 import { isBashAvailable } from "@/node/utils/main/bashPath";
 import windowStateKeeper from "electron-window-state";
 import { getTitleBarOptions } from "@/desktop/titleBarOptions";
+import { isUpdateInstallInProgress } from "@/desktop/updateInstallState";
 
 // React DevTools for development profiling
 // Using dynamic import() to avoid loading electron-devtools-installer at module init time
@@ -167,6 +169,8 @@ let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
+let latestUpdateStatus: UpdateStatus = { type: "idle" };
+let isUpdateClosePromptOpen = false;
 
 // mux:// deep links can arrive before the main window exists / finishes loading.
 const bufferedMuxDeepLinks: MuxDeepLinkPayload[] = [];
@@ -547,6 +551,10 @@ async function loadServices(): Promise<void> {
 
   services = new ServiceContainerClass(config);
   await services.initialize();
+  // Keep the latest update status in main so close-to-tray can prompt for installs.
+  services.updateService.onStatus((status) => {
+    latestUpdateStatus = status;
+  });
 
   // Generate auth token (use env var or random per-session)
   const authToken = process.env.MUX_SERVER_AUTH_TOKEN ?? randomBytes(32).toString("hex");
@@ -767,7 +775,47 @@ function createWindow() {
     //
     // Only hide when the tray exists to avoid trapping the user with no UI path
     // to restore the app.
-    if (isQuitting || !tray) {
+    if (isQuitting || isUpdateInstallInProgress() || !tray) {
+      return;
+    }
+
+    if (latestUpdateStatus.type === "downloaded") {
+      // If an update is ready, prompt before hiding to tray so users can install immediately.
+      event.preventDefault();
+
+      if (isUpdateClosePromptOpen) {
+        return;
+      }
+
+      isUpdateClosePromptOpen = true;
+      const messageBoxOptions: MessageBoxOptions = {
+        type: "question",
+        buttons: ["Install & restart", "Later", "Cancel"],
+        defaultId: 0,
+        cancelId: 2,
+        message: "An update is ready to install.",
+        detail: "Install now to restart and apply the update, or keep Mux running in the tray.",
+      };
+
+      const promptWindow = mainWindow;
+      const prompt = promptWindow
+        ? dialog.showMessageBox(promptWindow, messageBoxOptions)
+        : dialog.showMessageBox(messageBoxOptions);
+
+      void prompt
+        .then(({ response }) => {
+          if (response === 0) {
+            services?.updateService.install();
+            return;
+          }
+
+          if (response === 1) {
+            mainWindow?.hide();
+          }
+        })
+        .finally(() => {
+          isUpdateClosePromptOpen = false;
+        });
       return;
     }
 
@@ -912,6 +960,17 @@ if (gotTheLock) {
     // Ensure window close handlers don't block an explicit quit.
     // IMPORTANT: must be set before any early returns.
     isQuitting = true;
+    if (isUpdateInstallInProgress()) {
+      // Don't block updater-driven quitAndInstall() — let Electron quit immediately
+      // so the platform installer can take over. Best-effort cleanup only.
+      if (services && !isDisposing) {
+        isDisposing = true;
+        void services.dispose().catch((err) => {
+          console.error("Error during ServiceContainer dispose (update install):", err);
+        });
+      }
+      return;
+    }
 
     // Skip if already disposing or no services to clean up
     if (isDisposing || !services) {
