@@ -47,8 +47,7 @@ import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
 import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpServerManager";
 import { WorkspaceMcpOverridesService } from "./workspaceMcpOverridesService";
 import type { TaskService } from "@/node/services/taskService";
-import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
-import { buildRequestHeaders } from "@/common/utils/ai/requestHeaders";
+import { buildProviderOptions, buildRequestHeaders } from "@/common/utils/ai/providerOptions";
 import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
 
 import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";

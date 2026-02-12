@@ -228,8 +228,9 @@ export function normalizeAnthropicBaseURL(baseURL: string): string {
   return `${trimmed}/v1`;
 }
 
-/** Header value for Anthropic 1M context beta */
-export const ANTHROPIC_1M_CONTEXT_HEADER = "context-1m-2025-08-07";
+// Canonical definition lives in providerOptions; import for local use + re-export for backward compat.
+import { ANTHROPIC_1M_CONTEXT_HEADER } from "@/common/utils/ai/providerOptions";
+export { ANTHROPIC_1M_CONTEXT_HEADER };
 
 /**
  * Build headers for Anthropic provider, optionally including the 1M context beta header.
