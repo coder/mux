@@ -364,7 +364,15 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   const gitStatus = useGitStatus(workspaceId);
 
   // Get title edit context — manages inline title editing state across the sidebar
-  const { editingWorkspaceId, requestEdit, confirmEdit, cancelEdit } = useTitleEdit();
+  const {
+    editingWorkspaceId,
+    requestEdit,
+    confirmEdit,
+    cancelEdit,
+    generatingTitleWorkspaceId,
+    wrapGenerateTitle,
+  } = useTitleEdit();
+  const isGeneratingTitle = generatingTitleWorkspaceId === workspaceId;
   const { api } = useAPI();
 
   // Local state for title editing
@@ -708,7 +716,10 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                     onClick={(e) => {
                       e.stopPropagation();
                       setIsTitleMenuOpen(false);
-                      void api?.workspace.regenerateTitle({ workspaceId });
+                      wrapGenerateTitle(
+                        workspaceId,
+                        () => api?.workspace.regenerateTitle({ workspaceId }) ?? Promise.resolve()
+                      );
                     }}
                   >
                     <span className="flex items-center gap-2">
@@ -802,7 +813,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                     className={cn(
                       "text-foreground block truncate text-left text-[13px] transition-colors duration-200",
                       !isDisabled && "cursor-pointer",
-                      metadata.autoTitle && "italic"
+                      (metadata.autoTitle ?? isGeneratingTitle) && "italic"
                     )}
                     onDoubleClick={(e) => {
                       if (isDisabled) return;
@@ -814,7 +825,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                     <Shimmer
                       className={cn(
                         "w-full truncate",
-                        !(isWorking || isInitializing) && "no-shimmer"
+                        !(isWorking || isInitializing || isGeneratingTitle) && "no-shimmer"
                       )}
                       colorClass="var(--color-foreground)"
                     >

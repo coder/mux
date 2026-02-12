@@ -333,7 +333,7 @@ function SidebarTitleEditKeybinds(props: {
   selectedWorkspace: WorkspaceSelection | undefined;
   sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>;
 }) {
-  const { requestEdit } = useTitleEdit();
+  const { requestEdit, wrapGenerateTitle } = useTitleEdit();
   const { api } = useAPI();
 
   useEffect(() => {
@@ -352,12 +352,21 @@ function SidebarTitleEditKeybinds(props: {
         requestEdit(wsId, displayTitle);
       } else if (matchesKeybind(e, KEYBINDS.GENERATE_WORKSPACE_TITLE)) {
         e.preventDefault();
-        void api?.workspace.regenerateTitle({ workspaceId: wsId });
+        wrapGenerateTitle(
+          wsId,
+          () => api?.workspace.regenerateTitle({ workspaceId: wsId }) ?? Promise.resolve()
+        );
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [props.selectedWorkspace, props.sortedWorkspacesByProject, requestEdit, api]);
+  }, [
+    props.selectedWorkspace,
+    props.sortedWorkspacesByProject,
+    requestEdit,
+    wrapGenerateTitle,
+    api,
+  ]);
 
   return null;
 }
