@@ -1945,6 +1945,33 @@ pre code {
   -webkit-box-decoration-break: clone;
 }
 
+/* The streaming animated SVG should shimmer in sync with "Thinking..." text. */
+.shimmer-surface {
+  position: relative;
+  display: inline-flex;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.shimmer-surface::after {
+  --shimmer-overlay: color-mix(in srgb, var(--shimmer-color, var(--color-muted-foreground)) 35%, black);
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    transparent 35%,
+    var(--shimmer-overlay) 50%,
+    transparent 65%,
+    transparent 100%
+  );
+  background-size: 300% 100%;
+  animation: shimmer-text-sweep var(--shimmer-duration, 1.4s) steps(42, end) infinite;
+  mix-blend-mode: multiply;
+}
+
 @keyframes shimmer-text-sweep {
   from {
     background-position: 100% 0;
