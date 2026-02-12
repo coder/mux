@@ -702,8 +702,9 @@ export const ToolSelectorInteraction: AppStory = {
     // Click "None" to deselect all tools.
     // Use findByRole (retry-capable) instead of getByRole to handle transient
     // DOM gaps — in CI the Storybook iframe can briefly unmount/remount the
-    // story component between awaits.
-    const noneButton = await body.findByRole("button", { name: /^None$/i });
+    // story component between awaits. The longer timeout helps ride out
+    // cold-start remounts so the test isn't flaky.
+    const noneButton = await body.findByRole("button", { name: /^None$/i }, { timeout: 10000 });
     await userEvent.click(noneButton);
 
     // Re-query for the assertion — the previous noneButton reference could
@@ -725,8 +726,9 @@ export const ToolSelectorInteraction: AppStory = {
 
     // Click "All" to select all tools.
     // Use findByRole (retry-capable) and re-query inside waitFor to avoid
-    // stale refs if the DOM transiently unmounts between awaits.
-    const allButton = await body.findByRole("button", { name: /^All$/i });
+    // stale refs if the DOM transiently unmounts between awaits. Keep the
+    // timeout longer to absorb Storybook remounts in slower CI runs.
+    const allButton = await body.findByRole("button", { name: /^All$/i }, { timeout: 10000 });
     await waitFor(() => {
       const btn = body.getByRole("button", { name: /^All$/i });
       return expect(btn).toBeEnabled();
