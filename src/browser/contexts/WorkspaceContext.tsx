@@ -30,8 +30,10 @@ import {
   migrateWorkspaceStorage,
   AGENT_AI_DEFAULTS_KEY,
   DEFAULT_MODEL_KEY,
+  DEFAULT_RUNTIME_KEY,
   HIDDEN_MODELS_KEY,
   PREFERRED_COMPACTION_MODEL_KEY,
+  RUNTIME_ENABLEMENT_KEY,
   SELECTED_WORKSPACE_KEY,
   WORKSPACE_DRAFTS_BY_PROJECT_KEY,
 } from "@/common/constants/storage";
@@ -516,6 +518,16 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         }
         if (cfg.preferredCompactionModel !== undefined) {
           updatePersistedState(PREFERRED_COMPACTION_MODEL_KEY, cfg.preferredCompactionModel);
+        }
+
+        // Seed runtime enablement from backend so switching ports doesn't reset the UI.
+        if (cfg.runtimeEnablement !== undefined) {
+          updatePersistedState(RUNTIME_ENABLEMENT_KEY, cfg.runtimeEnablement);
+        }
+
+        // Seed global default runtime so workspace defaults survive port changes.
+        if (cfg.defaultRuntime !== undefined) {
+          updatePersistedState(DEFAULT_RUNTIME_KEY, cfg.defaultRuntime);
         }
 
         // One-time best-effort migration: if the backend doesn't have model prefs yet,

@@ -102,6 +102,8 @@ export interface MockORPCClientOptions {
   subagentAiDefaults?: SubagentAiDefaults;
   /** Coder lifecycle preferences for config.getConfig (e.g., Settings → Coder section) */
   stopCoderWorkspaceOnArchive?: boolean;
+  /** Initial runtime enablement for config.getConfig */
+  runtimeEnablement?: Record<string, boolean>;
   /** Per-workspace chat callback. Return messages to emit, or use the callback for streaming. */
   onChat?: (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => (() => void) | void;
   /** Mock for executeBash per workspace */
@@ -300,6 +302,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     subagentAiDefaults: initialSubagentAiDefaults,
     agentAiDefaults: initialAgentAiDefaults,
     stopCoderWorkspaceOnArchive: initialStopCoderWorkspaceOnArchive = true,
+    runtimeEnablement: initialRuntimeEnablement,
     agentDefinitions: initialAgentDefinitions,
     listBranches: customListBranches,
     gitInit: customGitInit,
@@ -422,6 +425,14 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   let muxGatewayEnabled: boolean | undefined = undefined;
   let muxGatewayModels: string[] | undefined = undefined;
   let stopCoderWorkspaceOnArchive = initialStopCoderWorkspaceOnArchive;
+  let runtimeEnablement: Record<string, boolean> = initialRuntimeEnablement ?? {
+    local: true,
+    worktree: true,
+    ssh: true,
+    coder: true,
+    docker: true,
+    devcontainer: true,
+  };
 
   let globalSecretsState: Secret[] = [...globalSecrets];
   const globalMcpServersState: MockMcpServers = { ...globalMcpServers };
@@ -578,6 +589,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           muxGatewayEnabled,
           muxGatewayModels,
           stopCoderWorkspaceOnArchive,
+          runtimeEnablement,
           agentAiDefaults,
           subagentAiDefaults,
           muxGovernorUrl,
@@ -623,6 +635,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       },
       updateCoderPrefs: (input: { stopCoderWorkspaceOnArchive: boolean }) => {
         stopCoderWorkspaceOnArchive = input.stopCoderWorkspaceOnArchive;
+        return Promise.resolve(undefined);
+      },
+      updateRuntimeEnablement: (input: { runtimeEnablement: Record<string, boolean> }) => {
+        runtimeEnablement = { ...runtimeEnablement, ...input.runtimeEnablement };
         return Promise.resolve(undefined);
       },
       unenrollMuxGovernor: () => Promise.resolve(undefined),
