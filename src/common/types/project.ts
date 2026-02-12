@@ -126,6 +126,9 @@ export interface ProjectsConfig {
    */
   stopCoderWorkspaceOnArchive?: boolean;
 
+  /** Global default runtime for new workspaces. */
+  defaultRuntime?: RuntimeEnablementId;
+
   /**
    * Override the default shell for local integrated terminals.
    *

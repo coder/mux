@@ -95,6 +95,11 @@ export const GATEWAY_ENABLED_KEY = "gateway-enabled"; // global on/off toggle
 export const RUNTIME_ENABLEMENT_KEY = "runtimeEnablement";
 
 /**
+ * Storage key for global default runtime selection (shared via ~/.mux/config.json).
+ */
+export const DEFAULT_RUNTIME_KEY = "defaultRuntime";
+
+/**
  * Get the localStorage key for cached MCP server test results (per project)
  * Format: "mcpTestResults:{projectPath}"
  * Stores: Record<serverName, CachedMCPTestResult>
