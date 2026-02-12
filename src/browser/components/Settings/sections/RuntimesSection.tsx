@@ -121,7 +121,7 @@ export function RuntimesSection() {
     if (cached) {
       setProjectOverrideEnabled(true);
       setProjectEnablement(cached.enablement);
-      setProjectDefaultRuntime(cached.defaultRuntime);
+      setProjectDefaultRuntime(cached.defaultRuntime ?? defaultRuntime ?? null);
       return;
     }
 
