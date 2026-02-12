@@ -5,6 +5,7 @@ import {
   type CoderWorkspaceConfig,
   type RuntimeMode,
   type ParsedRuntime,
+  type RuntimeEnablement,
   CODER_RUNTIME_PLACEHOLDER,
 } from "@/common/types/runtime";
 import type { RuntimeAvailabilityMap, RuntimeAvailabilityState } from "./useCreationWorkspace";
@@ -152,6 +153,8 @@ interface CreationControlsProps {
   nameState: WorkspaceNameState;
   /** Runtime availability state for each mode */
   runtimeAvailabilityState: RuntimeAvailabilityState;
+  /** Runtime enablement toggles from Settings (hide disabled runtimes). */
+  runtimeEnablement?: RuntimeEnablement;
   /** Available sections for this project */
   sections?: SectionConfig[];
   /** Currently selected section ID */
@@ -183,6 +186,7 @@ interface RuntimeButtonGroupProps {
   onSetDefault: (mode: RuntimeChoice) => void;
   disabled?: boolean;
   runtimeAvailabilityState?: RuntimeAvailabilityState;
+  runtimeEnablement?: RuntimeEnablement;
   coderInfo?: CoderInfo | null;
   allowedRuntimeModes?: RuntimeMode[] | null;
   allowSshHost?: boolean;
@@ -398,6 +402,7 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
   const availabilityMap = state?.status === "loaded" ? state.data : null;
   const coderInfo = props.coderInfo ?? null;
   const coderAvailability = resolveCoderAvailability(coderInfo);
+  const runtimeEnablement = props.runtimeEnablement;
 
   const allowSshHost = props.allowSshHost ?? true;
   const allowSshCoder = props.allowSshCoder ?? true;
@@ -436,6 +441,12 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
       return false;
     }
 
+    // User request: hide Settings-disabled runtimes unless already selected.
+    const isEnablementDisabled = runtimeEnablement?.[option.value] === false;
+    if (isEnablementDisabled && props.value !== option.value) {
+      return false;
+    }
+
     const { isPolicyDisabled } = resolveRuntimeButtonState(
       option.value,
       availabilityMap,
@@ -457,18 +468,27 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
     <div className="flex flex-wrap gap-1 " role="group" aria-label="Runtime type">
       {runtimeOptions.map((option) => {
         const isActive = props.value === option.value;
-        const { isModeDisabled, isPolicyDisabled, disabledReason, isDefault } =
-          resolveRuntimeButtonState(
-            option.value,
-            availabilityMap,
-            props.defaultMode,
-            coderAvailability,
-            allowedModeSet,
-            allowSshHost,
-            allowSshCoder
-          );
-        const isDisabled = Boolean(props.disabled) || isModeDisabled || isPolicyDisabled;
-        const showDisabledReason = isModeDisabled || isPolicyDisabled;
+        const isEnablementDisabled = runtimeEnablement?.[option.value] === false;
+        const {
+          isModeDisabled,
+          isPolicyDisabled,
+          disabledReason: resolvedDisabledReason,
+          isDefault,
+        } = resolveRuntimeButtonState(
+          option.value,
+          availabilityMap,
+          props.defaultMode,
+          coderAvailability,
+          allowedModeSet,
+          allowSshHost,
+          allowSshCoder
+        );
+        const disabledReason = isEnablementDisabled
+          ? "Disabled in Settings"
+          : resolvedDisabledReason;
+        const isDisabled =
+          Boolean(props.disabled) || isModeDisabled || isPolicyDisabled || isEnablementDisabled;
+        const showDisabledReason = isModeDisabled || isPolicyDisabled || isEnablementDisabled;
 
         const Icon = option.Icon;
 
@@ -796,6 +816,7 @@ export function CreationControls(props: CreationControlsProps) {
             onSetDefault={props.onSetDefaultRuntime}
             disabled={props.disabled}
             runtimeAvailabilityState={runtimeAvailabilityState}
+            runtimeEnablement={props.runtimeEnablement}
             coderInfo={props.coderInfo ?? props.coderProps?.coderInfo ?? null}
             allowedRuntimeModes={props.allowedRuntimeModes}
             allowSshHost={props.allowSshHost}
