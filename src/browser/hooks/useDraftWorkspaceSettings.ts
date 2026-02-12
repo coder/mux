@@ -373,9 +373,13 @@ export function useDraftWorkspaceSettings(
     parsedDefault?.mode === RUNTIME_MODE.SSH ? parsedDefault.host : lastSsh.host;
 
   // When the persisted default says "Coder", reuse the saved config even if last-used SSH disabled it.
+  // When settings say plain "ssh" and there's no draft selection, don't reattach the last-used
+  // coder config — that would override the user's explicit plain SSH preference.
   const defaultSshCoder = coderDefaultFromString
     ? (lastSshState.coderConfig ?? DEFAULT_CODER_CONFIG)
-    : lastSsh.coder;
+    : defaultRuntimeString === undefined && settingsDefaultRuntime === RUNTIME_MODE.SSH
+      ? undefined
+      : lastSsh.coder;
 
   const defaultDockerImage =
     parsedDefault?.mode === RUNTIME_MODE.DOCKER ? parsedDefault.image : lastDockerImage;
