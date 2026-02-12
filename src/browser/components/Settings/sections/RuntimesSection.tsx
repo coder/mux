@@ -23,7 +23,7 @@ import type {
   RuntimeEnablementId,
   RuntimeMode,
 } from "@/common/types/runtime";
-import { RUNTIME_ENABLEMENT_IDS } from "@/common/types/runtime";
+import { normalizeRuntimeEnablement } from "@/common/types/runtime";
 
 type RuntimeAvailabilityMap = Record<RuntimeMode, RuntimeAvailabilityStatus>;
 
@@ -53,26 +53,6 @@ const RUNTIME_ROWS: RuntimeRow[] = [
 
 function getProjectLabel(path: string) {
   return path.split(/[\\/]/).pop() ?? path;
-}
-
-function mergeRuntimeEnablement(
-  base: RuntimeEnablement,
-  overrides?: Partial<Record<RuntimeEnablementId, false>>
-): RuntimeEnablement {
-  const merged: RuntimeEnablement = { ...base };
-
-  if (!overrides) {
-    return merged;
-  }
-
-  // Project configs store only disabled runtimes; merge so the UI reflects the effective values.
-  for (const runtimeId of RUNTIME_ENABLEMENT_IDS) {
-    if (overrides[runtimeId] === false) {
-      merged[runtimeId] = false;
-    }
-  }
-
-  return merged;
 }
 
 function getFallbackRuntime(enablement: RuntimeEnablement): RuntimeEnablementId | null {
@@ -143,7 +123,12 @@ export function RuntimesSection() {
       projectConfig?.defaultRuntime !== undefined;
 
     setProjectOverrideEnabled(hasOverrides);
-    setProjectEnablement(mergeRuntimeEnablement(enablement, projectConfig?.runtimeEnablement));
+    // When overrides are active, the project's enablement is independent of global settings
+    // (all-true defaults + only the project's explicit `false` overrides). This matches
+    // the creation flow in ChatInput/index.tsx which uses normalizeRuntimeEnablement directly.
+    setProjectEnablement(
+      hasOverrides ? normalizeRuntimeEnablement(projectConfig?.runtimeEnablement) : enablement
+    );
     setProjectDefaultRuntime(projectConfig?.defaultRuntime ?? defaultRuntime ?? null);
   }, [defaultRuntime, enablement, projects, selectedProjectPath]);
 
