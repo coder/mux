@@ -12,6 +12,10 @@ import "../dom";
 import { shouldRunIntegrationTests } from "../../testUtils";
 import { uploadToMuxMd, deleteFromMuxMd, getMuxMdBaseUrl } from "../../../src/common/lib/muxMd";
 
+if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
+  jest.retryTimes(2, { logErrorsBeforeRetry: true });
+}
+
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -45,17 +49,20 @@ describeIntegration("mux.md sharing (upload integration)", () => {
   test("should generate unique URLs for each upload", async () => {
     const content = "Test content for uniqueness check";
 
-    const result1 = await uploadToMuxMd(content, {
-      name: "message.md",
-      type: "text/markdown",
-      size: content.length,
-    });
-
-    const result2 = await uploadToMuxMd(content, {
-      name: "message.md",
-      type: "text/markdown",
-      size: content.length,
-    });
+    // Run both uploads concurrently to reduce wall-clock time and avoid flakiness
+    // from sequential network latency to the external mux.md service.
+    const [result1, result2] = await Promise.all([
+      uploadToMuxMd(content, {
+        name: "message.md",
+        type: "text/markdown",
+        size: content.length,
+      }),
+      uploadToMuxMd(content, {
+        name: "message.md",
+        type: "text/markdown",
+        size: content.length,
+      }),
+    ]);
 
     // Each upload should generate unique id, key, and mutateKey
     expect(result1.id).not.toBe(result2.id);
