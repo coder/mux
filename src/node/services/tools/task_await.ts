@@ -66,9 +66,9 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
         }
       ).filterDescendantAgentTaskIds;
 
-      // Read patch artifacts lazily (after waiting) to avoid stale results. Patch generation is
-      // started after `resolveWaiters` in `handleAgentReport`, so reading once up-front can miss
-      // artifacts that appear while we're awaiting reports.
+      // Read patch artifacts lazily (after waiting) to avoid stale results. Patch generation
+      // runs asynchronously (started in `finalizeAgentTaskReport` before waiters resolve), so
+      // the artifact may still be "pending" at read time — task_apply_git_patch does a fresh read.
       const readGitFormatPatchArtifact = async (childTaskId: string) => {
         if (!config.workspaceSessionDir) return null;
         return await readSubagentGitPatchArtifact(config.workspaceSessionDir, childTaskId);

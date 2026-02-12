@@ -107,15 +107,70 @@ describe("StreamManager - stopWhen configuration", () => {
     if (!Array.isArray(stopWhen)) {
       throw new Error("Expected autonomous stopWhen to be an array of conditions");
     }
-    expect(stopWhen).toHaveLength(2);
+    expect(stopWhen).toHaveLength(3);
 
-    const [maxStepCondition, queuedMessageCondition] = stopWhen;
+    const [maxStepCondition, queuedMessageCondition, agentReportCondition] = stopWhen;
     expect(maxStepCondition({ steps: new Array(99999) })).toBe(false);
     expect(maxStepCondition({ steps: new Array(100000) })).toBe(true);
 
     expect(queuedMessageCondition({ steps: [] })).toBe(false);
     queued = true;
     expect(queuedMessageCondition({ steps: [] })).toBe(true);
+
+    expect(
+      agentReportCondition({
+        steps: [{ toolResults: [{ toolName: "agent_report", output: { success: true } }] }],
+      })
+    ).toBe(true);
+  });
+
+  test("stops only after successful agent_report tool result in autonomous mode", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({ hasQueuedMessage: () => false });
+    if (!Array.isArray(stopWhen)) {
+      throw new Error("Expected autonomous stopWhen to be an array of conditions");
+    }
+
+    const [, , reportStop] = stopWhen;
+    if (!reportStop) {
+      throw new Error("Expected autonomous stopWhen to include agent_report condition");
+    }
+
+    // Returns true when step contains successful agent_report tool result.
+    expect(
+      reportStop({
+        steps: [{ toolResults: [{ toolName: "agent_report", output: { success: true } }] }],
+      })
+    ).toBe(true);
+
+    // Returns false when step contains failed agent_report output.
+    expect(
+      reportStop({
+        steps: [{ toolResults: [{ toolName: "agent_report", output: { success: false } }] }],
+      })
+    ).toBe(false);
+
+    // Returns false when step only contains agent_report tool call (no successful result yet).
+    expect(
+      reportStop({
+        steps: [{ toolCalls: [{ toolName: "agent_report" }] }],
+      })
+    ).toBe(false);
+
+    // Returns false when step contains other tool results.
+    expect(
+      reportStop({
+        steps: [{ toolResults: [{ toolName: "bash", output: { success: true } }] }],
+      })
+    ).toBe(false);
+
+    // Returns false when no steps.
+    expect(reportStop({ steps: [] })).toBe(false);
   });
 
   test("treats missing queued-message callback as not queued", () => {

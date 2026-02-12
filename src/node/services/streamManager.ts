@@ -1019,9 +1019,34 @@ export class StreamManager extends EventEmitter {
       return stepCountIs(1);
     }
 
-    // Allow effectively unlimited autonomous steps while still yielding quickly
-    // when a queued user message should interrupt at the next step boundary.
-    return [stepCountIs(100000), () => request.hasQueuedMessage?.() ?? false];
+    // For autonomous loops: cap steps, check for queued messages, and stop after
+    // a successful agent_report result (`output.success === true`) so the stream ends
+    // naturally (preserving usage accounting) without allowing post-report tool execution.
+    const isSuccessfulAgentReportOutput = (value: unknown): boolean => {
+      return (
+        typeof value === "object" &&
+        value !== null &&
+        "success" in value &&
+        (value as { success?: unknown }).success === true
+      );
+    };
+
+    const hasSuccessfulAgentReportResult: ReturnType<typeof stepCountIs> = ({ steps }) => {
+      const lastStep = steps[steps.length - 1];
+      return (
+        lastStep?.toolResults?.some(
+          (toolResult) =>
+            toolResult.toolName === "agent_report" &&
+            isSuccessfulAgentReportOutput(toolResult.output)
+        ) ?? false
+      );
+    };
+
+    return [
+      stepCountIs(100000),
+      () => request.hasQueuedMessage?.() ?? false,
+      hasSuccessfulAgentReportResult,
+    ];
   }
 
   private createStreamResult(
@@ -1837,10 +1862,23 @@ export class StreamManager extends EventEmitter {
 
               // CRITICAL: Delete partial.json before updating chat.jsonl
               // On successful completion, partial.json becomes stale and must be removed
-              await this.historyService.deletePartial(workspaceId as string);
+              const deleteResult = await this.historyService.deletePartial(workspaceId as string);
+              if (!deleteResult.success) {
+                workspaceLog.warn("Failed to delete partial on stream end", {
+                  error: deleteResult.error,
+                });
+              }
 
               // Update the placeholder message in chat.jsonl with final content
-              await this.historyService.updateHistory(workspaceId as string, finalAssistantMessage);
+              const updateResult = await this.historyService.updateHistory(
+                workspaceId as string,
+                finalAssistantMessage
+              );
+              if (!updateResult.success) {
+                workspaceLog.warn("Failed to update history on stream end", {
+                  error: updateResult.error,
+                });
+              }
 
               // Update cumulative session usage (if service is available)
               // Wrapped in try-catch: usage recording is non-critical and shouldn't block stream completion
