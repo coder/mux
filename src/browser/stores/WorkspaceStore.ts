@@ -1636,15 +1636,17 @@ export class WorkspaceStore {
           }
         }
 
-        // Full replay: clear stale derived/transient state before subscribing.
-        if (!mode || mode.type === "full") {
-          this.resetChatStateForReplay(workspaceId);
-        }
-
         const iterator = await client.workspace.onChat(
           { workspaceId, mode },
           { signal: attemptController.signal }
         );
+
+        // Full replay: clear stale derived/transient state now that the subscription
+        // is active. Deferred to after the iterator is established so the UI continues
+        // displaying previous state until replay data actually starts arriving.
+        if (!mode || mode.type === "full") {
+          this.resetChatStateForReplay(workspaceId);
+        }
 
         // Stall watchdog: server sends heartbeats every 5s, so if we don't receive ANY events
         // (including heartbeats) for 10s, the connection is likely dead.
