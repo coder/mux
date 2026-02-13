@@ -42,10 +42,14 @@ import {
   normalizeTaskSettings,
 } from "@/common/types/tasks";
 import {
-  discoverAgentSkills,
   discoverAgentSkillsDiagnostics,
+  type DiscoverAgentSkillsDiagnosticsResult,
   readAgentSkill,
 } from "@/node/services/agentSkills/agentSkillsService";
+import {
+  getAgentSkillsDiscoveryCacheKey,
+  loadAgentSkillsDiagnosticsWithFallback,
+} from "./agentSkillsDiagnosticsCache";
 import {
   discoverAgentDefinitions,
   readAgentDefinition,
@@ -106,6 +110,8 @@ async function resolveAgentDiscoveryContext(
   );
   return { runtime, discoveryPath: input.projectPath! };
 }
+
+const agentSkillsDiagnosticsCache = new Map<string, DiscoverAgentSkillsDiagnosticsResult>();
 
 function isErrnoWithCode(error: unknown, code: string): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
@@ -839,7 +845,14 @@ export const router = (authToken?: string) => {
             await context.aiService.waitForInit(input.workspaceId);
           }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
-          return discoverAgentSkills(runtime, discoveryPath);
+          const cacheKey = getAgentSkillsDiscoveryCacheKey(input);
+          const diagnostics = await loadAgentSkillsDiagnosticsWithFallback({
+            cache: agentSkillsDiagnosticsCache,
+            cacheKey,
+            discover: () => discoverAgentSkillsDiagnostics(runtime, discoveryPath),
+          });
+
+          return diagnostics.skills;
         }),
       listDiagnostics: t
         .input(schemas.agentSkills.listDiagnostics.input)
@@ -850,7 +863,12 @@ export const router = (authToken?: string) => {
             await context.aiService.waitForInit(input.workspaceId);
           }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
-          return discoverAgentSkillsDiagnostics(runtime, discoveryPath);
+          const cacheKey = getAgentSkillsDiscoveryCacheKey(input);
+          return loadAgentSkillsDiagnosticsWithFallback({
+            cache: agentSkillsDiagnosticsCache,
+            cacheKey,
+            discover: () => discoverAgentSkillsDiagnostics(runtime, discoveryPath),
+          });
         }),
       get: t
         .input(schemas.agentSkills.get.input)

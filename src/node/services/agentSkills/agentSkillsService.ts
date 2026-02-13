@@ -59,6 +59,46 @@ function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+// Keep transient transport failures distinct from deterministic SKILL.md issues.
+// Callers can safely reuse stale diagnostics for these errors instead of surfacing false "missing/unreadable" problems.
+export class AgentSkillTransientDiscoveryError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AgentSkillTransientDiscoveryError";
+  }
+}
+
+const NON_TRANSIENT_SKILL_IO_ERROR_PATTERNS: readonly RegExp[] = [
+  /no such file or directory/i,
+  /not a directory/i,
+  /permission denied/i,
+  /is a directory/i,
+];
+
+const TRANSIENT_SKILL_IO_ERROR_PATTERNS: readonly RegExp[] = [
+  /ssh connection to .* is in backoff/i,
+  /ssh connection to .* did not become healthy/i,
+  /ssh probe timed out/i,
+  /operation aborted/i,
+  /timed out/i,
+  /connection reset by peer/i,
+  /connection (?:to .* )?closed/i,
+  /connection refused/i,
+  /network is unreachable/i,
+  /no route to host/i,
+  /broken pipe/i,
+  /kex_exchange_identification/i,
+  /resource temporarily unavailable/i,
+];
+
+function isLikelyTransientSkillIoError(message: string): boolean {
+  if (NON_TRANSIENT_SKILL_IO_ERROR_PATTERNS.some((pattern) => pattern.test(message))) {
+    return false;
+  }
+
+  return TRANSIENT_SKILL_IO_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+}
+
 async function listSkillDirectoriesFromLocalFs(root: string): Promise<string[]> {
   try {
     const entries = await fs.readdir(root, { withFileTypes: true });
@@ -111,7 +151,14 @@ async function readSkillDescriptorFromDir(
   let stat;
   try {
     stat = await runtime.stat(skillFilePath);
-  } catch {
+  } catch (err) {
+    const message = formatError(err);
+    if (isLikelyTransientSkillIoError(message)) {
+      throw new AgentSkillTransientDiscoveryError(
+        `Transient error while stat-ing ${skillFilePath}: ${message}`
+      );
+    }
+
     options?.invalidSkills?.push({
       directoryName,
       scope,
@@ -152,6 +199,12 @@ async function readSkillDescriptorFromDir(
     content = await readFileString(runtime, skillFilePath);
   } catch (err) {
     const message = formatError(err);
+    if (isLikelyTransientSkillIoError(message)) {
+      throw new AgentSkillTransientDiscoveryError(
+        `Transient error while reading ${skillFilePath}: ${message}`
+      );
+    }
+
     log.warn(`Failed to read SKILL.md for ${directoryName}: ${message}`);
     options?.invalidSkills?.push({
       directoryName,
