@@ -281,6 +281,56 @@ describe("useContextSwitchWarning", () => {
     expect(result.current.warning?.targetLimit).toBe(100_000);
   });
 
+  test("does not re-show dismissed warnings when config arrives", async () => {
+    const previousModel = "anthropic:claude-sonnet-4-5";
+    const nextModel = "openai:gpt-5.2-codex";
+
+    const props = {
+      workspaceId: "workspace-dismissed-warning",
+      messages: [buildAssistantMessage(previousModel)],
+      pendingModel: previousModel,
+      use1M: false,
+      workspaceUsage: buildUsage(260_000, previousModel),
+      api: undefined,
+      pendingSendOptions: buildSendOptions(previousModel),
+      providersConfig: null as ProvidersConfigMap | null,
+    };
+
+    const { result, rerender } = renderHook(
+      (hookProps: typeof props) => useContextSwitchWarning(hookProps),
+      { initialProps: props, wrapper }
+    );
+
+    act(() => {
+      recordWorkspaceModelChange(props.workspaceId, nextModel, "user");
+      rerender({
+        ...props,
+        pendingModel: nextModel,
+        pendingSendOptions: buildSendOptions(nextModel),
+        providersConfig: null,
+      });
+    });
+
+    await waitFor(() => expect(result.current.warning?.targetModel).toBe(nextModel));
+
+    act(() => {
+      result.current.handleDismiss();
+    });
+
+    await waitFor(() => expect(result.current.warning).toBeNull());
+
+    act(() => {
+      rerender({
+        ...props,
+        pendingModel: nextModel,
+        pendingSendOptions: buildSendOptions(nextModel),
+        providersConfig: buildProvidersConfigWithCustomContext("openai", "dummy-model", 10_000),
+      });
+    });
+
+    await waitFor(() => expect(result.current.warning).toBeNull());
+  });
+
   test("warns when gateway model strings are normalized for explicit switches", async () => {
     const previousModel = "anthropic:claude-sonnet-4-5";
     const nextModel = "openai:gpt-5.2-codex";
