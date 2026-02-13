@@ -450,7 +450,10 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
           </Button>
         </TooltipTrigger>
         <TooltipContent align="center">
-          Select agent ({formatKeybind(KEYBINDS.TOGGLE_AGENT)})
+          Select agent{" "}
+          <span className="mobile-hide-shortcut-hints">
+            ({formatKeybind(KEYBINDS.TOGGLE_AGENT)})
+          </span>
         </TooltipContent>
       </Tooltip>
 
