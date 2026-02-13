@@ -1,19 +1,37 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { execFileSync } from "child_process";
 import { log } from "@/node/services/log";
 
 const ASKPASS_SCRIPT = `#!/bin/sh
 # mux-askpass — SSH_ASKPASS helper for Mux
-# Called by OpenSSH with the prompt text as $1.
-# Writes prompt to a regular file, blocks on response FIFO.
-printf '%s' "$1" > "$MUX_ASKPASS_DIR/prompt"
-read -r response < "$MUX_ASKPASS_DIR/response"
-printf '%s\\n' "$response"
+# Each invocation is an independent request/response transaction identified
+# by a unique ID, so multiple prompts per SSH handshake are handled correctly.
+# Uses only regular files (no mkfifo) for cross-platform portability.
+req_id="$$.$(date +%s%N)"
+prompt_file="$MUX_ASKPASS_DIR/prompt.$req_id.txt"
+response_file="$MUX_ASKPASS_DIR/response.$req_id.txt"
+printf '%s' "$1" > "$prompt_file"
+# Poll for response file (60s timeout = 1200 × 50ms)
+i=0
+while [ "$i" -lt 1200 ]; do
+  if [ -f "$response_file" ]; then
+    cat "$response_file"
+    rm -f "$prompt_file" "$response_file"
+    exit 0
+  fi
+  sleep 0.05
+  i=$((i + 1))
+done
+exit 1
 `;
 
 let askpassPath: string | undefined;
+
+function extractRequestId(filename: string): string | undefined {
+  const match = /^prompt\.(.+)\.txt$/.exec(filename);
+  return match?.[1];
+}
 
 async function ensureAskpassScript(): Promise<string> {
   if (askpassPath) {
@@ -66,49 +84,62 @@ export async function createAskpassSession(
   onPrompt: (prompt: string) => Promise<string>
 ): Promise<AskpassSession> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-askpass-"));
-  const promptFile = path.join(dir, "prompt");
-  const responseFifo = path.join(dir, "response");
+  const processed = new Set<string>();
+  let closed = false;
 
-  // Create the response FIFO — askpass blocks reading it
-  execFileSync("mkfifo", [responseFifo]);
+  async function handlePrompt(requestId: string): Promise<void> {
+    const promptFile = path.join(dir, `prompt.${requestId}.txt`);
+    const responseFile = path.join(dir, `response.${requestId}.txt`);
 
-  let handled = false;
+    try {
+      await fs.promises.access(promptFile);
+    } catch {
+      processed.delete(requestId);
+      return;
+    }
 
-  // Watch for askpass to write the prompt file.
-  // fs.watch is set up BEFORE SSH is spawned, so we cannot miss the event.
-  const watcher = fs.watch(dir, (_, filename) => {
-    // Some systems report filename as null — check directly
-    if (handled || (filename !== null && filename !== "prompt")) return;
+    if (closed) return;
 
-    void (async () => {
+    try {
+      const promptText = await fs.promises.readFile(promptFile, "utf-8");
+      const response = await onPrompt(promptText);
+      await fs.promises.writeFile(responseFile, response + "\n");
+    } catch (err) {
+      log.debug("Askpass prompt handling failed:", err);
+      // Write rejection to unblock askpass (best-effort)
       try {
-        await fs.promises.access(promptFile);
+        await fs.promises.writeFile(responseFile, "no\n");
+      } catch {
+        /* askpass may already be gone */
+      }
+    }
+  }
+
+  // Watch for askpass to write prompt files.
+  // fs.watch is set up BEFORE SSH is spawned, so we cannot miss events.
+  const watcher = fs.watch(dir, (_, filename) => {
+    if (closed) return;
+
+    const candidateFilenames: string[] = [];
+    if (typeof filename === "string") {
+      candidateFilenames.push(filename);
+    } else {
+      try {
+        candidateFilenames.push(...fs.readdirSync(dir));
       } catch {
         return;
       }
+    }
 
-      if (handled) return;
-      handled = true;
-
-      try {
-        const promptText = await fs.promises.readFile(promptFile, "utf-8");
-        const response = await onPrompt(promptText);
-        // Writing to the FIFO unblocks the askpass script's `read`
-        const fd = await fs.promises.open(responseFifo, "w");
-        await fd.write(response + "\n");
-        await fd.close();
-      } catch (err) {
-        log.debug("Askpass prompt handling failed:", err);
-        // Write rejection to unblock askpass (best-effort)
-        try {
-          const fd = await fs.promises.open(responseFifo, "w");
-          await fd.write("no\n");
-          await fd.close();
-        } catch {
-          /* askpass may already be gone */
-        }
+    for (const candidate of candidateFilenames) {
+      const requestId = extractRequestId(candidate);
+      if (!requestId || processed.has(requestId)) {
+        continue;
       }
-    })();
+
+      processed.add(requestId);
+      void handlePrompt(requestId);
+    }
   });
 
   const scriptPath = await ensureAskpassScript();
@@ -123,7 +154,7 @@ export async function createAskpassSession(
       MUX_ASKPASS_DIR: dir,
     },
     cleanup() {
-      handled = true;
+      closed = true;
       watcher.close();
       try {
         fs.rmSync(dir, { recursive: true, force: true });
