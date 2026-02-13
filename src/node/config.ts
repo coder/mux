@@ -5,7 +5,7 @@ import * as jsonc from "jsonc-parser";
 import writeFileAtomic from "write-file-atomic";
 import { log } from "@/node/services/log";
 import type { WorkspaceMetadata, FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { Secret, SecretsConfig } from "@/common/types/secrets";
+import { secretsToRecord, type Secret, type SecretsConfig } from "@/common/types/secrets";
 import type {
   Workspace,
   ProjectConfig,
@@ -1061,17 +1061,21 @@ ${jsonString}`;
     return stripTrailingSlashes(projectPath);
   }
 
-  private static isSecretValue(value: unknown): value is Secret["value"] {
-    if (typeof value === "string") {
-      return true;
-    }
-
+  private static isSecretReferenceValue(value: unknown): value is { secret: string } {
     return (
       typeof value === "object" &&
       value !== null &&
       "secret" in value &&
       typeof (value as { secret?: unknown }).secret === "string"
     );
+  }
+
+  private static isSecretValue(value: unknown): value is Secret["value"] {
+    if (typeof value === "string") {
+      return true;
+    }
+
+    return Config.isSecretReferenceValue(value);
   }
 
   private static isSecret(value: unknown): value is Secret {
@@ -1192,24 +1196,37 @@ ${jsonString}`;
   /**
    * Get effective secrets for a project.
    *
-   * Merges global + project secrets with project keys overriding global keys.
+   * Project secrets define which env vars are injected into this project/workspace.
+   * Global secrets are only used as a shared value store and are injected only when
+   * a project secret references them via `{ secret: "GLOBAL_KEY" }`.
    */
   getEffectiveSecrets(projectPath: string): Secret[] {
     const normalizedProjectPath = Config.normalizeSecretsProjectPath(projectPath) || projectPath;
     const config = this.loadSecretsConfig();
-    const globalSecrets = config[Config.GLOBAL_SECRETS_KEY] ?? [];
     const projectSecrets = config[normalizedProjectPath] ?? [];
+    const globalSecretsByKey = secretsToRecord(config[Config.GLOBAL_SECRETS_KEY] ?? []);
 
-    // Merge-by-key (last writer wins).
-    const mergedByKey = new Map<string, Secret>();
-    for (const secret of globalSecrets) {
-      mergedByKey.set(secret.key, secret);
-    }
-    for (const secret of projectSecrets) {
-      mergedByKey.set(secret.key, secret);
-    }
+    return projectSecrets.map((secret) => {
+      if (!Config.isSecretReferenceValue(secret.value)) {
+        return secret;
+      }
 
-    return Array.from(mergedByKey.values());
+      const targetKey = secret.value.secret.trim();
+      if (!targetKey) {
+        return secret;
+      }
+
+      // Allow empty-string global secrets by checking for undefined explicitly.
+      const resolvedGlobalValue = globalSecretsByKey[targetKey];
+      if (resolvedGlobalValue !== undefined) {
+        return {
+          ...secret,
+          value: resolvedGlobalValue,
+        };
+      }
+
+      return secret;
+    });
   }
 
   /**
