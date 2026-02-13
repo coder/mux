@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 
+import type { ProviderModelEntry } from "@/common/orpc/types";
 import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
 import type { ProviderService } from "@/node/services/providerService";
@@ -62,7 +63,7 @@ function mockFetch(
 interface MockDeps {
   setConfigCalls: Array<{ provider: string; keyPath: string[]; value: string }>;
   setConfigResult: Result<void, string>;
-  setModelsCalls: Array<{ provider: string; models: string[] }>;
+  setModelsCalls: Array<{ provider: string; models: ProviderModelEntry[] }>;
   setModelsResult: Result<void, string>;
   focusCalls: number;
 }
@@ -85,7 +86,7 @@ function createMockProviderService(
       deps.setConfigCalls.push({ provider, keyPath, value });
       return deps.setConfigResult;
     },
-    setModels: (provider: string, models: string[]): Result<void, string> => {
+    setModels: (provider: string, models: ProviderModelEntry[]): Result<void, string> => {
       deps.setModelsCalls.push({ provider, models });
       return deps.setModelsResult;
     },

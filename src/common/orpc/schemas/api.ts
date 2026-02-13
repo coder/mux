@@ -121,6 +121,16 @@ export const AWSCredentialStatusSchema = z.object({
   secretAccessKeySet: z.boolean(),
 });
 
+export const ProviderModelEntrySchema = z.union([
+  z.string().min(1),
+  z
+    .object({
+      id: z.string().min(1),
+      contextWindowTokens: z.number().int().positive().optional(),
+    })
+    .strict(),
+]);
+
 export const ProviderConfigInfoSchema = z.object({
   apiKeySet: z.boolean(),
   /** Whether this provider is enabled for model requests */
@@ -128,7 +138,7 @@ export const ProviderConfigInfoSchema = z.object({
   /** Whether this provider is configured and ready to use */
   isConfigured: z.boolean(),
   baseUrl: z.string().optional(),
-  models: z.array(z.string()).optional(),
+  models: z.array(ProviderModelEntrySchema).optional(),
   /** OpenAI-specific fields */
   serviceTier: z.enum(["auto", "default", "flex", "priority"]).optional(),
   /** OpenAI-only: whether Codex OAuth tokens are present in providers.jsonc */
@@ -162,7 +172,7 @@ export const providers = {
   setModels: {
     input: z.object({
       provider: z.string(),
-      models: z.array(z.string()),
+      models: z.array(ProviderModelEntrySchema),
     }),
     output: ResultSchema(z.void(), z.string()),
   },

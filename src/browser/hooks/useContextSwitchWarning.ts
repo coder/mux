@@ -8,7 +8,7 @@
 import { useReducer, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
-import type { SendMessageOptions } from "@/common/orpc/types";
+import type { ProvidersConfigMap, SendMessageOptions } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
@@ -25,7 +25,6 @@ import {
   consumeWorkspaceModelChange,
   setWorkspaceModelWithOrigin,
 } from "@/browser/utils/modelChange";
-import { useProvidersConfig } from "./useProvidersConfig";
 import { executeCompaction } from "@/browser/utils/chatCommands";
 
 interface UseContextSwitchWarningProps {
@@ -36,6 +35,7 @@ interface UseContextSwitchWarningProps {
   workspaceUsage: WorkspaceUsageState | undefined;
   api: RouterClient<AppRouter> | undefined;
   pendingSendOptions: SendMessageOptions;
+  providersConfig: ProvidersConfigMap | null;
 }
 
 interface UseContextSwitchWarningResult {
@@ -124,13 +124,20 @@ function switchReducer(state: SwitchState, action: SwitchAction): SwitchState {
 export function useContextSwitchWarning(
   props: UseContextSwitchWarningProps
 ): UseContextSwitchWarningResult {
-  const { workspaceId, messages, pendingModel, use1M, workspaceUsage, api, pendingSendOptions } =
-    props;
+  const {
+    workspaceId,
+    messages,
+    pendingModel,
+    use1M,
+    workspaceUsage,
+    api,
+    pendingSendOptions,
+    providersConfig,
+  } = props;
 
   const [switchState, dispatch] = useReducer(switchReducer, pendingModel, createSwitchState);
   const warning = switchState.warning;
   const prevUse1MRef = useRef(use1M);
-  const { config: providersConfig } = useProvidersConfig();
   const policyState = usePolicy();
   const effectivePolicy =
     policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
@@ -177,7 +184,7 @@ export function useContextSwitchWarning(
       });
 
       if (suggestion) {
-        const limit = getEffectiveContextLimit(suggestion.modelId, use1M);
+        const limit = getEffectiveContextLimit(suggestion.modelId, use1M, providersConfig);
         if (limit && limit > w.currentTokens) {
           return { ...w, compactionModel: suggestion.modelId, errorMessage: null };
         }
@@ -355,8 +362,8 @@ export function useContextSwitchWarning(
     // OFF → ON: may clear warning if context now fits
     // ON → OFF: may show warning if context no longer fits
     if (wasEnabled !== use1M) {
-      const previousLimit = getEffectiveContextLimit(pendingModel, wasEnabled);
-      const nextLimit = getEffectiveContextLimit(pendingModel, use1M);
+      const previousLimit = getEffectiveContextLimit(pendingModel, wasEnabled, providersConfig);
+      const nextLimit = getEffectiveContextLimit(pendingModel, use1M, providersConfig);
 
       // Only surface same-model warnings if the effective limit actually changed.
       if (previousLimit === nextLimit) {
@@ -383,7 +390,7 @@ export function useContextSwitchWarning(
         dispatch({ type: "CLEAR_WARNING" });
       }
     }
-  }, [use1M, pendingModel, tokens, messages, evaluateWarning, warning]);
+  }, [use1M, pendingModel, tokens, messages, providersConfig, evaluateWarning, warning]);
 
   return { warning, handleModelChange, handleCompact, handleDismiss };
 }

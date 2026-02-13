@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import type { ProviderModelEntry } from "@/common/orpc/types";
 import { Config } from "@/node/config";
 import { ProviderService } from "./providerService";
 
@@ -90,6 +91,54 @@ describe("ProviderService.getConfig", () => {
       expect(cfg.openai.codexOauthSet).toBe(true);
       expect(cfg.openai.isEnabled).toBe(false);
       expect(cfg.openai.isConfigured).toBe(false);
+    });
+  });
+});
+
+describe("ProviderService model normalization", () => {
+  it("normalizes malformed model entries when reading config", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          models: [
+            "  gpt-5  ",
+            { id: "custom-model", contextWindowTokens: 128_000 },
+            { id: "custom-model", contextWindowTokens: 64_000 },
+            { id: "no-context", contextWindowTokens: 0 },
+            { id: "" },
+            42,
+          ] as unknown as ProviderModelEntry[],
+        },
+      });
+
+      const cfg = service.getConfig();
+      expect(cfg.openai.models).toEqual([
+        "gpt-5",
+        { id: "custom-model", contextWindowTokens: 128_000 },
+        "no-context",
+      ]);
+    });
+  });
+
+  it("normalizes malformed model entries before persisting", () => {
+    withTempConfig((config, service) => {
+      const result = service.setModels("openai", [
+        "  gpt-5  ",
+        { id: "custom-model", contextWindowTokens: 100_000 },
+        { id: "custom-model", contextWindowTokens: 64_000 },
+        { id: "no-context", contextWindowTokens: 0 },
+        { id: "" },
+        42,
+      ] as unknown as ProviderModelEntry[]);
+
+      expect(result.success).toBe(true);
+      const providersConfig = config.loadProvidersConfig();
+      expect(providersConfig?.openai?.models).toEqual([
+        "gpt-5",
+        { id: "custom-model", contextWindowTokens: 100_000 },
+        "no-context",
+      ]);
     });
   });
 });

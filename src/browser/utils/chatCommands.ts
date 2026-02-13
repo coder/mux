@@ -8,7 +8,7 @@
 
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
-import type { SendMessageOptions, FilePart } from "@/common/orpc/types";
+import type { FilePart, ProviderModelEntry, SendMessageOptions } from "@/common/orpc/types";
 import {
   type MuxFrontendMetadata,
   type CompactionRequestData,
@@ -44,6 +44,7 @@ import {
   WORDS_TO_TOKENS_RATIO,
   buildCompactionPrompt,
 } from "@/common/constants/ui";
+import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
 import { openInEditor } from "@/browser/utils/openInEditor";
 
 // ============================================================================
@@ -211,8 +212,8 @@ export async function processSlashCommand(
       if (activeClient && !BUILT_IN_MODEL_SET.has(canonicalModel) && provider !== "mux-gateway") {
         try {
           const config = await activeClient.providers.getConfig();
-          const existingModels = config[provider]?.models ?? [];
-          if (!existingModels.includes(modelId)) {
+          const existingModels: ProviderModelEntry[] = config[provider]?.models ?? [];
+          if (!existingModels.some((entry) => getProviderModelEntryId(entry) === modelId)) {
             // Add model via the same API as settings
             await activeClient.providers.setModels({
               provider,

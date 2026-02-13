@@ -24,6 +24,11 @@ import {
   LAST_CUSTOM_MODEL_PROVIDER_KEY,
   PREFERRED_COMPACTION_MODEL_KEY,
 } from "@/common/constants/storage";
+import type { ProviderModelEntry } from "@/common/orpc/types";
+import {
+  getProviderModelEntryContextWindowTokens,
+  getProviderModelEntryId,
+} from "@/common/utils/providers/modelEntries";
 import { ModelRow } from "./ModelRow";
 
 // Providers to exclude from the custom models UI (handled specially or internal)
@@ -50,6 +55,33 @@ interface EditingState {
   provider: string;
   originalModelId: string;
   newModelId: string;
+  contextWindowTokens: string;
+  focus?: "model" | "context";
+}
+
+function parseContextWindowTokensInput(value: string): number | null {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function buildProviderModelEntry(
+  modelId: string,
+  contextWindowTokens: number | null
+): ProviderModelEntry {
+  if (contextWindowTokens === null) {
+    return modelId;
+  }
+
+  return { id: modelId, contextWindowTokens };
 }
 
 export function ModelsSection() {
@@ -112,7 +144,10 @@ export function ModelsSection() {
     (provider: string, modelId: string, excludeOriginal?: string): boolean => {
       if (!config) return false;
       const currentModels = config[provider]?.models ?? [];
-      return currentModels.some((m) => m === modelId && m !== excludeOriginal);
+      return currentModels.some((entry) => {
+        const currentModelId = getProviderModelEntryId(entry);
+        return currentModelId === modelId && currentModelId !== excludeOriginal;
+      });
     },
     [config]
   );
@@ -153,7 +188,7 @@ export function ModelsSection() {
 
       // Optimistic update - returns new models array for API call
       const updatedModels = updateModelsOptimistically(provider, (models) =>
-        models.filter((m) => m !== modelId)
+        models.filter((entry) => getProviderModelEntryId(entry) !== modelId)
       );
 
       // Save in background
@@ -162,10 +197,33 @@ export function ModelsSection() {
     [api, config, updateModelsOptimistically]
   );
 
-  const handleStartEdit = useCallback((provider: string, modelId: string) => {
-    setEditing({ provider, originalModelId: modelId, newModelId: modelId });
-    setError(null);
-  }, []);
+  const handleStartEdit = useCallback(
+    (provider: string, modelId: string, contextWindowTokens: number | null) => {
+      setEditing({
+        provider,
+        originalModelId: modelId,
+        newModelId: modelId,
+        contextWindowTokens: contextWindowTokens === null ? "" : String(contextWindowTokens),
+        focus: "model",
+      });
+      setError(null);
+    },
+    []
+  );
+
+  const handleStartContextEdit = useCallback(
+    (provider: string, modelId: string, contextWindowTokens: number | null) => {
+      setEditing({
+        provider,
+        originalModelId: modelId,
+        newModelId: modelId,
+        contextWindowTokens: contextWindowTokens === null ? "" : String(contextWindowTokens),
+        focus: "context",
+      });
+      setError(null);
+    },
+    []
+  );
 
   const handleCancelEdit = useCallback(() => {
     setEditing(null);
@@ -181,6 +239,13 @@ export function ModelsSection() {
       return;
     }
 
+    const contextWindowTokensInput = editing.contextWindowTokens.trim();
+    const parsedContextWindowTokens = parseContextWindowTokensInput(contextWindowTokensInput);
+    if (contextWindowTokensInput.length > 0 && parsedContextWindowTokens === null) {
+      setError("Context window must be a positive integer");
+      return;
+    }
+
     // Only validate duplicates if the model ID actually changed
     if (trimmedModelId !== editing.originalModelId) {
       if (modelExists(editing.provider, trimmedModelId)) {
@@ -191,10 +256,29 @@ export function ModelsSection() {
 
     setError(null);
 
+    const replacementEntry = buildProviderModelEntry(trimmedModelId, parsedContextWindowTokens);
+
     // Optimistic update - returns new models array for API call
-    const updatedModels = updateModelsOptimistically(editing.provider, (models) =>
-      models.map((m) => (m === editing.originalModelId ? trimmedModelId : m))
-    );
+    const updatedModels = updateModelsOptimistically(editing.provider, (models) => {
+      const nextModels: ProviderModelEntry[] = [];
+      let replaced = false;
+
+      for (const modelEntry of models) {
+        if (!replaced && getProviderModelEntryId(modelEntry) === editing.originalModelId) {
+          nextModels.push(replacementEntry);
+          replaced = true;
+          continue;
+        }
+
+        nextModels.push(modelEntry);
+      }
+
+      if (!replaced) {
+        nextModels.push(replacementEntry);
+      }
+
+      return nextModels;
+    });
     setEditing(null);
 
     // Save in background
@@ -212,17 +296,35 @@ export function ModelsSection() {
   }
 
   // Get all custom models across providers (excluding hidden providers like mux-gateway)
-  const getCustomModels = (): Array<{ provider: string; modelId: string; fullId: string }> => {
-    const models: Array<{ provider: string; modelId: string; fullId: string }> = [];
+  const getCustomModels = (): Array<{
+    provider: string;
+    modelId: string;
+    fullId: string;
+    contextWindowTokens: number | null;
+  }> => {
+    const models: Array<{
+      provider: string;
+      modelId: string;
+      fullId: string;
+      contextWindowTokens: number | null;
+    }> = [];
+
     for (const [provider, providerConfig] of Object.entries(config)) {
       // Skip hidden providers (mux-gateway models are accessed via the cloud toggle, not listed separately)
       if (HIDDEN_PROVIDERS.has(provider)) continue;
-      if (providerConfig.models) {
-        for (const modelId of providerConfig.models) {
-          models.push({ provider, modelId, fullId: `${provider}:${modelId}` });
-        }
+      if (!providerConfig.models) continue;
+
+      for (const modelEntry of providerConfig.models) {
+        const modelId = getProviderModelEntryId(modelEntry);
+        models.push({
+          provider,
+          modelId,
+          fullId: `${provider}:${modelId}`,
+          contextWindowTokens: getProviderModelEntryContextWindowTokens(modelEntry),
+        });
       }
     }
+
     return models;
   };
 
@@ -353,18 +455,35 @@ export function ModelsSection() {
                       isCustom={true}
                       isDefault={defaultModel === model.fullId}
                       isEditing={isModelEditing}
-                      editValue={isModelEditing ? editing.newModelId : undefined}
+                      editModelValue={isModelEditing ? editing.newModelId : undefined}
+                      editContextValue={isModelEditing ? editing.contextWindowTokens : undefined}
+                      editAutofocus={isModelEditing ? editing.focus : undefined}
+                      customContextWindowTokens={model.contextWindowTokens}
                       editError={isModelEditing ? error : undefined}
                       saving={false}
                       hasActiveEdit={editing !== null}
                       isGatewayEnabled={gateway.modelUsesGateway(model.fullId)}
                       is1MContextEnabled={has1MContext(model.fullId)}
                       onSetDefault={() => setDefaultModel(model.fullId)}
-                      onStartEdit={() => handleStartEdit(model.provider, model.modelId)}
+                      onStartEdit={() =>
+                        handleStartEdit(model.provider, model.modelId, model.contextWindowTokens)
+                      }
+                      onStartContextEdit={() =>
+                        handleStartContextEdit(
+                          model.provider,
+                          model.modelId,
+                          model.contextWindowTokens
+                        )
+                      }
                       onSaveEdit={handleSaveEdit}
                       onCancelEdit={handleCancelEdit}
-                      onEditChange={(value) =>
+                      onEditModelChange={(value) =>
                         setEditing((prev) => (prev ? { ...prev, newModelId: value } : null))
+                      }
+                      onEditContextChange={(value) =>
+                        setEditing((prev) =>
+                          prev ? { ...prev, contextWindowTokens: value } : null
+                        )
                       }
                       onRemove={() => handleRemoveModel(model.provider, model.modelId)}
                       isHiddenFromSelector={hiddenModels.includes(model.fullId)}
