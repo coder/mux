@@ -111,6 +111,7 @@ export const NameGenerationAuthError: AppStory = {
     <AppWithMocks
       setup={setupNameGenerationErrorStory({
         type: "authentication",
+        authKind: "invalid_credentials",
         provider: "openai",
         raw: "Invalid API key",
       })}

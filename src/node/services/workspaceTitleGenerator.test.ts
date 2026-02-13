@@ -164,7 +164,10 @@ describe("workspaceTitleGenerator error mappers", () => {
         createApiCallError(401, "Unauthorized"),
         "openai:gpt-4.1-mini"
       );
-      expect(mapped).toMatchObject({ type: "authentication" });
+      expect(mapped).toMatchObject({
+        type: "authentication",
+        authKind: "invalid_credentials",
+      });
     });
 
     test("maps APICallError 403 to permission_denied", () => {
@@ -216,7 +219,10 @@ describe("workspaceTitleGenerator error mappers", () => {
       });
 
       const mapped = mapNameGenerationError(retryError, "openai:gpt-4.1-mini");
-      expect(mapped).toMatchObject({ type: "authentication" });
+      expect(mapped).toMatchObject({
+        type: "authentication",
+        authKind: "invalid_credentials",
+      });
     });
 
     test("maps fetch TypeError to network", () => {
@@ -239,13 +245,21 @@ describe("workspaceTitleGenerator error mappers", () => {
     test("maps api_key_not_found to authentication with provider", () => {
       const error: SendMessageError = { type: "api_key_not_found", provider: "anthropic" };
       const mapped = mapModelCreationError(error, "openai:gpt-4.1-mini");
-      expect(mapped).toEqual({ type: "authentication", provider: "anthropic" });
+      expect(mapped).toEqual({
+        type: "authentication",
+        authKind: "api_key_missing",
+        provider: "anthropic",
+      });
     });
 
     test("maps oauth_not_connected to authentication with provider", () => {
       const error: SendMessageError = { type: "oauth_not_connected", provider: "openai" };
       const mapped = mapModelCreationError(error, "anthropic:claude-3-5-haiku");
-      expect(mapped).toEqual({ type: "authentication", provider: "openai" });
+      expect(mapped).toEqual({
+        type: "authentication",
+        authKind: "oauth_not_connected",
+        provider: "openai",
+      });
     });
 
     test("maps provider_disabled to configuration", () => {
@@ -266,10 +280,12 @@ describe("workspaceTitleGenerator error mappers", () => {
       expect(mapped).toMatchObject({ type: "permission_denied" });
     });
 
-    test("maps unknown model creation errors to unknown", () => {
-      const error: SendMessageError = { type: "unknown", raw: "Something" };
-      const mapped = mapModelCreationError(error, "openai:gpt-4.1-mini");
-      expect(mapped).toMatchObject({ type: "unknown" });
+    test("maps unknown to unknown with raw preserved", () => {
+      const result = mapModelCreationError(
+        { type: "unknown", raw: "Some detailed error" },
+        "openai:gpt-4o"
+      );
+      expect(result).toEqual({ type: "unknown", raw: "Some detailed error" });
     });
   });
 });

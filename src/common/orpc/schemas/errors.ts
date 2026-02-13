@@ -43,6 +43,7 @@ export const StreamErrorTypeSchema = z.enum([
 export const NameGenerationErrorSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("authentication"),
+    authKind: z.enum(["api_key_missing", "oauth_not_connected", "invalid_credentials"]),
     provider: z.string().nullish(),
     raw: z.string().nullish(),
   }),

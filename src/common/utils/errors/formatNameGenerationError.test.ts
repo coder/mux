@@ -6,17 +6,41 @@ const format = (error: NameGenerationError) => formatNameGenerationError(error);
 
 describe("formatNameGenerationError", () => {
   test("formats authentication errors with provider context", () => {
-    const formatted = format({ type: "authentication", provider: "anthropic" });
+    const formatted = format({
+      type: "authentication",
+      authKind: "invalid_credentials",
+      provider: "anthropic",
+    });
 
     expect(formatted.title).toContain("Authentication");
     expect(formatted.hint).toContain("Settings");
   });
 
   test("formats authentication errors without provider", () => {
-    const formatted = format({ type: "authentication" });
+    const formatted = format({ type: "authentication", authKind: "invalid_credentials" });
 
     expect(formatted.title).toContain("Authentication");
-    expect(formatted.message).toBe("API key is missing or invalid.");
+    expect(formatted.message).toBe("Authentication failed.");
+  });
+
+  test("returns OAuth-specific guidance for oauth_not_connected", () => {
+    const result = formatNameGenerationError({
+      type: "authentication",
+      authKind: "oauth_not_connected",
+      provider: "openai",
+    });
+    expect(result.title).toBe("OAuth not connected");
+    expect(result.hint).toContain("connect your");
+  });
+
+  test("returns API-key-specific guidance for api_key_missing", () => {
+    const result = formatNameGenerationError({
+      type: "authentication",
+      authKind: "api_key_missing",
+      provider: "anthropic",
+    });
+    expect(result.title).toBe("API key missing");
+    expect(result.hint).toContain("add an API key");
   });
 
   test("formats permission_denied as access denied", () => {

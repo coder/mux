@@ -20,12 +20,35 @@ export function formatNameGenerationError(error: NameGenerationError): Formatted
   switch (error.type) {
     case "authentication": {
       const provider = error.provider ? getProviderDisplayName(error.provider) : null;
+
+      if (error.authKind === "oauth_not_connected") {
+        return {
+          title: "OAuth not connected",
+          message: provider
+            ? `Workspace naming requires an OAuth connection for ${provider}.`
+            : "OAuth connection required for workspace naming.",
+          hint: provider
+            ? `Open Settings → Providers and connect your ${provider} account.`
+            : "Open Settings → Providers and connect your account.",
+          docsPath: "/config/providers",
+        };
+      }
+
+      if (error.authKind === "api_key_missing") {
+        return {
+          title: "API key missing",
+          message: provider ? `No API key configured for ${provider}.` : "No API key configured.",
+          hint: provider
+            ? `Open Settings → Providers and add an API key for ${provider}.`
+            : "Add an API key in Settings → Providers.",
+          docsPath: "/config/providers",
+        };
+      }
+
       return {
         title: "Authentication failed",
-        message: provider
-          ? `Could not authenticate with ${provider}.`
-          : "API key is missing or invalid.",
-        hint: "Check your API key in Settings → Providers.",
+        message: provider ? `Could not authenticate with ${provider}.` : "Authentication failed.",
+        hint: "Verify your credentials in Settings → Providers.",
         docsPath: "/config/providers",
       };
     }

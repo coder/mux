@@ -190,7 +190,12 @@ export function mapNameGenerationError(error: unknown, modelString: string): Nam
 
   if (APICallError.isInstance(error)) {
     if (error.statusCode === 401) {
-      return { type: "authentication", provider, raw: error.message };
+      return {
+        type: "authentication",
+        authKind: "invalid_credentials",
+        provider,
+        raw: error.message,
+      };
     }
     if (error.statusCode === 403) {
       return { type: "permission_denied", provider, raw: error.message };
@@ -222,18 +227,30 @@ export function mapModelCreationError(
 
   switch (error.type) {
     case "api_key_not_found":
-      return { type: "authentication", provider: error.provider ?? provider };
+      return {
+        type: "authentication",
+        authKind: "api_key_missing",
+        provider: error.provider ?? provider,
+      };
     case "oauth_not_connected":
-      return { type: "authentication", provider: error.provider ?? provider };
+      return {
+        type: "authentication",
+        authKind: "oauth_not_connected",
+        provider: error.provider ?? provider,
+      };
     case "provider_disabled":
       return { type: "configuration", raw: "Provider disabled" };
     case "provider_not_supported":
       return { type: "configuration", raw: "Provider not supported" };
     case "policy_denied":
       return { type: "permission_denied", provider, raw: error.message };
+    case "unknown":
+      return { type: "unknown", raw: error.raw ?? "Unknown error" };
     default: {
       const raw =
-        "message" in error && typeof error.message === "string" ? error.message : error.type;
+        "message" in error && typeof error.message === "string"
+          ? error.message
+          : `Failed to create model for ${modelString}: ${error.type}`;
       return { type: "unknown", raw };
     }
   }
