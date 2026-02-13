@@ -18,6 +18,13 @@ import { log } from "@/node/services/log";
 import { attachStreamErrorHandler } from "@/node/utils/streamErrors";
 import type { SSHConnectionConfig } from "./sshConnectionPool";
 import { resolveSSHConfig, type ResolvedSSHConfig } from "./sshConfigParser";
+import type { HostKeyVerificationService } from "@/node/services/hostKeyVerificationService";
+
+let hostKeyService: HostKeyVerificationService | undefined;
+
+export function setHostKeyVerificationService(svc: HostKeyVerificationService): void {
+  hostKeyService = svc;
+}
 
 /**
  * Connection health status
@@ -611,6 +618,26 @@ export class SSH2ConnectionPool {
               keepaliveInterval: 5000,
               keepaliveCountMax: 2,
               ...(privateKey ? { privateKey } : {}),
+              // Host key verification
+              ...(hostKeyService
+                ? {
+                    hostHash: "sha256" as const,
+                    hostVerifier: (
+                      fingerprint: string,
+                      verify: (accept: boolean) => void
+                    ): boolean => {
+                      void hostKeyService!
+                        .requestVerification({
+                          host: resolvedConfig.hostName,
+                          keyType: "unknown", // ssh2 doesn't expose key type in this callback
+                          fingerprint: `SHA256:${fingerprint}`,
+                          prompt: `The authenticity of host '${resolvedConfig.hostName}' can't be established.\nFingerprint: SHA256:${fingerprint}`,
+                        })
+                        .then(verify);
+                      return true;
+                    },
+                  }
+                : {}),
             };
 
             client.connect(connectOptions);

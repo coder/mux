@@ -45,12 +45,15 @@ import { McpOauthService } from "@/node/services/mcpOauthService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
 import { getSigningService, type SigningService } from "@/node/services/signingService";
 import { coderService, type CoderService } from "@/node/services/coderService";
+import { HostKeyVerificationService } from "@/node/services/hostKeyVerificationService";
 import { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
 import {
   createStartCoderOnUnarchiveHook,
   createStopCoderOnArchiveHook,
 } from "@/node/runtime/coderLifecycleHooks";
 import { setGlobalCoderService } from "@/node/runtime/runtimeFactory";
+import { setHostKeyVerificationService } from "@/node/runtime/sshConnectionPool";
+import { setHostKeyVerificationService as setSSH2HostKeyVerificationService } from "@/node/runtime/SSH2ConnectionPool";
 import { PolicyService } from "@/node/services/policyService";
 import type { ORPCContext } from "@/node/orpc/context";
 
@@ -112,6 +115,7 @@ export class ServiceContainer {
   public readonly signingService: SigningService;
   public readonly policyService: PolicyService;
   public readonly coderService: CoderService;
+  public readonly hostKeyVerificationService = new HostKeyVerificationService();
   private readonly ptyService: PTYService;
   public readonly idleCompactionService: IdleCompactionService;
 
@@ -223,6 +227,8 @@ export class ServiceContainer {
 
     // Register globally so all createRuntime calls can create CoderSSHRuntime
     setGlobalCoderService(this.coderService);
+    setHostKeyVerificationService(this.hostKeyVerificationService);
+    setSSH2HostKeyVerificationService(this.hostKeyVerificationService);
 
     // Backend timing stats (behind feature flag).
     this.aiService.on("stream-start", (data: StreamStartEvent) =>
@@ -435,6 +441,7 @@ export class ServiceContainer {
       policyService: this.policyService,
       signingService: this.signingService,
       coderService: this.coderService,
+      hostKeyVerificationService: this.hostKeyVerificationService,
     };
   }
 

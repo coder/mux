@@ -68,6 +68,7 @@ import { AboutDialogProvider } from "./contexts/AboutDialogContext";
 import { SettingsModal } from "./components/Settings/SettingsModal";
 import { AboutDialog } from "./components/About/AboutDialog";
 import { MuxGatewaySessionExpiredDialog } from "./components/MuxGatewaySessionExpiredDialog";
+import { HostKeyVerificationDialog } from "./components/HostKeyVerificationDialog";
 import { SplashScreenProvider } from "./components/splashScreens/SplashScreenProvider";
 import { TutorialProvider } from "./contexts/TutorialContext";
 import { PowerModeProvider } from "./contexts/PowerModeContext";
@@ -1071,6 +1072,7 @@ function AppInner() {
         <SettingsModal />
         <AboutDialog />
         <MuxGatewaySessionExpiredDialog />
+        <HostKeyVerificationDialog />
       </div>
     </>
   );
