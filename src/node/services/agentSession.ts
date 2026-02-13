@@ -101,6 +101,14 @@ interface CompactionRequestMetadata {
   };
 }
 
+interface SwitchAgentResult {
+  agentId: string;
+  reason?: string;
+  followUp?: string;
+}
+
+const MAX_CONSECUTIVE_AGENT_SWITCHES = 3;
+
 const PDF_MEDIA_TYPE = "application/pdf";
 
 function normalizeMediaType(mediaType: string): string {
@@ -182,6 +190,9 @@ export class AgentSession {
   private turnPhase: TurnPhase = TurnPhase.IDLE;
   // When true, stream-end skips auto-flushing queued messages so an edit can truncate first.
   private deferQueuedFlushUntilAfterEdit = false;
+  /** Guardrail against synthetic switch_agent ping-pong loops. */
+  private consecutiveAgentSwitches = 0;
+
   private idleWaiters: Array<() => void> = [];
   private readonly messageQueue = new MessageQueue();
   private readonly compactionHandler: CompactionHandler;
@@ -511,6 +522,11 @@ export class AgentSession {
     this.assertNotDisposed("sendMessage");
 
     assert(typeof message === "string", "sendMessage requires a string message");
+    // Real user sends break any synthetic switch chain.
+    if (!internal?.synthetic) {
+      this.consecutiveAgentSwitches = 0;
+    }
+
     const trimmedMessage = message.trim();
     const fileParts = options?.fileParts;
     const editMessageId = options?.editMessageId;
@@ -1815,10 +1831,13 @@ export class AgentSession {
     forward("stream-end", async (payload) => {
       this.setTurnPhase(TurnPhase.COMPLETING);
 
+      const streamEndPayload = payload as StreamEndEvent;
+      const activeStreamOptions = this.activeStreamContext?.options;
+
       let emittedStreamEnd = false;
       try {
         this.activeCompactionRequest = undefined;
-        const handled = await this.compactionHandler.handleCompletion(payload as StreamEndEvent);
+        const handled = await this.compactionHandler.handleCompletion(streamEndPayload);
 
         if (!handled) {
           this.emitChatEvent(payload);
@@ -1852,6 +1871,18 @@ export class AgentSession {
           await this.dispatchPendingFollowUp();
         }
 
+        const switchResult = this.extractSwitchAgentResult(streamEndPayload);
+        if (switchResult) {
+          const dispatchedSwitchFollowUp = await this.dispatchAgentSwitch(
+            switchResult,
+            activeStreamOptions,
+            streamEndPayload.metadata.model
+          );
+          if (dispatchedSwitchFollowUp) {
+            return;
+          }
+        }
+
         // Stream end: auto-send queued messages (for user messages typed during streaming)
         // P2: if an edit is waiting, skip the queue flush so the edit truncates first.
         if (this.deferQueuedFlushUntilAfterEdit) {
@@ -1876,7 +1907,8 @@ export class AgentSession {
         }
       } finally {
         // Only clean up if we're still in COMPLETING — a new turn started by
-        // dispatchPendingFollowUp() or sendQueuedMessages() owns the stream state now.
+        // dispatchPendingFollowUp(), dispatchAgentSwitch(), or sendQueuedMessages()
+        // owns the stream state now.
         if (this.turnPhase === TurnPhase.COMPLETING) {
           this.resetActiveStreamState();
           this.setTurnPhase(TurnPhase.IDLE);
@@ -2067,6 +2099,106 @@ export class AgentSession {
           }
         });
     }
+  }
+
+  /** Extract a successful switch_agent tool result from stream-end parts (latest wins). */
+  private extractSwitchAgentResult(payload: StreamEndEvent): SwitchAgentResult | undefined {
+    for (let index = payload.parts.length - 1; index >= 0; index -= 1) {
+      const part = payload.parts[index];
+      if (part.type !== "dynamic-tool") {
+        continue;
+      }
+      if (part.state !== "output-available" || part.toolName !== "switch_agent") {
+        continue;
+      }
+
+      const parsedOutput = this.parseSwitchAgentOutput(part.output);
+      if (parsedOutput) {
+        return parsedOutput;
+      }
+    }
+
+    return undefined;
+  }
+
+  private parseSwitchAgentOutput(output: unknown): SwitchAgentResult | undefined {
+    if (typeof output !== "object" || output === null) {
+      return undefined;
+    }
+
+    const candidate = output as Record<string, unknown>;
+    if (candidate.ok !== true) {
+      return undefined;
+    }
+    if (typeof candidate.agentId !== "string") {
+      return undefined;
+    }
+
+    const agentId = candidate.agentId.trim();
+    if (agentId.length === 0) {
+      return undefined;
+    }
+
+    return {
+      agentId,
+      reason: typeof candidate.reason === "string" ? candidate.reason : undefined,
+      followUp: typeof candidate.followUp === "string" ? candidate.followUp : undefined,
+    };
+  }
+
+  /** Dispatch follow-up message after switch_agent and guard against ping-pong loops. */
+  private async dispatchAgentSwitch(
+    switchResult: SwitchAgentResult,
+    currentOptions: SendMessageOptions | undefined,
+    fallbackModel: string
+  ): Promise<boolean> {
+    assert(
+      typeof switchResult.agentId === "string" && switchResult.agentId.trim().length > 0,
+      "dispatchAgentSwitch requires a non-empty switchResult.agentId"
+    );
+    assert(
+      typeof fallbackModel === "string" && fallbackModel.trim().length > 0,
+      "dispatchAgentSwitch requires a non-empty fallbackModel"
+    );
+
+    this.consecutiveAgentSwitches += 1;
+    if (this.consecutiveAgentSwitches > MAX_CONSECUTIVE_AGENT_SWITCHES) {
+      log.warn("switch_agent loop guard triggered; skipping synthetic follow-up", {
+        workspaceId: this.workspaceId,
+        count: this.consecutiveAgentSwitches,
+        limit: MAX_CONSECUTIVE_AGENT_SWITCHES,
+        targetAgentId: switchResult.agentId,
+      });
+      return false;
+    }
+
+    const followUpText = switchResult.followUp?.trim() || "Continue.";
+    const normalizedOptionModel = currentOptions?.model?.trim();
+    const effectiveModel =
+      normalizedOptionModel && normalizedOptionModel.length > 0
+        ? normalizedOptionModel
+        : fallbackModel.trim();
+
+    const followUpOptions: SendMessageOptions = {
+      ...(currentOptions ?? {}),
+      model: effectiveModel,
+      agentId: switchResult.agentId,
+    };
+
+    const sendResult = await this.sendMessage(followUpText, followUpOptions, {
+      synthetic: true,
+    });
+
+    if (!sendResult.success) {
+      log.warn("Failed to dispatch switch_agent follow-up", {
+        workspaceId: this.workspaceId,
+        targetAgentId: switchResult.agentId,
+        error: sendResult.error,
+      });
+      return false;
+    }
+
+    return true;
   }
 
   /**
