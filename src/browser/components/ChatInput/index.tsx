@@ -157,7 +157,7 @@ function estimateBase64DataUrlBytes(dataUrl: string): number | null {
 }
 const MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS = 4_000_000;
 
-export type { ChatInputProps, ChatInputAPI };
+export type { ChatInputAPI };
 
 const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { api } = useAPI();
