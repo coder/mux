@@ -665,12 +665,20 @@ function AppInner() {
       } else if (matchesKeybind(e, KEYBINDS.PREV_WORKSPACE)) {
         e.preventDefault();
         handleNavigateWorkspace("prev");
-      } else if (matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE)) {
+      } else if (
+        matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE) ||
+        matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE_ALT)
+      ) {
         e.preventDefault();
         if (isCommandPaletteOpen) {
           closeCommandPalette();
         } else {
-          openCommandPalette();
+          // Alternate palette shortcut opens in command mode (with ">") while the
+          // primary Ctrl/Cmd+Shift+P shortcut opens default workspace-switch mode.
+          const initialQuery = matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE_ALT)
+            ? ">"
+            : undefined;
+          openCommandPalette(initialQuery);
         }
       } else if (matchesKeybind(e, KEYBINDS.OPEN_MUX_CHAT)) {
         e.preventDefault();
