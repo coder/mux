@@ -4,7 +4,8 @@
  */
 import { Config } from "@/node/config";
 import { ServiceContainer } from "@/node/services/serviceContainer";
-import { migrateLegacyMuxHome } from "@/common/constants/paths";
+import { getMuxHome, migrateLegacyMuxHome } from "@/common/constants/paths";
+import { ServerLockfile } from "@/node/services/serverLockfile";
 import type { BrowserWindow } from "electron";
 import { Command } from "commander";
 import { validateProjectPath } from "@/node/utils/pathUtils";
@@ -62,6 +63,19 @@ const mockWindow: BrowserWindow = {
   }, 1000);
 
   migrateLegacyMuxHome();
+
+  // Early lockfile check: detect an existing server BEFORE initializing services.
+  // serviceContainer.initialize() resumes queued/running tasks (via TaskService),
+  // so we must fail fast here to avoid orphaned side effects when another server
+  // already holds the lock. ServerService.startServer() re-checks as defense-in-depth.
+  const muxHome = getMuxHome();
+  const earlyLockfile = new ServerLockfile(muxHome);
+  const existing = await earlyLockfile.read();
+  if (existing) {
+    console.error(`Error: mux API server is already running at ${existing.baseUrl}`);
+    console.error(`Use 'mux api' commands to interact with the running instance.`);
+    process.exit(1);
+  }
 
   const config = new Config();
   const serviceContainer = new ServiceContainer(config);
