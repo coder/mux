@@ -7,7 +7,6 @@ import {
   type RuntimeMode,
   type ParsedRuntime,
   type CoderWorkspaceConfig,
-  parseRuntimeModeAndHost,
   buildRuntimeString,
   RUNTIME_MODE,
   CODER_RUNTIME_PLACEHOLDER,
@@ -195,7 +194,9 @@ export function useDraftWorkspaceSettings(
   const globalDefaultRuntime = normalizeRuntimeChoice(rawGlobalDefaultRuntime);
 
   // Project-scoped default runtime (persisted when the creation tooltip checkbox is used).
-  const [defaultRuntimeString, setDefaultRuntimeString] = usePersistedState<string | undefined>(
+  // Legacy per-project default (only write-side used by setDefaultRuntimeChoice; reads
+  // now come from settingsDefaultRuntime above).
+  const [, setDefaultRuntimeString] = usePersistedState<string | undefined>(
     getRuntimeKey(projectPath),
     undefined,
     { listener: true }
@@ -206,12 +207,10 @@ export function useDraftWorkspaceSettings(
       ? (projectConfig.defaultRuntime ?? globalDefaultRuntime ?? RUNTIME_MODE.WORKTREE)
       : (globalDefaultRuntime ?? RUNTIME_MODE.WORKTREE);
 
-  // Respect prior per-project draft selections first; only fall back to Settings defaults
-  // when there is no persisted runtime string for this project yet.
-  const parsedDefault =
-    defaultRuntimeString === undefined
-      ? buildRuntimeFromChoice(settingsDefaultRuntime)
-      : parseRuntimeModeAndHost(defaultRuntimeString);
+  // Always use the Settings-configured default as the canonical source of truth.
+  // The old per-project localStorage key (getRuntimeKey) is now stale since the creation
+  // tooltip default toggle was removed; new defaults come from the Runtimes settings panel.
+  const parsedDefault = buildRuntimeFromChoice(settingsDefaultRuntime);
   const defaultRuntimeMode: RuntimeMode = parsedDefault?.mode ?? RUNTIME_MODE.WORKTREE;
 
   // Project-scoped trunk branch preference (persisted per project)
@@ -372,12 +371,11 @@ export function useDraftWorkspaceSettings(
   const defaultSshHost =
     parsedDefault?.mode === RUNTIME_MODE.SSH ? parsedDefault.host : lastSsh.host;
 
-  // When the persisted default says "Coder", reuse the saved config even if last-used SSH disabled it.
-  // When settings say plain "ssh" and there's no draft selection, don't reattach the last-used
-  // coder config — that would override the user's explicit plain SSH preference.
+  // When the settings default says "Coder", reuse the saved config even if last-used SSH disabled it.
+  // When settings say plain "ssh", don't reattach the last-used coder config.
   const defaultSshCoder = coderDefaultFromString
     ? (lastSshState.coderConfig ?? DEFAULT_CODER_CONFIG)
-    : defaultRuntimeString === undefined && settingsDefaultRuntime === RUNTIME_MODE.SSH
+    : settingsDefaultRuntime === RUNTIME_MODE.SSH
       ? undefined
       : lastSsh.coder;
 

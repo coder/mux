@@ -6,7 +6,11 @@ import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import { ProjectProvider } from "@/browser/contexts/ProjectContext";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { getLastRuntimeConfigKey, getRuntimeKey } from "@/common/constants/storage";
+import {
+  DEFAULT_RUNTIME_KEY,
+  getLastRuntimeConfigKey,
+  getRuntimeKey,
+} from "@/common/constants/storage";
 import { CODER_RUNTIME_PLACEHOLDER } from "@/common/types/runtime";
 import { useDraftWorkspaceSettings } from "./useDraftWorkspaceSettings";
 
@@ -135,7 +139,8 @@ describe("useDraftWorkspaceSettings", () => {
   test("keeps Coder default even after plain SSH usage", async () => {
     const projectPath = "/tmp/project";
 
-    updatePersistedState(getRuntimeKey(projectPath), `ssh ${CODER_RUNTIME_PLACEHOLDER}`);
+    updatePersistedState(DEFAULT_RUNTIME_KEY, "coder");
+    updatePersistedState(getRuntimeKey(projectPath), "ssh dev@host");
     updatePersistedState(getLastRuntimeConfigKey(projectPath), {
       ssh: {
         host: "dev@host",
