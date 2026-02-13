@@ -524,12 +524,11 @@ export function CreationControls(props: CreationControlsProps) {
   const isCoderSelected =
     selectedRuntime.mode === RUNTIME_MODE.SSH && selectedRuntime.coder != null;
   const runtimeChoice: RuntimeChoice = isCoderSelected ? "coder" : runtimeMode;
-  const coderUsername =
-    props.coderProps?.coderInfo?.state === "available"
-      ? props.coderProps.coderInfo.username
-      : undefined;
-  const coderDeploymentUrl =
-    props.coderProps?.coderInfo?.state === "available" ? props.coderProps.coderInfo.url : undefined;
+  const coderInfo = props.coderInfo ?? props.coderProps?.coderInfo ?? null;
+  const coderAvailability = resolveCoderAvailability(coderInfo);
+  const isCoderAvailable = coderAvailability.state === "available";
+  const coderUsername = coderInfo?.state === "available" ? coderInfo.username : undefined;
+  const coderDeploymentUrl = coderInfo?.state === "available" ? coderInfo.url : undefined;
 
   const availabilityMap =
     runtimeAvailabilityState.status === "loaded" ? runtimeAvailabilityState.data : null;
@@ -584,8 +583,13 @@ export function CreationControls(props: CreationControlsProps) {
       if (runtimeEnablement?.[mode] === false) {
         return false;
       }
-      if (mode === "coder" && !props.coderProps) {
-        return false;
+      if (mode === "coder") {
+        if (!props.coderProps) {
+          return false;
+        }
+        if (!isCoderAvailable) {
+          return false;
+        }
       }
       // Filter by availability to avoid selecting unavailable runtimes (e.g., Docker
       // when daemon is down, devcontainer when config missing, non-git projects).
@@ -622,7 +626,7 @@ export function CreationControls(props: CreationControlsProps) {
 
     // User request: auto-switch away from Settings-disabled runtimes.
     if (firstEnabled === "coder") {
-      if (!props.coderProps) {
+      if (!props.coderProps || !isCoderAvailable) {
         return;
       }
       onSelectedRuntimeChange({
@@ -691,6 +695,7 @@ export function CreationControls(props: CreationControlsProps) {
     runtimeAvailabilityState,
     runtimeChoice,
     selectedRuntime,
+    isCoderAvailable,
   ]);
 
   const handleNameChange = useCallback(
@@ -909,7 +914,7 @@ export function CreationControls(props: CreationControlsProps) {
             disabled={props.disabled}
             runtimeAvailabilityState={runtimeAvailabilityState}
             runtimeEnablement={props.runtimeEnablement}
-            coderInfo={props.coderInfo ?? props.coderProps?.coderInfo ?? null}
+            coderInfo={coderInfo}
             allowedRuntimeModes={props.allowedRuntimeModes}
             allowSshHost={props.allowSshHost}
             allowSshCoder={props.allowSshCoder}
