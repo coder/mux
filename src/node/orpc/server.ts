@@ -169,19 +169,13 @@ function inferProtocol(req: OriginValidationRequest): "http" | "https" {
 }
 
 function getExpectedOrigin(req: OriginValidationRequest): string | null {
-  const forwardedHost = getFirstHeaderValue(req, "x-forwarded-host");
-  const forwardedProto = getFirstHeaderValue(req, "x-forwarded-proto");
-
-  if (forwardedHost && forwardedProto) {
-    return buildOrigin(forwardedProto, forwardedHost);
-  }
-
-  const host = getFirstHeaderValue(req, "host");
+  const host = getFirstHeaderValue(req, "x-forwarded-host") ?? getFirstHeaderValue(req, "host");
   if (!host) {
     return null;
   }
 
-  return buildOrigin(inferProtocol(req), host);
+  const proto = getFirstHeaderValue(req, "x-forwarded-proto") ?? inferProtocol(req);
+  return buildOrigin(proto, host);
 }
 
 function normalizeOrigin(raw: string | null | undefined): string | null {
@@ -234,6 +228,19 @@ function getPathnameFromRequestUrl(requestUrl: string | undefined): string | nul
   }
 }
 
+const OAUTH_CALLBACK_ORIGIN_BYPASS_PATHS = new Set<string>([
+  "/auth/mux-gateway/callback",
+  "/auth/mux-governor/callback",
+  "/auth/mcp-oauth/callback",
+]);
+
+function isOAuthCallbackNavigationRequest(req: Pick<express.Request, "method" | "path">): boolean {
+  return (
+    (req.method === "GET" || req.method === "POST") &&
+    OAUTH_CALLBACK_ORIGIN_BYPASS_PATHS.has(req.path)
+  );
+}
+
 /**
  * Create an oRPC server with HTTP and WebSocket endpoints.
  *
@@ -281,6 +288,7 @@ export async function createOrpcServer({
     const normalizedOrigin = normalizeOrigin(originHeader);
     const expectedOrigin = getExpectedOrigin(req);
     const allowedOrigin = isOriginAllowed(req) ? normalizedOrigin : null;
+    const oauthCallbackNavigationRequest = isOAuthCallbackNavigationRequest(req);
 
     if (req.method === "OPTIONS") {
       if (!allowedOrigin) {
@@ -305,6 +313,14 @@ export async function createOrpcServer({
     }
 
     if (!allowedOrigin) {
+      // OAuth redirects can legitimately arrive from a different origin (including
+      // response_mode=form_post). These callback handlers validate OAuth state
+      // before exchanging codes, so allowing navigation requests here is safe.
+      if (oauthCallbackNavigationRequest) {
+        next();
+        return;
+      }
+
       log.warn("Blocked cross-origin HTTP request", {
         method: req.method,
         path: req.path,
