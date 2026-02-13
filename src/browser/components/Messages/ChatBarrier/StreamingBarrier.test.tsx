@@ -89,6 +89,7 @@ void mock.module("@/browser/hooks/useModelsFromSettings", () => ({
   getDefaultModel: () => "openai:gpt-4o-mini",
 }));
 
+import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { StreamingBarrier } from "./StreamingBarrier";
 
 describe("StreamingBarrier", () => {
@@ -110,7 +111,7 @@ describe("StreamingBarrier", () => {
     globalThis.document = undefined as unknown as Document;
   });
 
-  test("clicking cancel during normal streaming interrupts with default options", () => {
+  test("clicking stop during normal streaming interrupts with default options", () => {
     currentWorkspaceState = createWorkspaceState({
       canInterrupt: true,
       isCompacting: false,
@@ -119,14 +120,53 @@ describe("StreamingBarrier", () => {
 
     const view = render(<StreamingBarrier workspaceId="ws-1" />);
 
-    fireEvent.click(view.getByRole("button", { name: "Interrupt streaming" }));
+    fireEvent.click(view.getByRole("button", { name: "Stop streaming" }));
 
     expect(disableAutoRetryPreferenceMock).toHaveBeenCalledWith("ws-1");
     expect(setInterrupting).toHaveBeenCalledWith("ws-1");
     expect(interruptStream).toHaveBeenCalledWith({ workspaceId: "ws-1" });
   });
 
-  test("clicking cancel during compaction uses onCancelCompaction when provided", () => {
+  test("clicking stop during stream-start interrupts without setting interrupting state", () => {
+    currentWorkspaceState = createWorkspaceState({
+      canInterrupt: false,
+      pendingStreamStartTime: Date.now(),
+      pendingStreamModel: "openai:gpt-4o-mini",
+    });
+
+    const view = render(<StreamingBarrier workspaceId="ws-1" />);
+
+    const stopButton = view.getByRole("button", { name: "Stop streaming" });
+    expect(stopButton.textContent).toContain("Esc");
+    expect(stopButton.getAttribute("title")).toBe("Esc");
+
+    fireEvent.click(stopButton);
+
+    expect(disableAutoRetryPreferenceMock).toHaveBeenCalledWith("ws-1");
+    expect(setInterrupting).not.toHaveBeenCalled();
+    expect(interruptStream).toHaveBeenCalledWith({ workspaceId: "ws-1" });
+  });
+
+  test("shows vim interrupt shortcut when vim mode is enabled", () => {
+    currentWorkspaceState = createWorkspaceState({
+      canInterrupt: false,
+      pendingStreamStartTime: Date.now(),
+      pendingStreamModel: "openai:gpt-4o-mini",
+    });
+
+    const view = render(<StreamingBarrier workspaceId="ws-1" vimEnabled />);
+
+    const stopButton = view.getByRole("button", { name: "Stop streaming" });
+    const expectedVimShortcut = formatKeybind(KEYBINDS.INTERRUPT_STREAM_VIM).replace(
+      "Escape",
+      "Esc"
+    );
+
+    expect(stopButton.textContent).toContain(expectedVimShortcut);
+    expect(stopButton.getAttribute("title")).toBe(expectedVimShortcut);
+  });
+
+  test("clicking stop during compaction uses onCancelCompaction when provided", () => {
     currentWorkspaceState = createWorkspaceState({
       canInterrupt: true,
       isCompacting: true,
@@ -137,7 +177,7 @@ describe("StreamingBarrier", () => {
       <StreamingBarrier workspaceId="ws-1" onCancelCompaction={onCancelCompaction} />
     );
 
-    fireEvent.click(view.getByRole("button", { name: "Interrupt streaming" }));
+    fireEvent.click(view.getByRole("button", { name: "Stop streaming" }));
 
     expect(disableAutoRetryPreferenceMock).toHaveBeenCalledWith("ws-1");
     expect(onCancelCompaction).toHaveBeenCalledTimes(1);
@@ -145,7 +185,7 @@ describe("StreamingBarrier", () => {
     expect(interruptStream).not.toHaveBeenCalled();
   });
 
-  test("clicking cancel during compaction falls back to abandonPartial interrupt", () => {
+  test("clicking stop during compaction falls back to abandonPartial interrupt", () => {
     currentWorkspaceState = createWorkspaceState({
       canInterrupt: true,
       isCompacting: true,
@@ -153,7 +193,7 @@ describe("StreamingBarrier", () => {
 
     const view = render(<StreamingBarrier workspaceId="ws-1" />);
 
-    fireEvent.click(view.getByRole("button", { name: "Interrupt streaming" }));
+    fireEvent.click(view.getByRole("button", { name: "Stop streaming" }));
 
     expect(disableAutoRetryPreferenceMock).toHaveBeenCalledWith("ws-1");
     expect(setInterrupting).not.toHaveBeenCalled();
@@ -171,7 +211,7 @@ describe("StreamingBarrier", () => {
 
     const view = render(<StreamingBarrier workspaceId="ws-1" />);
 
-    expect(view.queryByRole("button", { name: "Interrupt streaming" })).toBeNull();
+    expect(view.queryByRole("button", { name: "Stop streaming" })).toBeNull();
     expect(view.getByText("type a message to respond")).toBeTruthy();
   });
 });

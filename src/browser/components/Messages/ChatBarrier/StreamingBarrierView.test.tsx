@@ -16,9 +16,30 @@ describe("StreamingBarrierView", () => {
     globalThis.document = undefined as unknown as Document;
   });
 
-  test("renders cancel hint as a button when onCancel is provided", () => {
+  test("renders stop button when onCancel is provided", () => {
     const onCancel = mock(() => undefined);
 
+    const view = render(
+      <StreamingBarrierView
+        statusText="streaming..."
+        cancelText="hit Esc to cancel"
+        cancelShortcutText="Esc"
+        onCancel={onCancel}
+      />
+    );
+
+    const stopButton = view.getByRole("button", { name: "Stop streaming" });
+    expect(stopButton.textContent).toContain("Stop");
+    expect(stopButton.textContent).toContain("Esc");
+    expect(stopButton.getAttribute("title")).toBe("Esc");
+
+    fireEvent.click(stopButton);
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not render shortcut badge when cancelShortcutText is omitted", () => {
+    const onCancel = mock(() => undefined);
     const view = render(
       <StreamingBarrierView
         statusText="streaming..."
@@ -27,9 +48,9 @@ describe("StreamingBarrierView", () => {
       />
     );
 
-    fireEvent.click(view.getByRole("button", { name: "Interrupt streaming" }));
-
-    expect(onCancel).toHaveBeenCalledTimes(1);
+    const stopButton = view.getByRole("button", { name: "Stop streaming" });
+    expect(stopButton.textContent).toContain("Stop");
+    expect(stopButton.textContent).not.toContain("Esc");
   });
 
   test("renders cancel hint as plain text when onCancel is omitted", () => {
@@ -38,6 +59,6 @@ describe("StreamingBarrierView", () => {
     );
 
     expect(view.getByText("hit Esc to cancel")).toBeTruthy();
-    expect(view.queryByRole("button", { name: "Interrupt streaming" })).toBeNull();
+    expect(view.queryByRole("button", { name: "Stop streaming" })).toBeNull();
   });
 });

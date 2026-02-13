@@ -747,6 +747,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                 <PinnedTodoList workspaceId={workspaceId} />
                 <StreamingBarrier
                   workspaceId={workspaceId}
+                  vimEnabled={vimEnabled}
                   onCancelCompaction={handleCancelCompactionFromBarrier}
                 />
                 {shouldShowQueuedAgentTaskPrompt && (

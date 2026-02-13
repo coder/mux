@@ -2218,6 +2218,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     }
   };
 
+  const interruptKeybind = vimEnabled
+    ? KEYBINDS.INTERRUPT_STREAM_VIM
+    : KEYBINDS.INTERRUPT_STREAM_NORMAL;
+
   // Build placeholder text based on current state
   const placeholder = (() => {
     // Creation view keeps the onboarding prompt; workspace stays concise for the inline hints.
@@ -2239,9 +2243,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       }
     }
     if (isCompacting) {
-      const interruptKeybind = vimEnabled
-        ? KEYBINDS.INTERRUPT_STREAM_VIM
-        : KEYBINDS.INTERRUPT_STREAM_NORMAL;
       return `Compacting... (${formatKeybind(interruptKeybind)} cancel | ${formatKeybind(KEYBINDS.SEND_MESSAGE)} to queue)`;
     }
 

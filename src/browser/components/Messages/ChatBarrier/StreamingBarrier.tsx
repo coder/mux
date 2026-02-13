@@ -29,6 +29,11 @@ interface StreamingBarrierProps {
   workspaceId: string;
   className?: string;
   /**
+   * Optional vim state from parent subscription.
+   * Falls back to persisted value when omitted.
+   */
+  vimEnabled?: boolean;
+  /**
    * Optional compaction-specific cancel hook.
    * When provided, this path should preserve compaction edit state + follow-up content.
    */
@@ -43,6 +48,7 @@ interface StreamingBarrierProps {
 export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
   workspaceId,
   className,
+  vimEnabled: vimEnabledFromParent,
   onCancelCompaction,
 }) => {
   const workspaceState = useWorkspaceState(workspaceId);
@@ -95,11 +101,11 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
       : currentModel;
   const modelName = model ? getModelName(model) : null;
 
-  // Vim mode affects cancel keybind hint (read once per render, no subscription needed)
-  const vimEnabled = readPersistedState(VIM_ENABLED_KEY, false);
+  // Prefer parent vim state (subscribed in ChatPane) so the hint updates immediately.
+  const vimEnabled = vimEnabledFromParent ?? readPersistedState(VIM_ENABLED_KEY, false);
   const interruptKeybind = formatKeybind(
     vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL
-  );
+  ).replace("Escape", "Esc");
   const interruptHint = `hit ${interruptKeybind} to cancel`;
 
   // Compute status text based on phase
@@ -136,15 +142,13 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
     }
   })();
 
-  const canTapCancel = phase === "streaming" || phase === "compacting";
+  const canTapCancel = phase === "starting" || phase === "streaming" || phase === "compacting";
   const handleCancelClick = () => {
     if (!api) {
       return;
     }
 
-    // Keep this strict: ask_user_question and starting states are intentionally not interruptable
-    // from this UI control to match keyboard shortcut semantics.
-    if (phase !== "streaming" && phase !== "compacting") {
+    if (phase !== "starting" && phase !== "streaming" && phase !== "compacting") {
       return;
     }
 
@@ -165,7 +169,10 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
       return;
     }
 
-    storeRaw.setInterrupting(workspaceId);
+    if (phase === "streaming") {
+      storeRaw.setInterrupting(workspaceId);
+    }
+
     void api.workspace.interruptStream({ workspaceId });
   };
 
@@ -180,6 +187,7 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
       tps={tps}
       cancelText={cancelText}
       onCancel={canTapCancel ? handleCancelClick : undefined}
+      cancelShortcutText={canTapCancel ? interruptKeybind : undefined}
       className={className}
       hintElement={
         showCompactionHint ? (
