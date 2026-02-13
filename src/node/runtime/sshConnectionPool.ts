@@ -23,6 +23,21 @@ import { log } from "@/node/services/log";
 import type { HostKeyVerificationService } from "@/node/services/hostKeyVerificationService";
 import { createAskpassSession, parseHostKeyPrompt } from "./sshAskpass";
 
+/**
+ * Classify an SSH_ASKPASS prompt to route it through the correct handler.
+ *
+ * OpenSSH askpass receives the bare prompt question (e.g., "Are you sure you
+ * want to continue connecting (yes/no/[fingerprint])?" for host-key, or
+ * "Enter passphrase for key '...':" for encrypted keys). We classify based
+ * on the prompt text so host-key prompts go through verification UI and
+ * everything else fails fast.
+ */
+function classifyAskpassPrompt(promptText: string): "host-key" | "credential" {
+  // OpenSSH host-key confirmation prompt always contains "continue connecting"
+  if (/continue connecting/i.test(promptText)) return "host-key";
+  return "credential";
+}
+
 let hostKeyService: HostKeyVerificationService | undefined;
 
 export function setHostKeyVerificationService(svc: HostKeyVerificationService): void {
@@ -419,11 +434,21 @@ export class SSHConnectionPool {
     // phase (60s) when a host-key prompt is detected.
     let extendDeadline: ((ms: number) => void) | undefined;
 
-    // Set up SSH_ASKPASS for host-key verification.
-    // The askpass script writes prompts to a temp file; we respond via a FIFO.
+    // Set up SSH_ASKPASS for interactive host-key verification.
+    // The askpass helper exchanges prompt/response text through temp files.
+    // Non-host-key prompts (passphrase, password) return empty to fail fast —
+    // passphrase-protected keys must be agent-unlocked before Mux can use them.
     const askpass =
       canPromptInteractively && verificationService
         ? await createAskpassSession(async (promptText) => {
+            if (classifyAskpassPrompt(promptText) !== "host-key") {
+              // Credential prompts (passphrase/password) are not supported during
+              // probe — keys must be unlocked via ssh-agent. Return empty string
+              // so SSH treats this as auth failure and moves on.
+              log.warn("SSH askpass: unsupported credential prompt during probe, failing fast");
+              return "";
+            }
+
             extendDeadline?.(HOST_KEY_APPROVAL_TIMEOUT_MS);
 
             const fullContext = stderr + "\n" + promptText;
