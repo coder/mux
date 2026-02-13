@@ -293,9 +293,11 @@ export const electronTest = base.extend<ElectronFixtures>({
         electronEnv.NODE_ENV = electronEnv.NODE_ENV ?? "production";
       }
 
-      // When running as root (e.g., in Docker/CI), Electron requires --no-sandbox
+      // When running in Linux containers, Electron's chrome-sandbox helper binary is often
+      // present but not configured correctly (setuid root). In that case Electron hard-fails
+      // unless we disable sandboxing.
       const launchArgs = ["."];
-      if (process.getuid?.() === 0) {
+      if (process.platform === "linux" || process.getuid?.() === 0) {
         launchArgs.unshift("--no-sandbox");
       }
 

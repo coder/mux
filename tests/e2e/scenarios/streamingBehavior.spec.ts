@@ -11,7 +11,7 @@ test.skip(
 );
 
 test.describe("streaming behavior", () => {
-  test("stream continues after settings modal opens", async ({ ui, page }) => {
+  test("stream continues after settings opens", async ({ ui, page }) => {
     await ui.projects.openFirstWorkspace();
 
     const streamPromise = ui.chat.captureStreamTimeline(async () => {
