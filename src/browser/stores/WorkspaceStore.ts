@@ -1656,8 +1656,14 @@ export class WorkspaceStore {
 
         if (aggregator) {
           const cursor = aggregator.getOnChatCursor();
-          if (cursor) {
-            mode = { type: "since", cursor };
+          if (cursor?.history) {
+            mode = {
+              type: "since",
+              cursor: {
+                history: cursor.history,
+                stream: cursor.stream,
+              },
+            };
           }
         }
 
