@@ -180,6 +180,15 @@ const RUNTIME_CHOICE_ORDER: RuntimeChoice[] = [
   RUNTIME_MODE.DEVCONTAINER,
 ];
 
+const RUNTIME_FALLBACK_ORDER: RuntimeChoice[] = [
+  RUNTIME_MODE.WORKTREE,
+  RUNTIME_MODE.LOCAL,
+  RUNTIME_MODE.SSH,
+  "coder",
+  RUNTIME_MODE.DOCKER,
+  RUNTIME_MODE.DEVCONTAINER,
+];
+
 const RUNTIME_CHOICE_OPTIONS: Array<{
   value: RuntimeChoice;
   label: string;
@@ -579,7 +588,7 @@ export function CreationControls(props: CreationControlsProps) {
       ? new Set<RuntimeMode>(props.allowedRuntimeModes)
       : null;
 
-    const firstEnabled = RUNTIME_CHOICE_ORDER.find((mode) => {
+    const firstEnabled = RUNTIME_FALLBACK_ORDER.find((mode) => {
       if (runtimeEnablement?.[mode] === false) {
         return false;
       }
