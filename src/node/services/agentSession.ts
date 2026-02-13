@@ -2273,7 +2273,7 @@ export class AgentSession {
       return false;
     }
 
-    const followUpText = switchResult.followUp?.trim() || "Continue.";
+    const followUpText = switchResult.followUp?.trim() ?? "Continue.";
     const normalizedOptionModel = currentOptions?.model?.trim();
     const effectiveModel =
       normalizedOptionModel && normalizedOptionModel.length > 0
