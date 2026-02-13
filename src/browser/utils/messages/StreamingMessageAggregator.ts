@@ -892,6 +892,7 @@ export class StreamingMessageAggregator {
   getOnChatCursor(): OnChatCursor | undefined {
     let maxHistorySequence = -1;
     let maxHistoryMessageId: string | undefined;
+    let minHistorySequence = Number.POSITIVE_INFINITY;
 
     for (const message of this.messages.values()) {
       const historySequence = message.metadata?.historySequence;
@@ -903,9 +904,13 @@ export class StreamingMessageAggregator {
         maxHistorySequence = historySequence;
         maxHistoryMessageId = message.id;
       }
+
+      if (historySequence < minHistorySequence) {
+        minHistorySequence = historySequence;
+      }
     }
 
-    if (!maxHistoryMessageId) {
+    if (!maxHistoryMessageId || !Number.isFinite(minHistorySequence)) {
       return undefined;
     }
 
@@ -918,6 +923,7 @@ export class StreamingMessageAggregator {
       history: {
         messageId: maxHistoryMessageId,
         historySequence: maxHistorySequence,
+        oldestHistorySequence: minHistorySequence,
       },
     };
 

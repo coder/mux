@@ -27,6 +27,10 @@ export const HeartbeatEventSchema = z.object({
 export const OnChatHistoryCursorSchema = z.object({
   messageId: z.string(),
   historySequence: z.number(),
+  // Oldest historySequence visible when the cursor was created.
+  // Server uses this to detect truncation/compaction that removed older rows
+  // while the client was disconnected, forcing a safe full replay fallback.
+  oldestHistorySequence: z.number().optional(),
 });
 
 /** Cursor for where the client left off in an active stream. */
