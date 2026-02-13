@@ -16,7 +16,7 @@ import { WorkspaceHoverPreview } from "./WorkspaceHoverPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
-import { Pencil, Trash2, Ellipsis, Loader2, Link2, Sparkles } from "lucide-react";
+import { Pencil, Trash2, Ellipsis, Loader2, Link2, Sparkles, GitBranch } from "lucide-react";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
@@ -76,6 +76,7 @@ export interface WorkspaceListItemProps extends WorkspaceListItemBaseProps {
   /** Section ID this workspace belongs to (for drag-drop targeting) */
   sectionId?: string;
   onSelectWorkspace: (selection: WorkspaceSelection) => void;
+  onForkWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
   onArchiveWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
   onCancelCreation: (workspaceId: string) => Promise<void>;
 }
@@ -349,6 +350,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     depth,
     sectionId,
     onSelectWorkspace,
+    onForkWorkspace,
     onArchiveWorkspace,
     onCancelCreation,
   } = props;
@@ -730,6 +732,23 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                       </span>
                     </span>
                   </button>
+                  {!isMuxHelpChat && (
+                    // Expose fork in the row menu so users can quickly branch off a chat
+                    // without needing to remember the /fork slash command.
+                    <button
+                      className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsTitleMenuOpen(false);
+                        void onForkWorkspace(workspaceId, e.currentTarget);
+                      }}
+                    >
+                      <span className="flex items-center gap-2">
+                        <GitBranch className="h-3 w-3 shrink-0" />
+                        Fork chat
+                      </span>
+                    </button>
+                  )}
                   {/* Share transcript link (gated on telemetry/link-sharing being enabled). */}
                   {linkSharingEnabled === true && !isMuxHelpChat && (
                     <button

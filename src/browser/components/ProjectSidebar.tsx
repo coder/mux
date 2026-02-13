@@ -60,6 +60,7 @@ import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
 import { useRouter } from "@/browser/contexts/RouterContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
+import { forkWorkspace } from "@/browser/utils/chatCommands";
 import { PopoverError } from "./PopoverError";
 import { SectionHeader } from "./SectionHeader";
 import { AddSectionButton } from "./AddSectionButton";
@@ -408,6 +409,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   } = useWorkspaceActions();
   const workspaceStore = useWorkspaceStoreRaw();
   const { navigateToProject } = useRouter();
+  const { api } = useAPI();
 
   // Get project state and operations from context
   const {
@@ -519,6 +521,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const [archivingWorkspaceIds, setArchivingWorkspaceIds] = useState<Set<string>>(new Set());
   const [removingWorkspaceIds, setRemovingWorkspaceIds] = useState<Set<string>>(new Set());
   const workspaceArchiveError = usePopoverError();
+  const workspaceForkError = usePopoverError();
   const workspaceRemoveError = usePopoverError();
   const [archiveConfirmation, setArchiveConfirmation] = useState<{
     workspaceId: string;
@@ -573,6 +576,35 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       setExpandedSections((prev) => ({ ...prev, [key]: true }));
     }
   };
+
+  const handleForkWorkspace = useCallback(
+    async (workspaceId: string, buttonElement?: HTMLElement) => {
+      if (!api) {
+        workspaceForkError.showError(workspaceId, "Not connected to server");
+        return;
+      }
+
+      const result = await forkWorkspace({
+        client: api,
+        sourceWorkspaceId: workspaceId,
+      });
+      if (result.success) {
+        return;
+      }
+
+      let anchor: { top: number; left: number } | undefined;
+      if (buttonElement) {
+        const rect = buttonElement.getBoundingClientRect();
+        anchor = {
+          top: rect.top + window.scrollY,
+          left: rect.right + 10,
+        };
+      }
+
+      workspaceForkError.showError(workspaceId, result.error ?? "Failed to fork chat", anchor);
+    },
+    [api, workspaceForkError]
+  );
 
   const performArchiveWorkspace = useCallback(
     async (workspaceId: string, buttonElement?: HTMLElement) => {
@@ -1067,6 +1099,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     metadata.isRemoving === true
                                   }
                                   onSelectWorkspace={handleSelectWorkspace}
+                                  onForkWorkspace={handleForkWorkspace}
                                   onArchiveWorkspace={handleArchiveWorkspace}
                                   onCancelCreation={handleCancelWorkspaceCreation}
                                   depth={depthByWorkspaceId[metadata.id] ?? 0}
@@ -1432,6 +1465,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             error={workspaceArchiveError.error}
             prefix="Failed to archive chat"
             onDismiss={workspaceArchiveError.clearError}
+          />
+          <PopoverError
+            error={workspaceForkError.error}
+            prefix="Failed to fork chat"
+            onDismiss={workspaceForkError.clearError}
           />
           <PopoverError
             error={workspaceRemoveError.error}
