@@ -120,7 +120,7 @@ const mockWindow: BrowserWindow = {
 
   if (resolved.mode === "disabled") {
     console.warn(
-      "\n⚠️  Authentication is DISABLED (--no-auth). The server is open to anyone who can reach it."
+      "\nWARNING: Authentication is DISABLED (--no-auth). The server is open to anyone who can reach it."
     );
   } else {
     console.log(`\n  Auth: enabled (token source: ${resolved.source})`);
