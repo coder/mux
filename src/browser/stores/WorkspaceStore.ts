@@ -2078,9 +2078,10 @@ export class WorkspaceStore {
 
       if (replay === "full") {
         // Full replay replaces backend-derived history state. Reset transient UI-only
-        // fields that are not reconstructed from persisted history so stale values
-        // (queued message/live tool output/task IDs) do not survive reconnect fallback.
-        transient.queuedMessage = null;
+        // fields that are never reconstructed from replayed history so stale values
+        // do not survive reconnect fallback.
+        // NOTE: queuedMessage is preserved because queued-message-changed is not
+        // replayed on subscribe; clearing it here can hide still-valid queued work.
         transient.liveBashOutput.clear();
         transient.liveTaskIds.clear();
       }
