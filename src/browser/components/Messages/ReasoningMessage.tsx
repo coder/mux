@@ -15,6 +15,32 @@ interface ReasoningMessageProps {
 const REASONING_FONT_CLASSES = "font-primary text-[12px] leading-[18px]";
 const MAX_SUMMARY_CHARS = 240;
 
+function parseLeadingBoldSummary(
+  summary: string
+): { boldText: string; trailingText: string } | null {
+  // OpenAI reasoning summaries commonly start with markdown bold: "**Title**".
+  // Parse only a leading pair so we can keep the cheap plain-text header render while
+  // preserving the expected visual emphasis.
+  if (!summary.startsWith("**")) {
+    return null;
+  }
+
+  const closingMarkerIndex = summary.indexOf("**", 2);
+  if (closingMarkerIndex <= 2) {
+    return null;
+  }
+
+  const boldText = summary.slice(2, closingMarkerIndex).trim();
+  if (!boldText) {
+    return null;
+  }
+
+  return {
+    boldText,
+    trailingText: summary.slice(closingMarkerIndex + 2),
+  };
+}
+
 export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, className }) => {
   const [isExpanded, setIsExpanded] = useState(message.isStreaming);
   // Track the height when expanded to reserve space during collapse transitions
@@ -30,6 +56,7 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
     summaryLineRaw.length > MAX_SUMMARY_CHARS
       ? `${summaryLineRaw.slice(0, MAX_SUMMARY_CHARS)}…`
       : summaryLineRaw;
+  const parsedLeadingBoldSummary = parseLeadingBoldSummary(summaryLine);
   const hasAdditionalLines = hasContent && /[\r\n]/.test(trimmedContent);
   // OpenAI models often emit terse, single-line traces; surface them inline instead of hiding behind the label.
   const isSingleLineTrace = !isStreaming && hasContent && !hasAdditionalLines;
@@ -44,12 +71,18 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
     }
   }, [isExpanded, isSingleLineTrace, content]);
 
-  // Auto-collapse when streaming ends
+  const wasStreamingRef = useRef(isStreaming);
+
+  // Auto-collapse only when a stream transitions from active -> completed.
+  // Keep user-triggered expansion working for completed messages.
   useEffect(() => {
-    if (!isStreaming && isExpanded) {
+    const wasStreaming = wasStreamingRef.current;
+    wasStreamingRef.current = isStreaming;
+
+    if (wasStreaming && !isStreaming) {
       setIsExpanded(false);
     }
-  }, [isStreaming, isExpanded]);
+  }, [isStreaming]);
 
   const toggleExpanded = () => {
     if (!isCollapsible) {
@@ -117,7 +150,14 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
               <Shimmer colorClass="var(--color-thinking-mode)">Thinking...</Shimmer>
             ) : hasContent ? (
               <span className={cn("truncate whitespace-nowrap", REASONING_FONT_CLASSES)}>
-                {summaryLine}
+                {parsedLeadingBoldSummary ? (
+                  <>
+                    <strong>{parsedLeadingBoldSummary.boldText}</strong>
+                    {parsedLeadingBoldSummary.trailingText}
+                  </>
+                ) : (
+                  summaryLine
+                )}
               </span>
             ) : (
               "Thought"
