@@ -335,4 +335,12 @@ export class ServerService {
   isServerRunning(): boolean {
     return this.server !== null;
   }
+
+  /**
+   * Get the path to the server lockfile (for displaying to users).
+   * Returns null if no server lockfile has been acquired yet.
+   */
+  getLockfilePath(): string | null {
+    return this.lockfile?.getLockPath() ?? null;
+  }
 }
