@@ -51,6 +51,8 @@ export interface ResolveAgentOptions {
   requestedAgentId: string | undefined;
   /** When true, skip workspace-specific agents (for "unbricking" broken agent files). */
   disableWorkspaceAgents: boolean;
+  /** Enable switch_agent tool for sessions that were started from the Auto agent. */
+  enableAgentSwitchTool: boolean;
   modelString: string;
   /** Caller-supplied tool policy (applied AFTER agent policy for further restriction). */
   callerToolPolicy: ToolPolicy | undefined;
@@ -102,6 +104,7 @@ export async function resolveAgentForStream(
     workspacePath,
     requestedAgentId: rawAgentId,
     disableWorkspaceAgents,
+    enableAgentSwitchTool,
     modelString,
     callerToolPolicy,
     cfg,
@@ -224,6 +227,7 @@ export async function resolveAgentForStream(
     agents: agentsForInheritance,
     isSubagent: isSubagentWorkspace,
     disableTaskToolsForDepth: shouldDisableTaskToolsForDepth,
+    enableAgentSwitchTool,
   });
 
   // The Chat with Mux system workspace must remain sandboxed regardless of caller-supplied
