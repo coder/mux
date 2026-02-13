@@ -461,9 +461,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   });
   const { startSequence: startTutorial } = useTutorial();
 
-  // Track OpenAI provider voice prerequisites from Settings → Providers.
+  // Track transcription provider prerequisites from Settings → Providers.
   const [openAIKeySet, setOpenAIKeySet] = useState(false);
   const [openAIProviderEnabled, setOpenAIProviderEnabled] = useState(true);
+  const [muxGatewayCouponSet, setMuxGatewayCouponSet] = useState(false);
+  const [muxGatewayEnabled, setMuxGatewayEnabled] = useState(true);
+  const isTranscriptionAvailable =
+    (openAIProviderEnabled && openAIKeySet) || (muxGatewayEnabled && muxGatewayCouponSet);
 
   // Voice input - appends transcribed text to input
   const voiceInput = useVoiceInput({
@@ -477,15 +481,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       pushToast({ type: "error", message: error });
     },
     onSend: () => void handleSend(),
-    openAIKeySet,
-    openAIProviderEnabled,
+    isTranscriptionAvailable,
     useRecordingKeybinds: true,
     api,
   });
 
-  const voiceInputUnavailableMessage = !voiceInput.isProviderEnabled
-    ? "Voice input is disabled because OpenAI provider is turned off. Enable it in Settings → Providers."
-    : "Voice input requires OpenAI API key. Configure in Settings → Providers.";
+  const voiceInputUnavailableMessage =
+    "Voice input requires a Mux Gateway login or an OpenAI API key. Configure in Settings → Providers.";
 
   // Start creation tutorial when entering creation mode
   useEffect(() => {
@@ -1248,7 +1250,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     };
   }, [api, variant, workspaceId, atMentionProjectPath, sendMessageOptions.disableWorkspaceAgents]);
 
-  // Voice input: track OpenAI key + enabled state (subscribe to provider config changes)
+  // Voice input: track transcription provider availability (subscribe to provider config changes)
   useEffect(() => {
     if (!api) return;
 
@@ -1259,12 +1261,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     // Ensure we `return()` them so backend subscriptions clean up EventEmitter listeners.
     let iterator: AsyncIterator<unknown> | null = null;
 
-    const checkOpenAIKey = async () => {
+    const checkTranscriptionConfig = async () => {
       try {
         const config = await api.providers.getConfig();
         if (!signal.aborted) {
           setOpenAIKeySet(config?.openai?.apiKeySet ?? false);
           setOpenAIProviderEnabled(config?.openai?.isEnabled ?? true);
+          setMuxGatewayCouponSet(config?.["mux-gateway"]?.couponCodeSet ?? false);
+          setMuxGatewayEnabled(config?.["mux-gateway"]?.isEnabled ?? true);
         }
       } catch {
         // Ignore errors fetching config
@@ -1272,7 +1276,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     };
 
     // Initial fetch
-    void checkOpenAIKey();
+    void checkTranscriptionConfig();
 
     // Subscribe to provider config changes via oRPC
     (async () => {
@@ -1288,7 +1292,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
         for await (const _ of subscribedIterator) {
           if (signal.aborted) break;
-          void checkOpenAIKey();
+          void checkTranscriptionConfig();
         }
       } catch {
         // Subscription cancelled via abort signal - expected on cleanup
@@ -1396,7 +1400,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (!voiceInput.shouldShowUI) return;
 
     const handleToggle = () => {
-      if (!voiceInput.isProviderEnabled || !voiceInput.isApiKeySet) {
+      if (!voiceInput.isAvailable) {
         pushToast({
           type: "error",
           message: voiceInputUnavailableMessage,
@@ -2155,7 +2159,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     // Handle voice input toggle (Ctrl+D / Cmd+D)
     if (matchesKeybind(e, KEYBINDS.TOGGLE_VOICE_INPUT) && voiceInput.shouldShowUI) {
       e.preventDefault();
-      if (!voiceInput.isProviderEnabled || !voiceInput.isApiKeySet) {
+      if (!voiceInput.isAvailable) {
         pushToast({
           type: "error",
           message: voiceInputUnavailableMessage,
@@ -2172,8 +2176,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       !e.repeat &&
       input.trim() === "" &&
       voiceInput.shouldShowUI &&
-      voiceInput.isProviderEnabled &&
-      voiceInput.isApiKeySet &&
+      voiceInput.isAvailable &&
       voiceInput.state === "idle"
     ) {
       e.preventDefault();
@@ -2443,8 +2446,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 <div className="absolute right-2 bottom-2">
                   <VoiceInputButton
                     state={voiceInput.state}
-                    isApiKeySet={voiceInput.isApiKeySet}
-                    isProviderEnabled={voiceInput.isProviderEnabled}
+                    isApiKeySet={voiceInput.isAvailable}
+                    isProviderEnabled={voiceInput.isAvailable}
                     shouldShowUI={voiceInput.shouldShowUI}
                     requiresSecureContext={voiceInput.requiresSecureContext}
                     onToggle={voiceInput.toggle}

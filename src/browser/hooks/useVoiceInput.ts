@@ -1,5 +1,5 @@
 /**
- * Voice input via OpenAI transcription (gpt-4o-transcribe).
+ * Voice input via backend transcription (Mux Gateway or OpenAI credentials).
  *
  * State machine: idle → requesting → recording → transcribing → idle
  *
@@ -20,9 +20,8 @@ export interface UseVoiceInputOptions {
   onError?: (error: string) => void;
   /** Called after successful transcription if stop({ send: true }) was used */
   onSend?: () => void;
-  openAIKeySet: boolean;
-  /** Whether the OpenAI provider is enabled in Settings → Providers. */
-  openAIProviderEnabled: boolean;
+  /** Whether voice transcription is available (OpenAI key set OR Mux Gateway configured). */
+  isTranscriptionAvailable: boolean;
   /**
    * When true, hook manages global keybinds during recording:
    * - Space: stop and send (requires release after start)
@@ -37,8 +36,7 @@ export interface UseVoiceInputOptions {
 export interface UseVoiceInputResult {
   state: VoiceInputState;
   isSupported: boolean;
-  isApiKeySet: boolean;
-  isProviderEnabled: boolean;
+  isAvailable: boolean;
   /** False on touch devices (they have native keyboard dictation) */
   shouldShowUI: boolean;
   /** True when running over HTTP (not localhost) - microphone requires secure context */
@@ -219,8 +217,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
       HAS_GET_USER_MEDIA &&
       !HAS_TOUCH_DICTATION &&
       state === "idle" &&
-      callbacksRef.current.openAIProviderEnabled &&
-      callbacksRef.current.openAIKeySet;
+      callbacksRef.current.isTranscriptionAvailable;
 
     if (!canStart) return;
 
@@ -375,8 +372,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
   return {
     state,
     isSupported: HAS_MEDIA_RECORDER && HAS_GET_USER_MEDIA,
-    isApiKeySet: callbacksRef.current.openAIKeySet,
-    isProviderEnabled: callbacksRef.current.openAIProviderEnabled,
+    isAvailable: callbacksRef.current.isTranscriptionAvailable,
     shouldShowUI: HAS_MEDIA_RECORDER && !HAS_TOUCH_DICTATION,
     requiresSecureContext: HAS_MEDIA_RECORDER && !HAS_GET_USER_MEDIA,
     mediaRecorder,
