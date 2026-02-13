@@ -200,12 +200,38 @@ async function findWorkspaceMCPDialog(
 }
 
 function createWorkspaceMCPModalScope(canvasElement: HTMLElement) {
+  /** Re-open the dialog if a Storybook remount reset component state. */
+  const ensureOpen = async () => {
+    if (!queryWorkspaceMCPDialog(canvasElement)) {
+      await openWorkspaceMCPModal(canvasElement);
+    }
+  };
+
   return {
-    query: () => {
-      const dialog = queryWorkspaceMCPDialog(canvasElement);
-      return dialog ? within(dialog) : null;
+    /** Self-healing find: re-opens the dialog if it disappeared. */
+    find: async (timeout = 10000) => {
+      await ensureOpen();
+      return within(await findWorkspaceMCPDialog(canvasElement, timeout));
     },
-    find: async (timeout = 10000) => within(await findWorkspaceMCPDialog(canvasElement, timeout)),
+    /**
+     * Self-healing assertion: ensures the dialog is open, then retries the
+     * assertion callback until it passes or timeout expires. Survives
+     * Storybook remounts that reset component state mid-test.
+     */
+    assert: async (
+      assertion: (scope: ReturnType<typeof within>) => void | Promise<void>,
+      timeout = 10000
+    ) => {
+      await waitFor(
+        async () => {
+          await ensureOpen();
+          const dialog = queryWorkspaceMCPDialog(canvasElement);
+          if (!dialog) throw new Error("Workspace MCP dialog not found");
+          await assertion(within(dialog));
+        },
+        { timeout }
+      );
+    },
   };
 }
 
@@ -725,75 +751,38 @@ export const ToolSelectorInteraction: AppStory = {
     await openWorkspaceMCPModal(canvasElement);
     const modal = createWorkspaceMCPModalScope(canvasElement);
 
-    // Wait for the modal's data loading to fully settle. After loadData()
-    // completes, all tools are allowed by default, so the "All" button is
-    // disabled (allAllowed === true). Checking for this avoids interacting
-    // with DOM elements that may be stale from an earlier render.
-    await waitFor(
-      () => {
-        const scope = modal.query();
-        if (!scope) throw new Error("Workspace MCP dialog missing");
-
-        const allBtn = scope.queryByRole("button", { name: /^All$/i });
-        if (!allBtn) throw new Error("All button not found — modal still loading");
-        return expect(allBtn).toBeDisabled();
-      },
-      { timeout: 10000 }
-    );
+    // Wait for the modal's data loading to settle — all tools allowed by
+    // default so "All" is disabled.
+    await modal.assert((scope) => {
+      const allBtn = scope.queryByRole("button", { name: /^All$/i });
+      if (!allBtn) throw new Error("All button not found — modal still loading");
+      expect(allBtn).toBeDisabled();
+    });
 
     // Click "None" to deselect all tools.
-    // Use findByRole (retry-capable) instead of getByRole to handle transient
-    // DOM gaps — in CI the Storybook iframe can briefly unmount/remount the
-    // story component between awaits. The longer timeout helps ride out
-    // cold-start remounts so the test isn't flaky.
     const noneButton = await (
       await modal.find(10000)
     ).findByRole("button", { name: /^None$/i }, { timeout: 10000 });
     await userEvent.click(noneButton);
 
-    // Re-query for the assertion — the previous noneButton reference could
-    // be stale if React replaced the DOM node during re-render.
-    await waitFor(() => {
-      const scope = modal.query();
-      if (!scope) throw new Error("Workspace MCP dialog missing");
-
-      const btn = scope.getByRole("button", { name: /^None$/i });
-      return expect(btn).toBeDisabled();
+    // "None" should be disabled and "0 of X tools enabled" should appear.
+    await modal.assert((scope) => {
+      expect(scope.getByRole("button", { name: /^None$/i })).toBeDisabled();
+      scope.getByText((_content: string, element: Element | null) => {
+        const t = (element?.textContent ?? "").replace(/\s+/g, " ").trim();
+        return /^0 of \d+ tools enabled$/i.test(t);
+      });
     });
 
-    // Should now show "0 of X tools enabled".
-    await (
-      await modal.find(10000)
-    ).findByText(
-      (_content, element) => {
-        const text = (element?.textContent ?? "").replace(/\s+/g, " ").trim();
-        return /^0 of \d+ tools enabled$/i.test(text);
-      },
-      {},
-      { timeout: 10000 }
-    );
-
-    // Click "All" to select all tools.
-    // Use findByRole (retry-capable) and re-query inside waitFor to avoid
-    // stale refs if the DOM transiently unmounts between awaits. Keep the
-    // timeout longer to absorb Storybook remounts in slower CI runs.
-    await waitFor(() => {
-      const scope = modal.query();
-      if (!scope) throw new Error("Workspace MCP dialog missing");
-
-      const btn = scope.getByRole("button", { name: /^All$/i });
-      return expect(btn).toBeEnabled();
-    });
+    // Click "All" to re-select all tools.
     const allButton = await (
       await modal.find(10000)
     ).findByRole("button", { name: /^All$/i }, { timeout: 10000 });
     await userEvent.click(allButton);
-    await waitFor(() => {
-      const scope = modal.query();
-      if (!scope) throw new Error("Workspace MCP dialog missing");
 
-      const btn = scope.getByRole("button", { name: /^All$/i });
-      return expect(btn).toBeDisabled();
+    // "All" should be disabled again.
+    await modal.assert((scope) => {
+      expect(scope.getByRole("button", { name: /^All$/i })).toBeDisabled();
     });
   },
 };
