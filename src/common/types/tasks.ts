@@ -11,6 +11,9 @@ export interface TaskSettings {
    */
   proposePlanImplementReplacesChatHistory?: boolean;
 
+  /** When a plan-mode sub-agent task calls propose_plan, hand off to Orchestrator instead of Exec (default). */
+  planSubagentDefaultsToOrchestrator?: boolean;
+
   // System 1: bash output compaction (log filtering)
   bashOutputCompactionMinLines?: number;
   bashOutputCompactionMinTotalBytes?: number;
@@ -35,6 +38,7 @@ export const DEFAULT_TASK_SETTINGS: TaskSettings = {
   maxParallelAgentTasks: TASK_SETTINGS_LIMITS.maxParallelAgentTasks.default,
   maxTaskNestingDepth: TASK_SETTINGS_LIMITS.maxTaskNestingDepth.default,
   proposePlanImplementReplacesChatHistory: false,
+  planSubagentDefaultsToOrchestrator: false,
 
   bashOutputCompactionMinLines:
     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.default,
@@ -116,6 +120,11 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
       ? record.proposePlanImplementReplacesChatHistory
       : (DEFAULT_TASK_SETTINGS.proposePlanImplementReplacesChatHistory ?? false);
 
+  const planSubagentDefaultsToOrchestrator =
+    typeof record.planSubagentDefaultsToOrchestrator === "boolean"
+      ? record.planSubagentDefaultsToOrchestrator
+      : (DEFAULT_TASK_SETTINGS.planSubagentDefaultsToOrchestrator ?? false);
+
   const bashOutputCompactionMinLines = clampInt(
     record.bashOutputCompactionMinLines,
     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.default,
@@ -151,6 +160,7 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
     maxParallelAgentTasks,
     maxTaskNestingDepth,
     proposePlanImplementReplacesChatHistory,
+    planSubagentDefaultsToOrchestrator,
     bashOutputCompactionMinLines,
     bashOutputCompactionMinTotalBytes,
     bashOutputCompactionMaxKeptLines,
@@ -170,6 +180,11 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
   assert(
     typeof proposePlanImplementReplacesChatHistory === "boolean",
     "normalizeTaskSettings: proposePlanImplementReplacesChatHistory must be a boolean"
+  );
+
+  assert(
+    typeof planSubagentDefaultsToOrchestrator === "boolean",
+    "normalizeTaskSettings: planSubagentDefaultsToOrchestrator must be a boolean"
   );
 
   assert(

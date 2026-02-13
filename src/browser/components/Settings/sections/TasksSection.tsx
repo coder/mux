@@ -43,7 +43,7 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     name: "Plan",
     description: "Create a plan before coding",
     uiSelectable: true,
-    subagentRunnable: false,
+    subagentRunnable: true,
     base: "plan",
   },
   {
@@ -236,6 +236,7 @@ function areTaskSettingsEqual(a: TaskSettings, b: TaskSettings): boolean {
     a.maxParallelAgentTasks === b.maxParallelAgentTasks &&
     a.maxTaskNestingDepth === b.maxTaskNestingDepth &&
     a.proposePlanImplementReplacesChatHistory === b.proposePlanImplementReplacesChatHistory &&
+    a.planSubagentDefaultsToOrchestrator === b.planSubagentDefaultsToOrchestrator &&
     a.bashOutputCompactionMinLines === b.bashOutputCompactionMinLines &&
     a.bashOutputCompactionMinTotalBytes === b.bashOutputCompactionMinTotalBytes &&
     a.bashOutputCompactionMaxKeptLines === b.bashOutputCompactionMaxKeptLines &&
@@ -543,6 +544,12 @@ export function TasksSection() {
   const setProposePlanImplementReplacesChatHistory = (value: boolean) => {
     setTaskSettings((prev) =>
       normalizeTaskSettings({ ...prev, proposePlanImplementReplacesChatHistory: value })
+    );
+  };
+
+  const setPlanSubagentDefaultsToOrchestrator = (value: boolean) => {
+    setTaskSettings((prev) =>
+      normalizeTaskSettings({ ...prev, planSubagentDefaultsToOrchestrator: value })
     );
   };
 
@@ -927,6 +934,23 @@ export function TasksSection() {
               checked={taskSettings.proposePlanImplementReplacesChatHistory ?? false}
               onCheckedChange={setProposePlanImplementReplacesChatHistory}
               aria-label="Toggle plan Implement replaces conversation with plan"
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <div className="text-foreground text-sm">
+                Plan sub-agents: default to Orchestrator
+              </div>
+              <div className="text-muted text-xs">
+                When enabled, plan sub-agent tasks switch to Orchestrator after propose_plan.
+                Otherwise they switch to Exec.
+              </div>
+            </div>
+            <Switch
+              checked={taskSettings.planSubagentDefaultsToOrchestrator ?? false}
+              onCheckedChange={setPlanSubagentDefaultsToOrchestrator}
+              aria-label="Toggle plan sub-agents default to Orchestrator"
             />
           </div>
         </div>
