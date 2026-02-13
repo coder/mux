@@ -939,6 +939,47 @@ export class AgentSession {
     return Ok(undefined);
   }
 
+  private async maybeEnableAgentSwitchingForAutoAgent(agentId: string | undefined): Promise<void> {
+    assert(
+      typeof agentId === "string" || agentId === undefined,
+      "maybeEnableAgentSwitchingForAutoAgent agentId must be string|undefined"
+    );
+
+    const normalizedAgentId = agentId?.trim().toLowerCase();
+    if (normalizedAgentId !== "auto") {
+      return;
+    }
+
+    // Guard for test mocks that may not implement getWorkspaceMetadata.
+    if (typeof this.aiService.getWorkspaceMetadata !== "function") {
+      return;
+    }
+
+    try {
+      const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
+      if (!metadataResult.success) {
+        log.warn("Failed to read workspace metadata while enabling agent switching", {
+          workspaceId: this.workspaceId,
+          error: metadataResult.error,
+        });
+        return;
+      }
+
+      if (metadataResult.data.agentSwitchingEnabled === true) {
+        return;
+      }
+
+      await this.config.updateWorkspaceMetadata(this.workspaceId, {
+        agentSwitchingEnabled: true,
+      });
+    } catch (error) {
+      log.warn("Failed to persist agent switching metadata flag", {
+        workspaceId: this.workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   private async streamWithHistory(
     modelString: string,
     options?: SendMessageOptions,
@@ -948,6 +989,8 @@ export class AgentSession {
     if (this.disposed) {
       return Ok(undefined);
     }
+
+    await this.maybeEnableAgentSwitchingForAutoAgent(options?.agentId);
 
     // Reset per-stream flags (used for retries / crash-safe bookkeeping).
     this.ackPendingPostCompactionStateOnStreamEnd = false;

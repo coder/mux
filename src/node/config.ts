@@ -685,6 +685,7 @@ export class Config {
                   : undefined),
               parentWorkspaceId: workspace.parentWorkspaceId,
               agentType: workspace.agentType,
+              agentSwitchingEnabled: workspace.agentSwitchingEnabled,
               taskStatus: workspace.taskStatus,
               reportedAt: workspace.reportedAt,
               taskModelString: workspace.taskModelString,
@@ -771,6 +772,7 @@ export class Config {
             // Preserve tree/task metadata when present in config (metadata.json won't have it)
             metadata.parentWorkspaceId ??= workspace.parentWorkspaceId;
             metadata.agentType ??= workspace.agentType;
+            metadata.agentSwitchingEnabled ??= workspace.agentSwitchingEnabled;
             metadata.taskStatus ??= workspace.taskStatus;
             metadata.reportedAt ??= workspace.reportedAt;
             metadata.taskModelString ??= workspace.taskModelString;
@@ -821,6 +823,7 @@ export class Config {
                   : undefined),
               parentWorkspaceId: workspace.parentWorkspaceId,
               agentType: workspace.agentType,
+              agentSwitchingEnabled: workspace.agentSwitchingEnabled,
               taskStatus: workspace.taskStatus,
               reportedAt: workspace.reportedAt,
               taskModelString: workspace.taskModelString,
@@ -865,6 +868,7 @@ export class Config {
                 : undefined),
             parentWorkspaceId: workspace.parentWorkspaceId,
             agentType: workspace.agentType,
+            agentSwitchingEnabled: workspace.agentSwitchingEnabled,
             taskStatus: workspace.taskStatus,
             reportedAt: workspace.reportedAt,
             taskModelString: workspace.taskModelString,
@@ -925,6 +929,7 @@ export class Config {
         parentWorkspaceId: metadata.parentWorkspaceId,
         agentType: metadata.agentType,
         agentId: metadata.agentId,
+        agentSwitchingEnabled: metadata.agentSwitchingEnabled,
         taskStatus: metadata.taskStatus,
         reportedAt: metadata.reportedAt,
         taskModelString: metadata.taskModelString,
@@ -980,7 +985,7 @@ export class Config {
    */
   async updateWorkspaceMetadata(
     workspaceId: string,
-    updates: Partial<Pick<WorkspaceMetadata, "name" | "runtimeConfig">>
+    updates: Partial<Pick<WorkspaceMetadata, "name" | "runtimeConfig" | "agentSwitchingEnabled">>
   ): Promise<void> {
     await this.editConfig((config) => {
       for (const [_projectPath, projectConfig] of config.projects) {
@@ -988,6 +993,9 @@ export class Config {
         if (workspace) {
           if (updates.name !== undefined) workspace.name = updates.name;
           if (updates.runtimeConfig !== undefined) workspace.runtimeConfig = updates.runtimeConfig;
+          if (updates.agentSwitchingEnabled !== undefined) {
+            workspace.agentSwitchingEnabled = updates.agentSwitchingEnabled;
+          }
           return config;
         }
       }
