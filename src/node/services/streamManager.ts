@@ -2871,9 +2871,28 @@ export class StreamManager extends EventEmitter {
     const afterTimestamp = opts?.afterTimestamp;
     const filteredReplayParts =
       afterTimestamp != null
-        ? replayParts.filter(
-            (part) => part.timestamp !== undefined && part.timestamp > afterTimestamp
-          )
+        ? replayParts.filter((part) => {
+            const partTimestamp = part.timestamp;
+
+            // Missing timestamps should be replayed defensively rather than dropped.
+            if (partTimestamp === undefined) {
+              return true;
+            }
+
+            if (partTimestamp > afterTimestamp) {
+              return true;
+            }
+
+            // Dynamic tool parts keep their original start timestamp even when they later
+            // transition to output-available. If we filter strictly by timestamp, a reconnect
+            // that occurred after tool-call-start but before tool-call-end can miss the tool
+            // completion event entirely. Replay output-available parts to preserve correctness.
+            if (part.type === "dynamic-tool" && part.state === "output-available") {
+              return true;
+            }
+
+            return false;
+          })
         : replayParts;
 
     const replayMessageId = streamInfo.messageId;

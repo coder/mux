@@ -1624,12 +1624,14 @@ export class WorkspaceStore {
       let lastChatEventAt = Date.now();
 
       try {
-        // Reconnect incrementally when we have a stable caught-up state.
+        // Reconnect incrementally whenever we can build a valid cursor.
+        // Do not gate on transient.caughtUp here: retry paths may optimistically
+        // set caughtUp=false to re-enable buffering, but the cursor can still
+        // represent the latest rendered state for an incremental reconnect.
         const aggregator = this.aggregators.get(workspaceId);
-        const transient = this.chatTransientState.get(workspaceId);
         let mode: OnChatMode | undefined;
 
-        if (aggregator && transient?.caughtUp) {
+        if (aggregator) {
           const cursor = aggregator.getOnChatCursor();
           if (cursor) {
             mode = { type: "since", cursor };
