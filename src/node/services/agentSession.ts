@@ -504,10 +504,16 @@ export class AgentSession {
 
       if (streamInfo) {
         await this.aiService.replayStream(this.workspaceId, { afterTimestamp });
+      }
 
+      // Re-read stream state after replay. The stream can end while we are
+      // replaying history, and caught-up cursor metadata must reflect that
+      // latest backend state to avoid phantom active streams in the client.
+      const streamInfoAfterReplay = this.aiService.getStreamInfo(this.workspaceId);
+      if (streamInfoAfterReplay) {
         let streamLastTimestamp = 0;
-        for (let index = streamInfo.parts.length - 1; index >= 0; index -= 1) {
-          const timestamp = streamInfo.parts[index]?.timestamp;
+        for (let index = streamInfoAfterReplay.parts.length - 1; index >= 0; index -= 1) {
+          const timestamp = streamInfoAfterReplay.parts[index]?.timestamp;
           if (timestamp === undefined) {
             continue;
           }
@@ -515,7 +521,7 @@ export class AgentSession {
           break;
         }
 
-        for (const completionTimestamp of streamInfo.toolCompletionTimestamps.values()) {
+        for (const completionTimestamp of streamInfoAfterReplay.toolCompletionTimestamps.values()) {
           if (completionTimestamp > streamLastTimestamp) {
             streamLastTimestamp = completionTimestamp;
           }
@@ -524,7 +530,7 @@ export class AgentSession {
         serverCursor = {
           ...serverCursor,
           stream: {
-            messageId: streamInfo.messageId,
+            messageId: streamInfoAfterReplay.messageId,
             lastTimestamp: streamLastTimestamp,
           },
         };
