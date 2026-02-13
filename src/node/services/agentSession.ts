@@ -405,13 +405,34 @@ export class AgentSession {
         const historyCursor = mode?.type === "since" ? mode.cursor.history : undefined;
         const streamCursor = mode?.type === "since" ? mode.cursor.stream : undefined;
 
+        let oldestHistorySequence: number | undefined;
+        for (const message of history) {
+          const historySequence = message.metadata?.historySequence;
+          if (historySequence === undefined) {
+            continue;
+          }
+
+          if (oldestHistorySequence === undefined || historySequence < oldestHistorySequence) {
+            oldestHistorySequence = historySequence;
+          }
+        }
+
         if (historyCursor) {
           const matchedHistoryCursor = history.find(
             (message) =>
               message.id === historyCursor.messageId &&
               message.metadata?.historySequence === historyCursor.historySequence
           );
-          if (matchedHistoryCursor) {
+
+          // Incremental history replay is safe only when we can prove no older
+          // rows were truncated while disconnected. Require oldestHistorySequence
+          // from the client cursor and match it against current server history.
+          const oldestHistoryMatches =
+            historyCursor.oldestHistorySequence !== undefined &&
+            oldestHistorySequence !== undefined &&
+            historyCursor.oldestHistorySequence === oldestHistorySequence;
+
+          if (matchedHistoryCursor && oldestHistoryMatches) {
             sinceHistorySequence = historyCursor.historySequence;
           }
         }
@@ -473,6 +494,7 @@ export class AgentSession {
             history: {
               messageId: message.id,
               historySequence,
+              ...(oldestHistorySequence !== undefined ? { oldestHistorySequence } : {}),
             },
           };
           break;
