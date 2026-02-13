@@ -1227,6 +1227,7 @@ export class StreamManager extends EventEmitter {
 
     // Emit tool-call-end event (listeners can now safely read partial)
     const completionTimestamp = nextPartTimestamp(streamInfo);
+    streamInfo.toolCompletionTimestamps ??= new Map();
     streamInfo.toolCompletionTimestamps.set(toolCallId, completionTimestamp);
     this.emit("tool-call-end", {
       type: "tool-call-end",
@@ -2838,7 +2839,7 @@ export class StreamManager extends EventEmitter {
         messageId: streamInfo.messageId,
         model: streamInfo.model,
         historySequence: streamInfo.historySequence,
-        toolCompletionTimestamps: streamInfo.toolCompletionTimestamps,
+        toolCompletionTimestamps: streamInfo.toolCompletionTimestamps ?? new Map(),
         parts: streamInfo.parts,
       };
     }
