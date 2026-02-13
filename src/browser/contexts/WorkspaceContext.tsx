@@ -525,6 +525,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     currentWorkspaceId,
     currentProjectId,
     currentProjectPathFromState,
+    currentSettingsSection,
     pendingSectionId,
     pendingDraftId,
   } = useRouter();
@@ -933,6 +934,12 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     // Skip if we already have a selected workspace (from localStorage or URL hash)
     if (selectedWorkspace) return;
 
+    // Skip if user is on the settings page — navigating to /settings/:section
+    // clears the workspace from the URL, making selectedWorkspace null. Without
+    // this guard the effect would auto-select a workspace and navigate away from
+    // settings immediately.
+    if (currentSettingsSection) return;
+
     // Skip if user is in the middle of creating a workspace
     if (pendingNewWorkspaceProject) return;
 
@@ -976,6 +983,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     api,
     loading,
     selectedWorkspace,
+    currentSettingsSection,
     pendingNewWorkspaceProject,
     workspaceMetadata,
     setSelectedWorkspace,
