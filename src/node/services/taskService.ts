@@ -139,6 +139,10 @@ interface CompletedAgentReportCacheEntry {
   ancestorWorkspaceIds: string[];
 }
 
+interface ParentAutoResumeHint {
+  agentId?: string;
+}
+
 function isTypedWorkspaceEvent(value: unknown, type: string): boolean {
   return (
     typeof value === "object" &&
@@ -274,10 +278,10 @@ export class TaskService {
       };
     },
     fallbackModel: string,
-    eventMetadata?: { agentId?: string; model?: string; thinkingLevel?: ThinkingLevel }
+    hint?: ParentAutoResumeHint
   ): Promise<{ model: string; agentId: string; thinkingLevel?: ThinkingLevel }> {
-    // 1) Try stream-end event metadata (available in handleStreamEnd path)
-    let agentId = eventMetadata?.agentId;
+    // 1) Try stream-end hint metadata (available in handleStreamEnd path)
+    let agentId = hint?.agentId;
 
     // 2) Fall back to latest assistant message metadata in history (restart-safe)
     if (!agentId) {
@@ -2360,7 +2364,8 @@ export class TaskService {
 
     // Auto-resume any parent stream that was waiting on a task tool call (restart-safe).
     const postCfg = this.config.loadConfigOrDefault();
-    if (!findWorkspaceEntry(postCfg, parentWorkspaceId)) {
+    const parentEntry = findWorkspaceEntry(postCfg, parentWorkspaceId);
+    if (!parentEntry) {
       // Parent may have been cleaned up (e.g. it already reported and this was its last descendant).
       return;
     }
@@ -2369,10 +2374,9 @@ export class TaskService {
       this.consecutiveAutoResumes.delete(parentWorkspaceId);
     }
     if (!hasActiveDescendants && !this.aiService.isStreaming(parentWorkspaceId)) {
-      const parentEntry = findWorkspaceEntry(postCfg, parentWorkspaceId);
       const resumeOptions = await this.resolveParentAutoResumeOptions(
         parentWorkspaceId,
-        parentEntry ?? { workspace: {} },
+        parentEntry,
         latestChildEntry?.workspace.taskModelString ?? defaultModel
       );
       const sendResult = await this.workspaceService.sendMessage(
