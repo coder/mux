@@ -1,6 +1,8 @@
 import { log } from "@/node/services/log";
 import type { UpdateStatus } from "@/common/orpc/types";
+import type { UpdateChannel } from "@/common/types/project";
 import { parseDebugUpdater } from "@/common/utils/env";
+import type { Config } from "@/node/config";
 
 // Interface matching the implementation class in desktop/updater.ts
 // We redefine it here to avoid importing the class directly which brings in electron-updater
@@ -10,6 +12,8 @@ interface DesktopUpdaterService {
   installUpdate(): void;
   subscribe(callback: (status: UpdateStatus) => void): () => void;
   getStatus(): UpdateStatus;
+  getChannel(): UpdateChannel;
+  setChannel(channel: UpdateChannel): void;
 }
 
 export class UpdateService {
@@ -18,7 +22,7 @@ export class UpdateService {
   private subscribers = new Set<(status: UpdateStatus) => void>();
   private readonly ready: Promise<void>;
 
-  constructor() {
+  constructor(private readonly config: Config) {
     this.ready = this.initialize().catch((err) => {
       log.error("Failed to initialize UpdateService:", err);
     });
@@ -31,7 +35,8 @@ export class UpdateService {
         // Dynamic import to avoid loading electron-updater in CLI
         // eslint-disable-next-line no-restricted-syntax
         const { UpdaterService: DesktopUpdater } = await import("@/desktop/updater");
-        this.impl = new DesktopUpdater();
+        const channel = this.config.getUpdateChannel();
+        this.impl = new DesktopUpdater(channel);
 
         // Forward updates
         this.impl.subscribe((status: UpdateStatus) => {
@@ -90,6 +95,22 @@ export class UpdateService {
   install(): void {
     if (this.impl) {
       this.impl.installUpdate();
+    }
+  }
+
+  getChannel(): UpdateChannel {
+    if (this.impl) {
+      return this.impl.getChannel();
+    }
+
+    return this.config.getUpdateChannel();
+  }
+
+  async setChannel(channel: UpdateChannel): Promise<void> {
+    await this.ready;
+    await this.config.setUpdateChannel(channel);
+    if (this.impl) {
+      this.impl.setChannel(channel);
     }
   }
 

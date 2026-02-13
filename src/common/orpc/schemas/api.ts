@@ -1524,6 +1524,8 @@ export const splashScreens = {
 };
 
 // Update
+export const UpdateChannelSchema = z.enum(["stable", "latest"]);
+
 export const update = {
   check: {
     input: z.object({ source: z.enum(["auto", "manual"]).optional() }).optional(),
@@ -1540,6 +1542,14 @@ export const update = {
   onStatus: {
     input: z.void(),
     output: eventIterator(UpdateStatusSchema),
+  },
+  getChannel: {
+    input: z.void(),
+    output: UpdateChannelSchema,
+  },
+  setChannel: {
+    input: z.object({ channel: UpdateChannelSchema }),
+    output: z.void(),
   },
 };
 
