@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from "react";
-import { ChevronRight, FileText, ExternalLink, Check, Eye, EyeOff, Info } from "lucide-react";
+import { ChevronRight, FileText, ExternalLink, Eye, EyeOff, Info } from "lucide-react";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
 import type { RuntimeConfig } from "@/common/types/runtime";
+import { PlanFileDialog } from "./PlanFileDialog";
 
 interface PostCompactionSectionProps {
   workspaceId: string;
@@ -30,14 +31,7 @@ export const PostCompactionSection: React.FC<PostCompactionSectionProps> = (prop
     "postCompaction:filesExpanded",
     false
   );
-  const [copied, setCopied] = useState(false);
-
-  const handleCopyPath = async () => {
-    if (!props.planPath) return;
-    await navigator.clipboard.writeText(props.planPath);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
+  const [isPlanDialogOpen, setIsPlanDialogOpen] = useState(false);
 
   const handleOpenPlan = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -108,52 +102,62 @@ export const PostCompactionSection: React.FC<PostCompactionSectionProps> = (prop
       {!collapsed && (
         <div className="mt-2 flex flex-col gap-2">
           {planExists && props.planPath && (
-            <div className={`flex items-center gap-1 ${isPlanExcluded ? "opacity-50" : ""}`}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={() => void props.onToggleExclusion("plan")}
-                    className="text-subtle hover:text-foreground p-0.5 transition-colors"
-                    type="button"
-                  >
-                    {isPlanExcluded ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="top" showArrow={false}>
-                  {isPlanExcluded ? "Include in context" : "Exclude from context"}
-                </TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={() => void handleCopyPath()}
-                    className={`text-subtle hover:text-foreground flex items-center gap-2 text-left text-xs transition-colors ${isPlanExcluded ? "line-through" : ""}`}
-                    type="button"
-                  >
-                    <FileText className="h-3.5 w-3.5" />
-                    <span>Plan file</span>
-                    {copied && <Check className="h-3 w-3 text-green-500" />}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="top" showArrow={false}>
-                  Click to copy path
-                </TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={handleOpenPlan}
-                    className="text-subtle hover:text-foreground p-0.5 transition-colors"
-                    type="button"
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="top" showArrow={false}>
-                  Open in editor
-                </TooltipContent>
-              </Tooltip>
-            </div>
+            <>
+              <div className={`flex items-center gap-1 ${isPlanExcluded ? "opacity-50" : ""}`}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => void props.onToggleExclusion("plan")}
+                      className="text-subtle hover:text-foreground p-0.5 transition-colors"
+                      type="button"
+                    >
+                      {isPlanExcluded ? (
+                        <EyeOff className="h-3 w-3" />
+                      ) : (
+                        <Eye className="h-3 w-3" />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" showArrow={false}>
+                    {isPlanExcluded ? "Include in context" : "Exclude from context"}
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => setIsPlanDialogOpen(true)}
+                      className={`text-subtle hover:text-foreground flex items-center gap-2 text-left text-xs transition-colors ${isPlanExcluded ? "line-through" : ""}`}
+                      type="button"
+                    >
+                      <FileText className="h-3.5 w-3.5" />
+                      <span>Plan file</span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" showArrow={false}>
+                    View plan
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={handleOpenPlan}
+                      className="text-subtle hover:text-foreground p-0.5 transition-colors"
+                      type="button"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" showArrow={false}>
+                    Open in editor
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+              <PlanFileDialog
+                open={isPlanDialogOpen}
+                onOpenChange={setIsPlanDialogOpen}
+                workspaceId={props.workspaceId}
+              />
+            </>
           )}
 
           {trackedFilesCount > 0 && (
