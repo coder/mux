@@ -500,7 +500,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
               <span className="flex items-center gap-2">
                 <Server className="h-3 w-3 shrink-0" />
                 Configure MCP servers{" "}
-                <span className="text-muted text-[10px]">
+                <span className="text-muted mobile-hide-shortcut-hints text-[10px]">
                   ({formatKeybind(KEYBINDS.CONFIGURE_MCP)})
                 </span>
               </span>
@@ -518,7 +518,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                 <span className="flex items-center gap-2">
                   <Link2 className="h-3 w-3 shrink-0" />
                   Share a transcript{" "}
-                  <span className="text-muted text-[10px]">
+                  <span className="text-muted mobile-hide-shortcut-hints text-[10px]">
                     ({formatKeybind(KEYBINDS.SHARE_TRANSCRIPT)})
                   </span>
                 </span>
@@ -542,7 +542,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                 <span className="flex items-center gap-2">
                   <ArchiveIcon className="h-3 w-3 shrink-0" />
                   Archive chat{" "}
-                  <span className="text-muted text-[10px]">
+                  <span className="text-muted mobile-hide-shortcut-hints text-[10px]">
                     ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
                   </span>
                 </span>

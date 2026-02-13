@@ -184,7 +184,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
         className="border-warning font-primary text-warning hover:bg-warning-overlay cursor-pointer rounded border bg-transparent px-4 py-2 text-xs font-semibold whitespace-nowrap transition-all duration-200 hover:-translate-y-px active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50"
         onClick={handleStopAutoRetry}
       >
-        Stop ({stopKeybind})
+        Stop <span className="mobile-hide-shortcut-hints">({stopKeybind})</span>
       </button>
     );
   } else {

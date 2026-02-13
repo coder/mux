@@ -47,6 +47,9 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   const isSynthetic = message.isSynthetic === true;
   const content = message.content;
   const [vimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, { listener: true });
+  const isMobileTouch =
+    typeof window !== "undefined" &&
+    window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches;
 
   console.assert(
     typeof clipboardWriteText === "function",
@@ -116,7 +119,9 @@ export const UserMessage: React.FC<UserMessageProps> = ({
             disabled: isCompacting,
             icon: <Pencil />,
             tooltip: isCompacting
-              ? `Cannot edit while compacting (${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} to cancel)`
+              ? isMobileTouch
+                ? "Cannot edit while compacting"
+                : `Cannot edit while compacting (${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} to cancel)`
               : undefined,
           },
         ]
