@@ -272,6 +272,8 @@ export const electronTest = base.extend<ElectronFixtures>({
       recordVideoDir = testInfo.outputPath("electron-video");
       fs.mkdirSync(recordVideoDir, { recursive: true });
 
+      const isPerfScenario = /[\\/]scenarios[\\/]perf\./.test(testInfo.file);
+      const shouldCaptureReactProfile = process.env.MUX_PROFILE_REACT === "1" || isPerfScenario;
       const electronEnv: Record<string, string> = {};
       for (const [key, value] of Object.entries(process.env)) {
         if (typeof value === "string") {
@@ -282,6 +284,7 @@ export const electronTest = base.extend<ElectronFixtures>({
       electronEnv.MUX_MOCK_AI = electronEnv.MUX_MOCK_AI ?? "1";
       electronEnv.MUX_ROOT = configRoot;
       electronEnv.MUX_E2E = "1";
+      electronEnv.MUX_PROFILE_REACT = shouldCaptureReactProfile ? "1" : "0";
       electronEnv.MUX_E2E_LOAD_DIST = shouldLoadDist ? "1" : "0";
       electronEnv.VITE_DISABLE_MERMAID = "1";
 

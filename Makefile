@@ -54,7 +54,7 @@ include fmt.mk
 .PHONY: all build dev start clean help
 .PHONY: build-renderer version build-icons build-static
 .PHONY: lint lint-fix typecheck typecheck-react-native static-check
-.PHONY: test test-unit test-integration test-watch test-coverage test-e2e smoke-test
+.PHONY: test test-unit test-integration test-watch test-coverage test-e2e test-e2e-perf smoke-test
 .PHONY: dist dist-mac dist-win dist-linux install-mac-arm64
 .PHONY: vscode-ext vscode-ext-install
 .PHONY: docs-server check-docs-links
@@ -362,6 +362,10 @@ smoke-test: build ## Run smoke test on npm package
 test-e2e: ## Run end-to-end tests
 	@$(MAKE) build
 	@MUX_E2E_LOAD_DIST=1 MUX_E2E_SKIP_BUILD=1 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 bun x playwright test --project=electron $(PLAYWRIGHT_ARGS)
+
+test-e2e-perf: ## Run automated workspace-load perf profiling scenarios
+	@$(MAKE) build
+	@MUX_E2E_RUN_PERF=1 MUX_PROFILE_REACT=1 MUX_E2E_LOAD_DIST=1 MUX_E2E_SKIP_BUILD=1 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 bun x playwright test --project=electron tests/e2e/scenarios/perf.workspaceOpen.spec.ts $(PLAYWRIGHT_ARGS)
 
 ## Distribution
 dist: build ## Build distributable packages

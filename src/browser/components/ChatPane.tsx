@@ -75,6 +75,38 @@ import {
   normalizeQueuedMessage,
   type EditingMessageState,
 } from "@/browser/utils/chatEditing";
+import { recordSyntheticReactRenderSample } from "@/browser/utils/perf/reactProfileCollector";
+
+// Perf e2e runs load the production bundle where React's onRender profiler callbacks may not
+// fire. This marker records synthetic commit timings for selected subtrees so automated perf
+// runs still capture render-path metrics for workspace-open regressions.
+function PerfRenderMarker(props: { id: string; children: React.ReactNode }): React.ReactElement {
+  const renderStartTimeRef = useRef(performance.now());
+  renderStartTimeRef.current = performance.now();
+  const hasProfiledMountRef = useRef(false);
+
+  useLayoutEffect(() => {
+    if (window.api?.enableReactPerfProfile !== true) {
+      return;
+    }
+
+    const commitTime = performance.now();
+    const actualDuration = Math.max(0, commitTime - renderStartTimeRef.current);
+    const phase = hasProfiledMountRef.current ? "update" : "mount";
+    hasProfiledMountRef.current = true;
+
+    recordSyntheticReactRenderSample({
+      id: props.id,
+      phase,
+      actualDuration,
+      baseDuration: actualDuration,
+      startTime: renderStartTimeRef.current,
+      commitTime,
+    });
+  });
+
+  return <>{props.children}</>;
+}
 
 interface ChatPaneProps {
   workspaceId: string;
@@ -562,216 +594,226 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   }
 
   return (
-    <div
-      ref={chatAreaRef}
-      className="flex min-w-96 flex-1 flex-col [@media(max-width:768px)]:max-h-full [@media(max-width:768px)]:w-full [@media(max-width:768px)]:min-w-0"
-    >
-      <WorkspaceHeader
-        workspaceId={workspaceId}
-        projectName={projectName}
-        projectPath={projectPath}
-        workspaceName={workspaceName}
-        workspaceTitle={workspaceTitle}
-        leftSidebarCollapsed={leftSidebarCollapsed}
-        onToggleLeftSidebarCollapsed={onToggleLeftSidebarCollapsed}
-        namedWorkspacePath={namedWorkspacePath}
-        runtimeConfig={runtimeConfig}
-        onOpenTerminal={onOpenTerminal}
-      />
+    <PerfRenderMarker id="chat-pane">
+      <div
+        ref={chatAreaRef}
+        className="flex min-w-96 flex-1 flex-col [@media(max-width:768px)]:max-h-full [@media(max-width:768px)]:w-full [@media(max-width:768px)]:min-w-0"
+      >
+        <PerfRenderMarker id="chat-pane.header">
+          <WorkspaceHeader
+            workspaceId={workspaceId}
+            projectName={projectName}
+            projectPath={projectPath}
+            workspaceName={workspaceName}
+            workspaceTitle={workspaceTitle}
+            leftSidebarCollapsed={leftSidebarCollapsed}
+            onToggleLeftSidebarCollapsed={onToggleLeftSidebarCollapsed}
+            namedWorkspacePath={namedWorkspacePath}
+            runtimeConfig={runtimeConfig}
+            onOpenTerminal={onOpenTerminal}
+          />
+        </PerfRenderMarker>
 
-      {/* Spacer for fixed mobile header - mobile-header-spacer adds padding-top on touch devices */}
-      <div className="mobile-header-spacer relative flex-1 overflow-hidden">
-        <div
-          ref={contentRef}
-          onWheel={markUserInteraction}
-          onTouchMove={markUserInteraction}
-          onScroll={handleScroll}
-          role="log"
-          aria-live={canInterrupt ? "polite" : "off"}
-          aria-busy={canInterrupt}
-          aria-label="Conversation transcript"
-          tabIndex={0}
-          data-testid="message-window"
-          data-loaded={!loading}
-          className="h-full overflow-x-hidden overflow-y-auto p-[15px] leading-[1.5] break-words whitespace-pre-wrap"
-        >
-          <div
-            ref={innerRef}
-            className={cn("max-w-4xl mx-auto", deferredMessages.length === 0 && "h-full")}
-          >
-            {deferredMessages.length === 0 ? (
-              <div className="text-placeholder flex h-full flex-1 flex-col items-center justify-center text-center [&_h3]:m-0 [&_h3]:mb-2.5 [&_h3]:text-base [&_h3]:font-medium [&_p]:m-0 [&_p]:text-[13px]">
-                <h3>No Messages Yet</h3>
-                <p>Send a message below to begin</p>
-                <p className="text-muted mt-5 flex items-start gap-2 text-xs">
-                  <Lightbulb aria-hidden="true" className="mt-0.5 h-3 w-3 shrink-0" />
-                  <span>
-                    Tip: Add a{" "}
-                    <code className="bg-inline-code-dark-bg text-code-string rounded-[3px] px-1.5 py-0.5 font-mono text-[11px]">
-                      .mux/init
-                    </code>{" "}
-                    hook to your project to run setup commands
-                    <br />
-                    (e.g., install dependencies, build) when creating new workspaces
-                  </span>
-                </p>
-              </div>
-            ) : (
-              <MessageListProvider value={messageListContextValue}>
-                <>
-                  {deferredMessages.map((msg, index) => {
-                    // Compute bash_output grouping at render-time
-                    const bashOutputGroup = computeBashOutputGroupInfo(deferredMessages, index);
+        <PerfRenderMarker id="chat-pane.transcript">
+          {/* Spacer for fixed mobile header - mobile-header-spacer adds padding-top on touch devices */}
+          <div className="mobile-header-spacer relative flex-1 overflow-hidden">
+            <div
+              ref={contentRef}
+              onWheel={markUserInteraction}
+              onTouchMove={markUserInteraction}
+              onScroll={handleScroll}
+              role="log"
+              aria-live={canInterrupt ? "polite" : "off"}
+              aria-busy={canInterrupt}
+              aria-label="Conversation transcript"
+              tabIndex={0}
+              data-testid="message-window"
+              data-loaded={!loading}
+              className="h-full overflow-x-hidden overflow-y-auto p-[15px] leading-[1.5] break-words whitespace-pre-wrap"
+            >
+              <div
+                ref={innerRef}
+                className={cn("max-w-4xl mx-auto", deferredMessages.length === 0 && "h-full")}
+              >
+                {deferredMessages.length === 0 ? (
+                  <div className="text-placeholder flex h-full flex-1 flex-col items-center justify-center text-center [&_h3]:m-0 [&_h3]:mb-2.5 [&_h3]:text-base [&_h3]:font-medium [&_p]:m-0 [&_p]:text-[13px]">
+                    <h3>No Messages Yet</h3>
+                    <p>Send a message below to begin</p>
+                    <p className="text-muted mt-5 flex items-start gap-2 text-xs">
+                      <Lightbulb aria-hidden="true" className="mt-0.5 h-3 w-3 shrink-0" />
+                      <span>
+                        Tip: Add a{" "}
+                        <code className="bg-inline-code-dark-bg text-code-string rounded-[3px] px-1.5 py-0.5 font-mono text-[11px]">
+                          .mux/init
+                        </code>{" "}
+                        hook to your project to run setup commands
+                        <br />
+                        (e.g., install dependencies, build) when creating new workspaces
+                      </span>
+                    </p>
+                  </div>
+                ) : (
+                  <MessageListProvider value={messageListContextValue}>
+                    <>
+                      {deferredMessages.map((msg, index) => {
+                        // Compute bash_output grouping at render-time
+                        const bashOutputGroup = computeBashOutputGroupInfo(deferredMessages, index);
 
-                    // For bash_output groups, use first message ID as expansion key
-                    const groupKey = bashOutputGroup
-                      ? deferredMessages[bashOutputGroup.firstIndex]?.id
-                      : undefined;
-                    const isGroupExpanded = groupKey ? expandedBashGroups.has(groupKey) : false;
+                        // For bash_output groups, use first message ID as expansion key
+                        const groupKey = bashOutputGroup
+                          ? deferredMessages[bashOutputGroup.firstIndex]?.id
+                          : undefined;
+                        const isGroupExpanded = groupKey ? expandedBashGroups.has(groupKey) : false;
 
-                    // Skip rendering middle items in a bash_output group (unless expanded)
-                    if (bashOutputGroup?.position === "middle" && !isGroupExpanded) {
-                      return null;
-                    }
+                        // Skip rendering middle items in a bash_output group (unless expanded)
+                        if (bashOutputGroup?.position === "middle" && !isGroupExpanded) {
+                          return null;
+                        }
 
-                    const isAtCutoff =
-                      editCutoffHistoryId !== undefined &&
-                      msg.type !== "history-hidden" &&
-                      msg.type !== "workspace-init" &&
-                      msg.type !== "compaction-boundary" &&
-                      msg.historyId === editCutoffHistoryId;
+                        const isAtCutoff =
+                          editCutoffHistoryId !== undefined &&
+                          msg.type !== "history-hidden" &&
+                          msg.type !== "workspace-init" &&
+                          msg.type !== "compaction-boundary" &&
+                          msg.historyId === editCutoffHistoryId;
 
-                    return (
-                      <React.Fragment key={msg.id}>
-                        <div
-                          data-testid="chat-message"
-                          data-message-id={
-                            msg.type !== "history-hidden" &&
-                            msg.type !== "workspace-init" &&
-                            msg.type !== "compaction-boundary"
-                              ? msg.historyId
-                              : undefined
-                          }
-                        >
-                          <MessageRenderer
-                            message={msg}
-                            onEditUserMessage={handleEditUserMessage}
-                            workspaceId={workspaceId}
-                            isCompacting={isCompacting}
-                            onReviewNote={handleReviewNote}
-                            isLatestProposePlan={
-                              msg.type === "tool" &&
-                              msg.toolName === "propose_plan" &&
-                              msg.id === latestProposePlanId
-                            }
-                            bashOutputGroup={bashOutputGroup}
-                            taskReportLinking={taskReportLinking}
-                            userMessageNavigation={
-                              msg.type === "user" && userMessageNavMap
-                                ? {
-                                    prevUserMessageId: userMessageNavMap.get(msg.historyId)?.prev,
-                                    nextUserMessageId: userMessageNavMap.get(msg.historyId)?.next,
-                                    onNavigate: handleNavigateToMessage,
-                                  }
-                                : undefined
-                            }
-                          />
-                        </div>
-                        {/* Show collapsed indicator after the first item in a bash_output group */}
-                        {bashOutputGroup?.position === "first" && groupKey && (
-                          <BashOutputCollapsedIndicator
-                            processId={bashOutputGroup.processId}
-                            collapsedCount={bashOutputGroup.collapsedCount}
-                            isExpanded={isGroupExpanded}
-                            onToggle={() => {
-                              setExpandedBashGroups((prev) => {
-                                const next = new Set(prev);
-                                if (next.has(groupKey)) {
-                                  next.delete(groupKey);
-                                } else {
-                                  next.add(groupKey);
+                        return (
+                          <React.Fragment key={msg.id}>
+                            <div
+                              data-testid="chat-message"
+                              data-message-id={
+                                msg.type !== "history-hidden" &&
+                                msg.type !== "workspace-init" &&
+                                msg.type !== "compaction-boundary"
+                                  ? msg.historyId
+                                  : undefined
+                              }
+                            >
+                              <MessageRenderer
+                                message={msg}
+                                onEditUserMessage={handleEditUserMessage}
+                                workspaceId={workspaceId}
+                                isCompacting={isCompacting}
+                                onReviewNote={handleReviewNote}
+                                isLatestProposePlan={
+                                  msg.type === "tool" &&
+                                  msg.toolName === "propose_plan" &&
+                                  msg.id === latestProposePlanId
                                 }
-                                return next;
-                              });
-                            }}
-                          />
-                        )}
-                        {isAtCutoff && <EditCutoffBarrier />}
-                        {shouldShowInterruptedBarrier(msg) && <InterruptedBarrier />}
-                      </React.Fragment>
-                    );
-                  })}
-                  {/* Show RetryBarrier after the last message if needed */}
-                  {showRetryBarrierUI && <RetryBarrier workspaceId={workspaceId} />}
-                </>
-              </MessageListProvider>
+                                bashOutputGroup={bashOutputGroup}
+                                taskReportLinking={taskReportLinking}
+                                userMessageNavigation={
+                                  msg.type === "user" && userMessageNavMap
+                                    ? {
+                                        prevUserMessageId: userMessageNavMap.get(msg.historyId)
+                                          ?.prev,
+                                        nextUserMessageId: userMessageNavMap.get(msg.historyId)
+                                          ?.next,
+                                        onNavigate: handleNavigateToMessage,
+                                      }
+                                    : undefined
+                                }
+                              />
+                            </div>
+                            {/* Show collapsed indicator after the first item in a bash_output group */}
+                            {bashOutputGroup?.position === "first" && groupKey && (
+                              <BashOutputCollapsedIndicator
+                                processId={bashOutputGroup.processId}
+                                collapsedCount={bashOutputGroup.collapsedCount}
+                                isExpanded={isGroupExpanded}
+                                onToggle={() => {
+                                  setExpandedBashGroups((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(groupKey)) {
+                                      next.delete(groupKey);
+                                    } else {
+                                      next.add(groupKey);
+                                    }
+                                    return next;
+                                  });
+                                }}
+                              />
+                            )}
+                            {isAtCutoff && <EditCutoffBarrier />}
+                            {shouldShowInterruptedBarrier(msg) && <InterruptedBarrier />}
+                          </React.Fragment>
+                        );
+                      })}
+                      {/* Show RetryBarrier after the last message if needed */}
+                      {showRetryBarrierUI && <RetryBarrier workspaceId={workspaceId} />}
+                    </>
+                  </MessageListProvider>
+                )}
+                <PinnedTodoList workspaceId={workspaceId} />
+                <StreamingBarrier
+                  workspaceId={workspaceId}
+                  onCancelCompaction={handleCancelCompactionFromBarrier}
+                />
+                {shouldShowQueuedAgentTaskPrompt && (
+                  <QueuedMessage
+                    message={{
+                      id: `queued-agent-task-${workspaceId}`,
+                      content: queuedAgentTaskPrompt ?? "",
+                    }}
+                  />
+                )}
+                {workspaceState?.queuedMessage && (
+                  <QueuedMessage
+                    message={workspaceState.queuedMessage}
+                    onEdit={() => void handleEditQueuedMessage()}
+                    onSendImmediately={
+                      workspaceState.canInterrupt ? handleSendQueuedImmediately : undefined
+                    }
+                  />
+                )}
+                <ConcurrentLocalWarning
+                  workspaceId={workspaceId}
+                  projectPath={projectPath}
+                  runtimeConfig={runtimeConfig}
+                />
+              </div>
+            </div>
+            {!autoScroll && (
+              <button
+                onClick={jumpToBottom}
+                type="button"
+                className="assistant-chip font-primary text-foreground hover:assistant-chip-hover absolute bottom-2 left-1/2 z-20 -translate-x-1/2 cursor-pointer rounded-[20px] px-2 py-1 text-xs font-medium shadow-[0_4px_12px_rgba(0,0,0,0.3)] backdrop-blur-[1px] transition-all duration-200 hover:scale-105 active:scale-95"
+              >
+                Press {formatKeybind(KEYBINDS.JUMP_TO_BOTTOM)} to jump to bottom
+              </button>
             )}
-            <PinnedTodoList workspaceId={workspaceId} />
-            <StreamingBarrier
-              workspaceId={workspaceId}
-              onCancelCompaction={handleCancelCompactionFromBarrier}
-            />
-            {shouldShowQueuedAgentTaskPrompt && (
-              <QueuedMessage
-                message={{
-                  id: `queued-agent-task-${workspaceId}`,
-                  content: queuedAgentTaskPrompt ?? "",
-                }}
-              />
-            )}
-            {workspaceState?.queuedMessage && (
-              <QueuedMessage
-                message={workspaceState.queuedMessage}
-                onEdit={() => void handleEditQueuedMessage()}
-                onSendImmediately={
-                  workspaceState.canInterrupt ? handleSendQueuedImmediately : undefined
-                }
-              />
-            )}
-            <ConcurrentLocalWarning
-              workspaceId={workspaceId}
-              projectPath={projectPath}
-              runtimeConfig={runtimeConfig}
-            />
           </div>
-        </div>
-        {!autoScroll && (
-          <button
-            onClick={jumpToBottom}
-            type="button"
-            className="assistant-chip font-primary text-foreground hover:assistant-chip-hover absolute bottom-2 left-1/2 z-20 -translate-x-1/2 cursor-pointer rounded-[20px] px-2 py-1 text-xs font-medium shadow-[0_4px_12px_rgba(0,0,0,0.3)] backdrop-blur-[1px] transition-all duration-200 hover:scale-105 active:scale-95"
-          >
-            Press {formatKeybind(KEYBINDS.JUMP_TO_BOTTOM)} to jump to bottom
-          </button>
-        )}
+        </PerfRenderMarker>
+        <PerfRenderMarker id="chat-pane.input">
+          <ChatInputPane
+            workspaceId={workspaceId}
+            projectName={projectName}
+            workspaceName={workspaceName}
+            isStreamStarting={isStreamStarting}
+            runtimeConfig={runtimeConfig}
+            isQueuedAgentTask={isQueuedAgentTask}
+            isCompacting={isCompacting}
+            canInterrupt={canInterrupt}
+            autoCompactionResult={autoCompactionResult}
+            shouldShowCompactionWarning={shouldShowCompactionWarning}
+            contextSwitchWarning={contextSwitchWarning}
+            onContextSwitchCompact={handleContextSwitchCompact}
+            onContextSwitchDismiss={handleContextSwitchDismiss}
+            onModelChange={handleModelChange}
+            onCompactClick={handleCompactClick}
+            onMessageSent={handleMessageSent}
+            onTruncateHistory={handleClearHistory}
+            editingMessage={editingMessage}
+            onCancelEdit={handleCancelEdit}
+            onEditLastUserMessage={handleEditLastUserMessageClick}
+            onChatInputReady={handleChatInputReady}
+            hasQueuedCompaction={Boolean(workspaceState.queuedMessage?.hasCompactionRequest)}
+            reviews={reviews}
+            onCheckReviews={handleCheckReviews}
+          />
+        </PerfRenderMarker>
       </div>
-      <ChatInputPane
-        workspaceId={workspaceId}
-        projectName={projectName}
-        workspaceName={workspaceName}
-        isStreamStarting={isStreamStarting}
-        runtimeConfig={runtimeConfig}
-        isQueuedAgentTask={isQueuedAgentTask}
-        isCompacting={isCompacting}
-        canInterrupt={canInterrupt}
-        autoCompactionResult={autoCompactionResult}
-        shouldShowCompactionWarning={shouldShowCompactionWarning}
-        contextSwitchWarning={contextSwitchWarning}
-        onContextSwitchCompact={handleContextSwitchCompact}
-        onContextSwitchDismiss={handleContextSwitchDismiss}
-        onModelChange={handleModelChange}
-        onCompactClick={handleCompactClick}
-        onMessageSent={handleMessageSent}
-        onTruncateHistory={handleClearHistory}
-        editingMessage={editingMessage}
-        onCancelEdit={handleCancelEdit}
-        onEditLastUserMessage={handleEditLastUserMessageClick}
-        onChatInputReady={handleChatInputReady}
-        hasQueuedCompaction={Boolean(workspaceState.queuedMessage?.hasCompactionRequest)}
-        reviews={reviews}
-        onCheckReviews={handleCheckReviews}
-      />
-    </div>
+    </PerfRenderMarker>
   );
 };
 

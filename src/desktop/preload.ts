@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld("api", {
     electron: process.versions.electron,
   },
   isE2E: process.env.MUX_E2E === "1",
+  enableReactPerfProfile: process.env.MUX_PROFILE_REACT === "1",
   enableTelemetryInDev: process.env.MUX_ENABLE_TELEMETRY_IN_DEV === "1",
   // Note: When debugging LLM requests, we also want to see synthetic/request-only
   // messages in the chat history so the UI matches what was sent to the provider.

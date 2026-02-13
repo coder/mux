@@ -24,6 +24,8 @@ declare global {
     enableTelemetryInDev?: boolean;
     // E2E test mode flag - used to adjust UI behavior (e.g., longer toast durations)
     isE2E?: boolean;
+    // Enables in-app React.Profiler capture for automated perf tests.
+    enableReactPerfProfile?: boolean;
     // True if running under Rosetta 2 translation on Apple Silicon (storybook/tests may set this)
     isRosetta?: boolean;
     // Async getter (used in Electron) for environments where preload cannot use Node builtins

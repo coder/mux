@@ -14,11 +14,11 @@ import { z } from "zod";
 import * as path from "path";
 import * as fs from "fs/promises";
 import * as fsSync from "fs";
-import { Config } from "@/node/config";
-import { DisposableTempDir } from "@/node/services/tempDir";
-import { AgentSession, type AgentSessionChatEvent } from "@/node/services/agentSession";
-import { CodexOauthService } from "@/node/services/codexOauthService";
-import { createCoreServices } from "@/node/services/coreServices";
+import { Config } from "../node/config";
+import { DisposableTempDir } from "../node/services/tempDir";
+import { AgentSession, type AgentSessionChatEvent } from "../node/services/agentSession";
+import { CodexOauthService } from "../node/services/codexOauthService";
+import { createCoreServices } from "../node/services/coreServices";
 import {
   isCaughtUpMessage,
   isReasoningDelta,
@@ -34,14 +34,14 @@ import {
   isUsageDelta,
   type SendMessageOptions,
   type WorkspaceChatMessage,
-} from "@/common/orpc/types";
-import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
+} from "../common/orpc/types";
+import { createDisplayUsage } from "../common/utils/tokens/displayUsage";
 import {
   getTotalCost,
   formatCostWithDollar,
   sumUsageHistory,
   type ChatUsageDisplay,
-} from "@/common/utils/tokens/usageAggregator";
+} from "../common/utils/tokens/usageAggregator";
 import {
   formatToolStart,
   formatToolEnd,
@@ -49,28 +49,31 @@ import {
   formatGenericToolEnd,
   isMultilineResultTool,
 } from "./toolFormatters";
-import { defaultModel, resolveModelAlias } from "@/common/utils/ai/models";
-import { buildProvidersFromEnv, hasAnyConfiguredProvider } from "@/node/utils/providerRequirements";
+import { defaultModel, resolveModelAlias } from "../common/utils/ai/models";
+import {
+  buildProvidersFromEnv,
+  hasAnyConfiguredProvider,
+} from "../node/utils/providerRequirements";
 
 import {
   DEFAULT_THINKING_LEVEL,
   THINKING_DISPLAY_LABELS,
   parseThinkingInput,
   type ParsedThinkingInput,
-} from "@/common/types/thinking";
-import { resolveThinkingInput } from "@/common/utils/thinking/policy";
-import type { RuntimeConfig } from "@/common/types/runtime";
-import { parseRuntimeModeAndHost, RUNTIME_MODE } from "@/common/types/runtime";
-import assert from "@/common/utils/assert";
+} from "../common/types/thinking";
+import { resolveThinkingInput } from "../common/utils/thinking/policy";
+import type { RuntimeConfig } from "../common/types/runtime";
+import { parseRuntimeModeAndHost, RUNTIME_MODE } from "../common/types/runtime";
+import assert from "../common/utils/assert";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
-import { log, type LogLevel } from "@/node/services/log";
+import { log, type LogLevel } from "../node/services/log";
 import chalk from "chalk";
-import type { InitLogger, WorkspaceInitResult } from "@/node/runtime/Runtime";
-import { DockerRuntime } from "@/node/runtime/DockerRuntime";
-import { runFullInit } from "@/node/runtime/runtimeFactory";
+import type { InitLogger, WorkspaceInitResult } from "../node/runtime/Runtime";
+import { DockerRuntime } from "../node/runtime/DockerRuntime";
+import { runFullInit } from "../node/runtime/runtimeFactory";
 import { execSync } from "child_process";
 import { getParseOptions } from "./argv";
-import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { EXPERIMENT_IDS } from "../common/constants/experiments";
 
 // Display labels for CLI help (OFF, LOW, MED, HIGH, MAX)
 const THINKING_LABELS_LIST = Object.values(THINKING_DISPLAY_LABELS).join(", ");

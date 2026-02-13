@@ -1,0 +1,45 @@
+name: Perf Profiles
+
+on:
+  workflow_dispatch:
+    inputs:
+      perf_profiles:
+        description: 'Optional comma-separated profiles (e.g., "small,large,tool-heavy")'
+        required: false
+        type: string
+  schedule:
+    - cron: "30 8 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  workspace-open:
+    name: Workspace Open Profiles
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-mux
+      - name: Install xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+      - uses: ./.github/actions/setup-playwright
+      - name: Run workspace perf profiling scenarios
+        run: xvfb-run -a make test-e2e-perf
+        env:
+          ELECTRON_DISABLE_SANDBOX: 1
+          MUX_E2E_PERF_PROFILES: ${{ github.event.inputs.perf_profiles || '' }}
+      - name: Upload perf artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: perf-artifacts-${{ github.run_id }}
+          path: |
+            artifacts/perf/**
+            artifacts/playwright-report/**
+            artifacts/playwright-output/**
+          if-no-files-found: warn
