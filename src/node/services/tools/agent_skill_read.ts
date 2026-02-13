@@ -46,7 +46,7 @@ function buildSkillReadDescription(config: ToolConfiguration): string {
 
 /**
  * Agent Skill read tool factory.
- * Reads and validates a skill's SKILL.md from project-local or global skills roots.
+ * Reads and validates a skill's SKILL.md from project-local, global, or universal skills roots.
  */
 export const createAgentSkillReadTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({

@@ -9,6 +9,7 @@ import { DisposableTempDir } from "@/node/services/tempDir";
 import {
   discoverAgentSkills,
   discoverAgentSkillsDiagnostics,
+  getDefaultAgentSkillsRoots,
   readAgentSkill,
 } from "./agentSkillsService";
 
@@ -55,22 +56,66 @@ describe("agentSkillsService", () => {
     expect(bar!.scope).toBe("global");
   });
 
-  test("scans universal root after mux global root", async () => {
+  test("falls back to lower-precedence root when higher-precedence skill is invalid", async () => {
+    using project = new DisposableTempDir("agent-skills-project-invalid");
+    using global = new DisposableTempDir("agent-skills-global-valid");
+
+    const projectSkillsRoot = path.join(project.path, ".mux", "skills");
+    const globalSkillsRoot = global.path;
+
+    const invalidProjectSkillDir = path.join(projectSkillsRoot, "foo");
+    await fs.mkdir(invalidProjectSkillDir, { recursive: true });
+    await fs.writeFile(
+      path.join(invalidProjectSkillDir, "SKILL.md"),
+      "---\nname: foo\n---\n",
+      "utf-8"
+    );
+
+    await writeSkill(globalSkillsRoot, "foo", "from global");
+
+    const roots = { projectRoot: projectSkillsRoot, globalRoot: globalSkillsRoot };
+    const runtime = new LocalRuntime(project.path);
+
+    const skills = await discoverAgentSkills(runtime, project.path, { roots });
+    const foo = skills.find((s) => s.name === "foo");
+
+    expect(foo).toBeDefined();
+    expect(foo!.scope).toBe("global");
+    expect(foo!.description).toBe("from global");
+  });
+
+  test("default roots include workspace and home universal paths", () => {
+    using project = new DisposableTempDir("agent-skills-default-roots");
+    const runtime = new LocalRuntime(project.path);
+
+    const roots = getDefaultAgentSkillsRoots(runtime, project.path);
+
+    expect(roots.projectRoot).toBe(path.join(project.path, ".mux", "skills"));
+    expect(roots.workspaceUniversalRoot).toBe(path.join(project.path, ".agent", "skills"));
+    expect(roots.globalRoot).toBe("~/.mux/skills");
+    expect(roots.universalRoot).toBe("~/.agents/skills");
+  });
+
+  test("scans workspace/home universal roots after mux global root", async () => {
     using project = new DisposableTempDir("agent-skills-project");
     using global = new DisposableTempDir("agent-skills-global");
     using universal = new DisposableTempDir("agent-skills-universal");
 
     const projectSkillsRoot = path.join(project.path, ".mux", "skills");
+    const workspaceUniversalSkillsRoot = path.join(project.path, ".agent", "skills");
     const globalSkillsRoot = global.path;
     const universalSkillsRoot = universal.path;
 
     await writeSkill(globalSkillsRoot, "shared", "from global");
-    await writeSkill(universalSkillsRoot, "shared", "from universal");
-    await writeSkill(universalSkillsRoot, "universal-only", "from universal only");
+    await writeSkill(workspaceUniversalSkillsRoot, "shared", "from workspace universal");
+    await writeSkill(universalSkillsRoot, "shared", "from home universal");
+    await writeSkill(workspaceUniversalSkillsRoot, "workspace-universal-only", "workspace only");
+    await writeSkill(universalSkillsRoot, "home-universal-only", "home only");
 
     const roots = {
       projectRoot: projectSkillsRoot,
       globalRoot: globalSkillsRoot,
+      workspaceUniversalRoot: workspaceUniversalSkillsRoot,
       universalRoot: universalSkillsRoot,
     };
     const runtime = new LocalRuntime(project.path);
@@ -82,15 +127,34 @@ describe("agentSkillsService", () => {
     expect(shared!.scope).toBe("global");
     expect(shared!.description).toBe("from global");
 
-    const universalOnly = skills.find((s) => s.name === "universal-only");
-    expect(universalOnly).toBeDefined();
-    expect(universalOnly!.scope).toBe("global");
-    expect(universalOnly!.description).toBe("from universal only");
+    const workspaceUniversalOnly = skills.find((s) => s.name === "workspace-universal-only");
+    expect(workspaceUniversalOnly).toBeDefined();
+    expect(workspaceUniversalOnly!.scope).toBe("global");
+    expect(workspaceUniversalOnly!.description).toBe("workspace only");
 
-    const universalOnlyName = SkillNameSchema.parse("universal-only");
-    const resolved = await readAgentSkill(runtime, project.path, universalOnlyName, { roots });
-    expect(resolved.package.scope).toBe("global");
-    expect(resolved.package.frontmatter.description).toBe("from universal only");
+    const homeUniversalOnly = skills.find((s) => s.name === "home-universal-only");
+    expect(homeUniversalOnly).toBeDefined();
+    expect(homeUniversalOnly!.scope).toBe("global");
+    expect(homeUniversalOnly!.description).toBe("home only");
+
+    const workspaceUniversalOnlyName = SkillNameSchema.parse("workspace-universal-only");
+    const resolvedWorkspace = await readAgentSkill(
+      runtime,
+      project.path,
+      workspaceUniversalOnlyName,
+      {
+        roots,
+      }
+    );
+    expect(resolvedWorkspace.package.scope).toBe("global");
+    expect(resolvedWorkspace.package.frontmatter.description).toBe("workspace only");
+
+    const homeUniversalOnlyName = SkillNameSchema.parse("home-universal-only");
+    const resolvedHome = await readAgentSkill(runtime, project.path, homeUniversalOnlyName, {
+      roots,
+    });
+    expect(resolvedHome.package.scope).toBe("global");
+    expect(resolvedHome.package.frontmatter.description).toBe("home only");
   });
 
   test("readAgentSkill resolves project before global", async () => {
