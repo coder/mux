@@ -6,8 +6,11 @@ import { UpdaterService, type UpdateStatus } from "./updater";
 const mockAutoUpdater = Object.assign(new EventEmitter(), {
   autoDownload: false,
   autoInstallOnAppQuit: true,
+  channel: "latest",
+  allowPrerelease: false,
   checkForUpdates: mock(() => Promise.resolve()),
   downloadUpdate: mock(() => Promise.resolve()),
+  setFeedURL: mock(() => {}),
   quitAndInstall: mock(() => {
     // Mock implementation - does nothing in tests
   }),
@@ -41,8 +44,11 @@ describe("UpdaterService", () => {
     // Reset mocks
     mockAutoUpdater.checkForUpdates.mockClear();
     mockAutoUpdater.downloadUpdate.mockClear();
+    mockAutoUpdater.setFeedURL.mockClear();
     mockAutoUpdater.quitAndInstall.mockClear();
     mockAutoUpdater.removeAllListeners();
+    mockAutoUpdater.channel = "latest";
+    mockAutoUpdater.allowPrerelease = false;
 
     mockUpdateInstallInProgress = false;
 
@@ -84,6 +90,72 @@ describe("UpdaterService", () => {
         throw new Error(`Expected available status, got: ${status.type}`);
       }
       expect(status.info.version).toBe("0.0.1");
+    });
+  });
+
+  describe("channel management", () => {
+    it("defaults to stable channel", () => {
+      expect(service.getChannel()).toBe("stable");
+      expect(mockAutoUpdater.setFeedURL).toHaveBeenCalledWith({
+        provider: "github",
+        owner: "coder",
+        repo: "mux",
+        releaseType: "release",
+      });
+    });
+
+    it("accepts initial channel 'latest'", () => {
+      mockAutoUpdater.setFeedURL.mockClear();
+
+      const latestService = new UpdaterService("latest");
+
+      expect(latestService.getChannel()).toBe("latest");
+      expect(mockAutoUpdater.setFeedURL).toHaveBeenCalledWith({
+        provider: "github",
+        owner: "coder",
+        repo: "mux",
+        releaseType: "prerelease",
+      });
+      expect(mockAutoUpdater.allowPrerelease).toBe(true);
+    });
+
+    it("setChannel switches from stable to latest", () => {
+      mockAutoUpdater.setFeedURL.mockClear();
+      const channelService = new UpdaterService();
+
+      mockAutoUpdater.emit("update-available", { version: "2.0.0" });
+      expect(channelService.getStatus().type).toBe("available");
+
+      channelService.setChannel("latest");
+
+      expect(channelService.getChannel()).toBe("latest");
+      expect(mockAutoUpdater.setFeedURL).toHaveBeenLastCalledWith({
+        provider: "github",
+        owner: "coder",
+        repo: "mux",
+        releaseType: "prerelease",
+      });
+      expect(channelService.getStatus()).toEqual({ type: "idle" });
+    });
+
+    it("setChannel throws when downloading", () => {
+      mockAutoUpdater.setFeedURL.mockClear();
+      const channelService = new UpdaterService();
+
+      mockAutoUpdater.emit("download-progress", { percent: 50 });
+
+      expect(() => channelService.setChannel("latest")).toThrow(
+        "Cannot switch channel while downloading"
+      );
+    });
+
+    it("setChannel is no-op for same channel", () => {
+      mockAutoUpdater.setFeedURL.mockClear();
+      const channelService = new UpdaterService();
+
+      expect(mockAutoUpdater.setFeedURL).toHaveBeenCalledTimes(1);
+      channelService.setChannel("stable");
+      expect(mockAutoUpdater.setFeedURL).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -1,6 +1,7 @@
 import { autoUpdater } from "electron-updater";
 import type { UpdateInfo } from "electron-updater";
 import { log } from "@/node/services/log";
+import type { UpdateChannel } from "@/common/types/project";
 import { parseDebugUpdater } from "@/common/utils/env";
 import {
   clearUpdateInstallInProgress,
@@ -59,11 +60,18 @@ export class UpdaterService {
   };
   private checkSource: "auto" | "manual" = "auto";
   private subscribers = new Set<(status: UpdateStatus) => void>();
+  private currentChannel: UpdateChannel = "stable";
 
-  constructor() {
+  constructor(initialChannel: UpdateChannel = "stable") {
     // Configure auto-updater
     autoUpdater.autoDownload = false; // Wait for user confirmation
     autoUpdater.autoInstallOnAppQuit = true;
+
+    // Set up event handlers
+    this.setupEventHandlers();
+
+    this.currentChannel = initialChannel;
+    this.applyChannel(initialChannel);
 
     // Parse DEBUG_UPDATER for dev mode and optional fake version/fail phase
     const debugConfig = parseDebugUpdater(
@@ -101,9 +109,29 @@ export class UpdaterService {
         }
       }
     }
+  }
 
-    // Set up event handlers
-    this.setupEventHandlers();
+  private applyChannel(channel: UpdateChannel) {
+    if (channel === "latest") {
+      autoUpdater.allowPrerelease = true;
+      autoUpdater.channel = "dev";
+      // Point at GitHub pre-releases for the latest channel
+      autoUpdater.setFeedURL({
+        provider: "github",
+        owner: "coder",
+        repo: "mux",
+        releaseType: "prerelease",
+      });
+    } else {
+      autoUpdater.allowPrerelease = false;
+      autoUpdater.channel = "latest";
+      autoUpdater.setFeedURL({
+        provider: "github",
+        owner: "coder",
+        repo: "mux",
+        releaseType: "release",
+      });
+    }
   }
 
   private setupEventHandlers() {
@@ -429,6 +457,25 @@ export class UpdaterService {
       this.updateStatus = { type: "error", phase: "install", message };
       this.notifyRenderer();
     }
+  }
+
+  getChannel(): UpdateChannel {
+    return this.currentChannel;
+  }
+
+  setChannel(channel: UpdateChannel): void {
+    if (this.currentChannel === channel) {
+      return;
+    }
+
+    if (this.updateStatus.type === "downloading") {
+      throw new Error("Cannot switch channel while downloading");
+    }
+
+    this.currentChannel = channel;
+    this.applyChannel(channel);
+    this.updateStatus = { type: "idle" };
+    this.notifyRenderer();
   }
 
   /**
