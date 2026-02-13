@@ -192,6 +192,8 @@ export interface ModelRowProps {
 export function ModelRow(props: ModelRowProps) {
   const stats = getModelStats(props.fullId);
 
+  const contextBaseTokens = props.customContextWindowTokens ?? stats?.max_input_tokens ?? null;
+
   // Editing mode - render as a full-width row
   if (props.isEditing) {
     return (
@@ -285,15 +287,28 @@ export function ModelRow(props: ModelRowProps) {
 
       {/* Context Window — inline slider for models that support 1M context */}
       <td className="w-16 py-1.5 pr-2 md:w-20">
-        {props.onToggle1MContext && stats ? (
+        {props.onToggle1MContext && contextBaseTokens ? (
           <ContextWindowSlider
-            baseTokens={stats.max_input_tokens}
+            baseTokens={contextBaseTokens}
             enabled={props.is1MContextEnabled ?? false}
             onToggle={props.onToggle1MContext}
           />
-        ) : stats ? (
+        ) : !stats && props.onStartContextEdit ? (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              props.onStartContextEdit?.();
+            }}
+            disabled={Boolean(props.saving) || Boolean(props.hasActiveEdit)}
+            className="text-muted hover:text-foreground ml-auto block text-right text-xs disabled:cursor-not-allowed disabled:opacity-60"
+            aria-label="Edit context window"
+          >
+            {contextBaseTokens ? formatTokenCount(contextBaseTokens) : "—"}
+          </button>
+        ) : contextBaseTokens ? (
           <span className="text-muted block text-right text-xs">
-            {formatTokenCount(stats.max_input_tokens)}
+            {formatTokenCount(contextBaseTokens)}
           </span>
         ) : props.onStartContextEdit ? (
           <button
@@ -306,9 +321,7 @@ export function ModelRow(props: ModelRowProps) {
             className="text-muted hover:text-foreground ml-auto block text-right text-xs disabled:cursor-not-allowed disabled:opacity-60"
             aria-label="Edit context window"
           >
-            {props.customContextWindowTokens
-              ? formatTokenCount(props.customContextWindowTokens)
-              : "—"}
+            —
           </button>
         ) : (
           <span className="text-muted block text-right text-xs">—</span>

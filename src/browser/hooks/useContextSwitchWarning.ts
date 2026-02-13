@@ -151,6 +151,7 @@ export function useContextSwitchWarning(
   const prevCheckOptionsRef = useRef(checkOptions);
   const prevWarningPreviousModelRef = useRef<string | null>(null);
   const lastEvaluatedTargetModelRef = useRef<string | null>(null);
+  const dismissedWarningModelRef = useRef<string | null>(null);
   const prevWorkspaceIdRef = useRef(workspaceId);
 
   // ChatPane is keyed by workspaceId today; keep a defensive reset to avoid stale warnings
@@ -162,6 +163,7 @@ export function useContextSwitchWarning(
       prevCheckOptionsRef.current = checkOptions;
       prevWarningPreviousModelRef.current = null;
       lastEvaluatedTargetModelRef.current = null;
+      dismissedWarningModelRef.current = null;
       dispatch({ type: "RESET", model: pendingModel });
     }
   }, [workspaceId, pendingModel, use1M, checkOptions]);
@@ -236,6 +238,7 @@ export function useContextSwitchWarning(
         deferred: tokens === 0,
       };
 
+      dismissedWarningModelRef.current = null;
       dispatch({ type: "USER_REQUESTED_MODEL", pending: pendingSwitch });
 
       if (pendingSwitch.deferred) {
@@ -278,8 +281,9 @@ export function useContextSwitchWarning(
   }, [api, workspaceId, pendingSendOptions, warning]);
 
   const handleDismiss = useCallback(() => {
+    dismissedWarningModelRef.current = warning?.targetModel ?? pendingModel;
     dispatch({ type: "CLEAR_WARNING" });
-  }, []);
+  }, [warning, pendingModel]);
 
   // Sync with indirect model changes (e.g., WorkspaceModeAISync updating model on mode/agent change).
   // Effect is appropriate: pendingModel comes from usePersistedState (localStorage).
@@ -289,6 +293,7 @@ export function useContextSwitchWarning(
       return;
     }
 
+    dismissedWarningModelRef.current = null;
     const origin = consumeWorkspaceModelChange(workspaceId, pendingModel);
     // Agent/mode switches call setWorkspaceModelWithOrigin, so they flow through this explicit path.
     if (origin === "user" || origin === "agent") {
@@ -367,6 +372,10 @@ export function useContextSwitchWarning(
     // Re-evaluate explicit switches that happened before provider/policy config loaded.
     // Without this, custom-model overrides may arrive after we already concluded "no warning".
     if (lastEvaluatedTargetModelRef.current !== pendingModel) {
+      return;
+    }
+
+    if (dismissedWarningModelRef.current === pendingModel) {
       return;
     }
 
