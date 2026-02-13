@@ -2592,6 +2592,9 @@ export class AgentSession {
       ...(currentOptions?.maxOutputTokens != null && {
         maxOutputTokens: currentOptions.maxOutputTokens,
       }),
+      ...(currentOptions?.disableWorkspaceAgents != null && {
+        disableWorkspaceAgents: currentOptions.disableWorkspaceAgents,
+      }),
       skipAiSettingsPersistence: true,
     };
 
