@@ -16,7 +16,8 @@ import type { HostKeyVerificationRequest } from "@/common/orpc/schemas/ssh";
 
 export function HostKeyVerificationDialog() {
   const { api } = useAPI();
-  const [pending, setPending] = useState<HostKeyVerificationRequest | null>(null);
+  const [pendingQueue, setPendingQueue] = useState<HostKeyVerificationRequest[]>([]);
+  const pending = pendingQueue[0] ?? null;
   const [responding, setResponding] = useState(false);
 
   useEffect(() => {
@@ -28,7 +29,7 @@ export function HostKeyVerificationDialog() {
     const { signal } = controller;
 
     // Global subscription: backend can request host-key verification at any time.
-    // Keep the latest pending request in component state so the dialog can render immediately.
+    // Queue pending requests so concurrent prompts are handled FIFO without drops.
     (async () => {
       try {
         const iterator = await api.ssh.hostKeyVerification.subscribe(undefined, { signal });
@@ -38,7 +39,9 @@ export function HostKeyVerificationDialog() {
             break;
           }
 
-          setPending(request);
+          setPendingQueue((prev) =>
+            prev.some((item) => item.requestId === request.requestId) ? prev : [...prev, request]
+          );
         }
       } catch {
         // Subscription closed (cleanup/reconnect): no-op
@@ -53,16 +56,14 @@ export function HostKeyVerificationDialog() {
       return;
     }
 
+    const requestId = pending.requestId;
     setResponding(true);
 
     try {
-      await api.ssh.hostKeyVerification.respond({
-        requestId: pending.requestId,
-        accept,
-      });
+      await api.ssh.hostKeyVerification.respond({ requestId, accept });
     } finally {
       setResponding(false);
-      setPending(null);
+      setPendingQueue((prev) => prev.filter((item) => item.requestId !== requestId));
     }
   };
 
