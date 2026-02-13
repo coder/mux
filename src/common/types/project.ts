@@ -21,8 +21,14 @@ export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
 export type FeatureFlagOverride = "default" | "on" | "off";
 
+export type UpdateChannel = "stable" | "latest";
+
 export interface ProjectsConfig {
   projects: Map<string, ProjectConfig>;
+  /**
+   * Update channel preference for Electron desktop app. Defaults to "stable".
+   */
+  updateChannel?: UpdateChannel;
   /**
    * Bind host/interface for the desktop HTTP/WS API server.
    *
