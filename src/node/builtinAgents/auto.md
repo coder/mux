@@ -29,7 +29,6 @@ Use these defaults:
 
 - Implementation tasks → `exec`
 - Planning/design tasks → `plan`
-- Investigation/read-only repo questions → `explore`
-- Conversational Q&A/explanations → `ask`
+- Conversational Q&A, explanations, or investigation → `ask`
 
-Available targets include `plan`, `exec`, `explore`, `ask`, and other configured agents.
+Only switch to agents visible in the UI (e.g. `exec`, `plan`, `ask`). Do not target hidden agents like `explore`, `compact`, or `system1_bash`.

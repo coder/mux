@@ -2313,10 +2313,26 @@ export class AgentSession {
         ? normalizedOptionModel
         : fallbackModel.trim();
 
+    // Build follow-up options from an explicit allowlist.
+    // Exclude edit-only fields (editMessageId) to prevent the synthetic
+    // follow-up from entering edit/truncation logic.
     const followUpOptions: SendMessageOptions = {
-      ...(currentOptions ?? {}),
       model: effectiveModel,
       agentId: switchResult.agentId,
+      // Preserve relevant settings from the original request
+      ...(currentOptions?.thinkingLevel != null && { thinkingLevel: currentOptions.thinkingLevel }),
+      ...(currentOptions?.system1ThinkingLevel != null && {
+        system1ThinkingLevel: currentOptions.system1ThinkingLevel,
+      }),
+      ...(currentOptions?.system1Model != null && { system1Model: currentOptions.system1Model }),
+      ...(currentOptions?.providerOptions != null && {
+        providerOptions: currentOptions.providerOptions,
+      }),
+      ...(currentOptions?.experiments != null && { experiments: currentOptions.experiments }),
+      ...(currentOptions?.maxOutputTokens != null && {
+        maxOutputTokens: currentOptions.maxOutputTokens,
+      }),
+      skipAiSettingsPersistence: true,
     };
 
     const sendResult = await this.sendMessage(followUpText, followUpOptions, {
