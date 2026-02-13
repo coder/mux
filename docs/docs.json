@@ -168,6 +168,7 @@
     { "source": "/sharing", "destination": "/workspaces/sharing" },
     { "source": "/guides/sharing", "destination": "/workspaces/sharing" },
     { "source": "/prompting-tips", "destination": "/agents/prompting-tips" },
+    { "source": "/prompting-tips.html", "destination": "/agents/prompting-tips" },
     { "source": "/guides/prompting-tips", "destination": "/agents/prompting-tips" },
     { "source": "/vim-mode", "destination": "/config/vim-mode" },
     { "source": "/guides/vim-mode", "destination": "/config/vim-mode" },
