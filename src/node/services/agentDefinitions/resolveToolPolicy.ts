@@ -85,7 +85,9 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
     runtimePolicy.push(...DEPTH_HARD_DENY);
   }
 
-  // Enable switch_agent for sessions that were initialized with the Auto agent.
+  // switch_agent is disabled by default and only enabled for Auto-started sessions.
+  // This must come before the subagent hard-deny so the deny takes precedence.
+  runtimePolicy.push({ regex_match: "switch_agent", action: "disable" });
   if (enableAgentSwitchTool && !isSubagent) {
     runtimePolicy.push({ regex_match: "switch_agent", action: "enable" });
   }

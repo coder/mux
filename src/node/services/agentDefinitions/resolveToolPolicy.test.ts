@@ -14,7 +14,10 @@ describe("resolveToolPolicyForAgent", () => {
       enableAgentSwitchTool: false,
     });
 
-    expect(policy).toEqual([{ regex_match: ".*", action: "disable" }]);
+    expect(policy).toEqual([
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "switch_agent", action: "disable" },
+    ]);
   });
 
   test("switch_agent is disabled by default when auto switch is off", () => {
@@ -29,6 +32,7 @@ describe("resolveToolPolicyForAgent", () => {
     expect(policy).toEqual([
       { regex_match: ".*", action: "disable" },
       { regex_match: "file_read", action: "enable" },
+      { regex_match: "switch_agent", action: "disable" },
     ]);
   });
 
@@ -45,6 +49,7 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: ".*", action: "disable" },
       { regex_match: "file_read", action: "enable" },
       { regex_match: "bash.*", action: "enable" },
+      { regex_match: "switch_agent", action: "disable" },
     ]);
   });
 
@@ -61,6 +66,7 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: ".*", action: "disable" },
       { regex_match: "propose_plan", action: "enable" },
       { regex_match: "file_read", action: "enable" },
+      { regex_match: "switch_agent", action: "disable" },
     ]);
   });
 
@@ -76,6 +82,7 @@ describe("resolveToolPolicyForAgent", () => {
     expect(policy).toEqual([
       { regex_match: ".*", action: "disable" },
       { regex_match: "file_read", action: "enable" },
+      { regex_match: "switch_agent", action: "disable" },
       { regex_match: "switch_agent", action: "enable" },
     ]);
   });
@@ -92,6 +99,7 @@ describe("resolveToolPolicyForAgent", () => {
     expect(policy).toEqual([
       { regex_match: ".*", action: "disable" },
       { regex_match: "file_read", action: "enable" },
+      { regex_match: "switch_agent", action: "disable" },
       { regex_match: "propose_plan", action: "disable" },
       { regex_match: "ask_user_question", action: "disable" },
       { regex_match: "switch_agent", action: "disable" },
@@ -112,6 +120,7 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: ".*", action: "disable" },
       { regex_match: "task", action: "enable" },
       { regex_match: "file_read", action: "enable" },
+      { regex_match: "switch_agent", action: "disable" },
       { regex_match: "propose_plan", action: "disable" },
       { regex_match: "ask_user_question", action: "disable" },
       { regex_match: "switch_agent", action: "disable" },
@@ -134,6 +143,7 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: "file_read", action: "enable" },
       { regex_match: "task", action: "disable" },
       { regex_match: "task_.*", action: "disable" },
+      { regex_match: "switch_agent", action: "disable" },
     ]);
   });
 
@@ -152,6 +162,7 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: "file_read", action: "enable" },
       { regex_match: "task", action: "disable" },
       { regex_match: "task_.*", action: "disable" },
+      { regex_match: "switch_agent", action: "disable" },
       { regex_match: "propose_plan", action: "disable" },
       { regex_match: "ask_user_question", action: "disable" },
       { regex_match: "switch_agent", action: "disable" },
@@ -168,7 +179,10 @@ describe("resolveToolPolicyForAgent", () => {
       enableAgentSwitchTool: false,
     });
 
-    expect(policy).toEqual([{ regex_match: ".*", action: "disable" }]);
+    expect(policy).toEqual([
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "switch_agent", action: "disable" },
+    ]);
   });
 
   test("whitespace in tool patterns is trimmed", () => {
@@ -184,6 +198,7 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: ".*", action: "disable" },
       { regex_match: "file_read", action: "enable" },
       { regex_match: "bash", action: "enable" },
+      { regex_match: "switch_agent", action: "disable" },
     ]);
   });
 
@@ -204,6 +219,7 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: "bash", action: "enable" },
       { regex_match: "task", action: "enable" },
       { regex_match: "task", action: "disable" },
+      { regex_match: "switch_agent", action: "disable" },
     ]);
   });
 
@@ -227,6 +243,7 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: ".*", action: "enable" },
       { regex_match: "propose_plan", action: "disable" },
       { regex_match: "file_edit_.*", action: "disable" },
+      { regex_match: "switch_agent", action: "disable" },
     ]);
   });
 
@@ -254,6 +271,7 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: "task", action: "enable" },
       { regex_match: "bash", action: "disable" },
       { regex_match: "task", action: "disable" },
+      { regex_match: "switch_agent", action: "disable" },
     ]);
   });
 
@@ -274,6 +292,7 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: ".*", action: "disable" },
       { regex_match: "file_read", action: "enable" },
       { regex_match: "bash", action: "enable" },
+      { regex_match: "switch_agent", action: "disable" },
     ]);
   });
 });
