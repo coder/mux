@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Download, Loader2, RefreshCw } from "lucide-react";
 import { VERSION } from "@/version";
 import type { UpdateStatus } from "@/common/orpc/types";
+import { cn } from "@/common/lib/utils";
 import MuxLogoDark from "@/browser/assets/logos/mux-logo-dark.svg?react";
 import MuxLogoLight from "@/browser/assets/logos/mux-logo-light.svg?react";
 import { useTheme } from "@/browser/contexts/ThemeContext";
@@ -65,6 +66,8 @@ export function AboutDialog() {
   const MuxLogo = theme === "dark" || theme.endsWith("-dark") ? MuxLogoDark : MuxLogoLight;
   const { gitDescribe, buildTime } = parseVersionInfo(VERSION satisfies unknown);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
+  const [channel, setChannel] = useState<"stable" | "latest">("stable");
+  const [channelLoading, setChannelLoading] = useState(false);
 
   const isDesktop = typeof window !== "undefined" && Boolean(window.api);
 
@@ -97,9 +100,30 @@ export function AboutDialog() {
     };
   }, [api, isDesktop, isOpen]);
 
+  useEffect(() => {
+    if (!isOpen || !isDesktop || !api) {
+      return;
+    }
+
+    api.update.getChannel().then(setChannel).catch(console.error);
+  }, [api, isDesktop, isOpen]);
+
   const canUseUpdateApi = isDesktop && Boolean(api);
   const isChecking =
     canUseUpdateApi && (updateStatus.type === "checking" || updateStatus.type === "downloading");
+
+  const handleChannelChange = (next: "stable" | "latest") => {
+    if (!api || next === channel || channelLoading) {
+      return;
+    }
+
+    setChannelLoading(true);
+    api.update
+      .setChannel({ channel: next })
+      .then(() => setChannel(next))
+      .catch(console.error)
+      .finally(() => setChannelLoading(false));
+  };
 
   const handleCheckForUpdates = () => {
     if (!api) {
@@ -160,6 +184,45 @@ export function AboutDialog() {
             <div className="text-muted text-xs">Connecting to desktop update service…</div>
           ) : (
             <>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-muted text-xs">Channel</span>
+                  <div className="border-border-medium flex overflow-hidden rounded border text-xs">
+                    <button
+                      type="button"
+                      className={cn(
+                        "px-2.5 py-1 transition-colors",
+                        channel === "stable"
+                          ? "bg-toggle-bg text-foreground"
+                          : "text-muted hover:text-foreground"
+                      )}
+                      disabled={channelLoading}
+                      onClick={() => handleChannelChange("stable")}
+                    >
+                      Stable
+                    </button>
+                    <button
+                      type="button"
+                      className={cn(
+                        "border-border-medium border-l px-2.5 py-1 transition-colors",
+                        channel === "latest"
+                          ? "bg-toggle-bg text-foreground"
+                          : "text-muted hover:text-foreground"
+                      )}
+                      disabled={channelLoading}
+                      onClick={() => handleChannelChange("latest")}
+                    >
+                      Latest
+                    </button>
+                  </div>
+                </div>
+                <div className="text-muted text-xs">
+                  {channel === "stable"
+                    ? "Official releases only."
+                    : "Pre-release builds on every merge to main."}
+                </div>
+              </div>
+
               <Button
                 variant="outline"
                 size="sm"
