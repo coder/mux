@@ -55,6 +55,7 @@ import {
 } from "@/common/types/message";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
+import { hasNonEmptyPlanFile } from "@/node/utils/runtime/helpers";
 import { isExecLikeEditingCapableInResolvedChain } from "@/common/utils/agentTools";
 import {
   readAgentDefinition,
@@ -2216,6 +2217,7 @@ export class AgentSession {
       }
 
       // NOTE: hidden is opt-out. selectable is legacy opt-in.
+      // Mirrors the same logic in agents.list (src/node/orpc/router.ts).
       const uiSelectableBase =
         typeof resolvedFrontmatter.ui?.hidden === "boolean"
           ? !resolvedFrontmatter.ui.hidden
@@ -2229,6 +2231,34 @@ export class AgentSession {
           targetAgentId: parsedAgentId.data,
         });
         return false;
+      }
+
+      // Check ui.requires gating (e.g., orchestrator requires a plan file).
+      // This matches the router's `requiresPlan && !planReady` check.
+      const requiresPlan = resolvedFrontmatter.ui?.requires?.includes("plan") ?? false;
+      if (requiresPlan) {
+        // Fail closed: if plan state cannot be determined, treat as not ready.
+        let planReady = false;
+        try {
+          planReady = await hasNonEmptyPlanFile(
+            runtime,
+            metadata.name,
+            metadata.projectName,
+            this.workspaceId
+          );
+        } catch {
+          planReady = false;
+        }
+        if (!planReady) {
+          log.warn(
+            "switch_agent target requires a plan but no plan file exists; skipping synthetic follow-up",
+            {
+              workspaceId: this.workspaceId,
+              targetAgentId: parsedAgentId.data,
+            }
+          );
+          return false;
+        }
       }
 
       return true;
@@ -2273,7 +2303,10 @@ export class AgentSession {
       return false;
     }
 
-    const followUpText = switchResult.followUp?.trim() ?? "Continue.";
+    // Fall back to "Continue." for nullish, empty, or whitespace-only followUp strings.
+    const trimmedFollowUp = switchResult.followUp?.trim();
+    const followUpText =
+      trimmedFollowUp != null && trimmedFollowUp.length > 0 ? trimmedFollowUp : "Continue.";
     const normalizedOptionModel = currentOptions?.model?.trim();
     const effectiveModel =
       normalizedOptionModel && normalizedOptionModel.length > 0
