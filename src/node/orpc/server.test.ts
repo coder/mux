@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
-import { createOrpcServer } from "./server";
+import { createOrpcServer, resolveOrpcStaticDir } from "./server";
 import type { ORPCContext } from "./context";
 
 function getErrorCode(error: unknown): string | null {
@@ -17,6 +17,39 @@ function getErrorCode(error: unknown): string | null {
   const code = (error as { code?: unknown }).code;
   return typeof code === "string" ? code : null;
 }
+
+describe("resolveOrpcStaticDir", () => {
+  test("prefers the dist layout when dist/index.html exists", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-static-resolve-"));
+
+    try {
+      const baseDir = path.join(tempDir, "dist", "node", "orpc");
+      await fs.mkdir(baseDir, { recursive: true });
+      await fs.writeFile(path.join(tempDir, "dist", "index.html"), "dist-index", "utf-8");
+      await fs.writeFile(path.join(tempDir, "index.html"), "root-index", "utf-8");
+
+      const resolved = await resolveOrpcStaticDir(baseDir);
+      expect(resolved).toBe(path.join(tempDir, "dist"));
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("falls back to the repo-root layout when dist/index.html is missing", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-static-resolve-"));
+
+    try {
+      const baseDir = path.join(tempDir, "src", "node", "orpc");
+      await fs.mkdir(baseDir, { recursive: true });
+      await fs.writeFile(path.join(tempDir, "index.html"), "root-index", "utf-8");
+
+      const resolved = await resolveOrpcStaticDir(baseDir);
+      expect(resolved).toBe(tempDir);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("createOrpcServer", () => {
   test("serveStatic fallback does not swallow /api routes", async () => {
@@ -49,6 +82,67 @@ describe("createOrpcServer", () => {
 
       const apiRes = await fetch(`${server.baseUrl}/api/not-a-real-route`);
       expect(apiRes.status).toBe(404);
+    } finally {
+      await server?.close();
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("serveStatic does not rewrite missing asset requests to index.html", async () => {
+    const stubContext: Partial<ORPCContext> = {};
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-static-assets-"));
+    const indexHtml =
+      "<!doctype html><html><head><title>mux</title></head><body><div>ok</div></body></html>";
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+
+    try {
+      await fs.writeFile(path.join(tempDir, "index.html"), indexHtml, "utf-8");
+
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+        authToken: "test-token",
+        serveStatic: true,
+        staticDir: tempDir,
+      });
+
+      const assetRes = await fetch(`${server.baseUrl}/favicon-missing.png`);
+      expect(assetRes.status).toBe(404);
+    } finally {
+      await server?.close();
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("serveStatic serves root-level assets from staticDir/public", async () => {
+    const stubContext: Partial<ORPCContext> = {};
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-static-public-"));
+    const indexHtml =
+      "<!doctype html><html><head><title>mux</title></head><body><div>ok</div></body></html>";
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+
+    try {
+      await fs.writeFile(path.join(tempDir, "index.html"), indexHtml, "utf-8");
+      await fs.mkdir(path.join(tempDir, "public"), { recursive: true });
+      await fs.writeFile(path.join(tempDir, "public", "favicon.png"), "icon-bytes", "utf-8");
+
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+        authToken: "test-token",
+        serveStatic: true,
+        staticDir: tempDir,
+      });
+
+      const assetRes = await fetch(`${server.baseUrl}/favicon.png`);
+      expect(assetRes.status).toBe(200);
+      expect(await assetRes.text()).toBe("icon-bytes");
     } finally {
       await server?.close();
       await fs.rm(tempDir, { recursive: true, force: true });

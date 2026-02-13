@@ -105,4 +105,24 @@ describe("ThemeContext", () => {
     // Check that localStorage is still light (since forcedTheme doesn't write to storage by itself)
     expect(JSON.parse(window.localStorage.getItem(UI_THEME_KEY)!)).toBe("light");
   });
+
+  test("updates the browser tab favicon when the theme changes", () => {
+    const favicon = document.createElement("link");
+    favicon.rel = "icon";
+    favicon.dataset.themeIcon = "true";
+    favicon.href = "favicon.png";
+    document.head.appendChild(favicon);
+
+    try {
+      render(
+        <ThemeProvider forcedTheme="dark">
+          <TestComponent />
+        </ThemeProvider>
+      );
+
+      expect(favicon.href).toContain("favicon-dark.png");
+    } finally {
+      favicon.remove();
+    }
+  });
 });

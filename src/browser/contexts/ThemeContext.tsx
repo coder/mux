@@ -59,8 +59,8 @@ const THEME_COLORS: Record<ThemeMode, string> = {
 };
 
 const FAVICON_BY_SCHEME: Record<"light" | "dark", string> = {
-  light: "/favicon.ico",
-  dark: "/favicon-dark.ico",
+  light: "favicon.png",
+  dark: "favicon-dark.png",
 };
 
 /** Map theme mode to CSS color-scheme value */
@@ -79,9 +79,21 @@ function applyThemeFavicon(theme: ThemeMode) {
   }
 
   const scheme = getColorScheme(theme);
-  const nextHref = FAVICON_BY_SCHEME[scheme];
-  if (favicon.getAttribute("href") !== nextHref) {
-    favicon.setAttribute("href", nextHref);
+  // Use the document base URL so browser mode still resolves favicons behind URL
+  // prefixes, while falling back safely in minimal test DOMs without baseURI.
+  const baseHref =
+    document.baseURI || (typeof window !== "undefined" ? window.location.href : undefined);
+  let nextHref = FAVICON_BY_SCHEME[scheme];
+  if (baseHref) {
+    try {
+      nextHref = new URL(nextHref, baseHref).toString();
+    } catch {
+      // Keep the relative fallback when URL parsing is unavailable.
+    }
+  }
+
+  if (favicon.href !== nextHref) {
+    favicon.href = nextHref;
   }
 }
 

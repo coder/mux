@@ -35,6 +35,8 @@ const PNG_OUTPUT = path.join(BUILD_DIR, "icon.png");
 const ICNS_OUTPUT = path.join(BUILD_DIR, "icon.icns");
 const FAVICON_OUTPUT = path.join(ROOT, "public", "favicon.ico");
 const FAVICON_DARK_OUTPUT = path.join(ROOT, "public", "favicon-dark.ico");
+const FAVICON_PNG_OUTPUT = path.join(ROOT, "public", "favicon.png");
+const FAVICON_DARK_PNG_OUTPUT = path.join(ROOT, "public", "favicon-dark.png");
 
 const THEME_FAVICON_STYLE = `<style>
   :root {
@@ -209,6 +211,11 @@ async function generateFavicon(source: string, output: string) {
   console.warn("  ⚠ ImageMagick not found, favicon.ico is single-resolution");
 }
 
+async function generateFaviconPng(source: string, output: string) {
+  const pngBuffer = await sharp(source).resize(256, 256).png().toBuffer();
+  await writeFile(output, pngBuffer);
+}
+
 async function generateThemeFaviconSvg(output: string) {
   const svg = await readFile(SOURCE_BLACK, "utf8");
   const withCurrentColor = svg.replace(/fill="(black|white)"/g, 'fill="currentColor"');
@@ -239,11 +246,16 @@ async function updateAllLogos() {
   await generateThemeFaviconSvg(docsFaviconPath);
   console.log("✓ docs/favicon.svg");
 
-  // Generate favicons (light/dark)
+  // Generate favicons (light/dark) in both ICO and PNG formats.
+  // Browser tabs use PNG to avoid MIME mismatches when ImageMagick is unavailable.
   await generateFavicon(MONO_ICON.source, FAVICON_OUTPUT);
   console.log(`✓ public/favicon.ico`);
   await generateFavicon(SOURCE_WHITE, FAVICON_DARK_OUTPUT);
   console.log(`✓ public/favicon-dark.ico`);
+  await generateFaviconPng(MONO_ICON.source, FAVICON_PNG_OUTPUT);
+  console.log(`✓ public/favicon.png`);
+  await generateFaviconPng(SOURCE_WHITE, FAVICON_DARK_PNG_OUTPUT);
+  console.log(`✓ public/favicon-dark.png`);
 
   console.log("\n✅ All logos updated successfully!");
 }

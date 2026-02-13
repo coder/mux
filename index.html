@@ -9,8 +9,9 @@
     <meta name="description" content="Parallel agentic development with Electron + React" />
     <meta name="theme-color" content="#1e1e1e" />
     <link rel="manifest" href="/manifest.json" crossorigin="use-credentials" vite-ignore />
-    <link rel="icon" href="/favicon.ico" data-theme-icon vite-ignore />
-    <link rel="apple-touch-icon" href="/icon.png" vite-ignore />
+    <!-- Keep favicon paths relative so browser mode still resolves icons behind URL prefixes. -->
+    <link rel="icon" href="favicon.png" type="image/png" data-theme-icon />
+    <link rel="apple-touch-icon" href="icon.png" />
     <title>mux - coder multiplexer</title>
     <style>
       body {

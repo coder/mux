@@ -40,7 +40,7 @@ export interface OrpcServerOptions {
   context: ORPCContext;
   /** Whether to serve static files and SPA fallback (default: false) */
   serveStatic?: boolean;
-  /** Directory to serve static files from (default: dist/ relative to dist/node/orpc/) */
+  /** Directory to serve static files from (default: auto-detect dist/ or repo root). */
   staticDir?: string;
   /** Custom error handler for oRPC errors */
   onOrpcError?: (error: unknown, options: unknown) => void;
@@ -118,6 +118,28 @@ function escapeHtml(input: string): string {
     .replaceAll("'", "&#39;");
 }
 
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function resolveOrpcStaticDir(baseDir: string = __dirname): Promise<string> {
+  const candidates = [path.join(baseDir, "../.."), path.join(baseDir, "../../..")];
+
+  for (const candidate of candidates) {
+    const indexPath = path.join(candidate, "index.html");
+    if (await pathExists(indexPath)) {
+      return candidate;
+    }
+  }
+
+  return candidates[0];
+}
+
 /**
  * Create an oRPC server with HTTP and WebSocket endpoints.
  *
@@ -132,8 +154,7 @@ export async function createOrpcServer({
   authToken,
   context,
   serveStatic = false,
-  // From dist/node/orpc/, go up 2 levels to reach dist/ where index.html lives
-  staticDir = path.join(__dirname, "../.."),
+  staticDir,
   onOrpcError = (error, options) => {
     // Auth failures are expected in browser mode while the user enters the token.
     // Avoid spamming error logs with stack traces on every unauthenticated request.
@@ -160,19 +181,28 @@ export async function createOrpcServer({
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: false }));
 
+  const resolvedStaticDir = staticDir ?? (await resolveOrpcStaticDir());
+
   let spaIndexHtml: string | null = null;
 
   // Static file serving (optional)
   if (serveStatic) {
     try {
-      const indexHtmlPath = path.join(staticDir, "index.html");
+      const indexHtmlPath = path.join(resolvedStaticDir, "index.html");
       const indexHtml = await fs.readFile(indexHtmlPath, "utf8");
       spaIndexHtml = injectBaseHref(indexHtml, "/");
     } catch (error) {
       log.error("Failed to read index.html for SPA fallback:", error);
     }
 
-    app.use(express.static(staticDir));
+    app.use(express.static(resolvedStaticDir));
+
+    // In source-mode layouts, index.html lives at repo root while favicons and
+    // other web assets live in ./public. Serve both so browser tabs can load icons.
+    const publicDir = path.join(resolvedStaticDir, "public");
+    if (await pathExists(publicDir)) {
+      app.use(express.static(publicDir));
+    }
   }
 
   // Health check endpoint
@@ -727,6 +757,12 @@ export async function createOrpcServer({
     app.use((req, res, next) => {
       // Don't swallow API/ORPC routes with index.html.
       if (req.path.startsWith("/orpc") || req.path.startsWith("/api")) {
+        return next();
+      }
+
+      // Requests for explicit files (favicon, manifest, JS, etc.) should 404 when
+      // missing, rather than receiving HTML from SPA fallback.
+      if (path.extname(req.path)) {
         return next();
       }
 
