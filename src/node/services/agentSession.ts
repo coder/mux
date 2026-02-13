@@ -2335,6 +2335,7 @@ export class AgentSession {
       ...(currentOptions?.disableWorkspaceAgents != null && {
         disableWorkspaceAgents: currentOptions.disableWorkspaceAgents,
       }),
+      ...(currentOptions?.toolPolicy != null && { toolPolicy: currentOptions.toolPolicy }),
       skipAiSettingsPersistence: true,
     };
 
