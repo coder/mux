@@ -1736,7 +1736,13 @@ export class WorkspaceStore {
       if (this.isWorkspaceSubscribed(workspaceId)) {
         const transient = this.chatTransientState.get(workspaceId);
         if (transient) {
+          // Failed reconnect attempts may have buffered partial replay data.
+          // Clear replay buffers before the next attempt so we don't append a
+          // second replay copy and duplicate deltas/tool events on caught-up.
           transient.caughtUp = false;
+          transient.replayingHistory = false;
+          transient.historicalMessages.length = 0;
+          transient.pendingStreamEvents.length = 0;
         }
       }
 

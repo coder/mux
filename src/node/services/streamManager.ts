@@ -252,6 +252,11 @@ interface WorkspaceStreamInfo {
   // (messageId, timestamp, delta).
   lastPartTimestamp: number;
 
+  // Timestamp when each tool call reached output-available (tool-call-end emission).
+  // Needed for reconnect replay filtering because dynamic-tool parts keep their
+  // original start timestamp even after they gain output.
+  toolCompletionTimestamps: Map<string, number>;
+
   model: string;
   /** Effective thinking level after model policy clamping */
   thinkingLevel?: string;
@@ -1145,6 +1150,7 @@ export class StreamManager extends EventEmitter {
       token: streamToken,
       startTime,
       lastPartTimestamp: startTime,
+      toolCompletionTimestamps: new Map(),
       model: modelString,
       thinkingLevel,
       initialMetadata,
@@ -1220,6 +1226,8 @@ export class StreamManager extends EventEmitter {
     await this.flushPartialWrite(workspaceId, streamInfo);
 
     // Emit tool-call-end event (listeners can now safely read partial)
+    const completionTimestamp = nextPartTimestamp(streamInfo);
+    streamInfo.toolCompletionTimestamps.set(toolCallId, completionTimestamp);
     this.emit("tool-call-end", {
       type: "tool-call-end",
       workspaceId: workspaceId as string,
@@ -1227,7 +1235,7 @@ export class StreamManager extends EventEmitter {
       toolCallId,
       toolName,
       result: output,
-      timestamp: nextPartTimestamp(streamInfo),
+      timestamp: completionTimestamp,
     } as ToolCallEndEvent);
   }
 
@@ -2884,11 +2892,24 @@ export class StreamManager extends EventEmitter {
             }
 
             // Dynamic tool parts keep their original start timestamp even when they later
-            // transition to output-available. If we filter strictly by timestamp, a reconnect
-            // that occurred after tool-call-start but before tool-call-end can miss the tool
-            // completion event entirely. Replay output-available parts to preserve correctness.
+            // transition to output-available. Use the recorded tool completion timestamp
+            // (from tool-call-end emission) to decide whether completion happened after
+            // the reconnect cursor.
             if (part.type === "dynamic-tool" && part.state === "output-available") {
-              return true;
+              const completionTimestamp = streamInfo.toolCompletionTimestamps.get(part.toolCallId);
+              if (completionTimestamp === undefined) {
+                log.warn(
+                  "[streamManager] Missing tool completion timestamp during replay; dropping replayed completion to avoid duplicate side effects",
+                  {
+                    workspaceId,
+                    messageId: streamInfo.messageId,
+                    toolCallId: part.toolCallId,
+                  }
+                );
+                return false;
+              }
+
+              return completionTimestamp > afterTimestamp;
             }
 
             return false;
