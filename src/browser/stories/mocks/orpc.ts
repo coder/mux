@@ -1302,6 +1302,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         yield* [];
         await new Promise<void>(() => undefined);
       },
+      getChannel: async () => "stable" as const,
+      setChannel: async () => {},
     },
     policy: {
       get: () => Promise.resolve(policyResponse),

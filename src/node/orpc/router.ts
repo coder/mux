@@ -3808,6 +3808,18 @@ export const router = (authToken?: string) => {
             unsubscribe();
           }
         }),
+      getChannel: t
+        .input(schemas.update.getChannel.input)
+        .output(schemas.update.getChannel.output)
+        .handler(({ context }) => {
+          return context.updateService.getChannel();
+        }),
+      setChannel: t
+        .input(schemas.update.setChannel.input)
+        .output(schemas.update.setChannel.output)
+        .handler(async ({ context, input }) => {
+          await context.updateService.setChannel(input.channel);
+        }),
     },
     menu: {
       onOpenSettings: t
