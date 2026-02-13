@@ -122,6 +122,9 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
     toolCallId &&
     (status === "executing" || (status === "completed" && !resultHasOutput))
   );
+  const shouldTrackLatestStreamingBash = Boolean(
+    workspaceId && toolCallId && (status === "executing" || expanded)
+  );
 
   const foregroundBashToolCallIds = useForegroundBashToolCallIds(
     status === "executing" ? workspaceId : undefined
@@ -133,7 +136,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
     shouldTrackLiveBashState ? toolCallId : undefined
   );
   const latestStreamingBashId = useLatestStreamingBashId(
-    shouldTrackLiveBashState ? workspaceId : undefined
+    shouldTrackLatestStreamingBash ? workspaceId : undefined
   );
   const isLatestStreamingBash = latestStreamingBashId === toolCallId;
 
