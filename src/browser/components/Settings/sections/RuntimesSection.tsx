@@ -38,6 +38,7 @@ type RuntimeAvailabilityState =
 interface RuntimeOverrideCacheEntry {
   enablement: RuntimeEnablement;
   defaultRuntime: RuntimeEnablementId | null;
+  pending: boolean;
 }
 
 const ALL_SCOPE_VALUE = "__all__";
@@ -76,17 +77,49 @@ export function RuntimesSection() {
   const [runtimeAvailabilityState, setRuntimeAvailabilityState] =
     useState<RuntimeAvailabilityState>({ status: "idle" });
   const [coderInfo, setCoderInfo] = useState<CoderInfo | null>(null);
-  // Cache per-project overrides locally because config writes don't refresh the project context.
+  const [overrideCacheVersion, setOverrideCacheVersion] = useState(0);
+  // Cache pending per-project overrides locally while config updates propagate.
   const overrideCacheRef = useRef(new Map<string, RuntimeOverrideCacheEntry>());
 
   const selectedProjectPath = selectedScope === ALL_SCOPE_VALUE ? null : selectedScope;
   const isProjectScope = Boolean(selectedProjectPath);
   const isProjectOverrideActive = isProjectScope && projectOverrideEnabled;
 
-  const syncProjects = () => {
+  const syncProjects = () =>
     refreshProjects().catch(() => {
       // Best-effort only.
     });
+
+  const queueProjectOverrideUpdate = (
+    projectPath: string,
+    entry: RuntimeOverrideCacheEntry,
+    payload: {
+      projectPath: string;
+      runtimeEnablement?: RuntimeEnablement | null;
+      defaultRuntime?: RuntimeEnablementId | null;
+      runtimeOverridesEnabled?: boolean | null;
+    }
+  ) => {
+    overrideCacheRef.current.set(projectPath, entry);
+    const updatePromise = api?.config?.updateRuntimeEnablement(payload);
+    if (!updatePromise) {
+      overrideCacheRef.current.set(projectPath, { ...entry, pending: false });
+      setOverrideCacheVersion((prev) => prev + 1);
+      return;
+    }
+
+    updatePromise
+      .finally(() =>
+        syncProjects().finally(() => {
+          if (overrideCacheRef.current.get(projectPath) === entry) {
+            overrideCacheRef.current.set(projectPath, { ...entry, pending: false });
+            setOverrideCacheVersion((prev) => prev + 1);
+          }
+        })
+      )
+      .catch(() => {
+        // Best-effort only.
+      });
   };
 
   useEffect(() => {
@@ -107,9 +140,8 @@ export function RuntimesSection() {
       return;
     }
 
-    // Check local cache first (backend writes aren't reflected in context until reload).
     const cached = overrideCacheRef.current.get(selectedProjectPath);
-    if (cached) {
+    if (cached?.pending) {
       setProjectOverrideEnabled(true);
       setProjectEnablement(cached.enablement);
       setProjectDefaultRuntime(cached.defaultRuntime ?? defaultRuntime ?? null);
@@ -122,15 +154,27 @@ export function RuntimesSection() {
       Boolean(projectConfig?.runtimeEnablement) ||
       projectConfig?.defaultRuntime !== undefined;
 
-    setProjectOverrideEnabled(hasOverrides);
-    // When overrides are active, the project's enablement is independent of global settings
-    // (all-true defaults + only the project's explicit `false` overrides). This matches
-    // the creation flow in ChatInput/index.tsx which uses normalizeRuntimeEnablement directly.
-    setProjectEnablement(
-      hasOverrides ? normalizeRuntimeEnablement(projectConfig?.runtimeEnablement) : enablement
-    );
-    setProjectDefaultRuntime(projectConfig?.defaultRuntime ?? defaultRuntime ?? null);
-  }, [defaultRuntime, enablement, projects, selectedProjectPath]);
+    if (hasOverrides) {
+      const resolvedEnablement = normalizeRuntimeEnablement(projectConfig?.runtimeEnablement);
+      setProjectOverrideEnabled(true);
+      // When overrides are active, the project's enablement is independent of global settings
+      // (all-true defaults + only the project's explicit `false` overrides). This matches
+      // the creation flow in ChatInput/index.tsx which uses normalizeRuntimeEnablement directly.
+      setProjectEnablement(resolvedEnablement);
+      setProjectDefaultRuntime(projectConfig?.defaultRuntime ?? defaultRuntime ?? null);
+      overrideCacheRef.current.set(selectedProjectPath, {
+        enablement: resolvedEnablement,
+        defaultRuntime: projectConfig?.defaultRuntime ?? null,
+        pending: false,
+      });
+      return;
+    }
+
+    overrideCacheRef.current.delete(selectedProjectPath);
+    setProjectOverrideEnabled(false);
+    setProjectEnablement(enablement);
+    setProjectDefaultRuntime(defaultRuntime ?? null);
+  }, [defaultRuntime, enablement, projects, selectedProjectPath, overrideCacheVersion]);
 
   useEffect(() => {
     if (!api || !selectedProjectPath) {
@@ -217,15 +261,18 @@ export function RuntimesSection() {
       setProjectEnablement(enablement);
       setProjectDefaultRuntime(defaultRuntime ?? null);
       overrideCacheRef.current.delete(selectedProjectPath);
-      api?.config
-        ?.updateRuntimeEnablement({
-          projectPath: selectedProjectPath,
-          runtimeEnablement: null,
-          defaultRuntime: null,
-          runtimeOverridesEnabled: null,
-        })
-        .then(() => {
-          syncProjects();
+      const updatePromise = api?.config?.updateRuntimeEnablement({
+        projectPath: selectedProjectPath,
+        runtimeEnablement: null,
+        defaultRuntime: null,
+        runtimeOverridesEnabled: null,
+      });
+      if (!updatePromise) {
+        return;
+      }
+      updatePromise
+        .finally(() => {
+          void syncProjects();
         })
         .catch(() => {
           // Best-effort only.
@@ -234,27 +281,21 @@ export function RuntimesSection() {
     }
 
     const nextEnablement = { ...enablement };
+    const cacheEntry: RuntimeOverrideCacheEntry = {
+      enablement: nextEnablement,
+      defaultRuntime: defaultRuntime ?? null,
+      pending: true,
+    };
     setProjectOverrideEnabled(true);
     setProjectEnablement(nextEnablement);
     setProjectDefaultRuntime(defaultRuntime ?? null);
-    overrideCacheRef.current.set(selectedProjectPath, {
-      enablement: nextEnablement,
-      defaultRuntime: defaultRuntime ?? null,
-    });
 
-    api?.config
-      ?.updateRuntimeEnablement({
-        projectPath: selectedProjectPath,
-        runtimeEnablement: nextEnablement,
-        defaultRuntime: defaultRuntime ?? null,
-        runtimeOverridesEnabled: true,
-      })
-      .then(() => {
-        syncProjects();
-      })
-      .catch(() => {
-        // Best-effort only.
-      });
+    queueProjectOverrideUpdate(selectedProjectPath, cacheEntry, {
+      projectPath: selectedProjectPath,
+      runtimeEnablement: nextEnablement,
+      defaultRuntime: defaultRuntime ?? null,
+      runtimeOverridesEnabled: true,
+    });
   };
 
   const handleRuntimeToggle = (runtimeId: RuntimeEnablementId, enabled: boolean) => {
@@ -292,10 +333,11 @@ export function RuntimesSection() {
       nextDefaultRuntime = getFallbackRuntime(nextEnablement);
       setProjectDefaultRuntime(nextDefaultRuntime);
     }
-    overrideCacheRef.current.set(selectedProjectPath, {
+    const cacheEntry: RuntimeOverrideCacheEntry = {
       enablement: nextEnablement,
       defaultRuntime: nextDefaultRuntime,
-    });
+      pending: true,
+    };
 
     const updatePayload: {
       projectPath: string;
@@ -312,14 +354,7 @@ export function RuntimesSection() {
       updatePayload.defaultRuntime = nextDefaultRuntime ?? null;
     }
 
-    api?.config
-      ?.updateRuntimeEnablement(updatePayload)
-      .then(() => {
-        syncProjects();
-      })
-      .catch(() => {
-        // Best-effort only.
-      });
+    queueProjectOverrideUpdate(selectedProjectPath, cacheEntry, updatePayload);
   };
 
   const handleDefaultRuntimeChange = (value: string) => {
@@ -335,22 +370,16 @@ export function RuntimesSection() {
     }
 
     setProjectDefaultRuntime(runtimeId);
-    overrideCacheRef.current.set(selectedProjectPath, {
+    const cacheEntry: RuntimeOverrideCacheEntry = {
       enablement: projectEnablement,
       defaultRuntime: runtimeId,
+      pending: true,
+    };
+    queueProjectOverrideUpdate(selectedProjectPath, cacheEntry, {
+      projectPath: selectedProjectPath,
+      defaultRuntime: runtimeId,
+      runtimeOverridesEnabled: true,
     });
-    api?.config
-      ?.updateRuntimeEnablement({
-        projectPath: selectedProjectPath,
-        defaultRuntime: runtimeId,
-        runtimeOverridesEnabled: true,
-      })
-      .then(() => {
-        syncProjects();
-      })
-      .catch(() => {
-        // Best-effort only.
-      });
   };
 
   return (
