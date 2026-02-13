@@ -250,6 +250,54 @@ const z = 3;`);
       ).toBe(true);
     });
 
+    test("for-of loop variable is valid inside loop body", async () => {
+      const result = await analyzeCode(`
+        const items = [1, 2, 3];
+        for (const fetch of items) { console.log(fetch); }
+      `);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    test("for loop variable is valid inside loop", async () => {
+      const result = await analyzeCode(`
+        for (let process = 0; process < 1; process++) { console.log(process); }
+      `);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    test("for-of loop shadow does not leak outside loop", async () => {
+      const result = await analyzeCode(`
+        const items = [1, 2, 3];
+        for (const fetch of items) { console.log(fetch); }
+        fetch("https://example.com");
+      `);
+      expect(result.valid).toBe(false);
+      expect(
+        result.errors.some((e) => e.type === "unavailable_global" && e.message.includes("fetch"))
+      ).toBe(true);
+    });
+
+    test("catch binding is valid inside catch block", async () => {
+      const result = await analyzeCode(`
+        try { throw new Error("test"); } catch (process) { console.log(process.message); }
+      `);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    test("catch binding does not leak outside catch", async () => {
+      const result = await analyzeCode(`
+        try { throw new Error("test"); } catch (process) { console.log(process.message); }
+        process.env;
+      `);
+      expect(result.valid).toBe(false);
+      expect(
+        result.errors.some((e) => e.type === "unavailable_global" && e.message.includes("process"))
+      ).toBe(true);
+    });
+
     test("destructured binding shadowing 'fetch' does NOT error", async () => {
       const result = await analyzeCode(`
         const obj = { fetch: { output: "ok" } };

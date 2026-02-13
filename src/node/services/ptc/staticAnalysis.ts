@@ -186,47 +186,27 @@ function detectUnavailableGlobals(code: string, sourceFile?: ts.SourceFile): Ana
     scopes.add(scope);
   }
 
-  // Nearest enclosing Block or SourceFile.
-  function findBlockScope(node: ts.Node): ts.Node {
-    let current = node.parent;
+  // The scope container for a declaration: the smallest AST ancestor that
+  // encompasses both the declaration identifier and all valid reference sites.
+  // The AST structure naturally encodes this — walk up from the declaration's
+  // parent to the first scope-creating node. No special-casing needed.
+  function findDeclScope(declNode: ts.Node): ts.Node {
+    let current = declNode.parent;
     while (current) {
-      if (ts.isBlock(current) || ts.isSourceFile(current)) return current;
+      if (
+        ts.isFunctionLike(current) ||
+        ts.isCatchClause(current) ||
+        ts.isForInStatement(current) ||
+        ts.isForOfStatement(current) ||
+        ts.isForStatement(current) ||
+        ts.isBlock(current) ||
+        ts.isSourceFile(current)
+      ) {
+        return current;
+      }
       current = current.parent;
     }
     return parsedSourceFile;
-  }
-
-  // Determine the scope container a declaration is visible in.
-  function findDeclScope(declNode: ts.Node): ts.Node {
-    let current: ts.Node | undefined = declNode;
-    while (current) {
-      // Parameter → visible in its containing function-like scope
-      // (functions, methods, constructors, accessors, etc.)
-      if (ts.isParameter(current) && current.parent) {
-        const func = current.parent;
-        if (ts.isFunctionLike(func)) {
-          return func;
-        }
-        break;
-      }
-      // Catch clause variable → visible in catch block
-      if (
-        current.parent &&
-        ts.isCatchClause(current.parent) &&
-        current === current.parent.variableDeclaration
-      ) {
-        return current.parent.block;
-      }
-      // For-loop initializer → visible in loop body
-      if (current.parent && ts.isVariableDeclarationList(current.parent)) {
-        const gp = current.parent.parent;
-        if (gp && (ts.isForInStatement(gp) || ts.isForOfStatement(gp) || ts.isForStatement(gp))) {
-          return ts.isBlock(gp.statement) ? gp.statement : gp;
-        }
-      }
-      current = current.parent;
-    }
-    return findBlockScope(declNode);
   }
 
   function collectDeclarations(node: ts.Node): void {
