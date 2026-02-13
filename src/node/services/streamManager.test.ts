@@ -1048,6 +1048,78 @@ describe("StreamManager - replayStream", () => {
     // If replayStream iterates the live array, it would also emit "b".
     expect(deltas).toEqual(["a"]);
   });
+
+  test("replayStream filters output-available tool parts using completion timestamps", async () => {
+    const streamManager = new StreamManager(historyService);
+
+    // Suppress error events from bubbling up as uncaught exceptions during tests
+    streamManager.on("error", () => undefined);
+
+    const workspaceId = "ws-replay-tool-filter";
+
+    const replayedToolEnds: string[] = [];
+    streamManager.on(
+      "tool-call-end",
+      (event: { replay?: boolean | undefined; toolCallId: string }) => {
+        expect(event.replay).toBe(true);
+        replayedToolEnds.push(event.toolCallId);
+      }
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
+    if (!(workspaceStreamsValue instanceof Map)) {
+      throw new Error("StreamManager.workspaceStreams is not a Map");
+    }
+    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
+
+    const streamInfo = {
+      state: "streaming",
+      messageId: "msg-tools",
+      model: "claude-sonnet-4",
+      historySequence: 1,
+      startTime: 123,
+      initialMetadata: {},
+      toolCompletionTimestamps: new Map([
+        ["tool-old", 15],
+        ["tool-new", 30],
+      ]),
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "tool-old",
+          toolName: "bash",
+          input: {},
+          state: "output-available",
+          output: { ok: true },
+          timestamp: 10,
+        },
+        {
+          type: "dynamic-tool",
+          toolCallId: "tool-new",
+          toolName: "bash",
+          input: {},
+          state: "output-available",
+          output: { ok: true },
+          timestamp: 12,
+        },
+      ],
+    };
+
+    workspaceStreams.set(workspaceId, streamInfo);
+
+    const tokenTracker = Reflect.get(streamManager, "tokenTracker") as {
+      setModel: (model: string) => Promise<void>;
+      countTokens: (text: string) => Promise<number>;
+    };
+
+    tokenTracker.setModel = () => Promise.resolve();
+    tokenTracker.countTokens = () => Promise.resolve(1);
+
+    await streamManager.replayStream(workspaceId, { afterTimestamp: 20 });
+
+    expect(replayedToolEnds).toEqual(["tool-new"]);
+  });
 });
 
 describe("StreamManager - categorizeError", () => {
