@@ -18,6 +18,7 @@ import * as crypto from "crypto";
 import * as path from "path";
 import * as os from "os";
 import { spawn } from "child_process";
+import { HOST_KEY_APPROVAL_TIMEOUT_MS } from "@/common/constants/ssh";
 import { log } from "@/node/services/log";
 import type { HostKeyVerificationService } from "@/node/services/hostKeyVerificationService";
 import { createAskpassSession, parseHostKeyPrompt } from "./sshAskpass";
@@ -88,9 +89,6 @@ function withJitter(seconds: number): number {
 const HEALTHY_TTL_MS = 15 * 1000; // 15 seconds
 
 const DEFAULT_PROBE_TIMEOUT_MS = 10_000;
-// Matches PROMPT_TIMEOUT_MS in hostKeyVerificationService.ts — the user
-// has up to 60s to accept/reject the host key in the UI dialog.
-const HOST_KEY_PROMPT_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_WAIT_MS = 2 * 60 * 1000; // 2 minutes
 
 export interface AcquireConnectionOptions {
@@ -397,11 +395,18 @@ export class SSHConnectionPool {
     // doesn't self-terminate while the user is responding to the dialog.
     // The Node.js timer still provides fast-fail for unreachable hosts.
     const connectTimeout = verificationService
-      ? Math.ceil(HOST_KEY_PROMPT_TIMEOUT_MS / 1000)
+      ? Math.ceil(HOST_KEY_APPROVAL_TIMEOUT_MS / 1000)
       : Math.min(Math.ceil(timeoutMs / 1000), 15);
     args.push("-o", `ConnectTimeout=${connectTimeout}`);
     args.push("-o", "ServerAliveInterval=5");
     args.push("-o", "ServerAliveCountMax=2");
+
+    // When no host-key verification UI is available (headless/test/CLI),
+    // fall back to auto-accepting unknown hosts for probe connectivity checks.
+    if (!verificationService) {
+      args.push("-o", "StrictHostKeyChecking=no");
+      args.push("-o", "UserKnownHostsFile=/dev/null");
+    }
 
     args.push(config.host, "echo ok");
 
@@ -417,7 +422,7 @@ export class SSHConnectionPool {
     // The askpass script writes prompts to a temp file; we respond via a FIFO.
     const askpass = verificationService
       ? await createAskpassSession(async (promptText) => {
-          extendDeadline?.(HOST_KEY_PROMPT_TIMEOUT_MS);
+          extendDeadline?.(HOST_KEY_APPROVAL_TIMEOUT_MS);
 
           const fullContext = stderr + "\n" + promptText;
           const parsed = parseHostKeyPrompt(fullContext);

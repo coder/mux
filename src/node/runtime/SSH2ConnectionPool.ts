@@ -13,6 +13,7 @@ import * as path from "path";
 import { spawn, type ChildProcess } from "child_process";
 import { Duplex } from "stream";
 import type { Client } from "ssh2";
+import { HOST_KEY_APPROVAL_TIMEOUT_MS } from "@/common/constants/ssh";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 import { attachStreamErrorHandler } from "@/node/utils/streamErrors";
@@ -614,7 +615,11 @@ export class SSH2ConnectionPool {
               username,
               agent: agentOverride,
               sock: proxy?.sock,
-              readyTimeout: timeoutMs,
+              // hostVerifier can wait for user approval in the UI dialog,
+              // so keep the handshake alive long enough for that interaction.
+              readyTimeout: hostKeyService
+                ? Math.max(timeoutMs, HOST_KEY_APPROVAL_TIMEOUT_MS)
+                : timeoutMs,
               keepaliveInterval: 5000,
               keepaliveCountMax: 2,
               ...(privateKey ? { privateKey } : {}),
