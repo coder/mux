@@ -149,12 +149,21 @@ describe("extractTextFromContentParts", () => {
   });
 });
 
-const createApiCallError = (statusCode: number, message = `HTTP ${statusCode}`): APICallError =>
+const createApiCallError = (
+  statusCode: number,
+  message = `HTTP ${statusCode}`,
+  overrides?: {
+    data?: unknown;
+    responseBody?: string;
+  }
+): APICallError =>
   new APICallError({
     message,
     statusCode,
     url: "https://api.example.com/v1/responses",
     requestBodyValues: {},
+    data: overrides?.data,
+    responseBody: overrides?.responseBody,
   });
 
 describe("workspaceTitleGenerator error mappers", () => {
@@ -186,7 +195,18 @@ describe("workspaceTitleGenerator error mappers", () => {
       expect(mapped).toMatchObject({ type: "quota" });
     });
 
-    test("maps APICallError 429 to rate_limit", () => {
+    test("maps APICallError 429 with quota payload to quota", () => {
+      const mapped = mapNameGenerationError(
+        createApiCallError(429, "Request failed", {
+          data: { error: { code: "insufficient_quota", message: "Please add credits" } },
+          responseBody: '{"error":{"code":"insufficient_quota","message":"Please add credits"}}',
+        }),
+        "openai:gpt-4.1-mini"
+      );
+      expect(mapped).toMatchObject({ type: "quota" });
+    });
+
+    test("maps APICallError 429 throttling to rate_limit", () => {
       const mapped = mapNameGenerationError(
         createApiCallError(429, "Too Many Requests"),
         "openai:gpt-4.1-mini"

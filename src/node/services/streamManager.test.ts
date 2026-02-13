@@ -1119,6 +1119,52 @@ describe("StreamManager - categorizeError", () => {
 
     expect(categorizeMethod.call(streamManager, apiError)).toBe("quota");
   });
+
+  test("classifies 429 insufficient_quota responses as quota", () => {
+    const streamManager = new StreamManager(historyService);
+
+    const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
+      error: unknown
+    ) => unknown;
+    expect(typeof categorizeMethod).toBe("function");
+
+    const apiError = new APICallError({
+      message: "Request failed",
+      url: "https://api.openai.com/v1/responses",
+      requestBodyValues: {},
+      statusCode: 429,
+      responseHeaders: {},
+      responseBody:
+        '{"error":{"code":"insufficient_quota","message":"You exceeded your current quota"}}',
+      isRetryable: false,
+      data: {
+        error: { code: "insufficient_quota", message: "You exceeded your current quota" },
+      },
+    });
+
+    expect(categorizeMethod.call(streamManager, apiError)).toBe("quota");
+  });
+
+  test("classifies generic 429 throttling as rate_limit", () => {
+    const streamManager = new StreamManager(historyService);
+
+    const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
+      error: unknown
+    ) => unknown;
+    expect(typeof categorizeMethod).toBe("function");
+
+    const apiError = new APICallError({
+      message: "Too many requests, please retry shortly",
+      url: "https://api.openai.com/v1/responses",
+      requestBodyValues: {},
+      statusCode: 429,
+      responseHeaders: {},
+      responseBody: '{"error":{"message":"Too many requests"}}',
+      isRetryable: true,
+    });
+
+    expect(categorizeMethod.call(streamManager, apiError)).toBe("rate_limit");
+  });
 });
 
 describe("StreamManager - ask_user_question Partial Persistence", () => {

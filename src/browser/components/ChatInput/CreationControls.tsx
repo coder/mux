@@ -607,7 +607,10 @@ export function CreationControls(props: CreationControlsProps) {
   return (
     <div className="mb-3 flex flex-col gap-4">
       {/* Project name / workspace name header row - wraps on narrow viewports */}
-      <div className="flex items-center gap-y-2" data-component="WorkspaceNameGroup">
+      <div
+        className={cn("flex gap-y-2", nameState.error ? "items-start" : "items-center")}
+        data-component="WorkspaceNameGroup"
+      >
         {projects.size > 1 ? (
           <RadixSelect
             value={props.projectPath}
@@ -645,64 +648,68 @@ export function CreationControls(props: CreationControlsProps) {
         )}
         <span className="text-muted-foreground mx-2 text-lg">/</span>
 
-        {/* Name input with magic wand */}
-        <div className="flex items-center gap-1">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <input
-                id="workspace-name"
-                type="text"
-                value={nameState.name}
-                onChange={handleNameChange}
-                onFocus={handleInputFocus}
-                placeholder={nameState.isGenerating ? "Generating..." : "workspace-name"}
-                disabled={props.disabled}
-                className={cn(
-                  `border-border-medium focus:border-accent h-7 rounded-md
-                   border border-transparent bg-transparent text-lg font-semibold 
-                   field-sizing-content focus:border focus:bg-bg-dark focus:outline-none 
-                   disabled:opacity-50 max-w-[50vw] sm:max-w-[40vw] lg:max-w-[30vw]`,
-                  nameState.autoGenerate ? "text-muted" : "text-foreground",
-                  nameState.error && "border-red-500"
-                )}
-              />
-            </TooltipTrigger>
-            <TooltipContent align="start" className="max-w-64">
-              A stable identifier used for git branches, worktree folders, and session directories.
-            </TooltipContent>
-          </Tooltip>
-          {/* Magic wand / loading indicator */}
-          {nameState.isGenerating ? (
-            <Loader2 className="text-accent h-3.5 w-3.5 shrink-0 animate-spin" />
-          ) : (
+        {/* Keep generation errors stacked with the name field so remediation appears directly below it. */}
+        <div className="flex min-w-0 flex-col gap-1" data-component="WorkspaceNameInputBlock">
+          {/* Name input with magic wand */}
+          <div className="flex items-center gap-1">
             <Tooltip>
               <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={handleWandClick}
+                <input
+                  id="workspace-name"
+                  type="text"
+                  value={nameState.name}
+                  onChange={handleNameChange}
+                  onFocus={handleInputFocus}
+                  placeholder={nameState.isGenerating ? "Generating..." : "workspace-name"}
                   disabled={props.disabled}
-                  className="flex shrink-0 items-center disabled:opacity-50"
-                  aria-label={nameState.autoGenerate ? "Disable auto-naming" : "Enable auto-naming"}
-                >
-                  <Wand2
-                    className={cn(
-                      "h-3.5 w-3.5 transition-colors",
-                      nameState.autoGenerate
-                        ? "text-accent"
-                        : "text-muted-foreground opacity-50 hover:opacity-75"
-                    )}
-                  />
-                </button>
+                  className={cn(
+                    `border-border-medium focus:border-accent h-7 rounded-md
+                     border border-transparent bg-transparent text-lg font-semibold 
+                     field-sizing-content focus:border focus:bg-bg-dark focus:outline-none 
+                     disabled:opacity-50 max-w-[50vw] sm:max-w-[40vw] lg:max-w-[30vw]`,
+                    nameState.autoGenerate ? "text-muted" : "text-foreground",
+                    nameState.error && "border-red-500"
+                  )}
+                />
               </TooltipTrigger>
-              <TooltipContent align="center">
-                {nameState.autoGenerate ? "Auto-naming enabled" : "Click to enable auto-naming"}
+              <TooltipContent align="start" className="max-w-64">
+                A stable identifier used for git branches, worktree folders, and session
+                directories.
               </TooltipContent>
             </Tooltip>
-          )}
+            {/* Magic wand / loading indicator */}
+            {nameState.isGenerating ? (
+              <Loader2 className="text-accent h-3.5 w-3.5 shrink-0 animate-spin" />
+            ) : (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={handleWandClick}
+                    disabled={props.disabled}
+                    className="flex shrink-0 items-center disabled:opacity-50"
+                    aria-label={
+                      nameState.autoGenerate ? "Disable auto-naming" : "Enable auto-naming"
+                    }
+                  >
+                    <Wand2
+                      className={cn(
+                        "h-3.5 w-3.5 transition-colors",
+                        nameState.autoGenerate
+                          ? "text-accent"
+                          : "text-muted-foreground opacity-50 hover:opacity-75"
+                      )}
+                    />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent align="center">
+                  {nameState.autoGenerate ? "Auto-naming enabled" : "Click to enable auto-naming"}
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </div>
+          {nameState.error && <NameErrorDisplay error={nameState.error} />}
         </div>
-
-        {/* Error display */}
-        {nameState.error && <NameErrorDisplay error={nameState.error} />}
 
         {/* Section selector - right-aligned, same row as workspace name */}
         {props.sections && props.sections.length > 0 && props.onSectionChange && (

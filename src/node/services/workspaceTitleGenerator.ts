@@ -5,6 +5,7 @@ import { log } from "./log";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { NameGenerationError, SendMessageError } from "@/common/types/errors";
+import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
 import crypto from "crypto";
 
 /** Schema for AI-generated workspace identity (area name + descriptive title) */
@@ -204,7 +205,12 @@ export function mapNameGenerationError(error: unknown, modelString: string): Nam
       return { type: "quota", raw: error.message };
     }
     if (error.statusCode === 429) {
-      return { type: "rate_limit", raw: error.message };
+      const kind = classify429Capacity({
+        message: error.message,
+        data: error.data,
+        responseBody: error.responseBody,
+      });
+      return { type: kind, raw: error.message };
     }
     if (error.statusCode != null && error.statusCode >= 500) {
       return { type: "service_unavailable", raw: error.message };
