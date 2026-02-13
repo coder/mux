@@ -205,7 +205,7 @@ export class ServiceContainer {
     this.tokenizerService = new TokenizerService(this.sessionUsageService);
     this.serverService = new ServerService();
     this.menuEventService = new MenuEventService();
-    this.voiceService = new VoiceService(config);
+    this.voiceService = new VoiceService(config, this.providerService);
     this.featureFlagService = new FeatureFlagService(config, this.telemetryService);
     this.signingService = getSigningService();
     this.coderService = coderService;
