@@ -3,12 +3,12 @@
  *
  * The unread indicator shows when a workspace has activity the user hasn't seen.
  * Key components:
- * - recencyTimestamp: derived from the most recent user message or compacted message
+ * - recencyTimestamp: derived from max of user message, compacted message, or stream completion time
  * - lastReadTimestamp: persisted in localStorage, updated when workspace is selected
  * - isUnread: recencyTimestamp > lastReadTimestamp
  *
- * Bug under test: The unread indicator may incorrectly show as "unread" after a stream
- * completes, even when the user is actively viewing the workspace.
+ * Behavior under test: stream completion should make non-selected workspaces unread,
+ * while selected workspaces should be auto-marked as read.
  */
 
 import "./dom";
@@ -111,9 +111,10 @@ describe("Unread indicator (mock AI router)", () => {
       }
     });
 
-    test("assistant message alone does NOT update recencyTimestamp", async () => {
-      // This test validates that recency is computed from user messages,
-      // not from assistant responses.
+    test("recencyTimestamp is stable after stream completes (no further changes without new activity)", async () => {
+      // Recency now includes stream completion time.
+      // This test validates that once the stream is done, recency stays stable
+      // unless there is additional activity.
 
       await app.chat.send("First message");
       await app.chat.expectTranscriptContains("Mock response: First message");
@@ -124,8 +125,8 @@ describe("Unread indicator (mock AI router)", () => {
       // Wait a bit to ensure any timing differences would be detectable
       await new Promise((r) => setTimeout(r, 50));
 
-      // The recency should not have changed from just the assistant response
-      // (recency is set by the user message, not the assistant response)
+      // Stream completion already happened before we captured recencyAfterFirst,
+      // so without new activity the value should remain unchanged.
       const currentState = getWorkspaceUnreadState(app.workspaceId);
       expect(currentState.recencyTimestamp).toBe(recencyAfterFirst);
     });
@@ -157,14 +158,49 @@ describe("Unread indicator (mock AI router)", () => {
       const { recencyTimestamp, isUnread } = getWorkspaceUnreadState(app.workspaceId);
 
       // The workspace should NOT be unread while we're viewing it.
-      // The fix (in ChatInput) updates lastReadTimestamp when user sends a message,
-      // ensuring that user-initiated activity doesn't trigger the unread indicator.
+      // handleResponseComplete marks the selected workspace as read when a final
+      // stream completes, even though stream completion bumps recency.
       expect(isUnread(lastReadAfter)).toBe(false);
 
       // lastReadTimestamp should be >= recencyTimestamp after the fix
       if (recencyTimestamp !== null) {
         expect(lastReadAfter).toBeGreaterThanOrEqual(recencyTimestamp);
       }
+    });
+
+    test("selected workspace lastRead is updated on stream completion", async () => {
+      const lastReadBefore = getLastReadTimestamp(app.workspaceId);
+      const beforeSend = Date.now();
+
+      await app.chat.send("Test for read update");
+      await app.chat.expectTranscriptContains("Mock response: Test for read update");
+      const afterComplete = Date.now();
+
+      const lastRead = getLastReadTimestamp(app.workspaceId);
+      const { recencyTimestamp } = getWorkspaceUnreadState(app.workspaceId);
+
+      // handleResponseComplete updates selected workspace lastRead before any
+      // notification-related early return logic.
+      expect(lastRead).toBeGreaterThanOrEqual(lastReadBefore);
+      expect(lastRead).toBeGreaterThanOrEqual(beforeSend);
+      expect(lastRead).toBeLessThanOrEqual(afterComplete + 1000);
+      if (recencyTimestamp !== null) {
+        expect(lastRead).toBeGreaterThanOrEqual(recencyTimestamp);
+      }
+    });
+
+    test("stream completion bumps recency for unread detection", async () => {
+      // Core behavior: stream completion now bumps recencyTimestamp,
+      // so a non-active reader should see this workspace as unread.
+      await app.chat.send("Message to trigger stream");
+      await app.chat.expectTranscriptContains("Mock response: Message to trigger stream");
+
+      const { recencyTimestamp, isUnread } = getWorkspaceUnreadState(app.workspaceId);
+      expect(recencyTimestamp).not.toBeNull();
+
+      // Simulate someone who last read this workspace before stream completion.
+      const lastReadBeforeStreamCompleted = recencyTimestamp! - 1000;
+      expect(isUnread(lastReadBeforeStreamCompleted)).toBe(true);
     });
 
     test("workspace should show unread when activity happens in non-selected workspace", async () => {
@@ -241,7 +277,7 @@ describe("Unread indicator (mock AI router)", () => {
       await app.dispose();
     });
 
-    test("recencyTimestamp is based on user message, not assistant message", async () => {
+    test("recencyTimestamp reflects stream completion time", async () => {
       // Send a user message and note the recency
       const beforeSend = Date.now();
       await app.chat.send("User message for recency test");
@@ -252,14 +288,12 @@ describe("Unread indicator (mock AI router)", () => {
 
       const { recencyTimestamp } = getWorkspaceUnreadState(app.workspaceId);
 
-      // The recency should be from the user message time, not the assistant completion time
-      // It should be between when we sent and shortly after (user message timestamp)
+      // Recency now includes stream completion time, so it should fall within
+      // the send/completion window.
       expect(recencyTimestamp).not.toBeNull();
       // Allow some tolerance for timing
       expect(recencyTimestamp!).toBeGreaterThanOrEqual(beforeSend - 100);
-      // Recency should NOT be updated to the stream completion time
-      // (this would be a bug - assistant messages shouldn't affect recency)
-      // A rough heuristic: if it's way past when we sent, something is wrong
+      // Recency should be no later than shortly after completion.
       expect(recencyTimestamp!).toBeLessThan(afterComplete + 1000);
     });
 
