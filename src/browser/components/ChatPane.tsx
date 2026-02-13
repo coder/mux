@@ -57,6 +57,7 @@ import { executeCompaction } from "@/browser/utils/chatCommands";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "../hooks/useAutoCompactionSettings";
 import { useContextSwitchWarning } from "@/browser/hooks/useContextSwitchWarning";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { useForceCompaction } from "@/browser/hooks/useForceCompaction";
 import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
@@ -130,6 +131,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   const pendingModel = pendingSendOptions.model;
   const use1M = has1MContext(pendingModel);
 
+  const { config: providersConfig } = useProvidersConfig();
+
   const { threshold: autoCompactionThreshold } = useAutoCompactionSettings(
     workspaceId,
     pendingModel
@@ -174,6 +177,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     workspaceUsage,
     api: api ?? undefined,
     pendingSendOptions,
+    providersConfig,
   });
 
   // Apply message transformations:
@@ -231,8 +235,16 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   );
 
   const autoCompactionResult = useMemo(
-    () => checkAutoCompaction(workspaceUsage, pendingModel, use1M, autoCompactionThreshold / 100),
-    [workspaceUsage, pendingModel, use1M, autoCompactionThreshold]
+    () =>
+      checkAutoCompaction(
+        workspaceUsage,
+        pendingModel,
+        use1M,
+        autoCompactionThreshold / 100,
+        undefined,
+        providersConfig
+      ),
+    [workspaceUsage, pendingModel, use1M, providersConfig, autoCompactionThreshold]
   );
 
   // Show warning when: shouldShowWarning flag is true AND not currently compacting.

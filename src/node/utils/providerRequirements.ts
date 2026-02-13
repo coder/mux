@@ -87,7 +87,7 @@ export interface ProviderConfigRaw {
   apiKey?: string;
   baseUrl?: string;
   baseURL?: string; // Anthropic uses baseURL
-  models?: string[];
+  models?: unknown[];
   region?: string;
   bearerToken?: string;
   accessKeyId?: string;

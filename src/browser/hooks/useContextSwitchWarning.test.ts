@@ -5,7 +5,7 @@ import React from "react";
 import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import { PolicyProvider } from "@/browser/contexts/PolicyContext";
 import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
-import type { SendMessageOptions } from "@/common/orpc/types";
+import type { ProvidersConfigMap, SendMessageOptions } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import { useContextSwitchWarning } from "./useContextSwitchWarning";
 import { getEffectiveContextLimit } from "@/browser/utils/compaction/contextLimit";
@@ -111,6 +111,19 @@ const buildSendOptions = (model: string): SendMessageOptions => ({
   agentId: "exec",
 });
 
+const buildProvidersConfigWithCustomContext = (
+  provider: string,
+  modelId: string,
+  contextWindowTokens: number
+): ProvidersConfigMap => ({
+  [provider]: {
+    apiKeySet: true,
+    isEnabled: true,
+    isConfigured: true,
+    models: [{ id: modelId, contextWindowTokens }],
+  },
+});
+
 describe("useContextSwitchWarning", () => {
   beforeEach(() => {
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
@@ -136,6 +149,7 @@ describe("useContextSwitchWarning", () => {
       workspaceUsage: buildUsage(260_000, model),
       api: undefined,
       pendingSendOptions: buildSendOptions(model),
+      providersConfig: null,
     };
 
     const { result } = renderHook((hookProps: typeof props) => useContextSwitchWarning(hookProps), {
@@ -157,6 +171,7 @@ describe("useContextSwitchWarning", () => {
       workspaceUsage: buildUsage(260_000, previousModel),
       api: undefined,
       pendingSendOptions: buildSendOptions(previousModel),
+      providersConfig: null,
     };
 
     const { result, rerender } = renderHook(
@@ -170,10 +185,50 @@ describe("useContextSwitchWarning", () => {
         ...props,
         pendingModel: nextModel,
         pendingSendOptions: buildSendOptions(nextModel),
+        providersConfig: null,
       });
     });
 
     await waitFor(() => expect(result.current.warning?.targetModel).toBe(nextModel));
+  });
+
+  test("uses custom model context overrides when evaluating switches", async () => {
+    const previousModel = "anthropic:claude-sonnet-4-5";
+    const nextModel = "openai:custom-context-model";
+    const providersConfig = buildProvidersConfigWithCustomContext(
+      "openai",
+      "custom-context-model",
+      100_000
+    );
+
+    const props = {
+      workspaceId: "workspace-custom-context",
+      messages: [buildAssistantMessage(previousModel)],
+      pendingModel: previousModel,
+      use1M: false,
+      workspaceUsage: buildUsage(95_000, previousModel),
+      api: undefined,
+      pendingSendOptions: buildSendOptions(previousModel),
+      providersConfig,
+    };
+
+    const { result, rerender } = renderHook(
+      (hookProps: typeof props) => useContextSwitchWarning(hookProps),
+      { initialProps: props, wrapper }
+    );
+
+    act(() => {
+      recordWorkspaceModelChange(props.workspaceId, nextModel, "user");
+      rerender({
+        ...props,
+        pendingModel: nextModel,
+        pendingSendOptions: buildSendOptions(nextModel),
+        providersConfig,
+      });
+    });
+
+    await waitFor(() => expect(result.current.warning?.targetModel).toBe(nextModel));
+    expect(result.current.warning?.targetLimit).toBe(100_000);
   });
 
   test("warns when gateway model strings are normalized for explicit switches", async () => {
@@ -193,6 +248,7 @@ describe("useContextSwitchWarning", () => {
       workspaceUsage: buildUsage(tokens, previousModel),
       api: undefined,
       pendingSendOptions: buildSendOptions(previousModel),
+      providersConfig: null,
     };
 
     const { result, rerender } = renderHook(
@@ -206,6 +262,7 @@ describe("useContextSwitchWarning", () => {
         ...props,
         pendingModel: gatewayModel,
         pendingSendOptions: buildSendOptions(nextModel),
+        providersConfig: null,
       });
     });
 
@@ -244,6 +301,7 @@ describe("useContextSwitchWarning", () => {
         workspaceUsage: buildUsage(tokens, previousModel),
         api: undefined,
         pendingSendOptions: buildSendOptions(previousModel),
+        providersConfig: null,
       };
 
       const { result, rerender } = renderHook(
@@ -257,6 +315,7 @@ describe("useContextSwitchWarning", () => {
           ...props,
           pendingModel: nextModel,
           pendingSendOptions: buildSendOptions(nextModel),
+          providersConfig: null,
         });
       });
 
@@ -293,6 +352,7 @@ describe("useContextSwitchWarning", () => {
       workspaceUsage: buildUsage(tokens, previousModel),
       api: undefined,
       pendingSendOptions: buildSendOptions(previousModel),
+      providersConfig: null,
     };
 
     const { result, rerender } = renderHook(
@@ -306,6 +366,7 @@ describe("useContextSwitchWarning", () => {
         ...props,
         pendingModel: nextModel,
         pendingSendOptions: buildSendOptions(nextModel),
+        providersConfig: null,
       });
     });
 
@@ -322,6 +383,7 @@ describe("useContextSwitchWarning", () => {
       workspaceUsage: buildUsage(260_000, previousModel),
       api: undefined,
       pendingSendOptions: buildSendOptions(previousModel),
+      providersConfig: null,
     };
 
     const { result, rerender } = renderHook(
@@ -334,6 +396,7 @@ describe("useContextSwitchWarning", () => {
         ...props,
         pendingModel: nextModel,
         pendingSendOptions: buildSendOptions(nextModel),
+        providersConfig: null,
       });
     });
 
@@ -351,6 +414,7 @@ describe("useContextSwitchWarning", () => {
       workspaceUsage: buildUsage(260_000, previousModel),
       api: undefined,
       pendingSendOptions: buildSendOptions(previousModel),
+      providersConfig: null,
     };
 
     const { result, rerender } = renderHook(
@@ -364,6 +428,7 @@ describe("useContextSwitchWarning", () => {
         ...props,
         pendingModel: nextModel,
         pendingSendOptions: buildSendOptions(nextModel),
+        providersConfig: null,
       });
     });
 
@@ -374,6 +439,7 @@ describe("useContextSwitchWarning", () => {
         ...props,
         pendingModel: previousModel,
         pendingSendOptions: buildSendOptions(previousModel),
+        providersConfig: null,
       });
     });
 
@@ -384,6 +450,7 @@ describe("useContextSwitchWarning", () => {
         ...props,
         pendingModel: nextModel,
         pendingSendOptions: buildSendOptions(nextModel),
+        providersConfig: null,
       });
     });
 
@@ -401,6 +468,7 @@ describe("useContextSwitchWarning", () => {
       workspaceUsage: buildUsage(260_000, previousModel),
       api: undefined,
       pendingSendOptions: buildSendOptions(previousModel),
+      providersConfig: null,
     };
 
     const { result, rerender } = renderHook(
@@ -414,6 +482,7 @@ describe("useContextSwitchWarning", () => {
         ...props,
         pendingModel: nextModel,
         pendingSendOptions: buildSendOptions(nextModel),
+        providersConfig: null,
       });
     });
 
@@ -424,6 +493,7 @@ describe("useContextSwitchWarning", () => {
         ...props,
         pendingModel: nextModel,
         pendingSendOptions: buildSendOptions(nextModel),
+        providersConfig: null,
         workspaceUsage: buildUsage(0, nextModel),
       });
     });
@@ -434,6 +504,7 @@ describe("useContextSwitchWarning", () => {
         ...props,
         pendingModel: finalModel,
         pendingSendOptions: buildSendOptions(finalModel),
+        providersConfig: null,
         workspaceUsage: buildUsage(0, finalModel),
       });
     });
@@ -457,6 +528,7 @@ describe("useContextSwitchWarning", () => {
       workspaceUsage: buildUsage(0, previousModel),
       api: undefined,
       pendingSendOptions: buildSendOptions(previousModel),
+      providersConfig: null,
     };
 
     const { result, rerender } = renderHook(
@@ -470,6 +542,7 @@ describe("useContextSwitchWarning", () => {
         ...props,
         pendingModel: nextModel,
         pendingSendOptions: buildSendOptions(nextModel),
+        providersConfig: null,
       });
     });
 
@@ -480,6 +553,7 @@ describe("useContextSwitchWarning", () => {
         ...props,
         pendingModel: nextModel,
         pendingSendOptions: buildSendOptions(nextModel),
+        providersConfig: null,
         workspaceUsage: buildUsage(tokens, previousModel),
       });
     });
@@ -503,6 +577,7 @@ describe("useContextSwitchWarning", () => {
       workspaceUsage: buildUsage(0, previousModel),
       api: undefined,
       pendingSendOptions: buildSendOptions(previousModel),
+      providersConfig: null,
     };
 
     const { result, rerender } = renderHook(
@@ -516,6 +591,7 @@ describe("useContextSwitchWarning", () => {
         ...props,
         pendingModel: nextModel,
         pendingSendOptions: buildSendOptions(nextModel),
+        providersConfig: null,
       });
     });
 
@@ -526,6 +602,7 @@ describe("useContextSwitchWarning", () => {
         ...props,
         pendingModel: previousModel,
         pendingSendOptions: buildSendOptions(previousModel),
+        providersConfig: null,
       });
     });
 
@@ -536,6 +613,7 @@ describe("useContextSwitchWarning", () => {
         ...props,
         pendingModel: nextModel,
         pendingSendOptions: buildSendOptions(nextModel),
+        providersConfig: null,
         workspaceUsage: buildUsage(tokens, nextModel),
       });
     });
@@ -558,6 +636,7 @@ describe("useContextSwitchWarning", () => {
       workspaceUsage: buildUsage(tokens, model),
       api: undefined,
       pendingSendOptions: buildSendOptions(model),
+      providersConfig: null,
     };
 
     const { result, rerender } = renderHook(
@@ -592,6 +671,7 @@ describe("useContextSwitchWarning", () => {
       workspaceUsage: buildUsage(tokens, model),
       api: undefined,
       pendingSendOptions: buildSendOptions(model),
+      providersConfig: null,
     };
 
     const { result, rerender } = renderHook(

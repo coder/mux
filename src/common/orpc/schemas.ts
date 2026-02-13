@@ -185,6 +185,7 @@ export {
   mcp,
   secrets,
   ProviderConfigInfoSchema,
+  ProviderModelEntrySchema,
   muxGateway,
   muxGatewayOauth,
   copilotOauth,

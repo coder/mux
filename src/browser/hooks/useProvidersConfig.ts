@@ -1,6 +1,10 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useAPI } from "@/browser/contexts/API";
-import type { ProvidersConfigMap, ProviderConfigInfo } from "@/common/orpc/types";
+import type {
+  ProviderConfigInfo,
+  ProviderModelEntry,
+  ProvidersConfigMap,
+} from "@/common/orpc/types";
 
 /**
  * Hook to get provider config with automatic refresh on config changes.
@@ -71,7 +75,10 @@ export function useProvidersConfig() {
    * Bumps the fetch version to invalidate any in-flight fetches.
    */
   const updateModelsOptimistically = useCallback(
-    (provider: string, updater: (currentModels: string[]) => string[]): string[] => {
+    (
+      provider: string,
+      updater: (currentModels: ProviderModelEntry[]) => ProviderModelEntry[]
+    ): ProviderModelEntry[] => {
       // Invalidate any in-flight fetches so they don't overwrite our optimistic update
       fetchVersionRef.current++;
 
