@@ -120,26 +120,28 @@ export async function createAskpassSession(
   const watcher = fs.watch(dir, (_, filename) => {
     if (closed) return;
 
-    const candidateFilenames: string[] = [];
-    if (typeof filename === "string") {
-      candidateFilenames.push(filename);
-    } else {
-      try {
-        candidateFilenames.push(...fs.readdirSync(dir));
-      } catch {
-        return;
-      }
-    }
-
-    for (const candidate of candidateFilenames) {
-      const requestId = extractRequestId(candidate);
-      if (!requestId || processed.has(requestId)) {
-        continue;
+    void (async () => {
+      let candidateFilenames: string[];
+      if (typeof filename === "string") {
+        candidateFilenames = [filename];
+      } else {
+        try {
+          candidateFilenames = await fs.promises.readdir(dir);
+        } catch {
+          return;
+        }
       }
 
-      processed.add(requestId);
-      void handlePrompt(requestId);
-    }
+      for (const candidate of candidateFilenames) {
+        const requestId = extractRequestId(candidate);
+        if (!requestId || processed.has(requestId)) {
+          continue;
+        }
+
+        processed.add(requestId);
+        void handlePrompt(requestId);
+      }
+    })();
   });
 
   const scriptPath = await ensureAskpassScript();

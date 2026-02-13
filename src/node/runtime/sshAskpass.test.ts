@@ -23,8 +23,8 @@ describe("sshAskpass", () => {
 
           if (cleanupResponseFiles) {
             // Simulate askpass script cleanup.
-            await fs.promises.unlink(promptFile).catch(() => {});
-            await fs.promises.unlink(responseFile).catch(() => {});
+            await fs.promises.unlink(promptFile).catch(() => undefined);
+            await fs.promises.unlink(responseFile).catch(() => undefined);
           }
 
           return response.trim();
@@ -38,9 +38,9 @@ describe("sshAskpass", () => {
 
     test("handles a single prompt and returns response", async () => {
       const prompts: string[] = [];
-      const session = await createAskpassSession(async (prompt) => {
+      const session = await createAskpassSession((prompt) => {
         prompts.push(prompt);
-        return "yes";
+        return Promise.resolve("yes");
       });
 
       try {
@@ -59,9 +59,9 @@ describe("sshAskpass", () => {
 
     test("handles two sequential prompts without ignoring the second", async () => {
       const prompts: string[] = [];
-      const session = await createAskpassSession(async (prompt) => {
+      const session = await createAskpassSession((prompt) => {
         prompts.push(prompt);
-        return prompt.includes("continue connecting") ? "yes" : "denied";
+        return Promise.resolve(prompt.includes("continue connecting") ? "yes" : "denied");
       });
 
       try {
@@ -89,7 +89,7 @@ describe("sshAskpass", () => {
     });
 
     test("cleanup is idempotent", async () => {
-      const session = await createAskpassSession(async () => "ok");
+      const session = await createAskpassSession(() => Promise.resolve("ok"));
 
       session.cleanup();
       expect(() => session.cleanup()).not.toThrow();
@@ -97,9 +97,9 @@ describe("sshAskpass", () => {
 
     test("ignores duplicate request IDs", async () => {
       let callCount = 0;
-      const session = await createAskpassSession(async () => {
+      const session = await createAskpassSession(() => {
         callCount += 1;
-        return "yes";
+        return Promise.resolve("yes");
       });
 
       try {
@@ -129,7 +129,7 @@ describe("sshAskpass", () => {
     });
 
     test("session env includes required SSH variables", async () => {
-      const session = await createAskpassSession(async () => "ok");
+      const session = await createAskpassSession(() => Promise.resolve("ok"));
 
       try {
         expect(session.env.SSH_ASKPASS).toBeDefined();
