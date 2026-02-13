@@ -279,6 +279,26 @@ const z = 3;`);
       ).toBe(true);
     });
 
+    test("for-of RHS is not shadowed by loop variable", async () => {
+      const result = await analyzeCode(`
+        for (const process of process.list) { console.log(process); }
+      `);
+      expect(result.valid).toBe(false);
+      expect(
+        result.errors.some((e) => e.type === "unavailable_global" && e.message.includes("process"))
+      ).toBe(true);
+    });
+
+    test("for-in RHS is not shadowed by loop variable", async () => {
+      const result = await analyzeCode(`
+        for (const fetch in fetch.keys) { console.log(fetch); }
+      `);
+      expect(result.valid).toBe(false);
+      expect(
+        result.errors.some((e) => e.type === "unavailable_global" && e.message.includes("fetch"))
+      ).toBe(true);
+    });
+
     test("catch binding is valid inside catch block", async () => {
       const result = await analyzeCode(`
         try { throw new Error("test"); } catch (process) { console.log(process.message); }

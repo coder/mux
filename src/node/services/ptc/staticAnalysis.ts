@@ -228,12 +228,28 @@ function detectUnavailableGlobals(code: string, sourceFile?: ts.SourceFile): Ana
   collectDeclarations(parsedSourceFile);
 
   // Check whether a name has a visible declaration at the reference site.
+  // Tracks which child we entered from so for-in/for-of iterable expressions
+  // (where the binding isn't yet visible) are correctly excluded.
   function isDeclaredInScope(name: string, refNode: ts.Node): boolean {
     const scopes = declarationScopes.get(name);
     if (!scopes) return false;
+    let child: ts.Node | undefined;
     let current: ts.Node | undefined = refNode;
     while (current) {
-      if (scopes.has(current)) return true;
+      if (scopes.has(current)) {
+        // For for-in/for-of the binding is only visible in the body and
+        // initializer, not in the iterable expression (RHS).
+        if (
+          (ts.isForOfStatement(current) || ts.isForInStatement(current)) &&
+          child === current.expression
+        ) {
+          child = current;
+          current = current.parent;
+          continue;
+        }
+        return true;
+      }
+      child = current;
       current = current.parent;
     }
     return false;
