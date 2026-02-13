@@ -365,6 +365,29 @@ export class AgentSession {
     } satisfies AgentSessionMetadataEvent);
   }
 
+  private getStreamLastTimestamp(streamInfo: {
+    parts: Array<{ timestamp?: number }>;
+    toolCompletionTimestamps: Map<string, number>;
+  }): number {
+    let streamLastTimestamp = 0;
+    for (let index = streamInfo.parts.length - 1; index >= 0; index -= 1) {
+      const timestamp = streamInfo.parts[index]?.timestamp;
+      if (timestamp === undefined) {
+        continue;
+      }
+      streamLastTimestamp = timestamp;
+      break;
+    }
+
+    for (const completionTimestamp of streamInfo.toolCompletionTimestamps.values()) {
+      if (completionTimestamp > streamLastTimestamp) {
+        streamLastTimestamp = completionTimestamp;
+      }
+    }
+
+    return streamLastTimestamp;
+  }
+
   private async emitHistoricalEvents(
     listener: (event: AgentSessionChatEvent) => void,
     mode?: OnChatMode
@@ -377,6 +400,30 @@ export class AgentSession {
     try {
       if (mode?.type === "live") {
         replayMode = "live";
+
+        // Live mode still needs stream context when a response is currently active.
+        // Replay only stream-start (no historical deltas/tool updates) so clients can
+        // attach future live events to the correct message.
+        const liveStreamInfo = this.aiService.getStreamInfo(this.workspaceId);
+        if (liveStreamInfo) {
+          const streamLastTimestamp = this.getStreamLastTimestamp(liveStreamInfo);
+          await this.aiService.replayStream(this.workspaceId, {
+            afterTimestamp: streamLastTimestamp,
+          });
+
+          // Stream can end while replayStream runs; only expose cursor when still active.
+          const liveStreamInfoAfterReplay = this.aiService.getStreamInfo(this.workspaceId);
+          if (liveStreamInfoAfterReplay) {
+            serverCursor = {
+              ...serverCursor,
+              stream: {
+                messageId: liveStreamInfoAfterReplay.messageId,
+                lastTimestamp: this.getStreamLastTimestamp(liveStreamInfoAfterReplay),
+              },
+            };
+          }
+        }
+
         return;
       }
 
@@ -512,27 +559,11 @@ export class AgentSession {
       // latest backend state to avoid phantom active streams in the client.
       const streamInfoAfterReplay = this.aiService.getStreamInfo(this.workspaceId);
       if (streamInfoAfterReplay) {
-        let streamLastTimestamp = 0;
-        for (let index = streamInfoAfterReplay.parts.length - 1; index >= 0; index -= 1) {
-          const timestamp = streamInfoAfterReplay.parts[index]?.timestamp;
-          if (timestamp === undefined) {
-            continue;
-          }
-          streamLastTimestamp = timestamp;
-          break;
-        }
-
-        for (const completionTimestamp of streamInfoAfterReplay.toolCompletionTimestamps.values()) {
-          if (completionTimestamp > streamLastTimestamp) {
-            streamLastTimestamp = completionTimestamp;
-          }
-        }
-
         serverCursor = {
           ...serverCursor,
           stream: {
             messageId: streamInfoAfterReplay.messageId,
-            lastTimestamp: streamLastTimestamp,
+            lastTimestamp: this.getStreamLastTimestamp(streamInfoAfterReplay),
           },
         };
       } else if (!attemptedStreamReplay && partial) {
