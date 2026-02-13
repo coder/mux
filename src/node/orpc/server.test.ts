@@ -285,7 +285,7 @@ describe("createOrpcServer", () => {
         headers: { origin: "https://evil.example.com" },
       });
 
-      await expect(waitForWebSocketRejection(ws)).resolves.toBeUndefined();
+      await waitForWebSocketRejection(ws);
     } finally {
       ws?.terminate();
       await server?.close();

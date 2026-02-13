@@ -29,8 +29,10 @@ export function resolveServerAuthToken(
   explicitToken?: string,
   envToken?: string
 ): ResolvedAuthToken {
-  const provided = explicitToken?.trim() || envToken?.trim();
-  if (provided) return { token: provided, generated: false };
+  const explicit = explicitToken?.trim();
+  const env = envToken?.trim();
+  const provided = explicit && explicit.length > 0 ? explicit : env && env.length > 0 ? env : null;
+  if (provided != null) return { token: provided, generated: false };
   if (isLoopbackHost(host)) return { token: undefined, generated: false };
   const token = randomBytes(32).toString("hex");
   return { token, generated: true };
