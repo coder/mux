@@ -1,7 +1,7 @@
 import assert from "@/common/utils/assert";
 import type { MuxMessage, DisplayedMessage, QueuedMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { WorkspaceChatMessage, WorkspaceStatsSnapshot } from "@/common/orpc/types";
+import type { WorkspaceChatMessage, WorkspaceStatsSnapshot, OnChatMode } from "@/common/orpc/types";
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { TodoItem } from "@/common/types/tools";
@@ -1624,15 +1624,27 @@ export class WorkspaceStore {
       let lastChatEventAt = Date.now();
 
       try {
-        const iterator = await client.workspace.onChat(
-          { workspaceId },
-          { signal: attemptController.signal }
-        );
+        // Reconnect incrementally when we have a stable caught-up state.
+        const aggregator = this.aggregators.get(workspaceId);
+        const transient = this.chatTransientState.get(workspaceId);
+        let mode: OnChatMode | undefined;
 
-        if (this.pendingReplayReset.delete(workspaceId)) {
-          // Keep the existing UI visible until the replay can actually start.
+        if (aggregator && transient?.caughtUp) {
+          const cursor = aggregator.getOnChatCursor();
+          if (cursor) {
+            mode = { type: "since", cursor };
+          }
+        }
+
+        // Full replay: clear stale derived/transient state before subscribing.
+        if (!mode || mode.type === "full") {
           this.resetChatStateForReplay(workspaceId);
         }
+
+        const iterator = await client.workspace.onChat(
+          { workspaceId, mode },
+          { signal: attemptController.signal }
+        );
 
         // Stall watchdog: server sends heartbeats every 5s, so if we don't receive ANY events
         // (including heartbeats) for 10s, the connection is likely dead.
@@ -1718,7 +1730,10 @@ export class WorkspaceStore {
       }
 
       if (this.isWorkspaceSubscribed(workspaceId)) {
-        this.pendingReplayReset.add(workspaceId);
+        const transient = this.chatTransientState.get(workspaceId);
+        if (transient) {
+          transient.caughtUp = false;
+        }
       }
 
       const delayMs = calculateOnChatBackoffMs(attempt);
@@ -2029,16 +2044,28 @@ export class WorkspaceStore {
     const transient = this.assertChatTransientState(workspaceId);
 
     if (isCaughtUpMessage(data)) {
+      const replay = data.replay ?? "full";
+
       // Check if there's an active stream in buffered events (reconnection scenario)
       const pendingEvents = transient.pendingStreamEvents;
       const hasActiveStream = pendingEvents.some(
         (event) => "type" in event && event.type === "stream-start"
       );
 
-      // Load historical messages first
+      // Defensive cleanup: if server reports no active stream cursor, clear stale local stream contexts.
+      if (!data.cursor?.stream) {
+        aggregator.clearActiveStreams();
+      }
+
       if (transient.historicalMessages.length > 0) {
-        aggregator.loadHistoricalMessages(transient.historicalMessages, hasActiveStream);
+        const loadMode = replay === "full" ? "replace" : "append";
+        aggregator.loadHistoricalMessages(transient.historicalMessages, hasActiveStream, {
+          mode: loadMode,
+        });
         transient.historicalMessages.length = 0;
+      } else if (replay === "full") {
+        // Full replay can legitimately contain zero messages (e.g. compacted to empty).
+        aggregator.loadHistoricalMessages([], hasActiveStream, { mode: "replace" });
       }
 
       // Mark that we're replaying buffered history (prevents O(N) scheduling)

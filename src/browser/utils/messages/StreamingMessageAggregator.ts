@@ -26,7 +26,12 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { TodoItem, StatusSetToolResult, NotifyToolResult } from "@/common/types/tools";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 
-import type { WorkspaceChatMessage, StreamErrorMessage, DeleteMessage } from "@/common/orpc/types";
+import type {
+  WorkspaceChatMessage,
+  StreamErrorMessage,
+  DeleteMessage,
+  OnChatCursor,
+} from "@/common/orpc/types";
 import { isInitStart, isInitOutput, isInitEnd, isMuxMessage } from "@/common/orpc/types";
 import type {
   DynamicToolPart,
@@ -804,21 +809,29 @@ export class StreamingMessageAggregator {
    *
    * @param messages - Historical messages to load
    * @param hasActiveStream - Whether there's an active stream in buffered events (for reconnection scenario)
+   * @param opts.mode - "replace" clears existing state first, "append" merges into existing state
    */
-  loadHistoricalMessages(messages: MuxMessage[], hasActiveStream = false): void {
-    // Clear existing state to prevent stale messages from persisting.
-    // This method replaces all messages, not merges them.
-    this.messages.clear();
-    this.displayedMessageCache.clear();
-    this.messageVersions.clear();
-    this.deltaHistory.clear();
-    this.activeStreamUsage.clear();
-    this.loadedSkills.clear();
-    this.loadedSkillsCache = [];
-    this.skillLoadErrors.clear();
-    this.skillLoadErrorsCache = [];
+  loadHistoricalMessages(
+    messages: MuxMessage[],
+    hasActiveStream = false,
+    opts?: { mode?: "replace" | "append" }
+  ): void {
+    const mode = opts?.mode ?? "replace";
 
-    // Add all messages to the map
+    if (mode === "replace") {
+      // Clear existing state to prevent stale messages from persisting.
+      this.messages.clear();
+      this.displayedMessageCache.clear();
+      this.messageVersions.clear();
+      this.deltaHistory.clear();
+      this.activeStreamUsage.clear();
+      this.loadedSkills.clear();
+      this.loadedSkillsCache = [];
+      this.skillLoadErrors.clear();
+      this.skillLoadErrorsCache = [];
+    }
+
+    // Add/overwrite messages in the map
     for (const message of messages) {
       this.messages.set(message.id, message);
     }
@@ -871,6 +884,55 @@ export class StreamingMessageAggregator {
     return this.cache.allMessages;
   }
 
+  /**
+   * Build a cursor for incremental onChat reconnection.
+   * Returns undefined when we cannot safely represent the current state,
+   * forcing a full replay.
+   */
+  getOnChatCursor(): OnChatCursor | undefined {
+    let maxHistorySequence = -1;
+    let maxHistoryMessageId: string | undefined;
+
+    for (const message of this.messages.values()) {
+      const historySequence = message.metadata?.historySequence;
+      if (historySequence === undefined) {
+        continue;
+      }
+
+      if (historySequence > maxHistorySequence) {
+        maxHistorySequence = historySequence;
+        maxHistoryMessageId = message.id;
+      }
+    }
+
+    if (!maxHistoryMessageId) {
+      return undefined;
+    }
+
+    if (this.activeStreams.size > 1) {
+      // Defensive fallback: multiple active streams is anomalous, so force a full replay.
+      return undefined;
+    }
+
+    const cursor: OnChatCursor = {
+      history: {
+        messageId: maxHistoryMessageId,
+        historySequence: maxHistorySequence,
+      },
+    };
+
+    if (this.activeStreams.size === 1) {
+      const activeStreamEntry = this.activeStreams.entries().next().value;
+      assert(activeStreamEntry, "activeStreams size reported 1 but no entry found");
+      const [messageId, context] = activeStreamEntry;
+      cursor.stream = {
+        messageId,
+        lastTimestamp: context.lastServerTimestamp,
+      };
+    }
+
+    return cursor;
+  }
   // Efficient methods to check message state without creating arrays
   getMessageCount(): number {
     return this.messages.size;
@@ -1291,8 +1353,23 @@ export class StreamingMessageAggregator {
       thinkingLevel: data.thinkingLevel,
     };
 
+    // For incremental replay: stream-start may be re-emitted to re-establish context.
+    // If we already have this message with accumulated parts, don't wipe its content.
+    const existingMessage = this.messages.get(data.messageId);
+    if (data.replay && existingMessage && existingMessage.parts.length > 0) {
+      this.activeStreams.set(data.messageId, context);
+      if (existingMessage.metadata) {
+        existingMessage.metadata.model = data.model;
+        existingMessage.metadata.routedThroughGateway = data.routedThroughGateway;
+        existingMessage.metadata.mode = data.mode;
+        existingMessage.metadata.thinkingLevel = data.thinkingLevel;
+      }
+      this.markMessageDirty(data.messageId);
+      return;
+    }
+
     // Use messageId as key - ensures only ONE stream per message
-    // If called twice (e.g., during replay), second call safely overwrites first
+    // If called twice, second call safely overwrites first
     this.activeStreams.set(data.messageId, context);
 
     // Create initial streaming message with empty parts (deltas will append)
