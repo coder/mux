@@ -165,8 +165,8 @@ describe("matchesKeybind", () => {
     expect(matchesKeybind(event, keybind)).toBe(true);
   });
 
-  it("should match F1 for OPEN_COMMAND_PALETTE_ALT", () => {
-    const event = createEvent({ key: "F1" });
+  it("should match F2 for OPEN_COMMAND_PALETTE_ALT", () => {
+    const event = createEvent({ key: "F2" });
 
     expect(matchesKeybind(event, KEYBINDS.OPEN_COMMAND_PALETTE_ALT)).toBe(true);
   });

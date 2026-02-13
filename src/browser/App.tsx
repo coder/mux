@@ -673,7 +673,8 @@ function AppInner() {
         if (isCommandPaletteOpen) {
           closeCommandPalette();
         } else {
-          // F1 opens in command mode (with ">"); Ctrl+Shift+P opens default (workspace switch)
+          // Alternate palette shortcut opens in command mode (with ">") while the
+          // primary Ctrl/Cmd+Shift+P shortcut opens default workspace-switch mode.
           const initialQuery = matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE_ALT)
             ? ">"
             : undefined;

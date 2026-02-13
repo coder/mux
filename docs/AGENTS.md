@@ -74,7 +74,7 @@ HistoryService is pure local disk I/O with a single dependency (`getSessionDir`)
 
 ## Command Palette & UI Access
 
-- Open palette with `Cmd+Shift+P` (mac) / `Ctrl+Shift+P` (win/linux) / `F1`; quick toggle via `Cmd+P` / `Ctrl+P`.
+- Open palette with `Cmd+Shift+P` (mac) / `Ctrl+Shift+P` (win/linux) / `F2`; quick toggle via `Cmd+P` / `Ctrl+P`.
 - Palette covers workspace mgmt, navigation, chat utils, mode/model switches, slash commands (`/` for suggestions, `>` for actions).
 
 ## Styling
