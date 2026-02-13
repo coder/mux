@@ -209,6 +209,36 @@ const z = 3;`);
       expect(result.errors).toHaveLength(0);
     });
 
+    test("method parameter shadow does not leak outside class", async () => {
+      const result = await analyzeCode(`
+        class C { m(process) { return process.env; } }
+        const env = process.env;
+      `);
+      expect(result.valid).toBe(false);
+      expect(
+        result.errors.some((e) => e.type === "unavailable_global" && e.message.includes("process"))
+      ).toBe(true);
+    });
+
+    test("constructor parameter shadow does not leak outside class", async () => {
+      const result = await analyzeCode(`
+        class C { constructor(fetch) { this.f = fetch; } }
+        fetch("https://example.com");
+      `);
+      expect(result.valid).toBe(false);
+      expect(
+        result.errors.some((e) => e.type === "unavailable_global" && e.message.includes("fetch"))
+      ).toBe(true);
+    });
+
+    test("method parameter shadow is valid inside method body", async () => {
+      const result = await analyzeCode(`
+        class C { m(process) { return process.env; } }
+      `);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
     test("block-scoped shadow does not suppress outer reference", async () => {
       const result = await analyzeCode(`
         if (true) { const process = { env: "x" }; }

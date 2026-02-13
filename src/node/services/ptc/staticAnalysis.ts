@@ -200,14 +200,11 @@ function detectUnavailableGlobals(code: string, sourceFile?: ts.SourceFile): Ana
   function findDeclScope(declNode: ts.Node): ts.Node {
     let current: ts.Node | undefined = declNode;
     while (current) {
-      // Parameter → visible in function scope
+      // Parameter → visible in its containing function-like scope
+      // (functions, methods, constructors, accessors, etc.)
       if (ts.isParameter(current) && current.parent) {
         const func = current.parent;
-        if (
-          ts.isFunctionDeclaration(func) ||
-          ts.isFunctionExpression(func) ||
-          ts.isArrowFunction(func)
-        ) {
+        if (ts.isFunctionLike(func)) {
           return func;
         }
         break;
