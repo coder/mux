@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { DEFAULT_RUNTIME_KEY, RUNTIME_ENABLEMENT_KEY } from "@/common/constants/storage";
@@ -40,7 +41,18 @@ export function useRuntimeEnablement(): RuntimeEnablementState {
   );
 
   // Normalize persisted values so corrupted/legacy payloads don't break toggles.
-  const enablement = normalizeRuntimeEnablement(rawEnablement);
+  // Stabilize the reference: normalizeRuntimeEnablement returns a fresh object every call,
+  // so we use a ref to return the same object when the values haven't changed. This prevents
+  // downstream effects from re-running on every render.
+  const normalized = normalizeRuntimeEnablement(rawEnablement);
+  const enablementRef = useRef(normalized);
+  const prevSerializedRef = useRef(JSON.stringify(normalized));
+  const currentSerialized = JSON.stringify(normalized);
+  if (currentSerialized !== prevSerializedRef.current) {
+    enablementRef.current = normalized;
+    prevSerializedRef.current = currentSerialized;
+  }
+  const enablement = enablementRef.current;
   const defaultRuntime = normalizeDefaultRuntime(rawDefaultRuntime);
 
   const setRuntimeEnabled = (id: RuntimeEnablementId, enabled: boolean) => {

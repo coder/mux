@@ -7,6 +7,7 @@ import { ProjectProvider } from "@/browser/contexts/ProjectContext";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import {
+  DEFAULT_RUNTIME_KEY,
   GLOBAL_SCOPE_ID,
   getAgentIdKey,
   getLastRuntimeConfigKey,
@@ -182,7 +183,8 @@ describe("useDraftWorkspaceSettings", () => {
   test("keeps Coder default even after plain SSH usage", async () => {
     const projectPath = "/tmp/project";
 
-    updatePersistedState(getRuntimeKey(projectPath), `ssh ${CODER_RUNTIME_PLACEHOLDER}`);
+    updatePersistedState(DEFAULT_RUNTIME_KEY, "coder");
+    updatePersistedState(getRuntimeKey(projectPath), "ssh dev@host");
     updatePersistedState(getLastRuntimeConfigKey(projectPath), {
       ssh: {
         host: "dev@host",

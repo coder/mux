@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Loader2 } from "lucide-react";
 
 import { resolveCoderAvailability } from "@/browser/components/ChatInput/CoderControls";
@@ -62,17 +62,8 @@ function getFallbackRuntime(enablement: RuntimeEnablement): RuntimeEnablementId 
 export function RuntimesSection() {
   const { api } = useAPI();
   const { projects, refreshProjects } = useProjectContext();
-  const {
-    enablement: rawEnablement,
-    setRuntimeEnabled,
-    defaultRuntime,
-    setDefaultRuntime,
-  } = useRuntimeEnablement();
-
-  // Stabilize the enablement reference so effects don't fire on every render.
-  // normalizeRuntimeEnablement returns a fresh object each time; memoize by serialized value.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const enablement = useMemo(() => rawEnablement, [JSON.stringify(rawEnablement)]);
+  const { enablement, setRuntimeEnabled, defaultRuntime, setDefaultRuntime } =
+    useRuntimeEnablement();
 
   const projectList = Array.from(projects.keys());
 
