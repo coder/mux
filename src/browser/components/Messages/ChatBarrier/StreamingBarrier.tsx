@@ -28,14 +28,23 @@ type StreamingPhase =
 interface StreamingBarrierProps {
   workspaceId: string;
   className?: string;
+  /**
+   * Optional compaction-specific cancel hook.
+   * When provided, this path should preserve compaction edit state + follow-up content.
+   */
+  onCancelCompaction?: () => void;
 }
 
 /**
  * Self-contained streaming status barrier.
- * Computes all state internally from workspaceId - no props drilling needed.
+ * Computes streaming state internally from workspaceId.
  * Returns null when there's nothing to show.
  */
-export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId, className }) => {
+export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
+  workspaceId,
+  className,
+  onCancelCompaction,
+}) => {
   const workspaceState = useWorkspaceState(workspaceId);
   const aggregator = useWorkspaceAggregator(workspaceId);
   const storeRaw = useWorkspaceStoreRaw();
@@ -140,9 +149,15 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
     }
 
     disableAutoRetryPreference(workspaceId);
-    storeRaw.setInterrupting(workspaceId);
 
     if (phase === "compacting") {
+      // Reuse the established compaction-cancel flow from keyboard shortcuts so we keep
+      // edit restoration + follow-up content behavior consistent across input methods.
+      if (onCancelCompaction) {
+        onCancelCompaction();
+        return;
+      }
+
       void api.workspace.interruptStream({
         workspaceId,
         options: { abandonPartial: true },
@@ -150,6 +165,7 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
       return;
     }
 
+    storeRaw.setInterrupting(workspaceId);
     void api.workspace.interruptStream({ workspaceId });
   };
 

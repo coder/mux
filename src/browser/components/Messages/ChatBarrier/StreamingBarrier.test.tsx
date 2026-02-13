@@ -126,7 +126,26 @@ describe("StreamingBarrier", () => {
     expect(interruptStream).toHaveBeenCalledWith({ workspaceId: "ws-1" });
   });
 
-  test("clicking cancel during compaction interrupts with abandonPartial", () => {
+  test("clicking cancel during compaction uses onCancelCompaction when provided", () => {
+    currentWorkspaceState = createWorkspaceState({
+      canInterrupt: true,
+      isCompacting: true,
+    });
+
+    const onCancelCompaction = mock(() => undefined);
+    const view = render(
+      <StreamingBarrier workspaceId="ws-1" onCancelCompaction={onCancelCompaction} />
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "Interrupt streaming" }));
+
+    expect(disableAutoRetryPreferenceMock).toHaveBeenCalledWith("ws-1");
+    expect(onCancelCompaction).toHaveBeenCalledTimes(1);
+    expect(setInterrupting).not.toHaveBeenCalled();
+    expect(interruptStream).not.toHaveBeenCalled();
+  });
+
+  test("clicking cancel during compaction falls back to abandonPartial interrupt", () => {
     currentWorkspaceState = createWorkspaceState({
       canInterrupt: true,
       isCompacting: true,
@@ -137,7 +156,7 @@ describe("StreamingBarrier", () => {
     fireEvent.click(view.getByRole("button", { name: "Interrupt streaming" }));
 
     expect(disableAutoRetryPreferenceMock).toHaveBeenCalledWith("ws-1");
-    expect(setInterrupting).toHaveBeenCalledWith("ws-1");
+    expect(setInterrupting).not.toHaveBeenCalled();
     expect(interruptStream).toHaveBeenCalledWith({
       workspaceId: "ws-1",
       options: { abandonPartial: true },

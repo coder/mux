@@ -52,6 +52,7 @@ import { ContextSwitchWarning as ContextSwitchWarningBanner } from "./ContextSwi
 import { ConcurrentLocalWarning } from "./ConcurrentLocalWarning";
 import { BackgroundProcessesBanner } from "./BackgroundProcessesBanner";
 import { checkAutoCompaction } from "@/browser/utils/compaction/autoCompactionCheck";
+import { cancelCompaction } from "@/browser/utils/compaction/handler";
 import type { ContextSwitchWarning } from "@/browser/utils/compaction/contextSwitchCheck";
 import { executeCompaction } from "@/browser/utils/chatCommands";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
@@ -369,6 +370,14 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       options: { sendQueuedImmediately: true },
     });
   }, [api, workspaceId, workspaceState?.queuedMessage, workspaceState?.canInterrupt, storeRaw]);
+
+  const handleCancelCompactionFromBarrier = useCallback(() => {
+    if (!api || !aggregator) {
+      return;
+    }
+
+    void cancelCompaction(api, workspaceId, aggregator, setEditingMessage);
+  }, [api, workspaceId, aggregator, setEditingMessage]);
 
   const handleEditLastUserMessage = useCallback(async () => {
     const current = workspaceStateRef.current;
@@ -698,7 +707,10 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               </MessageListProvider>
             )}
             <PinnedTodoList workspaceId={workspaceId} />
-            <StreamingBarrier workspaceId={workspaceId} />
+            <StreamingBarrier
+              workspaceId={workspaceId}
+              onCancelCompaction={handleCancelCompactionFromBarrier}
+            />
             {shouldShowQueuedAgentTaskPrompt && (
               <QueuedMessage
                 message={{
