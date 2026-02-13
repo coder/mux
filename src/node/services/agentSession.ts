@@ -441,13 +441,14 @@ export class AgentSession {
           afterTimestamp = streamCursor.lastTimestamp;
         }
 
-        const historyCursorProvided = historyCursor !== undefined;
         const streamCursorProvided = streamCursor !== undefined;
-        const historyCursorValid = !historyCursorProvided || sinceHistorySequence !== undefined;
         const streamCursorValid = !streamCursorProvided || afterTimestamp !== undefined;
-        const anyCursorMatched = sinceHistorySequence !== undefined || afterTimestamp !== undefined;
+
+        // Guard against stream-only since cursors. We must have a valid history cursor
+        // for append-mode reconnects; otherwise persisted history would replay in full
+        // without replace semantics and duplicate local messages.
         const canReplaySince =
-          mode?.type === "since" && historyCursorValid && streamCursorValid && anyCursorMatched;
+          mode?.type === "since" && sinceHistorySequence !== undefined && streamCursorValid;
 
         if (canReplaySince) {
           replayMode = "since";

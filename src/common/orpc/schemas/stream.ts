@@ -48,7 +48,12 @@ export const OnChatCursorSchema = z.object({
 /** Discriminated mode for workspace.onChat subscription. */
 export const OnChatModeSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("full") }),
-  z.object({ type: z.literal("since"), cursor: OnChatCursorSchema }),
+  z.object({
+    type: z.literal("since"),
+    // Since-mode requires a persisted-history anchor; stream-only cursors are unsafe
+    // because the frontend uses append semantics for since reconnects.
+    cursor: OnChatCursorSchema.extend({ history: OnChatHistoryCursorSchema }),
+  }),
   z.object({ type: z.literal("live") }),
 ]);
 
