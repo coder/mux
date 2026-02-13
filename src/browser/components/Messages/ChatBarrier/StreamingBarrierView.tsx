@@ -7,6 +7,8 @@ export interface StreamingBarrierViewProps {
   tokenCount?: number;
   tps?: number;
   cancelText: string;
+  /** Optional click handler that turns cancelText into a tappable control. */
+  onCancel?: () => void;
   className?: string;
   /** Optional hint element shown after status (e.g., settings link) */
   hintElement?: React.ReactNode;
@@ -33,8 +35,19 @@ export const StreamingBarrierView: React.FC<StreamingBarrierViewProps> = (props)
           </span>
         )}
       </div>
-      <div className="text-muted ml-auto text-[11px] whitespace-nowrap select-none">
-        {props.cancelText}
+      <div className="text-muted ml-auto text-[11px] whitespace-nowrap">
+        {props.onCancel && props.cancelText.length > 0 ? (
+          <button
+            type="button"
+            onClick={props.onCancel}
+            className="hover:text-foreground cursor-pointer underline decoration-dotted underline-offset-2"
+            aria-label="Interrupt streaming"
+          >
+            {props.cancelText}
+          </button>
+        ) : (
+          <span className="select-none">{props.cancelText}</span>
+        )}
       </div>
     </div>
   );
