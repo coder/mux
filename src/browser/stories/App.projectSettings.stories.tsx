@@ -173,34 +173,36 @@ async function openProjectSettings(canvasElement: HTMLElement): Promise<void> {
 }
 
 /** Open the workspace MCP modal via the "More actions" menu */
-async function openWorkspaceMCPModal(canvasElement: HTMLElement): Promise<void> {
+async function openWorkspaceMCPModal(canvasElement: HTMLElement): Promise<HTMLElement> {
   const canvas = within(canvasElement);
   const body = within(canvasElement.ownerDocument.body);
 
   // Wait for workspace header to load
   await canvas.findByTestId("workspace-header", {}, { timeout: 10000 });
 
-  // The MCP button now lives inside the "More actions" popover menu.
-  // Open the menu first, then click the MCP item inside it.
-  //
-  // DEFENSIVE: In CI we occasionally see the first click not open the popover (Storybook still
-  // settling / focus changes). Retry once before failing to avoid flaky test runs.
-  const moreActionsButton = await canvas.findByTestId("workspace-more-actions");
-  await userEvent.click(moreActionsButton);
+  // The popover-to-dialog transition can race in CI when the menu closes before
+  // the MCP item click fully commits. Retry the full flow until the modal title
+  // appears so the test only proceeds once the real MCP dialog is mounted.
+  let dialog: HTMLElement | null = null;
+  await waitFor(
+    async () => {
+      const moreActionsButton = await canvas.findByTestId("workspace-more-actions");
+      await userEvent.click(moreActionsButton);
 
-  // The popover renders in a portal on document.body — search there for the MCP button.
-  try {
-    const mcpButton = await body.findByTestId("workspace-mcp-button");
-    await userEvent.click(mcpButton);
-  } catch {
-    // Retry: re-open the menu if the first click didn't stick.
-    const retryMoreActions = await canvas.findByTestId("workspace-more-actions");
-    await userEvent.click(retryMoreActions);
-    const mcpButton = await body.findByTestId("workspace-mcp-button");
-    await userEvent.click(mcpButton);
+      const mcpButton = await body.findByTestId("workspace-mcp-button", {}, { timeout: 3000 });
+      await userEvent.click(mcpButton);
+
+      await body.findByText("Workspace MCP Configuration", {}, { timeout: 3000 });
+      dialog = await body.findByRole("dialog", {}, { timeout: 3000 });
+    },
+    { timeout: 10000 }
+  );
+
+  if (dialog === null) {
+    throw new Error("Workspace MCP dialog did not open");
   }
 
-  await body.findByRole("dialog", {}, { timeout: 10000 });
+  return dialog;
 }
 
 const withDesktopWindowApi = [
@@ -526,13 +528,12 @@ export const WorkspaceMCPNoOverrides: AppStory = {
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await openWorkspaceMCPModal(canvasElement);
+    const dialog = await openWorkspaceMCPModal(canvasElement);
+    const modal = within(dialog);
 
-    const body = within(canvasElement.ownerDocument.body);
-
-    // Both servers should be shown and enabled
-    await body.findByText("mux");
-    await body.findByText("posthog");
+    // Both servers should be shown and enabled.
+    await expect(modal.findByText("mux")).resolves.toBeInTheDocument();
+    await expect(modal.findByText("posthog")).resolves.toBeInTheDocument();
   },
 };
 
@@ -556,13 +557,12 @@ export const WorkspaceMCPProjectDisabledServer: AppStory = {
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await openWorkspaceMCPModal(canvasElement);
+    const dialog = await openWorkspaceMCPModal(canvasElement);
+    const modal = within(dialog);
 
-    const body = within(canvasElement.ownerDocument.body);
-
-    // posthog should show "(disabled at project level)" but switch should still be toggleable
-    await body.findByText("posthog");
-    await body.findByText(/disabled at project level/i);
+    // posthog should show "(disabled at project level)" but switch should still be toggleable.
+    await expect(modal.findByText("posthog")).resolves.toBeInTheDocument();
+    await expect(modal.findByText(/disabled at project level/i)).resolves.toBeInTheDocument();
   },
 };
 
@@ -589,15 +589,14 @@ export const WorkspaceMCPEnabledOverride: AppStory = {
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await openWorkspaceMCPModal(canvasElement);
+    const dialog = await openWorkspaceMCPModal(canvasElement);
+    const modal = within(dialog);
 
-    const body = within(canvasElement.ownerDocument.body);
+    // posthog should be enabled despite project-level disable.
+    await expect(modal.findByText("posthog")).resolves.toBeInTheDocument();
+    await expect(modal.findByText(/disabled at project level/i)).resolves.toBeInTheDocument();
 
-    // posthog should be enabled despite project-level disable
-    await body.findByText("posthog");
-    await body.findByText(/disabled at project level/i);
-
-    // The switch should be ON (enabled at workspace level)
+    // The switch should be ON (enabled at workspace level).
   },
 };
 
@@ -624,13 +623,12 @@ export const WorkspaceMCPDisabledOverride: AppStory = {
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await openWorkspaceMCPModal(canvasElement);
+    const dialog = await openWorkspaceMCPModal(canvasElement);
+    const modal = within(dialog);
 
-    const body = within(canvasElement.ownerDocument.body);
-
-    // mux should be enabled, posthog should be disabled
-    await body.findByText("mux");
-    await body.findByText("posthog");
+    // mux should be enabled, posthog should be disabled.
+    await expect(modal.findByText("mux")).resolves.toBeInTheDocument();
+    await expect(modal.findByText("posthog")).resolves.toBeInTheDocument();
   },
 };
 
@@ -657,13 +655,13 @@ export const WorkspaceMCPWithToolAllowlist: AppStory = {
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await openWorkspaceMCPModal(canvasElement);
+    const dialog = await openWorkspaceMCPModal(canvasElement);
+    const modal = within(dialog);
 
-    const body = within(canvasElement.ownerDocument.body);
-    await body.findByText("posthog");
+    await expect(modal.findByText("posthog")).resolves.toBeInTheDocument();
 
-    // Should show filtered tool count
-    await body.findByText(/3 of 14 tools enabled/i);
+    // Should show filtered tool count.
+    await expect(modal.findByText(/3 of 14 tools enabled/i)).resolves.toBeInTheDocument();
   },
 };
 
@@ -689,9 +687,8 @@ export const ToolSelectorInteraction: AppStory = {
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await openWorkspaceMCPModal(canvasElement);
-
-    const body = within(canvasElement.ownerDocument.body);
+    const dialog = await openWorkspaceMCPModal(canvasElement);
+    const modal = within(dialog);
 
     // Wait for the modal's data loading to fully settle. After loadData()
     // completes, all tools are allowed by default, so the "All" button is
@@ -699,7 +696,7 @@ export const ToolSelectorInteraction: AppStory = {
     // with DOM elements that may be stale from an earlier render.
     await waitFor(
       () => {
-        const allBtn = body.queryByRole("button", { name: /^All$/i });
+        const allBtn = modal.queryByRole("button", { name: /^All$/i });
         if (!allBtn) throw new Error("All button not found — modal still loading");
         return expect(allBtn).toBeDisabled();
       },
@@ -711,18 +708,18 @@ export const ToolSelectorInteraction: AppStory = {
     // DOM gaps — in CI the Storybook iframe can briefly unmount/remount the
     // story component between awaits. The longer timeout helps ride out
     // cold-start remounts so the test isn't flaky.
-    const noneButton = await body.findByRole("button", { name: /^None$/i }, { timeout: 10000 });
+    const noneButton = await modal.findByRole("button", { name: /^None$/i }, { timeout: 10000 });
     await userEvent.click(noneButton);
 
     // Re-query for the assertion — the previous noneButton reference could
     // be stale if React replaced the DOM node during re-render.
     await waitFor(() => {
-      const btn = body.getByRole("button", { name: /^None$/i });
+      const btn = modal.getByRole("button", { name: /^None$/i });
       return expect(btn).toBeDisabled();
     });
 
     // Should now show "0 of X tools enabled".
-    await body.findByText(
+    await modal.findByText(
       (_content, element) => {
         const text = (element?.textContent ?? "").replace(/\s+/g, " ").trim();
         return /^0 of \d+ tools enabled$/i.test(text);
@@ -735,14 +732,14 @@ export const ToolSelectorInteraction: AppStory = {
     // Use findByRole (retry-capable) and re-query inside waitFor to avoid
     // stale refs if the DOM transiently unmounts between awaits. Keep the
     // timeout longer to absorb Storybook remounts in slower CI runs.
-    const allButton = await body.findByRole("button", { name: /^All$/i }, { timeout: 10000 });
+    const allButton = await modal.findByRole("button", { name: /^All$/i }, { timeout: 10000 });
     await waitFor(() => {
-      const btn = body.getByRole("button", { name: /^All$/i });
+      const btn = modal.getByRole("button", { name: /^All$/i });
       return expect(btn).toBeEnabled();
     });
     await userEvent.click(allButton);
     await waitFor(() => {
-      const btn = body.getByRole("button", { name: /^All$/i });
+      const btn = modal.getByRole("button", { name: /^All$/i });
       return expect(btn).toBeDisabled();
     });
   },
@@ -768,15 +765,14 @@ export const ToggleServerEnabled: AppStory = {
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await openWorkspaceMCPModal(canvasElement);
+    const dialog = await openWorkspaceMCPModal(canvasElement);
+    const modal = within(dialog);
 
-    const body = within(canvasElement.ownerDocument.body);
+    // Find the posthog server row.
+    await expect(modal.findByText("posthog")).resolves.toBeInTheDocument();
 
-    // Find the posthog server row
-    await body.findByText("posthog");
-
-    // Find all switches and click the second one (posthog)
-    const switches = await body.findAllByRole("switch");
+    // Find all switches and click the second one (posthog).
+    const switches = await modal.findAllByRole("switch");
     // posthog should be the second switch
     if (switches.length >= 2) {
       await userEvent.click(switches[1]);
