@@ -502,6 +502,7 @@ export class AgentSession {
         }
       }
 
+      const attemptedStreamReplay = streamInfo !== undefined;
       if (streamInfo) {
         await this.aiService.replayStream(this.workspaceId, { afterTimestamp });
       }
@@ -534,8 +535,10 @@ export class AgentSession {
             lastTimestamp: streamLastTimestamp,
           },
         };
-      } else if (partial) {
-        // Add type: "message" for discriminated union (partials from disk don't have it)
+      } else if (!attemptedStreamReplay && partial) {
+        // Only emit disk partial when we did not replay an active stream.
+        // If a stream was replayed and then ended, this stale pre-replay partial can
+        // duplicate text/tool output when combined with replayed stream events.
         listener({ workspaceId: this.workspaceId, message: { ...partial, type: "message" } });
       }
 
