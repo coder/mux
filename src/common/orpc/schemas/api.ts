@@ -10,6 +10,7 @@ import { RuntimeConfigSchema, RuntimeAvailabilitySchema } from "./runtime";
 import { SecretSchema } from "./secrets";
 import {
   CompletedMessagePartSchema,
+  OnChatModeSchema,
   SendMessageOptionsSchema,
   StreamEndEventSchema,
   UpdateStatusSchema,
@@ -1002,7 +1003,10 @@ export const workspace = {
   },
   // Subscriptions
   onChat: {
-    input: z.object({ workspaceId: z.string() }),
+    input: z.object({
+      workspaceId: z.string(),
+      mode: OnChatModeSchema.optional(),
+    }),
     output: eventIterator(WorkspaceChatMessageSchema), // Stream event
   },
   onMetadata: {
