@@ -4,7 +4,11 @@
  */
 
 import type z from "zod";
-import type { SendMessageErrorSchema, StreamErrorTypeSchema } from "../orpc/schemas";
+import type {
+  NameGenerationErrorSchema,
+  SendMessageErrorSchema,
+  StreamErrorTypeSchema,
+} from "../orpc/schemas";
 
 /**
  * Discriminated union for all possible sendMessage errors.
@@ -20,3 +24,5 @@ export type SendMessageError = z.infer<typeof SendMessageErrorSchema>;
  * Used across backend (StreamManager) and frontend (StreamErrorMessage)
  */
 export type StreamErrorType = z.infer<typeof StreamErrorTypeSchema>;
+
+export type NameGenerationError = z.infer<typeof NameGenerationErrorSchema>;
