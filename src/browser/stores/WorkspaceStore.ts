@@ -2076,6 +2076,15 @@ export class WorkspaceStore {
         aggregator.clearActiveStreams();
       }
 
+      if (replay === "full") {
+        // Full replay replaces backend-derived history state. Reset transient UI-only
+        // fields that are not reconstructed from persisted history so stale values
+        // (queued message/live tool output/task IDs) do not survive reconnect fallback.
+        transient.queuedMessage = null;
+        transient.liveBashOutput.clear();
+        transient.liveTaskIds.clear();
+      }
+
       if (transient.historicalMessages.length > 0) {
         const loadMode = replay === "full" ? "replace" : "append";
         aggregator.loadHistoricalMessages(transient.historicalMessages, hasActiveStream, {
