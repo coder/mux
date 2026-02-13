@@ -17,6 +17,7 @@ import {
 } from "@/node/services/mdnsAdvertiserService";
 import * as os from "os";
 import { getParseOptions } from "./argv";
+import { isLoopbackHost, resolveServerAuthToken } from "./serverSecurity";
 
 const program = new Command();
 program
@@ -32,25 +33,17 @@ program
 const options = program.opts();
 const HOST = options.host as string;
 const PORT = Number.parseInt(String(options.port), 10);
-const rawAuthToken = (options.authToken as string | undefined) ?? process.env.MUX_SERVER_AUTH_TOKEN;
-const AUTH_TOKEN = rawAuthToken?.trim() ? rawAuthToken.trim() : undefined;
+const { token: AUTH_TOKEN, generated: authTokenGenerated } = resolveServerAuthToken(
+  HOST,
+  options.authToken as string | undefined,
+  process.env.MUX_SERVER_AUTH_TOKEN
+);
 const ADD_PROJECT_PATH = options.addProject as string | undefined;
 // SSH host for editor deep links (CLI flag > env var > config file, resolved later)
 const CLI_SSH_HOST = options.sshHost as string | undefined;
 
 // Track the launch project path for initial navigation
 let launchProjectPath: string | null = null;
-
-function isLoopbackHost(host: string): boolean {
-  const normalized = host.trim().toLowerCase();
-
-  // IPv4 loopback range (RFC 1122): 127.0.0.0/8
-  if (normalized.startsWith("127.")) {
-    return true;
-  }
-
-  return normalized === "localhost" || normalized === "::1";
-}
 
 // Minimal BrowserWindow stub for services that expect one
 const mockWindow: BrowserWindow = {
@@ -141,6 +134,12 @@ const mockWindow: BrowserWindow = {
   }
 
   console.log(`Server is running on ${server.baseUrl}`);
+
+  if (authTokenGenerated && AUTH_TOKEN) {
+    console.log("\nAuto-generated auth token for non-loopback host.");
+    console.log(`Open in browser: ${server.baseUrl}?token=${AUTH_TOKEN}`);
+    console.log("Or set MUX_SERVER_AUTH_TOKEN or --auth-token to use a fixed token.\n");
+  }
 
   // Cleanup on shutdown
   let cleanupInProgress = false;
