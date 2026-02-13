@@ -1,22 +1,16 @@
 /**
  * CLI entry point for the mux oRPC server.
- * Uses createOrpcServer from ./orpcServer.ts for the actual server logic.
+ * Uses ServerService for server lifecycle management.
  */
 import { Config } from "@/node/config";
 import { ServiceContainer } from "@/node/services/serviceContainer";
-import { ServerLockfile } from "@/node/services/serverLockfile";
-import { getMuxHome, migrateLegacyMuxHome } from "@/common/constants/paths";
+import { migrateLegacyMuxHome } from "@/common/constants/paths";
 import type { BrowserWindow } from "electron";
 import { Command } from "commander";
 import { validateProjectPath } from "@/node/utils/pathUtils";
-import { createOrpcServer } from "@/node/orpc/server";
 import { VERSION } from "@/version";
-import {
-  buildMuxMdnsServiceOptions,
-  MdnsAdvertiserService,
-} from "@/node/services/mdnsAdvertiserService";
-import * as os from "os";
 import { getParseOptions } from "./argv";
+import { resolveServerAuthToken } from "./serverAuthToken";
 
 const program = new Command();
 program
@@ -24,7 +18,9 @@ program
   .description("HTTP/WebSocket ORPC server for mux")
   .option("-h, --host <host>", "bind to specific host", "localhost")
   .option("-p, --port <port>", "bind to specific port", "3000")
-  .option("--auth-token <token>", "optional bearer token for HTTP/WS auth")
+  .option("--auth-token <token>", "bearer token for HTTP/WS auth (default: auto-generated)")
+  .option("--no-auth", "disable authentication (server is open to anyone who can reach it)")
+  .option("--print-auth-token", "always print the auth token on startup")
   .option("--ssh-host <host>", "SSH hostname/alias for editor deep links (e.g., devbox)")
   .option("--add-project <path>", "add and open project at the specified path (idempotent)")
   .parse(process.argv, getParseOptions());
@@ -32,25 +28,17 @@ program
 const options = program.opts();
 const HOST = options.host as string;
 const PORT = Number.parseInt(String(options.port), 10);
-const rawAuthToken = (options.authToken as string | undefined) ?? process.env.MUX_SERVER_AUTH_TOKEN;
-const AUTH_TOKEN = rawAuthToken?.trim() ? rawAuthToken.trim() : undefined;
+const resolved = resolveServerAuthToken({
+  noAuth: options.noAuth === true || options.auth === false,
+  cliToken: options.authToken as string | undefined,
+  envToken: process.env.MUX_SERVER_AUTH_TOKEN,
+});
 const ADD_PROJECT_PATH = options.addProject as string | undefined;
 // SSH host for editor deep links (CLI flag > env var > config file, resolved later)
 const CLI_SSH_HOST = options.sshHost as string | undefined;
 
 // Track the launch project path for initial navigation
 let launchProjectPath: string | null = null;
-
-function isLoopbackHost(host: string): boolean {
-  const normalized = host.trim().toLowerCase();
-
-  // IPv4 loopback range (RFC 1122): 127.0.0.0/8
-  if (normalized.startsWith("127.")) {
-    return true;
-  }
-
-  return normalized === "localhost" || normalized === "::1";
-}
 
 // Minimal BrowserWindow stub for services that expect one
 const mockWindow: BrowserWindow = {
@@ -75,15 +63,6 @@ const mockWindow: BrowserWindow = {
 
   migrateLegacyMuxHome();
 
-  // Check for existing server (Electron or another mux server instance)
-  const lockfile = new ServerLockfile(getMuxHome());
-  const existing = await lockfile.read();
-  if (existing) {
-    console.error(`Error: mux API server is already running at ${existing.baseUrl}`);
-    console.error(`Use 'mux api' commands to interact with the running instance.`);
-    process.exit(1);
-  }
-
   const config = new Config();
   const serviceContainer = new ServiceContainer(config);
   await serviceContainer.initialize();
@@ -102,45 +81,55 @@ const mockWindow: BrowserWindow = {
 
   const context = serviceContainer.toORPCContext();
 
-  const mdnsAdvertiser = new MdnsAdvertiserService();
-  const server = await createOrpcServer({
+  // Start server via ServerService (handles lockfile, mDNS, network URLs)
+  const serverInfo = await serviceContainer.serverService.startServer({
+    muxHome: serviceContainer.config.rootDir,
+    context,
     host: HOST,
     port: PORT,
-    authToken: AUTH_TOKEN,
-    context,
+    authToken: resolved.token,
     serveStatic: true,
   });
 
   // Server is now listening - clear the startup keepalive since httpServer keeps the loop alive
   clearInterval(startupKeepalive);
 
-  // Acquire lockfile so other instances know we're running
-  await lockfile.acquire(server.baseUrl, AUTH_TOKEN ?? "");
-
-  const mdnsAdvertisementEnabled = config.getMdnsAdvertisementEnabled();
-  if (mdnsAdvertisementEnabled !== false && !isLoopbackHost(HOST)) {
-    const instanceName = config.getMdnsServiceName() ?? `mux-${os.hostname()}`;
-    const serviceOptions = buildMuxMdnsServiceOptions({
-      bindHost: HOST,
-      port: server.port,
-      instanceName,
-      version: VERSION.git_describe,
-      authRequired: AUTH_TOKEN?.trim().length ? true : false,
-    });
-
-    try {
-      await mdnsAdvertiser.start(serviceOptions);
-    } catch (err) {
-      console.warn("Failed to advertise mux API server via mDNS:", err);
+  // --- Startup output ---
+  console.log(`\nmux server v${VERSION.git_describe}`);
+  console.log(`  URL:  ${serverInfo.baseUrl}`);
+  if (serverInfo.networkBaseUrls.length > 0) {
+    for (const url of serverInfo.networkBaseUrls) {
+      console.log(`  LAN:  ${url}`);
     }
-  } else if (mdnsAdvertisementEnabled === true && isLoopbackHost(HOST)) {
-    console.warn(
-      "mDNS advertisement requested, but the API server is loopback-only. " +
-        "Set --host 0.0.0.0 (or a LAN IP) to enable LAN discovery."
-    );
   }
+  console.log(`  Docs: ${serverInfo.baseUrl}/api/docs`);
 
-  console.log(`Server is running on ${server.baseUrl}`);
+  if (resolved.mode === "disabled") {
+    console.warn(
+      "\n⚠️  Authentication is DISABLED (--no-auth). The server is open to anyone who can reach it."
+    );
+  } else {
+    console.log(`\n  Auth: enabled (token source: ${resolved.source})`);
+
+    // Print token when explicitly requested or when network-accessible
+    const showToken =
+      options.printAuthToken === true ||
+      serverInfo.networkBaseUrls.length > 0 ||
+      resolved.source === "generated";
+    if (showToken) {
+      console.log(`\n  # Connect from another machine:`);
+      console.log(`  export MUX_SERVER_URL=${serverInfo.baseUrl}`);
+      console.log(`  export MUX_SERVER_AUTH_TOKEN=${resolved.token}`);
+      console.log(`\n  # Open in browser:`);
+      console.log(`  ${serverInfo.baseUrl}/?token=${resolved.token}`);
+    }
+
+    const lockfilePath = serviceContainer.serverService.getLockfilePath();
+    if (lockfilePath) {
+      console.log(`\n  Token stored in: ${lockfilePath}`);
+    }
+  }
+  console.log(""); // blank line
 
   // Cleanup on shutdown
   let cleanupInProgress = false;
@@ -157,21 +146,14 @@ const mockWindow: BrowserWindow = {
     }, 5000);
 
     try {
-      // Close all PTY sessions first (these are the "sub-processes" nodemon sees)
+      // Close all PTY sessions first
       serviceContainer.terminalService.closeAllSessions();
 
       // Dispose background processes
       await serviceContainer.dispose();
 
-      // Release lockfile and close server
-      try {
-        await mdnsAdvertiser.stop();
-      } catch (err) {
-        console.warn("Failed to stop mDNS advertiser:", err);
-      }
-
-      await lockfile.release();
-      await server.close();
+      // Stop server (releases lockfile, stops mDNS, closes HTTP server)
+      await serviceContainer.serverService.stopServer();
 
       clearTimeout(forceExitTimer);
       process.exit(0);
