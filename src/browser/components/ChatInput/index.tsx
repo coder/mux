@@ -637,10 +637,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { projects } = useProjectContext();
   const pendingSectionId = variant === "creation" ? (props.pendingSectionId ?? null) : null;
   const creationProject = variant === "creation" ? projects.get(props.projectPath) : undefined;
+  const hasCreationRuntimeOverrides =
+    creationProject?.runtimeOverridesEnabled === true ||
+    Boolean(creationProject?.runtimeEnablement) ||
+    creationProject?.defaultRuntime !== undefined;
   // Keep workspace creation in sync with Settings → Runtimes project overrides.
   const creationRuntimeEnablement =
-    variant === "creation" && creationProject?.runtimeOverridesEnabled
-      ? normalizeRuntimeEnablement(creationProject.runtimeEnablement)
+    variant === "creation" && hasCreationRuntimeOverrides
+      ? normalizeRuntimeEnablement(creationProject?.runtimeEnablement)
       : runtimeEnablement;
   const creationSections = creationProject?.sections ?? [];
 

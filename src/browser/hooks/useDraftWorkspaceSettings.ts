@@ -202,10 +202,13 @@ export function useDraftWorkspaceSettings(
     { listener: true }
   );
 
-  const settingsDefaultRuntime: RuntimeChoice =
-    projectConfig?.runtimeOverridesEnabled === true
-      ? (projectConfig.defaultRuntime ?? globalDefaultRuntime ?? RUNTIME_MODE.WORKTREE)
-      : (globalDefaultRuntime ?? RUNTIME_MODE.WORKTREE);
+  const hasProjectRuntimeOverrides =
+    projectConfig?.runtimeOverridesEnabled === true ||
+    Boolean(projectConfig?.runtimeEnablement) ||
+    projectConfig?.defaultRuntime !== undefined;
+  const settingsDefaultRuntime: RuntimeChoice = hasProjectRuntimeOverrides
+    ? (projectConfig?.defaultRuntime ?? globalDefaultRuntime ?? RUNTIME_MODE.WORKTREE)
+    : (globalDefaultRuntime ?? RUNTIME_MODE.WORKTREE);
 
   // Always use the Settings-configured default as the canonical source of truth.
   // The old per-project localStorage key (getRuntimeKey) is now stale since the creation
