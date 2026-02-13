@@ -2871,10 +2871,14 @@ export class StreamManager extends EventEmitter {
    * Returns undefined if no active stream exists
    * Used to re-establish streaming context on frontend reconnection
    */
-  getStreamInfo(
-    workspaceId: string
-  ):
-    | { messageId: string; model: string; historySequence: number; parts: CompletedMessagePart[] }
+  getStreamInfo(workspaceId: string):
+    | {
+        messageId: string;
+        model: string;
+        historySequence: number;
+        parts: CompletedMessagePart[];
+        toolCompletionTimestamps: Map<string, number>;
+      }
     | undefined {
     const typedWorkspaceId = workspaceId as WorkspaceId;
     const streamInfo = this.workspaceStreams.get(typedWorkspaceId);
@@ -2888,6 +2892,7 @@ export class StreamManager extends EventEmitter {
         messageId: streamInfo.messageId,
         model: streamInfo.model,
         historySequence: streamInfo.historySequence,
+        toolCompletionTimestamps: streamInfo.toolCompletionTimestamps,
         parts: streamInfo.parts,
       };
     }

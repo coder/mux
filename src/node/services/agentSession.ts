@@ -492,6 +492,12 @@ export class AgentSession {
           break;
         }
 
+        for (const completionTimestamp of streamInfo.toolCompletionTimestamps.values()) {
+          if (completionTimestamp > streamLastTimestamp) {
+            streamLastTimestamp = completionTimestamp;
+          }
+        }
+
         serverCursor = {
           ...serverCursor,
           stream: {
