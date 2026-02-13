@@ -115,12 +115,26 @@ function RouterContextInner(props: { children: ReactNode }) {
   const settingsMatch = /^\/settings\/([^/]+)$/.exec(location.pathname);
   const currentSettingsSection = settingsMatch ? decodeURIComponent(settingsMatch[1]) : null;
 
-  const lastNonSettingsLocationRef = useRef<string>(getInitialRoute());
+  interface NonSettingsLocationSnapshot {
+    url: string;
+    state: unknown;
+  }
+
+  // When leaving settings, we need to restore the *full* previous location including
+  // any in-memory navigation state (e.g. /project relies on { projectPath } state, and
+  // the legacy ?path= deep link rewrite stores that path in location.state).
+  const lastNonSettingsLocationRef = useRef<NonSettingsLocationSnapshot>({
+    url: getInitialRoute(),
+    state: null,
+  });
   useEffect(() => {
     if (!location.pathname.startsWith("/settings")) {
-      lastNonSettingsLocationRef.current = location.pathname + location.search;
+      lastNonSettingsLocationRef.current = {
+        url: location.pathname + location.search,
+        state: location.state,
+      };
     }
-  }, [location.pathname, location.search]);
+  }, [location.pathname, location.search, location.state]);
 
   // Back-compat: if we ever land on a legacy deep link (/project?path=<full path>),
   // immediately replace it with the non-path project id URL.
@@ -180,8 +194,11 @@ function RouterContextInner(props: { children: ReactNode }) {
 
   const navigateFromSettings = useCallback(() => {
     const lastLocation = lastNonSettingsLocationRef.current;
-    const fallback = lastLocation && !lastLocation.startsWith("/settings") ? lastLocation : "/";
-    void navigateRef.current(fallback);
+    if (!lastLocation.url || lastLocation.url.startsWith("/settings")) {
+      void navigateRef.current("/");
+      return;
+    }
+    void navigateRef.current(lastLocation.url, { state: lastLocation.state });
   }, []);
 
   const value = useMemo<RouterContext>(
