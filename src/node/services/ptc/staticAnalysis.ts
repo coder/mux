@@ -232,18 +232,50 @@ function detectUnavailableGlobals(code: string, sourceFile?: ts.SourceFile): Ana
   }
   collectDeclarations(parsedSourceFile);
 
-  // Check whether a name has a visible declaration at the reference site.
-  // Tracks which child we entered from so for-in/for-of iterable expressions
-  // (where the binding isn't yet visible) are correctly excluded.
+  // Check whether a name is shadowed by a local declaration visible at the
+  // reference site. Accounts for position-dependent visibility:
+  // - For-in/for-of: loop variable not visible in iterable expression
+  // - Variable TDZ: `const x = x.y` — binding exists but is uninitialized
+  // - Parameter defaults: `f(x = x.y)` — parameter not yet bound in default
   function isDeclaredInScope(name: string, refNode: ts.Node): boolean {
     const scopes = declarationScopes.get(name);
     if (!scopes) return false;
+
     let child: ts.Node | undefined;
     let current: ts.Node | undefined = refNode;
+    // TDZ tracking: detected when the walk enters a declaration's initializer
+    // for the same name, before crossing any scope boundary.
+    let crossedScopeBoundary = false;
+    let inVarInit = false;
+    let inParamDefault = false;
+
     while (current) {
+      // Track scope boundary crossings — once crossed, TDZ detection is
+      // disabled because closures/blocks create new execution contexts.
+      if (child && (ts.isFunctionLike(current) || SCOPE_KINDS.has(current.kind))) {
+        crossedScopeBoundary = true;
+      }
+
+      // TDZ detection: entering a declaration's own initializer means the
+      // binding isn't yet initialized at this reference site. Only checked
+      // before crossing any scope boundary (closures defer evaluation).
+      if (
+        !crossedScopeBoundary &&
+        child != null &&
+        (ts.isVariableDeclaration(current) || ts.isParameter(current)) &&
+        ts.isIdentifier(current.name) &&
+        current.name.text === name &&
+        child === current.initializer
+      ) {
+        if (ts.isVariableDeclaration(current)) {
+          inVarInit = true;
+        } else {
+          inParamDefault = true;
+        }
+      }
+
       if (scopes.has(current)) {
-        // For for-in/for-of the binding is only visible in the body and
-        // initializer, not in the iterable expression (RHS).
+        // For-in/for-of: binding not visible in the iterable expression.
         if (
           (ts.isForOfStatement(current) || ts.isForInStatement(current)) &&
           child === current.expression
@@ -252,8 +284,25 @@ function detectUnavailableGlobals(code: string, sourceFile?: ts.SourceFile): Ana
           current = current.parent;
           continue;
         }
+
+        // Variable TDZ: const/let/var binding shadows everything but is
+        // uninitialized — no valid shadow exists at any scope level.
+        if (inVarInit) {
+          return false;
+        }
+
+        // Parameter default: the parameter isn't bound in its own default
+        // expression. Skip this scope; an outer declaration may shadow.
+        if (inParamDefault) {
+          inParamDefault = false;
+          child = current;
+          current = current.parent;
+          continue;
+        }
+
         return true;
       }
+
       child = current;
       current = current.parent;
     }

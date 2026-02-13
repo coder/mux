@@ -361,6 +361,35 @@ const z = 3;`);
       expect(result.valid).toBe(true);
       expect(result.errors).toHaveLength(0);
     });
+    test("variable TDZ self-reference is flagged", async () => {
+      const result = await analyzeCode(`const process = process.env;`);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].type).toBe("unavailable_global");
+    });
+
+    test("parameter default self-reference is flagged", async () => {
+      const result = await analyzeCode(`function f(process = process.env) {}`);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].type).toBe("unavailable_global");
+    });
+
+    test("valid shadow after initialization is NOT flagged", async () => {
+      const result = await analyzeCode(`const process = 1; process.env;`);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    test("TDZ does not cross scope boundary", async () => {
+      const result = await analyzeCode(`const process = { env: () => process }; process.env();`);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    test("parameter default with outer shadow is NOT flagged", async () => {
+      const result = await analyzeCode(`const process = 1; function f(process = process.env) {}`);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
   });
 
   describe("allowed constructs (work in QuickJS)", () => {
