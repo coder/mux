@@ -2151,7 +2151,10 @@ export class AgentSession {
     };
   }
 
-  private async isAgentSwitchTargetValid(agentId: string): Promise<boolean> {
+  private async isAgentSwitchTargetValid(
+    agentId: string,
+    disableWorkspaceAgents?: boolean
+  ): Promise<boolean> {
     assert(
       typeof agentId === "string" && agentId.trim().length > 0,
       "isAgentSwitchTargetValid requires a non-empty agentId"
@@ -2195,10 +2198,14 @@ export class AgentSession {
       ? metadata.projectPath
       : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
 
+    // When disableWorkspaceAgents is active, use project path for discovery
+    // (only built-in/global agents). Mirrors resolveAgentForStream behavior.
+    const discoveryPath = disableWorkspaceAgents ? metadata.projectPath : workspacePath;
+
     try {
       const resolvedFrontmatter = await resolveAgentFrontmatter(
         runtime,
-        workspacePath,
+        discoveryPath,
         parsedAgentId.data
       );
       const cfg = this.config.loadConfigOrDefault();
@@ -2298,7 +2305,10 @@ export class AgentSession {
       return false;
     }
 
-    const targetValid = await this.isAgentSwitchTargetValid(switchResult.agentId);
+    const targetValid = await this.isAgentSwitchTargetValid(
+      switchResult.agentId,
+      currentOptions?.disableWorkspaceAgents
+    );
     if (!targetValid) {
       return false;
     }
@@ -2336,6 +2346,9 @@ export class AgentSession {
         disableWorkspaceAgents: currentOptions.disableWorkspaceAgents,
       }),
       ...(currentOptions?.toolPolicy != null && { toolPolicy: currentOptions.toolPolicy }),
+      ...(currentOptions?.additionalSystemInstructions != null && {
+        additionalSystemInstructions: currentOptions.additionalSystemInstructions,
+      }),
       skipAiSettingsPersistence: true,
     };
 
