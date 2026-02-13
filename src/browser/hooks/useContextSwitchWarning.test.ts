@@ -231,6 +231,56 @@ describe("useContextSwitchWarning", () => {
     expect(result.current.warning?.targetLimit).toBe(100_000);
   });
 
+  test("re-evaluates explicit switches when providers config loads later", async () => {
+    const previousModel = "anthropic:claude-sonnet-4-5";
+    const nextModel = "openai:custom-context-model";
+    const providersConfig = buildProvidersConfigWithCustomContext(
+      "openai",
+      "custom-context-model",
+      100_000
+    );
+
+    const props = {
+      workspaceId: "workspace-custom-context-late-config",
+      messages: [buildAssistantMessage(previousModel)],
+      pendingModel: previousModel,
+      use1M: false,
+      workspaceUsage: buildUsage(95_000, previousModel),
+      api: undefined,
+      pendingSendOptions: buildSendOptions(previousModel),
+      providersConfig: null as ProvidersConfigMap | null,
+    };
+
+    const { result, rerender } = renderHook(
+      (hookProps: typeof props) => useContextSwitchWarning(hookProps),
+      { initialProps: props, wrapper }
+    );
+
+    act(() => {
+      recordWorkspaceModelChange(props.workspaceId, nextModel, "user");
+      rerender({
+        ...props,
+        pendingModel: nextModel,
+        pendingSendOptions: buildSendOptions(nextModel),
+        providersConfig: null,
+      });
+    });
+
+    await waitFor(() => expect(result.current.warning).toBeNull());
+
+    act(() => {
+      rerender({
+        ...props,
+        pendingModel: nextModel,
+        pendingSendOptions: buildSendOptions(nextModel),
+        providersConfig,
+      });
+    });
+
+    await waitFor(() => expect(result.current.warning?.targetModel).toBe(nextModel));
+    expect(result.current.warning?.targetLimit).toBe(100_000);
+  });
+
   test("warns when gateway model strings are normalized for explicit switches", async () => {
     const previousModel = "anthropic:claude-sonnet-4-5";
     const nextModel = "openai:gpt-5.2-codex";
