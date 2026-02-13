@@ -105,6 +105,74 @@ describe("computeRecencyTimestamp", () => {
     expect(computeRecencyTimestamp(messages)).toBe(250);
   });
 
+  describe("compaction semantics", () => {
+    it("manual compaction summary bumps recency", () => {
+      const now = Date.now();
+      const messages = [
+        createMuxMessage("1", "assistant", "summary", { compacted: "user", timestamp: now }),
+      ];
+
+      const result = computeRecencyTimestamp(messages);
+      expect(result).toBe(now);
+    });
+
+    it("idle compaction request user message is ignored", () => {
+      const messages = [
+        createMuxMessage("1", "user", "compact", {
+          timestamp: 2000,
+          muxMetadata: {
+            type: "compaction-request",
+            rawCommand: "/compact",
+            parsed: {},
+            source: "idle-compaction",
+          },
+        }),
+      ];
+
+      const result = computeRecencyTimestamp(messages);
+      expect(result).toBeNull();
+    });
+
+    it("idle compacted summary timestamp governs recency (backdated)", () => {
+      const requestTime = Date.now();
+      const backdatedTime = requestTime - 60000;
+      const messages = [
+        createMuxMessage("idle-req", "user", "compact", {
+          timestamp: requestTime,
+          muxMetadata: {
+            type: "compaction-request",
+            rawCommand: "/compact",
+            parsed: {},
+            source: "idle-compaction",
+          },
+        }),
+        createMuxMessage("idle-summary", "assistant", "Summary", {
+          compacted: "idle",
+          timestamp: backdatedTime,
+        }),
+      ];
+
+      const result = computeRecencyTimestamp(messages);
+      expect(result).toBe(backdatedTime);
+    });
+
+    it("manual compaction request user message does bump recency", () => {
+      const messages = [
+        createMuxMessage("1", "user", "/compact", {
+          timestamp: 3000,
+          muxMetadata: {
+            type: "compaction-request",
+            rawCommand: "/compact",
+            parsed: {},
+          },
+        }),
+      ];
+
+      const result = computeRecencyTimestamp(messages);
+      expect(result).toBe(3000);
+    });
+  });
+
   // Tests for createdAt parameter
   describe("with createdAt parameter", () => {
     it("returns createdAt timestamp when no messages exist", () => {
