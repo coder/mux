@@ -38,6 +38,7 @@ import {
   createTaskReportMessageId,
 } from "@/node/services/utils/messageIds";
 import { defaultModel, normalizeGatewayModel } from "@/common/utils/ai/models";
+import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { AgentIdSchema } from "@/common/orpc/schemas";
@@ -50,6 +51,7 @@ import {
   TaskToolResultSchema,
   TaskToolArgsSchema,
 } from "@/common/utils/tools/toolDefinitions";
+import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
 import { formatSendMessageError } from "@/node/services/utils/sendMessageError";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { taskQueueDebug } from "@/node/services/taskQueueDebug";
@@ -264,6 +266,63 @@ export class TaskService {
       workspace.aiSettings
     );
   }
+  private async isPlanLikeTaskWorkspace(entry: {
+    projectPath: string;
+    workspace: Pick<
+      WorkspaceConfigEntry,
+      "id" | "name" | "path" | "runtimeConfig" | "agentId" | "agentType"
+    >;
+  }): Promise<boolean> {
+    assert(entry.projectPath.length > 0, "isPlanLikeTaskWorkspace: projectPath must be non-empty");
+
+    const rawAgentId = coerceNonEmptyString(entry.workspace.agentId ?? entry.workspace.agentType);
+    if (!rawAgentId) {
+      return false;
+    }
+
+    const normalizedAgentId = rawAgentId.trim().toLowerCase();
+    const parsedAgentId = AgentIdSchema.safeParse(normalizedAgentId);
+    if (!parsedAgentId.success) {
+      return normalizedAgentId === "plan";
+    }
+
+    const workspacePath = coerceNonEmptyString(entry.workspace.path);
+    const workspaceName = coerceNonEmptyString(entry.workspace.name) ?? entry.workspace.id;
+    const runtimeConfig = entry.workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG;
+    if (!workspacePath || !workspaceName) {
+      return parsedAgentId.data === "plan";
+    }
+
+    try {
+      const runtime = createRuntimeForWorkspace({
+        runtimeConfig,
+        projectPath: entry.projectPath,
+        name: workspaceName,
+      });
+      const agentDefinition = await readAgentDefinition(runtime, workspacePath, parsedAgentId.data);
+      const chain = await resolveAgentInheritanceChain({
+        runtime,
+        workspacePath,
+        agentId: agentDefinition.id,
+        agentDefinition,
+        workspaceId: entry.workspace.id ?? workspaceName,
+      });
+
+      if (agentDefinition.id === "compact") {
+        return false;
+      }
+
+      return isPlanLikeInResolvedChain(chain);
+    } catch (error: unknown) {
+      log.debug("Failed to resolve task agent mode; falling back to agentId check", {
+        workspaceId: entry.workspace.id,
+        agentId: parsedAgentId.data,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return parsedAgentId.data === "plan";
+    }
+  }
+
   private async emitWorkspaceMetadata(workspaceId: string): Promise<void> {
     assert(workspaceId.length > 0, "emitWorkspaceMetadata: workspaceId must be non-empty");
 
@@ -323,8 +382,10 @@ export class TaskService {
       // fall back immediately.
       this.remindedAwaitingReport.add(task.id);
 
-      const resumedAgentId = (task.agentId ?? task.agentType ?? "").trim().toLowerCase();
-      const isPlanLike = resumedAgentId === "plan";
+      const isPlanLike = await this.isPlanLikeTaskWorkspace({
+        projectPath: task.projectPath,
+        workspace: task,
+      });
       const completionToolName = isPlanLike ? "propose_plan" : "agent_report";
 
       const model = task.taskModelString ?? defaultModel;
@@ -2062,10 +2123,7 @@ export class TaskService {
       return;
     }
 
-    const agentId = (entry.workspace.agentId ?? entry.workspace.agentType ?? "")
-      .trim()
-      .toLowerCase();
-    const isPlanLike = agentId === "plan";
+    const isPlanLike = await this.isPlanLikeTaskWorkspace(entry);
 
     // Never allow a task to finish/report while it still has active descendant tasks.
     // We'll auto-resume this task once the last descendant reports.
@@ -2248,23 +2306,49 @@ export class TaskService {
         targetAgentId === "orchestrator"
           ? "Start orchestrating the implementation of this plan."
           : "Implement the plan.";
-      const sendKickoffResult = await this.workspaceService.sendMessage(
-        args.workspaceId,
-        kickoffMsg,
-        {
-          model: resolvedModel,
-          agentId: targetAgentId,
-          thinkingLevel: resolvedThinking,
-          experiments: args.entry.workspace.taskExperiments,
-        },
-        { synthetic: true }
-      );
-      if (!sendKickoffResult.success) {
+      try {
+        const sendKickoffResult = await this.workspaceService.sendMessage(
+          args.workspaceId,
+          kickoffMsg,
+          {
+            model: resolvedModel,
+            agentId: targetAgentId,
+            thinkingLevel: resolvedThinking,
+            experiments: args.entry.workspace.taskExperiments,
+          },
+          { synthetic: true }
+        );
+        if (!sendKickoffResult.success) {
+          log.error("Plan-task auto-handoff failed to send kickoff message", {
+            workspaceId: args.workspaceId,
+            targetAgentId,
+            error: sendKickoffResult.error,
+          });
+          await this.setTaskStatus(args.workspaceId, "awaiting_report").catch(
+            (statusError: unknown) => {
+              log.error("Plan-task auto-handoff could not reset status after kickoff failure", {
+                workspaceId: args.workspaceId,
+                targetAgentId,
+                error: statusError,
+              });
+            }
+          );
+        }
+      } catch (error: unknown) {
         log.error("Plan-task auto-handoff failed to send kickoff message", {
           workspaceId: args.workspaceId,
           targetAgentId,
-          error: sendKickoffResult.error,
+          error,
         });
+        await this.setTaskStatus(args.workspaceId, "awaiting_report").catch(
+          (statusError: unknown) => {
+            log.error("Plan-task auto-handoff could not reset status after kickoff failure", {
+              workspaceId: args.workspaceId,
+              targetAgentId,
+              error: statusError,
+            });
+          }
+        );
       }
     } catch (error: unknown) {
       log.error("Plan-task auto-handoff failed", {
