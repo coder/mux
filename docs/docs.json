@@ -112,7 +112,10 @@
           },
           {
             "group": "Integrations",
-            "pages": ["integrations/vscode-extension"]
+            "pages": [
+              "integrations/vscode-extension",
+              "integrations/mux-governor"
+            ]
           },
           {
             "group": "Reference",
