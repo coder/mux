@@ -373,6 +373,7 @@ export class SSHConnectionPool {
   ): Promise<void> {
     const controlPath = getControlPath(config);
     const verificationService = hostKeyService;
+    const canPromptInteractively = verificationService?.hasInteractiveResponder() === true;
 
     const args: string[] = ["-T"]; // No PTY needed for probe
 
@@ -394,7 +395,7 @@ export class SSHConnectionPool {
     // When host-key prompts are possible, use the longer prompt timeout so SSH
     // doesn't self-terminate while the user is responding to the dialog.
     // The Node.js timer still provides fast-fail for unreachable hosts.
-    const connectTimeout = verificationService
+    const connectTimeout = canPromptInteractively
       ? Math.ceil(HOST_KEY_APPROVAL_TIMEOUT_MS / 1000)
       : Math.min(Math.ceil(timeoutMs / 1000), 15);
     args.push("-o", `ConnectTimeout=${connectTimeout}`);
@@ -403,7 +404,7 @@ export class SSHConnectionPool {
 
     // When no host-key verification UI is available (headless/test/CLI),
     // fall back to auto-accepting unknown hosts for probe connectivity checks.
-    if (!verificationService) {
+    if (!canPromptInteractively) {
       args.push("-o", "StrictHostKeyChecking=no");
       args.push("-o", "UserKnownHostsFile=/dev/null");
     }
@@ -420,16 +421,17 @@ export class SSHConnectionPool {
 
     // Set up SSH_ASKPASS for host-key verification.
     // The askpass script writes prompts to a temp file; we respond via a FIFO.
-    const askpass = verificationService
-      ? await createAskpassSession(async (promptText) => {
-          extendDeadline?.(HOST_KEY_APPROVAL_TIMEOUT_MS);
+    const askpass =
+      canPromptInteractively && verificationService
+        ? await createAskpassSession(async (promptText) => {
+            extendDeadline?.(HOST_KEY_APPROVAL_TIMEOUT_MS);
 
-          const fullContext = stderr + "\n" + promptText;
-          const parsed = parseHostKeyPrompt(fullContext);
-          const accepted = await verificationService.requestVerification(parsed);
-          return accepted ? "yes" : "no";
-        })
-      : undefined;
+            const fullContext = stderr + "\n" + promptText;
+            const parsed = parseHostKeyPrompt(fullContext);
+            const accepted = await verificationService.requestVerification(parsed);
+            return accepted ? "yes" : "no";
+          })
+        : undefined;
 
     return new Promise((resolve, reject) => {
       const proc = spawn("ssh", args, {

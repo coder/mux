@@ -502,6 +502,8 @@ export class SSH2ConnectionPool {
         const readableKeys = await resolvePrivateKeys(resolvedConfigWithIdentities.identityFiles);
         const keysToTry: Array<Buffer | undefined> =
           readableKeys.length > 0 ? readableKeys : [undefined];
+        const verificationService = hostKeyService;
+        const canPromptInteractively = verificationService?.hasInteractiveResponder() === true;
 
         const connectWithKey = async (
           privateKey: Buffer | undefined,
@@ -617,21 +619,21 @@ export class SSH2ConnectionPool {
               sock: proxy?.sock,
               // hostVerifier can wait for user approval in the UI dialog,
               // so keep the handshake alive long enough for that interaction.
-              readyTimeout: hostKeyService
+              readyTimeout: canPromptInteractively
                 ? Math.max(timeoutMs, HOST_KEY_APPROVAL_TIMEOUT_MS)
                 : timeoutMs,
               keepaliveInterval: 5000,
               keepaliveCountMax: 2,
               ...(privateKey ? { privateKey } : {}),
               // Host key verification
-              ...(hostKeyService
+              ...(canPromptInteractively && verificationService
                 ? {
                     hostHash: "sha256" as const,
                     hostVerifier: (
                       fingerprint: string,
                       verify: (accept: boolean) => void
                     ): boolean => {
-                      void hostKeyService!
+                      void verificationService
                         .requestVerification({
                           host: resolvedConfig.hostName,
                           keyType: "unknown", // ssh2 doesn't expose key type in this callback
@@ -642,7 +644,9 @@ export class SSH2ConnectionPool {
                       return true;
                     },
                   }
-                : {}),
+                : {
+                    hostVerifier: () => true,
+                  }),
             };
 
             client.connect(connectOptions);

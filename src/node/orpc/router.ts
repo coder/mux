@@ -3849,6 +3849,7 @@ export const router = (authToken?: string) => {
             if (signal?.aborted) return;
 
             const service = context.hostKeyVerificationService;
+            const releaseResponder = service.registerInteractiveResponder();
             const queue = createAsyncEventQueue<HostKeyVerificationRequest>();
 
             const onRequest = (req: HostKeyVerificationRequest) => queue.push(req);
@@ -3861,6 +3862,7 @@ export const router = (authToken?: string) => {
               yield* queue.iterate();
             } finally {
               signal?.removeEventListener("abort", onAbort);
+              releaseResponder();
               queue.end();
               service.off("request", onRequest);
             }

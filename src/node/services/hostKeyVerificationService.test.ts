@@ -22,6 +22,7 @@ function waitForTimeout(): Promise<void> {
 describe("HostKeyVerificationService", () => {
   let service: HostKeyVerificationService;
   let requests: HostKeyVerificationRequest[];
+  let releaseResponder: () => void;
 
   beforeEach(() => {
     service = new HostKeyVerificationService(TEST_TIMEOUT_MS);
@@ -29,6 +30,7 @@ describe("HostKeyVerificationService", () => {
     service.on("request", (req: HostKeyVerificationRequest) => {
       requests.push(req);
     });
+    releaseResponder = service.registerInteractiveResponder();
   });
 
   it("resolves on explicit respond", async () => {
@@ -115,5 +117,49 @@ describe("HostKeyVerificationService", () => {
 
     const results = await Promise.all([verification1, verification2, verification3]);
     expect(results).toEqual([true, true, true]);
+  });
+
+  it("returns true immediately with no responders", async () => {
+    releaseResponder();
+
+    const result = await service.requestVerification(REQUEST_PARAMS);
+
+    expect(result).toBe(true);
+    expect(requests).toHaveLength(0);
+  });
+
+  it("emits request when responder is registered", async () => {
+    releaseResponder();
+    const release = service.registerInteractiveResponder();
+
+    const verification = service.requestVerification(REQUEST_PARAMS);
+
+    expect(requests).toHaveLength(1);
+    service.respond(requests[0].requestId, true);
+
+    const result = await verification;
+    expect(result).toBe(true);
+
+    release();
+  });
+
+  it("reverts to immediate fallback after responder released", async () => {
+    releaseResponder();
+
+    const result = await service.requestVerification(REQUEST_PARAMS);
+
+    expect(result).toBe(true);
+    expect(requests).toHaveLength(0);
+  });
+
+  it("double-release is safe", () => {
+    releaseResponder();
+
+    const release = service.registerInteractiveResponder();
+
+    expect(() => {
+      release();
+      release();
+    }).not.toThrow();
   });
 });

@@ -13,11 +13,30 @@ export class HostKeyVerificationService extends EventEmitter {
   private pending = new Map<string, PendingEntry>();
   /** Dedup: host -> inflight requestId. Coalesces concurrent probes for same host. */
   private inflightByHost = new Map<string, string>();
+  private activeResponders = 0;
   private readonly timeoutMs: number;
 
   constructor(timeoutMs = HOST_KEY_APPROVAL_TIMEOUT_MS) {
     super();
     this.timeoutMs = timeoutMs;
+  }
+
+  registerInteractiveResponder(): () => void {
+    this.activeResponders += 1;
+
+    let released = false;
+    return () => {
+      if (released) {
+        return;
+      }
+
+      released = true;
+      this.activeResponders = Math.max(0, this.activeResponders - 1);
+    };
+  }
+
+  hasInteractiveResponder(): boolean {
+    return this.activeResponders > 0;
   }
 
   private finalizeRequest(requestId: string, accept: boolean): void {
@@ -42,6 +61,10 @@ export class HostKeyVerificationService extends EventEmitter {
   async requestVerification(
     params: Omit<HostKeyVerificationRequest, "requestId">
   ): Promise<boolean> {
+    if (!this.hasInteractiveResponder()) {
+      return true;
+    }
+
     // Dedup: if a prompt for this host is already pending, append another waiter
     const existingId = this.inflightByHost.get(params.host);
     if (existingId) {
