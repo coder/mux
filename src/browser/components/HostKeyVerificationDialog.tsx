@@ -28,13 +28,20 @@ export function HostKeyVerificationDialog() {
     const controller = new AbortController();
     const { signal } = controller;
 
+    // Track the async iterator so we can explicitly close it on cleanup.
+    // Some oRPC iterators don't reliably terminate on abort alone;
+    // calling return() ensures the backend subscription finally block runs,
+    // which releases the responder lease and listener state.
+    let iteratorRef: AsyncIterator<HostKeyVerificationRequest> | undefined;
+
     // Global subscription: backend can request host-key verification at any time.
     // Queue pending requests so concurrent prompts are handled FIFO without drops.
     (async () => {
       try {
-        const iterator = await api.ssh.hostKeyVerification.subscribe(undefined, { signal });
+        const iterable = await api.ssh.hostKeyVerification.subscribe(undefined, { signal });
+        iteratorRef = iterable[Symbol.asyncIterator]();
 
-        for await (const request of iterator) {
+        for await (const request of iterable) {
           if (signal.aborted) {
             break;
           }
@@ -48,7 +55,10 @@ export function HostKeyVerificationDialog() {
       }
     })();
 
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      void iteratorRef?.return?.(undefined);
+    };
   }, [api]);
 
   const respond = async (accept: boolean) => {
