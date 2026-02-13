@@ -150,6 +150,7 @@ export function useContextSwitchWarning(
 
   const prevCheckOptionsRef = useRef(checkOptions);
   const prevWarningPreviousModelRef = useRef<string | null>(null);
+  const lastEvaluatedTargetModelRef = useRef<string | null>(null);
   const prevWorkspaceIdRef = useRef(workspaceId);
 
   // ChatPane is keyed by workspaceId today; keep a defensive reset to avoid stale warnings
@@ -160,6 +161,7 @@ export function useContextSwitchWarning(
       prevUse1MRef.current = use1M;
       prevCheckOptionsRef.current = checkOptions;
       prevWarningPreviousModelRef.current = null;
+      lastEvaluatedTargetModelRef.current = null;
       dispatch({ type: "RESET", model: pendingModel });
     }
   }, [workspaceId, pendingModel, use1M, checkOptions]);
@@ -205,6 +207,7 @@ export function useContextSwitchWarning(
         return null;
       }
 
+      lastEvaluatedTargetModelRef.current = options.targetModel;
       const previousModel = options.previousModel ?? findPreviousModel(messages);
       prevWarningPreviousModelRef.current = previousModel;
       const result = checkContextSwitch(
@@ -326,28 +329,57 @@ export function useContextSwitchWarning(
     const checkOptionsChanged = prevCheckOptions !== checkOptions;
     prevCheckOptionsRef.current = checkOptions;
 
-    if (!checkOptionsChanged || !warning) {
+    if (!checkOptionsChanged) {
       return;
     }
 
-    // User request: keep explicit warnings tied to the model that triggered them.
-    // If a background model change happens, skip refresh instead of re-warning.
-    if (warning.targetModel !== pendingModel) {
+    const gainedAccessData =
+      (prevCheckOptions.providersConfig === null && checkOptions.providersConfig !== null) ||
+      (prevCheckOptions.policy === null && checkOptions.policy !== null);
+
+    if (warning) {
+      // User request: keep explicit warnings tied to the model that triggered them.
+      // If a background model change happens, skip refresh instead of re-warning.
+      if (warning.targetModel !== pendingModel) {
+        return;
+      }
+
+      // Refresh existing warnings when policy/config arrives so compaction suggestions appear.
+      // Only update active warnings to avoid resurrecting dismissed banners.
+      // Preserve same-model warnings (like 1M toggle) when refreshing for policy/config updates.
+      const nextWarning = evaluateWarning({
+        tokens,
+        targetModel: pendingModel,
+        previousModel: prevWarningPreviousModelRef.current,
+        allowSameModel: true,
+      });
+      if (areWarningsEqual(warning, nextWarning)) {
+        return;
+      }
+      dispatch({ type: "WARNING_UPDATED", warning: nextWarning });
       return;
     }
 
-    // Refresh existing warnings when policy/config arrives so compaction suggestions appear.
-    // Only update active warnings to avoid resurrecting dismissed banners.
-    // Preserve same-model warnings (like 1M toggle) when refreshing for policy/config updates.
+    if (!gainedAccessData || tokens === 0) {
+      return;
+    }
+
+    // Re-evaluate explicit switches that happened before provider/policy config loaded.
+    // Without this, custom-model overrides may arrive after we already concluded "no warning".
+    if (lastEvaluatedTargetModelRef.current !== pendingModel) {
+      return;
+    }
+
     const nextWarning = evaluateWarning({
       tokens,
       targetModel: pendingModel,
       previousModel: prevWarningPreviousModelRef.current,
       allowSameModel: true,
     });
-    if (areWarningsEqual(warning, nextWarning)) {
+    if (!nextWarning) {
       return;
     }
+
     dispatch({ type: "WARNING_UPDATED", warning: nextWarning });
   }, [checkOptions, warning, tokens, pendingModel, evaluateWarning]);
 
