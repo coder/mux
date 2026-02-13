@@ -542,6 +542,21 @@ export class AgentSession {
         listener({ workspaceId: this.workspaceId, message: { ...partial, type: "message" } });
       }
 
+      // Replay queued-message snapshot before caught-up so reconnect clients can
+      // rebuild queue UI state deterministically (especially on full-replay fallback).
+      listener({
+        workspaceId: this.workspaceId,
+        message: {
+          type: "queued-message-changed",
+          workspaceId: this.workspaceId,
+          queuedMessages: this.messageQueue.getMessages(),
+          displayText: this.messageQueue.getDisplayText(),
+          fileParts: this.messageQueue.getFileParts(),
+          reviews: this.messageQueue.getReviews(),
+          hasCompactionRequest: this.messageQueue.hasCompactionRequest(),
+        },
+      });
+
       // Replay init state only for full replay. Incremental reconnects already have init state.
       if (replayMode === "full") {
         await this.initStateManager.replayInit(this.workspaceId);
