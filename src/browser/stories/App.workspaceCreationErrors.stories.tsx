@@ -5,6 +5,7 @@ import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { expandProjects } from "./storyHelpers";
 import type { NameGenerationError } from "@/common/types/errors";
 import { getLastRuntimeConfigKey, getRuntimeKey } from "@/common/constants/storage";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import type { ProjectConfig } from "@/node/config";
 
 const PROJECT_PATH = "/Users/dev/my-project";
@@ -13,11 +14,9 @@ const NAME_GENERATION_PROMPT = "Fix the sidebar layout";
 async function openProjectCreationView(storyRoot: HTMLElement): Promise<void> {
   // App now boots into the built-in mux-chat workspace.
   // Navigate to the project creation page so runtime controls are visible.
-  if (typeof localStorage !== "undefined") {
-    // Ensure runtime selection state doesn't leak between stories.
-    localStorage.removeItem(getLastRuntimeConfigKey(PROJECT_PATH));
-    localStorage.removeItem(getRuntimeKey(PROJECT_PATH));
-  }
+  // Ensure runtime selection state doesn't leak between stories.
+  updatePersistedState(getLastRuntimeConfigKey(PROJECT_PATH), null);
+  updatePersistedState(getRuntimeKey(PROJECT_PATH), null);
 
   const projectRow = await waitFor(
     () => {
