@@ -294,6 +294,37 @@ describe("agentSkillsService", () => {
     expect(caught).toBeInstanceOf(AgentSkillTransientDiscoveryError);
   });
 
+  test("discoverAgentSkills skips transient skill I/O failures and returns other skills", async () => {
+    using project = new DisposableTempDir("agent-skills-transient-discovery");
+    using global = new DisposableTempDir("agent-skills-global");
+
+    const projectSkillsRoot = path.join(project.path, ".mux", "skills");
+    const globalSkillsRoot = global.path;
+
+    await writeSkill(projectSkillsRoot, "foo", "valid");
+    await writeSkill(projectSkillsRoot, "bar", "also valid");
+
+    const roots = { projectRoot: projectSkillsRoot, globalRoot: globalSkillsRoot };
+    const runtime = new LocalRuntime(project.path);
+    const originalStat = runtime.stat.bind(runtime);
+
+    spyOn(runtime, "stat").mockImplementation(
+      async (targetPath: string, abortSignal?: AbortSignal) => {
+        if (targetPath.endsWith(path.join("foo", "SKILL.md"))) {
+          throw new Error(
+            "SSH connection to test-host is in backoff for 2s. Last error: connection timed out"
+          );
+        }
+
+        return originalStat(targetPath, abortSignal);
+      }
+    );
+
+    const skills = await discoverAgentSkills(runtime, project.path, { roots });
+
+    expect(skills.map((skill) => skill.name)).toEqual(["bar", "init", "mux-docs"]);
+  });
+
   test("discovers symlinked skill directories", async () => {
     using project = new DisposableTempDir("agent-skills-symlink");
     using skillSource = new DisposableTempDir("agent-skills-source");

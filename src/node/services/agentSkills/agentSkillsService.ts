@@ -305,12 +305,22 @@ export async function discoverAgentSkills(
       }
 
       const skillDir = runtime.normalizePath(directoryName, resolvedRoot);
-      const descriptor = await readSkillDescriptorFromDir(
-        runtime,
-        skillDir,
-        directoryName,
-        scan.scope
-      );
+      let descriptor: AgentSkillDescriptor | null;
+      try {
+        descriptor = await readSkillDescriptorFromDir(runtime, skillDir, directoryName, scan.scope);
+      } catch (error) {
+        if (error instanceof AgentSkillTransientDiscoveryError) {
+          // Non-diagnostic callers (for example stream context hints) should degrade per-skill
+          // rather than dropping all discovered skills when SSH transport briefly flaps.
+          log.warn(
+            `Skipping ${scan.scope} skill '${directoryName}' after transient discovery error: ${error.message}`
+          );
+          continue;
+        }
+
+        throw error;
+      }
+
       if (!descriptor) continue;
 
       // Precedence: project overwrites global.
