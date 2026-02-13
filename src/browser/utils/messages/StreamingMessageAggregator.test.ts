@@ -260,8 +260,8 @@ describe("StreamingMessageAggregator", () => {
     });
 
     test("should disable displayed message cap when showAllMessages is enabled", () => {
-      // Test smart truncation: user/assistant messages are always kept,
-      // but tool calls and reasoning blocks from old messages are filtered out.
+      // Test smart truncation: user messages are always kept, while older assistant/tool/
+      // reasoning rows can be filtered behind a history-hidden marker.
       // Create a mix of message types: user messages with tool-heavy assistant responses.
       const manyMessages: Parameters<
         typeof StreamingMessageAggregator.prototype.loadHistoricalMessages
@@ -311,8 +311,8 @@ describe("StreamingMessageAggregator", () => {
 
       // Each pair produces 4 DisplayedMessages: user + reasoning + tool + assistant
       // Total: 100 user + 100 assistant + 100 tool + 100 reasoning = 400 DisplayedMessages
-      // With cap at 128, the first 272 are candidates for filtering.
-      // In those 272: user + assistant messages are kept, tool/reasoning are filtered.
+      // With cap at 64, the first 336 are candidates for filtering.
+      // In those 336: user messages are kept, while assistant/tool/reasoning may be omitted.
       const capped = aggregator.getDisplayedMessages();
 
       // Verify history-hidden marker is present (some tool calls were filtered)
@@ -321,18 +321,19 @@ describe("StreamingMessageAggregator", () => {
       expect(hiddenIndex).toBeLessThan(capped.length - 1);
       if (hiddenIndex !== -1) {
         expect(capped[hiddenIndex - 1]?.type).toBe("user");
-        expect(capped[hiddenIndex + 1]?.type).toBe("assistant");
+        expect(capped[hiddenIndex + 1]?.type).toBe("user");
         expect(capped[hiddenIndex]?.type).toBe("history-hidden");
         if (capped[hiddenIndex]?.type === "history-hidden") {
           expect(capped[hiddenIndex].hiddenCount).toBeGreaterThan(0);
         }
       }
 
-      // All user and assistant text messages should still be present
+      // User prompts remain fully visible; older assistant rows can be omitted.
       const userMessages = capped.filter((m) => m.type === "user");
       const assistantMessages = capped.filter((m) => m.type === "assistant");
       expect(userMessages).toHaveLength(100);
-      expect(assistantMessages).toHaveLength(100);
+      expect(assistantMessages.length).toBeLessThan(100);
+      expect(assistantMessages.length).toBeGreaterThan(0);
 
       // Enable showAllMessages to see full history
       aggregator.setShowAllMessages(true);

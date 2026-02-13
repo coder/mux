@@ -116,11 +116,25 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   const { expanded, setExpanded, toggleExpanded } = useToolExpansion();
   const [outputDialogOpen, setOutputDialogOpen] = useState(false);
 
-  const foregroundBashToolCallIds = useForegroundBashToolCallIds(workspaceId);
+  const resultHasOutput = typeof (result as { output?: unknown } | undefined)?.output === "string";
+  const shouldTrackLiveBashState = Boolean(
+    workspaceId &&
+    toolCallId &&
+    (status === "executing" || (status === "completed" && !resultHasOutput))
+  );
+
+  const foregroundBashToolCallIds = useForegroundBashToolCallIds(
+    status === "executing" ? workspaceId : undefined
+  );
   const { sendToBackground } = useBackgroundBashActions();
 
-  const liveOutput = useBashToolLiveOutput(workspaceId, toolCallId);
-  const latestStreamingBashId = useLatestStreamingBashId(workspaceId);
+  const liveOutput = useBashToolLiveOutput(
+    shouldTrackLiveBashState ? workspaceId : undefined,
+    shouldTrackLiveBashState ? toolCallId : undefined
+  );
+  const latestStreamingBashId = useLatestStreamingBashId(
+    shouldTrackLiveBashState ? workspaceId : undefined
+  );
   const isLatestStreamingBash = latestStreamingBashId === toolCallId;
 
   const outputRef = useRef<HTMLPreElement>(null);
@@ -192,8 +206,6 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   // but for a foreground→background migration we want to show "backgrounded"
   const effectiveStatus: ToolStatus =
     status === "completed" && result && "backgroundProcessId" in result ? "backgrounded" : status;
-
-  const resultHasOutput = typeof (result as { output?: unknown } | undefined)?.output === "string";
 
   const showLiveOutput =
     !isBackground && (status === "executing" || (Boolean(liveOutput) && !resultHasOutput));

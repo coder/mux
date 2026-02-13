@@ -17,9 +17,9 @@ if (process.platform === "darwin") {
 import { randomBytes } from "crypto";
 import { RPCHandler } from "@orpc/server/message-port";
 import { onError } from "@orpc/server";
-import { router } from "@/node/orpc/router";
-import { formatOrpcError } from "@/node/orpc/formatOrpcError";
-import { ServerLockfile } from "@/node/services/serverLockfile";
+import { router } from "../node/orpc/router";
+import { formatOrpcError } from "../node/orpc/formatOrpcError";
+import { ServerLockfile } from "../node/services/serverLockfile";
 import "disposablestack/auto";
 
 import type { MenuItemConstructorOptions, MessageBoxOptions } from "electron";
@@ -44,20 +44,20 @@ app.commandLine.appendSwitch("js-flags", "--max-old-space-size=8192");
 
 import * as fs from "fs";
 import * as path from "path";
-import type { Config } from "@/node/config";
-import type { ServiceContainer } from "@/node/services/serviceContainer";
-import { VERSION } from "@/version";
-import { getMuxHome, migrateLegacyMuxHome } from "@/common/constants/paths";
-import type { MuxDeepLinkPayload } from "@/common/types/deepLink";
-import type { UpdateStatus } from "@/common/orpc/types";
-import { parseMuxDeepLink } from "@/common/utils/deepLink";
+import type { Config } from "../node/config";
+import type { ServiceContainer } from "../node/services/serviceContainer";
+import { VERSION } from "../version";
+import { getMuxHome, migrateLegacyMuxHome } from "../common/constants/paths";
+import type { MuxDeepLinkPayload } from "../common/types/deepLink";
+import type { UpdateStatus } from "../common/orpc/types";
+import { parseMuxDeepLink } from "../common/utils/deepLink";
 
-import assert from "@/common/utils/assert";
-import { loadTokenizerModules } from "@/node/utils/main/tokenizer";
-import { isBashAvailable } from "@/node/utils/main/bashPath";
+import assert from "../common/utils/assert";
+import { loadTokenizerModules } from "../node/utils/main/tokenizer";
+import { isBashAvailable } from "../node/utils/main/bashPath";
 import windowStateKeeper from "electron-window-state";
-import { getTitleBarOptions } from "@/desktop/titleBarOptions";
-import { isUpdateInstallInProgress } from "@/desktop/updateInstallState";
+import { getTitleBarOptions } from "./titleBarOptions";
+import { isUpdateInstallInProgress } from "./updateInstallState";
 
 // React DevTools for development profiling
 // Using dynamic import() to avoid loading electron-devtools-installer at module init time
@@ -542,9 +542,9 @@ async function loadServices(): Promise<void> {
     { ServiceContainer: ServiceContainerClass },
     { TerminalWindowManager: TerminalWindowManagerClass },
   ] = await Promise.all([
-    import("@/node/config"),
-    import("@/node/services/serviceContainer"),
-    import("@/desktop/terminalWindowManager"),
+    import("../node/config"),
+    import("../node/services/serviceContainer"),
+    import("./terminalWindowManager"),
   ]);
   /* eslint-enable no-restricted-syntax */
   config = new ConfigClass();

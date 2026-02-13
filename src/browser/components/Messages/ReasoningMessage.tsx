@@ -13,6 +13,7 @@ interface ReasoningMessageProps {
 }
 
 const REASONING_FONT_CLASSES = "font-primary text-[12px] leading-[18px]";
+const MAX_SUMMARY_CHARS = 240;
 
 export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, className }) => {
   const [isExpanded, setIsExpanded] = useState(message.isStreaming);
@@ -24,7 +25,11 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
   const isStreaming = message.isStreaming;
   const trimmedContent = content?.trim() ?? "";
   const hasContent = trimmedContent.length > 0;
-  const summaryLine = hasContent ? (trimmedContent.split(/\r?\n/)[0] ?? "") : "";
+  const summaryLineRaw = hasContent ? (trimmedContent.split(/\r?\n/)[0] ?? "") : "";
+  const summaryLine =
+    summaryLineRaw.length > MAX_SUMMARY_CHARS
+      ? `${summaryLineRaw.slice(0, MAX_SUMMARY_CHARS)}…`
+      : summaryLineRaw;
   const hasAdditionalLines = hasContent && /[\r\n]/.test(trimmedContent);
   // OpenAI models often emit terse, single-line traces; surface them inline instead of hiding behind the label.
   const isSingleLineTrace = !isStreaming && hasContent && !hasAdditionalLines;
@@ -41,10 +46,10 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
 
   // Auto-collapse when streaming ends
   useEffect(() => {
-    if (!isStreaming) {
+    if (!isStreaming && isExpanded) {
       setIsExpanded(false);
     }
-  }, [isStreaming]);
+  }, [isStreaming, isExpanded]);
 
   const toggleExpanded = () => {
     if (!isCollapsible) {
@@ -111,13 +116,9 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
             {isStreaming ? (
               <Shimmer colorClass="var(--color-thinking-mode)">Thinking...</Shimmer>
             ) : hasContent ? (
-              <MarkdownRenderer
-                content={summaryLine}
-                className={cn(
-                  "truncate [&_*]:inline [&_*]:align-baseline [&_*]:whitespace-nowrap",
-                  REASONING_FONT_CLASSES
-                )}
-              />
+              <span className={cn("truncate whitespace-nowrap", REASONING_FONT_CLASSES)}>
+                {summaryLine}
+              </span>
             ) : (
               "Thought"
             )}
@@ -158,7 +159,7 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
         }}
         aria-hidden={!showExpandedContent}
       >
-        {renderContent()}
+        {isStreaming || showExpandedContent ? renderContent() : null}
       </div>
     </div>
   );

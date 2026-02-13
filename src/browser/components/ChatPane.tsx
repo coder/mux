@@ -11,6 +11,7 @@ import { Lightbulb } from "lucide-react";
 import { MessageListProvider } from "./Messages/MessageListContext";
 import { cn } from "@/common/lib/utils";
 import { MessageRenderer } from "./Messages/MessageRenderer";
+import type { UserMessageNavigation } from "./Messages/UserMessage";
 import { InterruptedBarrier } from "./Messages/ChatBarrier/InterruptedBarrier";
 import { EditCutoffBarrier } from "./Messages/ChatBarrier/EditCutoffBarrier";
 import { StreamingBarrier } from "./Messages/ChatBarrier/StreamingBarrier";
@@ -21,7 +22,7 @@ import { ChatInput, type ChatInputAPI } from "./ChatInput/index";
 import {
   shouldShowInterruptedBarrier,
   mergeConsecutiveStreamErrors,
-  computeBashOutputGroupInfo,
+  computeBashOutputGroupInfos,
   shouldBypassDeferredMessages,
 } from "@/browser/utils/messages/messageUtils";
 import { computeTaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
@@ -238,28 +239,14 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     [workspaceId, latestMessageId, onOpenTerminal]
   );
 
-  // Compute navigation map for user messages (prev/next historyIds for each user message)
-  // Only enabled when there are 2+ user messages to navigate between
-  const userMessageNavMap = useMemo(() => {
-    const userMessages = deferredMessages.filter(
-      (m): m is DisplayedMessage & { type: "user" } => m.type === "user"
-    );
-    // Only enable navigation when there are multiple user messages
-    if (userMessages.length < 2) return null;
-
-    const navMap = new Map<string, { prev?: string; next?: string }>();
-    for (let i = 0; i < userMessages.length; i++) {
-      const msg = userMessages[i];
-      navMap.set(msg.historyId, {
-        prev: i > 0 ? userMessages[i - 1].historyId : undefined,
-        next: i < userMessages.length - 1 ? userMessages[i + 1].historyId : undefined,
-      });
-    }
-    return navMap;
-  }, [deferredMessages]);
-
   const taskReportLinking = useMemo(
     () => computeTaskReportLinking(deferredMessages),
+    [deferredMessages]
+  );
+
+  // Precompute bash_output grouping once per message snapshot so row rendering stays O(n).
+  const bashOutputGroupInfos = useMemo(
+    () => computeBashOutputGroupInfos(deferredMessages),
     [deferredMessages]
   );
 
@@ -327,6 +314,33 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     },
     [contentRef, setAutoScroll]
   );
+
+  // Precompute per-user navigation objects so MessageRenderer rows receive stable prop
+  // references across non-message updates (usage bumps, stats updates, etc.).
+  const userMessageNavigationByHistoryId = useMemo(() => {
+    const userHistoryIds: string[] = [];
+    for (const message of deferredMessages) {
+      if (message.type === "user") {
+        userHistoryIds.push(message.historyId);
+      }
+    }
+
+    if (userHistoryIds.length < 2) {
+      return null;
+    }
+
+    const navigationByHistoryId = new Map<string, UserMessageNavigation>();
+    for (let index = 0; index < userHistoryIds.length; index++) {
+      navigationByHistoryId.set(userHistoryIds[index], {
+        prevUserMessageId: index > 0 ? userHistoryIds[index - 1] : undefined,
+        nextUserMessageId:
+          index < userHistoryIds.length - 1 ? userHistoryIds[index + 1] : undefined,
+        onNavigate: handleNavigateToMessage,
+      });
+    }
+
+    return navigationByHistoryId;
+  }, [deferredMessages, handleNavigateToMessage]);
 
   // ChatInput API for focus management
   const chatInputAPI = useRef<ChatInputAPI | null>(null);
@@ -656,8 +670,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                   <MessageListProvider value={messageListContextValue}>
                     <>
                       {deferredMessages.map((msg, index) => {
-                        // Compute bash_output grouping at render-time
-                        const bashOutputGroup = computeBashOutputGroupInfo(deferredMessages, index);
+                        const bashOutputGroup = bashOutputGroupInfos[index];
 
                         // For bash_output groups, use first message ID as expansion key
                         const groupKey = bashOutputGroup
@@ -676,6 +689,12 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                           msg.type !== "workspace-init" &&
                           msg.type !== "compaction-boundary" &&
                           msg.historyId === editCutoffHistoryId;
+
+                        const taskReportLinkingForMessage =
+                          msg.type === "tool" &&
+                          (msg.toolName === "task" || msg.toolName === "task_await")
+                            ? taskReportLinking
+                            : undefined;
 
                         return (
                           <React.Fragment key={msg.id}>
@@ -701,16 +720,10 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                                   msg.id === latestProposePlanId
                                 }
                                 bashOutputGroup={bashOutputGroup}
-                                taskReportLinking={taskReportLinking}
+                                taskReportLinking={taskReportLinkingForMessage}
                                 userMessageNavigation={
-                                  msg.type === "user" && userMessageNavMap
-                                    ? {
-                                        prevUserMessageId: userMessageNavMap.get(msg.historyId)
-                                          ?.prev,
-                                        nextUserMessageId: userMessageNavMap.get(msg.historyId)
-                                          ?.next,
-                                        onNavigate: handleNavigateToMessage,
-                                      }
+                                  msg.type === "user"
+                                    ? userMessageNavigationByHistoryId?.get(msg.historyId)
                                     : undefined
                                 }
                               />
