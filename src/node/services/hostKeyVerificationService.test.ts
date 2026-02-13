@@ -1,14 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach, vi, mock } from "bun:test";
+import { describe, it, expect, beforeEach } from "bun:test";
 
+import { HostKeyVerificationService } from "./hostKeyVerificationService";
 import type { HostKeyVerificationRequest } from "@/common/orpc/schemas/ssh";
 
+/** Short timeout for tests — avoids waiting the real 60s. */
 const TEST_TIMEOUT_MS = 20;
-
-mock.module("@/common/constants/ssh", () => ({
-  HOST_KEY_APPROVAL_TIMEOUT_MS: TEST_TIMEOUT_MS,
-}));
-
-const { HostKeyVerificationService } = await import("./hostKeyVerificationService");
 
 const REQUEST_PARAMS: Omit<HostKeyVerificationRequest, "requestId"> = {
   host: "example.com",
@@ -24,19 +20,15 @@ function waitForTimeout(): Promise<void> {
 }
 
 describe("HostKeyVerificationService", () => {
-  let service: InstanceType<typeof HostKeyVerificationService>;
+  let service: HostKeyVerificationService;
   let requests: HostKeyVerificationRequest[];
 
   beforeEach(() => {
-    service = new HostKeyVerificationService();
+    service = new HostKeyVerificationService(TEST_TIMEOUT_MS);
     requests = [];
     service.on("request", (req: HostKeyVerificationRequest) => {
       requests.push(req);
     });
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
   });
 
   it("resolves on explicit respond", async () => {
@@ -45,7 +37,8 @@ describe("HostKeyVerificationService", () => {
     expect(requests).toHaveLength(1);
     service.respond(requests[0].requestId, true);
 
-    await expect(verification).resolves.toBe(true);
+    const result = await verification;
+    expect(result).toBe(true);
   });
 
   it("resolves false on timeout", async () => {
@@ -53,7 +46,8 @@ describe("HostKeyVerificationService", () => {
 
     await waitForTimeout();
 
-    await expect(verification).resolves.toBe(false);
+    const result = await verification;
+    expect(result).toBe(false);
   });
 
   it("deduped waiters all resolve on respond", async () => {
@@ -64,11 +58,8 @@ describe("HostKeyVerificationService", () => {
     expect(requests).toHaveLength(1);
     service.respond(requests[0].requestId, true);
 
-    await expect(Promise.all([verification1, verification2, verification3])).resolves.toEqual([
-      true,
-      true,
-      true,
-    ]);
+    const results = await Promise.all([verification1, verification2, verification3]);
+    expect(results).toEqual([true, true, true]);
   });
 
   it("deduped waiters all resolve false on timeout", async () => {
@@ -78,11 +69,8 @@ describe("HostKeyVerificationService", () => {
 
     await waitForTimeout();
 
-    await expect(Promise.all([verification1, verification2, verification3])).resolves.toEqual([
-      false,
-      false,
-      false,
-    ]);
+    const results = await Promise.all([verification1, verification2, verification3]);
+    expect(results).toEqual([false, false, false]);
   });
 
   it("late respond after timeout is a no-op", async () => {
@@ -90,7 +78,8 @@ describe("HostKeyVerificationService", () => {
     const requestId = requests[0].requestId;
 
     await waitForTimeout();
-    await expect(verification).resolves.toBe(false);
+    const result = await verification;
+    expect(result).toBe(false);
 
     expect(() => {
       service.respond(requestId, true);
@@ -101,7 +90,8 @@ describe("HostKeyVerificationService", () => {
     const firstVerification = service.requestVerification(REQUEST_PARAMS);
 
     await waitForTimeout();
-    await expect(firstVerification).resolves.toBe(false);
+    const firstResult = await firstVerification;
+    expect(firstResult).toBe(false);
 
     const secondVerification = service.requestVerification(REQUEST_PARAMS);
 
@@ -110,7 +100,8 @@ describe("HostKeyVerificationService", () => {
 
     service.respond(requests[1].requestId, true);
 
-    await expect(secondVerification).resolves.toBe(true);
+    const secondResult = await secondVerification;
+    expect(secondResult).toBe(true);
   });
 
   it("emits request event only for first caller", async () => {
@@ -122,10 +113,7 @@ describe("HostKeyVerificationService", () => {
 
     service.respond(requests[0].requestId, true);
 
-    await expect(Promise.all([verification1, verification2, verification3])).resolves.toEqual([
-      true,
-      true,
-      true,
-    ]);
+    const results = await Promise.all([verification1, verification2, verification3]);
+    expect(results).toEqual([true, true, true]);
   });
 });

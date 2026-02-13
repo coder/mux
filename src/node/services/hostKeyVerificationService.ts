@@ -13,6 +13,12 @@ export class HostKeyVerificationService extends EventEmitter {
   private pending = new Map<string, PendingEntry>();
   /** Dedup: host -> inflight requestId. Coalesces concurrent probes for same host. */
   private inflightByHost = new Map<string, string>();
+  private readonly timeoutMs: number;
+
+  constructor(timeoutMs = HOST_KEY_APPROVAL_TIMEOUT_MS) {
+    super();
+    this.timeoutMs = timeoutMs;
+  }
 
   private finalizeRequest(requestId: string, accept: boolean): void {
     const entry = this.pending.get(requestId);
@@ -55,7 +61,7 @@ export class HostKeyVerificationService extends EventEmitter {
         host: params.host,
         timer: setTimeout(() => {
           this.finalizeRequest(requestId, false);
-        }, HOST_KEY_APPROVAL_TIMEOUT_MS),
+        }, this.timeoutMs),
         waiters: [resolve],
       };
 
