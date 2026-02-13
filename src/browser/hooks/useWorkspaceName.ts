@@ -5,7 +5,14 @@ import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getWorkspaceNameStateKey } from "@/common/constants/storage";
 import { useGateway, formatAsGatewayModel } from "./useGatewayModels";
 import { getKnownModel } from "@/common/constants/knownModels";
+import type { NameGenerationError } from "@/common/types/errors";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
+
+/** Discriminated error type for workspace name operations */
+export type WorkspaceNameUIError =
+  | { kind: "generation"; error: NameGenerationError }
+  | { kind: "validation"; message: string }
+  | { kind: "transport"; message: string };
 
 /** Small/fast models preferred for name generation */
 const PREFERRED_MODELS = [getKnownModel("HAIKU").id, getKnownModel("GPT_MINI").id];
@@ -74,8 +81,8 @@ export interface WorkspaceNameState {
   isGenerating: boolean;
   /** Whether auto-generation is enabled */
   autoGenerate: boolean;
-  /** Error message if generation failed */
-  error: string | null;
+  /** Error state for generation/validation/transport failures */
+  error: WorkspaceNameUIError | null;
   /** Set whether auto-generation is enabled */
   setAutoGenerate: (enabled: boolean) => void;
   /** Set manual name (for when auto-generate is off) */
@@ -167,7 +174,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
   const { generatedIdentity, manualName, autoGenerate, lastGeneratedFor } = stored;
 
   const [isGenerating, setIsGenerating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<WorkspaceNameUIError | null>(null);
 
   // Debounce timer
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -261,11 +268,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
           return identity;
         }
 
-        const errorMsg =
-          result.error.type === "unknown" && "raw" in result.error
-            ? result.error.raw
-            : `Generation failed: ${result.error.type}`;
-        setError(errorMsg);
+        setError({ kind: "generation", error: result.error });
         safeResolve(null);
         return null;
       } catch (err) {
@@ -273,7 +276,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
           return null;
         }
         const errorMsg = err instanceof Error ? err.message : String(err);
-        setError(errorMsg);
+        setError({ kind: "transport", message: errorMsg });
         safeResolve(null);
         return null;
       } finally {
@@ -358,7 +361,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
       // Validate in real-time as user types (skip empty - will show on submit)
       if (newName.trim()) {
         const validation = validateWorkspaceName(newName);
-        setError(validation.error ?? null);
+        setError(validation.error ? { kind: "validation", message: validation.error } : null);
       } else {
         setError(null);
       }
@@ -371,7 +374,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
     // Use that name directly with a generated title from the message
     if (!autoGenerate) {
       if (!manualName.trim()) {
-        setError("Please enter a workspace name");
+        setError({ kind: "validation", message: "Please enter a workspace name" });
         return null;
       }
       // Manual name provided — skip LLM call entirely.

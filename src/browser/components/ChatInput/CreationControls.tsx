@@ -25,6 +25,7 @@ import { PlatformPaths } from "@/common/utils/paths";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { cn } from "@/common/lib/utils";
+import { formatNameGenerationError } from "@/common/utils/errors/formatNameGenerationError";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { Skeleton } from "../ui/skeleton";
 import { DocsLink } from "../DocsLink";
@@ -33,7 +34,7 @@ import {
   type RuntimeChoice,
   type RuntimeIconProps,
 } from "@/browser/utils/runtimeUi";
-import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
+import type { WorkspaceNameState, WorkspaceNameUIError } from "@/browser/hooks/useWorkspaceName";
 import type { CoderInfo } from "@/common/orpc/schemas/coder";
 import type { SectionConfig } from "@/common/types/project";
 import { resolveSectionColor } from "@/common/constants/ui";
@@ -102,6 +103,27 @@ function CredentialSharingCheckbox(props: {
       <span className="text-muted">Share credentials (SSH, Git)</span>
       <DocsLink path={props.docsPath} />
     </label>
+  );
+}
+
+function NameErrorDisplay(props: { error: WorkspaceNameUIError }) {
+  // Validation and transport errors are already human-readable plain text.
+  if (props.error.kind === "validation" || props.error.kind === "transport") {
+    return <span className="text-xs text-red-500">{props.error.message}</span>;
+  }
+
+  const formatted = formatNameGenerationError(props.error.error);
+  return (
+    <div className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-200">
+      <div className="font-medium text-red-100">{formatted.title}</div>
+      <div>{formatted.message}</div>
+      {formatted.hint && <div className="mt-1 text-red-300">Fix: {formatted.hint}</div>}
+      {formatted.docsPath && (
+        <DocsLink path={formatted.docsPath} className="mt-1 text-xs">
+          Troubleshooting
+        </DocsLink>
+      )}
+    </div>
   );
 }
 
@@ -680,7 +702,7 @@ export function CreationControls(props: CreationControlsProps) {
         </div>
 
         {/* Error display */}
-        {nameState.error && <span className="text-xs text-red-500">{nameState.error}</span>}
+        {nameState.error && <NameErrorDisplay error={nameState.error} />}
 
         {/* Section selector - right-aligned, same row as workspace name */}
         {props.sections && props.sections.length > 0 && props.onSectionChange && (
