@@ -753,10 +753,10 @@ export const ToolSelectorInteraction: AppStory = {
 
     // Wait for the modal's data loading to settle — all tools allowed by
     // default so "All" is disabled.
-    await modal.assert((scope) => {
+    await modal.assert(async (scope) => {
       const allBtn = scope.queryByRole("button", { name: /^All$/i });
       if (!allBtn) throw new Error("All button not found — modal still loading");
-      expect(allBtn).toBeDisabled();
+      await expect(allBtn).toBeDisabled();
     });
 
     // Click "None" to deselect all tools.
@@ -766,12 +766,21 @@ export const ToolSelectorInteraction: AppStory = {
     await userEvent.click(noneButton);
 
     // "None" should be disabled and "0 of X tools enabled" should appear.
-    await modal.assert((scope) => {
-      expect(scope.getByRole("button", { name: /^None$/i })).toBeDisabled();
+    await modal.assert(async (scope) => {
+      await expect(scope.getByRole("button", { name: /^None$/i })).toBeDisabled();
       scope.getByText((_content: string, element: Element | null) => {
         const t = (element?.textContent ?? "").replace(/\s+/g, " ").trim();
         return /^0 of \d+ tools enabled$/i.test(t);
       });
+    });
+
+    // "All" must be enabled (not all tools selected) before we click it.
+    // This guards against a Storybook remount silently resetting to the
+    // default state where All is already disabled — without this check
+    // the click would be a no-op and the final assertion would pass
+    // vacuously, masking regressions in the None→All transition.
+    await modal.assert(async (scope) => {
+      await expect(scope.getByRole("button", { name: /^All$/i })).toBeEnabled();
     });
 
     // Click "All" to re-select all tools.
@@ -781,8 +790,8 @@ export const ToolSelectorInteraction: AppStory = {
     await userEvent.click(allButton);
 
     // "All" should be disabled again.
-    await modal.assert((scope) => {
-      expect(scope.getByRole("button", { name: /^All$/i })).toBeDisabled();
+    await modal.assert(async (scope) => {
+      await expect(scope.getByRole("button", { name: /^All$/i })).toBeDisabled();
     });
   },
 };
