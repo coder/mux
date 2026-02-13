@@ -161,6 +161,7 @@ export async function simulateToolPolicyNoop(
     messageId: ctx.assistantMessageId,
     metadata: {
       model: ctx.canonicalModelString,
+      agentId: ctx.effectiveAgentId,
       thinkingLevel: ctx.effectiveThinkingLevel,
       routedThroughGateway: ctx.routedThroughGateway,
       systemMessageTokens: ctx.systemMessageTokens,

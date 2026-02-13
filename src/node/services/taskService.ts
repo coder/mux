@@ -139,6 +139,10 @@ interface CompletedAgentReportCacheEntry {
   ancestorWorkspaceIds: string[];
 }
 
+interface ParentAutoResumeHint {
+  agentId?: string;
+}
+
 function isTypedWorkspaceEvent(value: unknown, type: string): boolean {
   return (
     typeof value === "object" &&
@@ -259,6 +263,55 @@ export class TaskService {
       workspace.aiSettings
     );
   }
+  /**
+   * Derives auto-resume send options (agentId, model, thinkingLevel) from durable
+   * conversation metadata, so synthetic resumes preserve the parent's active agent.
+   *
+   * Precedence: stream-end event metadata → last assistant message in history → workspace AI settings → defaults.
+   */
+  private async resolveParentAutoResumeOptions(
+    parentWorkspaceId: string,
+    parentEntry: {
+      workspace: {
+        aiSettingsByAgent?: Record<string, { model: string; thinkingLevel?: ThinkingLevel }>;
+        aiSettings?: { model: string; thinkingLevel?: ThinkingLevel };
+      };
+    },
+    fallbackModel: string,
+    hint?: ParentAutoResumeHint
+  ): Promise<{ model: string; agentId: string; thinkingLevel?: ThinkingLevel }> {
+    // 1) Try stream-end hint metadata (available in handleStreamEnd path)
+    let agentId = hint?.agentId;
+
+    // 2) Fall back to latest assistant message metadata in history (restart-safe)
+    if (!agentId) {
+      try {
+        const historyResult = await this.historyService.getLastMessages(parentWorkspaceId, 20);
+        if (historyResult.success) {
+          for (let i = historyResult.data.length - 1; i >= 0; i--) {
+            const msg = historyResult.data[i];
+            if (msg?.role === "assistant" && msg.metadata?.agentId) {
+              agentId = msg.metadata.agentId;
+              break;
+            }
+          }
+        }
+      } catch {
+        // Best-effort; fall through to defaults
+      }
+    }
+
+    // 3) Default
+    agentId = agentId ?? WORKSPACE_DEFAULTS.agentId;
+
+    const aiSettings = this.resolveWorkspaceAISettings(parentEntry.workspace, agentId);
+    return {
+      model: aiSettings?.model ?? fallbackModel,
+      agentId,
+      thinkingLevel: aiSettings?.thinkingLevel,
+    };
+  }
+
   private async emitWorkspaceMetadata(workspaceId: string): Promise<void> {
     assert(workspaceId.length > 0, "emitWorkspaceMetadata: workspaceId must be non-empty");
 
@@ -2016,9 +2069,12 @@ export class TaskService {
       }
       this.consecutiveAutoResumes.set(workspaceId, resumeCount + 1);
 
-      const parentAgentId = entry.workspace.agentId ?? WORKSPACE_DEFAULTS.agentId;
-      const parentAiSettings = this.resolveWorkspaceAISettings(entry.workspace, parentAgentId);
-      const model = parentAiSettings?.model ?? defaultModel;
+      const resumeOptions = await this.resolveParentAutoResumeOptions(
+        workspaceId,
+        entry,
+        defaultModel,
+        event.metadata
+      );
 
       const sendResult = await this.workspaceService.sendMessage(
         workspaceId,
@@ -2028,9 +2084,9 @@ export class TaskService {
           "If any tasks are still queued/running/awaiting_report after that, call task_await again. " +
           "Only once all tasks are completed should you write your final response, integrating their reports.",
         {
-          model,
-          agentId: parentAgentId,
-          thinkingLevel: parentAiSettings?.thinkingLevel,
+          model: resumeOptions.model,
+          agentId: resumeOptions.agentId,
+          thinkingLevel: resumeOptions.thinkingLevel,
         },
         // Skip auto-resume counter reset — this IS an auto-resume, not a user message.
         { skipAutoResumeReset: true, synthetic: true }
@@ -2308,7 +2364,8 @@ export class TaskService {
 
     // Auto-resume any parent stream that was waiting on a task tool call (restart-safe).
     const postCfg = this.config.loadConfigOrDefault();
-    if (!findWorkspaceEntry(postCfg, parentWorkspaceId)) {
+    const parentEntry = findWorkspaceEntry(postCfg, parentWorkspaceId);
+    if (!parentEntry) {
       // Parent may have been cleaned up (e.g. it already reported and this was its last descendant).
       return;
     }
@@ -2317,12 +2374,18 @@ export class TaskService {
       this.consecutiveAutoResumes.delete(parentWorkspaceId);
     }
     if (!hasActiveDescendants && !this.aiService.isStreaming(parentWorkspaceId)) {
+      const resumeOptions = await this.resolveParentAutoResumeOptions(
+        parentWorkspaceId,
+        parentEntry,
+        latestChildEntry?.workspace.taskModelString ?? defaultModel
+      );
       const sendResult = await this.workspaceService.sendMessage(
         parentWorkspaceId,
         "Your background sub-agent task(s) have completed. Use task_await to retrieve their reports and integrate the results.",
         {
-          model: latestChildEntry?.workspace.taskModelString ?? defaultModel,
-          agentId: WORKSPACE_DEFAULTS.agentId,
+          model: resumeOptions.model,
+          agentId: resumeOptions.agentId,
+          thinkingLevel: resumeOptions.thinkingLevel,
         },
         // Skip auto-resume counter reset — this IS an auto-resume, not a user message.
         { skipAutoResumeReset: true, synthetic: true }
