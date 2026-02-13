@@ -350,6 +350,12 @@ export const SecretsSection: React.FC = () => {
           <p className="text-muted mt-1 text-xs">
             Scope: <span className="text-foreground">{scopeLabel}</span>
           </p>
+          <p className="text-muted mt-1 text-xs">
+            Global secrets are shared storage only; they are not injected by default.
+          </p>
+          <p className="text-muted mt-1 text-xs">
+            Project secrets control injection. Use Type: Global to reference a global value.
+          </p>
         </div>
 
         <ToggleGroup

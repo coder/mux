@@ -278,7 +278,7 @@ describe("Config", () => {
       expect(parsed.__global__).toEqual([{ key: "GLOBAL_A", value: "1" }]);
     });
 
-    it("merges global + project secrets with project overriding by key", async () => {
+    it("does not inherit global secrets by default", async () => {
       await config.updateGlobalSecrets([
         { key: "TOKEN", value: "global" },
         { key: "A", value: "1" },
@@ -295,7 +295,6 @@ describe("Config", () => {
 
       expect(record).toEqual({
         TOKEN: "project",
-        A: "1",
         B: "2",
       });
     });
@@ -310,8 +309,21 @@ describe("Config", () => {
 
       const record = secretsToRecord(config.getEffectiveSecrets(projectPath));
       expect(record).toEqual({
-        GLOBAL_TOKEN: "abc",
         TOKEN: "abc",
+      });
+    });
+
+    it("resolves same-key project secret references to global values", async () => {
+      await config.updateGlobalSecrets([{ key: "OPENAI_API_KEY", value: "abc" }]);
+
+      const projectPath = "/fake/project";
+      await config.updateProjectSecrets(projectPath, [
+        { key: "OPENAI_API_KEY", value: { secret: "OPENAI_API_KEY" } },
+      ]);
+
+      const record = secretsToRecord(config.getEffectiveSecrets(projectPath));
+      expect(record).toEqual({
+        OPENAI_API_KEY: "abc",
       });
     });
 
