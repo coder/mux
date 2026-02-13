@@ -259,6 +259,7 @@ export class StreamingMessageAggregator {
     latestStreamingBashToolCallId?: string | null; // null = computed, none found
   } = {};
   private recencyTimestamp: number | null = null;
+  private lastResponseCompletedAt: number | null = null;
 
   // Delta history for token counting and TPS calculation
   private deltaHistory = new Map<string, DeltaRecordStorage>();
@@ -531,7 +532,11 @@ export class StreamingMessageAggregator {
    */
   private updateRecency(): void {
     const messages = this.getAllMessages();
-    this.recencyTimestamp = computeRecencyTimestamp(messages, this.createdAt, this.unarchivedAt);
+    const messageRecency = computeRecencyTimestamp(messages, this.createdAt, this.unarchivedAt);
+    const candidates = [messageRecency, this.lastResponseCompletedAt].filter(
+      (t): t is number => t !== null
+    );
+    this.recencyTimestamp = candidates.length > 0 ? Math.max(...candidates) : null;
   }
 
   /**
@@ -817,6 +822,7 @@ export class StreamingMessageAggregator {
     this.loadedSkillsCache = [];
     this.skillLoadErrors.clear();
     this.skillLoadErrorsCache = [];
+    this.lastResponseCompletedAt = null;
 
     // Add all messages to the map
     for (const message of messages) {
@@ -1388,12 +1394,22 @@ export class StreamingMessageAggregator {
       // Clean up stream-scoped state (active stream tracking, TODOs)
       this.cleanupStreamState(data.messageId);
 
+      const isFinal = this.activeStreams.size === 0;
+
       // Notify on normal stream completion (skip replay-only reconstruction)
       // isFinal = true when this was the last active stream (assistant done with all work)
       if (this.workspaceId && this.onResponseComplete) {
-        const isFinal = this.activeStreams.size === 0;
         const finalText = this.extractFinalResponseText(message);
         this.onResponseComplete(this.workspaceId, data.messageId, isFinal, finalText, compaction);
+      }
+
+      // Bump recency when the final non-compaction stream completes.
+      // This makes non-active workspaces show the unread indicator bar
+      // after an assistant response finishes. Compaction streams are excluded
+      // because idle compaction must stay backdated (background operation)
+      // and manual compaction already bumps recency via its compacted summary.
+      if (isFinal && !activeStream.isCompacting) {
+        this.lastResponseCompletedAt = Date.now();
       }
     } else {
       // Reconnection case: user reconnected after stream completed
