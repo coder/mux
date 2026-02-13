@@ -29,6 +29,24 @@ describe("isLoopbackHost", () => {
   test("case insensitive", () => {
     expect(isLoopbackHost("LOCALHOST")).toBe(true);
   });
+
+  test("rejects hostnames starting with 127. that are not IPs", () => {
+    expect(isLoopbackHost("127.example.com")).toBe(false);
+    expect(isLoopbackHost("127.0.0.evil")).toBe(false);
+  });
+
+  test("recognizes bracketed IPv6 loopback [::1]", () => {
+    expect(isLoopbackHost("[::1]")).toBe(true);
+  });
+
+  test("rejects 127-prefix with wrong octet count", () => {
+    expect(isLoopbackHost("127.0.0")).toBe(false);
+    expect(isLoopbackHost("127.0.0.1.2")).toBe(false);
+  });
+
+  test("rejects 127-prefix with out-of-range octets", () => {
+    expect(isLoopbackHost("127.0.0.256")).toBe(false);
+  });
 });
 
 describe("resolveServerAuthToken", () => {
