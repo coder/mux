@@ -218,37 +218,36 @@ describe("createCodeExecutionTool", () => {
       expect(result.error).toContain("Dynamic import() is not available");
     });
 
-    it("includes line and column numbers for type errors", async () => {
+    it("surfaces runtime validation errors for wrong tool args", async () => {
       const mockTools: Record<string, Tool> = {
         bash: createMockTool("bash", z.object({ script: z.string() })),
       };
       const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge(mockTools));
 
       const result = (await tool.execute!(
-        { code: "const x = 1;\nconst result = mux.bash({ scriptz: 'ls' });" }, // typo on line 2
+        { code: "const x = 1;\nconst result = mux.bash({ scriptz: 'ls' });" },
         mockToolCallOptions
       )) as PTCExecutionResult;
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("Code analysis failed");
-      expect(result.error).toContain("scriptz");
-      expect(result.error).toContain("(line 2, col");
+      expect(result.error).not.toContain("Code analysis failed");
+      expect(result.error).toContain("script");
     });
 
-    it("includes line and column for calling non-existent tools", async () => {
+    it("surfaces runtime errors for calling non-existent tools", async () => {
       const mockTools: Record<string, Tool> = {
         bash: createMockTool("bash", z.object({ script: z.string() })),
       };
       const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge(mockTools));
 
       const result = (await tool.execute!(
-        { code: "const x = 1;\nconst y = 2;\nmux.nonexistent({ arg: 1 });" }, // line 3
+        { code: "const x = 1;\nconst y = 2;\nmux.nonexistent({ arg: 1 });" },
         mockToolCallOptions
       )) as PTCExecutionResult;
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("Code analysis failed");
-      expect(result.error).toContain("(line 3, col");
+      expect(result.error).not.toContain("Code analysis failed");
+      expect(result.error).toMatch(/nonexistent|not a function/i);
     });
   });
 
@@ -348,7 +347,7 @@ describe("createCodeExecutionTool", () => {
       expect(result.toolCalls[0].duration_ms).toBeGreaterThanOrEqual(0);
     });
 
-    it("validates tool arguments against schema", async () => {
+    it("validates tool arguments against schema at runtime", async () => {
       const mockTools: Record<string, Tool> = {
         file_read: createMockTool("file_read", z.object({ filePath: z.string() })),
       };
@@ -360,10 +359,9 @@ describe("createCodeExecutionTool", () => {
         mockToolCallOptions
       )) as PTCExecutionResult;
 
-      // Now caught by TypeScript type validation at compile time, not runtime
       expect(result.success).toBe(false);
-      // Error message contains TypeScript diagnostic (e.g., "filePath" required)
-      expect(result.error).toContain("Code analysis failed");
+      expect(result.error).not.toContain("Code analysis failed");
+      expect(result.error).toMatch(/filePath|required|validation/i);
     });
 
     it("handles tool execution errors gracefully", async () => {
