@@ -44,6 +44,7 @@ import {
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
+  getWorkspaceLastReadKey,
   EXPANDED_PROJECTS_KEY,
   LEFT_SIDEBAR_COLLAPSED_KEY,
   LEFT_SIDEBAR_WIDTH_KEY,
@@ -809,6 +810,14 @@ function AppInner() {
     ) => {
       // Only notify on final message (when assistant is done with all work)
       if (!isFinal) return;
+
+      // Mark the selected workspace as read when a stream completes on it.
+      // This prevents false unread indicators: without this, the recency bump
+      // from stream completion would exceed lastRead, causing a brief unread flash
+      // when the user switches away from a workspace they were actively viewing.
+      if (selectedWorkspaceRef.current?.workspaceId === workspaceId) {
+        updatePersistedState(getWorkspaceLastReadKey(workspaceId), Date.now());
+      }
 
       // Skip notification if compaction completed with a continue message.
       // We use the compaction metadata instead of queued state since the queue
