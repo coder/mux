@@ -379,7 +379,9 @@ export function useDraftWorkspaceSettings(
   ]);
 
   const defaultSshHost =
-    parsedDefault?.mode === RUNTIME_MODE.SSH ? parsedDefault.host : lastSsh.host;
+    parsedDefault?.mode === RUNTIME_MODE.SSH && parsedDefault.host.trim()
+      ? parsedDefault.host
+      : lastSsh.host;
 
   // When the settings default says "Coder", reuse the saved config even if last-used SSH disabled it.
   // When settings say plain "ssh", don't reattach the last-used coder config.
@@ -390,7 +392,9 @@ export function useDraftWorkspaceSettings(
       : lastSsh.coder;
 
   const defaultDockerImage =
-    parsedDefault?.mode === RUNTIME_MODE.DOCKER ? parsedDefault.image : lastDockerImage;
+    parsedDefault?.mode === RUNTIME_MODE.DOCKER && parsedDefault.image.trim()
+      ? parsedDefault.image
+      : lastDockerImage;
 
   const defaultDevcontainerConfigPath =
     parsedDefault?.mode === RUNTIME_MODE.DEVCONTAINER && parsedDefault.configPath.trim()
