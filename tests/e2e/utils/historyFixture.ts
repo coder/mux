@@ -14,7 +14,15 @@ type HistoryProfileDefinition = {
   toolOutputChars: number;
 };
 
-export type HistoryProfileName = "small" | "medium" | "large" | "tool-heavy" | "reasoning-heavy";
+const HISTORY_PROFILE_NAMES = [
+  "small",
+  "medium",
+  "large",
+  "tool-heavy",
+  "reasoning-heavy",
+] as const;
+
+export type HistoryProfileName = (typeof HISTORY_PROFILE_NAMES)[number];
 
 export interface SeededHistoryProfileSummary {
   profile: HistoryProfileName;
@@ -120,6 +128,23 @@ function createAssistantParts(args: {
   return parts;
 }
 
+async function appendOrThrow(args: {
+  historyService: HistoryService;
+  workspaceId: string;
+  message: MuxMessage;
+  profile: HistoryProfileName;
+  role: "user" | "assistant";
+}): Promise<void> {
+  const appendResult = await args.historyService.appendToHistory(args.workspaceId, args.message);
+  if (appendResult.success) {
+    return;
+  }
+
+  throw new Error(
+    `Failed to append ${args.role} message for profile ${args.profile}: ${appendResult.error}`
+  );
+}
+
 export async function seedWorkspaceHistoryProfile(args: {
   demoProject: DemoProjectConfig;
   profile: HistoryProfileName;
@@ -133,10 +158,6 @@ export async function seedWorkspaceHistoryProfile(args: {
 
   await fsPromises.writeFile(demoProject.historyPath, "", "utf-8");
 
-  let estimatedCharacterCount = 0;
-  let totalMessages = 0;
-  let assistantMessages = 0;
-
   for (let pairIndex = 0; pairIndex < profileConfig.messagePairs; pairIndex++) {
     const userText = buildDeterministicText(
       `${profile}-user-${pairIndex}`,
@@ -145,16 +166,13 @@ export async function seedWorkspaceHistoryProfile(args: {
     const userMessage = createMuxMessage(`${profile}-user-msg-${pairIndex}`, "user", userText, {
       timestamp: BASE_TIMESTAMP_MS + pairIndex * 2,
     });
-
-    const userAppendResult = await historyService.appendToHistory(
-      demoProject.workspaceId,
-      userMessage
-    );
-    if (!userAppendResult.success) {
-      throw new Error(
-        `Failed to append user message for profile ${profile}: ${userAppendResult.error}`
-      );
-    }
+    await appendOrThrow({
+      historyService,
+      workspaceId: demoProject.workspaceId,
+      message: userMessage,
+      profile,
+      role: "user",
+    });
 
     const assistantText = buildDeterministicText(
       `${profile}-assistant-${pairIndex}`,
@@ -177,31 +195,25 @@ export async function seedWorkspaceHistoryProfile(args: {
       },
       assistantParts
     );
-
-    const assistantAppendResult = await historyService.appendToHistory(
-      demoProject.workspaceId,
-      assistantMessage
-    );
-    if (!assistantAppendResult.success) {
-      throw new Error(
-        `Failed to append assistant message for profile ${profile}: ${assistantAppendResult.error}`
-      );
-    }
-
-    estimatedCharacterCount +=
-      userText.length +
-      assistantText.length +
-      profileConfig.toolOutputChars +
-      profileConfig.reasoningChars;
-    totalMessages += 2;
-    assistantMessages += 1;
+    await appendOrThrow({
+      historyService,
+      workspaceId: demoProject.workspaceId,
+      message: assistantMessage,
+      profile,
+      role: "assistant",
+    });
   }
 
   return {
     profile,
-    messageCount: totalMessages,
-    assistantMessageCount: assistantMessages,
-    estimatedCharacterCount,
+    messageCount: profileConfig.messagePairs * 2,
+    assistantMessageCount: profileConfig.messagePairs,
+    estimatedCharacterCount:
+      profileConfig.messagePairs *
+      (profileConfig.userChars +
+        profileConfig.assistantChars +
+        profileConfig.toolOutputChars +
+        profileConfig.reasoningChars),
     hasToolParts: profileConfig.toolOutputChars > 0,
     hasReasoningParts: profileConfig.reasoningChars > 0,
   };
@@ -209,29 +221,22 @@ export async function seedWorkspaceHistoryProfile(args: {
 
 export function parseHistoryProfilesFromEnv(rawProfiles: string | undefined): HistoryProfileName[] {
   if (!rawProfiles) {
-    return ["small", "medium", "large", "tool-heavy", "reasoning-heavy"];
+    return [...HISTORY_PROFILE_NAMES];
   }
 
-  const requested = rawProfiles
+  const requestedProfiles = rawProfiles
     .split(",")
     .map((profile) => profile.trim())
     .filter((profile) => profile.length > 0);
 
-  const validProfiles = new Set<HistoryProfileName>([
-    "small",
-    "medium",
-    "large",
-    "tool-heavy",
-    "reasoning-heavy",
-  ]);
-
-  for (const profile of requested) {
-    if (!validProfiles.has(profile as HistoryProfileName)) {
-      throw new Error(
-        `Invalid MUX_E2E_PERF_PROFILES entry "${profile}". Expected one of: ${Array.from(validProfiles).join(", ")}.`
-      );
-    }
+  const invalidProfile = requestedProfiles.find(
+    (profile) => !HISTORY_PROFILE_NAMES.includes(profile as HistoryProfileName)
+  );
+  if (invalidProfile) {
+    throw new Error(
+      `Invalid MUX_E2E_PERF_PROFILES entry "${invalidProfile}". Expected one of: ${HISTORY_PROFILE_NAMES.join(", ")}.`
+    );
   }
 
-  return requested as HistoryProfileName[];
+  return requestedProfiles as HistoryProfileName[];
 }

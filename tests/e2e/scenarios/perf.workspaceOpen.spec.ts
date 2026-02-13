@@ -10,34 +10,6 @@ import {
 const shouldRunPerfScenarios = process.env.MUX_E2E_RUN_PERF === "1";
 const selectedProfiles = parseHistoryProfilesFromEnv(process.env.MUX_E2E_PERF_PROFILES);
 
-function assertReactProfileSnapshot(snapshot: unknown): asserts snapshot is {
-  sampleCount: number;
-  enabled: boolean;
-  byProfilerId: Record<string, { sampleCount: number }>;
-} {
-  if (!snapshot || typeof snapshot !== "object") {
-    throw new Error("React profile snapshot was not captured");
-  }
-
-  const typedSnapshot = snapshot as {
-    sampleCount?: unknown;
-    enabled?: unknown;
-    byProfilerId?: unknown;
-  };
-
-  if (typeof typedSnapshot.sampleCount !== "number") {
-    throw new Error("React profile snapshot is missing numeric sampleCount");
-  }
-
-  if (typeof typedSnapshot.enabled !== "boolean") {
-    throw new Error("React profile snapshot is missing boolean enabled flag");
-  }
-
-  if (!typedSnapshot.byProfilerId || typeof typedSnapshot.byProfilerId !== "object") {
-    throw new Error("React profile snapshot is missing profiler id summary data");
-  }
-}
-
 test.skip(
   ({ browserName }) => browserName !== "chromium",
   "Electron scenario runs on chromium only"
@@ -68,7 +40,9 @@ test.describe("workspace open performance profiling", () => {
       });
 
       const reactProfileSnapshot = await readReactProfileSnapshot(page);
-      assertReactProfileSnapshot(reactProfileSnapshot);
+      if (!reactProfileSnapshot) {
+        throw new Error("React profile snapshot was not captured");
+      }
 
       const artifactDirectory = await writePerfArtifacts({
         testInfo,

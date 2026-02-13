@@ -51,6 +51,12 @@ interface ChromeProfileCapture {
   };
 }
 
+interface ReactProfileSnapshotLike {
+  enabled: boolean;
+  sampleCount: number;
+  byProfilerId: Record<string, { sampleCount: number }>;
+}
+
 function sanitizeForPath(value: string): string {
   const compact = value
     .replace(/\s+/g, "-")
@@ -245,21 +251,19 @@ export async function resetReactProfileSamples(page: Page): Promise<boolean> {
   });
 }
 
-export async function readReactProfileSnapshot(page: Page): Promise<unknown> {
+export async function readReactProfileSnapshot(
+  page: Page
+): Promise<ReactProfileSnapshotLike | null> {
   return page.evaluate(() => {
     const reactProfiler = (
       window as Window & {
         __muxReactProfiler?: {
-          snapshot?: () => unknown;
+          snapshot?: () => ReactProfileSnapshotLike;
         };
       }
     ).__muxReactProfiler;
 
-    if (!reactProfiler?.snapshot) {
-      return null;
-    }
-
-    return reactProfiler.snapshot();
+    return reactProfiler?.snapshot ? reactProfiler.snapshot() : null;
   });
 }
 

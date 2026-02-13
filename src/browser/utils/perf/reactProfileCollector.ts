@@ -1,5 +1,3 @@
-import type { ProfilerOnRenderCallback } from "react";
-
 const MAX_REACT_PROFILE_SAMPLES = 20_000;
 
 type ReactProfilerPhase = "mount" | "update" | "nested-update";
@@ -156,24 +154,6 @@ function appendReactSample(sample: ReactSampleInput): void {
 export function recordSyntheticReactRenderSample(sample: ReactSampleInput): void {
   appendReactSample(sample);
 }
-
-export const recordReactRenderSample: ProfilerOnRenderCallback = (
-  id,
-  phase,
-  actualDuration,
-  baseDuration,
-  startTime,
-  commitTime
-) => {
-  appendReactSample({
-    id,
-    phase,
-    actualDuration,
-    baseDuration,
-    startTime,
-    commitTime,
-  });
-};
 
 function ensureReactProfilerPageApi(): void {
   if (typeof window === "undefined") {
