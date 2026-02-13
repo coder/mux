@@ -542,8 +542,18 @@ export class AgentSession {
         listener({ workspaceId: this.workspaceId, message: { ...partial, type: "message" } });
       }
 
+      // Replay init state only for full replay. Incremental reconnects already have init state.
+      if (replayMode === "full") {
+        await this.initStateManager.replayInit(this.workspaceId);
+      }
+    } catch (error) {
+      log.error("Failed to replay history for workspace", {
+        workspaceId: this.workspaceId,
+        error,
+      });
+    } finally {
       // Replay queued-message snapshot before caught-up so reconnect clients can
-      // rebuild queue UI state deterministically (especially on full-replay fallback).
+      // rebuild queue UI state even when history replay errored mid-flight.
       listener({
         workspaceId: this.workspaceId,
         message: {
@@ -557,16 +567,6 @@ export class AgentSession {
         },
       });
 
-      // Replay init state only for full replay. Incremental reconnects already have init state.
-      if (replayMode === "full") {
-        await this.initStateManager.replayInit(this.workspaceId);
-      }
-    } catch (error) {
-      log.error("Failed to replay history for workspace", {
-        workspaceId: this.workspaceId,
-        error,
-      });
-    } finally {
       // Send caught-up after ALL historical data (including init events)
       // This signals frontend that replay is complete and future events are real-time
       listener({
