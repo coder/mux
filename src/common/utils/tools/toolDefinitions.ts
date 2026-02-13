@@ -527,6 +527,18 @@ export const AgentReportToolArgsSchema = z
   })
   .strict();
 
+// -----------------------------------------------------------------------------
+// switch_agent (agent switching for Auto agent)
+// -----------------------------------------------------------------------------
+
+export const SwitchAgentToolArgsSchema = z
+  .object({
+    agentId: AgentIdSchema,
+    reason: z.string().max(512).nullish(),
+    followUp: z.string().max(2000).nullish(),
+  })
+  .strict();
+
 export const AgentReportToolResultSchema = z.object({ success: z.literal(true) }).strict();
 const FILE_TOOL_PATH = z
   .string()
@@ -885,6 +897,13 @@ export const TOOL_DEFINITIONS = {
       "Report the final result of a sub-agent task back to the parent workspace. " +
       "Call this exactly once when you have a final answer (after any spawned sub-tasks complete).",
     schema: AgentReportToolArgsSchema,
+  },
+  switch_agent: {
+    description:
+      "Switch to a different agent and restart the stream. " +
+      "Only UI-selectable agents can be targeted. " +
+      "The current stream will end and a new stream will start with the selected agent.",
+    schema: SwitchAgentToolArgsSchema,
   },
   system1_keep_ranges: {
     description:
@@ -1429,6 +1448,7 @@ export function getAvailableTools(
     "task_terminate",
     "task_list",
     ...(enableAgentReport ? ["agent_report"] : []),
+    "switch_agent",
     "system1_keep_ranges",
     "todo_write",
     "todo_read",

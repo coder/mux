@@ -24,6 +24,7 @@ import { createAgentSkillReadFileTool } from "@/node/services/tools/agent_skill_
 import { createMuxGlobalAgentsReadTool } from "@/node/services/tools/mux_global_agents_read";
 import { createMuxGlobalAgentsWriteTool } from "@/node/services/tools/mux_global_agents_write";
 import { createAgentReportTool } from "@/node/services/tools/agent_report";
+import { createSwitchAgentTool } from "@/node/services/tools/switch_agent";
 import { createSystem1KeepRangesTool } from "@/node/services/tools/system1_keep_ranges";
 import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
 import { withHooks, type HookConfig } from "@/node/services/tools/withHooks";
@@ -302,6 +303,7 @@ export async function getToolsForModel(
     ask_user_question: createAskUserQuestionTool(config),
     propose_plan: createProposePlanTool(config),
     ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),
+    switch_agent: createSwitchAgentTool(config),
     system1_keep_ranges: createSystem1KeepRangesTool(config),
     todo_write: createTodoWriteTool(config),
     todo_read: createTodoReadTool(config),
