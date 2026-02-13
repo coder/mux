@@ -131,11 +131,19 @@ const mockWindow: BrowserWindow = {
       serverInfo.networkBaseUrls.length > 0 ||
       resolved.source === "generated";
     if (showToken) {
+      // Use a LAN-reachable URL for remote connection instructions when available,
+      // since baseUrl is loopback (127.0.0.1) even when binding to 0.0.0.0.
+      const remoteUrl =
+        serverInfo.networkBaseUrls.length > 0 ? serverInfo.networkBaseUrls[0] : serverInfo.baseUrl;
+      // Shell-quote the token to handle metacharacters ($, &, spaces, etc.)
+      const shellToken = `'${resolved.token.replace(/'/g, "'\\''")}'`;
+      const urlToken = encodeURIComponent(resolved.token);
+
       console.log(`\n  # Connect from another machine:`);
-      console.log(`  export MUX_SERVER_URL=${serverInfo.baseUrl}`);
-      console.log(`  export MUX_SERVER_AUTH_TOKEN=${resolved.token}`);
+      console.log(`  export MUX_SERVER_URL=${remoteUrl}`);
+      console.log(`  export MUX_SERVER_AUTH_TOKEN=${shellToken}`);
       console.log(`\n  # Open in browser:`);
-      console.log(`  ${serverInfo.baseUrl}/?token=${resolved.token}`);
+      console.log(`  ${remoteUrl}/?token=${urlToken}`);
     }
 
     const lockfilePath = serviceContainer.serverService.getLockfilePath();
