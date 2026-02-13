@@ -20,8 +20,40 @@ import { RuntimeModeSchema } from "./runtime";
 export const HeartbeatEventSchema = z.object({
   type: z.literal("heartbeat"),
 });
+
+// --- OnChat subscription cursor/mode schemas ---
+
+/** Cursor for where the client left off in persisted history. */
+export const OnChatHistoryCursorSchema = z.object({
+  messageId: z.string(),
+  historySequence: z.number(),
+});
+
+/** Cursor for where the client left off in an active stream. */
+export const OnChatStreamCursorSchema = z.object({
+  messageId: z.string(),
+  lastTimestamp: z.number(),
+});
+
+/** Combined cursor the client sends on reconnect. */
+export const OnChatCursorSchema = z.object({
+  history: OnChatHistoryCursorSchema.optional(),
+  stream: OnChatStreamCursorSchema.optional(),
+});
+
+/** Discriminated mode for workspace.onChat subscription. */
+export const OnChatModeSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("full") }),
+  z.object({ type: z.literal("since"), cursor: OnChatCursorSchema }),
+  z.object({ type: z.literal("live") }),
+]);
+
 export const CaughtUpMessageSchema = z.object({
   type: z.literal("caught-up"),
+  /** Which replay strategy the server actually used. */
+  replay: z.enum(["full", "since", "live"]).optional(),
+  /** Server's cursor at end of replay (client should use this for next reconnect). */
+  cursor: OnChatCursorSchema.optional(),
 });
 
 /** Sent when a workspace becomes eligible for idle compaction while connected */
