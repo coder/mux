@@ -214,6 +214,14 @@ describe("workspaceTitleGenerator error mappers", () => {
       expect(mapped).toMatchObject({ type: "rate_limit" });
     });
 
+    test("maps APICallError 429 with quota wording but no billing markers to rate_limit", () => {
+      const mapped = mapNameGenerationError(
+        createApiCallError(429, "Per-minute quota limit reached. Retry in 10s."),
+        "openai:gpt-4.1-mini"
+      );
+      expect(mapped).toMatchObject({ type: "rate_limit" });
+    });
+
     test("maps APICallError 500 to service_unavailable", () => {
       const mapped = mapNameGenerationError(
         createApiCallError(500, "Internal Server Error"),

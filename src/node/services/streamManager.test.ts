@@ -1165,6 +1165,27 @@ describe("StreamManager - categorizeError", () => {
 
     expect(categorizeMethod.call(streamManager, apiError)).toBe("rate_limit");
   });
+
+  test("classifies 429 mentioning quota limits as rate_limit (not billing)", () => {
+    const streamManager = new StreamManager(historyService);
+
+    const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
+      error: unknown
+    ) => unknown;
+    expect(typeof categorizeMethod).toBe("function");
+
+    const apiError = new APICallError({
+      message: "Per-minute quota limit reached. Retry in 10s.",
+      url: "https://api.openai.com/v1/responses",
+      requestBodyValues: {},
+      statusCode: 429,
+      responseHeaders: {},
+      responseBody: '{"error":{"message":"Per-minute quota limit reached"}}',
+      isRetryable: true,
+    });
+
+    expect(categorizeMethod.call(streamManager, apiError)).toBe("rate_limit");
+  });
 });
 
 describe("StreamManager - ask_user_question Partial Persistence", () => {

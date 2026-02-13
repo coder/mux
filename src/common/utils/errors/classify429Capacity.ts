@@ -1,9 +1,9 @@
 export type Capacity429Kind = "quota" | "rate_limit";
 
-const QUOTA_INDICATORS = [
+const BILLING_429_MARKERS = [
   "insufficient_quota",
   "insufficient quota",
-  "quota",
+  // Intentionally excludes bare "quota" — throttling 429s often reference per-minute/request quotas.
   "billing",
   "payment required",
   "insufficient balance",
@@ -25,8 +25,8 @@ function stringifyData(data: unknown): string {
 }
 
 /**
- * Distinguish quota/billing 429s from transient throttling 429s.
- * Providers commonly encode quota failures as 429 with structured payload hints.
+ * Distinguish billing/quota-exhausted 429s from transient throttling 429s.
+ * Uses billing-specific markers to avoid treating generic per-minute quota wording as account quota exhaustion.
  */
 export function classify429Capacity(input: {
   message?: string | null;
@@ -37,5 +37,5 @@ export function classify429Capacity(input: {
     .join("\n")
     .toLowerCase();
 
-  return QUOTA_INDICATORS.some((needle) => corpus.includes(needle)) ? "quota" : "rate_limit";
+  return BILLING_429_MARKERS.some((needle) => corpus.includes(needle)) ? "quota" : "rate_limit";
 }
