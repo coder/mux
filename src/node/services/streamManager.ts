@@ -2354,7 +2354,8 @@ export class StreamManager extends EventEmitter {
       }
 
       // Check for Anthropic context exceeded errors
-      if (error.message.includes("prompt is too long:")) {
+      const msgLower = error.message.toLowerCase();
+      if (msgLower.includes("prompt is too long") || msgLower.includes("input is too long")) {
         return "context_exceeded";
       }
 
