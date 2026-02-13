@@ -2838,7 +2838,7 @@ export class StreamManager extends EventEmitter {
    * Emits the same events (stream-start, stream-delta, etc.) that would be emitted during live streaming
    * This allows replay to flow through the same event path as live streaming (no duplication)
    */
-  async replayStream(workspaceId: string): Promise<void> {
+  async replayStream(workspaceId: string, opts?: { afterTimestamp?: number }): Promise<void> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
     const streamInfo = this.workspaceStreams.get(typedWorkspaceId);
 
@@ -2868,8 +2868,16 @@ export class StreamManager extends EventEmitter {
     // That blocks AgentSession.emitHistoricalEvents() from sending "caught-up" on reconnect,
     // leaving the renderer stuck in "Loading workspace" and suppressing the streaming indicator.
     const replayParts = streamInfo.parts.slice();
+    const afterTimestamp = opts?.afterTimestamp;
+    const filteredReplayParts =
+      afterTimestamp != null
+        ? replayParts.filter(
+            (part) => part.timestamp !== undefined && part.timestamp > afterTimestamp
+          )
+        : replayParts;
+
     const replayMessageId = streamInfo.messageId;
-    for (const part of replayParts) {
+    for (const part of filteredReplayParts) {
       await this.emitPartAsEvent(typedWorkspaceId, replayMessageId, part, { replay: true });
     }
   }

@@ -20,6 +20,8 @@ import type {
   SendMessageOptions,
   FilePart,
   DeleteMessage,
+  OnChatMode,
+  OnChatCursor,
 } from "@/common/orpc/types";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { SendMessageError } from "@/common/types/errors";
@@ -346,10 +348,13 @@ export class AgentSession {
     return unsubscribe;
   }
 
-  async replayHistory(listener: (event: AgentSessionChatEvent) => void): Promise<void> {
+  async replayHistory(
+    listener: (event: AgentSessionChatEvent) => void,
+    mode?: OnChatMode
+  ): Promise<void> {
     this.assertNotDisposed("replayHistory");
     assert(typeof listener === "function", "listener must be a function");
-    await this.emitHistoricalEvents(listener);
+    await this.emitHistoricalEvents(listener, mode);
   }
 
   emitMetadata(metadata: FrontendWorkspaceMetadata | null): void {
@@ -361,11 +366,20 @@ export class AgentSession {
   }
 
   private async emitHistoricalEvents(
-    listener: (event: AgentSessionChatEvent) => void
+    listener: (event: AgentSessionChatEvent) => void,
+    mode?: OnChatMode
   ): Promise<void> {
+    let replayMode: "full" | "since" | "live" = "full";
+    let serverCursor: OnChatCursor | undefined;
+
     // try/catch/finally guarantees caught-up is always sent, even if replay fails.
     // Without caught-up, the frontend stays in "Loading workspace..." forever.
     try {
+      if (mode?.type === "live") {
+        replayMode = "live";
+        return;
+      }
+
       // Read partial BEFORE iterating history so we can skip the corresponding
       // placeholder message (which has empty parts). The partial has the real content.
       const streamInfo = this.aiService.getStreamInfo(this.workspaceId);
@@ -380,8 +394,48 @@ export class AgentSession {
         this.workspaceId,
         1
       );
+
+      let sinceHistorySequence: number | undefined;
+      let afterTimestamp: number | undefined;
+
       if (historyResult.success) {
-        for (const message of historyResult.data) {
+        const history = historyResult.data;
+
+        // Cursor-based replay: only use incremental mode when all provided cursor segments are valid.
+        const historyCursor = mode?.type === "since" ? mode.cursor.history : undefined;
+        const streamCursor = mode?.type === "since" ? mode.cursor.stream : undefined;
+
+        if (historyCursor) {
+          const matchedHistoryCursor = history.find(
+            (message) =>
+              message.id === historyCursor.messageId &&
+              message.metadata?.historySequence === historyCursor.historySequence
+          );
+          if (matchedHistoryCursor) {
+            sinceHistorySequence = historyCursor.historySequence;
+          }
+        }
+
+        if (streamCursor && streamInfo && streamCursor.messageId === streamInfo.messageId) {
+          afterTimestamp = streamCursor.lastTimestamp;
+        }
+
+        const historyCursorProvided = historyCursor !== undefined;
+        const streamCursorProvided = streamCursor !== undefined;
+        const historyCursorValid = !historyCursorProvided || sinceHistorySequence !== undefined;
+        const streamCursorValid = !streamCursorProvided || afterTimestamp !== undefined;
+        const anyCursorMatched = sinceHistorySequence !== undefined || afterTimestamp !== undefined;
+        const canReplaySince =
+          mode?.type === "since" && historyCursorValid && streamCursorValid && anyCursorMatched;
+
+        if (canReplaySince) {
+          replayMode = "since";
+        } else {
+          sinceHistorySequence = undefined;
+          afterTimestamp = undefined;
+        }
+
+        for (const message of history) {
           // Skip the placeholder message if we have a partial with the same historySequence.
           // The placeholder has empty parts; the partial has the actual content.
           // Without this, both get loaded and the empty placeholder may be shown as "last message".
@@ -391,22 +445,69 @@ export class AgentSession {
           ) {
             continue;
           }
+
+          // Incremental replay skips persisted messages the client already has.
+          if (sinceHistorySequence !== undefined) {
+            const messageHistorySequence = message.metadata?.historySequence;
+            if (
+              messageHistorySequence !== undefined &&
+              messageHistorySequence <= sinceHistorySequence
+            ) {
+              continue;
+            }
+          }
+
           // Add type: "message" for discriminated union (messages from chat.jsonl don't have it)
           listener({ workspaceId: this.workspaceId, message: { ...message, type: "message" } });
+        }
+
+        for (let index = history.length - 1; index >= 0; index -= 1) {
+          const message = history[index];
+          const historySequence = message.metadata?.historySequence;
+          if (historySequence === undefined) {
+            continue;
+          }
+
+          serverCursor = {
+            ...serverCursor,
+            history: {
+              messageId: message.id,
+              historySequence,
+            },
+          };
+          break;
         }
       }
 
       if (streamInfo) {
-        await this.aiService.replayStream(this.workspaceId);
+        await this.aiService.replayStream(this.workspaceId, { afterTimestamp });
+
+        let streamLastTimestamp = 0;
+        for (let index = streamInfo.parts.length - 1; index >= 0; index -= 1) {
+          const timestamp = streamInfo.parts[index]?.timestamp;
+          if (timestamp === undefined) {
+            continue;
+          }
+          streamLastTimestamp = timestamp;
+          break;
+        }
+
+        serverCursor = {
+          ...serverCursor,
+          stream: {
+            messageId: streamInfo.messageId,
+            lastTimestamp: streamLastTimestamp,
+          },
+        };
       } else if (partial) {
         // Add type: "message" for discriminated union (partials from disk don't have it)
         listener({ workspaceId: this.workspaceId, message: { ...partial, type: "message" } });
       }
 
-      // Replay init state BEFORE caught-up (treat as historical data)
-      // This ensures init events are buffered correctly by the frontend,
-      // preserving their natural timing characteristics from the hook execution.
-      await this.initStateManager.replayInit(this.workspaceId);
+      // Replay init state only for full replay. Incremental reconnects already have init state.
+      if (replayMode === "full") {
+        await this.initStateManager.replayInit(this.workspaceId);
+      }
     } catch (error) {
       log.error("Failed to replay history for workspace", {
         workspaceId: this.workspaceId,
@@ -417,7 +518,11 @@ export class AgentSession {
       // This signals frontend that replay is complete and future events are real-time
       listener({
         workspaceId: this.workspaceId,
-        message: { type: "caught-up" },
+        message: {
+          type: "caught-up",
+          replay: replayMode,
+          cursor: serverCursor,
+        },
       });
     }
   }
