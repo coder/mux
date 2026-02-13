@@ -11,6 +11,7 @@ import type {
   ProjectConfig,
   ProjectsConfig,
   FeatureFlagOverride,
+  UpdateChannel,
 } from "@/common/types/project";
 import {
   DEFAULT_TASK_SETTINGS,
@@ -69,6 +70,14 @@ function parseOptionalEnvBoolean(value: unknown): boolean | undefined {
 }
 function parseOptionalBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
+}
+
+function parseUpdateChannel(value: unknown): UpdateChannel | undefined {
+  if (value === "stable" || value === "latest") {
+    return value;
+  }
+
+  return undefined;
 }
 
 function parseOptionalStringArray(value: unknown): string[] | undefined {
@@ -186,6 +195,7 @@ export class Config {
           muxGovernorToken?: unknown;
           stopCoderWorkspaceOnArchive?: unknown;
           terminalDefaultShell?: unknown;
+          updateChannel?: unknown;
         };
 
         // Config is stored as array of [path, config] pairs
@@ -222,6 +232,7 @@ export class Config {
           // Default ON: store `false` only so config.json stays minimal.
           const stopCoderWorkspaceOnArchive =
             parseOptionalBoolean(parsed.stopCoderWorkspaceOnArchive) === false ? false : undefined;
+          const updateChannel = parseUpdateChannel(parsed.updateChannel);
 
           const agentAiDefaults =
             parsed.agentAiDefaults !== undefined
@@ -262,6 +273,7 @@ export class Config {
             muxGovernorToken: parseOptionalNonEmptyString(parsed.muxGovernorToken),
             stopCoderWorkspaceOnArchive,
             terminalDefaultShell: parseOptionalNonEmptyString(parsed.terminalDefaultShell),
+            updateChannel,
           };
         }
       }
@@ -310,6 +322,7 @@ export class Config {
         muxGovernorToken?: string;
         stopCoderWorkspaceOnArchive?: boolean;
         terminalDefaultShell?: string;
+        updateChannel?: UpdateChannel;
       } = {
         projects: Array.from(config.projects.entries()),
         taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
@@ -431,6 +444,11 @@ export class Config {
         data.terminalDefaultShell = terminalDefaultShell;
       }
 
+      // Stable is default: only persist non-default channel values.
+      if (config.updateChannel === "latest") {
+        data.updateChannel = "latest";
+      }
+
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
     } catch (error) {
       log.error("Error saving config:", error);
@@ -445,6 +463,22 @@ export class Config {
     const config = this.loadConfigOrDefault();
     const newConfig = fn(config);
     await this.saveConfig(newConfig);
+  }
+
+  getUpdateChannel(): UpdateChannel {
+    const config = this.loadConfigOrDefault();
+    return config.updateChannel === "latest" ? "latest" : "stable";
+  }
+
+  async setUpdateChannel(channel: UpdateChannel): Promise<void> {
+    await this.editConfig((config) => {
+      if (channel === "stable") {
+        delete config.updateChannel;
+      } else {
+        config.updateChannel = channel;
+      }
+      return config;
+    });
   }
 
   /**
