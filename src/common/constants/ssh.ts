@@ -1,0 +1,8 @@
+/**
+ * Maximum time (ms) to wait for the user to accept/reject a host-key
+ * verification prompt in the UI dialog. Shared across:
+ * - HostKeyVerificationService (auto-reject timeout)
+ * - OpenSSH connection pool (probe deadline extension)
+ * - SSH2 connection pool (readyTimeout extension)
+ */
+export const HOST_KEY_APPROVAL_TIMEOUT_MS = 60_000;
