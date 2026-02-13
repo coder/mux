@@ -1064,17 +1064,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return;
     }
 
-    // Prefer slash command suggestions when the input is a command.
-    if (input.trimStart().startsWith("/")) {
-      // Invalidate any in-flight completion request.
-      atMentionRequestIdRef.current++;
-      lastAtMentionScopeIdRef.current = null;
-      lastAtMentionQueryRef.current = null;
-      setAtMentionSuggestions([]);
-      setShowAtMentionSuggestions(false);
-      return;
-    }
-
     const cursor = inputRef.current?.selectionStart ?? input.length;
     const match = findAtMentionAtCursor(input, cursor);
 
@@ -2392,10 +2381,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   aria-label={editingMessage ? "Edit your last message" : "Message Claude"}
                   aria-autocomplete="list"
                   aria-controls={
-                    showCommandSuggestions && commandSuggestions.length > 0
-                      ? commandListId
-                      : showAtMentionSuggestions && atMentionSuggestions.length > 0
-                        ? atMentionListId
+                    showAtMentionSuggestions && atMentionSuggestions.length > 0
+                      ? atMentionListId
+                      : showCommandSuggestions && commandSuggestions.length > 0
+                        ? commandListId
                         : undefined
                   }
                   aria-expanded={
