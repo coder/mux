@@ -182,6 +182,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const isCompacting = variant === "workspace" ? (props.isCompacting ?? false) : false;
   const hasQueuedCompaction =
     variant === "workspace" ? (props.hasQueuedCompaction ?? false) : false;
+  const [isMobileTouch] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches
+  );
   // runtimeType for telemetry - defaults to "worktree" if not provided
   const runtimeType = variant === "workspace" ? (props.runtimeType ?? "worktree") : "worktree";
 
@@ -2231,6 +2236,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     // Workspace variant placeholders
     if (editingMessage) {
+      if (isMobileTouch) {
+        return "Edit your message...";
+      }
       const cancelHint = vimEnabled
         ? `${formatKeybind(KEYBINDS.CANCEL_EDIT)}×2 to cancel`
         : `${formatKeybind(KEYBINDS.CANCEL_EDIT)} to cancel`;
@@ -2243,6 +2251,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       }
     }
     if (isCompacting) {
+      if (isMobileTouch) {
+        return "Compacting...";
+      }
       return `Compacting... (${formatKeybind(interruptKeybind)} cancel | ${formatKeybind(KEYBINDS.SEND_MESSAGE)} to queue)`;
     }
 
@@ -2396,7 +2407,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 />
                 {/* Keep shortcuts visible in both creation + workspace without bloating the footer or crowding it. */}
                 {input.trim() === "" && !editingMessage && (
-                  <div className="text-muted pointer-events-none absolute right-12 bottom-3 left-2 flex items-center gap-4 text-[11px]">
+                  <div className="mobile-hide-shortcut-hints text-muted pointer-events-none absolute right-12 bottom-3 left-2 flex items-center gap-4 text-[11px]">
                     <span>
                       <span className="font-mono">{formatKeybind(KEYBINDS.FOCUS_CHAT)}</span>
                       <span> - focus chat</span>
@@ -2436,8 +2447,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             {/* Editing indicator - workspace only */}
             {variant === "workspace" && editingMessage && (
               <div className="text-edit-mode text-[11px] font-medium">
-                Editing message ({formatKeybind(KEYBINDS.CANCEL_EDIT)}
-                {vimEnabled ? "×2" : ""} to cancel)
+                Editing message{" "}
+                <span className="mobile-hide-shortcut-hints">
+                  ({formatKeybind(KEYBINDS.CANCEL_EDIT)}
+                  {vimEnabled ? "×2" : ""} to cancel)
+                </span>
               </div>
             )}
 
@@ -2541,7 +2555,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent align="center">
-                    Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})
+                    Send message{" "}
+                    <span className="mobile-hide-shortcut-hints">
+                      ({formatKeybind(KEYBINDS.SEND_MESSAGE)})
+                    </span>
                   </TooltipContent>
                 </Tooltip>
               </div>

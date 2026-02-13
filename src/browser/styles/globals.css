@@ -1081,6 +1081,10 @@ body,
     user-select: text;
   }
 
+  .mobile-hide-shortcut-hints {
+    display: none !important;
+  }
+
   button,
   a,
   [role="button"] {
