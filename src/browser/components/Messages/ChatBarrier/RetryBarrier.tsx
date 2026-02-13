@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, RefreshCw } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, Loader2, RefreshCw } from "lucide-react";
 import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import type { RetryState } from "@/browser/hooks/useResumeManager";
 import { useWorkspaceState } from "@/browser/stores/WorkspaceStore";
@@ -76,6 +76,22 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
     return messagesEligible;
   }, [autoRetry, workspaceState, lastError]);
 
+  const [isManualRetryInFlight, setIsManualRetryInFlight] = useState(false);
+  // createManualRetryState clears retryState.lastError immediately.
+  // Keep showing the last error text while the manual retry is in flight to avoid
+  // the banner collapsing and re-expanding if the retry fails with the same error.
+  const lastErrorBeforeManualRetryRef = useRef<typeof lastError>(undefined);
+
+  // Manual retry should acknowledge the click immediately, even before stream-start arrives.
+  // Clear once retry enters auto-retry UI, stream starts, or a new error lands.
+  useEffect(() => {
+    if (!isManualRetryInFlight) return;
+
+    if (effectiveAutoRetry || workspaceState?.canInterrupt || Boolean(lastError)) {
+      setIsManualRetryInFlight(false);
+    }
+  }, [isManualRetryInFlight, effectiveAutoRetry, workspaceState?.canInterrupt, lastError]);
+
   // Local state for UI
   const [countdown, setCountdown] = useState(0);
 
@@ -99,6 +115,8 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
   // Emits event to useResumeManager instead of calling resumeStream directly
   // This keeps all retry logic centralized in one place
   const handleManualRetry = () => {
+    lastErrorBeforeManualRetryRef.current = lastError;
+    setIsManualRetryInFlight(true);
     enableAutoRetryPreference(props.workspaceId); // Re-enable auto-retry for next failure
 
     // Create manual retry state: immediate retry BUT preserves attempt counter
@@ -131,9 +149,12 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
       : formatted.message;
   };
 
-  const details = lastError ? (
+  const displayedError =
+    lastError ?? (isManualRetryInFlight ? lastErrorBeforeManualRetryRef.current : undefined);
+
+  const details = displayedError ? (
     <div className="font-primary text-foreground/80 pl-8 text-[12px]">
-      <span className="text-warning font-semibold">Error:</span> {getErrorMessage(lastError)}
+      <span className="text-warning font-semibold">Error:</span> {getErrorMessage(displayedError)}
     </div>
   ) : null;
 
@@ -188,12 +209,22 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
       </button>
     );
   } else {
+    const retryLabel: React.ReactNode = isManualRetryInFlight ? (
+      <span className="inline-flex items-center gap-2">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Retrying...
+      </span>
+    ) : (
+      "Retry"
+    );
+
     actionButton = (
       <button
         className="bg-warning font-primary text-background cursor-pointer rounded border-none px-4 py-2 text-xs font-semibold whitespace-nowrap transition-all duration-200 hover:-translate-y-px hover:brightness-120 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50"
         onClick={handleManualRetry}
+        disabled={isManualRetryInFlight}
       >
-        Retry
+        {retryLabel}
       </button>
     );
   }

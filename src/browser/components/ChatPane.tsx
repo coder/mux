@@ -16,7 +16,7 @@ import { EditCutoffBarrier } from "./Messages/ChatBarrier/EditCutoffBarrier";
 import { StreamingBarrier } from "./Messages/ChatBarrier/StreamingBarrier";
 import { RetryBarrier } from "./Messages/ChatBarrier/RetryBarrier";
 import { PinnedTodoList } from "./PinnedTodoList";
-import { VIM_ENABLED_KEY } from "@/common/constants/storage";
+import { getRetryStateKey, VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { ChatInput, type ChatInputAPI } from "./ChatInput/index";
 import {
   shouldShowInterruptedBarrier,
@@ -30,11 +30,13 @@ import { enableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPre
 import {
   getInterruptionContext,
   getLastNonDecorativeMessage,
+  shouldKeepRetryBarrierVisibleDuringRetry,
 } from "@/browser/utils/messages/retryEligibility";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import type { RetryState } from "@/browser/hooks/useResumeManager";
 import {
   useWorkspaceAggregator,
   useWorkspaceUsage,
@@ -89,6 +91,11 @@ interface ChatPaneProps {
 }
 
 type ReviewsState = ReturnType<typeof useReviews>;
+
+const defaultRetryState: RetryState = {
+  attempt: 0,
+  retryStartTime: 0,
+};
 
 export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   const {
@@ -269,6 +276,13 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
 
   // Vim mode state - needed for keybind selection (Ctrl+C in vim, Esc otherwise)
   const [vimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, { listener: true });
+
+  const [retryState] = usePersistedState<RetryState>(
+    getRetryStateKey(workspaceId),
+    defaultRetryState,
+    { listener: true }
+  );
+  const retryAttempt = retryState?.attempt ?? 0;
 
   // Use auto-scroll hook for scroll management
   const {
@@ -461,21 +475,24 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, workspaceState?.loading]);
 
-  // Compute showRetryBarrier once for both keybinds and UI
-  // Track if last message was interrupted or errored (for RetryBarrier)
-  // Uses same logic as useResumeManager for DRY
-  const interruption = workspaceState
-    ? getInterruptionContext(
-        workspaceState.messages,
-        workspaceState.pendingStreamStartTime,
-        workspaceState.runtimeStatus,
-        workspaceState.lastAbortReason
-      )
-    : null;
+  // Compute showRetryBarrier once for both keybinds and UI.
+  // Keep RetryBarrier sticky during retry loop stream-starts (until visible content appears)
+  // so the footer doesn't flicker between Retry and Streaming states.
+  const interruption = getInterruptionContext(
+    workspaceState.messages,
+    workspaceState.pendingStreamStartTime,
+    workspaceState.runtimeStatus,
+    workspaceState.lastAbortReason
+  );
 
-  const showRetryBarrier = workspaceState
-    ? !workspaceState.canInterrupt && (interruption?.hasInterruptedStream ?? false)
-    : false;
+  const hasInterruptedStream = interruption.hasInterruptedStream;
+  const shouldKeepRetryVisibleDuringRetry = shouldKeepRetryBarrierVisibleDuringRetry(
+    workspaceState.messages,
+    retryAttempt
+  );
+
+  const showRetryBarrier =
+    (!workspaceState.canInterrupt && hasInterruptedStream) || shouldKeepRetryVisibleDuringRetry;
 
   const lastActionableMessage = getLastNonDecorativeMessage(workspaceState.messages);
   const suppressRetryBarrier =
@@ -698,7 +715,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               </MessageListProvider>
             )}
             <PinnedTodoList workspaceId={workspaceId} />
-            <StreamingBarrier workspaceId={workspaceId} />
+            {!showRetryBarrierUI && <StreamingBarrier workspaceId={workspaceId} />}
             {shouldShowQueuedAgentTaskPrompt && (
               <QueuedMessage
                 message={{
