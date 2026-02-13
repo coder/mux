@@ -182,11 +182,25 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const isCompacting = variant === "workspace" ? (props.isCompacting ?? false) : false;
   const hasQueuedCompaction =
     variant === "workspace" ? (props.hasQueuedCompaction ?? false) : false;
-  const [isMobileTouch] = useState(
+  const [isMobileTouch, setIsMobileTouch] = useState(
     () =>
       typeof window !== "undefined" &&
       window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches
   );
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const mobileTouchMediaQuery = window.matchMedia("(max-width: 768px) and (pointer: coarse)");
+    const handleMobileTouchChange = () => {
+      setIsMobileTouch(mobileTouchMediaQuery.matches);
+    };
+
+    handleMobileTouchChange();
+    mobileTouchMediaQuery.addEventListener("change", handleMobileTouchChange);
+    return () => {
+      mobileTouchMediaQuery.removeEventListener("change", handleMobileTouchChange);
+    };
+  }, []);
   // runtimeType for telemetry - defaults to "worktree" if not provided
   const runtimeType = variant === "workspace" ? (props.runtimeType ?? "worktree") : "worktree";
 
