@@ -10,6 +10,7 @@ const mockAutoUpdater = Object.assign(new EventEmitter(), {
   allowPrerelease: false,
   checkForUpdates: mock(() => Promise.resolve()),
   downloadUpdate: mock(() => Promise.resolve()),
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
   setFeedURL: mock(() => {}),
   quitAndInstall: mock(() => {
     // Mock implementation - does nothing in tests
