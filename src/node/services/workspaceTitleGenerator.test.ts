@@ -274,10 +274,10 @@ describe("workspaceTitleGenerator error mappers", () => {
       expect(mapped).toMatchObject({ type: "configuration" });
     });
 
-    test("maps policy_denied to permission_denied", () => {
+    test("maps policy_denied to policy", () => {
       const error: SendMessageError = { type: "policy_denied", message: "Provider blocked" };
       const mapped = mapModelCreationError(error, "openai:gpt-4.1-mini");
-      expect(mapped).toMatchObject({ type: "permission_denied" });
+      expect(mapped).toMatchObject({ type: "policy" });
     });
 
     test("maps unknown to unknown with raw preserved", () => {

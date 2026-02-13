@@ -52,6 +52,11 @@ export const NameGenerationErrorSchema = z.discriminatedUnion("type", [
     provider: z.string().nullish(),
     raw: z.string().nullish(),
   }),
+  z.object({
+    type: z.literal("policy"),
+    provider: z.string().nullish(),
+    raw: z.string().nullish(),
+  }),
   z.object({ type: z.literal("rate_limit"), raw: z.string().nullish() }),
   z.object({ type: z.literal("quota"), raw: z.string().nullish() }),
   z.object({ type: z.literal("service_unavailable"), raw: z.string().nullish() }),

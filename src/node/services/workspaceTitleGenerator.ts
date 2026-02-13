@@ -243,7 +243,7 @@ export function mapModelCreationError(
     case "provider_not_supported":
       return { type: "configuration", raw: "Provider not supported" };
     case "policy_denied":
-      return { type: "permission_denied", provider, raw: error.message };
+      return { type: "policy", provider, raw: error.message };
     case "unknown":
       return { type: "unknown", raw: error.raw ?? "Unknown error" };
     default: {
