@@ -2050,7 +2050,17 @@ export class WorkspaceStore {
    * This ensures isStreamEvent() and processStreamEvent() can never fall out of sync.
    */
   private isBufferedEvent(data: WorkspaceChatMessage): boolean {
-    return "type" in data && data.type in this.bufferedEventHandlers;
+    if (!("type" in data)) {
+      return false;
+    }
+
+    // Buffer high-frequency stream events (including bash/task live updates) until
+    // caught-up so full-replay reconnects can deterministically rebuild transient state.
+    return (
+      data.type in this.bufferedEventHandlers ||
+      data.type === "bash-output" ||
+      data.type === "task-created"
+    );
   }
 
   private handleChatMessage(workspaceId: string, data: WorkspaceChatMessage): void {
