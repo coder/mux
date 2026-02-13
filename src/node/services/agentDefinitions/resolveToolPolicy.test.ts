@@ -17,6 +17,21 @@ describe("resolveToolPolicyForAgent", () => {
     expect(policy).toEqual([{ regex_match: ".*", action: "disable" }]);
   });
 
+  test("switch_agent is disabled by default when auto switch is off", () => {
+    const agents: AgentLikeForPolicy[] = [{ tools: { add: ["file_read"] } }];
+    const policy = resolveToolPolicyForAgent({
+      agents,
+      isSubagent: false,
+      disableTaskToolsForDepth: false,
+      enableAgentSwitchTool: false,
+    });
+
+    expect(policy).toEqual([
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "file_read", action: "enable" },
+    ]);
+  });
+
   test("tools.add enables specified patterns", () => {
     const agents: AgentLikeForPolicy[] = [{ tools: { add: ["file_read", "bash.*"] } }];
     const policy = resolveToolPolicyForAgent({

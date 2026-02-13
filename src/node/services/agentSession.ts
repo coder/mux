@@ -56,7 +56,11 @@ import {
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { isExecLikeEditingCapableInResolvedChain } from "@/common/utils/agentTools";
-import { readAgentDefinition } from "@/node/services/agentDefinitions/agentDefinitionsService";
+import {
+  readAgentDefinition,
+  resolveAgentFrontmatter,
+} from "@/node/services/agentDefinitions/agentDefinitionsService";
+import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import { MessageQueue } from "./messageQueue";
 import type { StreamEndEvent } from "@/common/types/stream";
@@ -2146,6 +2150,98 @@ export class AgentSession {
     };
   }
 
+  private async isAgentSwitchTargetValid(agentId: string): Promise<boolean> {
+    assert(
+      typeof agentId === "string" && agentId.trim().length > 0,
+      "isAgentSwitchTargetValid requires a non-empty agentId"
+    );
+
+    const normalizedAgentId = agentId.trim();
+    const parsedAgentId = AgentIdSchema.safeParse(normalizedAgentId);
+    if (!parsedAgentId.success) {
+      log.warn("switch_agent target has invalid agentId format; skipping synthetic follow-up", {
+        workspaceId: this.workspaceId,
+        targetAgentId: normalizedAgentId,
+      });
+      return false;
+    }
+
+    if (typeof this.aiService.getWorkspaceMetadata !== "function") {
+      log.warn("Cannot validate switch_agent target: workspace metadata API unavailable", {
+        workspaceId: this.workspaceId,
+        targetAgentId: parsedAgentId.data,
+      });
+      return false;
+    }
+
+    const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
+    if (!metadataResult.success) {
+      log.warn("Cannot validate switch_agent target: workspace metadata unavailable", {
+        workspaceId: this.workspaceId,
+        targetAgentId: parsedAgentId.data,
+        error: metadataResult.error,
+      });
+      return false;
+    }
+
+    const metadata = metadataResult.data;
+    const runtime = createRuntimeForWorkspace(metadata);
+
+    // In-place workspaces (CLI/benchmarks) have projectPath === name.
+    // Use the path directly instead of reconstructing via getWorkspacePath.
+    const isInPlace = metadata.projectPath === metadata.name;
+    const workspacePath = isInPlace
+      ? metadata.projectPath
+      : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+
+    try {
+      const resolvedFrontmatter = await resolveAgentFrontmatter(
+        runtime,
+        workspacePath,
+        parsedAgentId.data
+      );
+      const cfg = this.config.loadConfigOrDefault();
+      const effectivelyDisabled = isAgentEffectivelyDisabled({
+        cfg,
+        agentId: parsedAgentId.data,
+        resolvedFrontmatter,
+      });
+
+      if (effectivelyDisabled) {
+        log.warn("switch_agent target is disabled; skipping synthetic follow-up", {
+          workspaceId: this.workspaceId,
+          targetAgentId: parsedAgentId.data,
+        });
+        return false;
+      }
+
+      // NOTE: hidden is opt-out. selectable is legacy opt-in.
+      const uiSelectableBase =
+        typeof resolvedFrontmatter.ui?.hidden === "boolean"
+          ? !resolvedFrontmatter.ui.hidden
+          : typeof resolvedFrontmatter.ui?.selectable === "boolean"
+            ? resolvedFrontmatter.ui.selectable
+            : true;
+
+      if (!uiSelectableBase) {
+        log.warn("switch_agent target is not UI-selectable; skipping synthetic follow-up", {
+          workspaceId: this.workspaceId,
+          targetAgentId: parsedAgentId.data,
+        });
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      log.warn("switch_agent target could not be resolved; skipping synthetic follow-up", {
+        workspaceId: this.workspaceId,
+        targetAgentId: parsedAgentId.data,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+  }
+
   /** Dispatch follow-up message after switch_agent and guard against ping-pong loops. */
   private async dispatchAgentSwitch(
     switchResult: SwitchAgentResult,
@@ -2169,6 +2265,11 @@ export class AgentSession {
         limit: MAX_CONSECUTIVE_AGENT_SWITCHES,
         targetAgentId: switchResult.agentId,
       });
+      return false;
+    }
+
+    const targetValid = await this.isAgentSwitchTargetValid(switchResult.agentId);
+    if (!targetValid) {
       return false;
     }
 
