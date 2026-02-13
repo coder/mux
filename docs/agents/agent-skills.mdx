@@ -28,13 +28,15 @@ npx skills add https://github.com/anthropics/skills --skill frontend-design
 
 ## Where skills live
 
-Mux discovers skills from three roots:
+Mux discovers skills from four roots:
 
 - **Workspace-local**: `.mux/skills/<skill-name>/SKILL.md` (in the workspace working directory)
-- **Global**: `~/.mux/skills/<skill-name>/SKILL.md`
+- **Global (Mux-specific)**: `~/.mux/skills/<skill-name>/SKILL.md`
+- **Universal (cross-tool)**: `~/.agents/skills/<skill-name>/SKILL.md`
 - **Built-in**: shipped with Mux
 
-If a skill exists in multiple locations, the precedence order is: **workspace-local > global > built-in**.
+If a skill exists in multiple locations, the precedence order is:
+**workspace-local > global (`~/.mux/skills`) > universal (`~/.agents/skills`) > built-in**.
 
 <Info>
   Mux reads skills using the active workspace runtime. For SSH workspaces, skills are read from the

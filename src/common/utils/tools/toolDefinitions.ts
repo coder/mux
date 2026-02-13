@@ -697,7 +697,7 @@ export const TOOL_DEFINITIONS = {
   agent_skill_read: {
     description:
       "Load an Agent Skill's SKILL.md (YAML frontmatter + markdown body) by name. " +
-      "Skills are discovered from <projectRoot>/.mux/skills/<name>/SKILL.md and ~/.mux/skills/<name>/SKILL.md.",
+      "Skills are discovered from <projectRoot>/.mux/skills/<name>/SKILL.md, ~/.mux/skills/<name>/SKILL.md, and ~/.agents/skills/<name>/SKILL.md.",
     schema: z
       .object({
         name: SkillNameSchema.describe("Skill name (directory name under the skills root)"),

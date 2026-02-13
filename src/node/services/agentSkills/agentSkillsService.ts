@@ -24,10 +24,12 @@ import { AgentSkillParseError, parseSkillMarkdown } from "./parseSkillMarkdown";
 import { getBuiltInSkillByName, getBuiltInSkillDescriptors } from "./builtInSkillDefinitions";
 
 const GLOBAL_SKILLS_ROOT = "~/.mux/skills";
+const UNIVERSAL_SKILLS_ROOT = "~/.agents/skills";
 
 export interface AgentSkillsRoots {
   projectRoot: string;
   globalRoot: string;
+  universalRoot?: string;
 }
 
 export function getDefaultAgentSkillsRoots(
@@ -41,7 +43,16 @@ export function getDefaultAgentSkillsRoots(
   return {
     projectRoot: runtime.normalizePath(".mux/skills", workspacePath),
     globalRoot: GLOBAL_SKILLS_ROOT,
+    universalRoot: UNIVERSAL_SKILLS_ROOT,
   };
+}
+
+function getGlobalSkillRoots(roots: AgentSkillsRoots): string[] {
+  const orderedRoots = [roots.globalRoot, roots.universalRoot].filter(
+    (root): root is string => root != null && root.length > 0
+  );
+
+  return Array.from(new Set(orderedRoots));
 }
 
 function formatError(error: unknown): string {
@@ -207,10 +218,10 @@ export async function discoverAgentSkills(
 
   const byName = new Map<SkillName, AgentSkillDescriptor>();
 
-  // Project skills take precedence over global.
+  // Project skills take precedence over global roots.
   const scans: Array<{ scope: AgentSkillScope; root: string }> = [
     { scope: "project", root: roots.projectRoot },
-    { scope: "global", root: roots.globalRoot },
+    ...getGlobalSkillRoots(roots).map((root) => ({ scope: "global" as const, root })),
   ];
 
   for (const scan of scans) {
@@ -283,10 +294,10 @@ export async function discoverAgentSkillsDiagnostics(
   const byName = new Map<SkillName, AgentSkillDescriptor>();
   const invalidSkills: AgentSkillIssue[] = [];
 
-  // Project skills take precedence over global.
+  // Project skills take precedence over global roots.
   const scans: Array<{ scope: AgentSkillScope; root: string }> = [
     { scope: "project", root: roots.projectRoot },
-    { scope: "global", root: roots.globalRoot },
+    ...getGlobalSkillRoots(roots).map((root) => ({ scope: "global" as const, root })),
   ];
 
   for (const scan of scans) {
@@ -429,10 +440,10 @@ export async function readAgentSkill(
 
   const roots = options?.roots ?? getDefaultAgentSkillsRoots(runtime, workspacePath);
 
-  // Project overrides global.
+  // Project overrides all global roots.
   const candidates: Array<{ scope: AgentSkillScope; root: string }> = [
     { scope: "project", root: roots.projectRoot },
-    { scope: "global", root: roots.globalRoot },
+    ...getGlobalSkillRoots(roots).map((root) => ({ scope: "global" as const, root })),
   ];
 
   for (const candidate of candidates) {
