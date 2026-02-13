@@ -138,6 +138,7 @@ export const StreamEndEventSchema = z.object({
   metadata: z
     .object({
       model: z.string(),
+      agentId: AgentIdSchema.optional().catch(undefined),
       thinkingLevel: ThinkingLevelSchema.optional(),
       routedThroughGateway: z.boolean().optional(),
       // Total usage across all steps (for cost calculation)
