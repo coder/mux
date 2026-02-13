@@ -2078,10 +2078,10 @@ export class WorkspaceStore {
 
       if (replay === "full") {
         // Full replay replaces backend-derived history state. Reset transient UI-only
-        // fields that are never reconstructed from replayed history so stale values
-        // do not survive reconnect fallback.
-        // NOTE: queuedMessage is preserved because queued-message-changed is not
-        // replayed on subscribe; clearing it here can hide still-valid queued work.
+        // fields before replay hydration so stale values do not survive reconnect fallback.
+        // queuedMessage is safe to clear because backend now replays a fresh
+        // queued-message-changed snapshot before caught-up.
+        transient.queuedMessage = null;
         transient.liveBashOutput.clear();
         transient.liveTaskIds.clear();
       }
