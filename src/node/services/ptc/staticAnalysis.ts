@@ -186,22 +186,27 @@ function detectUnavailableGlobals(code: string, sourceFile?: ts.SourceFile): Ana
     scopes.add(scope);
   }
 
+  // Runtime-relevant lexical scope boundaries, derived from TypeScript's
+  // LocalsContainer interface. Covers blocks, loops, switch, catch, and
+  // source file. Function-like scopes are handled separately via
+  // ts.isFunctionLike() since it's already a single predicate.
+  const SCOPE_KINDS = new Set([
+    ts.SyntaxKind.Block,
+    ts.SyntaxKind.ForStatement,
+    ts.SyntaxKind.ForInStatement,
+    ts.SyntaxKind.ForOfStatement,
+    ts.SyntaxKind.CaseBlock,
+    ts.SyntaxKind.CatchClause,
+    ts.SyntaxKind.ClassStaticBlockDeclaration,
+    ts.SyntaxKind.SourceFile,
+  ]);
+
   // The scope container for a declaration: the smallest AST ancestor that
   // encompasses both the declaration identifier and all valid reference sites.
-  // The AST structure naturally encodes this — walk up from the declaration's
-  // parent to the first scope-creating node. No special-casing needed.
   function findDeclScope(declNode: ts.Node): ts.Node {
     let current = declNode.parent;
     while (current) {
-      if (
-        ts.isFunctionLike(current) ||
-        ts.isCatchClause(current) ||
-        ts.isForInStatement(current) ||
-        ts.isForOfStatement(current) ||
-        ts.isForStatement(current) ||
-        ts.isBlock(current) ||
-        ts.isSourceFile(current)
-      ) {
+      if (ts.isFunctionLike(current) || SCOPE_KINDS.has(current.kind)) {
         return current;
       }
       current = current.parent;

@@ -299,6 +299,40 @@ const z = 3;`);
       ).toBe(true);
     });
 
+    test("switch-case declaration does not leak outside switch", async () => {
+      const result = await analyzeCode(`
+        const x = 1;
+        switch (x) {
+          case 1:
+            const process = { env: "local" };
+            console.log(process.env);
+            break;
+          default:
+            break;
+        }
+        process.env;
+      `);
+      expect(result.valid).toBe(false);
+      expect(
+        result.errors.some((e) => e.type === "unavailable_global" && e.message.includes("process"))
+      ).toBe(true);
+    });
+
+    test("switch-case declaration is valid inside switch", async () => {
+      const result = await analyzeCode(`
+        const x = 1;
+        switch (x) {
+          case 1:
+            const process = { env: "local" };
+            console.log(process.env);
+            break;
+          default:
+            break;
+        }
+      `);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
     test("catch binding is valid inside catch block", async () => {
       const result = await analyzeCode(`
         try { throw new Error("test"); } catch (process) { console.log(process.message); }
