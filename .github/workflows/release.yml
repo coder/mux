@@ -45,8 +45,8 @@ jobs:
     uses: ./.github/workflows/_desktop-release.yml
     with:
       ref: ${{ inputs.tag || github.ref }}
-      release_tag: ${{ env.RELEASE_TAG }}
-    secrets: inherit
+      release_tag: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
+    secrets: inherit # zizmor: ignore[secrets-inherit] -- reusable workflow needs platform signing secrets
 
   build-vscode-extension:
     name: Build and Release VS Code Extension

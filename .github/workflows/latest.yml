@@ -57,7 +57,7 @@ jobs:
       ref: ${{ github.sha }}
       release_tag: ${{ needs.compute-version.outputs.release_tag }}
       version_override: ${{ needs.compute-version.outputs.dev_version }}
-    secrets: inherit
+    secrets: inherit # zizmor: ignore[secrets-inherit] -- reusable workflow needs platform signing secrets
 
   cleanup:
     name: Cleanup old latest pre-releases
