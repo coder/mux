@@ -1,4 +1,4 @@
-import { describe, expect, it, mock, spyOn } from "bun:test";
+import { beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -94,7 +94,25 @@ function mockOpenAIProviderImport(): {
   };
 }
 
+const entraTokenProviderCalls: Array<{ abortSignal?: AbortSignal } | undefined> = [];
+const mockEntraTokenProvider = mock((options?: { abortSignal?: AbortSignal }) => {
+  entraTokenProviderCalls.push(options);
+  return Promise.resolve("entra-token");
+});
+const mockGetBearerTokenProvider = mock(() => mockEntraTokenProvider);
+
+void mock.module("@azure/identity", () => ({
+  DefaultAzureCredential: class DefaultAzureCredential {},
+  getBearerTokenProvider: mockGetBearerTokenProvider,
+}));
+
 describe("ProviderModelFactory.createModel", () => {
+  beforeEach(() => {
+    mockGetBearerTokenProvider.mockClear();
+    mockEntraTokenProvider.mockClear();
+    entraTokenProviderCalls.length = 0;
+  });
+
   it("returns provider_disabled when a non-gateway provider is disabled", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({
@@ -153,6 +171,32 @@ describe("ProviderModelFactory.createModel", () => {
             expect(state.options?.apiKey).toBe("entra-managed");
             expect(state.options?.baseURL).toBe("https://myendpoint.openai.azure.com");
             expect(state.modelId).toBe("gpt-5");
+          });
+        } finally {
+          restore();
+        }
+      });
+    });
+
+    it("falls back to Entra auth for Codex-required models when OAuth is not connected", async () => {
+      await withOpenAIEnv({}, async () => {
+        const { state, restore } = mockOpenAIProviderImport();
+
+        try {
+          await withTempConfig(async (config, factory) => {
+            config.saveProvidersConfig({
+              openai: {
+                authMode: "entra",
+                baseUrl: "https://myendpoint.openai.azure.com",
+              },
+            });
+
+            const result = await factory.createModel("openai:gpt-5.3-codex");
+
+            expect(result.success).toBe(true);
+            expect(state.options?.apiKey).toBe("entra-managed");
+            expect(state.options?.baseURL).toBe("https://myendpoint.openai.azure.com");
+            expect(state.modelId).toBe("gpt-5.3-codex");
           });
         } finally {
           restore();
@@ -242,6 +286,40 @@ describe("ProviderModelFactory.createModel", () => {
           }
         }
       );
+    });
+    it("passes request AbortSignal to Entra token acquisition", async () => {
+      await withOpenAIEnv({}, async () => {
+        const { state, restore } = mockOpenAIProviderImport();
+
+        try {
+          await withTempConfig(async (config, factory) => {
+            config.saveProvidersConfig({
+              openai: {
+                authMode: "entra",
+                baseUrl: "https://myendpoint.openai.azure.com",
+              },
+            });
+
+            const result = await factory.createModel("openai:gpt-5");
+            expect(result.success).toBe(true);
+
+            const providerFetch = state.options?.fetch;
+            expect(typeof providerFetch).toBe("function");
+
+            const abortController = new AbortController();
+            await (providerFetch as typeof fetch)("data:text/plain,ok", {
+              method: "POST",
+              signal: abortController.signal,
+            });
+
+            expect(mockGetBearerTokenProvider).toHaveBeenCalledTimes(1);
+            expect(mockEntraTokenProvider).toHaveBeenCalledTimes(1);
+            expect(entraTokenProviderCalls.at(-1)?.abortSignal).toBe(abortController.signal);
+          });
+        } finally {
+          restore();
+        }
+      });
     });
   });
 });

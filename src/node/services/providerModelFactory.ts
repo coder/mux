@@ -116,8 +116,12 @@ function wrapFetchWithOpenAIEntraAuth(baseFetch: typeof fetch): typeof fetch {
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1]
   ): Promise<Response> => {
+    const abortSignal =
+      init?.signal ??
+      (typeof Request !== "undefined" && input instanceof Request ? input.signal : undefined);
+
     const tokenProvider = await getEntraBearerTokenProvider();
-    const token = await tokenProvider();
+    const token = await tokenProvider(abortSignal ? { abortSignal } : undefined);
 
     // Clone headers to avoid mutating caller-provided objects.
     const headers = new Headers(
@@ -578,9 +582,8 @@ export class ProviderModelFactory {
             : undefined;
 
         // When a model requires Codex OAuth but the user hasn't connected it,
-        // fall back to their API key instead of blocking entirely. If no API key
-        // exists, surface the OAuth setup requirement.
-        if (codexOauthRequired && !storedCodexOauth && !creds.apiKey) {
+        // fall back to non-OAuth credentials (API key or Entra) instead of blocking entirely.
+        if (codexOauthRequired && !storedCodexOauth && !creds.isConfigured) {
           return Err({ type: "oauth_not_connected", provider: providerName });
         }
 
