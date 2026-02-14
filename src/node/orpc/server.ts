@@ -5,7 +5,6 @@
  * This module exports the server creation logic so it can be tested.
  * The CLI entry point (server.ts) uses this to start the server.
  */
-import cors from "cors";
 import express, { type Express } from "express";
 import * as fs from "fs/promises";
 import * as http from "http";
@@ -118,6 +117,130 @@ function escapeHtml(input: string): string {
     .replaceAll("'", "&#39;");
 }
 
+type OriginValidationRequest = Pick<http.IncomingMessage, "headers" | "socket"> & {
+  protocol?: string;
+};
+
+function getFirstHeaderValue(req: OriginValidationRequest, headerName: string): string | null {
+  const rawValue = req.headers[headerName.toLowerCase()];
+  const value = Array.isArray(rawValue) ? rawValue[0] : rawValue;
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const firstValue = value.split(",")[0]?.trim();
+  return firstValue?.length ? firstValue : null;
+}
+
+function normalizeProtocol(rawProtocol: string): "http" | "https" | null {
+  const normalized = rawProtocol.trim().toLowerCase().replace(/:$/, "");
+  if (normalized === "http" || normalized === "https") {
+    return normalized;
+  }
+
+  return null;
+}
+
+function buildOrigin(protocol: string, host: string): string | null {
+  const normalizedProtocol = normalizeProtocol(protocol);
+  const normalizedHost = host.trim();
+
+  if (!normalizedProtocol || normalizedHost.length === 0) {
+    return null;
+  }
+
+  try {
+    return new URL(`${normalizedProtocol}://${normalizedHost}`).origin;
+  } catch {
+    return null;
+  }
+}
+
+function inferProtocol(req: OriginValidationRequest): "http" | "https" {
+  if (typeof req.protocol === "string") {
+    const normalized = normalizeProtocol(req.protocol);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return (req.socket as { encrypted?: boolean }).encrypted ? "https" : "http";
+}
+
+function getExpectedOrigin(req: OriginValidationRequest): string | null {
+  const host = getFirstHeaderValue(req, "x-forwarded-host") ?? getFirstHeaderValue(req, "host");
+  if (!host) {
+    return null;
+  }
+
+  const proto = getFirstHeaderValue(req, "x-forwarded-proto") ?? inferProtocol(req);
+  return buildOrigin(proto, host);
+}
+
+function normalizeOrigin(raw: string | null | undefined): string | null {
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(raw);
+    const normalizedProtocol = normalizeProtocol(parsed.protocol);
+
+    if (!normalizedProtocol) {
+      return null;
+    }
+
+    return `${normalizedProtocol}://${parsed.host}`;
+  } catch {
+    return null;
+  }
+}
+
+function isOriginAllowed(req: OriginValidationRequest): boolean {
+  const origin = getFirstHeaderValue(req, "origin");
+  if (!origin) {
+    return true;
+  }
+
+  const normalizedOrigin = normalizeOrigin(origin);
+  if (!normalizedOrigin) {
+    return false;
+  }
+
+  const expectedOrigin = getExpectedOrigin(req);
+  if (!expectedOrigin) {
+    return false;
+  }
+
+  return normalizedOrigin === expectedOrigin;
+}
+
+function getPathnameFromRequestUrl(requestUrl: string | undefined): string | null {
+  if (!requestUrl) {
+    return null;
+  }
+
+  try {
+    return new URL(requestUrl, "http://localhost").pathname;
+  } catch {
+    return null;
+  }
+}
+
+const OAUTH_CALLBACK_ORIGIN_BYPASS_PATHS = new Set<string>([
+  "/auth/mux-gateway/callback",
+  "/auth/mux-governor/callback",
+  "/auth/mcp-oauth/callback",
+]);
+
+function isOAuthCallbackNavigationRequest(req: Pick<express.Request, "method" | "path">): boolean {
+  return (
+    (req.method === "GET" || req.method === "POST") &&
+    OAUTH_CALLBACK_ORIGIN_BYPASS_PATHS.has(req.path)
+  );
+}
+
 /**
  * Create an oRPC server with HTTP and WebSocket endpoints.
  *
@@ -154,7 +277,66 @@ export async function createOrpcServer({
 }: OrpcServerOptions): Promise<OrpcServer> {
   // Express app setup
   const app = express();
-  app.use(cors());
+  app.use((req, res, next) => {
+    const originHeader = getFirstHeaderValue(req, "origin");
+
+    if (!originHeader) {
+      next();
+      return;
+    }
+
+    const normalizedOrigin = normalizeOrigin(originHeader);
+    const expectedOrigin = getExpectedOrigin(req);
+    const allowedOrigin = isOriginAllowed(req) ? normalizedOrigin : null;
+    const oauthCallbackNavigationRequest = isOAuthCallbackNavigationRequest(req);
+
+    if (req.method === "OPTIONS") {
+      if (!allowedOrigin) {
+        log.warn("Blocked cross-origin CORS preflight request", {
+          method: req.method,
+          path: req.path,
+          origin: originHeader,
+          expectedOrigin,
+        });
+        res.sendStatus(403);
+        return;
+      }
+
+      res.setHeader("Vary", "Origin");
+      res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+      res.setHeader("Access-Control-Max-Age", "86400");
+      res.sendStatus(204);
+      return;
+    }
+
+    if (!allowedOrigin) {
+      // OAuth redirects can legitimately arrive from a different origin (including
+      // response_mode=form_post). These callback handlers validate OAuth state
+      // before exchanging codes, so allowing navigation requests here is safe.
+      if (oauthCallbackNavigationRequest) {
+        next();
+        return;
+      }
+
+      log.warn("Blocked cross-origin HTTP request", {
+        method: req.method,
+        path: req.path,
+        origin: originHeader,
+        expectedOrigin,
+      });
+      res.sendStatus(403);
+      return;
+    }
+
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    next();
+  });
+
   // OAuth providers may use POST redirects (307/308) or response_mode=form_post.
   // Support both JSON API requests and form-encoded callback payloads.
   app.use(express.json({ limit: "50mb" }));
@@ -771,7 +953,35 @@ export async function createOrpcServer({
   });
 
   // oRPC WebSocket handler
-  const wsServer = new WebSocketServer({ server: httpServer, path: "/orpc/ws" });
+  const wsServer = new WebSocketServer({ noServer: true });
+
+  httpServer.on("upgrade", (req, socket, head) => {
+    const pathname = getPathnameFromRequestUrl(req.url);
+    if (pathname !== "/orpc/ws") {
+      socket.destroy();
+      return;
+    }
+
+    if (!isOriginAllowed(req)) {
+      log.warn("Blocked cross-origin WebSocket upgrade request", {
+        origin: getFirstHeaderValue(req, "origin"),
+        expectedOrigin: getExpectedOrigin(req),
+        url: req.url,
+      });
+
+      try {
+        socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+      } finally {
+        socket.destroy();
+      }
+
+      return;
+    }
+
+    wsServer.handleUpgrade(req, socket, head, (ws) => {
+      wsServer.emit("connection", ws, req);
+    });
+  });
 
   attachStreamErrorHandler(wsServer, "orpc-ws-server", { logger: log });
 
