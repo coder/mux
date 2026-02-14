@@ -87,6 +87,59 @@ if (typeof globalFetchWithExtras.certificate === "function") {
     globalFetchWithExtras.certificate.bind(globalFetchWithExtras);
 }
 
+type EntraBearerTokenProvider = (options?: { abortSignal?: AbortSignal }) => Promise<string>;
+
+const ENTRA_AZURE_OPENAI_SCOPE = "https://cognitiveservices.azure.com/.default";
+let entraBearerTokenProviderPromise: Promise<EntraBearerTokenProvider> | null = null;
+
+async function getEntraBearerTokenProvider(): Promise<EntraBearerTokenProvider> {
+  entraBearerTokenProviderPromise ??= (async () => {
+    // eslint-disable-next-line no-restricted-syntax -- keep Azure identity loading lazy for users not on Entra auth.
+    const { DefaultAzureCredential, getBearerTokenProvider } = await import("@azure/identity");
+    return getBearerTokenProvider(
+      new DefaultAzureCredential(),
+      ENTRA_AZURE_OPENAI_SCOPE
+    ) as EntraBearerTokenProvider;
+  })();
+
+  return entraBearerTokenProviderPromise;
+}
+
+/**
+ * Wrap fetch to use Entra ID bearer tokens for Azure OpenAI keyless auth.
+ *
+ * Enterprise deployments can rely on DefaultAzureCredential (az login, managed identity,
+ * workload identity) instead of distributing API keys.
+ */
+function wrapFetchWithOpenAIEntraAuth(baseFetch: typeof fetch): typeof fetch {
+  const wrappedFetch = async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1]
+  ): Promise<Response> => {
+    const tokenProvider = await getEntraBearerTokenProvider();
+    const token = await tokenProvider();
+
+    // Clone headers to avoid mutating caller-provided objects.
+    const headers = new Headers(
+      init?.headers ??
+        (typeof Request !== "undefined" && input instanceof Request ? input.headers : undefined)
+    );
+    headers.set("Authorization", `Bearer ${token}`);
+    headers.delete("x-api-key");
+
+    return baseFetch(input, { ...(init ?? {}), headers });
+  };
+
+  return Object.assign(
+    wrappedFetch,
+    "preconnect" in baseFetch && typeof baseFetch.preconnect === "function"
+      ? {
+          preconnect: baseFetch.preconnect.bind(baseFetch),
+        }
+      : {}
+  ) as typeof fetch;
+}
+
 // ---------------------------------------------------------------------------
 // Fetch wrappers
 // ---------------------------------------------------------------------------
@@ -518,11 +571,16 @@ export class ProviderModelFactory {
         // Resolve credentials from config + env BEFORE OAuth checks so we can
         // fall back to an API key when OAuth is not connected.
         const creds = resolveProviderCredentials("openai", providerConfig);
+        const configAuthModeRaw = (providerConfig as { authMode?: unknown }).authMode;
+        const configAuthMode =
+          configAuthModeRaw === "apiKey" || configAuthModeRaw === "entra"
+            ? configAuthModeRaw
+            : undefined;
 
         // When a model requires Codex OAuth but the user hasn't connected it,
-        // fall back to their API key instead of blocking entirely.  If the model
-        // truly only works through OAuth, OpenAI's API will return a clear error.
-        if (codexOauthRequired && !storedCodexOauth && !creds.isConfigured) {
+        // fall back to their API key instead of blocking entirely. If no API key
+        // exists, surface the OAuth setup requirement.
+        if (codexOauthRequired && !storedCodexOauth && !creds.apiKey) {
           return Err({ type: "oauth_not_connected", provider: providerName });
         }
 
@@ -545,12 +603,20 @@ export class ProviderModelFactory {
             return true;
           }
 
-          if (!creds.isConfigured) {
+          if (!creds.apiKey) {
             return true;
           }
 
           return codexOauthDefaultAuth === "oauth";
         })();
+
+        // Auth priority for OpenAI: API key first, then Codex OAuth, then Entra keyless auth.
+        const shouldUseEntraAuth =
+          !shouldRouteThroughCodexOauth &&
+          !creds.apiKey &&
+          creds.isConfigured &&
+          (configAuthMode === "entra" || creds.authMode === "entra") &&
+          Boolean(creds.baseUrl);
 
         if (!shouldRouteThroughCodexOauth && !creds.isConfigured) {
           return Err({ type: "api_key_not_found", provider: providerName });
@@ -559,9 +625,13 @@ export class ProviderModelFactory {
         // Merge resolved credentials into config
         const configWithCreds = {
           ...providerConfig,
-          // When using Codex OAuth, we overwrite auth headers in fetch(), so the OpenAI API key
-          // isn't required. Still pass a placeholder to ensure the SDK never reads env vars.
-          apiKey: shouldRouteThroughCodexOauth ? (creds.apiKey ?? "codex-oauth") : creds.apiKey,
+          // When using Codex OAuth or Entra, we overwrite auth headers in fetch(), so an
+          // OpenAI API key isn't required. Pass placeholders to ensure the SDK never reads env vars.
+          apiKey: shouldRouteThroughCodexOauth
+            ? (creds.apiKey ?? "codex-oauth")
+            : shouldUseEntraAuth
+              ? "entra-managed"
+              : creds.apiKey,
           ...(creds.baseUrl && !providerConfig.baseURL && { baseURL: creds.baseUrl }),
           ...(creds.organization && { organization: creds.organization }),
         };
@@ -576,6 +646,9 @@ export class ProviderModelFactory {
         }
 
         const baseFetch = getProviderFetch(providerConfig);
+        const openAIAuthFetch = shouldUseEntraAuth
+          ? wrapFetchWithOpenAIEntraAuth(baseFetch)
+          : baseFetch;
         const codexOauthService = this.codexOauthService;
 
         // Wrap fetch to default truncation to "disabled" for OpenAI Responses API calls.
@@ -746,19 +819,19 @@ export class ProviderModelFactory {
                 nextInit = { ...(nextInit ?? {}), headers };
               }
 
-              return baseFetch(nextInput, nextInit);
+              return openAIAuthFetch(nextInput, nextInit);
             } catch (error) {
               // For normal OpenAI (API key) requests, fall back to the original fetch on unexpected errors.
               // For Codex OAuth routing, failures should surface (falling back would hit api.openai.com).
               if (shouldRouteThroughCodexOauth) {
                 throw error;
               }
-              return baseFetch(input, init);
+              return openAIAuthFetch(input, init);
             }
           },
-          "preconnect" in baseFetch && typeof baseFetch.preconnect === "function"
+          "preconnect" in openAIAuthFetch && typeof openAIAuthFetch.preconnect === "function"
             ? {
-                preconnect: baseFetch.preconnect.bind(baseFetch),
+                preconnect: openAIAuthFetch.preconnect.bind(openAIAuthFetch),
               }
             : {}
         );

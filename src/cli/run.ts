@@ -415,7 +415,7 @@ async function main(): Promise<number> {
       config.saveProvidersConfig(providersFromEnv);
     } else {
       throw new Error(
-        "No provider credentials found. Configure providers.jsonc or set ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY."
+        "No provider credentials found. Configure providers.jsonc or set ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY, or use OPENAI_AUTH_MODE=entra with OPENAI_BASE_URL for Azure keyless auth."
       );
     }
   }
