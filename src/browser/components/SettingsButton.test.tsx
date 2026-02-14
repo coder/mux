@@ -20,16 +20,17 @@ function SettingsButtonTestHarness() {
 
 describe("SettingsButton", () => {
   beforeEach(() => {
-    const happyWindow = new GlobalWindow({ url: "https://mux.example.com/workspace/test" });
-    globalThis.window = happyWindow as unknown as Window & typeof globalThis;
-    globalThis.document = happyWindow.document as unknown as Document;
-    globalThis.window.localStorage.clear();
+    if (typeof window === "undefined" || typeof document === "undefined") {
+      const happyWindow = new GlobalWindow({ url: "https://mux.example.com/workspace/test" });
+      globalThis.window = happyWindow as unknown as Window & typeof globalThis;
+      globalThis.document = happyWindow.document as unknown as Document;
+    }
+
+    window.localStorage.clear();
   });
 
   afterEach(() => {
     cleanup();
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    globalThis.document = undefined as unknown as Document;
   });
 
   test("switches to close mode while settings are open and restores previous route on click", async () => {
@@ -43,6 +44,7 @@ describe("SettingsButton", () => {
       </RouterProvider>
     );
 
+    const initialPathname = view.getByTestId("pathname").textContent;
     const settingsButton = view.getByTestId("settings-button");
     expect(settingsButton.getAttribute("aria-label")).toBe("Open settings");
 
@@ -58,7 +60,7 @@ describe("SettingsButton", () => {
     fireEvent.click(view.getByTestId("settings-button"));
 
     await waitFor(() => {
-      expect(view.getByTestId("pathname").textContent).toBe("/workspace/test");
+      expect(view.getByTestId("pathname").textContent).toBe(initialPathname);
     });
     await waitFor(() => {
       expect(view.getByTestId("settings-button").getAttribute("aria-label")).toBe("Open settings");
