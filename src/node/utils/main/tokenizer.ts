@@ -81,10 +81,26 @@ function resolveModelName(modelString: string): ModelName {
 
   if (!modelName) {
     const provider = normalized.split(":")[0] || "anthropic";
+
+    // GitHub Copilot hosts models from multiple providers.
+    // Infer the tokenizer family from the model name prefix.
+    let effectiveProvider = provider;
+    if (provider === "github-copilot") {
+      const modelId = normalized.split(":")[1] || "";
+      if (modelId.startsWith("claude-")) {
+        effectiveProvider = "anthropic";
+      } else if (modelId.startsWith("gemini-")) {
+        effectiveProvider = "google";
+      } else {
+        // gpt-*, grok-*, and unknown models use OpenAI tokenizer
+        effectiveProvider = "openai";
+      }
+    }
+
     const fallbackModel =
-      provider === "anthropic"
+      effectiveProvider === "anthropic"
         ? "anthropic/claude-sonnet-4.5"
-        : provider === "google"
+        : effectiveProvider === "google"
           ? "google/gemini-2.5-pro"
           : "openai/gpt-5";
 
