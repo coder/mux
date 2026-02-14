@@ -24,7 +24,8 @@ Mux is a desktop & browser application for parallel agentic development. It enab
   - **[Local](https://mux.coder.com/runtime/local)**: run directly in your project directory
   - **[Worktree](https://mux.coder.com/runtime/worktree)**: git worktrees on your local machine
   - **[SSH](https://mux.coder.com/runtime/ssh)**: remote execution on a server over SSH
-- **Multi-model** (`sonnet-4-*`, `grok-*`, `gpt-5-*`, `opus-4-*`)
+- **Multi-model** (`sonnet-4-*`, `grok-*`, `gpt-5-*`, `opus-4-*`, `glm-*`)
+  - GLM (Zhipu AI) supported for Chinese LLMs ([docs](https://mux.coder.com/config/models))
   - Ollama supported for local LLMs ([docs](https://mux.coder.com/config/models#ollama-local))
   - OpenRouter supported for long-tail of LLMs ([docs](https://mux.coder.com/config/models#openrouter-cloud))
 - **VS Code Extension**: Jump into Mux workspaces directly from VS Code ([docs](https://mux.coder.com/integrations/vscode-extension))
