@@ -137,6 +137,11 @@ export const APIProvider = (props: APIProviderProps) => {
     const urlToken = urlParams.get("token")?.trim();
     if (urlToken) {
       setStoredAuthToken(urlToken);
+      // Strip token from URL so it doesn't leak into bookmarks, browser
+      // history, PWA launch URLs, or Referer headers.
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete("token");
+      window.history.replaceState({}, "", cleanUrl.pathname + cleanUrl.search);
       return urlToken;
     }
 
