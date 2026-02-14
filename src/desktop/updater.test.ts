@@ -139,15 +139,42 @@ describe("UpdaterService", () => {
       expect(channelService.getStatus()).toEqual({ type: "idle" });
     });
 
+    it("setChannel throws when checking", () => {
+      mockAutoUpdater.setFeedURL.mockClear();
+      const channelService = new UpdaterService();
+
+      channelService.checkForUpdates();
+
+      expect(() => channelService.setChannel("latest")).toThrow("checking for updates");
+    });
+
     it("setChannel throws when downloading", () => {
       mockAutoUpdater.setFeedURL.mockClear();
       const channelService = new UpdaterService();
 
       mockAutoUpdater.emit("download-progress", { percent: 50 });
 
-      expect(() => channelService.setChannel("latest")).toThrow(
-        "Cannot switch channel while downloading"
-      );
+      expect(() => channelService.setChannel("latest")).toThrow("downloading an update");
+    });
+
+    it("setChannel throws when downloaded", () => {
+      mockAutoUpdater.setFeedURL.mockClear();
+      const channelService = new UpdaterService();
+
+      mockAutoUpdater.emit("update-downloaded", { version: "2.0.0" });
+
+      expect(() => channelService.setChannel("latest")).toThrow("ready to install");
+    });
+
+    it("setChannel notifies subscribers on switch", () => {
+      mockAutoUpdater.setFeedURL.mockClear();
+      const channelService = new UpdaterService();
+      const updates: UpdateStatus[] = [];
+
+      channelService.subscribe((status) => updates.push(status));
+      channelService.setChannel("latest");
+
+      expect(updates).toContainEqual({ type: "idle" });
     });
 
     it("setChannel is no-op for same channel", () => {

@@ -468,8 +468,11 @@ export class UpdaterService {
       return;
     }
 
-    if (this.updateStatus.type === "downloading") {
-      throw new Error("Cannot switch channel while downloading");
+    const blockedStates = ["checking", "downloading", "downloaded"] as const;
+    if ((blockedStates as readonly string[]).includes(this.updateStatus.type)) {
+      throw new Error(
+        `Cannot switch update channel while ${this.updateStatus.type === "checking" ? "checking for updates" : this.updateStatus.type === "downloading" ? "downloading an update" : "an update is ready to install"}`
+      );
     }
 
     this.currentChannel = channel;

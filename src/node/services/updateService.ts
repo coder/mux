@@ -108,10 +108,13 @@ export class UpdateService {
 
   async setChannel(channel: UpdateChannel): Promise<void> {
     await this.ready;
-    await this.config.setUpdateChannel(channel);
+    // Apply runtime switch first — it throws if the updater is in a blocked
+    // state (checking/downloading/downloaded). Only persist after success so
+    // config and runtime stay in sync.
     if (this.impl) {
       this.impl.setChannel(channel);
     }
+    await this.config.setUpdateChannel(channel);
   }
 
   onStatus(callback: (status: UpdateStatus) => void): () => void {
