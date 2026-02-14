@@ -48,17 +48,18 @@ Providers also read from environment variables as fallback:
 <details>
 <summary>Additional environment variables</summary>
 
-| Provider     | Variable                   | Purpose             |
-| ------------ | -------------------------- | ------------------- |
-| Anthropic    | `ANTHROPIC_BASE_URL`       | Custom API endpoint |
-| OpenAI       | `OPENAI_BASE_URL`          | Custom API endpoint |
-| OpenAI       | `OPENAI_ORG_ID`            | Organization ID     |
-| Google       | `GOOGLE_BASE_URL`          | Custom API endpoint |
-| xAI          | `XAI_BASE_URL`             | Custom API endpoint |
-| Azure OpenAI | `AZURE_OPENAI_API_KEY`     | API key             |
-| Azure OpenAI | `AZURE_OPENAI_ENDPOINT`    | Endpoint URL        |
-| Azure OpenAI | `AZURE_OPENAI_DEPLOYMENT`  | Deployment name     |
-| Azure OpenAI | `AZURE_OPENAI_API_VERSION` | API version         |
+| Provider     | Variable                   | Purpose                      |
+| ------------ | -------------------------- | ---------------------------- |
+| Anthropic    | `ANTHROPIC_BASE_URL`       | Custom API endpoint          |
+| OpenAI       | `OPENAI_BASE_URL`          | Custom API endpoint          |
+| OpenAI       | `OPENAI_ORG_ID`            | Organization ID              |
+| OpenAI       | `OPENAI_AUTH_MODE`         | Auth mode (`apiKey`/`entra`) |
+| Google       | `GOOGLE_BASE_URL`          | Custom API endpoint          |
+| xAI          | `XAI_BASE_URL`             | Custom API endpoint          |
+| Azure OpenAI | `AZURE_OPENAI_API_KEY`     | API key                      |
+| Azure OpenAI | `AZURE_OPENAI_ENDPOINT`    | Endpoint URL                 |
+| Azure OpenAI | `AZURE_OPENAI_DEPLOYMENT`  | Deployment name              |
+| Azure OpenAI | `AZURE_OPENAI_API_VERSION` | API version                  |
 
 Azure OpenAI env vars configure the OpenAI provider with Azure backend.
 
@@ -95,6 +96,48 @@ For advanced options not exposed in the UI, edit `~/.mux/providers.jsonc` direct
     "baseUrl": "http://your-server:11434/api", // Custom Ollama server
   },
 }
+```
+
+### OpenAI: Azure Entra ID (Keyless)
+
+Use Azure Entra ID credentials instead of API keys when routing the OpenAI provider through an Azure OpenAI endpoint.
+
+**Required configuration**
+
+- Set `OPENAI_AUTH_MODE=entra` (or `"authMode": "entra"` under `"openai"` in `~/.mux/providers.jsonc`).
+- Set `OPENAI_BASE_URL` to your Azure OpenAI endpoint (for example `https://my-resource.openai.azure.com`).
+- Do not set `OPENAI_API_KEY` for this mode.
+
+**How it works**
+
+Mux uses `DefaultAzureCredential` from `@azure/identity`, which supports:
+
+- Local development with `az login`
+- CI/CD with managed identity or workload identity
+
+**OpenAI auth priority**
+
+1. API key (if set)
+2. Codex OAuth (if applicable)
+3. Entra keyless (`authMode: "entra"` + Azure `baseUrl`)
+4. Error if no auth path is configured
+
+**`providers.jsonc` example**
+
+```jsonc
+{
+  "openai": {
+    "authMode": "entra",
+    "baseUrl": "https://my-resource.openai.azure.com",
+  },
+}
+```
+
+**Environment-only example**
+
+```sh
+OPENAI_AUTH_MODE=entra
+OPENAI_BASE_URL=https://my-resource.openai.azure.com
 ```
 
 ### Bedrock Authentication
