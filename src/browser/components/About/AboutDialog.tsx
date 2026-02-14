@@ -1,8 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Download, Loader2, RefreshCw } from "lucide-react";
 import { VERSION } from "@/version";
 import type { UpdateStatus } from "@/common/orpc/types";
-import { cn } from "@/common/lib/utils";
 import MuxLogoDark from "@/browser/assets/logos/mux-logo-dark.svg?react";
 import MuxLogoLight from "@/browser/assets/logos/mux-logo-light.svg?react";
 import { useTheme } from "@/browser/contexts/ThemeContext";
@@ -10,6 +9,7 @@ import { useAPI } from "@/browser/contexts/API";
 import { useAboutDialog } from "@/browser/contexts/AboutDialogContext";
 import { Button } from "@/browser/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/browser/components/ui/dialog";
+import { ToggleGroup, ToggleGroupItem } from "@/browser/components/ui/toggle-group";
 
 interface VersionRecord {
   buildTime?: unknown;
@@ -66,8 +66,9 @@ export function AboutDialog() {
   const MuxLogo = theme === "dark" || theme.endsWith("-dark") ? MuxLogoDark : MuxLogoLight;
   const { gitDescribe, buildTime } = parseVersionInfo(VERSION satisfies unknown);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
-  const [channel, setChannel] = useState<"stable" | "latest">("stable");
+  const [channel, setChannel] = useState<"stable" | "latest" | null>(null);
   const [channelLoading, setChannelLoading] = useState(false);
+  const channelRequestTokenRef = useRef(0);
 
   const isDesktop = typeof window !== "undefined" && Boolean(window.api);
 
@@ -105,7 +106,22 @@ export function AboutDialog() {
       return;
     }
 
-    api.update.getChannel().then(setChannel).catch(console.error);
+    let active = true;
+    // Ignore stale getChannel() responses when a newer request or manual selection has already happened.
+    const requestToken = ++channelRequestTokenRef.current;
+
+    api.update
+      .getChannel()
+      .then((nextChannel) => {
+        if (active && requestToken === channelRequestTokenRef.current) {
+          setChannel(nextChannel);
+        }
+      })
+      .catch(console.error);
+
+    return () => {
+      active = false;
+    };
   }, [api, isDesktop, isOpen]);
 
   const canUseUpdateApi = isDesktop && Boolean(api);
@@ -117,6 +133,8 @@ export function AboutDialog() {
       return;
     }
 
+    // Invalidate any in-flight getChannel() request so late responses cannot overwrite user intent.
+    channelRequestTokenRef.current += 1;
     setChannelLoading(true);
     api.update
       .setChannel({ channel: next })
@@ -184,44 +202,40 @@ export function AboutDialog() {
             <div className="text-muted text-xs">Connecting to desktop update service…</div>
           ) : (
             <>
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-muted text-xs">Channel</span>
-                  <div className="border-border-medium flex overflow-hidden rounded border text-xs">
-                    <button
-                      type="button"
-                      className={cn(
-                        "px-2.5 py-1 transition-colors",
-                        channel === "stable"
-                          ? "bg-toggle-bg text-foreground"
-                          : "text-muted hover:text-foreground"
-                      )}
+              {channel !== null && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted text-xs">Channel</span>
+                    <ToggleGroup
+                      type="single"
+                      value={channel}
+                      onValueChange={(next) => {
+                        if (next === "stable" || next === "latest") {
+                          handleChannelChange(next);
+                        }
+                      }}
                       disabled={channelLoading}
-                      onClick={() => handleChannelChange("stable")}
+                      aria-label="Update channel"
+                      className="border-border-medium rounded border bg-transparent p-0 text-xs"
                     >
-                      Stable
-                    </button>
-                    <button
-                      type="button"
-                      className={cn(
-                        "border-border-medium border-l px-2.5 py-1 transition-colors",
-                        channel === "latest"
-                          ? "bg-toggle-bg text-foreground"
-                          : "text-muted hover:text-foreground"
-                      )}
-                      disabled={channelLoading}
-                      onClick={() => handleChannelChange("latest")}
-                    >
-                      Latest
-                    </button>
+                      <ToggleGroupItem value="stable" className="rounded-none px-2.5 py-1">
+                        Stable
+                      </ToggleGroupItem>
+                      <ToggleGroupItem
+                        value="latest"
+                        className="border-border-medium rounded-none border-l px-2.5 py-1"
+                      >
+                        Latest
+                      </ToggleGroupItem>
+                    </ToggleGroup>
+                  </div>
+                  <div className="text-muted text-xs">
+                    {channel === "stable"
+                      ? "Official releases only."
+                      : "Pre-release builds on every merge to main."}
                   </div>
                 </div>
-                <div className="text-muted text-xs">
-                  {channel === "stable"
-                    ? "Official releases only."
-                    : "Pre-release builds on every merge to main."}
-                </div>
-              </div>
+              )}
 
               <Button
                 variant="outline"
