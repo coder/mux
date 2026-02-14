@@ -12,8 +12,11 @@ test.describe("Settings", () => {
     // Open settings
     await ui.settings.open();
 
-    // Verify settings page is open with correct structure.
-    await expect(page.getByRole("button", { name: /close settings/i })).toBeVisible();
+    // The titlebar settings control now acts as the close toggle while settings are open.
+    await expect(page.getByTestId("settings-button")).toHaveAttribute(
+      "aria-label",
+      "Close settings"
+    );
 
     // Verify sidebar sections are present
     await expect(page.getByRole("button", { name: "General", exact: true })).toBeVisible();
@@ -41,11 +44,12 @@ test.describe("Settings", () => {
     await expect(page.getByText("Theme", { exact: true })).toBeVisible();
   });
 
-  test("closes settings with close button", async ({ ui, page }) => {
+  test("closes settings with the titlebar toggle button", async ({ ui, page }) => {
     await ui.projects.openFirstWorkspace();
     await ui.settings.open();
 
-    const closeButton = page.getByRole("button", { name: /close settings/i });
+    const closeButton = page.getByTestId("settings-button");
+    await expect(closeButton).toHaveAttribute("aria-label", "Close settings");
     await closeButton.click();
 
     await ui.settings.expectClosed();

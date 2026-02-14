@@ -1,4 +1,4 @@
-import { Settings } from "lucide-react";
+import { Settings, X } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { Button } from "@/browser/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
@@ -9,7 +9,7 @@ interface SettingsButtonProps {
 }
 
 export function SettingsButton(props: SettingsButtonProps) {
-  const { open } = useSettings();
+  const { isOpen, open, close } = useSettings();
 
   return (
     <Tooltip>
@@ -18,17 +18,30 @@ export function SettingsButton(props: SettingsButtonProps) {
           variant="ghost"
           size="icon"
           onClick={() => {
+            // Keep the titlebar control as a true toggle: when settings are already open,
+            // this should behave like a close action and restore the previous route.
+            if (isOpen) {
+              close();
+              return;
+            }
+
             props.onBeforeOpenSettings?.();
             open();
           }}
           className="border-border-light text-muted-foreground hover:border-border-medium/80 hover:bg-toggle-bg/70 h-5 w-5 border"
-          aria-label="Open settings"
+          aria-label={isOpen ? "Close settings" : "Open settings"}
           data-testid="settings-button"
         >
-          <Settings className="h-3.5 w-3.5" aria-hidden />
+          {isOpen ? (
+            <X className="h-3.5 w-3.5" aria-hidden />
+          ) : (
+            <Settings className="h-3.5 w-3.5" aria-hidden />
+          )}
         </Button>
       </TooltipTrigger>
-      <TooltipContent>Open settings ({formatKeybind(KEYBINDS.OPEN_SETTINGS)})</TooltipContent>
+      <TooltipContent>
+        {isOpen ? "Close settings" : `Open settings (${formatKeybind(KEYBINDS.OPEN_SETTINGS)})`}
+      </TooltipContent>
     </Tooltip>
   );
 }
