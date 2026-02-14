@@ -54,6 +54,67 @@ describe("ProviderService.getConfig", () => {
     });
   });
 
+  it("surfaces OpenAI authMode when set to entra", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          authMode: "entra",
+          baseUrl: "https://myendpoint.openai.azure.com",
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg.openai.openaiAuthMode).toBe("entra");
+    });
+  });
+
+  it("surfaces OpenAI authMode when set to apiKey", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          authMode: "apiKey",
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg.openai.openaiAuthMode).toBe("apiKey");
+    });
+  });
+
+  it("omits OpenAI authMode when it is not set", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg.openai.openaiAuthMode).toBeUndefined();
+      expect(Object.prototype.hasOwnProperty.call(cfg.openai, "openaiAuthMode")).toBe(false);
+    });
+  });
+
+  it("does not surface openaiAuthMode for non-OpenAI providers", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        anthropic: {
+          apiKey: "sk-ant-test",
+          authMode: "entra",
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg.anthropic.openaiAuthMode).toBeUndefined();
+      expect(Object.prototype.hasOwnProperty.call(cfg.anthropic, "openaiAuthMode")).toBe(false);
+    });
+  });
+
   it("marks providers disabled when enabled is false", () => {
     withTempConfig((config, service) => {
       config.saveProvidersConfig({
