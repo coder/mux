@@ -75,18 +75,17 @@ type AgentStatus = z.infer<typeof AgentStatusSchema>;
 
 /**
  * Maximum number of DisplayedMessages to render before truncation kicks in.
- * We keep all user/assistant text messages (fast to render) and filter out
- * tool calls and reasoning blocks from older history for DOM performance.
+ * We keep all user prompts and structural markers, while allowing older assistant
+ * content to collapse behind the history-hidden marker for faster initial paint.
  */
-const MAX_DISPLAYED_MESSAGES = 128;
+const MAX_DISPLAYED_MESSAGES = 64;
 
 /**
  * Message types that are always preserved even in truncated history.
- * We only omit tool calls and reasoning blocks; everything else stays visible.
+ * Older assistant/tool/reasoning rows may be omitted until the user clicks “Load all”.
  */
 const ALWAYS_KEEP_MESSAGE_TYPES = new Set<DisplayedMessage["type"]>([
   "user",
-  "assistant",
   "stream-error",
   "compaction-boundary",
   "plan-display",
@@ -2479,8 +2478,8 @@ export class StreamingMessageAggregator {
       let resultMessages = displayedMessages;
 
       // Limit messages for DOM performance (unless explicitly disabled).
-      // Strategy: keep ALL user/assistant text messages (fast to render) but filter out
-      // tool calls and reasoning blocks from older portions of the chat.
+      // Strategy: keep user prompts + structural markers while allowing older assistant/tool/
+      // reasoning rows to collapse behind a history-hidden marker.
       // Full history is still maintained internally for token counting.
       if (!this.showAllMessages && displayedMessages.length > MAX_DISPLAYED_MESSAGES) {
         // Split into "old" (candidates for filtering) and "recent" (always keep intact)

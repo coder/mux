@@ -4,6 +4,7 @@ import {
   shouldShowInterruptedBarrier,
   mergeConsecutiveStreamErrors,
   computeBashOutputGroupInfo,
+  computeBashOutputGroupInfos,
   shouldBypassDeferredMessages,
 } from "./messageUtils";
 import type { DisplayedMessage } from "@/common/types/message";
@@ -573,5 +574,31 @@ describe("computeBashOutputGroupInfo", () => {
     expect(computeBashOutputGroupInfo(messages, 1)?.firstIndex).toBe(0); // middle
     expect(computeBashOutputGroupInfo(messages, 2)?.firstIndex).toBe(0); // middle
     expect(computeBashOutputGroupInfo(messages, 3)?.firstIndex).toBe(0); // last
+  });
+
+  it("precomputes per-index group info in one pass", () => {
+    const messages: DisplayedMessage[] = [
+      createBashOutputMessage("1", "bash_1", 1),
+      createBashOutputMessage("2", "bash_1", 2),
+      createBashOutputMessage("3", "bash_1", 3),
+      {
+        type: "user",
+        id: "u1",
+        historyId: "hu1",
+        content: "between groups",
+        historySequence: 4,
+      },
+      createBashOutputMessage("4", "bash_2", 5),
+      createBashOutputMessage("5", "bash_2", 6),
+      createBashOutputMessage("6", "bash_2", 7),
+      createBashOutputMessage("7", "bash_2", 8),
+    ];
+
+    const precomputed = computeBashOutputGroupInfos(messages);
+    expect(precomputed).toHaveLength(messages.length);
+
+    for (let index = 0; index < messages.length; index++) {
+      expect(precomputed[index]).toEqual(computeBashOutputGroupInfo(messages, index));
+    }
   });
 });

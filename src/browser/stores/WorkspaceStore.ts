@@ -807,6 +807,27 @@ export class WorkspaceStore {
   }
 
   /**
+   * Defer the caught-up usage bump until idle time so first transcript paint is not blocked
+   * by a second full ChatPane pass that only refreshes usage-derived UI.
+   */
+  private scheduleCaughtUpUsageBump(workspaceId: string): void {
+    const bumpUsage = () => {
+      const transient = this.chatTransientState.get(workspaceId);
+      if (!transient?.caughtUp || !this.aggregators.has(workspaceId)) {
+        return;
+      }
+      this.usageStore.bump(workspaceId);
+    };
+
+    if (typeof requestIdleCallback !== "function") {
+      setTimeout(bumpUsage, 0);
+      return;
+    }
+
+    requestIdleCallback(bumpUsage, { timeout: 100 });
+  }
+
+  /**
    * Subscribe to backend timing stats snapshots for a workspace.
    */
 
@@ -2058,8 +2079,9 @@ export class WorkspaceStore {
       this.states.bump(workspaceId);
       this.checkAndBumpRecencyIfChanged(); // Messages loaded, update recency
 
-      // Bump usage after loading history
-      this.usageStore.bump(workspaceId);
+      // Usage-only updates can trigger an extra full ChatPane render right after catch-up.
+      // Schedule this as idle follow-up so initial transcript paint wins the critical path.
+      this.scheduleCaughtUpUsageBump(workspaceId);
 
       // Hydrate consumer breakdown from persisted cache when possible.
       // Fall back to tokenization when no cache (or stale cache) exists.

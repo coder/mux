@@ -105,11 +105,14 @@ describe("Chat truncation UI", () => {
       await setupWorkspaceView(view, createResult.metadata, workspaceId);
       await waitForWorkspaceChatToRender(view.container);
 
-      const maxDisplayedMessages = 128;
+      // Must match MAX_DISPLAYED_MESSAGES in StreamingMessageAggregator.ts
+      const maxDisplayedMessages = 64;
       const totalDisplayedMessages = pairCount * 4;
       const oldDisplayedMessages = totalDisplayedMessages - maxDisplayedMessages;
       const oldPairs = oldDisplayedMessages / 4;
-      const expectedHiddenCount = oldPairs * 2;
+      // Each old pair contributes 3 hidden rows: reasoning + tool + assistant
+      // (user messages are always kept)
+      const expectedHiddenCount = oldPairs * 3;
       const expectedToolCount = oldPairs;
       const expectedThinkingCount = oldPairs;
 
@@ -133,9 +136,13 @@ describe("Chat truncation UI", () => {
       );
       expect(indicatorIndex).toBeGreaterThan(0);
       expect(messageBlocks[indicatorIndex - 1]?.textContent).toContain("user-0");
-      expect(messageBlocks[indicatorIndex + 1]?.textContent).toContain("assistant-0");
+      // After the indicator, the next kept old message is user-1 (assistant rows are now omitted)
+      expect(messageBlocks[indicatorIndex + 1]?.textContent).toContain("user-1");
 
-      const assistantText = view.getByText("assistant-0");
+      // Verify assistant meta rows survive in the recent (non-truncated) section.
+      // assistant-0 is now in the old section and gets omitted; pick a visible one instead.
+      const firstRecentPairIndex = oldPairs;
+      const assistantText = view.getByText(`assistant-${firstRecentPairIndex}`);
       const messageBlock = assistantText.closest("[data-message-block]");
       expect(messageBlock).toBeTruthy();
       expect(messageBlock?.querySelector("[data-message-meta]")).not.toBeNull();
