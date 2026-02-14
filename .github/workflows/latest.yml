@@ -31,6 +31,7 @@ jobs:
         run: |
           TAG_BASE=$(git describe --tags --abbrev=0 --match 'v*')
           IFS='.' read -r MAJOR MINOR PATCH <<< "${TAG_BASE#v}"
+          PATCH="${PATCH%%-*}"
           NEXT_PATCH="${MAJOR}.${MINOR}.$((PATCH + 1))"
           COMMITS=$(git rev-list --count HEAD "^$TAG_BASE")
           DEV_VERSION="${NEXT_PATCH}-dev.${COMMITS}"
