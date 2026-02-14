@@ -2353,9 +2353,17 @@ export class StreamManager extends EventEmitter {
         return "model_not_found";
       }
 
-      // Check for Anthropic context exceeded errors
+      // Check for context exceeded errors (Anthropic + OpenAI-compatible / Copilot)
       const msgLower = error.message.toLowerCase();
-      if (msgLower.includes("prompt is too long") || msgLower.includes("input is too long")) {
+
+      // Anthropic: "prompt is too long" / "input is too long"
+      // Copilot / OpenAI-compatible: "prompt token count of X exceeds the limit of Y"
+      const isContextExceeded =
+        msgLower.includes("prompt is too long") ||
+        msgLower.includes("input is too long") ||
+        (msgLower.includes("token") && msgLower.includes("exceeds") && msgLower.includes("limit"));
+
+      if (isContextExceeded) {
         return "context_exceeded";
       }
 
