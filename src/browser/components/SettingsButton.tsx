@@ -25,7 +25,7 @@ export function SettingsButton(props: SettingsButtonProps) {
           aria-label="Open settings"
           data-testid="settings-button"
         >
-          <Settings className="h-3.5 w-3.5" aria-hidden />
+          <Settings className="!size-3.5" aria-hidden />
         </Button>
       </TooltipTrigger>
       <TooltipContent>Open settings ({formatKeybind(KEYBINDS.OPEN_SETTINGS)})</TooltipContent>
