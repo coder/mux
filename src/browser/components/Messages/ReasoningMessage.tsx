@@ -149,7 +149,7 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
             {isStreaming ? (
               <Shimmer colorClass="var(--color-thinking-mode)">Thinking...</Shimmer>
             ) : hasContent ? (
-              <span className={cn("truncate whitespace-nowrap", REASONING_FONT_CLASSES)}>
+              <span className={cn("truncate whitespace-nowrap text-text", REASONING_FONT_CLASSES)}>
                 {parsedLeadingBoldSummary ? (
                   <>
                     <strong>{parsedLeadingBoldSummary.boldText}</strong>
