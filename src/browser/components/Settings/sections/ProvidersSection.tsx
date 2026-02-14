@@ -259,6 +259,7 @@ export function ProvidersSection() {
 
   const codexOauthIsConnected = config?.openai?.codexOauthSet === true;
   const openaiApiKeySet = config?.openai?.apiKeySet === true;
+  const openaiAuthMode = config?.openai?.openaiAuthMode ?? "apiKey";
   const codexOauthDefaultAuth =
     config?.openai?.codexOauthDefaultAuth === "apiKey" ? "apiKey" : "oauth";
   const codexOauthDefaultAuthIsEditable = codexOauthIsConnected && openaiApiKeySet;
@@ -1468,9 +1469,44 @@ export function ProvidersSection() {
                   );
                 })}
 
-                {/* OpenAI: ChatGPT OAuth + service tier */}
+                {/* OpenAI: auth mode, ChatGPT OAuth, and service tier */}
                 {provider === "openai" && (
                   <div className="border-border-light space-y-3 border-t pt-3">
+                    <div className="space-y-2">
+                      <div>
+                        <label className="text-muted block text-xs">Auth Mode</label>
+                        <p className="text-muted text-xs">
+                          Choose how to authenticate OpenAI requests.
+                        </p>
+                      </div>
+                      <Select
+                        value={openaiAuthMode}
+                        onValueChange={(next) => {
+                          if (!api) return;
+                          if (next !== "apiKey" && next !== "entra") {
+                            return;
+                          }
+
+                          // Provider config info exposes this as `openaiAuthMode`, but the
+                          // persisted providers.jsonc key is `authMode`.
+                          updateOptimistically("openai", { openaiAuthMode: next });
+                          void api.providers.setProviderConfig({
+                            provider: "openai",
+                            keyPath: ["authMode"],
+                            value: next,
+                          });
+                        }}
+                      >
+                        <SelectTrigger className="w-52">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="apiKey">API Key</SelectItem>
+                          <SelectItem value="entra">Azure Entra ID (keyless)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
                     <div>
                       <label className="text-foreground block text-xs font-medium">
                         ChatGPT (Codex) OAuth
