@@ -10,6 +10,7 @@ import {
 import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
 import { log } from "@/node/services/log";
+import { isLoopbackAddress } from "@/common/utils/urlSecurity";
 
 const DEFAULT_DESKTOP_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_SERVER_TIMEOUT_MS = 10 * 60 * 1000;
@@ -64,6 +65,12 @@ export class MuxGatewayOauthService {
       createDeferred<Result<void, string>>();
 
     const server = http.createServer((req, res) => {
+      if (!isLoopbackAddress(req.socket.remoteAddress)) {
+        res.statusCode = 403;
+        res.end("Forbidden");
+        return;
+      }
+
       const reqUrl = req.url ?? "/";
       const url = new URL(reqUrl, "http://localhost");
 

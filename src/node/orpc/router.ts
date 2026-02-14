@@ -29,6 +29,7 @@ import { hasNonEmptyPlanFile, readPlanFile } from "@/node/utils/runtime/helpers"
 import { secretsToRecord } from "@/common/types/secrets";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
+import { validateRedirectUri } from "@/common/utils/urlSecurity";
 import {
   DEFAULT_LAYOUT_PRESETS_CONFIG,
   isLayoutPresetsConfigEmpty,
@@ -1735,6 +1736,8 @@ export const router = (authToken?: string) => {
           if (origin) {
             try {
               const redirectUri = new URL("/auth/mcp-oauth/callback", origin).toString();
+              // Validates: rejects userinfo, non-http(s) schemes
+              validateRedirectUri(redirectUri);
               return context.mcpOauthService.startServerFlow({
                 ...input,
                 projectPath,
@@ -1757,6 +1760,11 @@ export const router = (authToken?: string) => {
           const proto = forwardedProto.length ? forwardedProto : "http";
 
           const redirectUri = `${proto}://${host}/auth/mcp-oauth/callback`;
+          try {
+            validateRedirectUri(redirectUri);
+          } catch {
+            return Err("Invalid OAuth redirect URI");
+          }
 
           return context.mcpOauthService.startServerFlow({
             ...input,
@@ -2184,6 +2192,8 @@ export const router = (authToken?: string) => {
             if (origin) {
               try {
                 const redirectUri = new URL("/auth/mcp-oauth/callback", origin).toString();
+                // Validates: rejects userinfo, non-http(s) schemes
+                validateRedirectUri(redirectUri);
                 return context.mcpOauthService.startServerFlow({ ...input, redirectUri });
               } catch {
                 // Fall back to Host header.
@@ -2202,6 +2212,11 @@ export const router = (authToken?: string) => {
             const proto = forwardedProto.length ? forwardedProto : "http";
 
             const redirectUri = `${proto}://${host}/auth/mcp-oauth/callback`;
+            try {
+              validateRedirectUri(redirectUri);
+            } catch {
+              return Err("Invalid OAuth redirect URI");
+            }
 
             return context.mcpOauthService.startServerFlow({ ...input, redirectUri });
           }),
