@@ -83,6 +83,17 @@ export interface MockSessionUsage {
   version: 1;
 }
 
+export interface MockTerminalSession {
+  sessionId: string;
+  workspaceId: string;
+  cols: number;
+  rows: number;
+  /** Initial snapshot returned by terminal.attach ({ type: "screenState" }). */
+  screenState: string;
+  /** Optional live output chunks yielded after screenState ({ type: "output" }). */
+  outputChunks?: string[];
+}
+
 export interface MockORPCClientOptions {
   /** Layout presets config for Settings → Layouts stories */
   layoutPresets?: LayoutPresetsConfig;
@@ -131,6 +142,8 @@ export interface MockORPCClientOptions {
   globalSecrets?: Secret[];
   /** Project secrets per project */
   projectSecrets?: Map<string, Secret[]>;
+  /** Terminal sessions to expose via terminal.listSessions + terminal.attach */
+  terminalSessions?: MockTerminalSession[];
   sessionUsage?: Map<string, MockSessionUsage>;
   /** Debug snapshot per workspace for the last LLM request modal */
   lastLlmRequestSnapshots?: Map<string, DebugLlmRequestSnapshot | null>;
@@ -281,6 +294,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     statsTabVariant = "control",
     globalSecrets = [],
     projectSecrets = new Map<string, Secret[]>(),
+    terminalSessions: initialTerminalSessions = [],
     globalMcpServers = {},
     mcpServers = new Map<string, MockMcpServers>(),
     mcpOverrides = new Map<string, MockMcpOverrides>(),
@@ -344,6 +358,30 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     : [muxChatWorkspace, ...inputWorkspaces];
 
   const workspaceMap = new Map(workspaces.map((w) => [w.id, w]));
+
+  // Terminal sessions are used by RightSidebar and TerminalView.
+  // Stories can seed deterministic sessions (with screenState) to make the embedded terminal look
+  // data-rich, while still keeping the default mock (no sessions) lightweight.
+  const terminalSessionsById = new Map<string, MockTerminalSession>();
+  const terminalSessionIdsByWorkspace = new Map<string, string[]>();
+
+  const registerTerminalSession = (session: MockTerminalSession) => {
+    terminalSessionsById.set(session.sessionId, session);
+    const existing = terminalSessionIdsByWorkspace.get(session.workspaceId) ?? [];
+    if (!existing.includes(session.sessionId)) {
+      terminalSessionIdsByWorkspace.set(session.workspaceId, [...existing, session.sessionId]);
+    }
+  };
+
+  for (const session of initialTerminalSessions) {
+    registerTerminalSession(session);
+  }
+
+  let terminalSessionCounter = 0;
+  const allocTerminalSessionId = () => {
+    terminalSessionCounter += 1;
+    return `mock-terminal-${terminalSessionCounter}`;
+  };
 
   let createdWorkspaceCounter = 0;
 
@@ -1215,24 +1253,90 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         }),
     },
     terminal: {
-      listSessions: (_input: { workspaceId: string }) => Promise.resolve([]),
-      create: () =>
-        Promise.resolve({
-          sessionId: "mock-session",
-          workspaceId: "mock-workspace",
-          cols: 80,
-          rows: 24,
-        }),
-      close: () => Promise.resolve(undefined),
-      resize: () => Promise.resolve(undefined),
+      listSessions: (input: { workspaceId: string }) =>
+        Promise.resolve(terminalSessionIdsByWorkspace.get(input.workspaceId) ?? []),
+      create: (input: {
+        workspaceId: string;
+        cols: number;
+        rows: number;
+        initialCommand?: string;
+      }) => {
+        const sessionId = allocTerminalSessionId();
+        registerTerminalSession({
+          sessionId,
+          workspaceId: input.workspaceId,
+          cols: input.cols,
+          rows: input.rows,
+          // Leave the terminal visually empty by default; data-rich stories can override via
+          // MockTerminalSession.screenState.
+          screenState: "",
+        });
+
+        return Promise.resolve({
+          sessionId,
+          workspaceId: input.workspaceId,
+          cols: input.cols,
+          rows: input.rows,
+        });
+      },
+      close: (input: { sessionId: string }) => {
+        const session = terminalSessionsById.get(input.sessionId);
+        if (session) {
+          terminalSessionsById.delete(input.sessionId);
+          const ids = terminalSessionIdsByWorkspace.get(session.workspaceId) ?? [];
+          terminalSessionIdsByWorkspace.set(
+            session.workspaceId,
+            ids.filter((id) => id !== input.sessionId)
+          );
+        }
+        return Promise.resolve(undefined);
+      },
+      resize: (input: { sessionId: string; cols: number; rows: number }) => {
+        const session = terminalSessionsById.get(input.sessionId);
+        if (session) {
+          terminalSessionsById.set(input.sessionId, {
+            ...session,
+            cols: input.cols,
+            rows: input.rows,
+          });
+        }
+        return Promise.resolve(undefined);
+      },
       sendInput: () => undefined,
-      attach: async function* (_input: { sessionId: string }) {
-        yield { type: "screenState", data: "" };
-        yield* [];
+      attach: async function* (input: { sessionId: string }, opts?: { signal?: AbortSignal }) {
+        const session = terminalSessionsById.get(input.sessionId);
+        yield { type: "screenState", data: session?.screenState ?? "" };
+
+        for (const chunk of session?.outputChunks ?? []) {
+          yield { type: "output", data: chunk };
+        }
+
+        // Keep the iterator alive until the caller aborts. The real backend streams output
+        // indefinitely; Storybook uses abort to clean up on story change.
+        if (opts?.signal) {
+          if (opts.signal.aborted) {
+            return;
+          }
+          await new Promise<void>((resolve) => {
+            opts.signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+          return;
+        }
+
         await new Promise<void>(() => undefined);
       },
-      onExit: async function* () {
+      onExit: async function* (_input: { sessionId: string }, opts?: { signal?: AbortSignal }) {
         yield* [];
+        if (opts?.signal) {
+          if (opts.signal.aborted) {
+            return;
+          }
+          await new Promise<void>((resolve) => {
+            opts.signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+          return;
+        }
+
         await new Promise<void>(() => undefined);
       },
       openWindow: () => Promise.resolve(undefined),

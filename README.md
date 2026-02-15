@@ -45,6 +45,7 @@ macOS and Linux.
 
 ## Screenshots
 
+<!-- Screenshots below are generated from Storybook stories under Docs/README Screenshots -->
 <table>
 <tr>
 <td align="center" width="50%">
