@@ -23,6 +23,12 @@ describe("getModelCapabilities", () => {
     expect(caps).not.toBeNull();
   });
 
+  it("keeps GPT-5.3-Codex-Spark as text-only via models-extra override", () => {
+    const caps = getModelCapabilities("openai:gpt-5.3-codex-spark");
+    expect(caps).not.toBeNull();
+    expect(caps?.supportsVision).toBe(false);
+  });
+
   it("returns maxPdfSizeMb when present in model metadata", () => {
     const caps = getModelCapabilities("google:gemini-1.5-flash");
     expect(caps).not.toBeNull();

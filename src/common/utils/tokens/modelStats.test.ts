@@ -24,6 +24,13 @@ describe("getModelStats", () => {
       expect(stats?.input_cost_per_token).toBe(0.000021);
     });
 
+    test("should find GPT-5.3-Codex-Spark in models-extra.ts", () => {
+      const stats = getModelStats("openai:gpt-5.3-codex-spark");
+      expect(stats).not.toBeNull();
+      expect(stats?.max_input_tokens).toBe(128000);
+      expect(stats?.max_output_tokens).toBe(128000);
+    });
+
     test("models-extra.ts should override models.json", () => {
       // gpt-5.2-codex exists in both files - models-extra.ts has correct 272k, models.json has incorrect 400k
       const stats = getModelStats("openai:gpt-5.2-codex");

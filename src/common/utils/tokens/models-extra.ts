@@ -109,6 +109,23 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_response_schema: true,
   },
 
+  // GPT-5.3-Codex-Spark - Released February 13, 2026
+  // OpenAI says this is a text-only Codex variant with a 128k context window.
+  // API pricing is not published yet, so we temporarily mirror GPT-5.3-Codex pricing.
+  "gpt-5.3-codex-spark": {
+    max_input_tokens: 128000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.00000175, // $1.75 per million input tokens (temporary)
+    output_cost_per_token: 0.000014, // $14 per million output tokens (temporary)
+    cache_read_input_token_cost: 0.000000175, // $0.175 per million cached input tokens (temporary)
+    litellm_provider: "openai",
+    mode: "responses",
+    supports_function_calling: true,
+    supports_vision: false,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+
   // GPT-5.2 Pro - Released December 11, 2025
   // $21/M input, $168/M output
   // Supports medium, high, xhigh reasoning levels
