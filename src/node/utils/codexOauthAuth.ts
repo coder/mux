@@ -131,12 +131,3 @@ export function extractAccountIdFromTokens(input: {
 
   return extractAccountIdFromToken(input.accessToken);
 }
-
-// ------------------------------------------------------------------------------------
-// Backwards-compatible export names.
-// ------------------------------------------------------------------------------------
-
-export const decodeJwtClaims = parseJwtClaims;
-export const extractChatGptAccountIdFromClaims = extractAccountIdFromClaims;
-export const extractChatGptAccountIdFromToken = extractAccountIdFromToken;
-export const extractChatGptAccountIdFromTokens = extractAccountIdFromTokens;
