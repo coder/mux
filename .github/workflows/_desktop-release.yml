@@ -40,7 +40,7 @@ jobs:
         if: inputs.version_override != ''
         shell: bash
         run: |
-          # Keep this in a script so latest/release workflows can share behavior.
+          # Keep this in a script so nightly/release workflows can share behavior.
           node ./scripts/set-package-version.js "$VERSION_OVERRIDE"
 
       - name: Build application
@@ -82,7 +82,7 @@ jobs:
         if: inputs.version_override != ''
         shell: bash
         run: |
-          # Keep this in a script so latest/release workflows can share behavior.
+          # Keep this in a script so nightly/release workflows can share behavior.
           node ./scripts/set-package-version.js "$VERSION_OVERRIDE"
 
       - name: Build application
@@ -131,7 +131,7 @@ jobs:
         if: inputs.version_override != ''
         shell: bash
         run: |
-          # Keep this in a script so latest/release workflows can share behavior.
+          # Keep this in a script so nightly/release workflows can share behavior.
           node ./scripts/set-package-version.js "$VERSION_OVERRIDE"
 
       - name: Build application

@@ -3,7 +3,7 @@
 /**
  * Patch package.json version in CI.
  *
- * Shared by release workflows so latest/release builds stay in sync without
+ * Shared by release workflows so nightly/release builds stay in sync without
  * copy-pasting inline Node snippets in multiple jobs.
  */
 const fs = require("node:fs");

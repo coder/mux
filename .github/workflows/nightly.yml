@@ -1,0 +1,74 @@
+name: Nightly Desktop
+
+on:
+  schedule:
+    - cron: '0 8 * * *' # Daily at 8 AM UTC
+  workflow_dispatch: {} # Engineers can trigger manually any time
+
+concurrency:
+  group: nightly-desktop
+  cancel-in-progress: true
+
+jobs:
+  compute-version:
+    name: Compute version and create pre-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Create and manage pre-releases
+    outputs:
+      release_tag: ${{ steps.compute.outputs.release_tag }}
+      nightly_version: ${{ steps.compute.outputs.nightly_version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0 # Required for git describe to find tags
+          persist-credentials: false
+
+      - name: Compute nightly pre-release version
+        id: compute
+        shell: bash
+        run: |
+          TAG_BASE=$(git describe --tags --abbrev=0 --match 'v*')
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${TAG_BASE#v}"
+          PATCH="${PATCH%%-*}"
+          NEXT_PATCH="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          COMMITS=$(git rev-list --count HEAD "^$TAG_BASE")
+          NIGHTLY_VERSION="${NEXT_PATCH}-nightly.${COMMITS}"
+          RELEASE_TAG="v${NIGHTLY_VERSION}"
+
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "nightly_version=$NIGHTLY_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Rotate nightly pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.compute.outputs.release_tag }}
+        shell: bash
+        run: |
+          # Delete any existing nightly pre-releases to keep the releases page clean
+          mapfile -t EXISTING < <(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" --jq '
+              .[]
+              | select(.prerelease)
+              | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-nightly\\.[0-9]+$"))
+              | .tag_name
+            '
+          )
+          for tag in "${EXISTING[@]}"; do
+            echo "Deleting existing nightly release $tag"
+            gh release delete "$tag" --yes --cleanup-tag
+          done
+
+          gh release create "$RELEASE_TAG" --prerelease --target "$GITHUB_SHA" --title "$RELEASE_TAG" --notes "Automated nightly build from main ($(date -u +%Y-%m-%d))"
+
+  desktop-builds:
+    name: Build and Release Desktop Apps
+    needs: compute-version
+    uses: ./.github/workflows/_desktop-release.yml
+    with:
+      ref: ${{ github.sha }}
+      release_tag: ${{ needs.compute-version.outputs.release_tag }}
+      version_override: ${{ needs.compute-version.outputs.nightly_version }}
+    secrets: inherit # zizmor: ignore[secrets-inherit] -- reusable workflow needs platform signing secrets
