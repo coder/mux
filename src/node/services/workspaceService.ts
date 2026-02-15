@@ -2064,6 +2064,21 @@ export class WorkspaceService extends EventEmitter {
     }
 
     const candidates: string[] = [...NAME_GEN_PREFERRED_MODELS];
+    const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+    if (metadataResult.success) {
+      const fallbackModels = [
+        metadataResult.data.aiSettings?.model,
+        ...Object.values(metadataResult.data.aiSettingsByAgent ?? {}).map(
+          (settings) => settings.model
+        ),
+      ];
+      for (const model of fallbackModels) {
+        if (model && !candidates.includes(model)) {
+          candidates.push(model);
+        }
+      }
+    }
+
     const result = await generateWorkspaceIdentity(
       userText,
       candidates,

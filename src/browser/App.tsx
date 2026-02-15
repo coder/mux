@@ -671,12 +671,13 @@ function AppInner() {
         handleNavigateWorkspace("prev");
       } else if (
         matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE_ALT) &&
+        !sidebarCollapsed &&
         selectedWorkspace &&
         selectedWorkspace.workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID &&
         !isEditableElement(e.target)
       ) {
-        // F2 edits the selected workspace title in the sidebar; skip command
-        // palette handling so both shortcuts don't fire for the same keypress.
+        // F2 edits the selected workspace title in the expanded sidebar; skip
+        // command palette handling so both shortcuts don't fire.
         return;
       } else if (
         matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE) ||
@@ -717,6 +718,7 @@ function AppInner() {
     handleNavigateWorkspace,
     handleOpenMuxChat,
     setSidebarCollapsed,
+    sidebarCollapsed,
     isCommandPaletteOpen,
     closeCommandPalette,
     openCommandPalette,

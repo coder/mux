@@ -1892,6 +1892,9 @@ describe("WorkspaceService regenerateTitle", () => {
   beforeEach(async () => {
     const mockAIService = {
       isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() =>
+        Promise.resolve({ success: false as const, error: "workspace metadata unavailable" })
+      ),
       // eslint-disable-next-line @typescript-eslint/no-empty-function
       on: mock(() => {}),
       // eslint-disable-next-line @typescript-eslint/no-empty-function
