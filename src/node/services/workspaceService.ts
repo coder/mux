@@ -32,6 +32,8 @@ import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
+import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
+import { NAME_GEN_PREFERRED_MODELS } from "@/common/constants/nameGeneration";
 import type { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
 import { getDevcontainerContainerName } from "@/node/runtime/devcontainerCli";
 import { expandTilde, expandTildeForSSH } from "@/node/runtime/tildeExpansion";
@@ -143,6 +145,44 @@ function isWorkspaceNameCollision(error: string | undefined): boolean {
 function appendCollisionSuffix(baseName: string): string {
   const suffix = Math.random().toString(36).substring(2, 6);
   return `${baseName}-${suffix}`;
+}
+
+/**
+ * Generate a unique fork branch name from the parent workspace name.
+ * Scans existing workspace names for the `{parentName}-fork-N` pattern
+ * and picks N+1, guaranteeing a valid git-safe branch name.
+ */
+export function generateForkBranchName(parentName: string, existingNames: string[]): string {
+  const prefix = `${parentName}-fork-`;
+  let max = 0;
+  for (const name of existingNames) {
+    if (name.startsWith(prefix)) {
+      const n = parseInt(name.slice(prefix.length), 10);
+      if (!isNaN(n) && n > max) max = n;
+    }
+  }
+  return `${prefix}${max + 1}`;
+}
+
+/**
+ * Generate a forked workspace title by appending a " (N)" suffix to the parent title.
+ * Scans existing titles in the same project to pick the next available number.
+ */
+export function generateForkTitle(parentTitle: string, existingTitles: string[]): string {
+  // Strip any existing " (N)" suffix from the parent title to get the base
+  const base = parentTitle.replace(/ \(\d+\)$/, "");
+  const prefix = `${base} (`;
+
+  let max = 0;
+  for (const title of existingTitles) {
+    if (title.startsWith(prefix) && title.endsWith(")")) {
+      const n = parseInt(title.slice(prefix.length, -1), 10);
+      if (!isNaN(n) && n > max) max = n;
+    }
+  }
+  // If parent title itself exists in the list (without suffix), start at (1)
+  // Otherwise continue from the highest found suffix
+  return `${base} (${max + 1})`;
 }
 
 function isErrnoWithCode(error: unknown, code: string): boolean {
@@ -1987,6 +2027,58 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
+   * Regenerate the workspace title from its chat history using AI.
+   * Reads the first user message (and optional first assistant reply) as context,
+   * then calls generateWorkspaceIdentity and persists the result via updateTitle.
+   */
+  async regenerateTitle(workspaceId: string): Promise<Result<{ title: string }>> {
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+    if (!historyResult.success) {
+      return Err("Could not read workspace history");
+    }
+
+    const firstUserMsg = historyResult.data.find((m) => m.role === "user");
+    if (!firstUserMsg) {
+      return Err("No user messages in workspace history");
+    }
+
+    const userText =
+      firstUserMsg.parts
+        ?.filter((p) => p.type === "text")
+        .map((p) => p.text)
+        .join("\n") || "";
+
+    if (!userText) {
+      return Err("First user message has no text content");
+    }
+
+    // Use the first assistant reply for richer context
+    let assistantContext: string | undefined;
+    const firstAssistantMsg = historyResult.data.find((m) => m.role === "assistant");
+    if (firstAssistantMsg) {
+      assistantContext =
+        firstAssistantMsg.parts
+          ?.filter((p) => p.type === "text")
+          .map((p) => p.text)
+          .join("\n") ?? undefined;
+    }
+
+    const candidates: string[] = [...NAME_GEN_PREFERRED_MODELS];
+    const result = await generateWorkspaceIdentity(
+      userText,
+      candidates,
+      this.aiService,
+      assistantContext
+    );
+    if (!result.success) {
+      return Err("Title generation failed");
+    }
+
+    await this.updateTitle(workspaceId, result.data.title);
+    return Ok({ title: result.data.title });
+  }
+
+  /**
    * Archive a workspace. Archived workspaces are hidden from the main sidebar
    * but can be viewed on the project page.
    *
@@ -2521,16 +2613,11 @@ export class WorkspaceService extends EventEmitter {
 
   async fork(
     sourceWorkspaceId: string,
-    newName: string
+    newName?: string
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata; projectPath: string }>> {
     try {
       if (sourceWorkspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
         return Err("Cannot fork the Chat with Mux system workspace");
-      }
-
-      const validation = validateWorkspaceName(newName);
-      if (!validation.valid) {
-        return Err(validation.error ?? "Invalid workspace name");
       }
 
       if (this.aiService.isStreaming(sourceWorkspaceId)) {
@@ -2559,6 +2646,25 @@ export class WorkspaceService extends EventEmitter {
         return Err("Forking Docker workspaces is not supported. Create a new workspace instead.");
       }
 
+      // Auto-generate branch name (and title) when user omits one (seamless fork).
+      // Uses pattern: {parentName}-fork-{N} for branch, "{parentTitle} (N)" for title.
+      const isAutoName = newName == null;
+      // Fetch all metadata upfront for both branch name and title collision checks.
+      const allMetadata = isAutoName ? await this.config.getAllWorkspaceMetadata() : [];
+      let resolvedName: string;
+      if (isAutoName) {
+        const existingNames = allMetadata
+          .filter((m) => m.projectPath === foundProjectPath)
+          .map((m) => m.name);
+        resolvedName = generateForkBranchName(sourceMetadata.name, existingNames);
+      } else {
+        const validation = validateWorkspaceName(newName);
+        if (!validation.valid) {
+          return Err(validation.error ?? "Invalid workspace name");
+        }
+        resolvedName = newName;
+      }
+
       const runtime = createRuntime(sourceRuntimeConfig, {
         projectPath: foundProjectPath,
         workspaceName: sourceMetadata.name,
@@ -2573,7 +2679,7 @@ export class WorkspaceService extends EventEmitter {
       const forkResult = await runtime.forkWorkspace({
         projectPath: foundProjectPath,
         sourceWorkspaceName: sourceMetadata.name,
-        newWorkspaceName: newName,
+        newWorkspaceName: resolvedName,
         initLogger,
       });
 
@@ -2592,7 +2698,7 @@ export class WorkspaceService extends EventEmitter {
         runtime,
         {
           projectPath: foundProjectPath,
-          branchName: newName,
+          branchName: resolvedName,
           trunkBranch: forkResult.sourceBranch ?? "main",
           workspacePath: forkResult.workspacePath!,
           initLogger,
@@ -2648,7 +2754,7 @@ export class WorkspaceService extends EventEmitter {
           }
         }
       } catch (copyError) {
-        await runtime.deleteWorkspace(foundProjectPath, newName, true);
+        await runtime.deleteWorkspace(foundProjectPath, resolvedName, true);
         try {
           await fsPromises.rm(newSessionDir, { recursive: true, force: true });
         } catch (cleanupError) {
@@ -2660,7 +2766,13 @@ export class WorkspaceService extends EventEmitter {
       }
 
       // Copy plan file if it exists (checks both new and legacy paths)
-      await copyPlanFile(runtime, sourceMetadata.name, sourceWorkspaceId, newName, projectName);
+      await copyPlanFile(
+        runtime,
+        sourceMetadata.name,
+        sourceWorkspaceId,
+        resolvedName,
+        projectName
+      );
 
       // Apply runtime-provided config updates (e.g., Coder marks shared workspaces)
       const { forkedRuntimeConfig } = await applyForkRuntimeUpdates(
@@ -2683,11 +2795,11 @@ export class WorkspaceService extends EventEmitter {
       }
 
       // Compute namedWorkspacePath for frontend metadata
-      const namedWorkspacePath = runtime.getWorkspacePath(foundProjectPath, newName);
+      const namedWorkspacePath = runtime.getWorkspacePath(foundProjectPath, resolvedName);
 
       const metadata: FrontendWorkspaceMetadata = {
         id: newWorkspaceId,
-        name: newName,
+        name: resolvedName,
         projectName,
         projectPath: foundProjectPath,
         createdAt: new Date().toISOString(),
@@ -2695,6 +2807,17 @@ export class WorkspaceService extends EventEmitter {
         namedWorkspacePath,
         // Preserve workspace organization when forking via /fork.
         sectionId: sourceMetadata.sectionId,
+        // Seamless fork: generate a numbered title like "Parent Title (1)".
+        ...(isAutoName
+          ? {
+              title: generateForkTitle(
+                sourceMetadata.title ?? sourceMetadata.name,
+                allMetadata
+                  .filter((m) => m.projectPath === foundProjectPath)
+                  .map((m) => m.title ?? m.name)
+              ),
+            }
+          : {}),
       };
 
       await this.config.addWorkspace(foundProjectPath, metadata);

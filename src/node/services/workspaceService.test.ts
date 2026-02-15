@@ -1881,3 +1881,70 @@ describe("WorkspaceService init cancellation", () => {
     }
   });
 });
+
+// --- Pure helper tests (no mocks needed) ---
+
+import { generateForkBranchName, generateForkTitle } from "./workspaceService";
+
+describe("generateForkBranchName", () => {
+  test("returns -fork-1 when no existing forks", () => {
+    expect(generateForkBranchName("sidebar-a1b2", [])).toBe("sidebar-a1b2-fork-1");
+  });
+
+  test("increments past the highest existing fork number", () => {
+    expect(
+      generateForkBranchName("sidebar-a1b2", [
+        "sidebar-a1b2-fork-1",
+        "sidebar-a1b2-fork-3",
+        "other-workspace",
+      ])
+    ).toBe("sidebar-a1b2-fork-4");
+  });
+
+  test("ignores non-matching workspace names", () => {
+    expect(
+      generateForkBranchName("feature", ["feature-branch", "feature-impl", "other-fork-1"])
+    ).toBe("feature-fork-1");
+  });
+
+  test("handles gaps in numbering", () => {
+    expect(generateForkBranchName("ws", ["ws-fork-1", "ws-fork-5"])).toBe("ws-fork-6");
+  });
+
+  test("ignores non-numeric suffixes", () => {
+    expect(generateForkBranchName("ws", ["ws-fork-abc", "ws-fork-"])).toBe("ws-fork-1");
+  });
+});
+
+describe("generateForkTitle", () => {
+  test("returns (1) when no existing forks", () => {
+    expect(generateForkTitle("Fix sidebar layout", [])).toBe("Fix sidebar layout (1)");
+  });
+
+  test("increments past the highest existing suffix", () => {
+    expect(
+      generateForkTitle("Fix sidebar layout", [
+        "Fix sidebar layout",
+        "Fix sidebar layout (1)",
+        "Fix sidebar layout (3)",
+      ])
+    ).toBe("Fix sidebar layout (4)");
+  });
+
+  test("strips existing suffix from parent before computing base", () => {
+    // Forking "Fix sidebar (2)" should produce "Fix sidebar (3)", not "Fix sidebar (2) (1)"
+    expect(generateForkTitle("Fix sidebar (2)", ["Fix sidebar (1)", "Fix sidebar (2)"])).toBe(
+      "Fix sidebar (3)"
+    );
+  });
+
+  test("ignores non-matching titles", () => {
+    expect(generateForkTitle("Refactor auth", ["Fix sidebar layout (1)", "Other task (2)"])).toBe(
+      "Refactor auth (1)"
+    );
+  });
+
+  test("handles gaps in numbering", () => {
+    expect(generateForkTitle("Task", ["Task (1)", "Task (5)"])).toBe("Task (6)");
+  });
+});

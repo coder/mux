@@ -25,7 +25,13 @@ import {
   reorderProjects,
   normalizeOrder,
 } from "@/common/utils/projectOrdering";
-import { matchesKeybind, formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import {
+  matchesKeybind,
+  formatKeybind,
+  isEditableElement,
+  KEYBINDS,
+} from "@/browser/utils/ui/keybinds";
+import { useAPI } from "@/browser/contexts/API";
 import { PlatformPaths } from "@/common/utils/paths";
 import {
   partitionWorkspacesByAge,
@@ -47,13 +53,14 @@ import type { Secret } from "@/common/types/secrets";
 
 import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
-import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
+import { TitleEditProvider, useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { ChevronRight, CircleHelp, KeyRound } from "lucide-react";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
 import { useRouter } from "@/browser/contexts/RouterContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
+import { forkWorkspace } from "@/browser/utils/chatCommands";
 import { PopoverError } from "./PopoverError";
 import { SectionHeader } from "./SectionHeader";
 import { AddSectionButton } from "./AddSectionButton";
@@ -319,6 +326,52 @@ function MuxChatStatusIndicator() {
   );
 }
 
+/**
+ * Handles F2 (edit title) and Shift+F2 (generate new title) keybinds.
+ * Rendered inside TitleEditProvider so it can access useTitleEdit().
+ */
+function SidebarTitleEditKeybinds(props: {
+  selectedWorkspace: WorkspaceSelection | undefined;
+  sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>;
+}) {
+  const { requestEdit, wrapGenerateTitle } = useTitleEdit();
+  const { api } = useAPI();
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!props.selectedWorkspace) return;
+      if (isEditableElement(e.target)) return;
+      const wsId = props.selectedWorkspace.workspaceId;
+      if (wsId === MUX_HELP_CHAT_WORKSPACE_ID) return;
+
+      if (matchesKeybind(e, KEYBINDS.EDIT_WORKSPACE_TITLE)) {
+        e.preventDefault();
+        const meta = props.sortedWorkspacesByProject
+          .get(props.selectedWorkspace.projectPath)
+          ?.find((m) => m.id === wsId);
+        const displayTitle = meta?.title ?? meta?.name ?? "";
+        requestEdit(wsId, displayTitle);
+      } else if (matchesKeybind(e, KEYBINDS.GENERATE_WORKSPACE_TITLE)) {
+        e.preventDefault();
+        wrapGenerateTitle(
+          wsId,
+          () => api?.workspace.regenerateTitle({ workspaceId: wsId }) ?? Promise.resolve()
+        );
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    props.selectedWorkspace,
+    props.sortedWorkspacesByProject,
+    requestEdit,
+    wrapGenerateTitle,
+    api,
+  ]);
+
+  return null;
+}
+
 interface ProjectSidebarProps {
   collapsed: boolean;
   onToggleCollapsed: () => void;
@@ -344,7 +397,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     setSelectedWorkspace: onSelectWorkspace,
     archiveWorkspace: onArchiveWorkspace,
     removeWorkspace,
-    renameWorkspace: onRenameWorkspace,
+    updateWorkspaceTitle: onUpdateTitle,
     refreshWorkspaceMetadata,
     pendingNewWorkspaceProject,
     pendingNewWorkspaceDraftId,
@@ -356,6 +409,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   } = useWorkspaceActions();
   const workspaceStore = useWorkspaceStoreRaw();
   const { navigateToProject } = useRouter();
+  const { api } = useAPI();
 
   // Get project state and operations from context
   const {
@@ -467,6 +521,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const [archivingWorkspaceIds, setArchivingWorkspaceIds] = useState<Set<string>>(new Set());
   const [removingWorkspaceIds, setRemovingWorkspaceIds] = useState<Set<string>>(new Set());
   const workspaceArchiveError = usePopoverError();
+  const workspaceForkError = usePopoverError();
   const workspaceRemoveError = usePopoverError();
   const [archiveConfirmation, setArchiveConfirmation] = useState<{
     workspaceId: string;
@@ -521,6 +576,35 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       setExpandedSections((prev) => ({ ...prev, [key]: true }));
     }
   };
+
+  const handleForkWorkspace = useCallback(
+    async (workspaceId: string, buttonElement?: HTMLElement) => {
+      if (!api) {
+        workspaceForkError.showError(workspaceId, "Not connected to server");
+        return;
+      }
+
+      const result = await forkWorkspace({
+        client: api,
+        sourceWorkspaceId: workspaceId,
+      });
+      if (result.success) {
+        return;
+      }
+
+      let anchor: { top: number; left: number } | undefined;
+      if (buttonElement) {
+        const rect = buttonElement.getBoundingClientRect();
+        anchor = {
+          top: rect.top + window.scrollY,
+          left: rect.right + 10,
+        };
+      }
+
+      workspaceForkError.showError(workspaceId, result.error ?? "Failed to fork chat", anchor);
+    },
+    [api, workspaceForkError]
+  );
 
   const performArchiveWorkspace = useCallback(
     async (workspaceId: string, buttonElement?: HTMLElement) => {
@@ -740,7 +824,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   }, [selectedWorkspace, handleAddWorkspace, handleArchiveWorkspace]);
 
   return (
-    <RenameProvider onRenameWorkspace={onRenameWorkspace}>
+    <TitleEditProvider onUpdateTitle={onUpdateTitle}>
+      <SidebarTitleEditKeybinds
+        selectedWorkspace={selectedWorkspace ?? undefined}
+        sortedWorkspacesByProject={sortedWorkspacesByProject}
+      />
       <DndProvider backend={HTML5Backend}>
         <ProjectDragLayer />
         <WorkspaceDragLayer />
@@ -1011,6 +1099,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     metadata.isRemoving === true
                                   }
                                   onSelectWorkspace={handleSelectWorkspace}
+                                  onForkWorkspace={handleForkWorkspace}
                                   onArchiveWorkspace={handleArchiveWorkspace}
                                   onCancelCreation={handleCancelWorkspaceCreation}
                                   depth={depthByWorkspaceId[metadata.id] ?? 0}
@@ -1378,6 +1467,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             onDismiss={workspaceArchiveError.clearError}
           />
           <PopoverError
+            error={workspaceForkError.error}
+            prefix="Failed to fork chat"
+            onDismiss={workspaceForkError.clearError}
+          />
+          <PopoverError
             error={workspaceRemoveError.error}
             prefix="Failed to cancel workspace creation"
             onDismiss={workspaceRemoveError.clearError}
@@ -1394,7 +1488,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           />
         </div>
       </DndProvider>
-    </RenameProvider>
+    </TitleEditProvider>
   );
 };
 

@@ -2314,7 +2314,7 @@ export const router = (authToken?: string) => {
         .input(schemas.nameGeneration.generate.input)
         .output(schemas.nameGeneration.generate.output)
         .handler(async ({ context, input }) => {
-          // Frontend provides ordered candidate list with gateway prefs applied.
+          // Frontend provides ordered candidate list; gateway routing resolved by createModel.
           // Backend tries candidates in order with retry on API errors.
           const result = await generateWorkspaceIdentity(
             input.message,
@@ -2435,6 +2435,12 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.workspaceService.updateTitle(input.workspaceId, input.title);
         }),
+      regenerateTitle: t
+        .input(schemas.workspace.regenerateTitle.input)
+        .output(schemas.workspace.regenerateTitle.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.regenerateTitle(input.workspaceId);
+        }),
       archive: t
         .input(schemas.workspace.archive.input)
         .output(schemas.workspace.archive.output)
@@ -2459,7 +2465,7 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           const result = await context.workspaceService.fork(
             input.sourceWorkspaceId,
-            input.newName
+            input.newName ?? undefined
           );
           if (!result.success) {
             return { success: false, error: result.error };

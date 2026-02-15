@@ -90,7 +90,7 @@ function AppInner() {
     loading,
     setWorkspaceMetadata,
     removeWorkspace,
-    renameWorkspace,
+    updateWorkspaceTitle,
     refreshWorkspaceMetadata,
     selectedWorkspace,
     setSelectedWorkspace,
@@ -555,9 +555,9 @@ function AppInner() {
     [removeWorkspace]
   );
 
-  const renameWorkspaceFromPalette = useCallback(
-    async (workspaceId: string, newName: string) => renameWorkspace(workspaceId, newName),
-    [renameWorkspace]
+  const updateTitleFromPalette = useCallback(
+    async (workspaceId: string, newTitle: string) => updateWorkspaceTitle(workspaceId, newTitle),
+    [updateWorkspaceTitle]
   );
 
   const addProjectFromPalette = useCallback(() => {
@@ -594,7 +594,7 @@ function AppInner() {
     getBranchesForProject,
     onSelectWorkspace: selectWorkspaceFromPalette,
     onRemoveWorkspace: removeWorkspaceFromPalette,
-    onRenameWorkspace: renameWorkspaceFromPalette,
+    onUpdateTitle: updateTitleFromPalette,
     onAddProject: addProjectFromPalette,
     onRemoveProject: removeProjectFromPalette,
     onToggleSidebar: toggleSidebarFromPalette,

@@ -66,7 +66,7 @@ export interface BuildSourcesParams {
     workspaceId: string;
   }) => void;
   onRemoveWorkspace: (workspaceId: string) => Promise<{ success: boolean; error?: string }>;
-  onRenameWorkspace: (
+  onUpdateTitle: (
     workspaceId: string,
     newName: string
   ) => Promise<{ success: boolean; error?: string }>;
@@ -263,28 +263,38 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         },
       });
       list.push({
-        id: CommandIds.workspaceRename(),
-        title: "Rename Current Workspace…",
+        id: CommandIds.workspaceEditTitle(),
+        title: "Edit Current Workspace Title…",
         subtitle: workspaceDisplayName,
+        shortcutHint: formatKeybind(KEYBINDS.EDIT_WORKSPACE_TITLE),
         section: section.workspaces,
         run: () => undefined,
         prompt: {
-          title: "Rename Workspace",
+          title: "Edit Workspace Title",
           fields: [
             {
               type: "text",
-              name: "newName",
-              label: "New name",
-              placeholder: "Enter new workspace name",
-              // Use workspace metadata name (not path) for initial value
-              initialValue: p.workspaceMetadata.get(selected.workspaceId)?.name ?? "",
-              getInitialValue: () => p.workspaceMetadata.get(selected.workspaceId)?.name ?? "",
-              validate: (v) => (!v.trim() ? "Name is required" : null),
+              name: "newTitle",
+              label: "New title",
+              placeholder: "Enter new workspace title",
+              initialValue: p.workspaceMetadata.get(selected.workspaceId)?.title ?? "",
+              getInitialValue: () => p.workspaceMetadata.get(selected.workspaceId)?.title ?? "",
+              validate: (v) => (!v.trim() ? "Title is required" : null),
             },
           ],
           onSubmit: async (vals) => {
-            await p.onRenameWorkspace(selected.workspaceId, vals.newName.trim());
+            await p.onUpdateTitle(selected.workspaceId, vals.newTitle.trim());
           },
+        },
+      });
+      list.push({
+        id: CommandIds.workspaceGenerateTitle(),
+        title: "Generate New Title for Current Workspace",
+        subtitle: workspaceDisplayName,
+        shortcutHint: formatKeybind(KEYBINDS.GENERATE_WORKSPACE_TITLE),
+        section: section.workspaces,
+        run: async () => {
+          await p.api?.workspace.regenerateTitle({ workspaceId: selected.workspaceId });
         },
       });
     }
@@ -328,12 +338,12 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         },
       });
       list.push({
-        id: CommandIds.workspaceRenameAny(),
-        title: "Rename Workspace…",
+        id: CommandIds.workspaceEditTitleAny(),
+        title: "Edit Workspace Title…",
         section: section.workspaces,
         run: () => undefined,
         prompt: {
-          title: "Rename Workspace",
+          title: "Edit Workspace Title",
           fields: [
             {
               type: "select",
@@ -358,20 +368,20 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
             },
             {
               type: "text",
-              name: "newName",
-              label: "New name",
-              placeholder: "Enter new workspace name",
+              name: "newTitle",
+              label: "New title",
+              placeholder: "Enter new workspace title",
               getInitialValue: (values) => {
                 const meta = Array.from(p.workspaceMetadata.values()).find(
                   (m) => m.id === values.workspaceId
                 );
-                return meta ? meta.name : "";
+                return meta?.title ?? "";
               },
-              validate: (v) => (!v.trim() ? "Name is required" : null),
+              validate: (v) => (!v.trim() ? "Title is required" : null),
             },
           ],
           onSubmit: async (vals) => {
-            await p.onRenameWorkspace(vals.workspaceId, vals.newName.trim());
+            await p.onUpdateTitle(vals.workspaceId, vals.newTitle.trim());
           },
         },
       });

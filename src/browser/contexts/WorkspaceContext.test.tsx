@@ -574,7 +574,7 @@ describe("WorkspaceContext", () => {
     expect(result.error).toBe("Failed");
   });
 
-  test("renameWorkspace updates workspace title (now uses updateTitle API)", async () => {
+  test("updateWorkspaceTitle updates workspace title via updateTitle API", async () => {
     const initialWorkspaces = [
       createWorkspaceMetadata({
         id: "ws-title-edit",
@@ -610,7 +610,7 @@ describe("WorkspaceContext", () => {
       }),
     ]);
 
-    await ctx().renameWorkspace("ws-title-edit", "New Title");
+    await ctx().updateWorkspaceTitle("ws-title-edit", "New Title");
 
     expect(workspaceApi.updateTitle).toHaveBeenCalledWith({
       workspaceId: "ws-title-edit",
@@ -618,7 +618,7 @@ describe("WorkspaceContext", () => {
     });
   });
 
-  test("renameWorkspace handles failure gracefully", async () => {
+  test("updateWorkspaceTitle handles failure gracefully", async () => {
     const { workspace: workspaceApi } = createMockAPI();
 
     const ctx = await setup();
@@ -628,7 +628,7 @@ describe("WorkspaceContext", () => {
       error: "Failed",
     });
 
-    const result = await ctx().renameWorkspace("ws-1", "new");
+    const result = await ctx().updateWorkspaceTitle("ws-1", "new");
     expect(result.success).toBe(false);
     expect(result.error).toBe("Failed");
   });
