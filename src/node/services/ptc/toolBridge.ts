@@ -18,6 +18,7 @@ const EXCLUDED_TOOLS = new Set([
   "todo_read", // UI-specific
   "status_set", // UI-specific
   "agent_report", // Must be top-level for taskService to read args from history
+  "switch_agent", // Must be top-level for stream-end detection
 ]);
 
 /**

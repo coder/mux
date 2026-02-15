@@ -107,9 +107,10 @@ describe("StreamManager - stopWhen configuration", () => {
     if (!Array.isArray(stopWhen)) {
       throw new Error("Expected autonomous stopWhen to be an array of conditions");
     }
-    expect(stopWhen).toHaveLength(3);
+    expect(stopWhen).toHaveLength(4);
 
-    const [maxStepCondition, queuedMessageCondition, agentReportCondition] = stopWhen;
+    const [maxStepCondition, queuedMessageCondition, agentReportCondition, switchAgentCondition] =
+      stopWhen;
     expect(maxStepCondition({ steps: new Array(99999) })).toBe(false);
     expect(maxStepCondition({ steps: new Array(100000) })).toBe(true);
 
@@ -120,6 +121,12 @@ describe("StreamManager - stopWhen configuration", () => {
     expect(
       agentReportCondition({
         steps: [{ toolResults: [{ toolName: "agent_report", output: { success: true } }] }],
+      })
+    ).toBe(true);
+
+    expect(
+      switchAgentCondition({
+        steps: [{ toolResults: [{ toolName: "switch_agent", output: { ok: true } }] }],
       })
     ).toBe(true);
   });
@@ -171,6 +178,55 @@ describe("StreamManager - stopWhen configuration", () => {
 
     // Returns false when no steps.
     expect(reportStop({ steps: [] })).toBe(false);
+  });
+
+  test("stops only after successful switch_agent tool result in autonomous mode", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({ hasQueuedMessage: () => false });
+    if (!Array.isArray(stopWhen)) {
+      throw new Error("Expected autonomous stopWhen to be an array of conditions");
+    }
+
+    const [, , , switchStop] = stopWhen;
+    if (!switchStop) {
+      throw new Error("Expected autonomous stopWhen to include switch_agent condition");
+    }
+
+    // Returns true when step contains successful switch_agent tool result.
+    expect(
+      switchStop({
+        steps: [{ toolResults: [{ toolName: "switch_agent", output: { ok: true } }] }],
+      })
+    ).toBe(true);
+
+    // Returns false when step contains failed switch_agent output.
+    expect(
+      switchStop({
+        steps: [{ toolResults: [{ toolName: "switch_agent", output: { ok: false } }] }],
+      })
+    ).toBe(false);
+
+    // Returns false when step only contains switch_agent tool call (no successful result yet).
+    expect(
+      switchStop({
+        steps: [{ toolCalls: [{ toolName: "switch_agent" }] }],
+      })
+    ).toBe(false);
+
+    // Returns false when step contains other tool results.
+    expect(
+      switchStop({
+        steps: [{ toolResults: [{ toolName: "bash", output: { ok: true } }] }],
+      })
+    ).toBe(false);
+
+    // Returns false when no steps.
+    expect(switchStop({ steps: [] })).toBe(false);
   });
 
   test("treats missing queued-message callback as not queued", () => {

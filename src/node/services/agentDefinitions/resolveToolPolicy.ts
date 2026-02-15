@@ -17,12 +17,14 @@ export interface ResolveToolPolicyOptions {
   agents: readonly AgentLikeForPolicy[];
   isSubagent: boolean;
   disableTaskToolsForDepth: boolean;
+  enableAgentSwitchTool: boolean;
 }
 
 // Runtime restrictions that cannot be overridden by agent definitions
 const SUBAGENT_HARD_DENY: ToolPolicy = [
   { regex_match: "propose_plan", action: "disable" },
   { regex_match: "ask_user_question", action: "disable" },
+  { regex_match: "switch_agent", action: "disable" },
 ];
 
 const DEPTH_HARD_DENY: ToolPolicy = [
@@ -47,7 +49,7 @@ const DEPTH_HARD_DENY: ToolPolicy = [
  * Subagents always get `agent_report` enabled regardless of their tool list.
  */
 export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): ToolPolicy {
-  const { agents, isSubagent, disableTaskToolsForDepth } = options;
+  const { agents, isSubagent, disableTaskToolsForDepth, enableAgentSwitchTool } = options;
 
   // Start with deny-all baseline
   const agentPolicy: ToolPolicy = [{ regex_match: ".*", action: "disable" }];
@@ -81,6 +83,13 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
 
   if (disableTaskToolsForDepth) {
     runtimePolicy.push(...DEPTH_HARD_DENY);
+  }
+
+  // switch_agent is disabled by default and only enabled for Auto-started sessions.
+  // This must come before the subagent hard-deny so the deny takes precedence.
+  runtimePolicy.push({ regex_match: "switch_agent", action: "disable" });
+  if (enableAgentSwitchTool && !isSubagent) {
+    runtimePolicy.push({ regex_match: "switch_agent", action: "enable" });
   }
 
   if (isSubagent) {
