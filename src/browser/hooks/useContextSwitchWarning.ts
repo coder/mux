@@ -8,7 +8,7 @@
 import { useReducer, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
-import type { SendMessageOptions } from "@/common/orpc/types";
+import type { ProvidersConfigMap, SendMessageOptions } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
@@ -25,7 +25,6 @@ import {
   consumeWorkspaceModelChange,
   setWorkspaceModelWithOrigin,
 } from "@/browser/utils/modelChange";
-import { useProvidersConfig } from "./useProvidersConfig";
 import { executeCompaction } from "@/browser/utils/chatCommands";
 
 interface UseContextSwitchWarningProps {
@@ -36,6 +35,7 @@ interface UseContextSwitchWarningProps {
   workspaceUsage: WorkspaceUsageState | undefined;
   api: RouterClient<AppRouter> | undefined;
   pendingSendOptions: SendMessageOptions;
+  providersConfig: ProvidersConfigMap | null;
 }
 
 interface UseContextSwitchWarningResult {
@@ -124,13 +124,20 @@ function switchReducer(state: SwitchState, action: SwitchAction): SwitchState {
 export function useContextSwitchWarning(
   props: UseContextSwitchWarningProps
 ): UseContextSwitchWarningResult {
-  const { workspaceId, messages, pendingModel, use1M, workspaceUsage, api, pendingSendOptions } =
-    props;
+  const {
+    workspaceId,
+    messages,
+    pendingModel,
+    use1M,
+    workspaceUsage,
+    api,
+    pendingSendOptions,
+    providersConfig,
+  } = props;
 
   const [switchState, dispatch] = useReducer(switchReducer, pendingModel, createSwitchState);
   const warning = switchState.warning;
   const prevUse1MRef = useRef(use1M);
-  const { config: providersConfig } = useProvidersConfig();
   const policyState = usePolicy();
   const effectivePolicy =
     policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
@@ -143,6 +150,8 @@ export function useContextSwitchWarning(
 
   const prevCheckOptionsRef = useRef(checkOptions);
   const prevWarningPreviousModelRef = useRef<string | null>(null);
+  const lastEvaluatedTargetModelRef = useRef<string | null>(null);
+  const dismissedWarningModelRef = useRef<string | null>(null);
   const prevWorkspaceIdRef = useRef(workspaceId);
 
   // ChatPane is keyed by workspaceId today; keep a defensive reset to avoid stale warnings
@@ -153,6 +162,8 @@ export function useContextSwitchWarning(
       prevUse1MRef.current = use1M;
       prevCheckOptionsRef.current = checkOptions;
       prevWarningPreviousModelRef.current = null;
+      lastEvaluatedTargetModelRef.current = null;
+      dismissedWarningModelRef.current = null;
       dispatch({ type: "RESET", model: pendingModel });
     }
   }, [workspaceId, pendingModel, use1M, checkOptions]);
@@ -177,7 +188,7 @@ export function useContextSwitchWarning(
       });
 
       if (suggestion) {
-        const limit = getEffectiveContextLimit(suggestion.modelId, use1M);
+        const limit = getEffectiveContextLimit(suggestion.modelId, use1M, providersConfig);
         if (limit && limit > w.currentTokens) {
           return { ...w, compactionModel: suggestion.modelId, errorMessage: null };
         }
@@ -198,6 +209,7 @@ export function useContextSwitchWarning(
         return null;
       }
 
+      lastEvaluatedTargetModelRef.current = options.targetModel;
       const previousModel = options.previousModel ?? findPreviousModel(messages);
       prevWarningPreviousModelRef.current = previousModel;
       const result = checkContextSwitch(
@@ -226,6 +238,7 @@ export function useContextSwitchWarning(
         deferred: tokens === 0,
       };
 
+      dismissedWarningModelRef.current = null;
       dispatch({ type: "USER_REQUESTED_MODEL", pending: pendingSwitch });
 
       if (pendingSwitch.deferred) {
@@ -268,8 +281,9 @@ export function useContextSwitchWarning(
   }, [api, workspaceId, pendingSendOptions, warning]);
 
   const handleDismiss = useCallback(() => {
+    dismissedWarningModelRef.current = warning?.targetModel ?? pendingModel;
     dispatch({ type: "CLEAR_WARNING" });
-  }, []);
+  }, [warning, pendingModel]);
 
   // Sync with indirect model changes (e.g., WorkspaceModeAISync updating model on mode/agent change).
   // Effect is appropriate: pendingModel comes from usePersistedState (localStorage).
@@ -279,6 +293,7 @@ export function useContextSwitchWarning(
       return;
     }
 
+    dismissedWarningModelRef.current = null;
     const origin = consumeWorkspaceModelChange(workspaceId, pendingModel);
     // Agent/mode switches call setWorkspaceModelWithOrigin, so they flow through this explicit path.
     if (origin === "user" || origin === "agent") {
@@ -319,28 +334,61 @@ export function useContextSwitchWarning(
     const checkOptionsChanged = prevCheckOptions !== checkOptions;
     prevCheckOptionsRef.current = checkOptions;
 
-    if (!checkOptionsChanged || !warning) {
+    if (!checkOptionsChanged) {
       return;
     }
 
-    // User request: keep explicit warnings tied to the model that triggered them.
-    // If a background model change happens, skip refresh instead of re-warning.
-    if (warning.targetModel !== pendingModel) {
+    const gainedAccessData =
+      (prevCheckOptions.providersConfig === null && checkOptions.providersConfig !== null) ||
+      (prevCheckOptions.policy === null && checkOptions.policy !== null);
+
+    if (warning) {
+      // User request: keep explicit warnings tied to the model that triggered them.
+      // If a background model change happens, skip refresh instead of re-warning.
+      if (warning.targetModel !== pendingModel) {
+        return;
+      }
+
+      // Refresh existing warnings when policy/config arrives so compaction suggestions appear.
+      // Only update active warnings to avoid resurrecting dismissed banners.
+      // Preserve same-model warnings (like 1M toggle) when refreshing for policy/config updates.
+      const nextWarning = evaluateWarning({
+        tokens,
+        targetModel: pendingModel,
+        previousModel: prevWarningPreviousModelRef.current,
+        allowSameModel: true,
+      });
+      if (areWarningsEqual(warning, nextWarning)) {
+        return;
+      }
+      dispatch({ type: "WARNING_UPDATED", warning: nextWarning });
       return;
     }
 
-    // Refresh existing warnings when policy/config arrives so compaction suggestions appear.
-    // Only update active warnings to avoid resurrecting dismissed banners.
-    // Preserve same-model warnings (like 1M toggle) when refreshing for policy/config updates.
+    if (!gainedAccessData || tokens === 0) {
+      return;
+    }
+
+    // Re-evaluate explicit switches that happened before provider/policy config loaded.
+    // Without this, custom-model overrides may arrive after we already concluded "no warning".
+    if (lastEvaluatedTargetModelRef.current !== pendingModel) {
+      return;
+    }
+
+    if (dismissedWarningModelRef.current === pendingModel) {
+      return;
+    }
+
     const nextWarning = evaluateWarning({
       tokens,
       targetModel: pendingModel,
       previousModel: prevWarningPreviousModelRef.current,
       allowSameModel: true,
     });
-    if (areWarningsEqual(warning, nextWarning)) {
+    if (!nextWarning) {
       return;
     }
+
     dispatch({ type: "WARNING_UPDATED", warning: nextWarning });
   }, [checkOptions, warning, tokens, pendingModel, evaluateWarning]);
 
@@ -355,8 +403,8 @@ export function useContextSwitchWarning(
     // OFF → ON: may clear warning if context now fits
     // ON → OFF: may show warning if context no longer fits
     if (wasEnabled !== use1M) {
-      const previousLimit = getEffectiveContextLimit(pendingModel, wasEnabled);
-      const nextLimit = getEffectiveContextLimit(pendingModel, use1M);
+      const previousLimit = getEffectiveContextLimit(pendingModel, wasEnabled, providersConfig);
+      const nextLimit = getEffectiveContextLimit(pendingModel, use1M, providersConfig);
 
       // Only surface same-model warnings if the effective limit actually changed.
       if (previousLimit === nextLimit) {
@@ -383,7 +431,7 @@ export function useContextSwitchWarning(
         dispatch({ type: "CLEAR_WARNING" });
       }
     }
-  }, [use1M, pendingModel, tokens, messages, evaluateWarning, warning]);
+  }, [use1M, pendingModel, tokens, messages, providersConfig, evaluateWarning, warning]);
 
   return { warning, handleModelChange, handleCompact, handleDismiss };
 }

@@ -70,6 +70,23 @@ describe("checkAutoCompaction", () => {
       expect(result.thresholdPercentage).toBe(70);
     });
 
+    test("uses custom context overrides for unknown models", () => {
+      const usage = createMockUsage(80_000, undefined, "openai:custom-context-model");
+      const result = checkAutoCompaction(usage, "openai:custom-context-model", false, 0.7, 10, {
+        openai: {
+          apiKeySet: true,
+          isEnabled: true,
+          isConfigured: true,
+          models: [{ id: "custom-context-model", contextWindowTokens: 100_000 }],
+        },
+      });
+
+      expect(result.shouldShowWarning).toBe(true);
+      expect(result.shouldForceCompact).toBe(true);
+      expect(result.usagePercentage).toBe(80);
+      expect(result.thresholdPercentage).toBe(70);
+    });
+
     test("returns false when usage is low (10%)", () => {
       const usage = createMockUsage(20_000); // 10% of 200k
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);

@@ -13,13 +13,15 @@ import { isProviderSupported, migrateGatewayModel } from "./useGatewayModels";
 import { isValidProvider } from "@/common/constants/providers";
 import { isModelAllowedByPolicy } from "@/browser/utils/policyUi";
 import { getModelProvider } from "@/common/utils/ai/models";
-import type { ProvidersConfigMap } from "@/common/orpc/types";
+import type { ProviderModelEntry, ProvidersConfigMap } from "@/common/orpc/types";
 import {
   DEFAULT_MODEL_KEY,
   GATEWAY_ENABLED_KEY,
   GATEWAY_MODELS_KEY,
   HIDDEN_MODELS_KEY,
 } from "@/common/constants/storage";
+
+import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
 
 const BUILT_IN_MODELS: string[] = Object.values(KNOWN_MODELS).map((m) => m.id);
 const BUILT_IN_MODEL_SET = new Set<string>(BUILT_IN_MODELS);
@@ -33,7 +35,8 @@ function getCustomModels(config: ProvidersConfigMap | null): string[] {
     // Only surface custom models from enabled providers
     if (!info.isEnabled) continue;
     if (!info.models) continue;
-    for (const modelId of info.models) {
+    for (const modelEntry of info.models) {
+      const modelId = getProviderModelEntryId(modelEntry);
       models.push(`${provider}:${modelId}`);
     }
   }
@@ -60,7 +63,8 @@ function getAllCustomModels(config: ProvidersConfigMap | null): string[] {
     if (provider === "mux-gateway") continue;
     if (!info.models) continue;
 
-    for (const modelId of info.models) {
+    for (const modelEntry of info.models) {
+      const modelId = getProviderModelEntryId(modelEntry);
       models.push(`${provider}:${modelId}`);
     }
   }
@@ -315,8 +319,8 @@ export function useModelsFromSettings() {
 
       const run = async () => {
         const providerConfig = config ?? (await api.providers.getConfig());
-        const existingModels = providerConfig[provider]?.models ?? [];
-        if (existingModels.includes(modelId)) return;
+        const existingModels: ProviderModelEntry[] = providerConfig[provider]?.models ?? [];
+        if (existingModels.some((entry) => getProviderModelEntryId(entry) === modelId)) return;
 
         await api.providers.setModels({ provider, models: [...existingModels, modelId] });
         await refresh();

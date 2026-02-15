@@ -21,6 +21,8 @@ import { cleanup, render, waitFor } from "@testing-library/react";
 
 import { APIProvider, useAPI } from "@/browser/contexts/API";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
+import type { ProviderModelEntry } from "@/common/orpc/types";
+import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
 
 import { shouldRunIntegrationTests } from "../../testUtils";
 import {
@@ -36,7 +38,7 @@ const describeIntegration = shouldRunIntegrationTests() ? describe : describe.sk
 function AddCustomModelHarness(props: {
   provider: string;
   modelId: string;
-  onDone: (modelsSent: string[]) => void;
+  onDone: (modelsSent: ProviderModelEntry[]) => void;
 }) {
   const { api } = useAPI();
   const { config, loading, updateModelsOptimistically } = useProvidersConfig();
@@ -90,7 +92,7 @@ describeIntegration("Custom Models", () => {
     }
 
     let done = false;
-    let modelsSent: string[] | null = null;
+    let modelsSent: ProviderModelEntry[] | null = null;
 
     const testModelId = "claude-test-custom-model";
 
@@ -116,10 +118,14 @@ describeIntegration("Custom Models", () => {
         { timeout: 10_000 }
       );
 
-      expect(modelsSent ?? []).toContain(testModelId);
+      expect((modelsSent ?? []).map((entry) => getProviderModelEntryId(entry))).toContain(
+        testModelId
+      );
 
       const cfg = await env.orpc.providers.getConfig();
-      expect(cfg.anthropic.models ?? []).toContain(testModelId);
+      expect((cfg.anthropic.models ?? []).map((entry) => getProviderModelEntryId(entry))).toContain(
+        testModelId
+      );
     } finally {
       view.unmount();
       cleanup();
