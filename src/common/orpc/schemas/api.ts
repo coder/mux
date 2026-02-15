@@ -138,6 +138,8 @@ export const ProviderConfigInfoSchema = z.object({
    * ChatGPT OAuth and an OpenAI API key are configured.
    */
   codexOauthDefaultAuth: z.enum(["oauth", "apiKey"]).optional(),
+  /** OpenAI-only: auth mode — API key (default) or Azure Entra ID keyless auth. */
+  openaiAuthMode: z.enum(["apiKey", "entra"]).optional(),
   /** AWS-specific fields (only present for bedrock provider) */
   aws: AWSCredentialStatusSchema.optional(),
   /** Mux Gateway-specific fields */

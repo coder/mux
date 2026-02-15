@@ -118,8 +118,9 @@ test.describe("Settings", () => {
     await expect(openaiButton).toBeVisible();
     await openaiButton.click();
 
-    // Wait for the provider section to expand - API Key label should be visible
-    await expect(page.getByText("API Key", { exact: true })).toBeVisible();
+    // Wait for the provider section to expand - the API Key field label should be visible.
+    // Use a label locator to avoid matching the new "API Key" auth-mode option text.
+    await expect(page.locator("label", { hasText: "API Key" }).first()).toBeVisible();
 
     // Verify API key is not set initially (shows "Not set")
     await expect(page.getByText("Not set").first()).toBeVisible();
@@ -148,7 +149,7 @@ test.describe("Settings", () => {
 
     // Expand OpenAI again
     await openaiButton.click();
-    await expect(page.getByText("API Key", { exact: true })).toBeVisible();
+    await expect(page.locator("label", { hasText: "API Key" }).first()).toBeVisible();
 
     // The API key should still show as set
     await expect(page.getByText("••••••••")).toBeVisible();

@@ -419,6 +419,12 @@ function generateProviderEnvVarsBlock(): string {
           " | Organization ID     |"
       );
     }
+    if (vars.authMode?.length) {
+      lines.push(
+        `| ${displayName.padEnd(12)} | \`${vars.authMode[0]}\``.padEnd(42) +
+          " | Auth mode (`apiKey`/`entra`) |"
+      );
+    }
   }
 
   // Azure OpenAI (special case)

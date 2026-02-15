@@ -23,6 +23,7 @@ export const PROVIDER_ENV_VARS: Partial<
       apiKey?: string[];
       baseUrl?: string[];
       organization?: string[];
+      authMode?: string[];
       region?: string[];
     }
   >
@@ -35,6 +36,7 @@ export const PROVIDER_ENV_VARS: Partial<
     apiKey: ["OPENAI_API_KEY"],
     baseUrl: ["OPENAI_BASE_URL", "OPENAI_API_BASE"],
     organization: ["OPENAI_ORG_ID"],
+    authMode: ["OPENAI_AUTH_MODE"],
   },
   google: {
     apiKey: ["GOOGLE_GENERATIVE_AI_API_KEY", "GOOGLE_API_KEY"],
@@ -95,6 +97,7 @@ export interface ProviderConfigRaw {
   couponCode?: string;
   voucher?: string; // legacy mux-gateway field
   organization?: string; // OpenAI org ID
+  authMode?: unknown; // OpenAI auth mode (apiKey | entra)
 }
 
 /** Result of resolving provider credentials */
@@ -109,6 +112,7 @@ export interface ResolvedCredentials {
   couponCode?: string; // mux-gateway
   baseUrl?: string; // from config or env
   organization?: string; // openai
+  authMode?: "entra"; // openai entra keyless mode
 }
 
 /** Legacy alias for backward compatibility */
@@ -163,9 +167,19 @@ export function resolveProviderCredentials(
   const baseUrl = config.baseURL ?? config.baseUrl ?? resolveEnv(envMapping?.baseUrl, env);
   // Config organization takes precedence over env var (user's explicit choice)
   const organization = config.organization ?? resolveEnv(envMapping?.organization, env);
+  const configAuthMode = typeof config.authMode === "string" ? config.authMode.trim() : undefined;
+  const envAuthMode = resolveEnv(envMapping?.authMode, env);
+  const rawAuthMode = configAuthMode ?? envAuthMode;
+  const authMode = rawAuthMode === "apiKey" || rawAuthMode === "entra" ? rawAuthMode : undefined;
 
   if (apiKey) {
     return { isConfigured: true, apiKey, baseUrl, organization };
+  }
+
+  // Enterprise Azure OpenAI deployments can use keyless auth via DefaultAzureCredential.
+  // This path is only active with explicit opt-in (authMode=entra) and an Azure endpoint.
+  if (provider === "openai" && authMode === "entra" && baseUrl) {
+    return { isConfigured: true, baseUrl, organization, authMode: "entra" };
   }
 
   return { isConfigured: false, missingRequirement: "api_key" };
@@ -211,6 +225,18 @@ export function buildProvidersFromEnv(
       if (creds.baseUrl) entry.baseUrl = creds.baseUrl;
       if (creds.organization) entry.organization = creds.organization;
       providers[provider] = entry;
+      continue;
+    }
+
+    if (
+      provider === "openai" &&
+      creds.isConfigured &&
+      creds.authMode === "entra" &&
+      creds.baseUrl
+    ) {
+      const entry: ProviderConfig = { authMode: "entra", baseUrl: creds.baseUrl };
+      if (creds.organization) entry.organization = creds.organization;
+      providers.openai = entry;
     }
   }
 
