@@ -406,6 +406,15 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     }
   }, [isEditing]);
 
+  const wasEditingRef = useRef(false);
+  useEffect(() => {
+    if (isEditing && !wasEditingRef.current) {
+      setEditingTitle(displayTitle);
+      setTitleError(null);
+    }
+    wasEditingRef.current = isEditing;
+  }, [isEditing, displayTitle]);
+
   // Clean up long-press timer on unmount
   useEffect(() => {
     return () => {

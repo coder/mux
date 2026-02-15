@@ -277,8 +277,14 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
               name: "newTitle",
               label: "New title",
               placeholder: "Enter new workspace title",
-              initialValue: p.workspaceMetadata.get(selected.workspaceId)?.title ?? "",
-              getInitialValue: () => p.workspaceMetadata.get(selected.workspaceId)?.title ?? "",
+              initialValue:
+                p.workspaceMetadata.get(selected.workspaceId)?.title ??
+                p.workspaceMetadata.get(selected.workspaceId)?.name ??
+                "",
+              getInitialValue: () => {
+                const current = p.workspaceMetadata.get(selected.workspaceId);
+                return current?.title ?? current?.name ?? "";
+              },
               validate: (v) => (!v.trim() ? "Title is required" : null),
             },
           ],
@@ -375,7 +381,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                 const meta = Array.from(p.workspaceMetadata.values()).find(
                   (m) => m.id === values.workspaceId
                 );
-                return meta?.title ?? "";
+                return meta?.title ?? meta?.name ?? "";
               },
               validate: (v) => (!v.trim() ? "Title is required" : null),
             },
