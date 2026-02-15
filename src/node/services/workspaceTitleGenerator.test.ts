@@ -1,5 +1,12 @@
+import { APICallError, RetryError } from "ai";
 import { describe, expect, test } from "bun:test";
-import { extractIdentityFromText, extractTextFromContentParts } from "./workspaceTitleGenerator";
+import type { SendMessageError } from "@/common/types/errors";
+import {
+  extractIdentityFromText,
+  extractTextFromContentParts,
+  mapModelCreationError,
+  mapNameGenerationError,
+} from "./workspaceTitleGenerator";
 
 describe("extractIdentityFromText", () => {
   test("extracts from markdown bold + backtick format", () => {
@@ -139,5 +146,174 @@ describe("extractTextFromContentParts", () => {
 
   test("returns null for non-array input", () => {
     expect(extractTextFromContentParts({ type: "text", text: "nope" })).toBeNull();
+  });
+});
+
+const createApiCallError = (
+  statusCode: number,
+  message = `HTTP ${statusCode}`,
+  overrides?: {
+    data?: unknown;
+    responseBody?: string;
+  }
+): APICallError =>
+  new APICallError({
+    message,
+    statusCode,
+    url: "https://api.example.com/v1/responses",
+    requestBodyValues: {},
+    data: overrides?.data,
+    responseBody: overrides?.responseBody,
+  });
+
+describe("workspaceTitleGenerator error mappers", () => {
+  describe("mapNameGenerationError", () => {
+    test("maps APICallError 401 to authentication", () => {
+      const mapped = mapNameGenerationError(
+        createApiCallError(401, "Unauthorized"),
+        "openai:gpt-4.1-mini"
+      );
+      expect(mapped).toMatchObject({
+        type: "authentication",
+        authKind: "invalid_credentials",
+      });
+    });
+
+    test("maps APICallError 403 to permission_denied", () => {
+      const mapped = mapNameGenerationError(
+        createApiCallError(403, "Forbidden"),
+        "openai:gpt-4.1-mini"
+      );
+      expect(mapped).toMatchObject({ type: "permission_denied" });
+    });
+
+    test("maps APICallError 402 to quota", () => {
+      const mapped = mapNameGenerationError(
+        createApiCallError(402, "Payment Required"),
+        "openai:gpt-4.1-mini"
+      );
+      expect(mapped).toMatchObject({ type: "quota" });
+    });
+
+    test("maps APICallError 429 with quota payload to quota", () => {
+      const mapped = mapNameGenerationError(
+        createApiCallError(429, "Request failed", {
+          data: { error: { code: "insufficient_quota", message: "Please add credits" } },
+          responseBody: '{"error":{"code":"insufficient_quota","message":"Please add credits"}}',
+        }),
+        "openai:gpt-4.1-mini"
+      );
+      expect(mapped).toMatchObject({ type: "quota" });
+    });
+
+    test("maps APICallError 429 throttling to rate_limit", () => {
+      const mapped = mapNameGenerationError(
+        createApiCallError(429, "Too Many Requests"),
+        "openai:gpt-4.1-mini"
+      );
+      expect(mapped).toMatchObject({ type: "rate_limit" });
+    });
+
+    test("maps APICallError 429 with quota wording but no billing markers to rate_limit", () => {
+      const mapped = mapNameGenerationError(
+        createApiCallError(429, "Per-minute quota limit reached. Retry in 10s."),
+        "openai:gpt-4.1-mini"
+      );
+      expect(mapped).toMatchObject({ type: "rate_limit" });
+    });
+
+    test("maps APICallError 500 to service_unavailable", () => {
+      const mapped = mapNameGenerationError(
+        createApiCallError(500, "Internal Server Error"),
+        "openai:gpt-4.1-mini"
+      );
+      expect(mapped).toMatchObject({ type: "service_unavailable" });
+    });
+
+    test("maps APICallError 503 to service_unavailable", () => {
+      const mapped = mapNameGenerationError(
+        createApiCallError(503, "Service Unavailable"),
+        "openai:gpt-4.1-mini"
+      );
+      expect(mapped).toMatchObject({ type: "service_unavailable" });
+    });
+
+    test("unwraps RetryError lastError when mapping", () => {
+      const apiCallError = createApiCallError(401, "Unauthorized");
+      const retryError = new RetryError({
+        message: "Retry failed",
+        reason: "maxRetriesExceeded",
+        errors: [apiCallError],
+      });
+
+      const mapped = mapNameGenerationError(retryError, "openai:gpt-4.1-mini");
+      expect(mapped).toMatchObject({
+        type: "authentication",
+        authKind: "invalid_credentials",
+      });
+    });
+
+    test("maps fetch TypeError to network", () => {
+      const mapped = mapNameGenerationError(new TypeError("fetch failed"), "openai:gpt-4.1-mini");
+      expect(mapped).toMatchObject({ type: "network" });
+    });
+
+    test("maps generic Error to unknown", () => {
+      const mapped = mapNameGenerationError(new Error("something"), "openai:gpt-4.1-mini");
+      expect(mapped).toMatchObject({ type: "unknown" });
+    });
+
+    test("maps non-Error input to unknown", () => {
+      const mapped = mapNameGenerationError("something", "openai:gpt-4.1-mini");
+      expect(mapped).toMatchObject({ type: "unknown" });
+    });
+  });
+
+  describe("mapModelCreationError", () => {
+    test("maps api_key_not_found to authentication with provider", () => {
+      const error: SendMessageError = { type: "api_key_not_found", provider: "anthropic" };
+      const mapped = mapModelCreationError(error, "openai:gpt-4.1-mini");
+      expect(mapped).toEqual({
+        type: "authentication",
+        authKind: "api_key_missing",
+        provider: "anthropic",
+      });
+    });
+
+    test("maps oauth_not_connected to authentication with provider", () => {
+      const error: SendMessageError = { type: "oauth_not_connected", provider: "openai" };
+      const mapped = mapModelCreationError(error, "anthropic:claude-3-5-haiku");
+      expect(mapped).toEqual({
+        type: "authentication",
+        authKind: "oauth_not_connected",
+        provider: "openai",
+      });
+    });
+
+    test("maps provider_disabled to configuration", () => {
+      const error: SendMessageError = { type: "provider_disabled", provider: "google" };
+      const mapped = mapModelCreationError(error, "google:gemini-2.0-flash");
+      expect(mapped).toMatchObject({ type: "configuration" });
+    });
+
+    test("maps provider_not_supported to configuration", () => {
+      const error: SendMessageError = { type: "provider_not_supported", provider: "custom" };
+      const mapped = mapModelCreationError(error, "custom:model");
+      expect(mapped).toMatchObject({ type: "configuration" });
+    });
+
+    test("maps policy_denied to policy", () => {
+      const error: SendMessageError = { type: "policy_denied", message: "Provider blocked" };
+      const mapped = mapModelCreationError(error, "openai:gpt-4.1-mini");
+      expect(mapped).toMatchObject({ type: "policy" });
+    });
+
+    test("maps unknown to unknown with raw preserved", () => {
+      const result = mapModelCreationError(
+        { type: "unknown", raw: "Some detailed error" },
+        "openai:gpt-4o"
+      );
+      expect(result).toEqual({ type: "unknown", raw: "Some detailed error" });
+    });
   });
 });

@@ -39,3 +39,28 @@ export const StreamErrorTypeSchema = z.enum([
   "runtime_start_failed", // Runtime is starting or temporarily unavailable (retryable)
   "unknown", // Catch-all
 ]);
+
+export const NameGenerationErrorSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("authentication"),
+    authKind: z.enum(["api_key_missing", "oauth_not_connected", "invalid_credentials"]),
+    provider: z.string().nullish(),
+    raw: z.string().nullish(),
+  }),
+  z.object({
+    type: z.literal("permission_denied"),
+    provider: z.string().nullish(),
+    raw: z.string().nullish(),
+  }),
+  z.object({
+    type: z.literal("policy"),
+    provider: z.string().nullish(),
+    raw: z.string().nullish(),
+  }),
+  z.object({ type: z.literal("rate_limit"), raw: z.string().nullish() }),
+  z.object({ type: z.literal("quota"), raw: z.string().nullish() }),
+  z.object({ type: z.literal("service_unavailable"), raw: z.string().nullish() }),
+  z.object({ type: z.literal("network"), raw: z.string().nullish() }),
+  z.object({ type: z.literal("configuration"), raw: z.string().nullish() }),
+  z.object({ type: z.literal("unknown"), raw: z.string() }),
+]);

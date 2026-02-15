@@ -1,0 +1,116 @@
+/**
+ * Format a NameGenerationError into user-friendly actionable messages.
+ * Follows the pattern of formatSendMessageError in formatSendError.ts.
+ */
+
+import { PROVIDER_DISPLAY_NAMES, type ProviderName } from "@/common/constants/providers";
+import type { NameGenerationError } from "@/common/types/errors";
+
+const getProviderDisplayName = (provider: string): string =>
+  PROVIDER_DISPLAY_NAMES[provider as ProviderName] ?? provider;
+
+export interface FormattedNameError {
+  title: string;
+  message: string;
+  hint?: string;
+  docsPath?: string;
+}
+
+export function formatNameGenerationError(error: NameGenerationError): FormattedNameError {
+  switch (error.type) {
+    case "authentication": {
+      const provider = error.provider ? getProviderDisplayName(error.provider) : null;
+
+      if (error.authKind === "oauth_not_connected") {
+        return {
+          title: "OAuth not connected",
+          message: provider
+            ? `Workspace naming requires an OAuth connection for ${provider}.`
+            : "OAuth connection required for workspace naming.",
+          hint: provider
+            ? `Open Settings → Providers and connect your ${provider} account.`
+            : "Open Settings → Providers and connect your account.",
+          docsPath: "/config/providers",
+        };
+      }
+
+      if (error.authKind === "api_key_missing") {
+        return {
+          title: "API key missing",
+          message: provider ? `No API key configured for ${provider}.` : "No API key configured.",
+          hint: provider
+            ? `Open Settings → Providers and add an API key for ${provider}.`
+            : "Add an API key in Settings → Providers.",
+          docsPath: "/config/providers",
+        };
+      }
+
+      return {
+        title: "Authentication failed",
+        message: provider ? `Could not authenticate with ${provider}.` : "Authentication failed.",
+        hint: "Verify your credentials in Settings → Providers.",
+        docsPath: "/config/providers",
+      };
+    }
+    case "permission_denied": {
+      const provider = error.provider ? getProviderDisplayName(error.provider) : null;
+      return {
+        title: "Access denied",
+        message: provider
+          ? `Permission denied by ${provider}.`
+          : "The API key does not have permission for this operation.",
+        hint: "Verify your API key has the required permissions.",
+        docsPath: "/config/providers",
+      };
+    }
+    case "policy": {
+      const provider = error.provider ? getProviderDisplayName(error.provider) : null;
+      return {
+        title: "Blocked by policy",
+        message: provider
+          ? `An organization policy prevents using ${provider} for workspace naming.`
+          : "An organization policy prevents this model from being used.",
+        hint: "Contact your administrator or select a different provider in Settings.",
+        docsPath: "/config/providers",
+      };
+    }
+    case "rate_limit":
+      return {
+        title: "Rate limited",
+        message: "Too many requests — the provider is throttling requests.",
+        hint: "Wait a moment and try again.",
+      };
+    case "quota":
+      return {
+        title: "Quota exceeded",
+        message: "Your usage quota or billing limit has been reached.",
+        hint: "Check your billing dashboard for the provider.",
+        docsPath: "/config/providers",
+      };
+    case "service_unavailable":
+      return {
+        title: "Service unavailable",
+        message: "The AI provider is temporarily unavailable.",
+        hint: "Try again in a few moments.",
+      };
+    case "network":
+      return {
+        title: "Network error",
+        message: "Could not reach the AI provider.",
+        hint: "Check your internet connection.",
+      };
+    case "configuration":
+      return {
+        title: "Configuration issue",
+        message: error.raw ?? "No working model is configured for name generation.",
+        hint: "Ensure at least one provider is enabled in Settings → Providers.",
+        docsPath: "/config/providers",
+      };
+    case "unknown": {
+      return {
+        title: "Name generation failed",
+        message: error.raw || "An unexpected error occurred during name generation.",
+      };
+    }
+  }
+}
