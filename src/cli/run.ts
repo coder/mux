@@ -605,6 +605,10 @@ async function main(): Promise<number> {
 
   // Track usage for cost summary at end of run
   const usageHistory: ChatUsageDisplay[] = [];
+  // Running total of completed main-agent message costs (from stream-end events only,
+  // excluding session-usage-delta sub-agent rollups). Used to emit usage-cost events
+  // that don't double-count sub-agent costs (which mux-run.sh sums separately).
+  let completedMainAgentCost = 0;
   // Track latest usage-delta per message as fallback when stream-end lacks usage metadata
   const latestUsageDelta = new Map<
     string,
@@ -880,6 +884,18 @@ async function main(): Promise<number> {
       }
       if (displayUsage) {
         usageHistory.push(displayUsage);
+        // Accumulate main-agent cost for usage-cost events (excludes sub-agent rollups)
+        const messageCost = getTotalCost(displayUsage);
+        if (messageCost !== undefined) {
+          completedMainAgentCost += messageCost;
+        }
+
+        // Emit recovery cost at stream-end so providers that skip usage-delta
+        // (and only report usage in stream-end metadata) still get a cost snapshot
+        // recoverable by mux-run.sh on timeout/crash.
+        if (emitJson && completedMainAgentCost > 0) {
+          emitJsonLine({ type: "usage-cost", cost_usd: completedMainAgentCost });
+        }
 
         // Budget enforcement at stream-end for providers that don't emit usage-delta events
         // Use cumulative cost across all messages in this run (not just the current message)
@@ -963,16 +979,27 @@ async function main(): Promise<number> {
         model, // Use the model from CLI options
       });
 
+      // Compute display usage with cost for this message's cumulative tokens.
+      // Used for both budget enforcement and JSON cost tracking.
+      const displayUsage = createDisplayUsage(
+        payload.cumulativeUsage,
+        model,
+        payload.cumulativeProviderMetadata
+      );
+
+      const cost = getTotalCost(displayUsage);
+
+      // In JSON mode, emit a running main-agent cost total so that if the process
+      // is killed (e.g. by timeout) before run-complete, the fallback extraction
+      // in mux-run.sh can recover the latest cumulative cost. Uses
+      // completedMainAgentCost (stream-end events only) to avoid double-counting
+      // sub-agent costs which mux-run.sh sums separately from session-usage-delta.
+      if (emitJson && cost !== undefined) {
+        emitJsonLine({ type: "usage-cost", cost_usd: completedMainAgentCost + cost });
+      }
+
       // Budget enforcement
       if (budget !== undefined) {
-        const displayUsage = createDisplayUsage(
-          payload.cumulativeUsage,
-          model,
-          payload.cumulativeProviderMetadata
-        );
-
-        const cost = getTotalCost(displayUsage);
-
         // Reject if model has unknown pricing: displayUsage exists with tokens but cost is undefined
         // (createDisplayUsage doesn't set hasUnknownCosts; that's only set by sumUsageHistory)
         // Include all token types: input, output, cached, cacheCreate, and reasoning

@@ -104,14 +104,19 @@ fi
 
 # Capture output to file while streaming to terminal for token extraction.
 # Keep stderr separate so the stdout log stays valid JSONL.
-if ! printf '%s' "${instruction}" \
+# Run in a subshell to capture the pipeline exit code without triggering
+# set -e (which would abort the script before we can extract tokens).
+mux_exit_code=0
+printf '%s' "${instruction}" \
   | "${cmd[@]}" \
     2> >(tee "${MUX_STDERR_FILE}" >&2) \
-  | tee "${MUX_OUTPUT_FILE}"; then
-  fatal "mux agent session failed"
-fi
+  | tee "${MUX_OUTPUT_FILE}" \
+  || mux_exit_code=$?
 
-# Extract usage and cost from the JSONL output.
+# Always extract usage and cost from the JSONL output, even on failure/timeout.
+# The tee'd output file contains all events emitted before the process died,
+# so we can recover token counts and (partial) cost data.
+#
 # Prefer the run-complete event (emitted at end of --json run) which has aggregated
 # totals. Fall back to summing usage-delta + session-usage-delta events when
 # run-complete is missing (e.g. process killed by timeout, stdout not flushed).
@@ -123,10 +128,15 @@ result = {"input": 0, "output": 0, "cost_usd": None}
 # latest per message and sum across messages at the end.
 cumulative_by_msg = {}
 # Track sub-agent usage from session-usage-delta events. These carry per-model
-# byModelDelta dicts with {input: {tokens, cost_usd}, output: {tokens, cost_usd}, ...}.
+# byModelDelta dicts with ChatUsageDisplay objects:
+#   {input: {tokens, cost_usd}, output: {tokens, cost_usd}, cached: ..., ...}
 # Each event is an incremental delta, so we sum them all.
 subagent_input = 0
 subagent_output = 0
+subagent_cost = 0.0
+# Track the latest cumulative main-agent cost from usage-cost events
+# (emitted by CLI in JSON mode as a running total for recovery on timeout).
+latest_usage_cost = None
 for line in open(sys.argv[1]):
     try:
         obj = json.loads(line)
@@ -137,6 +147,11 @@ for line in open(sys.argv[1]):
             result["cost_usd"] = obj.get("cost_usd")
             print(json.dumps(result))
             sys.exit(0)
+        # usage-cost events carry the latest cumulative main-agent cost
+        # (emitted by CLI alongside usage-delta events in JSON mode).
+        if obj.get("type") == "usage-cost":
+            latest_usage_cost = obj.get("cost_usd")
+            continue
         # Nested event wrapper: {"type":"event","payload":{"type":"usage-delta",...}}
         payload = obj.get("payload") or obj
         if payload.get("type") == "usage-delta":
@@ -147,9 +162,18 @@ for line in open(sys.argv[1]):
             usage = payload.get("cumulativeUsage") or payload.get("usage") or {}
             cumulative_by_msg[msg_id] = usage
         elif payload.get("type") == "session-usage-delta":
+            # session-usage-delta carries ChatUsageDisplay objects per model with
+            # cost_usd per component (input, output, cached, cacheCreate, reasoning).
+            # Only count input/output tokens to match run-complete semantics
+            # (which reports inputTokens/outputTokens excluding cache/reasoning).
+            # Sum cost from ALL components since cost_usd accounts for all billing.
             for model_usage in (payload.get("byModelDelta") or {}).values():
-                subagent_input += (model_usage.get("input") or {}).get("tokens", 0)
-                subagent_output += (model_usage.get("output") or {}).get("tokens", 0)
+                subagent_input += (model_usage.get("input") or {}).get("tokens", 0) or 0
+                subagent_output += (model_usage.get("output") or {}).get("tokens", 0) or 0
+                for component in ("input", "output", "cached", "cacheCreate", "reasoning"):
+                    cost = (model_usage.get(component) or {}).get("cost_usd")
+                    if cost is not None:
+                        subagent_cost += cost
     except Exception:
         pass
 # No run-complete found — aggregate the last usage-delta per message + sub-agent totals
@@ -158,5 +182,17 @@ for usage in cumulative_by_msg.values():
     result["output"] += (usage.get("outputTokens", 0) or 0)
 result["input"] += subagent_input
 result["output"] += subagent_output
+# Compute fallback cost from available sources:
+# 1. usage-cost events carry the running total from the CLI (main-agent cost,
+#    includes completed messages + current message cumulative usage-delta cost).
+# 2. session-usage-delta events carry sub-agent cost per component.
+# Combine both for the best available total.
+fallback_cost = (latest_usage_cost or 0) + subagent_cost
+if fallback_cost > 0:
+    result["cost_usd"] = fallback_cost
 print(json.dumps(result))
 ' "${MUX_OUTPUT_FILE}" > "${MUX_TOKEN_FILE}" 2>/dev/null || true
+
+if [[ "${mux_exit_code}" -ne 0 ]]; then
+  fatal "mux agent session failed"
+fi
