@@ -13,11 +13,19 @@ import * as path from "path";
 import { spawn, type ChildProcess } from "child_process";
 import { Duplex } from "stream";
 import type { Client } from "ssh2";
+import { HOST_KEY_APPROVAL_TIMEOUT_MS } from "@/common/constants/ssh";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 import { attachStreamErrorHandler } from "@/node/utils/streamErrors";
 import type { SSHConnectionConfig } from "./sshConnectionPool";
 import { resolveSSHConfig, type ResolvedSSHConfig } from "./sshConfigParser";
+import type { HostKeyVerificationService } from "@/node/services/hostKeyVerificationService";
+
+let hostKeyService: HostKeyVerificationService | undefined;
+
+export function setHostKeyVerificationService(svc: HostKeyVerificationService): void {
+  hostKeyService = svc;
+}
 
 /**
  * Connection health status
@@ -494,6 +502,8 @@ export class SSH2ConnectionPool {
         const readableKeys = await resolvePrivateKeys(resolvedConfigWithIdentities.identityFiles);
         const keysToTry: Array<Buffer | undefined> =
           readableKeys.length > 0 ? readableKeys : [undefined];
+        const verificationService = hostKeyService;
+        const canPromptInteractively = verificationService?.hasInteractiveResponder() === true;
 
         const connectWithKey = async (
           privateKey: Buffer | undefined,
@@ -607,10 +617,36 @@ export class SSH2ConnectionPool {
               username,
               agent: agentOverride,
               sock: proxy?.sock,
-              readyTimeout: timeoutMs,
+              // hostVerifier can wait for user approval in the UI dialog,
+              // so keep the handshake alive long enough for that interaction.
+              readyTimeout: canPromptInteractively
+                ? Math.max(timeoutMs, HOST_KEY_APPROVAL_TIMEOUT_MS)
+                : timeoutMs,
               keepaliveInterval: 5000,
               keepaliveCountMax: 2,
               ...(privateKey ? { privateKey } : {}),
+              // Host key verification
+              ...(canPromptInteractively && verificationService
+                ? {
+                    hostHash: "sha256" as const,
+                    hostVerifier: (
+                      fingerprint: string,
+                      verify: (accept: boolean) => void
+                    ): boolean => {
+                      void verificationService
+                        .requestVerification({
+                          host: resolvedConfig.hostName,
+                          keyType: "unknown", // ssh2 doesn't expose key type in this callback
+                          fingerprint: `SHA256:${fingerprint}`,
+                          prompt: `The authenticity of host '${resolvedConfig.hostName}' can't be established.\nFingerprint: SHA256:${fingerprint}`,
+                        })
+                        .then(verify);
+                      return true;
+                    },
+                  }
+                : {
+                    hostVerifier: () => true,
+                  }),
             };
 
             client.connect(connectOptions);

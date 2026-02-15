@@ -16,6 +16,7 @@ import type {
   FrontendWorkspaceMetadataSchemaType,
 } from "@/common/orpc/types";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
+import type { HostKeyVerificationRequest } from "@/common/orpc/schemas/ssh";
 import { createAuthMiddleware } from "./authMiddleware";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 import { clearLogFiles, getLogFilePath } from "@/node/services/log";
@@ -3838,6 +3839,42 @@ export const router = (authToken?: string) => {
           context.signingService.clearIdentityCache();
           return { success: true };
         }),
+    },
+    ssh: {
+      hostKeyVerification: {
+        subscribe: t
+          .input(schemas.ssh.hostKeyVerification.subscribe.input)
+          .output(schemas.ssh.hostKeyVerification.subscribe.output)
+          .handler(async function* ({ context, signal }) {
+            if (signal?.aborted) return;
+
+            const service = context.hostKeyVerificationService;
+            const releaseResponder = service.registerInteractiveResponder();
+            const queue = createAsyncEventQueue<HostKeyVerificationRequest>();
+
+            const onRequest = (req: HostKeyVerificationRequest) => queue.push(req);
+            service.on("request", onRequest);
+
+            const onAbort = () => queue.end();
+            signal?.addEventListener("abort", onAbort, { once: true });
+
+            try {
+              yield* queue.iterate();
+            } finally {
+              signal?.removeEventListener("abort", onAbort);
+              releaseResponder();
+              queue.end();
+              service.off("request", onRequest);
+            }
+          }),
+        respond: t
+          .input(schemas.ssh.hostKeyVerification.respond.input)
+          .output(schemas.ssh.hostKeyVerification.respond.output)
+          .handler(({ context, input }) => {
+            context.hostKeyVerificationService.respond(input.requestId, input.accept);
+            return Ok(undefined);
+          }),
+      },
     },
   });
 };

@@ -63,6 +63,10 @@ export class OpenSSHTransport implements SSHTransport {
     sshArgs.push("-o", `ConnectTimeout=${connectTimeout}`);
     sshArgs.push("-o", "ServerAliveInterval=5");
     sshArgs.push("-o", "ServerAliveCountMax=2");
+    // Non-interactive execs must never hang on host-key or password prompts.
+    // The probe path handles host-key verification via the Mux dialog;
+    // by the time we reach here, the host key should already be accepted.
+    sshArgs.push("-o", "BatchMode=yes");
 
     sshArgs.push(this.config.host, fullCommand);
 
@@ -110,8 +114,6 @@ export class OpenSSHTransport implements SSHTransport {
 
     if (this.config.identityFile) {
       args.push("-i", this.config.identityFile);
-      args.push("-o", "StrictHostKeyChecking=no");
-      args.push("-o", "UserKnownHostsFile=/dev/null");
     }
 
     args.push("-o", "LogLevel=FATAL");

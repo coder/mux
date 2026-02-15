@@ -18,7 +18,31 @@ import * as crypto from "crypto";
 import * as path from "path";
 import * as os from "os";
 import { spawn } from "child_process";
+import { HOST_KEY_APPROVAL_TIMEOUT_MS } from "@/common/constants/ssh";
 import { log } from "@/node/services/log";
+import type { HostKeyVerificationService } from "@/node/services/hostKeyVerificationService";
+import { createAskpassSession, parseHostKeyPrompt } from "./sshAskpass";
+
+/**
+ * Classify an SSH_ASKPASS prompt to route it through the correct handler.
+ *
+ * OpenSSH askpass receives the bare prompt question (e.g., "Are you sure you
+ * want to continue connecting (yes/no/[fingerprint])?" for host-key, or
+ * "Enter passphrase for key '...':" for encrypted keys). We classify based
+ * on the prompt text so host-key prompts go through verification UI and
+ * everything else fails fast.
+ */
+function classifyAskpassPrompt(promptText: string): "host-key" | "credential" {
+  // OpenSSH host-key confirmation prompt always contains "continue connecting"
+  if (/continue connecting/i.test(promptText)) return "host-key";
+  return "credential";
+}
+
+let hostKeyService: HostKeyVerificationService | undefined;
+
+export function setHostKeyVerificationService(svc: HostKeyVerificationService): void {
+  hostKeyService = svc;
+}
 
 /**
  * SSH connection configuration (host/port/identity only).
@@ -363,6 +387,8 @@ export class SSHConnectionPool {
     key: string
   ): Promise<void> {
     const controlPath = getControlPath(config);
+    const verificationService = hostKeyService;
+    const canPromptInteractively = verificationService?.hasInteractiveResponder() === true;
 
     const args: string[] = ["-T"]; // No PTY needed for probe
 
@@ -372,8 +398,6 @@ export class SSHConnectionPool {
 
     if (config.identityFile) {
       args.push("-i", config.identityFile);
-      args.push("-o", "StrictHostKeyChecking=no");
-      args.push("-o", "UserKnownHostsFile=/dev/null");
       args.push("-o", "LogLevel=ERROR");
     }
 
@@ -382,35 +406,94 @@ export class SSHConnectionPool {
     args.push("-o", `ControlPath=${controlPath}`);
     args.push("-o", "ControlPersist=60");
 
-    // Aggressive timeouts for probe
-    const connectTimeout = Math.min(Math.ceil(timeoutMs / 1000), 15);
+    // ConnectTimeout covers the entire SSH handshake including SSH_ASKPASS waits.
+    // When host-key prompts are possible, use the longer prompt timeout so SSH
+    // doesn't self-terminate while the user is responding to the dialog.
+    // The Node.js timer still provides fast-fail for unreachable hosts.
+    const connectTimeout = canPromptInteractively
+      ? Math.ceil(HOST_KEY_APPROVAL_TIMEOUT_MS / 1000)
+      : Math.min(Math.ceil(timeoutMs / 1000), 15);
     args.push("-o", `ConnectTimeout=${connectTimeout}`);
     args.push("-o", "ServerAliveInterval=5");
     args.push("-o", "ServerAliveCountMax=2");
+
+    // When no host-key verification UI is available (headless/test/CLI),
+    // fall back to auto-accepting unknown hosts for probe connectivity checks.
+    if (!canPromptInteractively) {
+      args.push("-o", "StrictHostKeyChecking=no");
+      args.push("-o", "UserKnownHostsFile=/dev/null");
+    }
 
     args.push(config.host, "echo ok");
 
     log.debug(`SSH probe: ssh ${args.join(" ")}`);
 
-    return new Promise((resolve, reject) => {
-      const proc = spawn("ssh", args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    // Wired to the probe timer inside the Promise; the askpass callback
+    // calls this to transition from connection phase (10s) to interaction
+    // phase (60s) when a host-key prompt is detected.
+    let extendDeadline: ((ms: number) => void) | undefined;
 
-      let stderr = "";
+    // Set up SSH_ASKPASS for interactive host-key verification.
+    // The askpass helper exchanges prompt/response text through temp files.
+    // Non-host-key prompts (passphrase, password) return empty to fail fast —
+    // passphrase-protected keys must be agent-unlocked before Mux can use them.
+    const askpass =
+      canPromptInteractively && verificationService
+        ? await createAskpassSession(async (promptText) => {
+            if (classifyAskpassPrompt(promptText) !== "host-key") {
+              // Credential prompts (passphrase/password) are not supported during
+              // probe — keys must be unlocked via ssh-agent. Return empty string
+              // so SSH treats this as auth failure and moves on.
+              log.warn("SSH askpass: unsupported credential prompt during probe, failing fast");
+              return "";
+            }
+
+            extendDeadline?.(HOST_KEY_APPROVAL_TIMEOUT_MS);
+
+            const fullContext = stderr + "\n" + promptText;
+            const parsed = parseHostKeyPrompt(fullContext);
+            const accepted = await verificationService.requestVerification(parsed);
+            return accepted ? "yes" : "no";
+          })
+        : undefined;
+
+    return new Promise((resolve, reject) => {
+      const proc = spawn("ssh", args, {
+        stdio: ["ignore", "pipe", "pipe"],
+        ...(askpass ? { env: { ...process.env, ...askpass.env } } : {}),
+      });
+
+      let timedOut = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+
+      const scheduleKill = (ms: number) => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+        timer = setTimeout(() => {
+          timedOut = true;
+          proc.kill("SIGKILL");
+          askpass?.cleanup();
+          const error = "SSH probe timed out";
+          this.markFailedByKey(key, error);
+          reject(new Error(error));
+        }, ms);
+      };
+
+      // Wire askpass deadline extension, then start initial fast timeout.
+      extendDeadline = scheduleKill;
+      scheduleKill(timeoutMs);
+
       proc.stderr.on("data", (data: Buffer) => {
         stderr += data.toString();
       });
 
-      let timedOut = false;
-      const timeout = setTimeout(() => {
-        timedOut = true;
-        proc.kill("SIGKILL");
-        const error = "SSH probe timed out";
-        this.markFailedByKey(key, error);
-        reject(new Error(error));
-      }, timeoutMs);
-
       proc.on("close", (code) => {
-        clearTimeout(timeout);
+        if (timer) {
+          clearTimeout(timer);
+        }
+        askpass?.cleanup();
         if (timedOut) return; // Already handled by timeout
 
         if (code === 0) {
@@ -425,7 +508,10 @@ export class SSHConnectionPool {
       });
 
       proc.on("error", (err) => {
-        clearTimeout(timeout);
+        if (timer) {
+          clearTimeout(timer);
+        }
+        askpass?.cleanup();
         const error = `SSH probe spawn error: ${err.message}`;
         this.markFailedByKey(key, error);
         reject(new Error(error));

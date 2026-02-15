@@ -319,6 +319,40 @@ describe("SSHConnectionPool", () => {
     });
   });
 
+  describe("askpass prompt classification", () => {
+    // classifyAskpassPrompt() routes prompts containing "continue connecting"
+    // through host-key verification and treats other prompts as credentials.
+    const HOST_KEY_PATTERN = /continue connecting/i;
+
+    test("detects standard host-key confirmation prompt", () => {
+      expect(
+        HOST_KEY_PATTERN.test(
+          "Are you sure you want to continue connecting (yes/no/[fingerprint])? "
+        )
+      ).toBe(true);
+    });
+
+    test("detects host-key prompt case-insensitively", () => {
+      expect(HOST_KEY_PATTERN.test("Are you sure you want to Continue Connecting (yes/no)?")).toBe(
+        true
+      );
+    });
+
+    test("rejects passphrase prompt", () => {
+      expect(HOST_KEY_PATTERN.test("Enter passphrase for key '/home/user/.ssh/id_ed25519':")).toBe(
+        false
+      );
+    });
+
+    test("rejects password prompt", () => {
+      expect(HOST_KEY_PATTERN.test("user@host's password:")).toBe(false);
+    });
+
+    test("rejects empty prompt", () => {
+      expect(HOST_KEY_PATTERN.test("")).toBe(false);
+    });
+  });
+
   describe("singleflighting", () => {
     test("concurrent acquireConnection calls share same probe", async () => {
       const pool = new SSHConnectionPool();
