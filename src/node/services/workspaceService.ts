@@ -2661,12 +2661,41 @@ export class WorkspaceService extends EventEmitter {
           .filter((m) => m.projectPath === foundProjectPath)
           .map((m) => m.name);
         resolvedName = generateForkBranchName(sourceMetadata.name, existingNames);
-      } else {
-        const validation = validateWorkspaceName(newName);
-        if (!validation.valid) {
-          return Err(validation.error ?? "Invalid workspace name");
+
+        if (!validateWorkspaceName(resolvedName).valid) {
+          // Legacy workspace names can violate current naming rules (invalid
+          // chars / length). Normalize and shrink the parent base until the
+          // generated fork name satisfies current invariants.
+          let normalizedParent = sourceMetadata.name
+            .toLowerCase()
+            .replace(/[^a-z0-9_-]+/g, "-")
+            .replace(/-+/g, "-")
+            .replace(/^[-_]+|[-_]+$/g, "");
+
+          if (!normalizedParent) {
+            normalizedParent = "workspace";
+          }
+
+          let candidateParent = normalizedParent;
+          while (candidateParent.length > 1) {
+            resolvedName = generateForkBranchName(candidateParent, existingNames);
+            if (validateWorkspaceName(resolvedName).valid) {
+              break;
+            }
+            candidateParent = candidateParent.slice(0, -1);
+          }
+
+          if (!validateWorkspaceName(resolvedName).valid) {
+            resolvedName = generateForkBranchName(candidateParent, existingNames);
+          }
         }
+      } else {
         resolvedName = newName;
+      }
+
+      const resolvedNameValidation = validateWorkspaceName(resolvedName);
+      if (!resolvedNameValidation.valid) {
+        return Err(resolvedNameValidation.error ?? "Invalid workspace name");
       }
 
       const runtime = createRuntime(sourceRuntimeConfig, {
