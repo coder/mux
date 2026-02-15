@@ -73,7 +73,7 @@ function parseOptionalBoolean(value: unknown): boolean | undefined {
 }
 
 function parseUpdateChannel(value: unknown): UpdateChannel | undefined {
-  if (value === "stable" || value === "latest") {
+  if (value === "stable" || value === "nightly") {
     return value;
   }
 
@@ -430,8 +430,8 @@ export class Config {
       }
 
       // Stable is default: only persist non-default channel values.
-      if (config.updateChannel === "latest") {
-        data.updateChannel = "latest";
+      if (config.updateChannel === "nightly") {
+        data.updateChannel = "nightly";
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
@@ -452,7 +452,7 @@ export class Config {
 
   getUpdateChannel(): UpdateChannel {
     const config = this.loadConfigOrDefault();
-    return config.updateChannel === "latest" ? "latest" : "stable";
+    return config.updateChannel === "nightly" ? "nightly" : "stable";
   }
 
   async setUpdateChannel(channel: UpdateChannel): Promise<void> {

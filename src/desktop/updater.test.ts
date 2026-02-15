@@ -105,12 +105,12 @@ describe("UpdaterService", () => {
       });
     });
 
-    it("accepts initial channel 'latest'", () => {
+    it("accepts initial channel 'nightly'", () => {
       mockAutoUpdater.setFeedURL.mockClear();
 
-      const latestService = new UpdaterService("latest");
+      const nightlyService = new UpdaterService("nightly");
 
-      expect(latestService.getChannel()).toBe("latest");
+      expect(nightlyService.getChannel()).toBe("nightly");
       expect(mockAutoUpdater.setFeedURL).toHaveBeenCalledWith({
         provider: "github",
         owner: "coder",
@@ -118,24 +118,26 @@ describe("UpdaterService", () => {
         releaseType: "prerelease",
       });
       expect(mockAutoUpdater.allowPrerelease).toBe(true);
+      expect(mockAutoUpdater.channel).toBe("nightly");
     });
 
-    it("setChannel switches from stable to latest", () => {
+    it("setChannel switches from stable to nightly", () => {
       mockAutoUpdater.setFeedURL.mockClear();
       const channelService = new UpdaterService();
 
       mockAutoUpdater.emit("update-available", { version: "2.0.0" });
       expect(channelService.getStatus().type).toBe("available");
 
-      channelService.setChannel("latest");
+      channelService.setChannel("nightly");
 
-      expect(channelService.getChannel()).toBe("latest");
+      expect(channelService.getChannel()).toBe("nightly");
       expect(mockAutoUpdater.setFeedURL).toHaveBeenLastCalledWith({
         provider: "github",
         owner: "coder",
         repo: "mux",
         releaseType: "prerelease",
       });
+      expect(mockAutoUpdater.channel).toBe("nightly");
       expect(channelService.getStatus()).toEqual({ type: "idle" });
     });
 
@@ -145,7 +147,7 @@ describe("UpdaterService", () => {
 
       channelService.checkForUpdates();
 
-      expect(() => channelService.setChannel("latest")).toThrow("checking for updates");
+      expect(() => channelService.setChannel("nightly")).toThrow("checking for updates");
     });
 
     it("setChannel throws when downloading", () => {
@@ -154,7 +156,7 @@ describe("UpdaterService", () => {
 
       mockAutoUpdater.emit("download-progress", { percent: 50 });
 
-      expect(() => channelService.setChannel("latest")).toThrow("downloading an update");
+      expect(() => channelService.setChannel("nightly")).toThrow("downloading an update");
     });
 
     it("setChannel throws when downloaded", () => {
@@ -163,7 +165,7 @@ describe("UpdaterService", () => {
 
       mockAutoUpdater.emit("update-downloaded", { version: "2.0.0" });
 
-      expect(() => channelService.setChannel("latest")).toThrow("ready to install");
+      expect(() => channelService.setChannel("nightly")).toThrow("ready to install");
     });
 
     it("setChannel notifies subscribers on switch", () => {
@@ -172,7 +174,7 @@ describe("UpdaterService", () => {
       const updates: UpdateStatus[] = [];
 
       channelService.subscribe((status) => updates.push(status));
-      channelService.setChannel("latest");
+      channelService.setChannel("nightly");
 
       expect(updates).toContainEqual({ type: "idle" });
     });

@@ -112,10 +112,10 @@ export class UpdaterService {
   }
 
   private applyChannel(channel: UpdateChannel) {
-    if (channel === "latest") {
+    if (channel === "nightly") {
       autoUpdater.allowPrerelease = true;
-      autoUpdater.channel = "dev";
-      // Point at GitHub pre-releases for the latest channel
+      autoUpdater.channel = "nightly";
+      // Point at GitHub pre-releases for the nightly channel
       autoUpdater.setFeedURL({
         provider: "github",
         owner: "coder",

@@ -25,7 +25,7 @@ export type FeatureFlagOverride = "default" | "on" | "off";
  * Update channel preference for Electron desktop app.
  * Keep in sync with `UpdateChannelSchema` in `src/common/orpc/schemas/api.ts`.
  */
-export type UpdateChannel = "stable" | "latest";
+export type UpdateChannel = "stable" | "nightly";
 
 export interface ProjectsConfig {
   projects: Map<string, ProjectConfig>;

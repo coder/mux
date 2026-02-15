@@ -1524,7 +1524,7 @@ export const splashScreens = {
 };
 
 // Update
-export const UpdateChannelSchema = z.enum(["stable", "latest"]);
+export const UpdateChannelSchema = z.enum(["stable", "nightly"]);
 
 export const update = {
   check: {

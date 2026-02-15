@@ -66,7 +66,7 @@ export function AboutDialog() {
   const MuxLogo = theme === "dark" || theme.endsWith("-dark") ? MuxLogoDark : MuxLogoLight;
   const { gitDescribe, buildTime } = parseVersionInfo(VERSION satisfies unknown);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
-  const [channel, setChannel] = useState<"stable" | "latest" | null>(null);
+  const [channel, setChannel] = useState<"stable" | "nightly" | null>(null);
   const [channelLoading, setChannelLoading] = useState(false);
   const channelRequestTokenRef = useRef(0);
 
@@ -128,7 +128,7 @@ export function AboutDialog() {
   const isChecking =
     canUseUpdateApi && (updateStatus.type === "checking" || updateStatus.type === "downloading");
 
-  const handleChannelChange = (next: "stable" | "latest") => {
+  const handleChannelChange = (next: "stable" | "nightly") => {
     if (!api || next === channel || channelLoading) {
       return;
     }
@@ -210,7 +210,7 @@ export function AboutDialog() {
                       type="single"
                       value={channel}
                       onValueChange={(next) => {
-                        if (next === "stable" || next === "latest") {
+                        if (next === "stable" || next === "nightly") {
                           handleChannelChange(next);
                         }
                       }}
@@ -222,17 +222,17 @@ export function AboutDialog() {
                         Stable
                       </ToggleGroupItem>
                       <ToggleGroupItem
-                        value="latest"
+                        value="nightly"
                         className="border-border-medium rounded-none border-l px-2.5 py-1"
                       >
-                        Latest
+                        Nightly
                       </ToggleGroupItem>
                     </ToggleGroup>
                   </div>
                   <div className="text-muted text-xs">
                     {channel === "stable"
                       ? "Official releases only."
-                      : "Pre-release builds on every merge to main."}
+                      : "Nightly pre-release builds from main."}
                   </div>
                 </div>
               )}
