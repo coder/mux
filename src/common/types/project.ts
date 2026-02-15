@@ -21,8 +21,18 @@ export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
 export type FeatureFlagOverride = "default" | "on" | "off";
 
+/**
+ * Update channel preference for Electron desktop app.
+ * Keep in sync with `UpdateChannelSchema` in `src/common/orpc/schemas/api.ts`.
+ */
+export type UpdateChannel = "stable" | "nightly";
+
 export interface ProjectsConfig {
   projects: Map<string, ProjectConfig>;
+  /**
+   * Update channel preference for Electron desktop app. Defaults to "stable".
+   */
+  updateChannel?: UpdateChannel;
   /**
    * Bind host/interface for the desktop HTTP/WS API server.
    *

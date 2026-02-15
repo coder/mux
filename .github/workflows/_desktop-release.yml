@@ -1,0 +1,165 @@
+name: Desktop Release Build (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref to build (tag, branch, or SHA)"
+        required: true
+        type: string
+      release_tag:
+        description: "Release tag used by scripts/generate-version.sh"
+        required: true
+        type: string
+      version_override:
+        description: "Optional package.json version override (e.g., 1.2.4-dev.7)"
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  build-macos:
+    name: Build and Release macOS
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-macos-15' || 'macos-latest' }}
+    permissions:
+      contents: write # Upload release assets
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      VERSION_OVERRIDE: ${{ inputs.version_override }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0 # Required for git describe to find tags
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-mux
+
+      - name: Patch package.json version
+        if: inputs.version_override != ''
+        shell: bash
+        run: |
+          # Keep this in a script so nightly/release workflows can share behavior.
+          node ./scripts/set-package-version.js "$VERSION_OVERRIDE"
+
+      - name: Build application
+        run: bun run build
+
+      - name: Setup code signing
+        run: ./scripts/setup-macos-signing.sh
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          AC_APIKEY_P8_BASE64: ${{ secrets.AC_APIKEY_P8_BASE64 }}
+          AC_APIKEY_ID: ${{ secrets.AC_APIKEY_ID }}
+          AC_APIKEY_ISSUER_ID: ${{ secrets.AC_APIKEY_ISSUER_ID }}
+
+      - name: Package and publish for macOS
+        run: make dist-mac-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-linux:
+    name: Build and Release Linux
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    permissions:
+      contents: write # Upload release assets
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      VERSION_OVERRIDE: ${{ inputs.version_override }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0 # Required for git describe to find tags
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-mux
+
+      - name: Patch package.json version
+        if: inputs.version_override != ''
+        shell: bash
+        run: |
+          # Keep this in a script so nightly/release workflows can share behavior.
+          node ./scripts/set-package-version.js "$VERSION_OVERRIDE"
+
+      - name: Build application
+        run: bun run build
+
+      - name: Package and publish for Linux
+        run: bun x electron-builder --linux --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-windows:
+    name: Build and Release Windows
+    runs-on: windows-latest
+    permissions:
+      contents: write # Upload release assets
+      id-token: write # GCP workload identity for code signing
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      VERSION_OVERRIDE: ${{ inputs.version_override }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-mux
+
+      - name: Add MSYS2 make to PATH
+        shell: pwsh
+        run: |
+          # MSYS2 is pre-installed on Windows runners, just needs to be in PATH
+          # Install make via pacman (faster than choco)
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm make
+          echo "C:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Verify tools
+        shell: bash
+        run: |
+          make --version
+          bun --version
+          magick --version | head -1
+
+      - name: Patch package.json version
+        if: inputs.version_override != ''
+        shell: bash
+        run: |
+          # Keep this in a script so nightly/release workflows can share behavior.
+          node ./scripts/set-package-version.js "$VERSION_OVERRIDE"
+
+      - name: Build application
+        run: bun run build
+
+      - name: Setup code signing
+        id: signing
+        uses: ./.github/actions/setup-windows-signing
+        with:
+          ev_signing_cert: ${{ secrets.EV_SIGNING_CERT }}
+          gcp_workload_id_provider: ${{ vars.GCP_WORKLOAD_ID_PROVIDER }}
+          gcp_service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Package and publish for Windows (.exe)
+        run: bun x electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # EV signing environment variables (used by custom sign script if configured)
+          EV_KEYSTORE: ${{ vars.EV_KEYSTORE }}
+          EV_KEY: ${{ vars.EV_KEY }}
+          EV_TSA_URL: ${{ vars.EV_TSA_URL }}
+          GCLOUD_ACCESS_TOKEN: ${{ steps.signing.outputs.gcloud_access_token }}
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-release
+          path: |
+            release/*.exe
+            release/*.exe.blockmap
+          if-no-files-found: error

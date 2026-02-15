@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Download, Loader2, RefreshCw } from "lucide-react";
 import { VERSION } from "@/version";
 import type { UpdateStatus } from "@/common/orpc/types";
@@ -9,6 +9,7 @@ import { useAPI } from "@/browser/contexts/API";
 import { useAboutDialog } from "@/browser/contexts/AboutDialogContext";
 import { Button } from "@/browser/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/browser/components/ui/dialog";
+import { ToggleGroup, ToggleGroupItem } from "@/browser/components/ui/toggle-group";
 
 interface VersionRecord {
   buildTime?: unknown;
@@ -65,6 +66,9 @@ export function AboutDialog() {
   const MuxLogo = theme === "dark" || theme.endsWith("-dark") ? MuxLogoDark : MuxLogoLight;
   const { gitDescribe, buildTime } = parseVersionInfo(VERSION satisfies unknown);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
+  const [channel, setChannel] = useState<"stable" | "nightly" | null>(null);
+  const [channelLoading, setChannelLoading] = useState(false);
+  const channelRequestTokenRef = useRef(0);
 
   const isDesktop = typeof window !== "undefined" && Boolean(window.api);
 
@@ -97,9 +101,47 @@ export function AboutDialog() {
     };
   }, [api, isDesktop, isOpen]);
 
+  useEffect(() => {
+    if (!isOpen || !isDesktop || !api) {
+      return;
+    }
+
+    let active = true;
+    // Ignore stale getChannel() responses when a newer request or manual selection has already happened.
+    const requestToken = ++channelRequestTokenRef.current;
+
+    api.update
+      .getChannel()
+      .then((nextChannel) => {
+        if (active && requestToken === channelRequestTokenRef.current) {
+          setChannel(nextChannel);
+        }
+      })
+      .catch(console.error);
+
+    return () => {
+      active = false;
+    };
+  }, [api, isDesktop, isOpen]);
+
   const canUseUpdateApi = isDesktop && Boolean(api);
   const isChecking =
     canUseUpdateApi && (updateStatus.type === "checking" || updateStatus.type === "downloading");
+
+  const handleChannelChange = (next: "stable" | "nightly") => {
+    if (!api || next === channel || channelLoading) {
+      return;
+    }
+
+    // Invalidate any in-flight getChannel() request so late responses cannot overwrite user intent.
+    channelRequestTokenRef.current += 1;
+    setChannelLoading(true);
+    api.update
+      .setChannel({ channel: next })
+      .then(() => setChannel(next))
+      .catch(console.error)
+      .finally(() => setChannelLoading(false));
+  };
 
   const handleCheckForUpdates = () => {
     if (!api) {
@@ -160,6 +202,41 @@ export function AboutDialog() {
             <div className="text-muted text-xs">Connecting to desktop update service…</div>
           ) : (
             <>
+              {channel !== null && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted text-xs">Channel</span>
+                    <ToggleGroup
+                      type="single"
+                      value={channel}
+                      onValueChange={(next) => {
+                        if (next === "stable" || next === "nightly") {
+                          handleChannelChange(next);
+                        }
+                      }}
+                      disabled={channelLoading}
+                      aria-label="Update channel"
+                      className="border-border-medium rounded border bg-transparent p-0 text-xs"
+                    >
+                      <ToggleGroupItem value="stable" className="rounded-none px-2.5 py-1">
+                        Stable
+                      </ToggleGroupItem>
+                      <ToggleGroupItem
+                        value="nightly"
+                        className="border-border-medium rounded-none border-l px-2.5 py-1"
+                      >
+                        Nightly
+                      </ToggleGroupItem>
+                    </ToggleGroup>
+                  </div>
+                  <div className="text-muted text-xs">
+                    {channel === "stable"
+                      ? "Official releases only."
+                      : "Nightly pre-release builds from main."}
+                  </div>
+                </div>
+              )}
+
               <Button
                 variant="outline"
                 size="sm"
