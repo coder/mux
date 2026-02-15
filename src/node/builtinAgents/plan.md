@@ -4,7 +4,7 @@ description: Create a plan before coding
 ui:
   color: var(--color-plan-mode)
 subagent:
-  runnable: false
+  runnable: true
 tools:
   add:
     # Allow all tools by default (includes MCP tools which have dynamic names)

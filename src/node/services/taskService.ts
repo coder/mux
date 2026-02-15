@@ -19,6 +19,7 @@ import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/r
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
+import { readPlanFile } from "@/node/utils/runtime/helpers";
 import { createRuntime, runBackgroundInit } from "@/node/runtime/runtimeFactory";
 import type { InitLogger, WorkspaceCreationResult } from "@/node/runtime/Runtime";
 import {
@@ -32,8 +33,12 @@ import type { TaskSettings } from "@/common/types/tasks";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
-import { createTaskReportMessageId } from "@/node/services/utils/messageIds";
+import {
+  createCompactionSummaryMessageId,
+  createTaskReportMessageId,
+} from "@/node/services/utils/messageIds";
 import { defaultModel, normalizeGatewayModel } from "@/common/utils/ai/models";
+import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { AgentIdSchema } from "@/common/orpc/schemas";
@@ -46,6 +51,7 @@ import {
   TaskToolResultSchema,
   TaskToolArgsSchema,
 } from "@/common/utils/tools/toolDefinitions";
+import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
 import { formatSendMessageError } from "@/node/services/utils/sendMessageError";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { taskQueueDebug } from "@/node/services/taskQueueDebug";
@@ -216,6 +222,7 @@ export class TaskService {
   private readonly completedReportsByTaskId = new Map<string, CompletedAgentReportCacheEntry>();
   private readonly gitPatchArtifactService: GitPatchArtifactService;
   private readonly remindedAwaitingReport = new Set<string>();
+  private readonly handoffInProgress = new Set<string>();
   /** Tracks consecutive auto-resumes per workspace. Reset when a user message is sent. */
   private consecutiveAutoResumes = new Map<string, number>();
 
@@ -259,6 +266,63 @@ export class TaskService {
       workspace.aiSettings
     );
   }
+  private async isPlanLikeTaskWorkspace(entry: {
+    projectPath: string;
+    workspace: Pick<
+      WorkspaceConfigEntry,
+      "id" | "name" | "path" | "runtimeConfig" | "agentId" | "agentType"
+    >;
+  }): Promise<boolean> {
+    assert(entry.projectPath.length > 0, "isPlanLikeTaskWorkspace: projectPath must be non-empty");
+
+    const rawAgentId = coerceNonEmptyString(entry.workspace.agentId ?? entry.workspace.agentType);
+    if (!rawAgentId) {
+      return false;
+    }
+
+    const normalizedAgentId = rawAgentId.trim().toLowerCase();
+    const parsedAgentId = AgentIdSchema.safeParse(normalizedAgentId);
+    if (!parsedAgentId.success) {
+      return normalizedAgentId === "plan";
+    }
+
+    const workspacePath = coerceNonEmptyString(entry.workspace.path);
+    const workspaceName = coerceNonEmptyString(entry.workspace.name) ?? entry.workspace.id;
+    const runtimeConfig = entry.workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG;
+    if (!workspacePath || !workspaceName) {
+      return parsedAgentId.data === "plan";
+    }
+
+    try {
+      const runtime = createRuntimeForWorkspace({
+        runtimeConfig,
+        projectPath: entry.projectPath,
+        name: workspaceName,
+      });
+      const agentDefinition = await readAgentDefinition(runtime, workspacePath, parsedAgentId.data);
+      const chain = await resolveAgentInheritanceChain({
+        runtime,
+        workspacePath,
+        agentId: agentDefinition.id,
+        agentDefinition,
+        workspaceId: entry.workspace.id ?? workspaceName,
+      });
+
+      if (agentDefinition.id === "compact") {
+        return false;
+      }
+
+      return isPlanLikeInResolvedChain(chain);
+    } catch (error: unknown) {
+      log.debug("Failed to resolve task agent mode; falling back to agentId check", {
+        workspaceId: entry.workspace.id,
+        agentId: parsedAgentId.data,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return parsedAgentId.data === "plan";
+    }
+  }
+
   private async emitWorkspaceMetadata(workspaceId: string): Promise<void> {
     assert(workspaceId.length > 0, "emitWorkspaceMetadata: workspaceId must be non-empty");
 
@@ -314,18 +378,27 @@ export class TaskService {
         continue;
       }
 
-      // Restart-safety: if this task stream ends again without agent_report, fall back immediately.
+      // Restart-safety: if this task stream ends again without its required completion tool,
+      // fall back immediately.
       this.remindedAwaitingReport.add(task.id);
+
+      const isPlanLike = await this.isPlanLikeTaskWorkspace({
+        projectPath: task.projectPath,
+        workspace: task,
+      });
+      const completionToolName = isPlanLike ? "propose_plan" : "agent_report";
 
       const model = task.taskModelString ?? defaultModel;
       const sendResult = await this.workspaceService.sendMessage(
         task.id,
-        "This task is awaiting its final agent_report. Call agent_report exactly once now.",
+        isPlanLike
+          ? "This task is awaiting its final propose_plan. Call propose_plan exactly once now."
+          : "This task is awaiting its final agent_report. Call agent_report exactly once now.",
         {
           model,
           agentId: task.agentId ?? WORKSPACE_DEFAULTS.agentId,
           thinkingLevel: task.taskThinkingLevel,
-          toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
+          toolPolicy: [{ regex_match: `^${completionToolName}$`, action: "require" }],
         },
         { synthetic: true }
       );
@@ -2050,6 +2123,8 @@ export class TaskService {
       return;
     }
 
+    const isPlanLike = await this.isPlanLikeTaskWorkspace(entry);
+
     // Never allow a task to finish/report while it still has active descendant tasks.
     // We'll auto-resume this task once the last descendant reports.
     const hasActiveDescendants = this.hasActiveDescendantAgentTasks(cfg, workspaceId);
@@ -2067,7 +2142,21 @@ export class TaskService {
       return;
     }
 
-    // If a task stream ends without agent_report, request it once.
+    const proposePlanResult = this.findProposePlanSuccessInParts(event.parts);
+    if (isPlanLike && proposePlanResult) {
+      await this.handleSuccessfulProposePlanAutoHandoff({
+        workspaceId,
+        entry,
+        proposePlanResult,
+        planSubagentDefaultsToOrchestrator:
+          (cfg.taskSettings ?? DEFAULT_TASK_SETTINGS).planSubagentDefaultsToOrchestrator ?? false,
+      });
+      return;
+    }
+
+    const missingCompletionToolName = isPlanLike ? "propose_plan" : "agent_report";
+
+    // If a task stream ends without its required completion tool, request it once.
     if (status === "awaiting_report" && this.remindedAwaitingReport.has(workspaceId)) {
       await this.fallbackReportMissingAgentReport(entry);
       await this.finalizeTerminationPhaseForReportedTask(workspaceId);
@@ -2081,15 +2170,195 @@ export class TaskService {
     const model = entry.workspace.taskModelString ?? defaultModel;
     await this.workspaceService.sendMessage(
       workspaceId,
-      "Your stream ended without calling agent_report. Call agent_report exactly once now with your final report.",
+      isPlanLike
+        ? "Your stream ended without calling propose_plan. Call propose_plan exactly once now."
+        : "Your stream ended without calling agent_report. Call agent_report exactly once now with your final report.",
       {
         model,
         agentId: entry.workspace.agentId ?? WORKSPACE_DEFAULTS.agentId,
         thinkingLevel: entry.workspace.taskThinkingLevel,
-        toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
+        toolPolicy: [{ regex_match: `^${missingCompletionToolName}$`, action: "require" }],
       },
       { synthetic: true }
     );
+  }
+
+  private async handleSuccessfulProposePlanAutoHandoff(args: {
+    workspaceId: string;
+    entry: { projectPath: string; workspace: WorkspaceConfigEntry };
+    proposePlanResult: { planPath: string };
+    planSubagentDefaultsToOrchestrator: boolean;
+  }): Promise<void> {
+    assert(
+      args.workspaceId.length > 0,
+      "handleSuccessfulProposePlanAutoHandoff: workspaceId must be non-empty"
+    );
+    assert(
+      args.proposePlanResult.planPath.length > 0,
+      "handleSuccessfulProposePlanAutoHandoff: planPath must be non-empty"
+    );
+
+    if (this.handoffInProgress.has(args.workspaceId)) {
+      log.debug("Skipping duplicate plan-task auto-handoff", { workspaceId: args.workspaceId });
+      return;
+    }
+
+    this.handoffInProgress.add(args.workspaceId);
+
+    try {
+      const targetAgentId: "exec" | "orchestrator" = args.planSubagentDefaultsToOrchestrator
+        ? "orchestrator"
+        : "exec";
+
+      let planSummary: { content: string; path: string } | null = null;
+
+      try {
+        const info = await this.workspaceService.getInfo(args.workspaceId);
+        if (!info) {
+          log.error("Plan-task auto-handoff could not read workspace metadata", {
+            workspaceId: args.workspaceId,
+          });
+        } else {
+          const runtime = createRuntimeForWorkspace(info);
+          const planResult = await readPlanFile(
+            runtime,
+            info.name,
+            info.projectName,
+            args.workspaceId
+          );
+          if (planResult.exists) {
+            planSummary = { content: planResult.content, path: planResult.path };
+          } else {
+            log.error("Plan-task auto-handoff did not find plan file content", {
+              workspaceId: args.workspaceId,
+              planPath: args.proposePlanResult.planPath,
+            });
+          }
+        }
+      } catch (error: unknown) {
+        log.error("Plan-task auto-handoff failed to read plan file", {
+          workspaceId: args.workspaceId,
+          planPath: args.proposePlanResult.planPath,
+          error,
+        });
+      }
+
+      const summaryContent = planSummary
+        ? `# Plan\n\n${planSummary.content}\n\nNote: This chat already contains the full plan; no need to re-open the plan file.\n\n---\n\n*Plan file preserved at:* \`${planSummary.path}\``
+        : `A plan was proposed at ${args.proposePlanResult.planPath}. Read the plan file and implement it.`;
+
+      const summaryMessage = createMuxMessage(
+        createCompactionSummaryMessageId(),
+        "assistant",
+        summaryContent,
+        {
+          timestamp: Date.now(),
+          compacted: "user",
+          agentId: "plan",
+        }
+      );
+
+      const replaceHistoryResult = await this.workspaceService.replaceHistory(
+        args.workspaceId,
+        summaryMessage,
+        {
+          mode: "append-compaction-boundary",
+          deletePlanFile: false,
+        }
+      );
+      if (!replaceHistoryResult.success) {
+        log.error("Plan-task auto-handoff failed to compact history", {
+          workspaceId: args.workspaceId,
+          error: replaceHistoryResult.error,
+        });
+      }
+
+      const latestCfg = this.config.loadConfigOrDefault();
+      const workspaceOverride = args.entry.workspace.aiSettingsByAgent?.[targetAgentId];
+      const globalDefaults = latestCfg.agentAiDefaults?.[targetAgentId];
+      const preferredModel = (
+        workspaceOverride?.model ??
+        globalDefaults?.modelString ??
+        args.entry.workspace.taskModelString ??
+        defaultModel
+      ).trim();
+      const resolvedModel = normalizeGatewayModel(
+        preferredModel.length > 0 ? preferredModel : defaultModel
+      );
+      const requestedThinking =
+        workspaceOverride?.thinkingLevel ??
+        globalDefaults?.thinkingLevel ??
+        args.entry.workspace.taskThinkingLevel ??
+        "off";
+      const resolvedThinking = enforceThinkingPolicy(resolvedModel, requestedThinking);
+
+      await this.editWorkspaceEntry(args.workspaceId, (workspace) => {
+        workspace.agentId = targetAgentId;
+        workspace.agentType = targetAgentId;
+        workspace.taskModelString = resolvedModel;
+        workspace.taskThinkingLevel = resolvedThinking;
+      });
+
+      await this.setTaskStatus(args.workspaceId, "running");
+      this.remindedAwaitingReport.delete(args.workspaceId);
+
+      const kickoffMsg =
+        targetAgentId === "orchestrator"
+          ? "Start orchestrating the implementation of this plan."
+          : "Implement the plan.";
+      try {
+        const sendKickoffResult = await this.workspaceService.sendMessage(
+          args.workspaceId,
+          kickoffMsg,
+          {
+            model: resolvedModel,
+            agentId: targetAgentId,
+            thinkingLevel: resolvedThinking,
+            experiments: args.entry.workspace.taskExperiments,
+          },
+          { synthetic: true }
+        );
+        if (!sendKickoffResult.success) {
+          log.error("Plan-task auto-handoff failed to send kickoff message", {
+            workspaceId: args.workspaceId,
+            targetAgentId,
+            error: sendKickoffResult.error,
+          });
+          await this.setTaskStatus(args.workspaceId, "awaiting_report").catch(
+            (statusError: unknown) => {
+              log.error("Plan-task auto-handoff could not reset status after kickoff failure", {
+                workspaceId: args.workspaceId,
+                targetAgentId,
+                error: statusError,
+              });
+            }
+          );
+        }
+      } catch (error: unknown) {
+        log.error("Plan-task auto-handoff failed to send kickoff message", {
+          workspaceId: args.workspaceId,
+          targetAgentId,
+          error,
+        });
+        await this.setTaskStatus(args.workspaceId, "awaiting_report").catch(
+          (statusError: unknown) => {
+            log.error("Plan-task auto-handoff could not reset status after kickoff failure", {
+              workspaceId: args.workspaceId,
+              targetAgentId,
+              error: statusError,
+            });
+          }
+        );
+      }
+    } catch (error: unknown) {
+      log.error("Plan-task auto-handoff failed", {
+        workspaceId: args.workspaceId,
+        planPath: args.proposePlanResult.planPath,
+        error,
+      });
+    } finally {
+      this.handoffInProgress.delete(args.workspaceId);
+    }
   }
 
   private async finalizeTerminationPhaseForReportedTask(workspaceId: string): Promise<void> {
@@ -2385,6 +2654,28 @@ export class TaskService {
         log.error("Task waiter reject callback failed", { taskId, error: rejectError });
       }
     }
+  }
+
+  private findProposePlanSuccessInParts(parts: readonly unknown[]): { planPath: string } | null {
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const part = parts[i];
+      if (!isDynamicToolPart(part)) continue;
+      if (part.toolName !== "propose_plan") continue;
+      if (part.state !== "output-available") continue;
+      if (!isSuccessfulToolResult(part.output)) continue;
+
+      const planPath =
+        typeof part.output === "object" &&
+        part.output !== null &&
+        "planPath" in part.output &&
+        typeof (part.output as { planPath?: unknown }).planPath === "string"
+          ? (part.output as { planPath: string }).planPath.trim()
+          : "";
+      if (!planPath) continue;
+
+      return { planPath };
+    }
+    return null;
   }
 
   private findAgentReportArgsInParts(

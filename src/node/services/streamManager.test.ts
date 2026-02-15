@@ -76,6 +76,7 @@ describe("StreamManager - stopWhen configuration", () => {
   type BuildStopWhenCondition = (request: {
     toolChoice?: { type: "tool"; toolName: string } | "required";
     hasQueuedMessage?: () => boolean;
+    stopAfterSuccessfulProposePlan?: boolean;
   }) => StopWhenCondition | StopWhenCondition[];
 
   test("uses single-step stopWhen when a tool is required", () => {
@@ -171,6 +172,111 @@ describe("StreamManager - stopWhen configuration", () => {
 
     // Returns false when no steps.
     expect(reportStop({ steps: [] })).toBe(false);
+  });
+
+  test("stops when propose_plan succeeds and flag is enabled", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      stopAfterSuccessfulProposePlan: true,
+    });
+    if (!Array.isArray(stopWhen)) {
+      throw new Error("Expected autonomous stopWhen to be an array of conditions");
+    }
+    expect(stopWhen).toHaveLength(4);
+
+    const proposePlanSuccessSteps = [
+      {
+        toolResults: [
+          {
+            toolName: "propose_plan",
+            output: { success: true, planPath: "/tmp/plan.md" },
+          },
+        ],
+      },
+    ];
+
+    const proposePlanCondition = stopWhen[3];
+    if (!proposePlanCondition) {
+      throw new Error("Expected stopWhen to include propose_plan condition");
+    }
+
+    expect(proposePlanCondition({ steps: proposePlanSuccessSteps })).toBe(true);
+    expect(stopWhen.some((condition) => condition({ steps: proposePlanSuccessSteps }))).toBe(true);
+  });
+
+  test("does not stop when propose_plan fails", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      stopAfterSuccessfulProposePlan: true,
+    });
+    if (!Array.isArray(stopWhen)) {
+      throw new Error("Expected autonomous stopWhen to be an array of conditions");
+    }
+
+    const proposePlanFailedSteps = [
+      {
+        toolResults: [
+          {
+            toolName: "propose_plan",
+            output: { success: false },
+          },
+        ],
+      },
+    ];
+
+    const proposePlanCondition = stopWhen[3];
+    if (!proposePlanCondition) {
+      throw new Error("Expected stopWhen to include propose_plan condition");
+    }
+
+    expect(proposePlanCondition({ steps: proposePlanFailedSteps })).toBe(false);
+    expect(stopWhen.some((condition) => condition({ steps: proposePlanFailedSteps }))).toBe(false);
+  });
+
+  test("does not stop for propose_plan when flag is false/absent", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const proposePlanSuccessSteps = [
+      {
+        toolResults: [
+          {
+            toolName: "propose_plan",
+            output: { success: true, planPath: "/tmp/plan.md" },
+          },
+        ],
+      },
+    ];
+
+    const stopWhenWithoutProposePlanFlag = [
+      buildStopWhen!({ hasQueuedMessage: () => false, stopAfterSuccessfulProposePlan: false }),
+      buildStopWhen!({ hasQueuedMessage: () => false }),
+    ];
+
+    for (const stopWhen of stopWhenWithoutProposePlanFlag) {
+      if (!Array.isArray(stopWhen)) {
+        throw new Error("Expected autonomous stopWhen to be an array of conditions");
+      }
+      expect(stopWhen).toHaveLength(3);
+      expect(stopWhen.some((condition) => condition({ steps: proposePlanSuccessSteps }))).toBe(
+        false
+      );
+    }
   });
 
   test("treats missing queued-message callback as not queued", () => {

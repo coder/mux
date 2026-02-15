@@ -101,6 +101,7 @@ interface StreamRequestConfig {
   headers?: Record<string, string | undefined>;
   maxOutputTokens?: number;
   hasQueuedMessage?: () => boolean;
+  stopAfterSuccessfulProposePlan?: boolean;
 }
 
 // Stream state enum for exhaustive checking
@@ -932,7 +933,8 @@ export class StreamManager extends EventEmitter {
     maxOutputTokens?: number,
     toolPolicy?: ToolPolicy,
     hasQueuedMessage?: () => boolean,
-    headers?: Record<string, string | undefined>
+    headers?: Record<string, string | undefined>,
+    stopAfterSuccessfulProposePlan?: boolean
   ): StreamRequestConfig {
     // Determine toolChoice based on toolPolicy.
     //
@@ -1008,11 +1010,15 @@ export class StreamManager extends EventEmitter {
       headers,
       maxOutputTokens: effectiveMaxOutputTokens,
       hasQueuedMessage,
+      stopAfterSuccessfulProposePlan,
     };
   }
 
   private createStopWhenCondition(
-    request: Pick<StreamRequestConfig, "toolChoice" | "hasQueuedMessage">
+    request: Pick<
+      StreamRequestConfig,
+      "toolChoice" | "hasQueuedMessage" | "stopAfterSuccessfulProposePlan"
+    >
   ): ReturnType<typeof stepCountIs> | Array<ReturnType<typeof stepCountIs>> {
     if (request.toolChoice) {
       // Required tool calls must stop after a single step to avoid recursive loops.
@@ -1042,11 +1048,30 @@ export class StreamManager extends EventEmitter {
       );
     };
 
-    return [
+    const hasSuccessfulProposePlanResult: ReturnType<typeof stepCountIs> = ({ steps }) => {
+      const lastStep = steps[steps.length - 1];
+      return (
+        lastStep?.toolResults?.some(
+          (toolResult) =>
+            toolResult.toolName === "propose_plan" &&
+            typeof toolResult.output === "object" &&
+            toolResult.output !== null &&
+            (toolResult.output as { success?: unknown }).success === true
+        ) ?? false
+      );
+    };
+
+    const stopConditions: Array<ReturnType<typeof stepCountIs>> = [
       stepCountIs(100000),
       () => request.hasQueuedMessage?.() ?? false,
       hasSuccessfulAgentReportResult,
     ];
+
+    if (request.stopAfterSuccessfulProposePlan) {
+      stopConditions.push(hasSuccessfulProposePlanResult);
+    }
+
+    return stopConditions;
   }
 
   private createStreamResult(
@@ -1106,7 +1131,8 @@ export class StreamManager extends EventEmitter {
     hasQueuedMessage?: () => boolean,
     workspaceName?: string,
     thinkingLevel?: string,
-    headers?: Record<string, string | undefined>
+    headers?: Record<string, string | undefined>,
+    stopAfterSuccessfulProposePlan?: boolean
   ): WorkspaceStreamInfo {
     // abortController is created and linked to the caller-provided abortSignal in startStream().
 
@@ -1121,7 +1147,8 @@ export class StreamManager extends EventEmitter {
       maxOutputTokens,
       toolPolicy,
       hasQueuedMessage,
-      headers
+      headers,
+      stopAfterSuccessfulProposePlan
     );
 
     // Start streaming - this can throw immediately if API key is missing
@@ -2487,7 +2514,8 @@ export class StreamManager extends EventEmitter {
     hasQueuedMessage?: () => boolean,
     workspaceName?: string,
     thinkingLevel?: string,
-    headers?: Record<string, string | undefined>
+    headers?: Record<string, string | undefined>,
+    stopAfterSuccessfulProposePlan?: boolean
   ): Promise<Result<StreamToken, SendMessageError>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
@@ -2563,7 +2591,8 @@ export class StreamManager extends EventEmitter {
           hasQueuedMessage,
           workspaceName,
           thinkingLevel,
-          headers
+          headers,
+          stopAfterSuccessfulProposePlan
         );
 
         // Guard against a narrow race:
