@@ -16,7 +16,12 @@ import type {
   FrontendWorkspaceMetadataSchemaType,
 } from "@/common/orpc/types";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
-import { createAuthMiddleware } from "./authMiddleware";
+import {
+  createAuthMiddleware,
+  extractClientIpAddress,
+  extractCookieValue,
+  getFirstHeaderValue,
+} from "./authMiddleware";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 import { clearLogFiles, getLogFilePath } from "@/node/services/log";
 import type { LogEntry } from "@/node/services/logBuffer";
@@ -61,6 +66,7 @@ import type { MuxMessage } from "@/common/types/message";
 import { coerceThinkingLevel } from "@/common/types/thinking";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
 import { log } from "@/node/services/log";
+import { SERVER_AUTH_SESSION_COOKIE_NAME } from "@/node/services/serverAuthService";
 import {
   readSubagentTranscriptArtifactsFile,
   type SubagentTranscriptArtifactIndexEntry,
@@ -272,6 +278,20 @@ async function findSubagentTranscriptEntryByScanningSessions(params: {
   return best;
 }
 
+async function getCurrentServerAuthSessionId(context: ORPCContext): Promise<string | null> {
+  const sessionToken = extractCookieValue(context.headers?.cookie, SERVER_AUTH_SESSION_COOKIE_NAME);
+  if (!sessionToken) {
+    return null;
+  }
+
+  const validation = await context.serverAuthService.validateSessionToken(sessionToken, {
+    userAgent: getFirstHeaderValue(context.headers, "user-agent"),
+    ipAddress: extractClientIpAddress(context.headers),
+  });
+
+  return validation?.sessionId ?? null;
+}
+
 export const router = (authToken?: string) => {
   const t = os.$context<ORPCContext>().use(createAuthMiddleware(authToken));
 
@@ -471,6 +491,31 @@ export const router = (authToken?: string) => {
             configuredPort,
             configuredServeWebUi,
           };
+        }),
+    },
+    serverAuth: {
+      listSessions: t
+        .input(schemas.serverAuth.listSessions.input)
+        .output(schemas.serverAuth.listSessions.output)
+        .handler(async ({ context }) => {
+          const currentSessionId = await getCurrentServerAuthSessionId(context);
+          return context.serverAuthService.listSessions(currentSessionId);
+        }),
+      revokeSession: t
+        .input(schemas.serverAuth.revokeSession.input)
+        .output(schemas.serverAuth.revokeSession.output)
+        .handler(async ({ context, input }) => {
+          const removed = await context.serverAuthService.revokeSession(input.sessionId);
+          return { removed };
+        }),
+      revokeOtherSessions: t
+        .input(schemas.serverAuth.revokeOtherSessions.input)
+        .output(schemas.serverAuth.revokeOtherSessions.output)
+        .handler(async ({ context }) => {
+          const currentSessionId = await getCurrentServerAuthSessionId(context);
+          const revokedCount =
+            await context.serverAuthService.revokeOtherSessions(currentSessionId);
+          return { revokedCount };
         }),
     },
     features: {

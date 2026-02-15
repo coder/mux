@@ -75,6 +75,33 @@ describe("Config", () => {
     });
   });
 
+  describe("server GitHub owner auth setting", () => {
+    it("persists serverAuthGithubOwner", async () => {
+      await config.editConfig((cfg) => {
+        cfg.serverAuthGithubOwner = "octocat";
+        return cfg;
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.serverAuthGithubOwner).toBe("octocat");
+      expect(config.getServerAuthGithubOwner()).toBe("octocat");
+    });
+
+    it("ignores empty serverAuthGithubOwner values on load", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [],
+          serverAuthGithubOwner: "   ",
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.serverAuthGithubOwner).toBeUndefined();
+    });
+  });
+
   describe("model preferences", () => {
     it("should normalize and persist defaultModel, hiddenModels, and preferredCompactionModel", async () => {
       await config.editConfig((cfg) => {

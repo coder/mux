@@ -18,10 +18,14 @@ import { OpenAPIHandler } from "@orpc/openapi/node";
 import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
 import { router, type AppRouter } from "@/node/orpc/router";
 import type { ORPCContext } from "@/node/orpc/context";
-import { extractWsHeaders, safeEq } from "@/node/orpc/authMiddleware";
+import { extractCookieValue, extractWsHeaders, safeEq } from "@/node/orpc/authMiddleware";
 import { VERSION } from "@/version";
 import { formatOrpcError } from "@/node/orpc/formatOrpcError";
 import { log } from "@/node/services/log";
+import {
+  SERVER_AUTH_SESSION_COOKIE_NAME,
+  SERVER_AUTH_SESSION_MAX_AGE_SECONDS,
+} from "@/node/services/serverAuthService";
 import { attachStreamErrorHandler, isIgnorableStreamError } from "@/node/utils/streamErrors";
 
 type AliveWebSocket = WebSocket & { isAlive?: boolean };
@@ -431,6 +435,63 @@ export async function createOrpcServer({
     res.json({ ...VERSION, mode: "server" });
   });
 
+  function getRequestIpAddress(
+    req: Pick<express.Request, "headers" | "socket">
+  ): string | undefined {
+    const forwardedFor = getFirstHeaderValue(req, "x-forwarded-for");
+    if (forwardedFor) {
+      const first = forwardedFor.split(",")[0]?.trim();
+      if (first) {
+        return first;
+      }
+    }
+
+    const remoteAddress = req.socket.remoteAddress?.trim();
+    return remoteAddress?.length ? remoteAddress : undefined;
+  }
+
+  function isSecureRequest(req: OriginValidationRequest): boolean {
+    const forwardedProto = getFirstHeaderValue(req, "x-forwarded-proto");
+    if (forwardedProto) {
+      return normalizeProtocol(forwardedProto) === "https";
+    }
+
+    if (typeof req.protocol === "string") {
+      return normalizeProtocol(req.protocol) === "https";
+    }
+
+    return Boolean((req.socket as { encrypted?: boolean }).encrypted);
+  }
+
+  function buildServerSessionCookie(sessionToken: string, secure: boolean): string {
+    const encoded = encodeURIComponent(sessionToken);
+    return `${SERVER_AUTH_SESSION_COOKIE_NAME}=${encoded}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SERVER_AUTH_SESSION_MAX_AGE_SECONDS}${secure ? "; Secure" : ""}`;
+  }
+
+  async function isHttpRequestAuthenticated(req: express.Request): Promise<boolean> {
+    if (!authToken?.trim()) {
+      return true;
+    }
+
+    const expectedToken = authToken.trim();
+    const presentedToken = extractBearerToken(req.header("authorization"));
+    if (presentedToken && safeEq(presentedToken, expectedToken)) {
+      return true;
+    }
+
+    const sessionToken = extractCookieValue(req.headers.cookie, SERVER_AUTH_SESSION_COOKIE_NAME);
+    if (!sessionToken) {
+      return false;
+    }
+
+    const validation = await context.serverAuthService.validateSessionToken(sessionToken, {
+      userAgent: req.header("user-agent") ?? undefined,
+      ipAddress: getRequestIpAddress(req),
+    });
+
+    return validation != null;
+  }
+
   function getStringParamFromQueryOrBody(req: express.Request, key: string): string | null {
     const queryValue = req.query[key];
     if (typeof queryValue === "string") return queryValue;
@@ -439,17 +500,51 @@ export async function createOrpcServer({
     const bodyValue = bodyRecord?.[key];
     return typeof bodyValue === "string" ? bodyValue : null;
   }
+  app.get("/auth/server-login/options", (_req, res) => {
+    res.json({ githubDeviceFlowEnabled: context.serverAuthService.isGithubDeviceFlowEnabled() });
+  });
+
+  app.post("/auth/server-login/github/start", async (_req, res) => {
+    const startResult = await context.serverAuthService.startGithubDeviceFlow();
+    if (!startResult.success) {
+      res.status(400).json({ error: startResult.error });
+      return;
+    }
+
+    res.json(startResult.data);
+  });
+
+  app.post("/auth/server-login/github/wait", async (req, res) => {
+    const flowId = getStringParamFromQueryOrBody(req, "flowId");
+    if (!flowId) {
+      res.status(400).json({ error: "Missing flowId" });
+      return;
+    }
+
+    const waitResult = await context.serverAuthService.waitForGithubDeviceFlow(flowId, {
+      userAgent: req.header("user-agent") ?? undefined,
+      ipAddress: getRequestIpAddress(req),
+    });
+
+    if (!waitResult.success) {
+      res.status(400).json({ error: waitResult.error });
+      return;
+    }
+
+    res.setHeader(
+      "Set-Cookie",
+      buildServerSessionCookie(waitResult.data.sessionToken, isSecureRequest(req))
+    );
+    res.json({ ok: true });
+  });
+
   // --- Mux Gateway OAuth (unauthenticated bootstrap routes) ---
   // These are raw Express routes (not oRPC) because the OAuth provider cannot
   // send a mux Bearer token during the redirect callback.
-  app.get("/auth/mux-gateway/start", (req, res) => {
-    if (authToken?.trim()) {
-      const expectedToken = authToken.trim();
-      const presentedToken = extractBearerToken(req.header("authorization"));
-      if (!presentedToken || !safeEq(presentedToken, expectedToken)) {
-        res.status(401).json({ error: "Invalid or missing auth token" });
-        return;
-      }
+  app.get("/auth/mux-gateway/start", async (req, res) => {
+    if (!(await isHttpRequestAuthenticated(req))) {
+      res.status(401).json({ error: "Invalid or missing auth token/session" });
+      return;
     }
 
     const hostHeader = req.get("x-forwarded-host") ?? req.get("host");
@@ -594,14 +689,10 @@ export async function createOrpcServer({
 
   // --- Mux Governor OAuth (unauthenticated bootstrap routes) ---
   // Similar to Mux Gateway OAuth but accepts user-provided governorUrl.
-  app.get("/auth/mux-governor/start", (req, res) => {
-    if (authToken?.trim()) {
-      const expectedToken = authToken.trim();
-      const presentedToken = extractBearerToken(req.header("authorization"));
-      if (!presentedToken || !safeEq(presentedToken, expectedToken)) {
-        res.status(401).json({ error: "Invalid or missing auth token" });
-        return;
-      }
+  app.get("/auth/mux-governor/start", async (req, res) => {
+    if (!(await isHttpRequestAuthenticated(req))) {
+      res.status(401).json({ error: "Invalid or missing auth token/session" });
+      return;
     }
 
     const governorUrl = typeof req.query.governorUrl === "string" ? req.query.governorUrl : null;

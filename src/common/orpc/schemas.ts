@@ -199,6 +199,8 @@ export {
   providers,
   ProvidersConfigMapSchema,
   server,
+  ServerAuthSessionSchema,
+  serverAuth,
   splashScreens,
   tasks,
   experiments,

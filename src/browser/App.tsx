@@ -110,7 +110,7 @@ function AppInner() {
     [setTheme]
   );
   const { layoutPresets, applySlotToWorkspace, saveCurrentWorkspaceToSlot } = useUILayouts();
-  const { api, status, error, authenticate } = useAPI();
+  const { api, status, error, authenticate, retry } = useAPI();
 
   const {
     projects,
@@ -937,7 +937,14 @@ function AppInner() {
 
   // Show auth modal if authentication is required
   if (status === "auth_required") {
-    return <AuthTokenModal isOpen={true} onSubmit={authenticate} error={error} />;
+    return (
+      <AuthTokenModal
+        isOpen={true}
+        onSubmit={authenticate}
+        onSessionAuthenticated={retry}
+        error={error}
+      />
+    );
   }
 
   return (

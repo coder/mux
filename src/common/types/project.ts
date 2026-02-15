@@ -53,6 +53,12 @@ export interface ProjectsConfig {
   /** SSH hostname/alias for this machine (used for editor deep links in browser mode) */
   serverSshHost?: string;
   /**
+   * Optional GitHub username allowed to authenticate server/browser mode via Device Flow.
+   *
+   * When unset, GitHub login is disabled and token-only auth remains in effect.
+   */
+  serverAuthGithubOwner?: string;
+  /**
    * Default parent directory for new projects (cloning and bare-name creation).
    *
    * When unset, falls back to getMuxProjectsDir() (~/.mux/projects).

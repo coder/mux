@@ -11,6 +11,7 @@ import {
   Keyboard,
   Layout,
   BrainCircuit,
+  Shield,
   ShieldCheck,
   Server,
   Lock,
@@ -29,6 +30,7 @@ import { MCPSettingsSection } from "./sections/MCPSettingsSection";
 import { SecretsSection } from "./sections/SecretsSection";
 import { LayoutsSection } from "./sections/LayoutsSection";
 import { ExperimentsSection } from "./sections/ExperimentsSection";
+import { ServerAccessSection } from "./sections/ServerAccessSection";
 import { KeybindsSection } from "./sections/KeybindsSection";
 import type { SettingsSection } from "./types";
 
@@ -68,6 +70,12 @@ const BASE_SECTIONS: SettingsSection[] = [
     label: "Secrets",
     icon: <Lock className="h-4 w-4" />,
     component: SecretsSection,
+  },
+  {
+    id: "server-access",
+    label: "Server Access",
+    icon: <Shield className="h-4 w-4" />,
+    component: ServerAccessSection,
   },
   {
     id: "layouts",

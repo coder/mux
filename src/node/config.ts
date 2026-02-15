@@ -168,6 +168,7 @@ export class Config {
           mdnsAdvertisementEnabled?: unknown;
           mdnsServiceName?: unknown;
           serverSshHost?: string;
+          serverAuthGithubOwner?: unknown;
           defaultProjectDir?: unknown;
           viewedSplashScreens?: string[];
           featureFlagOverrides?: Record<string, "default" | "on" | "off">;
@@ -241,6 +242,7 @@ export class Config {
             mdnsAdvertisementEnabled: parseOptionalBoolean(parsed.mdnsAdvertisementEnabled),
             mdnsServiceName: parseOptionalNonEmptyString(parsed.mdnsServiceName),
             serverSshHost: parsed.serverSshHost,
+            serverAuthGithubOwner: parseOptionalNonEmptyString(parsed.serverAuthGithubOwner),
             defaultProjectDir: parseOptionalNonEmptyString(parsed.defaultProjectDir),
             viewedSplashScreens: parsed.viewedSplashScreens,
             layoutPresets,
@@ -288,6 +290,7 @@ export class Config {
         mdnsAdvertisementEnabled?: boolean;
         mdnsServiceName?: string;
         serverSshHost?: string;
+        serverAuthGithubOwner?: string;
         defaultProjectDir?: string;
         viewedSplashScreens?: string[];
         layoutPresets?: ProjectsConfig["layoutPresets"];
@@ -362,6 +365,10 @@ export class Config {
 
       if (config.serverSshHost) {
         data.serverSshHost = config.serverSshHost;
+      }
+      const serverAuthGithubOwner = parseOptionalNonEmptyString(config.serverAuthGithubOwner);
+      if (serverAuthGithubOwner) {
+        data.serverAuthGithubOwner = serverAuthGithubOwner;
       }
       const defaultProjectDir = parseOptionalNonEmptyString(config.defaultProjectDir);
       if (defaultProjectDir) {
@@ -494,6 +501,18 @@ export class Config {
     return config.serverSshHost;
   }
 
+  /**
+   * Get the configured GitHub username allowed to authenticate server/browser mode.
+   */
+  getServerAuthGithubOwner(): string | undefined {
+    const envOwner = parseOptionalNonEmptyString(process.env.MUX_SERVER_AUTH_GITHUB_OWNER);
+    if (envOwner) {
+      return envOwner;
+    }
+
+    const config = this.loadConfigOrDefault();
+    return config.serverAuthGithubOwner;
+  }
   private getProjectName(projectPath: string): string {
     return PlatformPaths.getProjectName(projectPath);
   }

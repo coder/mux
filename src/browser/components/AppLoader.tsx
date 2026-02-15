@@ -130,7 +130,14 @@ function AppLoaderInner() {
 
   // If we're in browser mode and auth is required, show the token prompt before any data loads.
   if (apiState.status === "auth_required") {
-    return <AuthTokenModal isOpen={true} onSubmit={apiState.authenticate} error={apiState.error} />;
+    return (
+      <AuthTokenModal
+        isOpen={true}
+        onSubmit={apiState.authenticate}
+        onSessionAuthenticated={apiState.retry}
+        error={apiState.error}
+      />
+    );
   }
 
   // Only block the UI during the very first load. After that, keep rendering the

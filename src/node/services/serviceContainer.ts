@@ -52,6 +52,7 @@ import {
 } from "@/node/runtime/coderLifecycleHooks";
 import { setGlobalCoderService } from "@/node/runtime/runtimeFactory";
 import { PolicyService } from "@/node/services/policyService";
+import { ServerAuthService } from "@/node/services/serverAuthService";
 import type { ORPCContext } from "@/node/orpc/context";
 
 const MUX_HELP_CHAT_WELCOME_MESSAGE_ID = "mux-chat-welcome";
@@ -112,6 +113,7 @@ export class ServiceContainer {
   public readonly signingService: SigningService;
   public readonly policyService: PolicyService;
   public readonly coderService: CoderService;
+  public readonly serverAuthService: ServerAuthService;
   private readonly ptyService: PTYService;
   public readonly idleCompactionService: IdleCompactionService;
 
@@ -203,6 +205,8 @@ export class ServiceContainer {
     this.featureFlagService = new FeatureFlagService(config, this.telemetryService);
     this.signingService = getSigningService();
     this.coderService = coderService;
+
+    this.serverAuthService = new ServerAuthService(config);
 
     const workspaceLifecycleHooks = new WorkspaceLifecycleHooks();
     workspaceLifecycleHooks.registerBeforeArchive(
@@ -435,6 +439,7 @@ export class ServiceContainer {
       policyService: this.policyService,
       signingService: this.signingService,
       coderService: this.coderService,
+      serverAuthService: this.serverAuthService,
     };
   }
 
@@ -467,6 +472,7 @@ export class ServiceContainer {
     await this.codexOauthService.dispose();
 
     this.copilotOauthService.dispose();
+    this.serverAuthService.dispose();
     await this.backgroundProcessManager.terminateAll();
   }
 }

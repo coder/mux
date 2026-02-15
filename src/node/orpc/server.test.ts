@@ -3,8 +3,12 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import { WebSocket } from "ws";
+import { RPCLink as HTTPRPCLink } from "@orpc/client/fetch";
+import { createORPCClient } from "@orpc/client";
+import type { RouterClient } from "@orpc/server";
 import { createOrpcServer } from "./server";
 import type { ORPCContext } from "./context";
+import type { AppRouter } from "./router";
 
 function getErrorCode(error: unknown): string | null {
   if (typeof error !== "object" || error === null) {
@@ -94,6 +98,19 @@ async function closeWebSocket(ws: WebSocket): Promise<void> {
   });
 }
 
+function createHttpClient(
+  baseUrl: string,
+  headers?: Record<string, string>
+): RouterClient<AppRouter> {
+  const link = new HTTPRPCLink({
+    url: `${baseUrl}/orpc`,
+    headers,
+  });
+
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- test helper
+  return createORPCClient(link) as RouterClient<AppRouter>;
+}
+
 describe("createOrpcServer", () => {
   test("serveStatic fallback does not swallow /api routes", async () => {
     // Minimal context stub - router won't be exercised by this test.
@@ -128,6 +145,79 @@ describe("createOrpcServer", () => {
     } finally {
       await server?.close();
       await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("reports whether GitHub device-flow login is enabled", async () => {
+    async function runCase(enabled: boolean): Promise<void> {
+      const stubContext: Partial<ORPCContext> = {
+        serverAuthService: {
+          isGithubDeviceFlowEnabled: () => enabled,
+        } as unknown as ORPCContext["serverAuthService"],
+      };
+
+      let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+
+      try {
+        server = await createOrpcServer({
+          host: "127.0.0.1",
+          port: 0,
+          context: stubContext as ORPCContext,
+        });
+
+        const response = await fetch(`${server.baseUrl}/auth/server-login/options`);
+        expect(response.status).toBe(200);
+
+        const payload = (await response.json()) as { githubDeviceFlowEnabled?: boolean };
+        expect(payload.githubDeviceFlowEnabled).toBe(enabled);
+      } finally {
+        await server?.close();
+      }
+    }
+
+    await runCase(false);
+    await runCase(true);
+  });
+
+  test("accepts ORPC requests authenticated via mux_session cookie", async () => {
+    const stubContext: Partial<ORPCContext> = {
+      serverAuthService: {
+        validateSessionToken: (token: string) => {
+          if (token === "valid-session-token") {
+            return Promise.resolve({ sessionId: "session-1" });
+          }
+          return Promise.resolve(null);
+        },
+      } as unknown as ORPCContext["serverAuthService"],
+    };
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+        authToken: "test-token",
+      });
+
+      const unauthenticatedClient = createHttpClient(server.baseUrl);
+
+      let unauthenticatedError: unknown = null;
+      try {
+        await Promise.resolve(unauthenticatedClient.general.ping("cookie-auth"));
+      } catch (error) {
+        unauthenticatedError = error;
+      }
+      expect(unauthenticatedError).toBeTruthy();
+
+      const cookieClient = createHttpClient(server.baseUrl, {
+        Cookie: "mux_session=valid-session-token",
+      });
+      const authenticatedPing = await Promise.resolve(cookieClient.general.ping("cookie-auth"));
+      expect(authenticatedPing).toBe("Pong: cookie-auth");
+    } finally {
+      await server?.close();
     }
   });
 

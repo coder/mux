@@ -1389,6 +1389,14 @@ export const ApiServerStatusSchema = z.object({
   configuredServeWebUi: z.boolean(),
 });
 
+export const ServerAuthSessionSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  createdAtMs: z.number().int().nonnegative(),
+  lastUsedAtMs: z.number().int().nonnegative(),
+  isCurrent: z.boolean(),
+});
+
 export const server = {
   getLaunchProject: {
     input: z.void(),
@@ -1413,6 +1421,21 @@ export const server = {
       serveWebUi: z.boolean().nullable().optional(),
     }),
     output: ApiServerStatusSchema,
+  },
+};
+
+export const serverAuth = {
+  listSessions: {
+    input: z.void(),
+    output: z.array(ServerAuthSessionSchema),
+  },
+  revokeSession: {
+    input: z.object({ sessionId: z.string() }).strict(),
+    output: z.object({ removed: z.boolean() }),
+  },
+  revokeOtherSessions: {
+    input: z.void(),
+    output: z.object({ revokedCount: z.number().int().nonnegative() }),
   },
 };
 
