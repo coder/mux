@@ -10,7 +10,7 @@
     <meta name="theme-color" content="#1e1e1e" />
     <link rel="manifest" href="/manifest.json" crossorigin="use-credentials" vite-ignore />
     <link rel="icon" href="/favicon.ico" data-theme-icon vite-ignore />
-    <link rel="apple-touch-icon" href="/icon.png" vite-ignore />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" vite-ignore />
     <title>mux - coder multiplexer</title>
     <style>
       body {
@@ -106,12 +106,7 @@
     <script>
       (function () {
         const THEME_KEY = "uiTheme";
-        const VALID_THEMES = new Set([
-          "light",
-          "dark",
-          "flexoki-light",
-          "flexoki-dark",
-        ]);
+        const VALID_THEMES = new Set(["light", "dark", "flexoki-light", "flexoki-dark"]);
 
         const THEME_COLORS = {
           dark: "#1e1e1e",
