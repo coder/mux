@@ -5,7 +5,6 @@ import {
   clearLogEntries,
   getEpoch,
   getRecentLogs,
-  onLogEntry,
   pushLogEntry,
   subscribeLogFeed,
   type BufferEvent,
@@ -30,7 +29,7 @@ describe("logBuffer", () => {
     const startEpoch = getEpoch();
     const received: BufferEvent[] = [];
 
-    const unsubscribe = onLogEntry((event) => {
+    const { unsubscribe } = subscribeLogFeed((event) => {
       received.push(event);
     });
 
@@ -66,7 +65,7 @@ describe("logBuffer", () => {
     const startEpoch = getEpoch();
     const received: BufferEvent[] = [];
 
-    const unsubscribe = onLogEntry((event) => {
+    const { unsubscribe } = subscribeLogFeed((event) => {
       received.push(event);
     });
 
@@ -81,7 +80,7 @@ describe("logBuffer", () => {
   test("unsubscribe stops receiving append and reset events", () => {
     const received: BufferEvent[] = [];
 
-    const unsubscribe = onLogEntry((event) => {
+    const { unsubscribe } = subscribeLogFeed((event) => {
       received.push(event);
     });
 

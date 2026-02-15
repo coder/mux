@@ -18,7 +18,7 @@ import type { WindowService } from "@/node/services/windowService";
 import { log } from "@/node/services/log";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import {
-  extractChatGptAccountIdFromTokens,
+  extractAccountIdFromTokens,
   isCodexOauthAuthExpired,
   parseCodexOauthAuth,
   type CodexOauthAuth,
@@ -463,7 +463,7 @@ export class CodexOauthService {
         return Err("Codex OAuth exchange response missing expires_in");
       }
 
-      const accountId = extractChatGptAccountIdFromTokens({ accessToken, idToken }) ?? undefined;
+      const accountId = extractAccountIdFromTokens({ accessToken, idToken }) ?? undefined;
 
       return Ok({
         type: "oauth",
@@ -523,8 +523,7 @@ export class CodexOauthService {
         return Err("Codex OAuth refresh response missing expires_in");
       }
 
-      const accountId =
-        extractChatGptAccountIdFromTokens({ accessToken, idToken }) ?? current.accountId;
+      const accountId = extractAccountIdFromTokens({ accessToken, idToken }) ?? current.accountId;
 
       const next: CodexOauthAuth = {
         type: "oauth",

@@ -32,7 +32,7 @@ export function getEditableUserMessageText(
 /**
  * Type guard to check if a message is a bash_output tool call with valid args
  */
-export function isBashOutputTool(
+function isBashOutputTool(
   msg: DisplayedMessage
 ): msg is DisplayedMessage & { type: "tool"; toolName: "bash_output"; args: BashOutputToolArgs } {
   if (msg.type !== "tool" || msg.toolName !== "bash_output") {
@@ -96,20 +96,6 @@ export function shouldShowInterruptedBarrier(msg: DisplayedMessage): boolean {
   // Show if interrupted and not actively streaming (tools don't have isStreaming property)
   const isStreaming = "isStreaming" in msg ? msg.isStreaming : false;
   return msg.isPartial && !isStreaming;
-}
-
-/**
- * Type guard to check if a message part has a streaming state
- */
-export function isStreamingPart(part: unknown): part is { type: "text"; state: "streaming" } {
-  return (
-    typeof part === "object" &&
-    part !== null &&
-    "type" in part &&
-    part.type === "text" &&
-    "state" in part &&
-    part.state === "streaming"
-  );
 }
 
 /**
