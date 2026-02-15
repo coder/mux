@@ -73,6 +73,11 @@ describe("ShareTranscriptDialog", () => {
     originalGetComputedStyle = globalThis.getComputedStyle;
     globalThis.getComputedStyle = globalThis.window.getComputedStyle.bind(globalThis.window);
 
+    // Ensure test isolation from other suites that attach a mock ORPC client.
+    // Share dialog tests operate on local ephemeral messages and should not race
+    // onChat reconnect loops from unrelated WorkspaceStore tests.
+    getStore().setClient(null);
+
     spyOn(console, "error").mockImplementation(() => undefined);
 
     spyOn(muxMd, "uploadToMuxMd").mockResolvedValue({

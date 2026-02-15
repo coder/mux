@@ -772,8 +772,36 @@ describe("WorkspaceStore", () => {
       const live = store.getBashToolLiveOutput(workspaceId, "call-2");
       expect(live).toBeNull();
     });
-  });
 
+    it("replays pre-caught-up bash output after full replay catches up", async () => {
+      const workspaceId = "bash-output-workspace-3";
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield {
+          type: "bash-output",
+          workspaceId,
+          toolCallId: "call-3",
+          text: "buffered\n",
+          isError: false,
+          timestamp: 1,
+        };
+        await Promise.resolve();
+        yield { type: "caught-up", replay: "full" };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const live = store.getBashToolLiveOutput(workspaceId, "call-3");
+      expect(live).not.toBeNull();
+      if (!live) throw new Error("Expected buffered live output after caught-up");
+      expect(live.stdout).toContain("buffered");
+    });
+  });
   describe("task-created events", () => {
     it("exposes live taskId while the task tool is running", async () => {
       const workspaceId = "task-created-workspace-1";
@@ -832,6 +860,31 @@ describe("WorkspaceStore", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(store.getTaskToolLiveTaskId(workspaceId, "call-task-2")).toBeNull();
+    });
+
+    it("replays pre-caught-up task-created after full replay catches up", async () => {
+      const workspaceId = "task-created-workspace-3";
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield {
+          type: "task-created",
+          workspaceId,
+          toolCallId: "call-task-3",
+          taskId: "child-workspace-3",
+          timestamp: 1,
+        };
+        await Promise.resolve();
+        yield { type: "caught-up", replay: "full" };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(store.getTaskToolLiveTaskId(workspaceId, "call-task-3")).toBe("child-workspace-3");
     });
   });
 });

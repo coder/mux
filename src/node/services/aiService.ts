@@ -1058,12 +1058,12 @@ export class AIService extends EventEmitter {
    * Replay stream events
    * Emits the same events that would be emitted during live streaming
    */
-  async replayStream(workspaceId: string): Promise<void> {
+  async replayStream(workspaceId: string, opts?: { afterTimestamp?: number }): Promise<void> {
     if (this.mockModeEnabled && this.mockAiStreamPlayer) {
       await this.mockAiStreamPlayer.replayStream(workspaceId);
       return;
     }
-    await this.streamManager.replayStream(workspaceId);
+    await this.streamManager.replayStream(workspaceId, opts);
   }
 
   debugGetLastMockPrompt(workspaceId: string): Result<MuxMessage[] | null> {

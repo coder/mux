@@ -2829,7 +2829,7 @@ export const router = (authToken?: string) => {
           // 2. Replay history (sends caught-up at the end)
           await session.replayHistory(({ message }) => {
             push(message);
-          });
+          }, input.mode);
 
           replayRelay.finishReplay();
 
