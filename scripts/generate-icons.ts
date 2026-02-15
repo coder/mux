@@ -92,6 +92,9 @@ const LOGO_TARGETS = {
   "public/icon-192.png": { size: 192, ...APP_ICON },
   "public/icon-512.png": { size: 512, ...APP_ICON },
 
+  // iOS Safari uses apple-touch-icon for home screen installs.
+  "public/apple-touch-icon.png": { size: 180, ...APP_ICON },
+
   // Electron Tray Icons – Wide Canvas with "m" Mark (Monochrome on Transparent)
   //
   // The source SVGs have heavy internal padding (mark uses ~32% of canvas).
