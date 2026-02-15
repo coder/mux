@@ -80,6 +80,33 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     subagentRunnable: true,
     base: "exec",
   },
+  {
+    id: "mux",
+    scope: "built-in",
+    name: "Mux",
+    description: "Configure mux global behavior (system workspace)",
+    uiSelectable: false,
+    subagentRunnable: false,
+  },
+  {
+    // Keep every built-in agent ID in the fallback list so user overrides don't
+    // get mislabeled as "Unknown agents" when workspace discovery is unavailable.
+    id: "orchestrator",
+    scope: "built-in",
+    name: "Orchestrator",
+    description: "Coordinate sub-agent implementation and apply patches",
+    uiSelectable: true,
+    subagentRunnable: false,
+    base: "exec",
+  },
+  {
+    id: "system1_bash",
+    scope: "built-in",
+    name: "System1 Bash",
+    description: "Fast bash-output filtering (internal)",
+    uiSelectable: false,
+    subagentRunnable: false,
+  },
 ];
 
 function getAgentDefinitionPath(agent: AgentDefinitionDescriptor): string | null {
