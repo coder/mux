@@ -19,6 +19,7 @@ import {
 } from "@/common/types/tasks";
 import { isLayoutPresetsConfigEmpty, normalizeLayoutPresetsConfig } from "@/common/types/uiLayouts";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
+import { RUNTIME_ENABLEMENT_IDS, type RuntimeEnablementId } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { getMuxHome } from "@/common/constants/paths";
@@ -131,6 +132,78 @@ function parseOptionalPort(value: unknown): number | undefined {
 
   return value;
 }
+
+function normalizeRuntimeEnablementId(value: unknown): RuntimeEnablementId | undefined {
+  const trimmed = parseOptionalNonEmptyString(value);
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const normalized = trimmed.toLowerCase();
+  if (RUNTIME_ENABLEMENT_IDS.includes(normalized as RuntimeEnablementId)) {
+    return normalized as RuntimeEnablementId;
+  }
+
+  return undefined;
+}
+
+function normalizeRuntimeEnablementOverrides(
+  value: unknown
+): Partial<Record<RuntimeEnablementId, false>> | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const overrides: Partial<Record<RuntimeEnablementId, false>> = {};
+
+  for (const runtimeId of RUNTIME_ENABLEMENT_IDS) {
+    // Default ON: store `false` only so config.json stays minimal.
+    if (record[runtimeId] === false) {
+      overrides[runtimeId] = false;
+    }
+  }
+
+  return Object.keys(overrides).length > 0 ? overrides : undefined;
+}
+
+function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectConfig {
+  // Per-project runtime overrides are optional; keep config.json sparse by persisting only explicit
+  // overrides (false enablement + explicit default runtime selections).
+  if (!projectConfig || typeof projectConfig !== "object") {
+    return { workspaces: [] };
+  }
+
+  const record = projectConfig as ProjectConfig & {
+    runtimeEnablement?: unknown;
+    defaultRuntime?: unknown;
+    runtimeOverridesEnabled?: unknown;
+  };
+  const runtimeEnablement = normalizeRuntimeEnablementOverrides(record.runtimeEnablement);
+  const defaultRuntime = normalizeRuntimeEnablementId(record.defaultRuntime);
+  const runtimeOverridesEnabled = record.runtimeOverridesEnabled === true ? true : undefined;
+
+  const next = { ...record };
+  if (runtimeEnablement) {
+    next.runtimeEnablement = runtimeEnablement;
+  } else {
+    delete next.runtimeEnablement;
+  }
+
+  if (runtimeOverridesEnabled) {
+    next.runtimeOverridesEnabled = runtimeOverridesEnabled;
+  } else {
+    delete next.runtimeOverridesEnabled;
+  }
+
+  if (defaultRuntime) {
+    next.defaultRuntime = defaultRuntime;
+  } else {
+    delete next.defaultRuntime;
+  }
+
+  return next;
+}
 export type ProvidersConfig = Record<string, ProviderConfig>;
 
 /**
@@ -184,6 +257,8 @@ export class Config {
           muxGovernorUrl?: unknown;
           muxGovernorToken?: unknown;
           stopCoderWorkspaceOnArchive?: unknown;
+          runtimeEnablement?: unknown;
+          defaultRuntime?: unknown;
         };
 
         // Config is stored as array of [path, config] pairs
@@ -201,7 +276,11 @@ export class Config {
               return true;
             })
             .map(([projectPath, projectConfig]) => {
-              return [stripTrailingSlashes(projectPath), projectConfig] as [string, ProjectConfig];
+              const normalizedProjectConfig = normalizeProjectRuntimeSettings(projectConfig);
+              return [stripTrailingSlashes(projectPath), normalizedProjectConfig] as [
+                string,
+                ProjectConfig,
+              ];
             });
           const projectsMap = new Map<string, ProjectConfig>(normalizedPairs);
 
@@ -220,6 +299,9 @@ export class Config {
           // Default ON: store `false` only so config.json stays minimal.
           const stopCoderWorkspaceOnArchive =
             parseOptionalBoolean(parsed.stopCoderWorkspaceOnArchive) === false ? false : undefined;
+
+          const runtimeEnablement = normalizeRuntimeEnablementOverrides(parsed.runtimeEnablement);
+          const defaultRuntime = normalizeRuntimeEnablementId(parsed.defaultRuntime);
 
           const agentAiDefaults =
             parsed.agentAiDefaults !== undefined
@@ -258,6 +340,8 @@ export class Config {
             muxGovernorUrl: parseOptionalNonEmptyString(parsed.muxGovernorUrl),
             muxGovernorToken: parseOptionalNonEmptyString(parsed.muxGovernorToken),
             stopCoderWorkspaceOnArchive,
+            defaultRuntime,
+            runtimeEnablement,
           };
         }
       }
@@ -304,8 +388,13 @@ export class Config {
         muxGovernorUrl?: string;
         muxGovernorToken?: string;
         stopCoderWorkspaceOnArchive?: boolean;
+        runtimeEnablement?: ProjectsConfig["runtimeEnablement"];
+        defaultRuntime?: ProjectsConfig["defaultRuntime"];
       } = {
-        projects: Array.from(config.projects.entries()),
+        projects: Array.from(config.projects.entries()).map(
+          ([projectPath, projectConfig]) =>
+            [projectPath, normalizeProjectRuntimeSettings(projectConfig)] as [string, ProjectConfig]
+        ),
         taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
       };
 
@@ -414,6 +503,16 @@ export class Config {
       // Default ON: persist `false` only.
       if (config.stopCoderWorkspaceOnArchive === false) {
         data.stopCoderWorkspaceOnArchive = false;
+      }
+
+      const runtimeEnablement = normalizeRuntimeEnablementOverrides(config.runtimeEnablement);
+      if (runtimeEnablement) {
+        data.runtimeEnablement = runtimeEnablement;
+      }
+
+      const defaultRuntime = normalizeRuntimeEnablementId(config.defaultRuntime);
+      if (defaultRuntime !== undefined) {
+        data.defaultRuntime = defaultRuntime;
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");

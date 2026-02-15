@@ -44,6 +44,7 @@ import {
   getInputAttachmentsKey,
   AGENT_AI_DEFAULTS_KEY,
   VIM_ENABLED_KEY,
+  RUNTIME_ENABLEMENT_KEY,
   getProjectScopeId,
   getPendingScopeId,
   getDraftScopeId,
@@ -95,6 +96,7 @@ import type { PendingUserMessage } from "@/browser/utils/chatEditing";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import { DEFAULT_RUNTIME_ENABLEMENT, normalizeRuntimeEnablement } from "@/common/types/runtime";
 import { resolveThinkingInput } from "@/common/utils/thinking/policy";
 import {
   type MuxFrontendMetadata,
@@ -226,6 +228,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       modelKey: getModelKey(props.workspaceId),
     };
   })();
+
+  // User request: keep creation runtime controls synced with Settings enablement toggles.
+  const [rawRuntimeEnablement] = usePersistedState(
+    RUNTIME_ENABLEMENT_KEY,
+    DEFAULT_RUNTIME_ENABLEMENT,
+    { listener: true }
+  );
+  const runtimeEnablement = normalizeRuntimeEnablement(rawRuntimeEnablement);
 
   const [input, setInput] = usePersistedState(storageKeys.inputKey, "", { listener: true });
 
@@ -646,6 +656,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { projects } = useProjectContext();
   const pendingSectionId = variant === "creation" ? (props.pendingSectionId ?? null) : null;
   const creationProject = variant === "creation" ? projects.get(props.projectPath) : undefined;
+  const hasCreationRuntimeOverrides =
+    creationProject?.runtimeOverridesEnabled === true ||
+    Boolean(creationProject?.runtimeEnablement) ||
+    creationProject?.defaultRuntime !== undefined;
+  // Keep workspace creation in sync with Settings → Runtimes project overrides.
+  const creationRuntimeEnablement =
+    variant === "creation" && hasCreationRuntimeOverrides
+      ? normalizeRuntimeEnablement(creationProject?.runtimeEnablement)
+      : runtimeEnablement;
   const creationSections = creationProject?.sections ?? [];
 
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(() => pendingSectionId);
@@ -788,6 +807,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           projectName: props.projectName,
           nameState: creationState.nameState,
           runtimeAvailabilityState: creationState.runtimeAvailabilityState,
+          runtimeEnablement: creationRuntimeEnablement,
           sections: creationSections,
           selectedSectionId,
           onSectionChange: handleCreationSectionChange,

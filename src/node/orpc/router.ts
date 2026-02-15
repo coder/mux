@@ -42,6 +42,11 @@ import {
   normalizeTaskSettings,
 } from "@/common/types/tasks";
 import {
+  normalizeRuntimeEnablement,
+  RUNTIME_ENABLEMENT_IDS,
+  type RuntimeEnablementId,
+} from "@/common/types/runtime";
+import {
   discoverAgentSkills,
   discoverAgentSkillsDiagnostics,
   readAgentSkill,
@@ -508,6 +513,8 @@ export const router = (authToken?: string) => {
             hiddenModels: config.hiddenModels,
             preferredCompactionModel: config.preferredCompactionModel,
             stopCoderWorkspaceOnArchive: config.stopCoderWorkspaceOnArchive !== false,
+            runtimeEnablement: normalizeRuntimeEnablement(config.runtimeEnablement),
+            defaultRuntime: config.defaultRuntime ?? null,
             agentAiDefaults: config.agentAiDefaults ?? {},
             // Legacy fields (downgrade compatibility)
             subagentAiDefaults: config.subagentAiDefaults ?? {},
@@ -619,6 +626,93 @@ export const router = (authToken?: string) => {
               // Default ON: store `false` only.
               stopCoderWorkspaceOnArchive: input.stopCoderWorkspaceOnArchive ? undefined : false,
             };
+          });
+        }),
+      updateRuntimeEnablement: t
+        .input(schemas.config.updateRuntimeEnablement.input)
+        .output(schemas.config.updateRuntimeEnablement.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const shouldUpdateRuntimeEnablement = input.runtimeEnablement !== undefined;
+            const shouldUpdateDefaultRuntime = input.defaultRuntime !== undefined;
+            const shouldUpdateOverridesEnabled = input.runtimeOverridesEnabled !== undefined;
+            const projectPath = input.projectPath?.trim();
+
+            if (
+              !shouldUpdateRuntimeEnablement &&
+              !shouldUpdateDefaultRuntime &&
+              !shouldUpdateOverridesEnabled
+            ) {
+              return config;
+            }
+
+            const runtimeEnablementOverrides =
+              input.runtimeEnablement == null
+                ? undefined
+                : (() => {
+                    const normalized = normalizeRuntimeEnablement(input.runtimeEnablement);
+                    const disabled: Partial<Record<RuntimeEnablementId, false>> = {};
+
+                    for (const runtimeId of RUNTIME_ENABLEMENT_IDS) {
+                      if (!normalized[runtimeId]) {
+                        disabled[runtimeId] = false;
+                      }
+                    }
+
+                    return Object.keys(disabled).length > 0 ? disabled : undefined;
+                  })();
+
+            const defaultRuntime = input.defaultRuntime ?? undefined;
+            const runtimeOverridesEnabled =
+              input.runtimeOverridesEnabled === true ? true : undefined;
+
+            if (projectPath) {
+              const project = config.projects.get(projectPath);
+              if (!project) {
+                log.warn("Runtime settings update requested for missing project", { projectPath });
+                return config;
+              }
+
+              const nextProject = { ...project };
+
+              if (shouldUpdateRuntimeEnablement) {
+                if (runtimeEnablementOverrides) {
+                  nextProject.runtimeEnablement = runtimeEnablementOverrides;
+                } else {
+                  delete nextProject.runtimeEnablement;
+                }
+              }
+
+              if (shouldUpdateDefaultRuntime) {
+                if (defaultRuntime !== undefined) {
+                  nextProject.defaultRuntime = defaultRuntime;
+                } else {
+                  delete nextProject.defaultRuntime;
+                }
+              }
+
+              if (shouldUpdateOverridesEnabled) {
+                if (runtimeOverridesEnabled) {
+                  nextProject.runtimeOverridesEnabled = true;
+                } else {
+                  delete nextProject.runtimeOverridesEnabled;
+                }
+              }
+              const nextProjects = new Map(config.projects);
+              nextProjects.set(projectPath, nextProject);
+              return { ...config, projects: nextProjects };
+            }
+
+            const next = { ...config };
+            if (shouldUpdateRuntimeEnablement) {
+              next.runtimeEnablement = runtimeEnablementOverrides;
+            }
+
+            if (shouldUpdateDefaultRuntime) {
+              next.defaultRuntime = defaultRuntime;
+            }
+
+            return next;
           });
         }),
       saveConfig: t

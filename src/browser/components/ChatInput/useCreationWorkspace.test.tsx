@@ -1,4 +1,5 @@
 import type { APIClient } from "@/browser/contexts/API";
+import { ProjectProvider } from "@/browser/contexts/ProjectContext";
 import type { DraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
 import {
   getAgentIdKey,
@@ -161,7 +162,10 @@ type WorkspaceUpdateAgentAISettingsResult = Awaited<
 type WorkspaceCreateResult = Awaited<ReturnType<APIClient["workspace"]["create"]>>;
 type NameGenerationArgs = Parameters<APIClient["nameGeneration"]["generate"]>[0];
 type NameGenerationResult = Awaited<ReturnType<APIClient["nameGeneration"]["generate"]>>;
-type MockOrpcProjectsClient = Pick<APIClient["projects"], "listBranches" | "runtimeAvailability">;
+type MockOrpcProjectsClient = Pick<
+  APIClient["projects"],
+  "list" | "listBranches" | "runtimeAvailability"
+>;
 type MockOrpcWorkspaceClient = Pick<
   APIClient["workspace"],
   "sendMessage" | "create" | "updateAgentAISettings"
@@ -266,6 +270,7 @@ const setupWindow = ({
 
   currentORPCClient = {
     projects: {
+      list: () => Promise.resolve([]),
       listBranches: (input: ListBranchesArgs) => listBranchesMock(input),
       runtimeAvailability: () =>
         Promise.resolve({
@@ -881,7 +886,11 @@ function renderUseCreationWorkspace(options: HookOptions) {
     return null;
   }
 
-  render(<Harness {...options} />);
+  render(
+    <ProjectProvider>
+      <Harness {...options} />
+    </ProjectProvider>
+  );
 
   return () => {
     if (!resultRef.current) {

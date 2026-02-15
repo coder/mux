@@ -34,6 +34,11 @@ import {
   MUX_HELP_CHAT_WORKSPACE_NAME,
   MUX_HELP_CHAT_WORKSPACE_TITLE,
 } from "@/common/constants/muxChat";
+import {
+  normalizeRuntimeEnablement,
+  RUNTIME_ENABLEMENT_IDS,
+  type RuntimeEnablementId,
+} from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import {
   DEFAULT_TASK_SETTINGS,
@@ -98,6 +103,10 @@ export interface MockORPCClientOptions {
   subagentAiDefaults?: SubagentAiDefaults;
   /** Coder lifecycle preferences for config.getConfig (e.g., Settings → Coder section) */
   stopCoderWorkspaceOnArchive?: boolean;
+  /** Initial runtime enablement for config.getConfig */
+  runtimeEnablement?: Record<string, boolean>;
+  /** Initial default runtime for config.getConfig (global) */
+  defaultRuntime?: RuntimeEnablementId | null;
   /** Per-workspace chat callback. Return messages to emit, or use the callback for streaming. */
   onChat?: (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => (() => void) | void;
   /** Mock for executeBash per workspace */
@@ -290,6 +299,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     subagentAiDefaults: initialSubagentAiDefaults,
     agentAiDefaults: initialAgentAiDefaults,
     stopCoderWorkspaceOnArchive: initialStopCoderWorkspaceOnArchive = true,
+    runtimeEnablement: initialRuntimeEnablement,
+    defaultRuntime: initialDefaultRuntime,
     agentDefinitions: initialAgentDefinitions,
     listBranches: customListBranches,
     gitInit: customGitInit,
@@ -405,7 +416,16 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   let muxGatewayEnabled: boolean | undefined = undefined;
   let muxGatewayModels: string[] | undefined = undefined;
   let stopCoderWorkspaceOnArchive = initialStopCoderWorkspaceOnArchive;
+  let runtimeEnablement: Record<string, boolean> = initialRuntimeEnablement ?? {
+    local: true,
+    worktree: true,
+    ssh: true,
+    coder: true,
+    docker: true,
+    devcontainer: true,
+  };
 
+  let defaultRuntime: RuntimeEnablementId | null = initialDefaultRuntime ?? null;
   let globalSecretsState: Secret[] = [...globalSecrets];
   const globalMcpServersState: MockMcpServers = { ...globalMcpServers };
 
@@ -527,6 +547,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           muxGatewayEnabled,
           muxGatewayModels,
           stopCoderWorkspaceOnArchive,
+          runtimeEnablement,
+          defaultRuntime,
           agentAiDefaults,
           subagentAiDefaults,
           muxGovernorUrl,
@@ -572,6 +594,82 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       },
       updateCoderPrefs: (input: { stopCoderWorkspaceOnArchive: boolean }) => {
         stopCoderWorkspaceOnArchive = input.stopCoderWorkspaceOnArchive;
+        return Promise.resolve(undefined);
+      },
+      updateRuntimeEnablement: (input: {
+        projectPath?: string | null;
+        runtimeEnablement?: Record<string, boolean> | null;
+        defaultRuntime?: RuntimeEnablementId | null;
+        runtimeOverridesEnabled?: boolean | null;
+      }) => {
+        const shouldUpdateRuntimeEnablement = input.runtimeEnablement !== undefined;
+        const shouldUpdateDefaultRuntime = input.defaultRuntime !== undefined;
+        const shouldUpdateOverridesEnabled = input.runtimeOverridesEnabled !== undefined;
+        const projectPath = input.projectPath?.trim();
+
+        const runtimeEnablementOverrides =
+          input.runtimeEnablement == null
+            ? undefined
+            : (() => {
+                const normalized = normalizeRuntimeEnablement(input.runtimeEnablement);
+                const disabled: Partial<Record<RuntimeEnablementId, false>> = {};
+
+                for (const runtimeId of RUNTIME_ENABLEMENT_IDS) {
+                  if (!normalized[runtimeId]) {
+                    disabled[runtimeId] = false;
+                  }
+                }
+
+                return Object.keys(disabled).length > 0 ? disabled : undefined;
+              })();
+
+        const runtimeOverridesEnabled = input.runtimeOverridesEnabled === true ? true : undefined;
+
+        if (projectPath) {
+          const project = projects.get(projectPath);
+          if (project) {
+            const nextProject = { ...project };
+            if (shouldUpdateRuntimeEnablement) {
+              if (runtimeEnablementOverrides) {
+                nextProject.runtimeEnablement = runtimeEnablementOverrides;
+              } else {
+                delete nextProject.runtimeEnablement;
+              }
+            }
+
+            if (shouldUpdateDefaultRuntime) {
+              if (input.defaultRuntime !== null && input.defaultRuntime !== undefined) {
+                nextProject.defaultRuntime = input.defaultRuntime;
+              } else {
+                delete nextProject.defaultRuntime;
+              }
+            }
+
+            if (shouldUpdateOverridesEnabled) {
+              if (runtimeOverridesEnabled) {
+                nextProject.runtimeOverridesEnabled = true;
+              } else {
+                delete nextProject.runtimeOverridesEnabled;
+              }
+            }
+            projects.set(projectPath, nextProject);
+          }
+
+          return Promise.resolve(undefined);
+        }
+
+        if (shouldUpdateRuntimeEnablement) {
+          if (input.runtimeEnablement == null) {
+            runtimeEnablement = normalizeRuntimeEnablement({});
+          } else {
+            runtimeEnablement = normalizeRuntimeEnablement(input.runtimeEnablement);
+          }
+        }
+
+        if (shouldUpdateDefaultRuntime) {
+          defaultRuntime = input.defaultRuntime ?? null;
+        }
+
         return Promise.resolve(undefined);
       },
       unenrollMuxGovernor: () => Promise.resolve(undefined),

@@ -1,9 +1,17 @@
 import { z } from "zod";
-import { RuntimeConfigSchema } from "./runtime";
+import { RuntimeConfigSchema, RuntimeEnablementIdSchema } from "./runtime";
 import { WorkspaceMCPOverridesSchema } from "./mcp";
 import { WorkspaceAISettingsByAgentSchema, WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 
 const ThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh", "max"]);
+
+const RuntimeEnablementOverridesSchema = z
+  .object(
+    Object.fromEntries(
+      RuntimeEnablementIdSchema.options.map((runtimeId) => [runtimeId, z.literal(false)])
+    ) as Record<string, z.ZodLiteral<false>>
+  )
+  .partial();
 
 /**
  * Section schema for organizing workspaces within a project.
@@ -122,5 +130,14 @@ export const ProjectConfigSchema = z.object({
   idleCompactionHours: z.number().min(1).nullable().optional().meta({
     description:
       "Hours of inactivity before auto-compacting workspaces. null/undefined = disabled.",
+  }),
+  runtimeEnablement: RuntimeEnablementOverridesSchema.optional().meta({
+    description: "Runtime enablement overrides (store `false` only to keep config.json minimal)",
+  }),
+  runtimeOverridesEnabled: z.boolean().optional().meta({
+    description: "Whether this project uses runtime overrides, even if no overrides are set",
+  }),
+  defaultRuntime: RuntimeEnablementIdSchema.optional().meta({
+    description: "Default runtime override for new workspaces in this project",
   }),
 });

@@ -8,6 +8,7 @@ export { ResultSchema } from "./schemas/result";
 export {
   RuntimeConfigSchema,
   RuntimeModeSchema,
+  RuntimeEnablementIdSchema,
   RuntimeAvailabilitySchema,
   RuntimeAvailabilityStatusSchema,
   DevcontainerConfigInfoSchema,
