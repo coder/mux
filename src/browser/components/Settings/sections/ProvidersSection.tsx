@@ -1484,6 +1484,64 @@ export function ProvidersSection() {
                   );
                 })}
 
+                {/* Anthropic: prompt cache TTL */}
+                {provider === "anthropic" && (
+                  <div className="border-border-light border-t pt-3">
+                    <div className="mb-1 flex items-center gap-1">
+                      <label className="text-muted block text-xs">Prompt cache TTL</label>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <HelpIndicator aria-label="Anthropic prompt cache TTL help">
+                              ?
+                            </HelpIndicator>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <div className="max-w-[280px]">
+                              <div className="font-semibold">Prompt cache TTL</div>
+                              <div className="mt-1">
+                                Default is <span className="font-semibold">5m</span>. Use{" "}
+                                <span className="font-semibold">1h</span> for longer workflows at a
+                                higher cache-write cost.
+                              </div>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
+
+                    <Select
+                      value={config?.anthropic?.cacheTtl ?? "default"}
+                      onValueChange={(next) => {
+                        if (!api) {
+                          return;
+                        }
+                        if (next !== "default" && next !== "5m" && next !== "1h") {
+                          return;
+                        }
+
+                        const cacheTtl = next === "default" ? undefined : next;
+                        updateOptimistically("anthropic", { cacheTtl });
+                        void api.providers.setProviderConfig({
+                          provider: "anthropic",
+                          keyPath: ["cacheTtl"],
+                          // Empty string clears providers.jsonc key; backend defaults to 5m when unset.
+                          value: next === "default" ? "" : next,
+                        });
+                      }}
+                    >
+                      <SelectTrigger className="w-40">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="default">Default (5m)</SelectItem>
+                        <SelectItem value="5m">5 minutes</SelectItem>
+                        <SelectItem value="1h">1 hour</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
                 {/* OpenAI: ChatGPT OAuth + service tier */}
                 {provider === "openai" && (
                   <div className="border-border-light space-y-3 border-t pt-3">

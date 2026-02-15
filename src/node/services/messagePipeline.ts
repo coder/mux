@@ -27,7 +27,7 @@ import {
   injectFileChangeNotifications,
   injectPostCompactionAttachments,
 } from "@/browser/utils/messages/modelMessageTransform";
-import { applyCacheControl } from "@/common/utils/ai/cacheStrategy";
+import { applyCacheControl, type AnthropicCacheTtl } from "@/common/utils/ai/cacheStrategy";
 import { log } from "./log";
 
 /** Options for the full message preparation pipeline. */
@@ -58,6 +58,8 @@ export interface PrepareMessagesOptions {
   effectiveThinkingLevel: ThinkingLevel;
   /** Full model string (used for cache control). */
   modelString: string;
+  /** Optional Anthropic cache TTL override for prompt caching. */
+  anthropicCacheTtl?: AnthropicCacheTtl | null;
   /** Workspace ID (used only for debug logging). */
   workspaceId: string;
 }
@@ -98,6 +100,7 @@ export async function prepareMessagesForProvider(
     providerForMessages,
     effectiveThinkingLevel,
     modelString,
+    anthropicCacheTtl,
     workspaceId,
   } = opts;
 
@@ -181,7 +184,7 @@ export async function prepareMessagesForProvider(
   });
 
   // Apply cache control for Anthropic models AFTER transformation
-  const finalMessages = applyCacheControl(transformedMessages, modelString);
+  const finalMessages = applyCacheControl(transformedMessages, modelString, anthropicCacheTtl);
 
   log.debug_obj(`${workspaceId}/3_final_messages.json`, finalMessages);
 
