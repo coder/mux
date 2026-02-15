@@ -231,7 +231,10 @@ export function SettingsPage(props: SettingsPageProps) {
             </Button>
           </div>
           <div className="flex-1 overflow-y-auto p-4 md:p-6">
-            <SectionComponent />
+            {/* Keep settings content width bounded so long forms remain readable on wide screens. */}
+            <div className="w-full max-w-4xl">
+              <SectionComponent />
+            </div>
           </div>
         </div>
       </div>
