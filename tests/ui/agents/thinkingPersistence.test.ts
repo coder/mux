@@ -11,10 +11,7 @@ import { getModelKey } from "@/common/constants/storage";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 
-import { shouldRunIntegrationTests } from "../../testUtils";
 import { createAppHarness } from "../harness";
-
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 const OPENAI_MODEL = "openai:gpt-5.2";
 // Use Sonnet 4.5 as the model that caps at HIGH (4 levels, no xhigh).
@@ -144,7 +141,7 @@ async function expectThinkingLabel(container: HTMLElement, expected: string): Pr
   );
 }
 
-describeIntegration("Thinking level persistence", () => {
+describe("Thinking level persistence", () => {
   test("keeps XHIGH preference when switching away and back", async () => {
     const harness = await createAppHarness({ branchPrefix: "thinking" });
 

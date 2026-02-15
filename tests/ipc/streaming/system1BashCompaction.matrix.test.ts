@@ -16,7 +16,6 @@ import {
   createTestEnvironment,
   preloadTestModules,
   setupProviders,
-  shouldRunIntegrationTests,
   type TestEnvironment,
 } from "../setup";
 
@@ -93,10 +92,10 @@ const configuredModels = requestedModels.filter((modelString) => {
   return true;
 });
 
-const shouldRunSuite = shouldRunIntegrationTests() && configuredModels.length > 0;
-const describeIntegration = shouldRunSuite ? describe : describe.skip;
+const shouldRunSuite = configuredModels.length > 0;
+const describeSuite = shouldRunSuite ? describe : describe.skip;
 
-if (shouldRunIntegrationTests() && !shouldRunSuite) {
+if (!shouldRunSuite) {
   // eslint-disable-next-line no-console
   console.warn(
     "Skipping System1 bash compaction integration tests: no configured models (missing API keys)"
@@ -120,7 +119,7 @@ const MAX_KEPT_LINES = 40;
 
 // This test calls real providers via runSystem1KeepRangesForBashOutput() and validates that we can
 // reliably obtain usable keep_ranges for bash output filtering across a model + thinking-level matrix.
-describeIntegration("System1 bash output compaction (keep_ranges matrix)", () => {
+describeSuite("System1 bash output compaction (keep_ranges matrix)", () => {
   let env: TestEnvironment;
 
   beforeAll(async () => {

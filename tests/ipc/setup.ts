@@ -16,7 +16,7 @@ import type { OrpcSource } from "./helpers";
 import type { ORPCContext } from "../../src/node/orpc/context";
 import type { RuntimeConfig } from "../../src/common/types/runtime";
 import { createOrpcTestClient, type OrpcTestClient } from "./orpcTestClient";
-import { shouldRunIntegrationTests, validateApiKeys, getApiKey } from "../testUtils";
+import { validateApiKeys, getApiKey } from "../testUtils";
 
 export interface TestEnvironment {
   config: Config;
@@ -52,19 +52,19 @@ function createMockBrowserWindow(): BrowserWindow {
 /**
  * Create a test environment with temporary config and service container
  */
-export async function createTestEnvironment(): Promise<TestEnvironment> {
+export async function createTestEnvironment(options?: {
+  seedDummyKeys?: boolean;
+}): Promise<TestEnvironment> {
   // Create temporary directory for test config
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-test-"));
 
   // Create config with temporary directory
   const config = new Config(tempDir);
 
-  // Some UI tests render ProjectPage, which now hard-blocks workspace creation when no providers
-  // are configured. For non-integration tests, seed a dummy provider so the UI can render.
-  //
-  // For integration tests (TEST_INTEGRATION=1), do NOT write dummy keys here (they would override
-  // real env-backed credentials used by tests like name generation).
-  if (!shouldRunIntegrationTests()) {
+  // UI tests render ProjectPage, which hard-blocks workspace creation when no providers
+  // are configured. Seed a dummy provider so the UI can render. Tests that need real
+  // API keys call setupProviders() afterwards, which overwrites this.
+  if (options?.seedDummyKeys !== false) {
     config.saveProvidersConfig({
       anthropic: { apiKey: "test-key-for-ui-tests" },
     });
@@ -180,7 +180,7 @@ export async function setupProviders(
 }
 
 // Re-export test utilities for backwards compatibility
-export { shouldRunIntegrationTests, validateApiKeys, getApiKey };
+export { validateApiKeys, getApiKey };
 
 /**
  * Preload modules that may be imported dynamically during concurrent tests.

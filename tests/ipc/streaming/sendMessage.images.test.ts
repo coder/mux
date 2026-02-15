@@ -1,3 +1,5 @@
+jest.setTimeout(600_000);
+
 /**
  * sendMessage image handling integration tests.
  *
@@ -7,7 +9,6 @@
  * - Multi-modal conversation support
  */
 
-import { shouldRunIntegrationTests, validateApiKeys } from "../setup";
 import { sendMessage, modelString } from "../helpers";
 import {
   createSharedRepo,
@@ -33,13 +34,7 @@ async function collectFullHistory(
   return messages;
 }
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
 // Validate API keys before running tests
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]);
-}
 
 // 4x4 pure red PNG (#FF0000) as base64 data URI
 // Uses 8-bit RGB color (not indexed) for reliable vision model processing
@@ -71,7 +66,7 @@ const PROVIDER_CONFIGS: Array<[string, string]> = [
 beforeAll(createSharedRepo);
 afterAll(cleanupSharedRepo);
 
-describeIntegration("sendMessage image handling tests", () => {
+describe("sendMessage image handling tests", () => {
   configureTestRetries(3);
 
   describe.each(PROVIDER_CONFIGS)("%s image support", (provider, model) => {

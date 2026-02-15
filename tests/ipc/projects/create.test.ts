@@ -12,12 +12,10 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { getMuxHome, getMuxProjectsDir } from "../../../src/common/constants/paths";
 import * as os from "os";
-import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "../setup";
+import { createTestEnvironment, cleanupTestEnvironment } from "../setup";
 import { resolveOrpcClient } from "../helpers";
 
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
-describeIntegration("PROJECT_CREATE IPC Handler", () => {
+describe("PROJECT_CREATE IPC Handler", () => {
   test.concurrent("should resolve bare project name to mux projects dir", async () => {
     const env = await createTestEnvironment();
     const bareName = `mux-test-bare-${Date.now()}`;

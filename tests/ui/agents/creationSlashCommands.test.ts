@@ -5,7 +5,6 @@
 import "../dom";
 import { waitFor } from "@testing-library/react";
 
-import { shouldRunIntegrationTests } from "../../testUtils";
 import {
   cleanupSharedRepo,
   createSharedRepo,
@@ -26,8 +25,6 @@ import { ChatHarness } from "../harness";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { getDraftScopeId, getModelKey, getProjectScopeId } from "@/common/constants/storage";
 import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
-
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 type CreationView = {
   env: ReturnType<typeof getSharedEnv>;
@@ -61,7 +58,7 @@ async function setupCreationView(): Promise<CreationView> {
   };
 }
 
-describeIntegration("Creation slash commands", () => {
+describe("Creation slash commands", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });

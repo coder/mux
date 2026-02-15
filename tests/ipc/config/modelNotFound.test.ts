@@ -1,16 +1,12 @@
-import { setupWorkspace, shouldRunIntegrationTests, validateApiKeys } from "../setup";
+import { setupWorkspace } from "../setup";
 import { sendMessageWithModel, createStreamCollector, modelString } from "../helpers";
 import type { StreamErrorMessage } from "@/common/orpc/types";
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
+jest.setTimeout(600_000);
 
 // Validate API keys before running tests
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]);
-}
 
-describeIntegration("model_not_found error handling", () => {
+describe("model_not_found error handling", () => {
   test.concurrent(
     "should classify Anthropic 404 as model_not_found (not retryable)",
     async () => {

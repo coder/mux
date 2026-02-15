@@ -1,4 +1,4 @@
-import { setupWorkspace, shouldRunIntegrationTests } from "../setup";
+import { setupWorkspace } from "../setup";
 import {
   sendMessageWithModel,
   createStreamCollector,
@@ -10,8 +10,10 @@ import {
 import { spawn } from "child_process";
 import { loadTokenizerModules } from "../../../src/node/utils/main/tokenizer";
 
-// Skip all tests if TEST_INTEGRATION or TEST_OLLAMA is not set
-const shouldRunOllamaTests = shouldRunIntegrationTests() && process.env.TEST_OLLAMA === "1";
+jest.setTimeout(600_000);
+
+// Skip all tests unless TEST_OLLAMA=1 (requires local Ollama service)
+const shouldRunOllamaTests = process.env.TEST_OLLAMA === "1";
 const describeOllama = shouldRunOllamaTests ? describe : describe.skip;
 
 // Ollama doesn't require API keys - it's a local service

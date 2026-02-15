@@ -14,12 +14,13 @@ Two types of tests are preferred:
 
 Unit tests are located colocated with the source they test as ".test.ts[x]" files.
 
-Integration tests are located in `tests/`, with these primary harnesses:
+Integration tests are located in `tests/`, organized into semantic subfolders:
 
-- `tests/ipc` — tests that rely on the IPC and are focussed on ensuring backend behavior.
-- `tests/ui` — frontend integration tests that use the real IPC and happy-dom Full App rendering.
-- `tests/e2e` - end-to-end tests using Playwright which are needed to verify browser behavior that
-  can't be easily tested with happy-dom.
+- `tests/ipc/<area>/` — backend tests via IPC, grouped by oRPC namespace: `workspace/`, `streaming/`, `runtime/`, `terminal/`, `projects/`, `agents/`, `config/`, `providers/`.
+- `tests/ui/<area>/` — frontend integration tests using happy-dom Full App rendering, grouped by product area: `workspaces/`, `chat/`, `agents/`, `review/`, `tasks/`, `compaction/`, `config/`, `layout/`, `git/`, `runtime/`, `gateway/`.
+- `tests/e2e/` — end-to-end tests using Playwright for behavior that can't be easily tested with happy-dom.
+
+Shared helpers stay at the harness root (e.g., `tests/ipc/setup.ts`, `tests/ui/helpers.ts`).
 
 Additionally, we have stories in `src/browser/stories` that are primarily used for human visual
 verification of UI changes.
@@ -52,16 +53,16 @@ the production code, then verify the test passes.
 
 ## Test Runtime
 
-All tests in `tests/` are run under `bun x jest` with `TEST_INTEGRATION=1` set.
+All tests in `tests/` are run under `bun x jest`. Tests that live in `src/` run under `bun test` (generally these are unit tests).
 
-Otherwise, tests that live in `src/` run under `bun test` (generally these are unit tests).
+Tests that call real AI APIs set `jest.setTimeout(600_000)` at file level and use `validateApiKeys()` in a `beforeAll` to fail fast when keys are missing. No env var gating is needed — the Makefile controls which paths run.
 
 ## Runtime & Checks
 
 - Never kill the running Mux process; rely on the following for local validation:
   - `make typecheck`
   - `make static-check` (includes typecheck, lint, fmt-check, and docs link validation)
-  - targeted test invocations (e.g. `bun x jest tests/ipc/sendMessage.test.ts -t "pattern"`)
+  - targeted test invocations (e.g. `bun x jest tests/ipc/streaming/sendMessage.basic.test.ts -t "pattern"`)
 - Only wait on CI to pass when local, targeted checks pass.
 - Prefer surgical test invocations over running full suites.
 - Keep utils pure or parameterize external effects for easier testing.
@@ -91,8 +92,8 @@ Otherwise, tests that live in `src/` run under `bun test` (generally these are u
   - Backend API calls are fine for setup/teardown or to avoid expensive operations.
   - Consider moving the test to `tests/ipc` if backend logic needs granular testing.
 - Never bypass the UI in these tests; e.g. do not call `updatePersistedState` to change UI state—go through the UI to trigger the desired behavior.
-- These tests require `TEST_INTEGRATION=1`; use `shouldRunIntegrationTests()` guard.
 - Only call `validateApiKeys()` in tests that actually make AI API calls. Pure UI interaction tests (clicking buttons, selecting items) don't need API keys.
+- Tests that call real AI APIs should add `jest.setTimeout(600_000)` at file level.
 
 ### Happy-dom Limitations
 

@@ -1,10 +1,4 @@
-import {
-  shouldRunIntegrationTests,
-  createTestEnvironment,
-  cleanupTestEnvironment,
-  setupWorkspace,
-  validateApiKeys,
-} from "../setup";
+import { createTestEnvironment, cleanupTestEnvironment, setupWorkspace } from "../setup";
 import {
   createTempGitRepo,
   cleanupTempGitRepo,
@@ -29,6 +23,8 @@ import { HistoryService } from "../../../src/node/services/historyService";
 import { createMuxMessage, type MuxMessage } from "../../../src/common/types/message";
 import assert from "node:assert";
 
+jest.setTimeout(600_000);
+
 /** Collect all messages via iterateFullHistory (replaces removed getFullHistory). */
 async function collectFullHistory(service: HistoryService, workspaceId: string) {
   const messages: MuxMessage[] = [];
@@ -39,25 +35,19 @@ async function collectFullHistory(service: HistoryService, workspaceId: string) 
   return messages;
 }
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
 // Validate API keys for tests that need them
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["ANTHROPIC_API_KEY"]);
-}
 
 // SSH server config (shared across SSH runtime tests)
 let sshConfig: SSHServerConfig | undefined;
 // Retry flaky tests in CI (API latency / rate limiting)
 configureTestRetries(3);
 
-describeIntegration("Workspace fork", () => {
+describe("Workspace fork", () => {
   beforeAll(async () => {
     // Check if Docker is available (required for SSH tests)
     if (!(await isDockerAvailable())) {
       throw new Error(
-        "Docker is required for SSH runtime tests. Please install Docker or skip tests by unsetting TEST_INTEGRATION."
+        "Docker is required for SSH runtime tests. Please install Docker or skip this test suite."
       );
     }
 

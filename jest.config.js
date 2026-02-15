@@ -41,6 +41,6 @@ module.exports = {
   maxWorkers: "50%",
   // Force exit after tests complete to avoid hanging on lingering handles
   forceExit: true,
-  // 10 minute timeout for integration tests, 10s for unit tests
-  testTimeout: process.env.TEST_INTEGRATION === "1" ? 600000 : 10000,
+  // 2 min default covers non-AI integration tests. AI tests set jest.setTimeout(600_000).
+  testTimeout: 120000,
 };

@@ -1,7 +1,6 @@
 import "../dom";
 import { fireEvent, waitFor } from "@testing-library/react";
 
-import { shouldRunIntegrationTests } from "../../testUtils";
 import {
   cleanupSharedRepo,
   createSharedRepo,
@@ -12,9 +11,7 @@ import { installDom } from "../dom";
 import { renderReviewPanel } from "../renderReviewPanel";
 import { cleanupView, setupWorkspaceView } from "../helpers";
 
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
-describeIntegration("ReviewPanel focus (UI + ORPC)", () => {
+describe("ReviewPanel focus (UI + ORPC)", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });
