@@ -1,6 +1,8 @@
 import React from "react";
 import { CircleStopIcon } from "lucide-react";
 
+import { Shimmer } from "@/browser/components/ai-elements/shimmer";
+import { StreamingActivityIcon } from "@/browser/components/icons/StreamingActivityIcon";
 import { BaseBarrier } from "./BaseBarrier";
 
 export interface StreamingBarrierViewProps {
@@ -13,6 +15,7 @@ export interface StreamingBarrierViewProps {
   /** Optional keyboard hint shown inline on larger screens (e.g., "Esc"). */
   cancelShortcutText?: string;
   className?: string;
+  isStreamingPhase?: boolean;
   /** Optional hint element shown after status (e.g., settings link) */
   hintElement?: React.ReactNode;
 }
@@ -23,11 +26,37 @@ export interface StreamingBarrierViewProps {
  * Keep this file free of WorkspaceStore imports so it can be reused by alternate
  * frontends (e.g. the VS Code webview) without pulling in the desktop state layer.
  */
+const STREAMING_SHIMMER_DURATION_SECONDS = 2;
+
 export const StreamingBarrierView: React.FC<StreamingBarrierViewProps> = (props) => {
+  const statusText = props.isStreamingPhase ? (
+    <Shimmer
+      duration={STREAMING_SHIMMER_DURATION_SECONDS}
+      colorClass="var(--color-assistant-border)"
+    >
+      {props.statusText}
+    </Shimmer>
+  ) : (
+    props.statusText
+  );
+
+  const leadingElement = props.isStreamingPhase ? (
+    <StreamingActivityIcon
+      className="size-3"
+      shimmerColor="var(--color-assistant-border)"
+      shimmerDurationSeconds={STREAMING_SHIMMER_DURATION_SECONDS}
+    />
+  ) : undefined;
+
   return (
     <div className={`flex items-center justify-between gap-4 ${props.className ?? ""}`}>
       <div className="flex flex-1 items-center gap-2">
-        <BaseBarrier text={props.statusText} color="var(--color-assistant-border)" animate />
+        <BaseBarrier
+          text={statusText}
+          leadingElement={leadingElement}
+          color="var(--color-assistant-border)"
+          animate
+        />
         {props.hintElement}
         {props.tokenCount !== undefined && (
           <span className="text-assistant-border font-mono text-[11px] whitespace-nowrap select-none">

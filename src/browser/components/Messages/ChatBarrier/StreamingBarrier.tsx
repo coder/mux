@@ -189,6 +189,7 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
       onCancel={canTapCancel ? handleCancelClick : undefined}
       cancelShortcutText={canTapCancel ? interruptKeybind : undefined}
       className={className}
+      isStreamingPhase={phase === "streaming"}
       hintElement={
         showCompactionHint ? (
           <button

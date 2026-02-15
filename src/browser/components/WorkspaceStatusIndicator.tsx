@@ -1,10 +1,15 @@
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { ModelDisplay } from "@/browser/components/Messages/ModelDisplay";
+import { Shimmer } from "@/browser/components/ai-elements/shimmer";
 import { EmojiIcon } from "@/browser/components/icons/EmojiIcon";
+import { StreamingActivityIcon } from "@/browser/components/icons/StreamingActivityIcon";
 import { CircleHelp, ExternalLinkIcon, Loader2 } from "lucide-react";
 import { memo } from "react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { Button } from "./ui/button";
+
+const STREAMING_STATUS_SHIMMER_DURATION_SECONDS = 2;
+const STREAMING_STATUS_SHIMMER_COLOR = "var(--color-muted)";
 
 export const WorkspaceStatusIndicator = memo<{
   workspaceId: string;
@@ -63,23 +68,47 @@ export const WorkspaceStatusIndicator = memo<{
 
   const modelToShow = canInterrupt ? (currentModel ?? fallbackModel) : fallbackModel;
   const suffix = phase === "starting" ? "- starting..." : "- streaming...";
+  const isStreamingPhase = phase === "streaming";
 
   return (
     <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
       {phase === "starting" && (
         <Loader2 aria-hidden="true" className="h-3 w-3 shrink-0 animate-spin opacity-70" />
       )}
+      {isStreamingPhase && (
+        <StreamingActivityIcon
+          className="text-muted h-3 w-3 shrink-0"
+          shimmerColor={STREAMING_STATUS_SHIMMER_COLOR}
+          shimmerDurationSeconds={STREAMING_STATUS_SHIMMER_DURATION_SECONDS}
+        />
+      )}
       {modelToShow ? (
         <>
           <span className="min-w-0 truncate">
             <ModelDisplay modelString={modelToShow} showTooltip={false} />
           </span>
-          <span className="shrink-0 opacity-70">{suffix}</span>
+          {isStreamingPhase ? (
+            <Shimmer
+              className="shrink-0 opacity-70"
+              duration={STREAMING_STATUS_SHIMMER_DURATION_SECONDS}
+              colorClass={STREAMING_STATUS_SHIMMER_COLOR}
+            >
+              {suffix}
+            </Shimmer>
+          ) : (
+            <span className="shrink-0 opacity-70">{suffix}</span>
+          )}
         </>
+      ) : isStreamingPhase ? (
+        <Shimmer
+          className="min-w-0 truncate"
+          duration={STREAMING_STATUS_SHIMMER_DURATION_SECONDS}
+          colorClass={STREAMING_STATUS_SHIMMER_COLOR}
+        >
+          Assistant - streaming...
+        </Shimmer>
       ) : (
-        <span className="min-w-0 truncate">
-          {phase === "starting" ? "Assistant - starting..." : "Assistant - streaming..."}
-        </span>
+        <span className="min-w-0 truncate">Assistant - starting...</span>
       )}
     </div>
   );

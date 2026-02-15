@@ -1949,6 +1949,39 @@ pre code {
   -webkit-box-decoration-break: clone;
 }
 
+/* Shared shimmer overlay for non-text surfaces (e.g., streaming status icons). */
+.shimmer-surface {
+  position: relative;
+  display: inline-flex;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.streaming-activity-icon > svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.shimmer-surface::after {
+  --shimmer-overlay: color-mix(in srgb, var(--shimmer-color, var(--color-muted-foreground)) 35%, black);
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    transparent 35%,
+    var(--shimmer-overlay) 50%,
+    transparent 65%,
+    transparent 100%
+  );
+  background-size: 300% 100%;
+  animation: shimmer-text-sweep var(--shimmer-duration, 1.4s) steps(42, end) infinite;
+  mix-blend-mode: multiply;
+}
+
 @keyframes shimmer-text-sweep {
   from {
     background-position: 100% 0;
