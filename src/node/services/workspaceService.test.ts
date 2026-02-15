@@ -18,8 +18,10 @@ import type { ExtensionMetadataService } from "./ExtensionMetadataService";
 import type { FrontendWorkspaceMetadata, WorkspaceMetadata } from "@/common/types/workspace";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import type { BashToolResult } from "@/common/types/tools";
+import { createMuxMessage } from "@/common/types/message";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import * as runtimeFactory from "@/node/runtime/runtimeFactory";
+import * as workspaceTitleGenerator from "./workspaceTitleGenerator";
 
 // Helper to access private renamingWorkspaces set
 function addToRenamingWorkspaces(service: WorkspaceService, workspaceId: string): void {
@@ -1878,6 +1880,81 @@ describe("WorkspaceService init cancellation", () => {
     } finally {
       createRuntimeSpy.mockRestore();
       await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("WorkspaceService regenerateTitle", () => {
+  let workspaceService: WorkspaceService;
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+
+  beforeEach(async () => {
+    const mockAIService = {
+      isStreaming: mock(() => false),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/test",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: mock(() => ({ projectPath: "/tmp/proj", workspacePath: "/tmp/proj/ws" })),
+    };
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => undefined),
+    };
+
+    workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      mockAIService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
+  test("returns updateTitle error when persisting generated title fails", async () => {
+    const workspaceId = "ws-regenerate-title";
+
+    await historyService.appendToHistory(workspaceId, createMuxMessage("user-1", "user", "Fix CI"));
+
+    const generateIdentitySpy = spyOn(
+      workspaceTitleGenerator,
+      "generateWorkspaceIdentity"
+    ).mockResolvedValue(
+      Ok({
+        name: "ci-fix-a1b2",
+        title: "Fix CI",
+        modelUsed: "anthropic:claude-3-5-haiku-latest",
+      })
+    );
+    const updateTitleSpy = spyOn(workspaceService, "updateTitle").mockResolvedValueOnce(
+      Err("Failed to update workspace title: disk full")
+    );
+
+    try {
+      const result = await workspaceService.regenerateTitle(workspaceId);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toBe("Failed to update workspace title: disk full");
+      }
+      expect(updateTitleSpy).toHaveBeenCalledWith(workspaceId, "Fix CI");
+    } finally {
+      updateTitleSpy.mockRestore();
+      generateIdentitySpy.mockRestore();
     }
   });
 });

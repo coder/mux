@@ -2074,7 +2074,11 @@ export class WorkspaceService extends EventEmitter {
       return Err("Title generation failed");
     }
 
-    await this.updateTitle(workspaceId, result.data.title);
+    const updateTitleResult = await this.updateTitle(workspaceId, result.data.title);
+    if (!updateTitleResult.success) {
+      return Err(updateTitleResult.error);
+    }
+
     return Ok({ title: result.data.title });
   }
 
