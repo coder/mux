@@ -306,6 +306,21 @@ function nextPartTimestamp(streamInfo: WorkspaceStreamInfo): number {
 }
 
 /**
+ * Type guard for API error payloads that wrap a nested `error` object
+ * (e.g. OpenAI `{ error: { code, type, message } }` or Anthropic `{ error: { type } }`).
+ * Extracted as a module-level helper because multiple error-classification paths need it.
+ */
+function hasErrorProperty(data: unknown): data is { error: { code?: string; type?: string } } {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    "error" in data &&
+    typeof data.error === "object" &&
+    data.error !== null
+  );
+}
+
+/**
  * StreamManager - Handles all streaming operations with type safety and atomic operations
  *
  * Key invariants:
@@ -2014,16 +2029,6 @@ export class StreamManager extends EventEmitter {
     const canonicalModel = normalizeGatewayModel(streamInfo.model);
     const isAnthropic = canonicalModel.startsWith("anthropic:");
 
-    const hasErrorProperty = (data: unknown): data is { error: { type?: string } } => {
-      return (
-        typeof data === "object" &&
-        data !== null &&
-        "error" in data &&
-        typeof data.error === "object" &&
-        data.error !== null
-      );
-    };
-
     const isOverloadedApiCallError = (apiError: APICallError): boolean => {
       return (
         apiError.statusCode === 529 ||
@@ -2324,19 +2329,6 @@ export class StreamManager extends EventEmitter {
       if (error.statusCode && error.statusCode >= 500) return "server_error";
 
       // Check for model_not_found errors (OpenAI and Anthropic)
-      // Type guard for error data structure
-      const hasErrorProperty = (
-        data: unknown
-      ): data is { error: { code?: string; type?: string } } => {
-        return (
-          typeof data === "object" &&
-          data !== null &&
-          "error" in data &&
-          typeof data.error === "object" &&
-          data.error !== null
-        );
-      };
-
       // OpenAI: 400 with error.code === 'model_not_found'
       const isOpenAIModelError =
         error.statusCode === 400 &&
