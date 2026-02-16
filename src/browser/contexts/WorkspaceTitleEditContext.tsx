@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback } from "react";
+import React, { createContext, useContext, useState, useCallback, useRef } from "react";
 import type { Result } from "@/common/types/result";
 
 interface TitleEditResult {
@@ -84,10 +84,18 @@ export const TitleEditProvider: React.FC<TitleEditProviderProps> = ({
 
   // --- Generate title loading state ---
   const [generatingTitleWorkspaceId, setGeneratingTitleWorkspaceId] = useState<string | null>(null);
+  const regeneratingWorkspaceIdsRef = useRef<Set<string>>(new Set());
 
   const wrapGenerateTitle = useCallback(
     (workspaceId: string, fn: () => Promise<RegenerateTitleResult>) => {
+      // Ignore duplicate triggers while a regeneration is already in flight for this workspace.
+      if (regeneratingWorkspaceIdsRef.current.has(workspaceId)) {
+        return;
+      }
+
+      regeneratingWorkspaceIdsRef.current.add(workspaceId);
       setGeneratingTitleWorkspaceId(workspaceId);
+
       void fn()
         .then((result) => {
           if (!result.success && typeof window !== "undefined") {
@@ -100,6 +108,7 @@ export const TitleEditProvider: React.FC<TitleEditProviderProps> = ({
           }
         })
         .finally(() => {
+          regeneratingWorkspaceIdsRef.current.delete(workspaceId);
           setGeneratingTitleWorkspaceId((current) => (current === workspaceId ? null : current));
         });
     },
