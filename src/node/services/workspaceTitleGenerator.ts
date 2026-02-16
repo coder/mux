@@ -307,7 +307,7 @@ export async function generateWorkspaceIdentity(
         output: Output.object({ schema: workspaceIdentitySchema }),
         prompt: `Generate a workspace name and title for this development task:
 
-${assistantContext ? `User: "${message}"\n\nAssistant: "${assistantContext.slice(0, 500)}"` : `"${message}"`}
+${assistantContext ? `Assistant: "${assistantContext.slice(0, 500)}"\n\nUser: "${message}"` : `"${message}"`}
 
 Requirements:
 - name: The area of the codebase being worked on (1-2 words, max 15 chars, git-safe: lowercase, hyphens only). Random bytes will be appended for uniqueness, so focus on the area not the specific task. Examples: "sidebar", "auth", "config", "api"
