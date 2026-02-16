@@ -2066,8 +2066,12 @@ export class WorkspaceService extends EventEmitter {
       return Err("Could not read workspace history");
     }
 
-    let firstUserMsg = historyResult.data.find((m) => m.role === "user");
-    let firstAssistantMsg = historyResult.data.find((m) => m.role === "assistant");
+    const firstUserIndex = historyResult.data.findIndex((m) => m.role === "user");
+    let firstUserMsg = firstUserIndex >= 0 ? historyResult.data[firstUserIndex] : undefined;
+    let firstAssistantMsg =
+      firstUserIndex >= 0
+        ? historyResult.data.slice(firstUserIndex + 1).find((m) => m.role === "assistant")
+        : undefined;
 
     if (!firstUserMsg) {
       // Compaction boundaries can leave the latest epoch with only an assistant summary.
@@ -2081,8 +2085,9 @@ export class WorkspaceService extends EventEmitter {
           for (const message of messages) {
             if (!fallbackFirstUser && message.role === "user") {
               fallbackFirstUser = message;
+              continue;
             }
-            if (!fallbackFirstAssistant && message.role === "assistant") {
+            if (fallbackFirstUser && !fallbackFirstAssistant && message.role === "assistant") {
               fallbackFirstAssistant = message;
             }
           }

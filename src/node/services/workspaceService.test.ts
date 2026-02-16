@@ -2016,6 +2016,52 @@ describe("WorkspaceService regenerateTitle", () => {
       iterateSpy.mockRestore();
     }
   });
+  test("uses the first assistant reply after the first user message for context", async () => {
+    const workspaceId = "ws-regenerate-title-assistant-order";
+
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("assistant-summary", "assistant", "Older compacted summary")
+    );
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-first", "user", "Refine workspace title generation")
+    );
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("assistant-after-user", "assistant", "Useful assistant context")
+    );
+
+    const generateIdentitySpy = spyOn(
+      workspaceTitleGenerator,
+      "generateWorkspaceIdentity"
+    ).mockResolvedValue(
+      Ok({
+        name: "title-refresh-a1b2",
+        title: "Refine workspace title generation",
+        modelUsed: "anthropic:claude-3-5-haiku-latest",
+      })
+    );
+    const updateTitleSpy = spyOn(workspaceService, "updateTitle").mockResolvedValueOnce(
+      Ok(undefined)
+    );
+
+    try {
+      const result = await workspaceService.regenerateTitle(workspaceId);
+
+      expect(result.success).toBe(true);
+      expect(generateIdentitySpy).toHaveBeenCalledWith(
+        "Refine workspace title generation",
+        expect.any(Array),
+        expect.anything(),
+        "Useful assistant context"
+      );
+      expect(updateTitleSpy).toHaveBeenCalledWith(workspaceId, "Refine workspace title generation");
+    } finally {
+      updateTitleSpy.mockRestore();
+      generateIdentitySpy.mockRestore();
+    }
+  });
 });
 
 // --- Pure helper tests (no mocks needed) ---
