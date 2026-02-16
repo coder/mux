@@ -119,7 +119,7 @@ export const NameGenerationAuthError: AppStory = {
   play: async ({ canvasElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
     await openProjectCreationView(storyRoot);
-    await triggerNameGenerationFailure(storyRoot, "API key missing");
+    await triggerNameGenerationFailure(storyRoot, "API key error");
   },
 };
 

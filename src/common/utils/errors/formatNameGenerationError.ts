@@ -34,13 +34,15 @@ export function formatNameGenerationError(error: NameGenerationError): Formatted
         };
       }
 
-      // api_key_missing and invalid_credentials both point users to the same fix.
+      // api_key_missing and invalid_credentials share the same remediation path.
       return {
-        title: "API key missing",
-        message: provider ? `No API key configured for ${provider}.` : "No API key configured.",
+        title: "API key error",
+        message: provider
+          ? `Your API key for ${provider} is missing or invalid.`
+          : "Your API key is missing or invalid.",
         hint: provider
-          ? `Open Settings → Providers and add an API key for ${provider}.`
-          : "Add an API key in Settings → Providers.",
+          ? `Check your API key for ${provider} in Settings → Providers.`
+          : "Check your API key in Settings → Providers.",
         docsPath: "/config/providers",
       };
     }

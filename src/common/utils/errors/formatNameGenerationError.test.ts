@@ -12,16 +12,16 @@ describe("formatNameGenerationError", () => {
       provider: "anthropic",
     });
 
-    expect(formatted.title).toBe("API key missing");
-    expect(formatted.message).toBe("No API key configured for Anthropic.");
+    expect(formatted.title).toBe("API key error");
+    expect(formatted.message).toBe("Your API key for Anthropic is missing or invalid.");
     expect(formatted.hint).toContain("Settings");
   });
 
   test("formats authentication errors without provider", () => {
     const formatted = format({ type: "authentication", authKind: "invalid_credentials" });
 
-    expect(formatted.title).toBe("API key missing");
-    expect(formatted.message).toBe("No API key configured.");
+    expect(formatted.title).toBe("API key error");
+    expect(formatted.message).toBe("Your API key is missing or invalid.");
   });
 
   test("returns OAuth-specific guidance for oauth_not_connected", () => {
@@ -40,8 +40,8 @@ describe("formatNameGenerationError", () => {
       authKind: "api_key_missing",
       provider: "anthropic",
     });
-    expect(result.title).toBe("API key missing");
-    expect(result.hint).toContain("add an API key");
+    expect(result.title).toBe("API key error");
+    expect(result.hint).toContain("Check your API key");
   });
 
   test("formats permission_denied as access denied", () => {
