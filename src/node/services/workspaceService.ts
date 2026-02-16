@@ -198,6 +198,16 @@ function isErrnoWithCode(error: unknown, code: string): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
 }
 
+async function copyIfExists(sourcePath: string, destinationPath: string): Promise<void> {
+  try {
+    await fsPromises.copyFile(sourcePath, destinationPath);
+  } catch (error) {
+    if (!isErrnoWithCode(error, "ENOENT")) {
+      throw error;
+    }
+  }
+}
+
 function isPathInsideDir(dirPath: string, filePath: string): boolean {
   const resolvedDir = path.resolve(dirPath);
   const resolvedFile = path.resolve(filePath);
@@ -2805,43 +2815,17 @@ export class WorkspaceService extends EventEmitter {
       try {
         await fsPromises.mkdir(newSessionDir, { recursive: true });
 
-        const sourceChatPath = path.join(sourceSessionDir, "chat.jsonl");
-        const newChatPath = path.join(newSessionDir, "chat.jsonl");
-        try {
-          await fsPromises.copyFile(sourceChatPath, newChatPath);
-        } catch (error) {
-          if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
-            throw error;
-          }
-        }
-
-        const sourcePartialPath = path.join(sourceSessionDir, "partial.json");
-        const newPartialPath = path.join(newSessionDir, "partial.json");
-        try {
-          await fsPromises.copyFile(sourcePartialPath, newPartialPath);
-        } catch (error) {
-          if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
-            throw error;
-          }
-        }
-
-        const sourceTimingPath = path.join(sourceSessionDir, "session-timing.json");
-        const newTimingPath = path.join(newSessionDir, "session-timing.json");
-        try {
-          await fsPromises.copyFile(sourceTimingPath, newTimingPath);
-        } catch (error) {
-          if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
-            throw error;
-          }
-        }
-        const sourceUsagePath = path.join(sourceSessionDir, "session-usage.json");
-        const newUsagePath = path.join(newSessionDir, "session-usage.json");
-        try {
-          await fsPromises.copyFile(sourceUsagePath, newUsagePath);
-        } catch (error) {
-          if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
-            throw error;
-          }
+        const sessionFiles = [
+          "chat.jsonl",
+          "partial.json",
+          "session-timing.json",
+          "session-usage.json",
+        ] as const;
+        for (const fileName of sessionFiles) {
+          await copyIfExists(
+            path.join(sourceSessionDir, fileName),
+            path.join(newSessionDir, fileName)
+          );
         }
       } catch (copyError) {
         await runtime.deleteWorkspace(foundProjectPath, resolvedName, true);

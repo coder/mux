@@ -13,8 +13,8 @@ import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
 
 /**
- * Parse multiline command input into first-line tokens and remaining message
- * Used by commands that support messages on subsequent lines (/compact, /fork, /new)
+ * Parse multiline command input into first-line tokens and remaining message.
+ * Used by commands that support messages on subsequent lines (/compact, /new).
  */
 function parseMultilineCommand(rawInput: string): {
   firstLine: string;

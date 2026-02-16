@@ -1,5 +1,5 @@
 import { describe, expect, test, mock, beforeEach, afterEach, spyOn } from "bun:test";
-import { WorkspaceService } from "./workspaceService";
+import { WorkspaceService, generateForkBranchName, generateForkTitle } from "./workspaceService";
 import type { AgentSession } from "./agentSession";
 import { WorkspaceLifecycleHooks } from "./workspaceLifecycleHooks";
 import { EventEmitter } from "events";
@@ -2019,8 +2019,6 @@ describe("WorkspaceService regenerateTitle", () => {
 });
 
 // --- Pure helper tests (no mocks needed) ---
-
-import { generateForkBranchName, generateForkTitle } from "./workspaceService";
 
 describe("generateForkBranchName", () => {
   test("returns -fork-1 when no existing forks", () => {

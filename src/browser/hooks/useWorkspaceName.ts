@@ -214,7 +214,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
       generationPromiseRef.current = { promise, resolve: safeResolve, requestId };
 
       try {
-        // Frontend builds candidate list with gateway prefs applied.
+        // Frontend sends canonical candidates; backend createModel resolves gateway routing.
         // Backend tries candidates in order with retry on API errors.
         const result = await api.nameGeneration.generate({
           message: forMessage,
