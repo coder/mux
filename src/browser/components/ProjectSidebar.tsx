@@ -355,10 +355,12 @@ function SidebarTitleEditKeybinds(props: {
         requestEdit(wsId, displayTitle);
       } else if (matchesKeybind(e, KEYBINDS.GENERATE_WORKSPACE_TITLE)) {
         e.preventDefault();
-        wrapGenerateTitle(
-          wsId,
-          () => api?.workspace.regenerateTitle({ workspaceId: wsId }) ?? Promise.resolve()
-        );
+        wrapGenerateTitle(wsId, () => {
+          if (!api) {
+            return Promise.resolve({ success: false, error: "Not connected to server" });
+          }
+          return api.workspace.regenerateTitle({ workspaceId: wsId });
+        });
       }
     };
     window.addEventListener("keydown", handleKeyDown);

@@ -727,10 +727,15 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                     onClick={(e) => {
                       e.stopPropagation();
                       setIsTitleMenuOpen(false);
-                      wrapGenerateTitle(
-                        workspaceId,
-                        () => api?.workspace.regenerateTitle({ workspaceId }) ?? Promise.resolve()
-                      );
+                      wrapGenerateTitle(workspaceId, () => {
+                        if (!api) {
+                          return Promise.resolve({
+                            success: false,
+                            error: "Not connected to server",
+                          });
+                        }
+                        return api.workspace.regenerateTitle({ workspaceId });
+                      });
                     }}
                   >
                     <span className="flex items-center gap-2">
