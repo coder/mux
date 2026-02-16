@@ -287,17 +287,7 @@ export function ProvidersSection() {
     setCodexOauthDesktopFlowId(null);
     setCodexOauthDeviceFlow(null);
 
-    let popup: Window | null = null;
-
     try {
-      if (!isDesktop) {
-        // Open popup synchronously to preserve user gesture context (avoids popup blockers).
-        popup = window.open("about:blank", "_blank");
-        if (!popup) {
-          throw new Error("Popup blocked - please allow popups and try again.");
-        }
-      }
-
       setCodexOauthStatus("starting");
 
       if (!isDesktop) {
@@ -307,12 +297,10 @@ export function ProvidersSection() {
           if (startResult.success) {
             void api.codexOauth.cancelDeviceFlow({ flowId: startResult.data.flowId });
           }
-          popup?.close();
           return;
         }
 
         if (!startResult.success) {
-          popup?.close();
           setCodexOauthStatus("error");
           setCodexOauthError(startResult.error);
           return;
@@ -325,10 +313,8 @@ export function ProvidersSection() {
         });
         setCodexOauthStatus("waiting");
 
-        if (popup) {
-          popup.location.href = startResult.data.verifyUrl;
-        }
-
+        // Keep device-code login manual per user request: we only open the
+        // verification page from the explicit "Copy & open" action.
         const waitResult = await api.codexOauth.waitForDeviceFlow({
           flowId: startResult.data.flowId,
         });
@@ -355,12 +341,10 @@ export function ProvidersSection() {
         if (startResult.success) {
           void api.codexOauth.cancelDesktopFlow({ flowId: startResult.data.flowId });
         }
-        popup?.close();
         return;
       }
 
       if (!startResult.success) {
-        popup?.close();
         setCodexOauthStatus("error");
         setCodexOauthError(startResult.error);
         return;
@@ -389,8 +373,6 @@ export function ProvidersSection() {
       setCodexOauthDesktopFlowId(null);
       await refresh();
     } catch (err) {
-      popup?.close();
-
       if (attempt !== codexOauthAttemptRef.current) {
         return;
       }
@@ -901,8 +883,8 @@ export function ProvidersSection() {
       setCopilotVerificationUri(verificationUri);
       setCopilotLoginStatus("waiting");
 
-      // Open verification URL in browser
-      window.open(verificationUri, "_blank", "noopener");
+      // Keep device-code login manual per user request: we only open the
+      // verification page from the explicit "Copy & open" action.
 
       // Wait for flow to complete (polling happens on backend)
       const waitResult = await api.copilotOauth.waitForDeviceFlow({ flowId });
@@ -1342,7 +1324,7 @@ export function ProvidersSection() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              aria-label="Copy verification code"
+                              aria-label="Copy verification code and open verification page"
                               onClick={() => {
                                 void navigator.clipboard.writeText(copilotUserCode);
                                 setCopilotCodeCopied(true);
@@ -1353,15 +1335,19 @@ export function ProvidersSection() {
                                   () => setCopilotCodeCopied(false),
                                   2000
                                 );
+
+                                if (copilotVerificationUri) {
+                                  window.open(copilotVerificationUri, "_blank", "noopener");
+                                }
                               }}
                               className="text-muted hover:text-foreground h-auto px-1 py-0 text-xs"
                             >
-                              {copilotCodeCopied ? "Copied!" : "Copy"}
+                              {copilotCodeCopied ? "Copied!" : "Copy & open"}
                             </Button>
                           </div>
                           {copilotVerificationUri && (
                             <p className="text-muted text-xs">
-                              If the browser didn&apos;t open,{" "}
+                              Continue in your browser:{" "}
                               <a
                                 href={copilotVerificationUri}
                                 target="_blank"
@@ -1557,7 +1543,7 @@ export function ProvidersSection() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            aria-label="Copy verification code"
+                            aria-label="Copy verification code and open verification page"
                             onClick={() => {
                               void navigator.clipboard.writeText(codexOauthDeviceFlow.userCode);
                               setCodexOauthCodeCopied(true);
@@ -1568,14 +1554,15 @@ export function ProvidersSection() {
                                 () => setCodexOauthCodeCopied(false),
                                 2000
                               );
+                              window.open(codexOauthDeviceFlow.verifyUrl, "_blank", "noopener");
                             }}
                             className="text-muted hover:text-foreground h-auto px-1 py-0 text-xs"
                           >
-                            {codexOauthCodeCopied ? "Copied!" : "Copy"}
+                            {codexOauthCodeCopied ? "Copied!" : "Copy & open"}
                           </Button>
                         </div>
                         <p className="text-muted text-xs">
-                          If the browser didn&apos;t open,{" "}
+                          Continue in your browser:{" "}
                           <a
                             href={codexOauthDeviceFlow.verifyUrl}
                             target="_blank"
