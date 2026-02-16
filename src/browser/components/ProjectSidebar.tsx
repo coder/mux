@@ -587,14 +587,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         return;
       }
 
-      const result = await forkWorkspace({
-        client: api,
-        sourceWorkspaceId: workspaceId,
-      });
-      if (result.success) {
-        return;
-      }
-
       let anchor: { top: number; left: number } | undefined;
       if (buttonElement) {
         const rect = buttonElement.getBoundingClientRect();
@@ -604,7 +596,20 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         };
       }
 
-      workspaceForkError.showError(workspaceId, result.error ?? "Failed to fork chat", anchor);
+      try {
+        const result = await forkWorkspace({
+          client: api,
+          sourceWorkspaceId: workspaceId,
+        });
+        if (result.success) {
+          return;
+        }
+        workspaceForkError.showError(workspaceId, result.error ?? "Failed to fork chat", anchor);
+      } catch (error) {
+        // IPC/transport failures throw instead of returning { success: false }
+        const message = error instanceof Error ? error.message : String(error);
+        workspaceForkError.showError(workspaceId, message, anchor);
+      }
     },
     [api, workspaceForkError]
   );
