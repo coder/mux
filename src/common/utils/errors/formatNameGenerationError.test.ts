@@ -44,6 +44,17 @@ describe("formatNameGenerationError", () => {
     expect(result.hint).toContain("Check your API key");
   });
 
+  test("returns gateway-specific guidance for mux-gateway api_key_missing", () => {
+    const result = formatNameGenerationError({
+      type: "authentication",
+      authKind: "api_key_missing",
+      provider: "mux-gateway",
+    });
+    expect(result.title).toBe("Mux Gateway not connected");
+    expect(result.hint).toContain("Mux Gateway");
+    expect(result.docsPath).toBe("/getting-started/mux-gateway");
+  });
+
   test("formats permission_denied as access denied", () => {
     const formatted = format({ type: "permission_denied", provider: "openai" });
 

@@ -34,6 +34,16 @@ export function formatNameGenerationError(error: NameGenerationError): Formatted
         };
       }
 
+      // Mux Gateway uses OAuth coupon codes, not API keys.
+      if (error.authKind === "api_key_missing" && error.provider === "mux-gateway") {
+        return {
+          title: "Mux Gateway not connected",
+          message: "Connect your Mux Gateway account to enable workspace naming.",
+          hint: "Open Settings → Providers and connect Mux Gateway.",
+          docsPath: "/getting-started/mux-gateway",
+        };
+      }
+
       // api_key_missing and invalid_credentials share the same remediation path.
       return {
         title: "API key error",
