@@ -59,7 +59,7 @@ export function formatNameGenerationError(error: NameGenerationError): Formatted
         message: provider
           ? `Permission denied by ${provider}.`
           : "The API key does not have permission for this operation.",
-        hint: "Verify your API key has the required permissions.",
+        hint: "Ensure your API key is valid.",
         docsPath: "/config/providers",
       };
     }

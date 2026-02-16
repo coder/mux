@@ -114,10 +114,12 @@ function NameErrorDisplay(props: { error: WorkspaceNameUIError }) {
 
   const formatted = formatNameGenerationError(props.error.error);
   return (
-    <div className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-200">
-      <div className="font-medium text-red-100">{formatted.title}</div>
+    <div className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-800 dark:text-red-200">
+      <div className="font-medium text-red-900 dark:text-red-100">{formatted.title}</div>
       <div>{formatted.message}</div>
-      {formatted.hint && <div className="mt-1 text-red-300">Fix: {formatted.hint}</div>}
+      {formatted.hint && (
+        <div className="mt-1 text-red-700 dark:text-red-300">Fix: {formatted.hint}</div>
+      )}
       {formatted.docsPath && (
         <DocsLink path={formatted.docsPath} className="mt-1 text-xs">
           Troubleshooting
