@@ -156,9 +156,18 @@ export function generateForkBranchName(parentName: string, existingNames: string
   const prefix = `${parentName}-fork-`;
   let max = 0;
   for (const name of existingNames) {
-    if (name.startsWith(prefix)) {
-      const n = parseInt(name.slice(prefix.length), 10);
-      if (!isNaN(n) && n > max) max = n;
+    if (!name.startsWith(prefix)) {
+      continue;
+    }
+
+    const suffix = name.slice(prefix.length);
+    if (!/^\d+$/.test(suffix)) {
+      continue;
+    }
+
+    const n = Number(suffix);
+    if (n > max) {
+      max = n;
     }
   }
   return `${prefix}${max + 1}`;

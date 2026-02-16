@@ -2050,6 +2050,12 @@ describe("generateForkBranchName", () => {
   test("ignores non-numeric suffixes", () => {
     expect(generateForkBranchName("ws", ["ws-fork-abc", "ws-fork-"])).toBe("ws-fork-1");
   });
+
+  test("ignores partially numeric suffixes", () => {
+    expect(generateForkBranchName("ws", ["ws-fork-1abc", "ws-fork-02x", "ws-fork-3"])).toBe(
+      "ws-fork-4"
+    );
+  });
 });
 
 describe("generateForkTitle", () => {
