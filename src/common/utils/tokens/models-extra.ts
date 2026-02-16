@@ -15,6 +15,8 @@ interface ModelData {
   mode?: string;
   supports_function_calling?: boolean;
   supports_vision?: boolean;
+  supports_pdf_input?: boolean;
+  max_pdf_size_mb?: number;
   supports_reasoning?: boolean;
   supports_response_schema?: boolean;
   knowledge_cutoff?: string;
@@ -37,6 +39,8 @@ export const modelsExtra: Record<string, ModelData> = {
     mode: "chat",
     supports_function_calling: true,
     supports_vision: true,
+    // User-reported issue: Opus 4.6 should accept PDF attachments like other Claude 4.x models.
+    supports_pdf_input: true,
     supports_reasoning: true,
     supports_response_schema: true,
   },
