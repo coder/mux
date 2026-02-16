@@ -85,8 +85,23 @@ export const TitleEditProvider: React.FC<TitleEditProviderProps> = ({
   const wrapGenerateTitle = useCallback((workspaceId: string, fn: () => Promise<unknown>) => {
     setGeneratingTitleWorkspaceId(workspaceId);
     void fn()
-      .catch(() => {
-        // Callers surface user-visible errors; this prevents unhandled rejections.
+      .then((result) => {
+        if (
+          typeof result === "object" &&
+          result !== null &&
+          "success" in result &&
+          result.success === false
+        ) {
+          const error = "error" in result && typeof result.error === "string" ? result.error : null;
+          if (typeof window !== "undefined") {
+            window.alert(error ?? "Failed to generate workspace title");
+          }
+        }
+      })
+      .catch((error) => {
+        if (typeof window !== "undefined") {
+          window.alert(error instanceof Error ? error.message : String(error));
+        }
       })
       .finally(() => {
         setGeneratingTitleWorkspaceId((current) => (current === workspaceId ? null : current));
