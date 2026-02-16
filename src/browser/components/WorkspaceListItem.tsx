@@ -371,10 +371,10 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     requestEdit,
     confirmEdit,
     cancelEdit,
-    generatingTitleWorkspaceId,
+    generatingTitleWorkspaceIds,
     wrapGenerateTitle,
   } = useTitleEdit();
-  const isGeneratingTitle = generatingTitleWorkspaceId === workspaceId;
+  const isGeneratingTitle = generatingTitleWorkspaceIds.has(workspaceId);
   const { api } = useAPI();
 
   // Local state for title editing
