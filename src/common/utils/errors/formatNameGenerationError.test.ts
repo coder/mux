@@ -5,22 +5,23 @@ import { formatNameGenerationError } from "./formatNameGenerationError";
 const format = (error: NameGenerationError) => formatNameGenerationError(error);
 
 describe("formatNameGenerationError", () => {
-  test("formats authentication errors with provider context", () => {
+  test("formats invalid_credentials same as api_key_missing", () => {
     const formatted = format({
       type: "authentication",
       authKind: "invalid_credentials",
       provider: "anthropic",
     });
 
-    expect(formatted.title).toContain("Authentication");
+    expect(formatted.title).toBe("API key missing");
+    expect(formatted.message).toBe("No API key configured for Anthropic.");
     expect(formatted.hint).toContain("Settings");
   });
 
   test("formats authentication errors without provider", () => {
     const formatted = format({ type: "authentication", authKind: "invalid_credentials" });
 
-    expect(formatted.title).toContain("Authentication");
-    expect(formatted.message).toBe("Authentication failed.");
+    expect(formatted.title).toBe("API key missing");
+    expect(formatted.message).toBe("No API key configured.");
   });
 
   test("returns OAuth-specific guidance for oauth_not_connected", () => {

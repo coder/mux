@@ -34,21 +34,13 @@ export function formatNameGenerationError(error: NameGenerationError): Formatted
         };
       }
 
-      if (error.authKind === "api_key_missing") {
-        return {
-          title: "API key missing",
-          message: provider ? `No API key configured for ${provider}.` : "No API key configured.",
-          hint: provider
-            ? `Open Settings → Providers and add an API key for ${provider}.`
-            : "Add an API key in Settings → Providers.",
-          docsPath: "/config/providers",
-        };
-      }
-
+      // api_key_missing and invalid_credentials both point users to the same fix.
       return {
-        title: "Authentication failed",
-        message: provider ? `Could not authenticate with ${provider}.` : "Authentication failed.",
-        hint: "Verify your credentials in Settings → Providers.",
+        title: "API key missing",
+        message: provider ? `No API key configured for ${provider}.` : "No API key configured.",
+        hint: provider
+          ? `Open Settings → Providers and add an API key for ${provider}.`
+          : "Add an API key in Settings → Providers.",
         docsPath: "/config/providers",
       };
     }
