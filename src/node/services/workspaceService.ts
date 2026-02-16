@@ -184,9 +184,18 @@ export function generateForkTitle(parentTitle: string, existingTitles: string[])
 
   let max = 0;
   for (const title of existingTitles) {
-    if (title.startsWith(prefix) && title.endsWith(")")) {
-      const n = parseInt(title.slice(prefix.length, -1), 10);
-      if (!isNaN(n) && n > max) max = n;
+    if (!title.startsWith(prefix) || !title.endsWith(")")) {
+      continue;
+    }
+
+    const suffix = title.slice(prefix.length, -1);
+    if (!/^\d+$/.test(suffix)) {
+      continue;
+    }
+
+    const n = Number(suffix);
+    if (n > max) {
+      max = n;
     }
   }
   // If parent title itself exists in the list (without suffix), start at (1)

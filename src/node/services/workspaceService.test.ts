@@ -2087,4 +2087,10 @@ describe("generateForkTitle", () => {
   test("handles gaps in numbering", () => {
     expect(generateForkTitle("Task", ["Task (1)", "Task (5)"])).toBe("Task (6)");
   });
+
+  test("ignores non-numeric suffixes when selecting the next title number", () => {
+    expect(generateForkTitle("Task", ["Task (2025 roadmap)", "Task (12abc)", "Task (2)"])).toBe(
+      "Task (3)"
+    );
+  });
 });
