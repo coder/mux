@@ -300,7 +300,21 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         shortcutHint: formatKeybind(KEYBINDS.GENERATE_WORKSPACE_TITLE),
         section: section.workspaces,
         run: async () => {
-          await p.api?.workspace.regenerateTitle({ workspaceId: selected.workspaceId });
+          if (!p.api) {
+            alert("Not connected to server");
+            return;
+          }
+
+          try {
+            const result = await p.api.workspace.regenerateTitle({
+              workspaceId: selected.workspaceId,
+            });
+            if (!result.success) {
+              alert(result.error);
+            }
+          } catch (error) {
+            alert(error instanceof Error ? error.message : String(error));
+          }
         },
       });
     }

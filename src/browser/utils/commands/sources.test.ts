@@ -182,3 +182,72 @@ test("archive merged workspaces prompt submits selected project", async () => {
   expect(onArchiveMergedWorkspacesInProject).toHaveBeenCalledTimes(1);
   expect(onArchiveMergedWorkspacesInProject).toHaveBeenCalledWith("/repo/a");
 });
+
+async function withMockAlert(
+  fn: (alertMock: ReturnType<typeof mock>) => Promise<void>
+): Promise<void> {
+  const alertMock = mock();
+  const originalAlert = (globalThis as unknown as { alert?: typeof alert }).alert;
+  (globalThis as unknown as { alert: (message?: unknown) => void }).alert = (message?: unknown) => {
+    alertMock(message);
+  };
+  try {
+    await fn(alertMock);
+  } finally {
+    if (originalAlert) {
+      (globalThis as unknown as { alert: typeof alert }).alert = originalAlert;
+    } else {
+      delete (globalThis as unknown as { alert?: typeof alert }).alert;
+    }
+  }
+}
+
+test("workspace generate title command surfaces API failure result", async () => {
+  const regenerateTitle = mock(() =>
+    Promise.resolve({ success: false as const, error: "No user messages in workspace history" })
+  );
+  const sources = mk({
+    api: {
+      workspace: {
+        truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
+        interruptStream: () => Promise.resolve({ success: true, data: undefined }),
+        regenerateTitle,
+      },
+    } as unknown as APIClient,
+  });
+  const actions = sources.flatMap((s) => s());
+  const generateTitleAction = actions.find((a) => a.id === "ws:generate-title");
+
+  expect(generateTitleAction).toBeDefined();
+
+  await withMockAlert(async (alertMock) => {
+    await generateTitleAction!.run();
+    expect(regenerateTitle).toHaveBeenCalledWith({ workspaceId: "w1" });
+    expect(alertMock).toHaveBeenCalledTimes(1);
+    expect(alertMock).toHaveBeenCalledWith("No user messages in workspace history");
+  });
+});
+
+test("workspace generate title command surfaces transport errors", async () => {
+  const regenerateTitle = mock(() => Promise.reject(new Error("Connection lost")));
+  const sources = mk({
+    api: {
+      workspace: {
+        truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
+        interruptStream: () => Promise.resolve({ success: true, data: undefined }),
+        regenerateTitle,
+      },
+    } as unknown as APIClient,
+  });
+  const actions = sources.flatMap((s) => s());
+  const generateTitleAction = actions.find((a) => a.id === "ws:generate-title");
+
+  expect(generateTitleAction).toBeDefined();
+
+  await withMockAlert(async (alertMock) => {
+    await generateTitleAction!.run();
+    expect(regenerateTitle).toHaveBeenCalledWith({ workspaceId: "w1" });
+    expect(alertMock).toHaveBeenCalledTimes(1);
+    expect(alertMock).toHaveBeenCalledWith("Connection lost");
+  });
+});
