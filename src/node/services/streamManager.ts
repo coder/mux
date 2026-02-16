@@ -53,6 +53,7 @@ import { extractToolMediaAsUserMessagesFromModelMessages } from "@/node/utils/me
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 import { getModelStats } from "@/common/utils/tokens/modelStats";
+import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
 
 // Disable AI SDK warning logging (e.g., "setting `toolChoice` to `none` is not supported")
 globalThis.AI_SDK_LOG_WARNINGS = false;
@@ -2318,9 +2319,16 @@ export class StreamManager extends EventEmitter {
       if (error.statusCode === 401) return "authentication";
       // 402 (Payment Required) is used by mux gateway for billing/credits issues
       // (e.g. "Insufficient balance. Please add credits to continue.").
-      // Treat as non-retryable quota; 429 (rate_limit) covers RPM/time-based throttling.
+      // Treat as non-retryable quota. Some providers also encode quota failures as
+      // 429, so classify 429 by payload intent instead of status code alone.
       if (error.statusCode === 402) return "quota";
-      if (error.statusCode === 429) return "rate_limit";
+      if (error.statusCode === 429) {
+        return classify429Capacity({
+          message: error.message,
+          data: error.data,
+          responseBody: error.responseBody,
+        });
+      }
       if (error.statusCode && error.statusCode >= 500) return "server_error";
 
       // Check for model_not_found errors (OpenAI and Anthropic)

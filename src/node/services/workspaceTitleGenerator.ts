@@ -1,10 +1,11 @@
-import { NoObjectGeneratedError, streamText, Output } from "ai";
+import { APICallError, NoObjectGeneratedError, Output, RetryError, streamText } from "ai";
 import { z } from "zod";
 import type { AIService } from "./aiService";
 import { log } from "./log";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
-import type { SendMessageError } from "@/common/types/errors";
+import type { NameGenerationError, SendMessageError } from "@/common/types/errors";
+import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
 import crypto from "crypto";
 
 /** Schema for AI-generated workspace identity (area name + descriptive title) */
@@ -176,6 +177,91 @@ async function recoverIdentityFromFallback(
   return null;
 }
 
+function inferProviderFromModelString(modelString: string): string | undefined {
+  const provider = modelString.split(":")[0]?.trim();
+  return provider && provider.length > 0 ? provider : undefined;
+}
+
+export function mapNameGenerationError(error: unknown, modelString: string): NameGenerationError {
+  if (RetryError.isInstance(error) && error.lastError) {
+    return mapNameGenerationError(error.lastError, modelString);
+  }
+
+  const provider = inferProviderFromModelString(modelString);
+
+  if (APICallError.isInstance(error)) {
+    if (error.statusCode === 401) {
+      return {
+        type: "authentication",
+        authKind: "invalid_credentials",
+        provider,
+        raw: error.message,
+      };
+    }
+    if (error.statusCode === 403) {
+      return { type: "permission_denied", provider, raw: error.message };
+    }
+    if (error.statusCode === 402) {
+      return { type: "quota", raw: error.message };
+    }
+    if (error.statusCode === 429) {
+      const kind = classify429Capacity({
+        message: error.message,
+        data: error.data,
+        responseBody: error.responseBody,
+      });
+      return { type: kind, raw: error.message };
+    }
+    if (error.statusCode != null && error.statusCode >= 500) {
+      return { type: "service_unavailable", raw: error.message };
+    }
+  }
+
+  if (error instanceof TypeError && error.message.toLowerCase().includes("fetch")) {
+    return { type: "network", raw: error.message };
+  }
+
+  const raw = error instanceof Error ? error.message : String(error);
+  return { type: "unknown", raw };
+}
+
+export function mapModelCreationError(
+  error: SendMessageError,
+  modelString: string
+): NameGenerationError {
+  const provider = inferProviderFromModelString(modelString);
+
+  switch (error.type) {
+    case "api_key_not_found":
+      return {
+        type: "authentication",
+        authKind: "api_key_missing",
+        provider: error.provider ?? provider,
+      };
+    case "oauth_not_connected":
+      return {
+        type: "authentication",
+        authKind: "oauth_not_connected",
+        provider: error.provider ?? provider,
+      };
+    case "provider_disabled":
+      return { type: "configuration", raw: "Provider disabled" };
+    case "provider_not_supported":
+      return { type: "configuration", raw: "Provider not supported" };
+    case "policy_denied":
+      return { type: "policy", provider, raw: error.message };
+    case "unknown":
+      return { type: "unknown", raw: error.raw ?? "Unknown error" };
+    default: {
+      const raw =
+        "message" in error && typeof error.message === "string"
+          ? error.message
+          : `Failed to create model for ${modelString}: ${error.type}`;
+      return { type: "unknown", raw };
+    }
+  }
+}
+
 /**
  * Generate workspace identity (name + title) using AI.
  * Tries candidates in order, retrying on API errors (invalid keys, quota, etc.).
@@ -187,7 +273,7 @@ export async function generateWorkspaceIdentity(
   message: string,
   candidates: string[],
   aiService: AIService
-): Promise<Result<GenerateWorkspaceIdentityResult, SendMessageError>> {
+): Promise<Result<GenerateWorkspaceIdentityResult, NameGenerationError>> {
   if (candidates.length === 0) {
     return Err({ type: "unknown", raw: "No model candidates provided for name generation" });
   }
@@ -195,15 +281,15 @@ export async function generateWorkspaceIdentity(
   // Try up to 3 candidates
   const maxAttempts = Math.min(candidates.length, 3);
 
-  // Track the last API error to return if all candidates fail
-  let lastApiError: string | undefined;
+  // Track the last classified error to return if all candidates fail
+  let lastError: NameGenerationError | null = null;
 
   for (let i = 0; i < maxAttempts; i++) {
     const modelString = candidates[i];
 
     const modelResult = await aiService.createModel(modelString);
     if (!modelResult.success) {
-      // No credentials for this model, try next
+      lastError = mapModelCreationError(modelResult.error, modelString);
       log.debug(`Name generation: skipping ${modelString} (${modelResult.error.type})`);
       continue;
     }
@@ -260,20 +346,18 @@ Requirements:
         });
       }
 
-      // API error (invalid key, quota, network, etc.) - try next candidate
-      lastApiError = error instanceof Error ? error.message : String(error);
-      log.warn(`Name generation failed with ${modelString}, trying next candidate`, {
-        error: lastApiError,
-      });
+      lastError = mapNameGenerationError(error, modelString);
+      log.warn("Name generation failed, trying next candidate", { modelString, error: lastError });
       continue;
     }
   }
 
-  // Return the last API error if available (more actionable than generic message)
-  const errorMessage = lastApiError
-    ? `Name generation failed: ${lastApiError}`
-    : "Name generation failed - no working model found";
-  return Err({ type: "unknown", raw: errorMessage });
+  return Err(
+    lastError ?? {
+      type: "configuration",
+      raw: "No working model candidates were available for name generation.",
+    }
+  );
 }
 
 /**

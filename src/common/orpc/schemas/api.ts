@@ -2,7 +2,7 @@ import { eventIterator } from "@orpc/server";
 import { UIModeSchema } from "../../types/mode";
 import { z } from "zod";
 import { ChatStatsSchema, SessionUsageFileSchema } from "./chatStats";
-import { SendMessageErrorSchema } from "./errors";
+import { NameGenerationErrorSchema, SendMessageErrorSchema } from "./errors";
 import { BranchListResultSchema, FilePartSchema, MuxMessageSchema } from "./message";
 import { ProjectConfigSchema, SectionConfigSchema } from "./project";
 import { ResultSchema } from "./result";
@@ -1265,7 +1265,7 @@ export const nameGeneration = {
         title: z.string(),
         modelUsed: z.string(),
       }),
-      SendMessageErrorSchema
+      NameGenerationErrorSchema
     ),
   },
 };

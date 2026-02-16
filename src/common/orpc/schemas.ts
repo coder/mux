@@ -65,7 +65,11 @@ export {
   AgentIdSchema,
 } from "./schemas/agentDefinition";
 
-export { SendMessageErrorSchema, StreamErrorTypeSchema } from "./schemas/errors";
+export {
+  SendMessageErrorSchema,
+  StreamErrorTypeSchema,
+  NameGenerationErrorSchema,
+} from "./schemas/errors";
 
 // Tool schemas
 export { BashToolResultSchema, FileTreeNodeSchema } from "./schemas/tools";

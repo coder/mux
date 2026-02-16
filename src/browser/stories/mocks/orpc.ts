@@ -24,6 +24,7 @@ import type {
 import type { MuxMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
+import type { NameGenerationError } from "@/common/types/errors";
 import type { Secret } from "@/common/types/secrets";
 import type { MCPHttpServerInfo, MCPServerInfo } from "@/common/types/mcp";
 import type { MCPOAuthAuthStatus } from "@/common/types/mcpOauth";
@@ -111,6 +112,8 @@ export interface MockORPCClientOptions {
   providersList?: string[];
   /** Mock for projects.remove - return error string to simulate failure */
   onProjectRemove?: (projectPath: string) => { success: true } | { success: false; error: string };
+  /** Override for nameGeneration.generate result (default: success) */
+  nameGenerationResult?: { success: false; error: NameGenerationError };
   /** Background processes per workspace */
   backgroundProcesses?: Map<
     string,
@@ -270,6 +273,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     providersConfig = { anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true } },
     providersList = [],
     onProjectRemove,
+    nameGenerationResult,
     backgroundProcesses = new Map<string, MockBackgroundProcess[]>(),
     sessionUsage = new Map<string, MockSessionUsage>(),
     lastLlmRequestSnapshots = new Map<string, DebugLlmRequestSnapshot | null>(),
@@ -1208,11 +1212,15 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         Promise.resolve(coderWorkspacesResult ?? { ok: true, workspaces: coderWorkspaces }),
     },
     nameGeneration: {
-      generate: () =>
-        Promise.resolve({
-          success: true,
+      generate: () => {
+        if (nameGenerationResult) {
+          return Promise.resolve(nameGenerationResult);
+        }
+        return Promise.resolve({
+          success: true as const,
           data: { name: "generated-workspace", title: "Generated Workspace", modelUsed: "mock" },
-        }),
+        });
+      },
     },
     terminal: {
       listSessions: (_input: { workspaceId: string }) => Promise.resolve([]),
