@@ -765,7 +765,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                       className="shrink-0 cursor-pointer border-none bg-transparent p-0"
                       aria-label="Open Chat with Mux"
                     >
-                      <MuxLogo className="h-5 w-[44px]" aria-hidden="true" />
+                      <MuxLogo className="h-5 w-auto" aria-hidden="true" />
                     </button>
                   </div>
                   <div className="flex items-center gap-1.5">
@@ -1370,7 +1370,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
               </button>
             </div>
           ) : (
-            <div className="mt-auto flex shrink-0 items-center justify-center pb-2">
+            <div className="flex shrink-0 items-center justify-center pt-3 pb-2">
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
