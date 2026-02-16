@@ -3,6 +3,8 @@ import { buildCoreSources } from "./sources";
 import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
+import { GlobalWindow } from "happy-dom";
+import { CUSTOM_EVENTS } from "@/common/constants/events";
 import type { APIClient } from "@/browser/contexts/API";
 
 const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
@@ -183,71 +185,35 @@ test("archive merged workspaces prompt submits selected project", async () => {
   expect(onArchiveMergedWorkspacesInProject).toHaveBeenCalledWith("/repo/a");
 });
 
-async function withMockAlert(
-  fn: (alertMock: ReturnType<typeof mock>) => Promise<void>
-): Promise<void> {
-  const alertMock = mock();
-  const originalAlert = (globalThis as unknown as { alert?: typeof alert }).alert;
-  (globalThis as unknown as { alert: (message?: unknown) => void }).alert = (message?: unknown) => {
-    alertMock(message);
+test("workspace generate title command dispatches a title-generation request event", async () => {
+  const testWindow = new GlobalWindow();
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+
+  globalThis.window = testWindow as unknown as Window & typeof globalThis;
+  globalThis.document = testWindow.document as unknown as Document;
+
+  const receivedWorkspaceIds: string[] = [];
+  const handleRequest = (event: Event) => {
+    const detail = (event as CustomEvent<{ workspaceId: string }>).detail;
+    receivedWorkspaceIds.push(detail.workspaceId);
   };
+
+  window.addEventListener(CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED, handleRequest);
+
   try {
-    await fn(alertMock);
+    const sources = mk();
+    const actions = sources.flatMap((s) => s());
+    const generateTitleAction = actions.find((a) => a.id === "ws:generate-title");
+
+    expect(generateTitleAction).toBeDefined();
+
+    await generateTitleAction!.run();
+
+    expect(receivedWorkspaceIds).toEqual(["w1"]);
   } finally {
-    if (originalAlert) {
-      (globalThis as unknown as { alert: typeof alert }).alert = originalAlert;
-    } else {
-      delete (globalThis as unknown as { alert?: typeof alert }).alert;
-    }
+    window.removeEventListener(CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED, handleRequest);
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
   }
-}
-
-test("workspace generate title command surfaces API failure result", async () => {
-  const regenerateTitle = mock(() =>
-    Promise.resolve({ success: false as const, error: "No user messages in workspace history" })
-  );
-  const sources = mk({
-    api: {
-      workspace: {
-        truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
-        interruptStream: () => Promise.resolve({ success: true, data: undefined }),
-        regenerateTitle,
-      },
-    } as unknown as APIClient,
-  });
-  const actions = sources.flatMap((s) => s());
-  const generateTitleAction = actions.find((a) => a.id === "ws:generate-title");
-
-  expect(generateTitleAction).toBeDefined();
-
-  await withMockAlert(async (alertMock) => {
-    await generateTitleAction!.run();
-    expect(regenerateTitle).toHaveBeenCalledWith({ workspaceId: "w1" });
-    expect(alertMock).toHaveBeenCalledTimes(1);
-    expect(alertMock).toHaveBeenCalledWith("No user messages in workspace history");
-  });
-});
-
-test("workspace generate title command surfaces transport errors", async () => {
-  const regenerateTitle = mock(() => Promise.reject(new Error("Connection lost")));
-  const sources = mk({
-    api: {
-      workspace: {
-        truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
-        interruptStream: () => Promise.resolve({ success: true, data: undefined }),
-        regenerateTitle,
-      },
-    } as unknown as APIClient,
-  });
-  const actions = sources.flatMap((s) => s());
-  const generateTitleAction = actions.find((a) => a.id === "ws:generate-title");
-
-  expect(generateTitleAction).toBeDefined();
-
-  await withMockAlert(async (alertMock) => {
-    await generateTitleAction!.run();
-    expect(regenerateTitle).toHaveBeenCalledWith({ workspaceId: "w1" });
-    expect(alertMock).toHaveBeenCalledTimes(1);
-    expect(alertMock).toHaveBeenCalledWith("Connection lost");
-  });
 });

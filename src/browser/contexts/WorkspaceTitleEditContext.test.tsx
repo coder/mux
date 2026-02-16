@@ -44,6 +44,7 @@ describe("WorkspaceTitleEditContext", () => {
     globalThis.window = undefined as unknown as Window & typeof globalThis;
     globalThis.document = undefined as unknown as Document;
     globalThis.localStorage = undefined as unknown as Storage;
+    delete (globalThis as unknown as { alert?: typeof alert }).alert;
   });
 
   test("ignores duplicate regenerate requests while one is already in flight", async () => {
@@ -70,7 +71,7 @@ describe("WorkspaceTitleEditContext", () => {
       contextValue?.wrapGenerateTitle("ws-1", regenerate);
     });
 
-    expect(regenerate).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(regenerate).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(isGeneratingTitle(contextValue, "ws-1")).toBe(true));
 
     act(() => {
@@ -89,7 +90,7 @@ describe("WorkspaceTitleEditContext", () => {
       contextValue?.wrapGenerateTitle("ws-1", regenerateAfterComplete);
     });
 
-    expect(regenerateAfterComplete).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(regenerateAfterComplete).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(contextValue?.generatingTitleWorkspaceIds.size).toBe(0));
   });
 
@@ -138,6 +139,54 @@ describe("WorkspaceTitleEditContext", () => {
       deferredA.resolve({ success: true, data: { title: "A" } });
     });
 
+    await waitFor(() => expect(contextValue?.generatingTitleWorkspaceIds.size).toBe(0));
+  });
+
+  test("clears in-flight state when regenerate callback throws synchronously", async () => {
+    const testWindow = new GlobalWindow();
+    globalThis.window = testWindow as unknown as Window & typeof globalThis;
+    globalThis.document = testWindow.document as unknown as Document;
+    globalThis.localStorage = testWindow.localStorage as unknown as Storage;
+
+    const alertMock = mock();
+    const alertHandler = (message?: unknown) => {
+      alertMock(message);
+    };
+    (testWindow as unknown as { alert: (message?: unknown) => void }).alert = alertHandler;
+    (globalThis as unknown as { alert: (message?: unknown) => void }).alert = alertHandler;
+
+    let contextValue: ReturnType<typeof useTitleEdit> | null = null;
+
+    render(
+      <TitleEditProvider onUpdateTitle={() => Promise.resolve({ success: true })}>
+        <ContextProbe onValue={(value) => (contextValue = value)} />
+      </TitleEditProvider>
+    );
+
+    await waitFor(() => expect(contextValue).not.toBeNull());
+
+    const thrown = mock(() => {
+      throw new Error("sync failure");
+    });
+
+    act(() => {
+      contextValue?.wrapGenerateTitle("ws-sync", thrown);
+    });
+
+    await waitFor(() => expect(contextValue?.generatingTitleWorkspaceIds.size).toBe(0));
+    await waitFor(() => expect(alertMock).toHaveBeenCalledWith("sync failure"));
+
+    const completedResult: RegenerateTitleResult = {
+      success: true,
+      data: { title: "Recovered" },
+    };
+    const regenerateAfterThrow = mock(() => Promise.resolve(completedResult));
+
+    act(() => {
+      contextValue?.wrapGenerateTitle("ws-sync", regenerateAfterThrow);
+    });
+
+    await waitFor(() => expect(regenerateAfterThrow).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(contextValue?.generatingTitleWorkspaceIds.size).toBe(0));
   });
 });

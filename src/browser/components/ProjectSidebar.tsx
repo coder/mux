@@ -32,6 +32,7 @@ import {
   KEYBINDS,
 } from "@/browser/utils/ui/keybinds";
 import { useAPI } from "@/browser/contexts/API";
+import { CUSTOM_EVENTS, type CustomEventType } from "@/common/constants/events";
 import { PlatformPaths } from "@/common/utils/paths";
 import {
   partitionWorkspacesByAge,
@@ -338,6 +339,21 @@ function SidebarTitleEditKeybinds(props: {
   const { requestEdit, wrapGenerateTitle } = useTitleEdit();
   const { api } = useAPI();
 
+  const regenerateTitleForWorkspace = useCallback(
+    (workspaceId: string) => {
+      if (workspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
+        return;
+      }
+      wrapGenerateTitle(workspaceId, () => {
+        if (!api) {
+          return Promise.resolve({ success: false, error: "Not connected to server" });
+        }
+        return api.workspace.regenerateTitle({ workspaceId });
+      });
+    },
+    [wrapGenerateTitle, api]
+  );
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (props.collapsed) return;
@@ -355,12 +371,7 @@ function SidebarTitleEditKeybinds(props: {
         requestEdit(wsId, displayTitle);
       } else if (matchesKeybind(e, KEYBINDS.GENERATE_WORKSPACE_TITLE)) {
         e.preventDefault();
-        wrapGenerateTitle(wsId, () => {
-          if (!api) {
-            return Promise.resolve({ success: false, error: "Not connected to server" });
-          }
-          return api.workspace.regenerateTitle({ workspaceId: wsId });
-        });
+        regenerateTitleForWorkspace(wsId);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -370,9 +381,28 @@ function SidebarTitleEditKeybinds(props: {
     props.selectedWorkspace,
     props.sortedWorkspacesByProject,
     requestEdit,
-    wrapGenerateTitle,
-    api,
+    regenerateTitleForWorkspace,
   ]);
+
+  useEffect(() => {
+    const handleGenerateTitleRequest: EventListener = (event) => {
+      const customEvent = event as CustomEventType<
+        typeof CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED
+      >;
+      regenerateTitleForWorkspace(customEvent.detail.workspaceId);
+    };
+
+    window.addEventListener(
+      CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED,
+      handleGenerateTitleRequest
+    );
+    return () => {
+      window.removeEventListener(
+        CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED,
+        handleGenerateTitleRequest
+      );
+    };
+  }, [regenerateTitleForWorkspace]);
 
   return null;
 }

@@ -299,22 +299,12 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         subtitle: workspaceDisplayName,
         shortcutHint: formatKeybind(KEYBINDS.GENERATE_WORKSPACE_TITLE),
         section: section.workspaces,
-        run: async () => {
-          if (!p.api) {
-            alert("Not connected to server");
-            return;
-          }
-
-          try {
-            const result = await p.api.workspace.regenerateTitle({
+        run: () => {
+          window.dispatchEvent(
+            createCustomEvent(CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED, {
               workspaceId: selected.workspaceId,
-            });
-            if (!result.success) {
-              alert(result.error);
-            }
-          } catch (error) {
-            alert(error instanceof Error ? error.message : String(error));
-          }
+            })
+          );
         },
       });
     }

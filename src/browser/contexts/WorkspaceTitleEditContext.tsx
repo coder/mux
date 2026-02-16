@@ -105,7 +105,8 @@ export const TitleEditProvider: React.FC<TitleEditProviderProps> = ({
         return next;
       });
 
-      void fn()
+      void Promise.resolve()
+        .then(() => fn())
         .then((result) => {
           if (!result.success && typeof window !== "undefined") {
             window.alert(result.error);
