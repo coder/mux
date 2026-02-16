@@ -2045,6 +2045,10 @@ describe("generateForkBranchName", () => {
     expect(generateForkBranchName("ws", ["ws-fork-1", "ws-fork-5"])).toBe("ws-fork-6");
   });
 
+  test("treats stale branch names as collisions when choosing next fork name", () => {
+    expect(generateForkBranchName("ws", ["ws-fork-1", "ws-fork-2"])).toBe("ws-fork-3");
+  });
+
   test("ignores non-numeric suffixes", () => {
     expect(generateForkBranchName("ws", ["ws-fork-abc", "ws-fork-"])).toBe("ws-fork-1");
   });

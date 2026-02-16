@@ -28,6 +28,7 @@ import {
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
+import { listLocalBranches } from "@/node/git";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
 import { fileExists } from "@/node/utils/runtime/fileExists";
@@ -2733,9 +2734,23 @@ export class WorkspaceService extends EventEmitter {
       const allMetadata = isAutoName ? await this.config.getAllWorkspaceMetadata() : [];
       let resolvedName: string;
       if (isAutoName) {
-        const existingNames = allMetadata
-          .filter((m) => m.projectPath === foundProjectPath)
-          .map((m) => m.name);
+        const existingNamesSet = new Set(
+          allMetadata.filter((m) => m.projectPath === foundProjectPath).map((m) => m.name)
+        );
+        // Also include local branch names to avoid silently reusing stale branches that
+        // were left behind on disk but no longer exist in config metadata.
+        try {
+          for (const branchName of await listLocalBranches(foundProjectPath)) {
+            existingNamesSet.add(branchName);
+          }
+        } catch (error) {
+          log.debug("Failed to list local branches for fork auto-name preflight", {
+            projectPath: foundProjectPath,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+
+        const existingNames = [...existingNamesSet];
         resolvedName = generateForkBranchName(sourceMetadata.name, existingNames);
 
         if (!validateWorkspaceName(resolvedName).valid) {

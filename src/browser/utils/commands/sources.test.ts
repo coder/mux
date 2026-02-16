@@ -5,6 +5,7 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { GlobalWindow } from "happy-dom";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { APIClient } from "@/browser/contexts/API";
 
 const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
@@ -183,6 +184,20 @@ test("archive merged workspaces prompt submits selected project", async () => {
 
   expect(onArchiveMergedWorkspacesInProject).toHaveBeenCalledTimes(1);
   expect(onArchiveMergedWorkspacesInProject).toHaveBeenCalledWith("/repo/a");
+});
+
+test("workspace generate title command is hidden for Chat with Mux workspace", () => {
+  const sources = mk({
+    selectedWorkspace: {
+      projectPath: "/repo/a",
+      projectName: "a",
+      namedWorkspacePath: "/repo/a/mux-help",
+      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+    },
+  });
+  const actions = sources.flatMap((s) => s());
+
+  expect(actions.some((action) => action.id === "ws:generate-title")).toBe(false);
 });
 
 test("workspace generate title command dispatches a title-generation request event", async () => {

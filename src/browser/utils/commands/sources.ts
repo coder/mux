@@ -12,6 +12,7 @@ import {
   RIGHT_SIDEBAR_TAB_KEY,
 } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { disableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
 import { CommandIds } from "@/browser/utils/commandIds";
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
@@ -293,20 +294,22 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           },
         },
       });
-      list.push({
-        id: CommandIds.workspaceGenerateTitle(),
-        title: "Generate New Title for Current Workspace",
-        subtitle: workspaceDisplayName,
-        shortcutHint: formatKeybind(KEYBINDS.GENERATE_WORKSPACE_TITLE),
-        section: section.workspaces,
-        run: () => {
-          window.dispatchEvent(
-            createCustomEvent(CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED, {
-              workspaceId: selected.workspaceId,
-            })
-          );
-        },
-      });
+      if (selected.workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID) {
+        list.push({
+          id: CommandIds.workspaceGenerateTitle(),
+          title: "Generate New Title for Current Workspace",
+          subtitle: workspaceDisplayName,
+          shortcutHint: formatKeybind(KEYBINDS.GENERATE_WORKSPACE_TITLE),
+          section: section.workspaces,
+          run: () => {
+            window.dispatchEvent(
+              createCustomEvent(CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED, {
+                workspaceId: selected.workspaceId,
+              })
+            );
+          },
+        });
+      }
     }
 
     if (p.workspaceMetadata.size > 0) {
