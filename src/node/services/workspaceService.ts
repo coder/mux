@@ -2037,7 +2037,41 @@ export class WorkspaceService extends EventEmitter {
       return Err("Could not read workspace history");
     }
 
-    const firstUserMsg = historyResult.data.find((m) => m.role === "user");
+    let firstUserMsg = historyResult.data.find((m) => m.role === "user");
+    let firstAssistantMsg = historyResult.data.find((m) => m.role === "assistant");
+
+    if (!firstUserMsg) {
+      // Compaction boundaries can leave the latest epoch with only an assistant summary.
+      // Fall back to scanning full history so regenerateTitle still works for compacted chats.
+      let fallbackFirstUser: MuxMessage | undefined;
+      let fallbackFirstAssistant: MuxMessage | undefined;
+      const fullHistoryResult = await this.historyService.iterateFullHistory(
+        workspaceId,
+        "forward",
+        (messages) => {
+          for (const message of messages) {
+            if (!fallbackFirstUser && message.role === "user") {
+              fallbackFirstUser = message;
+            }
+            if (!fallbackFirstAssistant && message.role === "assistant") {
+              fallbackFirstAssistant = message;
+            }
+          }
+
+          // Stop scanning once we have both context messages.
+          if (fallbackFirstUser && fallbackFirstAssistant) {
+            return false;
+          }
+        }
+      );
+      if (!fullHistoryResult.success) {
+        return Err("Could not read workspace history");
+      }
+
+      firstUserMsg = fallbackFirstUser;
+      firstAssistantMsg ??= fallbackFirstAssistant;
+    }
+
     if (!firstUserMsg) {
       return Err("No user messages in workspace history");
     }
@@ -2054,7 +2088,6 @@ export class WorkspaceService extends EventEmitter {
 
     // Use the first assistant reply for richer context
     let assistantContext: string | undefined;
-    const firstAssistantMsg = historyResult.data.find((m) => m.role === "assistant");
     if (firstAssistantMsg) {
       assistantContext =
         firstAssistantMsg.parts

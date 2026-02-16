@@ -1960,6 +1960,62 @@ describe("WorkspaceService regenerateTitle", () => {
       generateIdentitySpy.mockRestore();
     }
   });
+  test("falls back to full history when latest compaction epoch has no user message", async () => {
+    const workspaceId = "ws-regenerate-title-compacted";
+
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-before-boundary", "user", "Refactor sidebar loading")
+    );
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("summary-boundary", "assistant", "Compacted summary", {
+        compacted: true,
+        compactionBoundary: true,
+        compactionEpoch: 1,
+      })
+    );
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("assistant-after-boundary", "assistant", "No new user messages yet")
+    );
+
+    const iterateSpy = spyOn(historyService, "iterateFullHistory");
+    const generateIdentitySpy = spyOn(
+      workspaceTitleGenerator,
+      "generateWorkspaceIdentity"
+    ).mockResolvedValue(
+      Ok({
+        name: "sidebar-refactor-a1b2",
+        title: "Refactor sidebar loading",
+        modelUsed: "anthropic:claude-3-5-haiku-latest",
+      })
+    );
+    const updateTitleSpy = spyOn(workspaceService, "updateTitle").mockResolvedValueOnce(
+      Ok(undefined)
+    );
+
+    try {
+      const result = await workspaceService.regenerateTitle(workspaceId);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.title).toBe("Refactor sidebar loading");
+      }
+      expect(iterateSpy).toHaveBeenCalledTimes(1);
+      expect(generateIdentitySpy).toHaveBeenCalledWith(
+        "Refactor sidebar loading",
+        expect.any(Array),
+        expect.anything(),
+        "Compacted summary"
+      );
+      expect(updateTitleSpy).toHaveBeenCalledWith(workspaceId, "Refactor sidebar loading");
+    } finally {
+      updateTitleSpy.mockRestore();
+      generateIdentitySpy.mockRestore();
+      iterateSpy.mockRestore();
+    }
+  });
 });
 
 // --- Pure helper tests (no mocks needed) ---
