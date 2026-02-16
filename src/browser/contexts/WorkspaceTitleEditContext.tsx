@@ -84,9 +84,13 @@ export const TitleEditProvider: React.FC<TitleEditProviderProps> = ({
 
   const wrapGenerateTitle = useCallback((workspaceId: string, fn: () => Promise<unknown>) => {
     setGeneratingTitleWorkspaceId(workspaceId);
-    void fn().finally(() => {
-      setGeneratingTitleWorkspaceId((current) => (current === workspaceId ? null : current));
-    });
+    void fn()
+      .catch(() => {
+        // Callers surface user-visible errors; this prevents unhandled rejections.
+      })
+      .finally(() => {
+        setGeneratingTitleWorkspaceId((current) => (current === workspaceId ? null : current));
+      });
   }, []);
 
   const value: TitleEditContextValue = {

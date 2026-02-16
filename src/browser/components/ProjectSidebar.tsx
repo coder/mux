@@ -333,12 +333,14 @@ function MuxChatStatusIndicator() {
 function SidebarTitleEditKeybinds(props: {
   selectedWorkspace: WorkspaceSelection | undefined;
   sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>;
+  collapsed: boolean;
 }) {
   const { requestEdit, wrapGenerateTitle } = useTitleEdit();
   const { api } = useAPI();
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (props.collapsed) return;
       if (!props.selectedWorkspace) return;
       if (isEditableElement(e.target)) return;
       const wsId = props.selectedWorkspace.workspaceId;
@@ -362,6 +364,7 @@ function SidebarTitleEditKeybinds(props: {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
+    props.collapsed,
     props.selectedWorkspace,
     props.sortedWorkspacesByProject,
     requestEdit,
@@ -828,6 +831,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       <SidebarTitleEditKeybinds
         selectedWorkspace={selectedWorkspace ?? undefined}
         sortedWorkspacesByProject={sortedWorkspacesByProject}
+        collapsed={collapsed}
       />
       <DndProvider backend={HTML5Backend}>
         <ProjectDragLayer />
