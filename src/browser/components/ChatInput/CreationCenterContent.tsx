@@ -1,6 +1,5 @@
-import { useRef, useEffect } from "react";
-import dancingBlinkDarkSrc from "@/browser/assets/animations/dancing-blink-dark.webm";
-import dancingBlinkLightSrc from "@/browser/assets/animations/dancing-blink-light.webm";
+import Lottie from "lottie-react";
+import dancingBlinkAnimation from "@/browser/assets/animations/dancing-blink.json";
 import { useTheme } from "@/browser/contexts/ThemeContext";
 
 interface CreationCenterContentProps {
@@ -19,48 +18,17 @@ interface CreationCenterContentProps {
 export function CreationCenterContent(props: CreationCenterContentProps) {
   const { theme } = useTheme();
   const isDark = theme === "dark" || theme.endsWith("-dark");
-  const videoSrc = isDark ? dancingBlinkDarkSrc : dancingBlinkLightSrc;
-
-  const videoRef = useRef<HTMLVideoElement>(null);
-
-  useEffect(() => {
-    if (!props.isSending || !videoRef.current) {
-      return;
-    }
-
-    videoRef.current.playbackRate = 1.3;
-  }, [props.isSending, videoSrc]);
 
   return (
     <>
-      {/*
-        Preload the current theme's creation animation while idle so the loading overlay starts
-        animating immediately as soon as workspace creation begins.
-      */}
-      {!props.isSending && (
-        <video
-          className="pointer-events-none absolute h-0 w-0 opacity-0"
-          src={videoSrc}
-          preload="auto"
-          muted
-          playsInline
-          aria-hidden="true"
-        />
-      )}
-
       {props.isSending && (
         <div
           className={`absolute inset-0 z-10 flex flex-col items-center justify-center pb-[30vh] ${isDark ? "bg-sidebar" : "bg-white"}`}
         >
-          <video
-            ref={videoRef}
-            className="h-[50vh] w-[50vw] object-contain"
-            src={videoSrc}
-            preload="auto"
-            autoPlay
+          <Lottie
+            animationData={dancingBlinkAnimation}
             loop
-            muted
-            playsInline
+            className="h-[50vh] w-[50vw] object-contain"
           />
           <div className="-mt-32 max-w-xl px-8 text-center">
             <h2 className="text-foreground mb-2 text-2xl font-medium">Creating workspace</h2>
