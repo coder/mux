@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useState } from "react";
 import { cn } from "@/common/lib/utils";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import ProjectSidebar from "./ProjectSidebar";
@@ -25,20 +25,21 @@ export function LeftSidebar(props: LeftSidebarProps) {
     ...projectSidebarProps
   } = props;
   const isDesktop = isDesktopMode();
-  // Match the CSS gate for the mobile "overlay" sidebar; we don't show a drag handle in that mode.
   const isMobileTouch =
     typeof window !== "undefined" &&
     window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches;
 
-
   const width = collapsed ? "40px" : `${widthPx ?? 288}px`;
 
-  // Suppress the width transition on initial render to prevent a
-  // visual flash where the sidebar animates from a default size.
-  const hasMounted = useRef(false);
+  // Two-phase mount: first render sets the width without transition
+  // or visible content, then after a frame we reveal everything.
+  // This prevents the flash of squished content on initial load.
+  const [isReady, setIsReady] = useState(false);
   useEffect(() => {
     requestAnimationFrame(() => {
-      hasMounted.current = true;
+      requestAnimationFrame(() => {
+        setIsReady(true);
+      });
     });
   }, []);
 
@@ -58,23 +59,29 @@ export function LeftSidebar(props: LeftSidebarProps) {
         data-testid="left-sidebar"
         className={cn(
           "h-full bg-sidebar border-r border-border flex flex-col shrink-0 overflow-hidden relative z-20",
-          !isResizing && hasMounted.current && "transition-[width] duration-200",
+          isReady && !isResizing && "transition-[width] duration-200",
           "mobile-sidebar",
           collapsed && "mobile-sidebar-collapsed",
-          // In desktop mode when collapsed, start border below titlebar height (32px)
-          // so it aligns with titlebar bottom edge and doesn't cut through traffic lights
           isDesktop &&
             collapsed &&
             "border-r-0 after:absolute after:right-0 after:top-0 after:bottom-0 after:w-px after:bg-border"
         )}
         style={{ width }}
       >
-
-        <ProjectSidebar
-          {...projectSidebarProps}
-          collapsed={collapsed}
-          onToggleCollapsed={onToggleCollapsed}
-        />
+        {/* Hide content until layout is settled to prevent squished flash */}
+        <div
+          className={cn(
+            "flex flex-col flex-1 min-h-0",
+            isReady ? "opacity-100" : "opacity-0"
+          )}
+          style={{ transition: isReady ? "opacity 150ms ease-in" : "none" }}
+        >
+          <ProjectSidebar
+            {...projectSidebarProps}
+            collapsed={collapsed}
+            onToggleCollapsed={onToggleCollapsed}
+          />
+        </div>
 
         {!collapsed && !isMobileTouch && onStartResize && (
           <div
