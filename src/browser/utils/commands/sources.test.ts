@@ -204,9 +204,11 @@ test("workspace generate title command dispatches a title-generation request eve
   const testWindow = new GlobalWindow();
   const originalWindow = globalThis.window;
   const originalDocument = globalThis.document;
+  const originalCustomEvent = globalThis.CustomEvent;
 
   globalThis.window = testWindow as unknown as Window & typeof globalThis;
   globalThis.document = testWindow.document as unknown as Document;
+  globalThis.CustomEvent = testWindow.CustomEvent as unknown as typeof CustomEvent;
 
   const receivedWorkspaceIds: string[] = [];
   const handleRequest = (event: Event) => {
@@ -230,5 +232,6 @@ test("workspace generate title command dispatches a title-generation request eve
     window.removeEventListener(CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED, handleRequest);
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
+    globalThis.CustomEvent = originalCustomEvent;
   }
 });
