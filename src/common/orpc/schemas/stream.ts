@@ -74,7 +74,7 @@ export const CaughtUpMessageSchema = z.object({
   cursor: OnChatCursorSchema.optional(),
 });
 
-/** Sent when a workspace becomes eligible for idle compaction while connected */
+/** Sent when backend starts idle compaction for a workspace */
 
 /**
  * Progress event for runtime readiness checks.
@@ -89,8 +89,8 @@ export const RuntimeStatusEventSchema = z.object({
   detail: z.string().optional(), // Human-readable status like "Starting Coder workspace..."
 });
 
-export const IdleCompactionNeededEventSchema = z.object({
-  type: z.literal("idle-compaction-needed"),
+export const IdleCompactionStartedEventSchema = z.object({
+  type: z.literal("idle-compaction-started"),
 });
 
 export const StreamErrorMessageSchema = z.object({
@@ -478,7 +478,7 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   QueuedMessageChangedEventSchema,
   RestoreToInputEventSchema,
   // Idle compaction notification
-  IdleCompactionNeededEventSchema,
+  IdleCompactionStartedEventSchema,
   // Runtime status events
   RuntimeStatusEventSchema,
   // Init events

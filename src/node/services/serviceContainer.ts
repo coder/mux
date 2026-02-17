@@ -167,7 +167,7 @@ export class ServiceContainer {
       config,
       this.historyService,
       this.extensionMetadata,
-      (workspaceId) => this.workspaceService.emitIdleCompactionNeeded(workspaceId)
+      (workspaceId) => this.workspaceService.executeIdleCompaction(workspaceId)
     );
     this.windowService = new WindowService();
     this.mcpOauthService = new McpOauthService(

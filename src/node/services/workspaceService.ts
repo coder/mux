@@ -31,6 +31,7 @@ import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStora
 import { listLocalBranches } from "@/node/git";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
+import { buildCompactionMessageText } from "@/common/utils/compaction/compactionPrompt";
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import { orchestrateFork } from "@/node/services/utils/forkOrchestrator";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
@@ -61,7 +62,7 @@ import {
   AskUserQuestionToolResultSchema,
 } from "@/common/utils/tools/toolDefinitions";
 import type { UIMode } from "@/common/types/mode";
-import type { MuxMessage } from "@/common/types/message";
+import type { MuxFrontendMetadata, MuxMessage } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import {
   hasSrcBaseDir,
@@ -71,6 +72,7 @@ import {
 } from "@/common/types/runtime";
 import { isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
@@ -4268,13 +4270,134 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
-   * Emit an idle-compaction-needed event to a workspace's stream.
-   * Called by IdleCompactionService when a workspace becomes eligible while connected.
+   * Execute idle compaction for a workspace directly from the backend.
+   *
+   * This path is frontend-independent: compaction still runs even if no UI is open.
+   * Throws on failure so IdleCompactionService can log and continue with the next workspace.
    */
-  emitIdleCompactionNeeded(workspaceId: string): void {
+  async executeIdleCompaction(workspaceId: string): Promise<void> {
+    assert(workspaceId.trim().length > 0, "executeIdleCompaction requires a non-empty workspaceId");
+
+    const sendOptions = await this.buildIdleCompactionSendOptions(workspaceId);
+
+    const muxMetadata: MuxFrontendMetadata = {
+      type: "compaction-request",
+      rawCommand: "/compact",
+      commandPrefix: "/compact",
+      parsed: {
+        model: sendOptions.model,
+      },
+      requestedModel: sendOptions.model,
+      source: "idle-compaction",
+      displayStatus: { emoji: "💤", message: "Compacting idle workspace..." },
+    };
+
+    const sendResult = await this.sendMessage(
+      workspaceId,
+      buildCompactionMessageText({}),
+      {
+        ...sendOptions,
+        muxMetadata,
+      },
+      {
+        // Idle compaction runs in background; avoid mutating auto-resume counters.
+        skipAutoResumeReset: true,
+      }
+    );
+
+    if (!sendResult.success) {
+      const rawError = sendResult.error;
+      const formattedError =
+        typeof rawError === "object" && rawError !== null
+          ? "raw" in rawError && typeof rawError.raw === "string"
+            ? rawError.raw
+            : "message" in rawError && typeof rawError.message === "string"
+              ? rawError.message
+              : "type" in rawError && typeof rawError.type === "string"
+                ? rawError.type
+                : JSON.stringify(rawError)
+          : String(rawError);
+      throw new Error(`Failed to execute idle compaction: ${formattedError}`);
+    }
+
+    this.emitIdleCompactionStarted(workspaceId);
+  }
+
+  private async buildIdleCompactionSendOptions(workspaceId: string): Promise<SendMessageOptions> {
+    const config = this.config.loadConfigOrDefault();
+    const workspaceMatch = this.config.findWorkspace(workspaceId);
+
+    const workspaceEntry = workspaceMatch
+      ? (() => {
+          const project = config.projects.get(workspaceMatch.projectPath);
+          return (
+            project?.workspaces.find((workspace) => workspace.id === workspaceId) ??
+            project?.workspaces.find((workspace) => workspace.path === workspaceMatch.workspacePath)
+          );
+        })()
+      : undefined;
+
+    const activity = await this.extensionMetadata.getMetadata(workspaceId);
+
+    const compactAgentSettings = workspaceEntry?.aiSettingsByAgent?.compact;
+    const execAgentSettings =
+      workspaceEntry?.aiSettingsByAgent?.[WORKSPACE_DEFAULTS.agentId] ?? workspaceEntry?.aiSettings;
+
+    const preferredCompactionModel =
+      typeof config.preferredCompactionModel === "string"
+        ? normalizeGatewayModel(config.preferredCompactionModel.trim())
+        : undefined;
+
+    const normalizedPreferredCompactionModel =
+      preferredCompactionModel && isValidModelFormat(preferredCompactionModel)
+        ? preferredCompactionModel
+        : undefined;
+
+    const fallbackModel =
+      normalizedPreferredCompactionModel ??
+      compactAgentSettings?.model ??
+      execAgentSettings?.model ??
+      activity?.lastModel ??
+      WORKSPACE_DEFAULTS.model;
+
+    let model = normalizeGatewayModel(fallbackModel);
+    if (!isValidModelFormat(model)) {
+      log.warn("Idle compaction resolved invalid model; falling back to workspace default", {
+        workspaceId,
+        model,
+      });
+      model = WORKSPACE_DEFAULTS.model;
+    }
+
+    const requestedThinking =
+      compactAgentSettings?.thinkingLevel ??
+      execAgentSettings?.thinkingLevel ??
+      activity?.lastThinkingLevel ??
+      WORKSPACE_DEFAULTS.thinkingLevel;
+
+    const normalizedThinkingLevel =
+      coerceThinkingLevel(requestedThinking) ?? WORKSPACE_DEFAULTS.thinkingLevel;
+
+    return {
+      model,
+      agentId: "compact",
+      thinkingLevel: enforceThinkingPolicy(model, normalizedThinkingLevel),
+      maxOutputTokens: undefined,
+      // Disable all tools during compaction - regex .* matches all tool names.
+      toolPolicy: [{ regex_match: ".*", action: "disable" }],
+      // Compaction should not mutate persisted workspace AI defaults.
+      skipAiSettingsPersistence: true,
+    };
+  }
+
+  /**
+   * Emit an idle-compaction-started event to a workspace's stream.
+   * This is a transient UI hint while backend-initiated compaction is running.
+   */
+  emitIdleCompactionStarted(workspaceId: string): void {
     const session = this.sessions.get(workspaceId);
     if (session) {
-      session.emitChatEvent({ type: "idle-compaction-needed" });
+      session.emitChatEvent({ type: "idle-compaction-started" });
     }
   }
 }
