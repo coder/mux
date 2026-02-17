@@ -23,6 +23,27 @@ interface PositionedMenuProps {
  * used across ChatPane transcript, WorkspaceListItem draft, etc.
  */
 export function PositionedMenu(props: PositionedMenuProps) {
+  const [isPlaced, setIsPlaced] = React.useState(false);
+
+  // Keep content invisible for one animation frame after opening/repositioning.
+  // This gives Radix/Floating UI time to compute final placement and avoids a
+  // first-frame flash at fallback coordinates.
+  React.useLayoutEffect(() => {
+    if (!props.open) {
+      setIsPlaced(false);
+      return;
+    }
+
+    setIsPlaced(false);
+    const frame = requestAnimationFrame(() => {
+      setIsPlaced(true);
+    });
+
+    return () => {
+      cancelAnimationFrame(frame);
+    };
+  }, [props.open, props.position?.x, props.position?.y]);
+
   return (
     <Popover open={props.open} onOpenChange={props.onOpenChange}>
       {props.position && (
@@ -43,6 +64,7 @@ export function PositionedMenu(props: PositionedMenuProps) {
         side="right"
         sideOffset={0}
         className={cn("!min-w-0 p-1", props.className ?? "w-[180px]")}
+        style={{ visibility: !props.open || isPlaced ? "visible" : "hidden" }}
         onClick={(e) => e.stopPropagation()}
       >
         {props.children}

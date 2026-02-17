@@ -7,7 +7,7 @@ import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { useDrag } from "react-dnd";
 import { getEmptyImage } from "react-dnd-html5-backend";
 import { GitStatusIndicator } from "./GitStatusIndicator";
@@ -303,12 +303,30 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
 
   const linkSharingEnabled = useLinkSharingEnabled();
   const [shareTranscriptOpen, setShareTranscriptOpen] = useState(false);
+  const [isOverflowMenuPlaced, setIsOverflowMenuPlaced] = useState(false);
 
   // Context menu via right-click / long-press. The hook manages position + long-press state.
   // The regular item also has a ⋮ trigger button, so we bridge the hook's isOpen into a
   // Popover that can be anchored either at the cursor position or the trigger button.
   const canOpenMenu = useCallback(() => !isDisabled && !isEditing, [isDisabled, isEditing]);
   const ctxMenu = useContextMenuPosition({ longPress: true, canOpen: canOpenMenu });
+  // Hide menu content for one frame while Radix/Floating UI recalculates anchor
+  // placement. This avoids first-frame flashes at stale trigger/fallback coords.
+  useLayoutEffect(() => {
+    if (!ctxMenu.isOpen) {
+      setIsOverflowMenuPlaced(false);
+      return;
+    }
+
+    setIsOverflowMenuPlaced(false);
+    const frame = requestAnimationFrame(() => {
+      setIsOverflowMenuPlaced(true);
+    });
+
+    return () => {
+      cancelAnimationFrame(frame);
+    };
+  }, [ctxMenu.isOpen, ctxMenu.position?.x, ctxMenu.position?.y]);
 
   useEffect(() => {
     if (isEditing) {
@@ -550,6 +568,9 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   side={ctxMenu.position ? "right" : "bottom"}
                   sideOffset={ctxMenu.position ? 0 : 6}
                   className="w-[250px] !min-w-0 p-1"
+                  style={{
+                    visibility: !ctxMenu.isOpen || isOverflowMenuPlaced ? "visible" : "hidden",
+                  }}
                   onClick={(e) => e.stopPropagation()}
                 >
                   <PositionedMenuItem
