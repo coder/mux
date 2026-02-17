@@ -93,6 +93,23 @@ export const IdleCompactionStartedEventSchema = z.object({
   type: z.literal("idle-compaction-started"),
 });
 
+export const AutoRetryScheduledEventSchema = z.object({
+  type: z.literal("auto-retry-scheduled"),
+  attempt: z.number(),
+  delayMs: z.number(),
+  scheduledAt: z.number(),
+});
+
+export const AutoRetryStartingEventSchema = z.object({
+  type: z.literal("auto-retry-starting"),
+  attempt: z.number(),
+});
+
+export const AutoRetryAbandonedEventSchema = z.object({
+  type: z.literal("auto-retry-abandoned"),
+  reason: z.string(),
+});
+
 export const StreamErrorMessageSchema = z.object({
   type: z.literal("stream-error"),
   messageId: z.string(),
@@ -479,6 +496,10 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   RestoreToInputEventSchema,
   // Idle compaction notification
   IdleCompactionStartedEventSchema,
+  // Auto-retry status events
+  AutoRetryScheduledEventSchema,
+  AutoRetryStartingEventSchema,
+  AutoRetryAbandonedEventSchema,
   // Runtime status events
   RuntimeStatusEventSchema,
   // Init events

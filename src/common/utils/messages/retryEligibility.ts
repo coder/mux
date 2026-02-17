@@ -48,7 +48,9 @@ const NON_RETRYABLE_STREAM_ERROR_SET = new Set<string>(NON_RETRYABLE_STREAM_ERRO
 /**
  * Check if a SendMessageError (from resumeStream failures) is non-retryable
  */
-export function isNonRetryableSendError(error: SendMessageError): boolean {
+export function isNonRetryableSendError(error: {
+  type: SendMessageError["type"] | string;
+}): boolean {
   // Debug flag: force all errors to be retryable
   if (isForceAllRetryableEnabled()) {
     return false;
@@ -62,12 +64,12 @@ export function isNonRetryableSendError(error: SendMessageError): boolean {
     case "invalid_model_string": // Bad model format - user must fix
     case "incompatible_workspace": // Workspace from newer mux version - user must upgrade
     case "runtime_not_ready": // Container doesn't exist - user must recreate workspace
+    case "policy_denied": // Policy blocks won't resolve automatically
       return true;
     case "runtime_start_failed": // Runtime is starting - transient, worth retrying
     case "unknown":
-      return false; // Transient errors might resolve on their own
-    case "policy_denied": // Policy blocks won't resolve automatically
-      return true;
+    default:
+      return false; // Transient or unknown errors might resolve on their own
   }
 }
 

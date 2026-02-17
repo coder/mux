@@ -135,6 +135,9 @@ export type { FilePart, MuxFilePart } from "./schemas/message";
 
 // Stream event schemas
 export {
+  AutoRetryAbandonedEventSchema,
+  AutoRetryScheduledEventSchema,
+  AutoRetryStartingEventSchema,
   CaughtUpMessageSchema,
   ChatMuxMessageSchema,
   CompletedMessagePartSchema,
