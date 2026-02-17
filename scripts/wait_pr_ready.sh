@@ -152,6 +152,15 @@ export MUX_GH_OWNER
 export MUX_GH_REPO
 export MUX_SKIP_FETCH_SYNC=1
 
+PR_DATA_FILE=$(mktemp)
+cleanup() {
+  rm -f "$PR_DATA_FILE"
+}
+trap cleanup EXIT
+
+# Share the latest PR GraphQL payload across child scripts to avoid duplicate API calls.
+export MUX_PR_DATA_FILE="$PR_DATA_FILE"
+
 echo "🚦 Waiting for PR #$PR_NUMBER to become ready (Codex + CI, fail-fast)..."
 echo ""
 

@@ -32,6 +32,7 @@ BOT_LOGIN_GRAPHQL="chatgpt-codex-connector"
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 CHECK_CODEX_COMMENTS_SCRIPT="$SCRIPT_DIR/check_codex_comments.sh"
 SKIP_FETCH_SYNC="${MUX_SKIP_FETCH_SYNC:-0}"
+PR_DATA_FILE="${MUX_PR_DATA_FILE:-}"
 
 if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
   echo "❌ PR number must be numeric. Got: '$PR_NUMBER'"
@@ -46,6 +47,18 @@ fi
 if [ "$SKIP_FETCH_SYNC" != "0" ] && [ "$SKIP_FETCH_SYNC" != "1" ]; then
   echo "❌ assertion failed: MUX_SKIP_FETCH_SYNC must be '0' or '1' (got '$SKIP_FETCH_SYNC')" >&2
   exit 1
+fi
+
+if [[ -n "$PR_DATA_FILE" ]]; then
+  if [ ! -e "$PR_DATA_FILE" ] && ! : >"$PR_DATA_FILE"; then
+    echo "❌ assertion failed: unable to create MUX_PR_DATA_FILE at '$PR_DATA_FILE'" >&2
+    exit 1
+  fi
+
+  if [ ! -w "$PR_DATA_FILE" ]; then
+    echo "❌ assertion failed: MUX_PR_DATA_FILE is not writable: '$PR_DATA_FILE'" >&2
+    exit 1
+  fi
 fi
 
 # Keep these regexes in sync with ./scripts/check_codex_comments.sh.
@@ -198,6 +211,19 @@ FETCH_PR_DATA() {
   done
 }
 
+cache_pr_data() {
+  local pr_data_json="$1"
+
+  if [[ -z "$PR_DATA_FILE" ]]; then
+    return 0
+  fi
+
+  if ! printf '%s\n' "$pr_data_json" >"$PR_DATA_FILE"; then
+    echo "❌ assertion failed: unable to write PR data to '$PR_DATA_FILE'" >&2
+    return 1
+  fi
+}
+
 LAST_REQUEST_AT=""
 
 CHECK_CODEX_STATUS_ONCE() {
@@ -214,6 +240,7 @@ CHECK_CODEX_STATUS_ONCE() {
   local check_output
 
   pr_data=$(FETCH_PR_DATA)
+  cache_pr_data "$pr_data" || return 1
 
   if [ "$(echo "$pr_data" | jq -r '.data.repository.pullRequest == null')" = "true" ]; then
     echo "❌ PR #${PR_NUMBER} does not exist in ${OWNER}/${REPO}." >&2
