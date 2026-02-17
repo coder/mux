@@ -5,15 +5,7 @@
  */
 
 import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import {
-  ArrowLeft,
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  Circle,
-  MessageSquare,
-  ThumbsDown,
-} from "lucide-react";
+import { ArrowLeft, Check, ChevronLeft, ChevronRight, Circle } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { SelectableDiffRenderer } from "../../shared/DiffRenderer";
 import { KeycapGroup } from "@/browser/components/ui/Keycap";
@@ -451,12 +443,6 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
   const selectedLineSummary = getCurrentLineSelection();
 
-  const selectionInSelectedHunk = Boolean(
-    selectedLineSummary &&
-    selectedHunkRange &&
-    isSelectionInsideRange(selectedLineSummary, selectedHunkRange)
-  );
-
   const openComposer = useCallback(
     (prefill: string) => {
       if (!selectedHunk || !selectedHunkRange) {
@@ -662,8 +648,6 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     return `${relativeStart}-${relativeEnd}`;
   }, [selectedLineSummary, selectedHunkRange]);
 
-  const canCompose = Boolean(onReviewNote && selectedHunk && selectionInSelectedHunk);
-
   return (
     <div
       ref={containerRef}
@@ -749,39 +733,6 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
             </>
           )}
         </div>
-
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Quick feedback buttons */}
-        {onReviewNote && (
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => openComposer("")}
-              disabled={!canCompose}
-              className={cn(
-                "flex cursor-pointer items-center gap-1 rounded border-none bg-transparent px-1.5 py-0.5 text-[11px] transition-colors",
-                "text-muted hover:text-link disabled:text-dim disabled:cursor-default"
-              )}
-              aria-label="Add a comment"
-            >
-              <MessageSquare className="h-3 w-3" />
-              <span className="hidden sm:inline">Add comment</span>
-            </button>
-            <button
-              onClick={() => openComposer("I don't like this change")}
-              disabled={!canCompose}
-              className={cn(
-                "flex cursor-pointer items-center gap-1 rounded border-none bg-transparent px-1.5 py-0.5 text-[11px] transition-colors",
-                "text-muted hover:text-warning-light disabled:text-dim disabled:cursor-default"
-              )}
-              aria-label="I don't like this change"
-            >
-              <ThumbsDown className="h-3 w-3" />
-              <span className="hidden sm:inline">Dislike</span>
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Unified whole-file diff with hunk overlays */}
