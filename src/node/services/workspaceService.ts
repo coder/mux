@@ -148,6 +148,53 @@ function appendCollisionSuffix(baseName: string): string {
   return `${baseName}-${suffix}`;
 }
 
+const MAX_REGENERATE_TITLE_CONTEXT_TURNS = 10;
+
+interface WorkspaceTitleContextTurn {
+  role: "user" | "assistant";
+  text: string;
+}
+
+function extractMuxMessageText(message: MuxMessage): string {
+  const text =
+    message.parts
+      ?.filter((part) => part.type === "text")
+      .map((part) => part.text.trim())
+      .filter((partText) => partText.length > 0)
+      .join("\n") ?? "";
+  return text;
+}
+
+function collectWorkspaceTitleContextTurns(
+  messages: readonly MuxMessage[]
+): WorkspaceTitleContextTurn[] {
+  const turns: WorkspaceTitleContextTurn[] = [];
+
+  for (const message of messages) {
+    if (message.role !== "user" && message.role !== "assistant") {
+      continue;
+    }
+
+    const text = extractMuxMessageText(message);
+    if (!text) {
+      continue;
+    }
+
+    turns.push({ role: message.role, text });
+  }
+
+  return turns;
+}
+
+function formatWorkspaceTitleContextTurns(turns: readonly WorkspaceTitleContextTurn[]): string {
+  return turns
+    .map(
+      (turn, index) =>
+        `Turn ${index + 1} (${turn.role === "user" ? "User" : "Assistant"}):\n${turn.text}`
+    )
+    .join("\n\n");
+}
+
 /**
  * Generate a unique fork branch name from the parent workspace name.
  * Scans existing workspace names for the `{parentName}-fork-N` pattern
@@ -2056,8 +2103,8 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
-   * Regenerate the workspace title from its chat history using AI.
-   * Reads the first user message (and optional first assistant reply) as context,
+   * Regenerate the workspace title from chat history using AI.
+   * Uses the first user message as the durable objective and the latest turns as context,
    * then calls generateWorkspaceIdentity and persists the result via updateTitle.
    */
   async regenerateTitle(workspaceId: string): Promise<Result<{ title: string }>> {
@@ -2066,35 +2113,24 @@ export class WorkspaceService extends EventEmitter {
       return Err("Could not read workspace history");
     }
 
-    const firstUserIndex = historyResult.data.findIndex((m) => m.role === "user");
-    let firstUserMsg = firstUserIndex >= 0 ? historyResult.data[firstUserIndex] : undefined;
-    let firstAssistantMsg =
-      firstUserIndex >= 0
-        ? historyResult.data.slice(firstUserIndex + 1).find((m) => m.role === "assistant")
-        : undefined;
+    let contextTurns = collectWorkspaceTitleContextTurns(historyResult.data);
+    let firstUserText = contextTurns.find((turn) => turn.role === "user")?.text;
 
-    if (!firstUserMsg) {
+    if (!firstUserText) {
       // Compaction boundaries can leave the latest epoch with only an assistant summary.
       // Fall back to scanning full history so regenerateTitle still works for compacted chats.
-      let fallbackFirstUser: MuxMessage | undefined;
-      let fallbackFirstAssistant: MuxMessage | undefined;
+      const fallbackTurns: WorkspaceTitleContextTurn[] = [];
+      let fallbackFirstUserText: string | undefined;
       const fullHistoryResult = await this.historyService.iterateFullHistory(
         workspaceId,
         "forward",
         (messages) => {
-          for (const message of messages) {
-            if (!fallbackFirstUser && message.role === "user") {
-              fallbackFirstUser = message;
-              continue;
+          const chunkTurns = collectWorkspaceTitleContextTurns(messages);
+          for (const turn of chunkTurns) {
+            if (!fallbackFirstUserText && turn.role === "user") {
+              fallbackFirstUserText = turn.text;
             }
-            if (fallbackFirstUser && !fallbackFirstAssistant && message.role === "assistant") {
-              fallbackFirstAssistant = message;
-            }
-          }
-
-          // Stop scanning once we have both context messages.
-          if (fallbackFirstUser && fallbackFirstAssistant) {
-            return false;
+            fallbackTurns.push(turn);
           }
         }
       );
@@ -2102,33 +2138,16 @@ export class WorkspaceService extends EventEmitter {
         return Err("Could not read workspace history");
       }
 
-      firstUserMsg = fallbackFirstUser;
-      firstAssistantMsg ??= fallbackFirstAssistant;
+      firstUserText = fallbackFirstUserText;
+      contextTurns = fallbackTurns;
     }
 
-    if (!firstUserMsg) {
+    if (!firstUserText) {
       return Err("No user messages in workspace history");
     }
 
-    const userText =
-      firstUserMsg.parts
-        ?.filter((p) => p.type === "text")
-        .map((p) => p.text)
-        .join("\n") || "";
-
-    if (!userText) {
-      return Err("First user message has no text content");
-    }
-
-    // Use the first assistant reply for richer context
-    let assistantContext: string | undefined;
-    if (firstAssistantMsg) {
-      assistantContext =
-        firstAssistantMsg.parts
-          ?.filter((p) => p.type === "text")
-          .map((p) => p.text)
-          .join("\n") ?? undefined;
-    }
+    const recentContextTurns = contextTurns.slice(-MAX_REGENERATE_TITLE_CONTEXT_TURNS);
+    const conversationContext = formatWorkspaceTitleContextTurns(recentContextTurns);
 
     const candidates: string[] = [...NAME_GEN_PREFERRED_MODELS];
     const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
@@ -2147,10 +2166,10 @@ export class WorkspaceService extends EventEmitter {
     }
 
     const result = await generateWorkspaceIdentity(
-      userText,
+      firstUserText,
       candidates,
       this.aiService,
-      assistantContext
+      conversationContext
     );
     if (!result.success) {
       return Err("Title generation failed");

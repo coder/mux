@@ -269,12 +269,24 @@ export function mapModelCreationError(
  * - name: Codebase area with 4-char suffix (e.g., "sidebar-a1b2")
  * - title: Human-readable description (e.g., "Fix plan mode over SSH")
  */
+export function buildWorkspaceIdentityPrompt(
+  message: string,
+  conversationContext?: string
+): string {
+  const conversationBlock =
+    conversationContext && conversationContext.trim().length > 0
+      ? `Conversation turns (oldest to newest; recent user/assistant turns):\n${conversationContext.trim().slice(0, 6_000)}\n\nPrimary user objective: "${message}"`
+      : `Primary user objective: "${message}"`;
+
+  return `Generate a workspace name and title for this development task:\n\n${conversationBlock}\n\nRequirements:\n- name: The area of the codebase being worked on (1-2 words, max 15 chars, git-safe: lowercase, hyphens only). Random bytes will be appended for uniqueness, so focus on the area not the specific task. Examples: "sidebar", "auth", "config", "api"\n- title: A 2-5 word description in verb-noun format. Examples: "Fix plan mode", "Add user authentication", "Refactor sidebar layout"\n- title guidance: Fit the long-term, overall purpose of the chat, not just the latest turn.`;
+}
+
 export async function generateWorkspaceIdentity(
   message: string,
   candidates: string[],
   aiService: AIService,
-  /** Optional prior assistant message for additional context (e.g. forked history). Truncated to 500 chars. */
-  assistantContext?: string
+  /** Optional conversation turns context used for regenerate-title prompts. */
+  conversationContext?: string
 ): Promise<Result<GenerateWorkspaceIdentityResult, NameGenerationError>> {
   if (candidates.length === 0) {
     return Err({ type: "unknown", raw: "No model candidates provided for name generation" });
@@ -305,13 +317,7 @@ export async function generateWorkspaceIdentity(
       const currentStream = streamText({
         model: modelResult.data,
         output: Output.object({ schema: workspaceIdentitySchema }),
-        prompt: `Generate a workspace name and title for this development task:
-
-${assistantContext ? `Assistant: "${assistantContext.slice(0, 500)}"\n\nUser: "${message}"` : `"${message}"`}
-
-Requirements:
-- name: The area of the codebase being worked on (1-2 words, max 15 chars, git-safe: lowercase, hyphens only). Random bytes will be appended for uniqueness, so focus on the area not the specific task. Examples: "sidebar", "auth", "config", "api"
-- title: A 2-5 word description in verb-noun format. Examples: "Fix plan mode", "Add user authentication", "Refactor sidebar layout"`,
+        prompt: buildWorkspaceIdentityPrompt(message, conversationContext),
       });
       stream = currentStream;
 

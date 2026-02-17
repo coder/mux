@@ -2,11 +2,35 @@ import { APICallError, RetryError } from "ai";
 import { describe, expect, test } from "bun:test";
 import type { SendMessageError } from "@/common/types/errors";
 import {
+  buildWorkspaceIdentityPrompt,
   extractIdentityFromText,
   extractTextFromContentParts,
   mapModelCreationError,
   mapNameGenerationError,
 } from "./workspaceTitleGenerator";
+
+describe("buildWorkspaceIdentityPrompt", () => {
+  test("includes long-term title guidance and formatted conversation turns", () => {
+    const prompt = buildWorkspaceIdentityPrompt(
+      "Refactor workspace title generation",
+      "Turn 1 (User):\nOutline the plan\n\nTurn 2 (Assistant):\nImplement incrementally"
+    );
+
+    expect(prompt).toContain("Conversation turns (oldest to newest; recent user/assistant turns):");
+    expect(prompt).toContain("Turn 1 (User):");
+    expect(prompt).toContain('Primary user objective: "Refactor workspace title generation"');
+    expect(prompt).toContain("Fit the long-term, overall purpose of the chat");
+  });
+
+  test("omits conversation block when no context is provided", () => {
+    const prompt = buildWorkspaceIdentityPrompt("Fix flaky tests");
+
+    expect(prompt).toContain('Primary user objective: "Fix flaky tests"');
+    expect(prompt).not.toContain(
+      "Conversation turns (oldest to newest; recent user/assistant turns):"
+    );
+  });
+});
 
 describe("extractIdentityFromText", () => {
   test("extracts from markdown bold + backtick format", () => {

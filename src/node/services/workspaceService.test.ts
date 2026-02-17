@@ -2003,12 +2003,16 @@ describe("WorkspaceService regenerateTitle", () => {
         expect(result.data.title).toBe("Refactor sidebar loading");
       }
       expect(iterateSpy).toHaveBeenCalledTimes(1);
-      expect(generateIdentitySpy).toHaveBeenCalledWith(
-        "Refactor sidebar loading",
-        expect.any(Array),
-        expect.anything(),
-        "Compacted summary"
-      );
+      expect(generateIdentitySpy).toHaveBeenCalledTimes(1);
+      const call = generateIdentitySpy.mock.calls[0];
+      expect(call?.[0]).toBe("Refactor sidebar loading");
+      const context = call?.[3];
+      expect(typeof context).toBe("string");
+      if (typeof context === "string") {
+        expect(context).toContain("Turn 1 (User):\nRefactor sidebar loading");
+        expect(context).toContain("Turn 2 (Assistant):\nCompacted summary");
+        expect(context).toContain("Turn 3 (Assistant):\nNo new user messages yet");
+      }
       expect(updateTitleSpy).toHaveBeenCalledWith(workspaceId, "Refactor sidebar loading");
     } finally {
       updateTitleSpy.mockRestore();
@@ -2016,7 +2020,7 @@ describe("WorkspaceService regenerateTitle", () => {
       iterateSpy.mockRestore();
     }
   });
-  test("uses the first assistant reply after the first user message for context", async () => {
+  test("passes recent user/assistant turns as formatted context", async () => {
     const workspaceId = "ws-regenerate-title-assistant-order";
 
     await historyService.appendToHistory(
@@ -2050,13 +2054,73 @@ describe("WorkspaceService regenerateTitle", () => {
       const result = await workspaceService.regenerateTitle(workspaceId);
 
       expect(result.success).toBe(true);
-      expect(generateIdentitySpy).toHaveBeenCalledWith(
-        "Refine workspace title generation",
-        expect.any(Array),
-        expect.anything(),
-        "Useful assistant context"
-      );
+      expect(generateIdentitySpy).toHaveBeenCalledTimes(1);
+      const call = generateIdentitySpy.mock.calls[0];
+      expect(call?.[0]).toBe("Refine workspace title generation");
+      const context = call?.[3];
+      expect(typeof context).toBe("string");
+      if (typeof context === "string") {
+        expect(context).toContain("Turn 1 (Assistant):\nOlder compacted summary");
+        expect(context).toContain("Turn 2 (User):\nRefine workspace title generation");
+        expect(context).toContain("Turn 3 (Assistant):\nUseful assistant context");
+        const summaryIndex = context.indexOf("Older compacted summary");
+        const userIndex = context.indexOf("Refine workspace title generation");
+        const assistantIndex = context.indexOf("Useful assistant context");
+        expect(summaryIndex).toBeGreaterThanOrEqual(0);
+        expect(userIndex).toBeGreaterThan(summaryIndex);
+        expect(assistantIndex).toBeGreaterThan(userIndex);
+      }
       expect(updateTitleSpy).toHaveBeenCalledWith(workspaceId, "Refine workspace title generation");
+    } finally {
+      updateTitleSpy.mockRestore();
+      generateIdentitySpy.mockRestore();
+    }
+  });
+  test("limits regenerate-title context to the most recent 10 turns", async () => {
+    const workspaceId = "ws-regenerate-title-last-ten-turns";
+
+    for (let turn = 1; turn <= 12; turn++) {
+      const role: "user" | "assistant" = turn % 2 === 1 ? "user" : "assistant";
+      const text = `${role === "user" ? "User" : "Assistant"} turn ${turn}`;
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage(`${role}-${turn}`, role, text)
+      );
+    }
+
+    const generateIdentitySpy = spyOn(
+      workspaceTitleGenerator,
+      "generateWorkspaceIdentity"
+    ).mockResolvedValue(
+      Ok({
+        name: "title-refresh-a1b2",
+        title: "User turn 1",
+        modelUsed: "anthropic:claude-3-5-haiku-latest",
+      })
+    );
+    const updateTitleSpy = spyOn(workspaceService, "updateTitle").mockResolvedValueOnce(
+      Ok(undefined)
+    );
+
+    try {
+      const result = await workspaceService.regenerateTitle(workspaceId);
+
+      expect(result.success).toBe(true);
+      expect(generateIdentitySpy).toHaveBeenCalledTimes(1);
+      const call = generateIdentitySpy.mock.calls[0];
+      expect(call?.[0]).toBe("User turn 1");
+      const context = call?.[3];
+      expect(typeof context).toBe("string");
+      if (typeof context === "string") {
+        expect(context).toContain("Turn 1 (User):\nUser turn 3");
+        expect(context).toContain("Turn 10 (Assistant):\nAssistant turn 12");
+        expect(context).not.toMatch(/User turn 1(?!\d)/);
+        expect(context).not.toMatch(/Assistant turn 2(?!\d)/);
+        expect(context).not.toContain("Turn 11 (");
+        const turnHeaders = context.match(/Turn \d+ \((User|Assistant)\):/g);
+        expect(turnHeaders?.length).toBe(10);
+      }
+      expect(updateTitleSpy).toHaveBeenCalledWith(workspaceId, "User turn 1");
     } finally {
       updateTitleSpy.mockRestore();
       generateIdentitySpy.mockRestore();
