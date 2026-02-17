@@ -28,7 +28,7 @@ export const AddSectionButton: React.FC<AddSectionButtonProps> = ({ onCreateSect
 
   if (isCreating) {
     return (
-      <div className="flex items-center gap-1 px-2 py-0.5">
+      <div className="flex items-center gap-1 px-2 py-1.5 border-t border-white/10">
         <div className="flex h-5 w-5 shrink-0 items-center justify-center">
           <Plus size={12} className="text-muted/60" />
         </div>
@@ -57,7 +57,7 @@ export const AddSectionButton: React.FC<AddSectionButtonProps> = ({ onCreateSect
     <button
       onClick={() => setIsCreating(true)}
       data-testid="add-section-button"
-      className="text-muted/60 hover:text-muted flex w-full cursor-pointer items-center justify-center gap-1 border-none bg-transparent px-2 py-0.5 text-[11px] transition-colors"
+      className="text-muted/60 hover:text-muted flex w-full cursor-pointer items-center justify-center gap-1 border-t border-white/10 border-l-0 border-r-0 border-b-0 bg-transparent px-2 py-1.5 text-[11px] transition-colors"
     >
       <Plus size={12} />
       <span>Add section</span>

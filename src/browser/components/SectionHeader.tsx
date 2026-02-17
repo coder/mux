@@ -76,6 +76,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
       style={{
         borderLeftWidth: 1,
         borderLeftColor: sectionColor,
+        backgroundColor: '#1e1e1e',
       }}
       data-section-id={section.id}
     >

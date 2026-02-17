@@ -92,7 +92,7 @@ export interface DraftWorkspaceListItemProps extends WorkspaceListItemBaseProps 
 
 /** Container styles shared between workspace and draft items */
 const LIST_ITEM_BASE_CLASSES =
-  "py-1.5 pr-2 transition-all duration-150 text-[13px] relative flex gap-1";
+  "py-1.5 pr-2 transition-all duration-150 text-[13px] relative flex gap-1 pl-5";
 
 /** Calculate left padding - always the same for dot alignment */
 function getItemPaddingLeft(_depth?: number): number {
@@ -538,7 +538,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           !isArchiving && "hover:bg-hover [&:hover_button]:opacity-100",
           isArchiving && "pointer-events-none opacity-70",
           isDisabled ? "cursor-default" : "cursor-pointer",
-          isSelected && !isDisabled && "bg-hover"
+          // isSelected pill is on title text only, not the row
         )}
         style={{ paddingLeft }}
         onClick={() => {
@@ -610,7 +610,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           <span
             className="absolute bg-neutral-600"
             style={{
-              left: `${paddingLeft + 4}px`,
+              left: `${paddingLeft + 6}px`,
               top: 0,
               bottom: 0,
               width: '1px',
@@ -619,7 +619,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           />
         )}
         {/* Status dot with solid background ring so line goes behind it */}
-        <div className="relative z-10 mt-1.5 flex shrink-0 items-start">
+        <div className="absolute z-10 flex shrink-0 items-start" style={{ left: `${paddingLeft}px`, top: '8px' }}>
           <span className="inline-flex items-center justify-center rounded-full bg-sidebar" style={{ padding: '2px' }}>
             <span className={cn(
               "inline-block h-2.5 w-2.5 rounded-full shrink-0 border",
@@ -812,7 +812,8 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                     className={cn(
                       "block truncate text-left text-[13px] transition-colors duration-200",
                       isSubAgent ? "text-muted-foreground" : "text-foreground font-medium",
-                      !isDisabled && "cursor-pointer"
+                      !isDisabled && "cursor-pointer",
+                      isSelected && !isDisabled && "bg-hover rounded px-1.5 -mx-1.5"
                     )}
                     onDoubleClick={(e) => {
                       if (isDisabled) return;
