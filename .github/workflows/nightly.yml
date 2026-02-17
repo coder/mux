@@ -6,7 +6,7 @@ on:
   workflow_dispatch: {} # Engineers can trigger manually any time
 
 concurrency:
-  group: nightly-desktop
+  group: nightly-desktop-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -21,6 +21,7 @@ jobs:
     outputs:
       release_tag: ${{ steps.compute.outputs.release_tag }}
       nightly_version: ${{ steps.compute.outputs.nightly_version }}
+      should_build: ${{ steps.create-release.outputs.should_build }}
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -47,22 +48,27 @@ jobs:
           echo "nightly_version=$NIGHTLY_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Create nightly pre-release
+        id: create-release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.compute.outputs.release_tag }}
         shell: bash
         run: |
           # If the same nightly tag already exists (re-run with no new commits),
-          # delete it first so gh release create doesn't fail.
+          # treat it as already built and skip downstream desktop builds.
           if gh release view "$RELEASE_TAG" &>/dev/null; then
-            echo "Release $RELEASE_TAG already exists — deleting before recreate"
-            gh release delete "$RELEASE_TAG" --yes --cleanup-tag
+            echo "Release $RELEASE_TAG already exists — reusing existing assets"
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
           gh release create "$RELEASE_TAG" --prerelease --target "$GITHUB_SHA" --title "$RELEASE_TAG" --notes "Automated nightly build from main ($(date -u +%Y-%m-%d))"
+          echo "should_build=true" >> "$GITHUB_OUTPUT"
 
   desktop-builds:
     name: Build and Release Desktop Apps
     needs: compute-version
+    if: needs.compute-version.outputs.should_build == 'true'
     uses: ./.github/workflows/_desktop-release.yml
     with:
       ref: ${{ github.sha }}
