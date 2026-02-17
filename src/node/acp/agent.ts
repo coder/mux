@@ -76,6 +76,8 @@ export class MuxAgent implements Agent {
 
   private readonly sessionStateById = new Map<string, SessionState>();
   private readonly chatSubscriptions = new Map<string, Promise<void>>();
+  /** Resolves once `onChat` is connected for a session (shared across callers). */
+  private readonly chatSubscriptionReady = new Map<string, Promise<void>>();
   private readonly turnCompletions = new Map<string, TurnCompletion>();
   private readonly latestUsageBySessionId = new Map<string, Usage>();
 
@@ -246,7 +248,7 @@ export class MuxAgent implements Agent {
 
     const workspaceId = this.sessionManager.getWorkspaceId(sessionId);
     const sessionState = await this.refreshSessionState(sessionId);
-    const message = promptBlocksToText(params.prompt);
+    const parsedPrompt = parsePromptBlocks(params.prompt);
 
     // Re-establish chat subscription if a prior one dropped (e.g., transient
     // websocket interruption). Without a live subscription, stream-end events
@@ -258,11 +260,12 @@ export class MuxAgent implements Agent {
     try {
       const sendResult = await this.server.client.workspace.sendMessage({
         workspaceId,
-        message,
+        message: parsedPrompt.text,
         options: {
           model: sessionState.aiSettings.model,
           thinkingLevel: sessionState.aiSettings.thinkingLevel,
           agentId: sessionState.agentId,
+          fileParts: parsedPrompt.fileParts.length > 0 ? parsedPrompt.fileParts : undefined,
         },
       });
 
@@ -348,7 +351,12 @@ export class MuxAgent implements Agent {
    * like `prompt()` can safely send messages without racing the subscription).
    */
   private async ensureChatSubscription(sessionId: string, workspaceId: string): Promise<void> {
-    if (this.chatSubscriptions.has(sessionId)) {
+    // If a subscription is already being established, wait for it to become
+    // connected rather than returning immediately.  This prevents callers
+    // (e.g., prompt after session load) from racing ahead of the onChat attach.
+    const existingReady = this.chatSubscriptionReady.get(sessionId);
+    if (existingReady != null) {
+      await existingReady;
       return;
     }
 
@@ -361,6 +369,10 @@ export class MuxAgent implements Agent {
       resolve: onConnected,
       reject: onConnectFailed,
     } = Promise.withResolvers<void>();
+
+    // Store the readiness promise *before* spawning the subscription so that
+    // concurrent callers will find and await it.
+    this.chatSubscriptionReady.set(sessionId, connectedPromise);
 
     const subscription = this.runChatSubscription(sessionId, workspaceId, onConnected)
       .catch((error) => {
@@ -376,6 +388,7 @@ export class MuxAgent implements Agent {
       })
       .finally(() => {
         this.chatSubscriptions.delete(sessionId);
+        this.chatSubscriptionReady.delete(sessionId);
       });
 
     this.chatSubscriptions.set(sessionId, subscription);
@@ -627,15 +640,27 @@ function generateDefaultBranchName(): string {
   return `${DEFAULT_BRANCH_PREFIX}-${timestamp}-${randomSuffix}`;
 }
 
-function promptBlocksToText(blocks: ContentBlock[]): string {
+interface ParsedPrompt {
+  text: string;
+  fileParts: Array<{ url: string; mediaType: string }>;
+}
+
+/**
+ * Convert ACP ContentBlock[] to MUX sendMessage arguments.
+ * - text/resource blocks → concatenated text
+ * - image blocks → fileParts (data URIs) for multimodal support
+ * - Unsupported types (audio, resource_link) → error rather than silent drop
+ */
+function parsePromptBlocks(blocks: ContentBlock[]): ParsedPrompt {
   assert(Array.isArray(blocks), "prompt: prompt blocks must be an array");
 
-  const parts: string[] = [];
+  const textParts: string[] = [];
+  const fileParts: Array<{ url: string; mediaType: string }> = [];
 
   for (const block of blocks) {
     if (block.type === "text") {
       if (block.text.trim().length > 0) {
-        parts.push(block.text);
+        textParts.push(block.text);
       }
       continue;
     }
@@ -643,28 +668,39 @@ function promptBlocksToText(blocks: ContentBlock[]): string {
     if (block.type === "resource") {
       const resource = block.resource;
       if ("text" in resource && resource.text.trim().length > 0) {
-        parts.push(resource.text);
+        textParts.push(resource.text);
+      } else if ("blob" in resource && typeof resource.blob === "string") {
+        // Binary resource embedded as base64 — treat as an image/file part.
+        const mimeType =
+          "mimeType" in resource && typeof resource.mimeType === "string"
+            ? resource.mimeType
+            : "application/octet-stream";
+        fileParts.push({ url: `data:${mimeType};base64,${resource.blob}`, mediaType: mimeType });
       } else {
-        parts.push(`[resource:${resource.uri}]`);
+        // Opaque resource reference without inline content — pass URI as text
+        // so the model has *some* context rather than silently dropping.
+        textParts.push(`[resource: ${resource.uri}]`);
       }
       continue;
     }
 
-    if (block.type === "resource_link") {
-      parts.push(`[resource_link:${block.name}] ${block.uri}`);
-      continue;
-    }
-
     if (block.type === "image") {
-      parts.push(`[image:${block.mimeType}]`);
+      // Convert ACP image (base64 data + mimeType) to a MUX file part.
+      const dataUri = `data:${block.mimeType};base64,${block.data}`;
+      fileParts.push({ url: dataUri, mediaType: block.mimeType });
       continue;
     }
 
-    parts.push(`[audio:${block.mimeType}]`);
+    // Unsupported content types — surface an error to the editor rather than
+    // silently dropping content which leads to confusing model behavior.
+    throw new Error(`prompt: unsupported content block type "${block.type}" is not yet supported`);
   }
 
-  const message = parts.join("\n\n").trim();
-  return message.length > 0 ? message : "[No textual prompt content provided]";
+  const text = textParts.join("\n\n").trim();
+  return {
+    text: text.length > 0 ? text : "[No textual prompt content provided]",
+    fileParts,
+  };
 }
 
 function isRecord(value: unknown): value is MetaRecord {
