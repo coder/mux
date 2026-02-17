@@ -36,6 +36,10 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 CHECK_CODEX_COMMENTS_SCRIPT="$SCRIPT_DIR/check_codex_comments.sh"
 SKIP_FETCH_SYNC="${MUX_SKIP_FETCH_SYNC:-0}"
 PR_DATA_FILE="${MUX_PR_DATA_FILE:-}"
+REACTIONS_SCAN_CACHE_FILE="${MUX_REACTIONS_SCAN_CACHE_FILE:-}"
+if [[ -z "$REACTIONS_SCAN_CACHE_FILE" && -n "$PR_DATA_FILE" ]]; then
+  REACTIONS_SCAN_CACHE_FILE="${PR_DATA_FILE}.reactions-scan"
+fi
 
 if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
   echo "❌ PR number must be numeric. Got: '$PR_NUMBER'"
@@ -60,6 +64,18 @@ if [[ -n "$PR_DATA_FILE" ]]; then
 
   if [ ! -w "$PR_DATA_FILE" ]; then
     echo "❌ assertion failed: MUX_PR_DATA_FILE is not writable: '$PR_DATA_FILE'" >&2
+    exit 1
+  fi
+fi
+
+if [[ -n "$REACTIONS_SCAN_CACHE_FILE" ]]; then
+  if [ ! -e "$REACTIONS_SCAN_CACHE_FILE" ] && ! : >"$REACTIONS_SCAN_CACHE_FILE"; then
+    echo "❌ assertion failed: unable to create reactions scan cache file at '$REACTIONS_SCAN_CACHE_FILE'" >&2
+    exit 1
+  fi
+
+  if [ ! -w "$REACTIONS_SCAN_CACHE_FILE" ]; then
+    echo "❌ assertion failed: reactions scan cache file is not writable: '$REACTIONS_SCAN_CACHE_FILE'" >&2
     exit 1
   fi
 fi
@@ -340,6 +356,55 @@ FULL_REACTIONS_SCAN_INTERVAL_SECS=300
 LAST_FULL_REACTIONS_SCAN_REQUEST_AT=""
 LAST_FULL_REACTIONS_SCAN_EPOCH=0
 
+should_scan_full_reactions_for_request() {
+  local request_at="$1"
+  local now_epoch="$2"
+  local cached_request_at="$LAST_FULL_REACTIONS_SCAN_REQUEST_AT"
+  local cached_last_scan_epoch="$LAST_FULL_REACTIONS_SCAN_EPOCH"
+  local cache_request_at
+  local cache_last_scan_epoch
+
+  if [[ -n "$REACTIONS_SCAN_CACHE_FILE" ]] && [ -s "$REACTIONS_SCAN_CACHE_FILE" ]; then
+    if jq -e '.requestAt != null and .lastScanEpoch != null' "$REACTIONS_SCAN_CACHE_FILE" >/dev/null 2>&1; then
+      cache_request_at=$(jq -r '.requestAt // empty' "$REACTIONS_SCAN_CACHE_FILE")
+      cache_last_scan_epoch=$(jq -r '.lastScanEpoch // 0' "$REACTIONS_SCAN_CACHE_FILE")
+      cached_request_at="$cache_request_at"
+      cached_last_scan_epoch="$cache_last_scan_epoch"
+    fi
+  fi
+
+  if [[ "$cached_request_at" != "$request_at" ]]; then
+    return 0
+  fi
+
+  if ! [[ "$cached_last_scan_epoch" =~ ^[0-9]+$ ]]; then
+    return 0
+  fi
+
+  if ((now_epoch - cached_last_scan_epoch >= FULL_REACTIONS_SCAN_INTERVAL_SECS)); then
+    return 0
+  fi
+
+  return 1
+}
+
+record_full_reactions_scan() {
+  local request_at="$1"
+  local scan_epoch="$2"
+
+  LAST_FULL_REACTIONS_SCAN_REQUEST_AT="$request_at"
+  LAST_FULL_REACTIONS_SCAN_EPOCH="$scan_epoch"
+
+  if [[ -z "$REACTIONS_SCAN_CACHE_FILE" ]]; then
+    return 0
+  fi
+
+  if ! jq -cn --arg request_at "$request_at" --argjson scan_epoch "$scan_epoch" '{requestAt: $request_at, lastScanEpoch: $scan_epoch}' >"$REACTIONS_SCAN_CACHE_FILE"; then
+    echo "❌ assertion failed: unable to persist reactions scan cache to '$REACTIONS_SCAN_CACHE_FILE'" >&2
+    return 1
+  fi
+}
+
 CHECK_CODEX_STATUS_ONCE() {
   local pr_data
   local pr_state
@@ -456,7 +521,7 @@ CHECK_CODEX_STATUS_ONCE() {
         # While waiting on Codex, avoid paginating the entire thumbs-up history every poll.
         # Scan once per @codex request and then at a coarse interval.
         now_epoch=$(date +%s)
-        if [[ "$LAST_FULL_REACTIONS_SCAN_REQUEST_AT" != "$request_at" ]] || ((now_epoch - LAST_FULL_REACTIONS_SCAN_EPOCH >= FULL_REACTIONS_SCAN_INTERVAL_SECS)); then
+        if should_scan_full_reactions_for_request "$request_at" "$now_epoch"; then
           should_scan_full_reactions=1
         fi
       fi
@@ -475,8 +540,8 @@ CHECK_CODEX_STATUS_ONCE() {
     # Codex may react early and later reactions can push that approval out of the
     # most-recent 100 window. Only paginate when needed to keep API churn bounded.
     all_thumbs_up_reactions=$(FETCH_ALL_THUMBS_UP_REACTIONS) || return 1
-    LAST_FULL_REACTIONS_SCAN_REQUEST_AT="$request_at"
-    LAST_FULL_REACTIONS_SCAN_EPOCH=$(date +%s)
+    now_epoch=$(date +%s)
+    record_full_reactions_scan "$request_at" "$now_epoch" || return 1
     approval_reaction_at=$(echo "$all_thumbs_up_reactions" | jq -r --arg bot "$BOT_LOGIN_GRAPHQL" --arg request_at "$request_at" '[.[] | select(.user.login == $bot and .createdAt > $request_at) | .createdAt] | sort | last // empty')
 
     if [[ -n "$approval_reaction_at" ]]; then
