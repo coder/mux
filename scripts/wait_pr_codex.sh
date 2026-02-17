@@ -6,7 +6,7 @@ set -euo pipefail
 # Usage: ./scripts/wait_pr_codex.sh <pr_number> [--once]
 #
 # Exits:
-#   0 - Codex approved (posts an explicit approval comment)
+#   0 - Codex approved (thumbs-up on PR description or explicit approval comment)
 #   1 - Codex left comments to address OR failed to review (e.g. rate limit)
 #  10 - still waiting for Codex response (only in --once mode)
 
@@ -167,6 +167,34 @@ GRAPHQL_QUERY='query($owner: String!, $repo: String!, $pr: Int!) {
           }
         }
       }
+      reactions(last: 100, content: THUMBS_UP) {
+        pageInfo {
+          hasPreviousPage
+          hasNextPage
+        }
+        nodes {
+          createdAt
+          user { login }
+        }
+      }
+    }
+  }
+}'
+
+# shellcheck disable=SC2016 # Single quotes are intentional - this is a GraphQL query.
+REACTIONS_GRAPHQL_QUERY='query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $pr) {
+      reactions(first: 100, after: $cursor, content: THUMBS_UP) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          createdAt
+          user { login }
+        }
+      }
     }
   }
 }'
@@ -219,6 +247,76 @@ FETCH_PR_DATA() {
   done
 }
 
+FETCH_REACTIONS_PAGE() {
+  local cursor="$1"
+  local attempt
+  local backoff
+  backoff="$BACKOFF_SECS"
+
+  for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
+    if gh api graphql \
+      -f query="$REACTIONS_GRAPHQL_QUERY" \
+      -F owner="$OWNER" \
+      -F repo="$REPO" \
+      -F pr="$PR_NUMBER" \
+      -F cursor="$cursor"; then
+      return 0
+    fi
+
+    if [ "$attempt" -eq "$MAX_ATTEMPTS" ]; then
+      echo "❌ GraphQL reactions query failed after ${MAX_ATTEMPTS} attempts" >&2
+      return 1
+    fi
+
+    echo "⚠️ GraphQL reactions query failed (attempt ${attempt}/${MAX_ATTEMPTS}); retrying in ${backoff}s..." >&2
+    sleep "$backoff"
+    backoff=$((backoff * 2))
+  done
+}
+
+FETCH_ALL_THUMBS_UP_REACTIONS() {
+  local all_reactions='[]'
+  local cursor="null"
+  local reactions_page
+  local page_nodes
+  local has_next
+  local end_cursor
+
+  while true; do
+    reactions_page=$(FETCH_REACTIONS_PAGE "$cursor") || return 1
+
+    if [ "$(echo "$reactions_page" | jq -r '.data.repository.pullRequest == null')" = "true" ]; then
+      echo "❌ PR #${PR_NUMBER} does not exist in ${OWNER}/${REPO}." >&2
+      return 1
+    fi
+
+    page_nodes=$(echo "$reactions_page" | jq -c '.data.repository.pullRequest.reactions.nodes // []')
+    all_reactions=$(jq -cn --argjson existing "$all_reactions" --argjson page "$page_nodes" '$existing + $page')
+
+    has_next=$(echo "$reactions_page" | jq -r '.data.repository.pullRequest.reactions.pageInfo.hasNextPage')
+    end_cursor=$(echo "$reactions_page" | jq -r '.data.repository.pullRequest.reactions.pageInfo.endCursor // empty')
+
+    case "$has_next" in
+      false)
+        break
+        ;;
+      true)
+        if [[ -z "$end_cursor" ]]; then
+          echo "❌ assertion failed: reactions hasNextPage=true with empty endCursor" >&2
+          return 1
+        fi
+        cursor="$end_cursor"
+        ;;
+      *)
+        echo "❌ assertion failed: unexpected reactions hasNextPage value '$has_next'" >&2
+        return 1
+        ;;
+    esac
+  done
+
+  printf '%s\n' "$all_reactions"
+}
+
 cache_pr_data() {
   local pr_data_json="$1"
 
@@ -242,6 +340,9 @@ CHECK_CODEX_STATUS_ONCE() {
   local request_at
   local rate_limit_comment
   local approval_comment
+  local approval_reaction_at
+  local reactions_has_previous
+  local all_thumbs_up_reactions
   local codex_response_count_comments
   local codex_response_count_threads
   local codex_response_count
@@ -319,6 +420,44 @@ CHECK_CODEX_STATUS_ONCE() {
     return 0
   fi
 
+  approval_reaction_at=$(echo "$pr_data" | jq -r --arg bot "$BOT_LOGIN_GRAPHQL" --arg request_at "$request_at" '[.data.repository.pullRequest.reactions.nodes[]? | select(.user.login == $bot and .createdAt > $request_at) | .createdAt] | sort | last // empty')
+
+  if [[ -n "$approval_reaction_at" ]]; then
+    echo ""
+    echo "✅ Codex approved PR #$PR_NUMBER via thumbs-up on the PR description"
+    echo ""
+    echo "Reaction timestamp: $approval_reaction_at"
+    return 0
+  fi
+
+  reactions_has_previous=$(echo "$pr_data" | jq -r '(.data.repository.pullRequest.reactions.pageInfo.hasPreviousPage | if . == null then "unknown" else tostring end)')
+
+  case "$reactions_has_previous" in
+    false) ;;
+    true)
+      # Codex may react early and later reactions can push that approval out of the
+      # most-recent 100 window. Paginate the full thumbs-up set before rejecting.
+      all_thumbs_up_reactions=$(FETCH_ALL_THUMBS_UP_REACTIONS) || return 1
+      approval_reaction_at=$(echo "$all_thumbs_up_reactions" | jq -r --arg bot "$BOT_LOGIN_GRAPHQL" --arg request_at "$request_at" '[.[] | select(.user.login == $bot and .createdAt > $request_at) | .createdAt] | sort | last // empty')
+
+      if [[ -n "$approval_reaction_at" ]]; then
+        echo ""
+        echo "✅ Codex approved PR #$PR_NUMBER via thumbs-up on the PR description"
+        echo ""
+        echo "Reaction timestamp: $approval_reaction_at"
+        return 0
+      fi
+      ;;
+    unknown)
+      echo "❌ assertion failed: reactions pageInfo.hasPreviousPage is missing" >&2
+      return 1
+      ;;
+    *)
+      echo "❌ assertion failed: unexpected reactions hasPreviousPage value '$reactions_has_previous'" >&2
+      return 1
+      ;;
+  esac
+
   codex_response_count_comments=$(echo "$all_comments" | jq -r --arg bot "$BOT_LOGIN_GRAPHQL" --arg request_at "$request_at" '[.[] | select(.author.login == $bot and .createdAt > $request_at)] | length')
   codex_response_count_threads=$(echo "$all_threads" | jq -r --arg bot "$BOT_LOGIN_GRAPHQL" --arg request_at "$request_at" '[.[] | select((.comments.nodes | length) > 0 and .comments.nodes[0].author.login == $bot and .comments.nodes[0].createdAt > $request_at)] | length')
   codex_response_count=$((codex_response_count_comments + codex_response_count_threads))
@@ -336,7 +475,8 @@ CHECK_CODEX_STATUS_ONCE() {
   fi
 
   echo ""
-  echo "❌ Codex responded, but no explicit approval comment was found after the latest '@codex review'."
+  echo "❌ Codex responded, but no approval signal was found after the latest '@codex review'."
+  echo "   👉 Expected either a thumbs-up reaction on the PR description or an approval comment like 'Didn't find any major issues'."
   echo "   👉 If you expected approval, re-comment '@codex review' and run this script again."
   return 1
 }
@@ -363,7 +503,7 @@ echo "⏳ Waiting for Codex review on PR #$PR_NUMBER..."
 echo ""
 echo "Tip: after you comment '@codex review', Codex will respond with either:"
 echo "  - review comments / threads to address (script exits 1)"
-echo "  - an explicit approval comment (script exits 0)"
+echo "  - thumbs-up reaction on the PR description OR an explicit approval comment (script exits 0)"
 echo ""
 
 while true; do

@@ -50,7 +50,8 @@ description: Agent instructions for AI assistants working on the Mux codebase
 - `.mux/tool_env` is sourced before every `bash` tool call. Use `run_and_report <step_name> <command...>` when running multiple validation steps in one call.
 - Do not pipe/redirect/wrap `run_and_report` output; keep helper markers intact so Mux can show clean step status.
 - `./scripts/wait_pr_ready.sh <pr_number>` is the preferred tail-end helper after local validation and after you've exhausted useful local work.
-- `./scripts/wait_pr_checks.sh <pr_number>` and `./scripts/wait_pr_codex.sh <pr_number>` are lower-level gates used by `wait_pr_ready.sh`.
+- `./scripts/wait_pr_checks.sh <pr_number>` is the checks watcher; `wait_pr_ready.sh` must execute `wait_pr_checks.sh --once` on each loop iteration.
+- `./scripts/wait_pr_codex.sh <pr_number>` is the Codex gate used by `wait_pr_ready.sh`.
 
 ## PR Workflow (Codex)
 
@@ -58,7 +59,7 @@ description: Agent instructions for AI assistants working on the Mux codebase
 - Prefer `gh` CLI for GitHub interactions over manual web/curl flows.
 
 > PR readiness is mandatory. You MUST keep iterating until the PR is fully ready.
-> A PR is fully ready only when: (1) Codex explicitly approves, (2) all Codex review threads are resolved, and (3) all required CI checks pass.
+> A PR is fully ready only when: (1) Codex confirms approval (thumbs-up reaction on the PR description or an approval comment like "Didn't find any major issues"), (2) all Codex review threads are resolved, and (3) all required CI checks pass.
 > You MUST NOT report success or stop the loop before these conditions are met.
 
 When a PR exists, you MUST remain in this loop until the PR is fully ready:
@@ -66,7 +67,7 @@ When a PR exists, you MUST remain in this loop until the PR is fully ready:
 1. Push your latest fixes.
 2. Run local validation (`make static-check` and targeted tests as needed).
 3. Request review with `@codex review`.
-4. Run `./scripts/wait_pr_ready.sh <pr_number>`.
+4. Run `./scripts/wait_pr_ready.sh <pr_number>` (which must execute `./scripts/wait_pr_checks.sh <pr_number> --once` while checks are pending).
 5. If Codex leaves comments, address them, resolve threads with `./scripts/resolve_pr_comment.sh <thread_id>`, push, and repeat.
 6. If checks/mergeability fail, fix issues locally, push, and repeat.
 
