@@ -63,24 +63,57 @@ function asToolTextContent(text: string): schema.ToolCallContent {
 
 function ensureMessageId(
   state: UpdateMappingState,
-  messageId: string,
-  eventType: string
-): { ok: true } | { ok: false; error: Error } {
+  messageId: string | undefined,
+  eventType: string,
+  opts?: { allowInitialization?: boolean }
+): { ok: true } | { ok: false } {
+  assert(eventType.length > 0, "event type must be non-empty");
+
+  if (typeof messageId !== "string" || messageId.length === 0) {
+    return { ok: false };
+  }
+
   if (!state.activeMessageId) {
-    state.activeMessageId = messageId;
-    return { ok: true };
+    if (opts?.allowInitialization) {
+      state.activeMessageId = messageId;
+      return { ok: true };
+    }
+
+    return { ok: false };
   }
 
   if (state.activeMessageId !== messageId) {
-    return {
-      ok: false,
-      error: new Error(
-        `Received ${eventType} for unexpected message ${messageId}; active stream is ${state.activeMessageId}`
-      ),
-    };
+    return { ok: false };
   }
 
   return { ok: true };
+}
+
+function createUnexpectedMessageIdError(
+  eventType: string,
+  messageId: string | undefined,
+  activeMessageId: string | null
+): Error {
+  const receivedMessageId = messageId ?? "<missing>";
+  const activeStreamId = activeMessageId ?? "<none>";
+  return new Error(
+    `Received ${eventType} for unexpected message ${receivedMessageId}; active stream is ${activeStreamId}`
+  );
+}
+
+function mapNonStartMessageIdMismatch(
+  state: UpdateMappingState,
+  eventType: string,
+  messageId: string | undefined
+): { kind: "ignore" } | { kind: "error"; error: Error } {
+  if (state.activeMessageId == null) {
+    return { kind: "ignore" };
+  }
+
+  return {
+    kind: "error",
+    error: createUnexpectedMessageIdError(eventType, messageId, state.activeMessageId),
+  };
 }
 
 function toUsageTokenCount(usage: {
@@ -133,9 +166,14 @@ export function mapWorkspaceChatEventToAcp(
   }
 
   if (isStreamStart(event)) {
-    const match = ensureMessageId(state, event.messageId, event.type);
+    const match = ensureMessageId(state, event.messageId, event.type, {
+      allowInitialization: true,
+    });
     if (!match.ok) {
-      return { kind: "error", error: match.error };
+      return {
+        kind: "error",
+        error: createUnexpectedMessageIdError(event.type, event.messageId, state.activeMessageId),
+      };
     }
     return { kind: "ignore" };
   }
@@ -143,7 +181,7 @@ export function mapWorkspaceChatEventToAcp(
   if (isStreamDelta(event)) {
     const match = ensureMessageId(state, event.messageId, event.type);
     if (!match.ok) {
-      return { kind: "error", error: match.error };
+      return mapNonStartMessageIdMismatch(state, event.type, event.messageId);
     }
 
     assert(typeof event.delta === "string", "stream delta must be text");
@@ -159,7 +197,7 @@ export function mapWorkspaceChatEventToAcp(
   if (isReasoningDelta(event)) {
     const match = ensureMessageId(state, event.messageId, event.type);
     if (!match.ok) {
-      return { kind: "error", error: match.error };
+      return mapNonStartMessageIdMismatch(state, event.type, event.messageId);
     }
 
     return {
@@ -174,7 +212,7 @@ export function mapWorkspaceChatEventToAcp(
   if (isToolCallStart(event)) {
     const match = ensureMessageId(state, event.messageId, event.type);
     if (!match.ok) {
-      return { kind: "error", error: match.error };
+      return mapNonStartMessageIdMismatch(state, event.type, event.messageId);
     }
 
     return {
@@ -192,7 +230,7 @@ export function mapWorkspaceChatEventToAcp(
   if (isToolCallDelta(event)) {
     const match = ensureMessageId(state, event.messageId, event.type);
     if (!match.ok) {
-      return { kind: "error", error: match.error };
+      return mapNonStartMessageIdMismatch(state, event.type, event.messageId);
     }
 
     const deltaText = stringifyUnknown(event.delta);
@@ -212,7 +250,7 @@ export function mapWorkspaceChatEventToAcp(
   if (isToolCallEnd(event)) {
     const match = ensureMessageId(state, event.messageId, event.type);
     if (!match.ok) {
-      return { kind: "error", error: match.error };
+      return mapNonStartMessageIdMismatch(state, event.type, event.messageId);
     }
 
     const outputText = stringifyUnknown(event.result);
@@ -237,7 +275,8 @@ export function mapWorkspaceChatEventToAcp(
 
     // Ignore stale usage events from a prior stream to avoid attributing
     // wrong token counts to the current prompt during stream overlap.
-    if (state.activeMessageId != null && event.messageId !== state.activeMessageId) {
+    const match = ensureMessageId(state, event.messageId, event.type);
+    if (!match.ok) {
       return { kind: "ignore" };
     }
 
@@ -256,7 +295,7 @@ export function mapWorkspaceChatEventToAcp(
   if (isStreamEnd(event)) {
     const match = ensureMessageId(state, event.messageId, event.type);
     if (!match.ok) {
-      return { kind: "error", error: match.error };
+      return mapNonStartMessageIdMismatch(state, event.type, event.messageId);
     }
 
     state.activeMessageId = null;
@@ -269,7 +308,7 @@ export function mapWorkspaceChatEventToAcp(
   if (isStreamAbort(event)) {
     const match = ensureMessageId(state, event.messageId, event.type);
     if (!match.ok) {
-      return { kind: "error", error: match.error };
+      return mapNonStartMessageIdMismatch(state, event.type, event.messageId);
     }
 
     state.activeMessageId = null;
