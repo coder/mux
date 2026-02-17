@@ -197,6 +197,14 @@ const DragAwarePanelResizeHandle: React.FC<{
   return <PanelResizeHandle className={className} />;
 };
 
+function hasMountedReviewPanel(node: RightSidebarLayoutNode): boolean {
+  if (node.type === "tabset") {
+    return node.activeTab === "review";
+  }
+
+  return node.children.some((child) => hasMountedReviewPanel(child));
+}
+
 type TabsetNode = Extract<RightSidebarLayoutNode, { type: "tabset" }>;
 
 interface RightSidebarTabsetNodeProps {
@@ -683,6 +691,21 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     () => parseRightSidebarLayoutState(layoutDraft ?? layoutRaw, initialActiveTab),
     [layoutDraft, layoutRaw, initialActiveTab]
   );
+
+  const hasReviewPanelMounted = React.useMemo(
+    () => hasMountedReviewPanel(layout.root),
+    [layout.root]
+  );
+
+  // If immersive mode is active but no ReviewPanel is mounted (e.g., user switched tabs),
+  // clear the persisted immersive flag to avoid leaving a blank overlay mounted.
+  React.useEffect(() => {
+    if (!isReviewImmersive || hasReviewPanelMounted) {
+      return;
+    }
+
+    setIsReviewImmersive(false);
+  }, [hasReviewPanelMounted, isReviewImmersive, setIsReviewImmersive]);
 
   // If the Stats tab feature is enabled, ensure it exists in the layout.
   // If disabled, ensure it doesn't linger in persisted layouts.

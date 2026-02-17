@@ -485,15 +485,26 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
   const navigateFile = useCallback(
     (direction: 1 | -1) => {
-      if (!activeFilePath) return;
-      const nextFile = getAdjacentFilePath(fileList, activeFilePath, direction);
-      if (!nextFile || nextFile === activeFilePath) return;
+      if (!activeFilePath || fileList.length <= 1) {
+        return;
+      }
 
-      // Select first hunk in the new file
-      const fileHunks = sortHunksInFileOrder(getFileHunks(hunks, nextFile));
-      if (fileHunks.length > 0) {
-        hunkJumpRef.current = true;
-        onSelectHunk(fileHunks[0].id);
+      // Skip files with no currently visible hunks (e.g. filtered out by read/search filters).
+      // This keeps file navigation moving forward instead of getting stuck on empty files.
+      let candidatePath = activeFilePath;
+      for (let step = 0; step < fileList.length - 1; step += 1) {
+        const nextPath = getAdjacentFilePath(fileList, candidatePath, direction);
+        if (!nextPath) {
+          return;
+        }
+
+        candidatePath = nextPath;
+        const fileHunks = sortHunksInFileOrder(getFileHunks(hunks, candidatePath));
+        if (fileHunks.length > 0) {
+          hunkJumpRef.current = true;
+          onSelectHunk(fileHunks[0].id);
+          return;
+        }
       }
     },
     [activeFilePath, fileList, hunks, onSelectHunk]
