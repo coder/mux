@@ -2584,6 +2584,19 @@ export const router = (authToken?: string) => {
           }
           return { success: true, data: undefined };
         }),
+      setAutoRetryEnabled: t
+        .input(schemas.workspace.setAutoRetryEnabled.input)
+        .output(schemas.workspace.setAutoRetryEnabled.output)
+        .handler(({ context, input }) => {
+          const result = context.workspaceService.setAutoRetryEnabled(
+            input.workspaceId,
+            input.enabled
+          );
+          if (!result.success) {
+            return { success: false, error: result.error };
+          }
+          return { success: true, data: undefined };
+        }),
       interruptStream: t
         .input(schemas.workspace.interruptStream.input)
         .output(schemas.workspace.interruptStream.output)

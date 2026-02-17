@@ -916,6 +916,13 @@ export const workspace = {
     }),
     output: ResultSchema(z.void(), SendMessageErrorSchema),
   },
+  setAutoRetryEnabled: {
+    input: z.object({
+      workspaceId: z.string(),
+      enabled: z.boolean(),
+    }),
+    output: ResultSchema(z.void(), z.string()),
+  },
   interruptStream: {
     input: z.object({
       workspaceId: z.string(),
