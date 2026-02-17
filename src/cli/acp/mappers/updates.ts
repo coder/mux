@@ -90,8 +90,15 @@ function toUsageTokenCount(usage: {
   reasoningTokens?: number;
   cachedInputTokens?: number;
 }): number {
-  if (typeof usage.totalTokens === "number" && Number.isFinite(usage.totalTokens)) {
-    return Math.max(0, Math.trunc(usage.totalTokens));
+  // Only trust totalTokens when it's a positive finite number. Stream accumulators
+  // may produce totalTokens: 0 when providers omit totals (addUsage in usageHelpers.ts
+  // defaults missing totals to 0), so 0 should fall through to the counter-based sum.
+  if (
+    typeof usage.totalTokens === "number" &&
+    Number.isFinite(usage.totalTokens) &&
+    usage.totalTokens > 0
+  ) {
+    return Math.trunc(usage.totalTokens);
   }
 
   // Note: cachedInputTokens are already included in inputTokens
