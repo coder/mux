@@ -49,8 +49,13 @@ import {
 import {
   discoverAgentSkills,
   discoverAgentSkillsDiagnostics,
+  type DiscoverAgentSkillsDiagnosticsResult,
   readAgentSkill,
 } from "@/node/services/agentSkills/agentSkillsService";
+import {
+  getAgentSkillsDiscoveryCacheKey,
+  loadAgentSkillsDiagnosticsWithFallback,
+} from "./agentSkillsDiagnosticsCache";
 import {
   discoverAgentDefinitions,
   readAgentDefinition,
@@ -112,6 +117,8 @@ async function resolveAgentDiscoveryContext(
   );
   return { runtime, discoveryPath: input.projectPath! };
 }
+
+const agentSkillsDiagnosticsCache = new Map<string, DiscoverAgentSkillsDiagnosticsResult>();
 
 function isErrnoWithCode(error: unknown, code: string): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
@@ -893,6 +900,8 @@ export const router = (authToken?: string) => {
             await context.aiService.waitForInit(input.workspaceId);
           }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
+          // Keep list resilient on first-load transient SSH hiccups by using non-diagnostic
+          // discovery, which skips only the affected skill instead of failing the whole request.
           return discoverAgentSkills(runtime, discoveryPath);
         }),
       listDiagnostics: t
@@ -904,7 +913,12 @@ export const router = (authToken?: string) => {
             await context.aiService.waitForInit(input.workspaceId);
           }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
-          return discoverAgentSkillsDiagnostics(runtime, discoveryPath);
+          const cacheKey = getAgentSkillsDiscoveryCacheKey(input);
+          return loadAgentSkillsDiagnosticsWithFallback({
+            cache: agentSkillsDiagnosticsCache,
+            cacheKey,
+            discover: () => discoverAgentSkillsDiagnostics(runtime, discoveryPath),
+          });
         }),
       get: t
         .input(schemas.agentSkills.get.input)

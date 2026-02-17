@@ -1,12 +1,13 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 
 import { SkillNameSchema } from "@/common/orpc/schemas";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import {
+  AgentSkillTransientDiscoveryError,
   discoverAgentSkills,
   discoverAgentSkillsDiagnostics,
   readAgentSkill,
@@ -223,6 +224,105 @@ describe("agentSkillsService", () => {
     expect(
       diagnostics.invalidSkills.find((i) => i.directoryName === "name-mismatch")?.message
     ).toContain("must match directory name");
+  });
+
+  test("discoverAgentSkillsDiagnostics rethrows transient stat errors", async () => {
+    using project = new DisposableTempDir("agent-skills-transient-stat");
+    using global = new DisposableTempDir("agent-skills-global");
+
+    const projectSkillsRoot = path.join(project.path, ".mux", "skills");
+    const globalSkillsRoot = global.path;
+
+    await writeSkill(projectSkillsRoot, "foo", "valid");
+
+    const roots = { projectRoot: projectSkillsRoot, globalRoot: globalSkillsRoot };
+    const runtime = new LocalRuntime(project.path);
+    const originalStat = runtime.stat.bind(runtime);
+
+    spyOn(runtime, "stat").mockImplementation(
+      async (targetPath: string, abortSignal?: AbortSignal) => {
+        if (targetPath.endsWith(path.join("foo", "SKILL.md"))) {
+          throw new Error(
+            "SSH connection to test-host is in backoff for 2s. Last error: connection timed out"
+          );
+        }
+
+        return originalStat(targetPath, abortSignal);
+      }
+    );
+
+    let caught: unknown;
+    try {
+      await discoverAgentSkillsDiagnostics(runtime, project.path, { roots });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(AgentSkillTransientDiscoveryError);
+  });
+
+  test("discoverAgentSkillsDiagnostics rethrows transient read errors", async () => {
+    using project = new DisposableTempDir("agent-skills-transient-read");
+    using global = new DisposableTempDir("agent-skills-global");
+
+    const projectSkillsRoot = path.join(project.path, ".mux", "skills");
+    const globalSkillsRoot = global.path;
+
+    await writeSkill(projectSkillsRoot, "foo", "valid");
+
+    const roots = { projectRoot: projectSkillsRoot, globalRoot: globalSkillsRoot };
+    const runtime = new LocalRuntime(project.path);
+    const originalReadFile = runtime.readFile.bind(runtime);
+
+    spyOn(runtime, "readFile").mockImplementation(
+      (targetPath: string, abortSignal?: AbortSignal) => {
+        if (targetPath.endsWith(path.join("foo", "SKILL.md"))) {
+          throw new Error("kex_exchange_identification: Connection closed by remote host");
+        }
+
+        return originalReadFile(targetPath, abortSignal);
+      }
+    );
+
+    let caught: unknown;
+    try {
+      await discoverAgentSkillsDiagnostics(runtime, project.path, { roots });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(AgentSkillTransientDiscoveryError);
+  });
+
+  test("discoverAgentSkills skips transient skill I/O failures and returns other skills", async () => {
+    using project = new DisposableTempDir("agent-skills-transient-discovery");
+    using global = new DisposableTempDir("agent-skills-global");
+
+    const projectSkillsRoot = path.join(project.path, ".mux", "skills");
+    const globalSkillsRoot = global.path;
+
+    await writeSkill(projectSkillsRoot, "foo", "valid");
+    await writeSkill(projectSkillsRoot, "bar", "also valid");
+
+    const roots = { projectRoot: projectSkillsRoot, globalRoot: globalSkillsRoot };
+    const runtime = new LocalRuntime(project.path);
+    const originalStat = runtime.stat.bind(runtime);
+
+    spyOn(runtime, "stat").mockImplementation(
+      async (targetPath: string, abortSignal?: AbortSignal) => {
+        if (targetPath.endsWith(path.join("foo", "SKILL.md"))) {
+          throw new Error(
+            "SSH connection to test-host is in backoff for 2s. Last error: connection timed out"
+          );
+        }
+
+        return originalStat(targetPath, abortSignal);
+      }
+    );
+
+    const skills = await discoverAgentSkills(runtime, project.path, { roots });
+
+    expect(skills.map((skill) => skill.name)).toEqual(["bar", "init", "mux-docs"]);
   });
 
   test("discovers symlinked skill directories", async () => {
