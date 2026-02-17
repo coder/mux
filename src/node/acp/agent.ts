@@ -444,6 +444,8 @@ export class MuxAgent implements Agent {
   }
 
   private handleStreamEvent(sessionId: string, event: WorkspaceChatMessage): void {
+    const isReplayEvent = (event as { replay?: boolean }).replay === true;
+
     if (event.type === "usage-delta") {
       this.latestUsageBySessionId.set(sessionId, convertToAcpUsage(event.cumulativeUsage));
       return;
@@ -461,13 +463,18 @@ export class MuxAgent implements Agent {
       this.lastStreamMessageIdBySession.set(sessionId, event.messageId);
 
       const completion = this.turnCompletions.get(sessionId);
-      if (completion != null && completion.messageId == null) {
+      // Reconnect replay can emit a prior message's stream-start while a new
+      // prompt is pending.  Do not bind replayed starts to the pending turn.
+      if (!isReplayEvent && completion != null && completion.messageId == null) {
         completion.messageId = event.messageId;
       }
       return;
     }
 
     if (event.type === "stream-end") {
+      if (isReplayEvent) {
+        return;
+      }
       // stream-end is a normal completion.  Only honour it for the identified
       // message — otherwise a prior in-flight message's completion could
       // prematurely resolve a freshly queued prompt.
@@ -483,6 +490,9 @@ export class MuxAgent implements Agent {
     }
 
     if (event.type === "stream-abort") {
+      if (isReplayEvent) {
+        return;
+      }
       // stream-abort can arrive before stream-start when the user cancels
       // immediately.  Always honour abort for any pending turn so prompt()
       // doesn't hang forever.
@@ -498,6 +508,9 @@ export class MuxAgent implements Agent {
     }
 
     if (event.type === "stream-error") {
+      if (isReplayEvent) {
+        return;
+      }
       // Like abort, errors must be propagated even before stream-start to
       // prevent hanging turns.
       if (!this.isActiveTurnMessageOrPending(sessionId, event.messageId)) {
