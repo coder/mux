@@ -266,7 +266,10 @@ export class StreamTranslator {
       | UserMessageChunkUpdate["sessionUpdate"],
     text: string
   ): SessionUpdate[] {
-    if (text.trim().length === 0) {
+    // Preserve whitespace-only chunks — providers emit standalone spaces and
+    // newlines (e.g., indentation, blank lines) that are significant for output
+    // formatting.  Only skip truly empty strings.
+    if (text.length === 0) {
       return [];
     }
 
