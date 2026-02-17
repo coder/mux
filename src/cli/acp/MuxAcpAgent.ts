@@ -116,6 +116,7 @@ export class MuxAcpAgent implements AcpAgent {
     }
 
     const branchName = muxMeta.branchName ?? `acp-${Date.now()}`;
+    const needsAutoName = muxMeta.branchName == null && muxMeta.title == null;
 
     let trunkBranch = muxMeta.trunkBranch;
     if (!trunkBranch) {
@@ -157,6 +158,7 @@ export class MuxAcpAgent implements AcpAgent {
       model,
       thinkingLevel,
       isNewSession: true,
+      needsAutoName,
     });
 
     this.subscribeToChat(workspaceId);
@@ -196,6 +198,7 @@ export class MuxAcpAgent implements AcpAgent {
       model,
       thinkingLevel,
       isNewSession: false,
+      needsAutoName: false,
     });
 
     this.subscribeToChat(workspaceId);
@@ -342,10 +345,10 @@ export class MuxAcpAgent implements AcpAgent {
       );
     }
 
-    // Only auto-generate a title for sessions created via newSession, not
-    // loadSession — reconnecting to an existing workspace should not overwrite
-    // its existing title.
-    if (!sessionAfterWait.firstPromptSent && sessionAfterWait.isNewSession) {
+    // Only auto-generate names for sessions created with placeholder naming,
+    // not when loading existing sessions, forking, or when explicit name/title
+    // metadata was provided.
+    if (!sessionAfterWait.firstPromptSent && sessionAfterWait.needsAutoName) {
       sessionAfterWait.firstPromptSent = true;
       this.maybeGenerateName(sessionAfterWait, rawMessageText).catch((error) => {
         this.deps.log("name generation failed", error);
@@ -650,6 +653,7 @@ export class MuxAcpAgent implements AcpAgent {
       model,
       thinkingLevel,
       isNewSession: true,
+      needsAutoName: false,
     });
 
     this.subscribeToChat(workspaceId);

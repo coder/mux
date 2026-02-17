@@ -36,6 +36,8 @@ export interface SessionState {
   firstPromptSent: boolean;
   /** Whether this session was created via newSession (true) or loadSession (false) */
   isNewSession: boolean;
+  /** Whether first-prompt auto-naming should run for this session */
+  needsAutoName: boolean;
   /** Highest historySequence seen from any stream-start on this session */
   lastSeenHistorySequence: number;
   /** Whether the session's onChat subscription has dropped/failed permanently */
@@ -49,6 +51,7 @@ interface SessionStateInit {
   model: string;
   thinkingLevel: ThinkingLevel;
   isNewSession: boolean;
+  needsAutoName: boolean;
 }
 
 export class SessionManager {
@@ -89,6 +92,7 @@ export class SessionManager {
       rejectCaughtUp,
       firstPromptSent: false,
       isNewSession: state.isNewSession,
+      needsAutoName: state.needsAutoName,
       lastSeenHistorySequence: -1,
       subscriptionDead: false,
     };
