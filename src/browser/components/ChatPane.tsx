@@ -13,7 +13,8 @@ import {
   formatTranscriptTextAsQuote,
   getTranscriptContextMenuText,
 } from "@/browser/utils/messages/transcriptContextMenu";
-import { Popover, PopoverAnchor, PopoverContent } from "./ui/popover";
+import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
+import { PositionedMenu, PositionedMenuItem } from "./ui/positioned-menu";
 import { MessageListProvider } from "./Messages/MessageListContext";
 import { cn } from "@/common/lib/utils";
 import { MessageRenderer } from "./Messages/MessageRenderer";
@@ -363,24 +364,15 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   // ChatInput API for focus management
   const chatInputAPI = useRef<ChatInputAPI | null>(null);
 
-  const [transcriptContextMenu, setTranscriptContextMenu] = useState<{
-    x: number;
-    y: number;
-    text: string;
-  } | null>(null);
-
-  const closeTranscriptContextMenu = useCallback(() => {
-    setTranscriptContextMenu(null);
-  }, []);
-
-  // Right-clicking transcript text should offer quick quote/copy actions,
+  // Right-clicking transcript text offers quick quote/copy actions,
   // using selection first and hovered text as a fallback when nothing is selected.
+  const transcriptMenu = useContextMenuPosition();
+  const transcriptMenuTextRef = useRef<string>("");
+
   const handleTranscriptContextMenu = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       const transcriptRoot = contentRef.current;
-      if (!transcriptRoot) {
-        return;
-      }
+      if (!transcriptRoot) return;
 
       const selection = typeof window === "undefined" ? null : window.getSelection();
       const text = getTranscriptContextMenuText({
@@ -390,44 +382,28 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       });
 
       if (!text) {
-        closeTranscriptContextMenu();
+        transcriptMenu.close();
         return;
       }
 
-      event.preventDefault();
-      setTranscriptContextMenu({
-        x: event.clientX,
-        y: event.clientY,
-        text,
-      });
+      transcriptMenuTextRef.current = text;
+      transcriptMenu.onContextMenu(event);
     },
-    [closeTranscriptContextMenu, contentRef]
+    [contentRef, transcriptMenu]
   );
 
   const handleQuoteHoveredText = useCallback(() => {
-    if (!transcriptContextMenu) {
-      return;
-    }
-
-    const quotedText = formatTranscriptTextAsQuote(transcriptContextMenu.text);
-    if (!quotedText) {
-      closeTranscriptContextMenu();
-      return;
-    }
-
+    const quotedText = formatTranscriptTextAsQuote(transcriptMenuTextRef.current);
+    transcriptMenu.close();
+    if (!quotedText) return;
     chatInputAPI.current?.appendText(quotedText);
     chatInputAPI.current?.focus();
-    closeTranscriptContextMenu();
-  }, [closeTranscriptContextMenu, transcriptContextMenu]);
+  }, [transcriptMenu]);
 
   const handleCopyHoveredText = useCallback(() => {
-    if (!transcriptContextMenu) {
-      return;
-    }
-
-    void copyToClipboard(transcriptContextMenu.text);
-    closeTranscriptContextMenu();
-  }, [closeTranscriptContextMenu, transcriptContextMenu]);
+    void copyToClipboard(transcriptMenuTextRef.current);
+    transcriptMenu.close();
+  }, [transcriptMenu]);
 
   // ChatPane is keyed by workspaceId (WorkspaceShell), so per-workspace UI state naturally
   // resets on workspace switches. Clear background errors so they don't leak across workspaces.
@@ -872,56 +848,22 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                 />
               </div>
             </div>
-            <Popover
-              open={transcriptContextMenu !== null}
-              onOpenChange={(open) => {
-                if (!open) {
-                  closeTranscriptContextMenu();
-                }
-              }}
+            <PositionedMenu
+              open={transcriptMenu.isOpen}
+              onOpenChange={transcriptMenu.onOpenChange}
+              position={transcriptMenu.position}
             >
-              {transcriptContextMenu && (
-                <PopoverAnchor asChild>
-                  <span
-                    style={{
-                      position: "fixed",
-                      left: transcriptContextMenu.x,
-                      top: transcriptContextMenu.y,
-                      width: 0,
-                      height: 0,
-                    }}
-                  />
-                </PopoverAnchor>
-              )}
-              <PopoverContent
-                align="start"
-                side="right"
-                sideOffset={0}
-                className="w-[180px] !min-w-0 p-1"
-                onClick={(event) => event.stopPropagation()}
-              >
-                <button
-                  type="button"
-                  className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
-                  onClick={handleQuoteHoveredText}
-                >
-                  <span className="flex items-center gap-2">
-                    <TextQuote className="h-3 w-3 shrink-0" />
-                    Quote in input
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
-                  onClick={handleCopyHoveredText}
-                >
-                  <span className="flex items-center gap-2">
-                    <Clipboard className="h-3 w-3 shrink-0" />
-                    Copy text
-                  </span>
-                </button>
-              </PopoverContent>
-            </Popover>
+              <PositionedMenuItem
+                icon={<TextQuote />}
+                label="Quote in input"
+                onClick={handleQuoteHoveredText}
+              />
+              <PositionedMenuItem
+                icon={<Clipboard />}
+                label="Copy text"
+                onClick={handleCopyHoveredText}
+              />
+            </PositionedMenu>
             {!autoScroll && (
               <button
                 onClick={jumpToBottom}
