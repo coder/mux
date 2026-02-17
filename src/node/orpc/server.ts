@@ -197,6 +197,29 @@ function normalizeOrigin(raw: string | null | undefined): string | null {
   }
 }
 
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase();
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
+}
+
+// In local development, the browser and proxy may use localhost/127.0.0.1 interchangeably.
+// Treat loopback host aliases as equivalent origins when protocol+port match.
+function areEquivalentLoopbackOrigins(originA: string, originB: string): boolean {
+  try {
+    const a = new URL(originA);
+    const b = new URL(originB);
+
+    return (
+      a.protocol === b.protocol &&
+      a.port === b.port &&
+      isLoopbackHostname(a.hostname) &&
+      isLoopbackHostname(b.hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isOriginAllowed(req: OriginValidationRequest): boolean {
   const origin = getFirstHeaderValue(req, "origin");
   if (!origin) {
@@ -213,7 +236,10 @@ function isOriginAllowed(req: OriginValidationRequest): boolean {
     return false;
   }
 
-  return normalizedOrigin === expectedOrigin;
+  return (
+    normalizedOrigin === expectedOrigin ||
+    areEquivalentLoopbackOrigins(normalizedOrigin, expectedOrigin)
+  );
 }
 
 function getPathnameFromRequestUrl(requestUrl: string | undefined): string | null {

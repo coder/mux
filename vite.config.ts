@@ -171,7 +171,8 @@ export default defineConfig(({ mode }) => {
         },
         "/api": {
           target: backendProxyTarget,
-          changeOrigin: true,
+          // Preserve Host for backend origin validation (same rationale as /orpc).
+          changeOrigin: false,
         },
         "/auth": {
           target: backendProxyTarget,
