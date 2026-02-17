@@ -16,6 +16,12 @@ export function handleLayoutSlotHotkeys(
     return false;
   }
 
+  // Dialogs are modal — don't process layout hotkeys when one is open.
+  // This runs in capture phase, so bubble-phase stopPropagation can't help here.
+  if (typeof document !== "undefined" && document.querySelector('[role="dialog"]')) {
+    return false;
+  }
+
   const workspaceId = params.selectedWorkspaceId;
   if (!workspaceId) {
     return false;
