@@ -70,6 +70,7 @@ import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/r
 import { MessageQueue } from "./messageQueue";
 import type { StreamEndEvent, StreamStartEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
+import { RetryManager, type RetryStatusEvent } from "./retryManager";
 import type { TelemetryService } from "./telemetryService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 
@@ -217,6 +218,9 @@ export class AgentSession {
   private readonly messageQueue = new MessageQueue();
   private readonly compactionHandler: CompactionHandler;
 
+  private readonly retryManager: RetryManager;
+  private lastAutoRetryOptions?: SendMessageOptions;
+
   /** Tracks file state for detecting external edits. */
   private readonly fileChangeTracker = new FileChangeTracker();
 
@@ -314,6 +318,14 @@ export class AgentSession {
       onCompactionComplete,
     });
 
+    this.retryManager = new RetryManager(
+      this.workspaceId,
+      async () => {
+        await this.retryActiveStream();
+      },
+      (event) => this.emitRetryEvent(event)
+    );
+
     this.attachAiListeners();
     this.attachInitListeners();
   }
@@ -326,6 +338,8 @@ export class AgentSession {
 
     // Ensure any callers blocked on waitForIdle() can continue during teardown.
     this.setTurnPhase(TurnPhase.IDLE);
+
+    this.retryManager.dispose();
 
     // Stop any active stream (fire and forget - disposal shouldn't block)
     void this.aiService.stopStream(this.workspaceId, { abandonPartial: true });
@@ -418,6 +432,41 @@ export class AgentSession {
     }
 
     return streamLastTimestamp;
+  }
+
+  private emitRetryEvent(event: RetryStatusEvent): void {
+    if (this.disposed) {
+      return;
+    }
+    this.emitChatEvent(event);
+  }
+
+  private extractRetryFailureMessage(error: SendMessageError): string | undefined {
+    if ("message" in error && typeof error.message === "string") {
+      return error.message;
+    }
+
+    if ("raw" in error && typeof error.raw === "string") {
+      return error.raw;
+    }
+
+    return undefined;
+  }
+
+  private async retryActiveStream(): Promise<void> {
+    const options = this.lastAutoRetryOptions;
+    if (!options) {
+      this.emitRetryEvent({ type: "auto-retry-abandoned", reason: "missing_retry_options" });
+      return;
+    }
+
+    const result = await this.resumeStream(options);
+    if (!result.success) {
+      this.retryManager.handleStreamFailure({
+        type: result.error.type,
+        message: this.extractRetryFailureMessage(result.error),
+      });
+    }
   }
 
   private async emitHistoricalEvents(
@@ -808,6 +857,11 @@ export class AgentSession {
     internal?: { synthetic?: boolean }
   ): Promise<Result<void, SendMessageError>> {
     this.assertNotDisposed("sendMessage");
+
+    // Any new user send represents explicit re-engagement. Cancel pending retries from prior
+    // failures and re-enable automatic retries for this turn.
+    this.retryManager.cancel();
+    this.retryManager.setEnabled(true);
 
     assert(typeof message === "string", "sendMessage requires a string message");
     // Real user sends break any synthetic switch chain.
@@ -1200,6 +1254,16 @@ export class AgentSession {
     }
   }
 
+  setAutoRetryEnabled(enabled: boolean): void {
+    this.assertNotDisposed("setAutoRetryEnabled");
+    assert(typeof enabled === "boolean", "setAutoRetryEnabled requires a boolean");
+
+    this.retryManager.setEnabled(enabled);
+    if (!enabled) {
+      this.retryManager.cancel();
+    }
+  }
+
   private normalizeGatewaySendOptions(options: SendMessageOptions): SendMessageOptions {
     // Keep persisted model IDs canonical; gateway routing is now backend-authoritative (issue #1769).
     const normalizedModel = normalizeGatewayModel(options.model.trim());
@@ -1219,6 +1283,9 @@ export class AgentSession {
     abandonPartial?: boolean;
   }): Promise<Result<void>> {
     this.assertNotDisposed("interruptStream");
+
+    // Explicit user interruption should immediately stop any pending auto-retry loop.
+    this.retryManager.cancel();
 
     // For hard interrupts, delete partial BEFORE stopping to prevent abort handler
     // from committing it. For soft interrupts, defer to stream-abort handler since
@@ -1310,6 +1377,7 @@ export class AgentSession {
     this.ackPendingPostCompactionStateOnStreamEnd = false;
     this.activeStreamHadAnyDelta = false;
     this.activeStreamHadPostCompactionInjection = false;
+    this.lastAutoRetryOptions = options;
     this.activeStreamContext = {
       modelString,
       options,
@@ -2035,6 +2103,11 @@ export class AgentSession {
       this.clearQueue();
     }
 
+    this.retryManager.handleStreamFailure({
+      type: data.errorType ?? "unknown",
+      message: data.error,
+    });
+
     this.emitChatEvent(createStreamErrorMessage(data));
     this.setTurnPhase(TurnPhase.IDLE);
   }
@@ -2136,6 +2209,11 @@ export class AgentSession {
         this.clearQueue();
       }
       this.pendingAgentSwitchingSync = undefined;
+      const abortReason = "abortReason" in payload ? payload.abortReason : undefined;
+      this.retryManager.handleStreamFailure({
+        type: "aborted",
+        message: abortReason,
+      });
       this.emitChatEvent(payload);
       this.setTurnPhase(TurnPhase.IDLE);
     });
@@ -2143,6 +2221,7 @@ export class AgentSession {
 
     forward("stream-end", async (payload) => {
       this.setTurnPhase(TurnPhase.COMPLETING);
+      this.retryManager.handleStreamSuccess();
 
       const streamEndPayload = payload as StreamEndEvent;
       const activeStreamOptions = this.activeStreamContext?.options;
