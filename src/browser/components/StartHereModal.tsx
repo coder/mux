@@ -79,7 +79,7 @@ export const StartHereModal: React.FC<StartHereModalProps> = ({ isOpen, onClose,
             Cancel
             <span
               aria-hidden="true"
-              className="border-border-medium text-muted ml-2 inline-flex items-center rounded border px-1 py-[1px] text-[10px] leading-none font-mono"
+              className="border-border-medium text-muted ml-2 inline-flex items-center rounded border px-1 py-[1px] font-mono text-[10px] leading-none"
             >
               N
             </span>
@@ -88,7 +88,7 @@ export const StartHereModal: React.FC<StartHereModalProps> = ({ isOpen, onClose,
             {isExecuting ? "Starting..." : "OK"}
             <span
               aria-hidden="true"
-              className="border-border-medium text-muted ml-2 inline-flex items-center rounded border px-1 py-[1px] text-[10px] leading-none font-mono"
+              className="border-border-medium text-muted ml-2 inline-flex items-center rounded border px-1 py-[1px] font-mono text-[10px] leading-none"
             >
               Y
             </span>

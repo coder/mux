@@ -320,23 +320,25 @@ export function LayoutsSection() {
               },
               {
                 label: "Delete layout",
-                onClick: async () => {
-                  const ok = await confirmDialog({
-                    title: `Delete layout "${preset.name}"?`,
-                    confirmLabel: "Delete",
-                    confirmVariant: "destructive",
-                  });
-                  if (!ok) return;
+                onClick: () => {
+                  void (async () => {
+                    const ok = await confirmDialog({
+                      title: `Delete layout "${preset.name}"?`,
+                      confirmLabel: "Delete",
+                      confirmVariant: "destructive",
+                    });
+                    if (!ok) return;
 
-                  setActionError(null);
+                    setActionError(null);
 
-                  setEditingName(null);
-                  setCapturingSlot(null);
-                  setCaptureError(null);
+                    setEditingName(null);
+                    setCapturingSlot(null);
+                    setCaptureError(null);
 
-                  void deleteSlot(slot).catch(() => {
-                    setActionError("Failed to delete layout.");
-                  });
+                    void deleteSlot(slot).catch(() => {
+                      setActionError("Failed to delete layout.");
+                    });
+                  })();
                 },
               },
             ];

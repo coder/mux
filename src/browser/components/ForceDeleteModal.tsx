@@ -34,7 +34,7 @@ export const ForceDeleteModal: React.FC<ForceDeleteModalProps> = ({
 }) => {
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const handleForceDelete = () => {
+  const handleForceDelete = useCallback(() => {
     setIsDeleting(true);
     void (async () => {
       try {
@@ -46,7 +46,7 @@ export const ForceDeleteModal: React.FC<ForceDeleteModalProps> = ({
         setIsDeleting(false);
       }
     })();
-  };
+  }, [onForceDelete, workspaceId, onClose]);
 
   const handleOpenChange = useCallback(
     (open: boolean) => {
@@ -108,7 +108,7 @@ export const ForceDeleteModal: React.FC<ForceDeleteModalProps> = ({
             Cancel
             <span
               aria-hidden="true"
-              className="border-border-medium text-muted ml-2 inline-flex items-center rounded border px-1 py-[1px] text-[10px] leading-none font-mono"
+              className="border-border-medium text-muted ml-2 inline-flex items-center rounded border px-1 py-[1px] font-mono text-[10px] leading-none"
             >
               N
             </span>
@@ -117,7 +117,7 @@ export const ForceDeleteModal: React.FC<ForceDeleteModalProps> = ({
             {isDeleting ? "Deleting..." : "Force Delete"}
             <span
               aria-hidden="true"
-              className="border-border-medium text-muted ml-2 inline-flex items-center rounded border px-1 py-[1px] text-[10px] leading-none font-mono"
+              className="border-border-medium text-muted ml-2 inline-flex items-center rounded border px-1 py-[1px] font-mono text-[10px] leading-none"
             >
               Y
             </span>
