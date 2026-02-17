@@ -923,6 +923,13 @@ export const workspace = {
     }),
     output: ResultSchema(z.void(), z.string()),
   },
+  setAutoCompactionThreshold: {
+    input: z.object({
+      workspaceId: z.string(),
+      threshold: z.number().finite().min(0.1).max(1.0),
+    }),
+    output: ResultSchema(z.void(), z.string()),
+  },
   interruptStream: {
     input: z.object({
       workspaceId: z.string(),

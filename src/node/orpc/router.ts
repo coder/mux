@@ -2597,6 +2597,19 @@ export const router = (authToken?: string) => {
           }
           return { success: true, data: undefined };
         }),
+      setAutoCompactionThreshold: t
+        .input(schemas.workspace.setAutoCompactionThreshold.input)
+        .output(schemas.workspace.setAutoCompactionThreshold.output)
+        .handler(({ context, input }) => {
+          const result = context.workspaceService.setAutoCompactionThreshold(
+            input.workspaceId,
+            input.threshold
+          );
+          if (!result.success) {
+            return { success: false, error: result.error };
+          }
+          return { success: true, data: undefined };
+        }),
       interruptStream: t
         .input(schemas.workspace.interruptStream.input)
         .output(schemas.workspace.interruptStream.output)

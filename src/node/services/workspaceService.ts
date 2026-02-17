@@ -3357,6 +3357,18 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  setAutoCompactionThreshold(workspaceId: string, threshold: number): Result<void> {
+    try {
+      const session = this.getOrCreateSession(workspaceId);
+      session.setAutoCompactionThreshold(threshold);
+      return Ok(undefined);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log.error("Unexpected error in setAutoCompactionThreshold handler:", error);
+      return Err(`Failed to set auto-compaction threshold: ${errorMessage}`);
+    }
+  }
+
   async interruptStream(
     workspaceId: string,
     options?: { soft?: boolean; abandonPartial?: boolean; sendQueuedImmediately?: boolean }
