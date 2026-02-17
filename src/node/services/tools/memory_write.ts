@@ -112,7 +112,7 @@ export const createMemoryWriteTool: ToolFactory = (config: ToolConfiguration) =>
           }
 
           const replaceArgs: StringReplaceArgs = {
-            file_path: memoryPath,
+            path: memoryPath,
             old_string: args.old_string,
             new_string: args.new_string,
             replace_count: replaceCount,

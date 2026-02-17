@@ -105,7 +105,7 @@ export class MemoryWriterPolicy {
       Config,
       "getSessionDir" | "loadConfigOrDefault" | "loadProvidersConfig"
     >,
-    private readonly historyService: Pick<HistoryService, "getHistory">,
+    private readonly historyService: Pick<HistoryService, "getHistoryFromLatestBoundary">,
     private readonly createModel: CreateModelFn
   ) {
     assert(config, "MemoryWriterPolicy: config is required");
@@ -310,7 +310,7 @@ export class MemoryWriterPolicy {
     });
 
     try {
-      const historyResult = await this.historyService.getHistory(ctx.workspaceId);
+      const historyResult = await this.historyService.getHistoryFromLatestBoundary(ctx.workspaceId);
       if (!historyResult.success) {
         workspaceLog.warn("[system1][memory] Failed to read history", {
           error: historyResult.error,

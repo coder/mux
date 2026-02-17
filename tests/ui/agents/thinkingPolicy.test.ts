@@ -7,8 +7,8 @@ import "../dom";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { shouldRunIntegrationTests } from "../testUtils";
-import { createAppHarness } from "./harness";
+import { shouldRunIntegrationTests } from "../../testUtils";
+import { createAppHarness } from "../harness";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 

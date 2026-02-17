@@ -357,6 +357,17 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
+<summary>memory_write (3)</summary>
+
+| Env var                        | JSON path       | Type   | Description                                                                                                        |
+| ------------------------------ | --------------- | ------ | ------------------------------------------------------------------------------------------------------------------ |
+| `MUX_TOOL_INPUT_NEW_STRING`    | `new_string`    | string | Replacement text (usually the full updated file content)                                                           |
+| `MUX_TOOL_INPUT_OLD_STRING`    | `old_string`    | string | Exact text to replace (usually the full current file content)                                                      |
+| `MUX_TOOL_INPUT_REPLACE_COUNT` | `replace_count` | number | Number of occurrences to replace (default: 1). Use -1 to replace all occurrences. If 1, old_string must be unique. |
+
+</details>
+
+<details>
 <summary>mux_global_agents_write (2)</summary>
 
 | Env var                      | JSON path    | Type    | Description                                                                            |

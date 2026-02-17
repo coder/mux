@@ -64,7 +64,7 @@ describe("MemoryWriterPolicy", () => {
       const policy = new MemoryWriterPolicy(
         createTestConfig({ sessionsDir, interval: 2 }),
         {
-          getHistory: (): Promise<
+          getHistoryFromLatestBoundary: (): Promise<
             { success: true; data: MuxMessage[] } | { success: false; error: string }
           > => {
             getHistoryCalls += 1;
@@ -91,7 +91,7 @@ describe("MemoryWriterPolicy", () => {
       let getHistoryCalls = 0;
 
       const historyService = {
-        getHistory: (): Promise<
+        getHistoryFromLatestBoundary: (): Promise<
           { success: true; data: MuxMessage[] } | { success: false; error: string }
         > => {
           getHistoryCalls += 1;
@@ -150,7 +150,7 @@ describe("MemoryWriterPolicy", () => {
       const policy = new MemoryWriterPolicy(
         createTestConfig({ sessionsDir, interval: 5 }),
         {
-          getHistory: (): Promise<
+          getHistoryFromLatestBoundary: (): Promise<
             { success: true; data: MuxMessage[] } | { success: false; error: string }
           > => {
             getHistoryCalls += 1;
@@ -187,7 +187,7 @@ describe("MemoryWriterPolicy", () => {
       const policy = new MemoryWriterPolicy(
         createTestConfig({ sessionsDir, interval: 1 }),
         {
-          getHistory: async (): Promise<
+          getHistoryFromLatestBoundary: async (): Promise<
             { success: true; data: MuxMessage[] } | { success: false; error: string }
           > => {
             getHistoryCalls += 1;
@@ -237,7 +237,7 @@ describe("MemoryWriterPolicy", () => {
           },
         }),
         {
-          getHistory: (): Promise<
+          getHistoryFromLatestBoundary: (): Promise<
             { success: true; data: MuxMessage[] } | { success: false; error: string }
           > => Promise.resolve({ success: true, data: [] }),
         },
@@ -262,7 +262,7 @@ describe("MemoryWriterPolicy", () => {
       const policy = new MemoryWriterPolicy(
         createTestConfig({ sessionsDir, interval: 1 }),
         {
-          getHistory: (): Promise<
+          getHistoryFromLatestBoundary: (): Promise<
             { success: true; data: MuxMessage[] } | { success: false; error: string }
           > => {
             getHistoryCalls += 1;
