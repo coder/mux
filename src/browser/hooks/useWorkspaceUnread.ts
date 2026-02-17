@@ -8,14 +8,22 @@ import { getWorkspaceLastReadKey } from "@/common/constants/storage";
  */
 export function useWorkspaceUnread(workspaceId: string): {
   isUnread: boolean;
-  lastReadTimestamp: number;
+  lastReadTimestamp: number | null;
   recencyTimestamp: number | null;
 } {
-  const [lastReadTimestamp] = usePersistedState<number>(getWorkspaceLastReadKey(workspaceId), 0, {
-    listener: true,
-  });
+  // Missing lastRead means this workspace has no persisted read baseline yet.
+  // Treat that as "implicitly read" until we observe an explicit read event,
+  // instead of coercing to epoch (0) which marks legacy workspaces unread forever.
+  const [lastReadTimestamp] = usePersistedState<number | null>(
+    getWorkspaceLastReadKey(workspaceId),
+    null,
+    {
+      listener: true,
+    }
+  );
   const { recencyTimestamp } = useWorkspaceSidebarState(workspaceId);
-  const isUnread = recencyTimestamp !== null && recencyTimestamp > lastReadTimestamp;
+  const isUnread =
+    recencyTimestamp !== null && lastReadTimestamp !== null && recencyTimestamp > lastReadTimestamp;
 
   return { isUnread, lastReadTimestamp, recencyTimestamp };
 }
