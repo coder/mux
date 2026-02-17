@@ -47,7 +47,9 @@ function getSelectedTranscriptText(
   const focusInsideTranscript =
     selection.focusNode !== null && transcriptRoot.contains(selection.focusNode);
 
-  if (!anchorInsideTranscript && !focusInsideTranscript) {
+  // Require the full selection range to stay within transcript content so we
+  // don't accidentally quote/copy text from outside the transcript.
+  if (!anchorInsideTranscript || !focusInsideTranscript) {
     return null;
   }
 
