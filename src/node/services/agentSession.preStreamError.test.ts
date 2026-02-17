@@ -6,7 +6,7 @@ import type { AIService } from "@/node/services/aiService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { SendMessageError } from "@/common/types/errors";
-import type { MuxMessage } from "@/common/types/message";
+import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
 import type { StreamErrorMessage, WorkspaceChatMessage } from "@/common/orpc/types";
@@ -56,7 +56,7 @@ async function createReplaySessionHarness(workspaceId: string) {
     backgroundProcessManager,
   });
 
-  return { session, cleanup, replayInit, replayStream };
+  return { session, cleanup, replayInit, replayStream, historyService };
 }
 describe("AgentSession pre-stream errors", () => {
   let historyCleanup: (() => Promise<void>) | undefined;
@@ -157,6 +157,89 @@ describe("AgentSession pre-stream errors", () => {
 
     expect(replayInit).toHaveBeenCalledWith(workspaceId);
     expect(events.some((event) => "type" in event && event.type === "caught-up")).toBe(true);
+  });
+
+  it("keeps since replay when stream cursor is stale but history cursor is valid", async () => {
+    const workspaceId = "ws-replay-since-stale-stream-cursor";
+    const { session, cleanup, replayInit, historyService } =
+      await createReplaySessionHarness(workspaceId);
+    historyCleanup = cleanup;
+
+    const firstMessage = createMuxMessage("msg-history-1", "user", "first");
+    const secondMessage = createMuxMessage("msg-history-2", "assistant", "second");
+
+    const appendFirst = await historyService.appendToHistory(workspaceId, firstMessage);
+    expect(appendFirst.success).toBe(true);
+    const appendSecond = await historyService.appendToHistory(workspaceId, secondMessage);
+    expect(appendSecond.success).toBe(true);
+
+    const historyResult = await historyService.getHistoryFromLatestBoundary(workspaceId);
+    if (!historyResult.success) {
+      throw new Error(`Failed to read history: ${historyResult.error}`);
+    }
+
+    const firstPersisted = historyResult.data.find((message) => message.id === firstMessage.id);
+    const secondPersisted = historyResult.data.find((message) => message.id === secondMessage.id);
+    if (!firstPersisted || !secondPersisted) {
+      throw new Error("Expected persisted history messages for since replay test");
+    }
+
+    const firstHistorySequence = firstPersisted.metadata?.historySequence;
+    if (firstHistorySequence === undefined) {
+      throw new Error("Expected first persisted message to have historySequence");
+    }
+
+    const historySequences = historyResult.data
+      .map((message) => message.metadata?.historySequence)
+      .filter((historySequence): historySequence is number => historySequence !== undefined);
+    if (historySequences.length === 0) {
+      throw new Error("Expected persisted history sequences for since replay test");
+    }
+    const oldestHistorySequence = Math.min(...historySequences);
+
+    const events: WorkspaceChatMessage[] = [];
+    await session.replayHistory(
+      ({ message }) => {
+        events.push(message);
+      },
+      {
+        type: "since",
+        cursor: {
+          history: {
+            messageId: firstPersisted.id,
+            historySequence: firstHistorySequence,
+            oldestHistorySequence,
+          },
+          stream: {
+            messageId: "ended-stream",
+            lastTimestamp: 9_999,
+          },
+        },
+      }
+    );
+
+    expect(replayInit).toHaveBeenCalledWith(workspaceId);
+
+    const caughtUp = events.find(
+      (event): event is Extract<WorkspaceChatMessage, { type: "caught-up" }> =>
+        "type" in event && event.type === "caught-up"
+    );
+    expect(caughtUp).toBeDefined();
+    expect(caughtUp?.replay).toBe("since");
+
+    const replayedMessageIds = events.reduce<string[]>((ids, event) => {
+      if (
+        "role" in event &&
+        (event.role === "user" || event.role === "assistant") &&
+        "id" in event &&
+        typeof event.id === "string"
+      ) {
+        ids.push(event.id);
+      }
+      return ids;
+    }, []);
+
+    expect(replayedMessageIds).toEqual([secondPersisted.id]);
   });
 
   it("replays init state for live-mode reconnects", async () => {

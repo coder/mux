@@ -489,17 +489,15 @@ export class AgentSession {
         }
 
         if (streamCursor && streamInfo && streamCursor.messageId === streamInfo.messageId) {
+          // Stream cursor is advisory: only apply it when the same stream is still active.
+          // If the stream ended or rotated while offline, keep since-mode history replay
+          // and skip stream filtering by leaving afterTimestamp undefined.
           afterTimestamp = streamCursor.lastTimestamp;
         }
 
-        const streamCursorProvided = streamCursor !== undefined;
-        const streamCursorValid = !streamCursorProvided || afterTimestamp !== undefined;
-
-        // Guard against stream-only since cursors. We must have a valid history cursor
-        // for append-mode reconnects; otherwise persisted history would replay in full
-        // without replace semantics and duplicate local messages.
-        const canReplaySince =
-          mode?.type === "since" && sinceHistorySequence !== undefined && streamCursorValid;
+        // Since replay safety is anchored by a valid persisted-history cursor.
+        // Stream cursor mismatches must not force a full replay when history is continuous.
+        const canReplaySince = mode?.type === "since" && sinceHistorySequence !== undefined;
 
         if (canReplaySince) {
           replayMode = "since";
