@@ -408,6 +408,12 @@ export const KEYBINDS = {
   // "N" for Notifications
   TOGGLE_NOTIFICATIONS: { key: "N", ctrl: true, shift: true },
 
+  /** Confirm action in confirmation dialogs */
+  CONFIRM_DIALOG_YES: { key: "y", allowShift: true },
+
+  /** Cancel/dismiss confirmation dialogs */
+  CONFIRM_DIALOG_NO: { key: "n", allowShift: true },
+
   TOGGLE_POWER_MODE: { key: "F12", shift: true },
 } as const;
 

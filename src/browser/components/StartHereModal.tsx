@@ -8,6 +8,8 @@ import {
   DialogFooter,
 } from "@/browser/components/ui/dialog";
 import { Button } from "@/browser/components/ui/button";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
+import { isEditableElement, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 
 interface StartHereModalProps {
   isOpen: boolean;
@@ -45,9 +47,27 @@ export const StartHereModal: React.FC<StartHereModalProps> = ({ isOpen, onClose,
     [isExecuting, handleCancel]
   );
 
+  const handleDialogKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (isExecuting) return;
+      if (isEditableElement(e.target)) return;
+
+      if (matchesKeybind(e, KEYBINDS.CONFIRM_DIALOG_YES)) {
+        e.preventDefault();
+        stopKeyboardPropagation(e);
+        void handleConfirm();
+      } else if (matchesKeybind(e, KEYBINDS.CONFIRM_DIALOG_NO)) {
+        e.preventDefault();
+        stopKeyboardPropagation(e);
+        handleCancel();
+      }
+    },
+    [isExecuting, handleConfirm, handleCancel]
+  );
+
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
-      <DialogContent showCloseButton={false}>
+      <DialogContent showCloseButton={false} onKeyDown={handleDialogKeyDown}>
         <DialogHeader>
           <DialogTitle>Start Here</DialogTitle>
           <DialogDescription>
@@ -57,9 +77,21 @@ export const StartHereModal: React.FC<StartHereModalProps> = ({ isOpen, onClose,
         <DialogFooter className="justify-center">
           <Button variant="secondary" onClick={handleCancel} disabled={isExecuting}>
             Cancel
+            <span
+              aria-hidden="true"
+              className="border-border-medium text-muted ml-2 inline-flex items-center rounded border px-1 py-[1px] text-[10px] leading-none font-mono"
+            >
+              N
+            </span>
           </Button>
           <Button onClick={() => void handleConfirm()} disabled={isExecuting}>
             {isExecuting ? "Starting..." : "OK"}
+            <span
+              aria-hidden="true"
+              className="border-border-medium text-muted ml-2 inline-flex items-center rounded border px-1 py-[1px] text-[10px] leading-none font-mono"
+            >
+              Y
+            </span>
           </Button>
         </DialogFooter>
       </DialogContent>

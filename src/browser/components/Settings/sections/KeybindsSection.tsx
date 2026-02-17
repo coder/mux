@@ -57,6 +57,9 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   NAVIGATE_BACK: "Navigate back",
   NAVIGATE_FORWARD: "Navigate forward",
   TOGGLE_NOTIFICATIONS: "Toggle notifications",
+  // Modal-only keybinds; intentionally omitted from KEYBIND_GROUPS.
+  CONFIRM_DIALOG_YES: "Confirm dialog action",
+  CONFIRM_DIALOG_NO: "Cancel dialog action",
   // Easter egg keybind; intentionally omitted from KEYBIND_GROUPS.
   TOGGLE_POWER_MODE: "",
 };

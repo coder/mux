@@ -14,6 +14,8 @@ import {
   WarningText,
 } from "@/browser/components/ui/dialog";
 import { Button } from "@/browser/components/ui/button";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
+import { isEditableElement, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 
 interface ForceDeleteModalProps {
   isOpen: boolean;
@@ -55,9 +57,32 @@ export const ForceDeleteModal: React.FC<ForceDeleteModalProps> = ({
     [isDeleting, onClose]
   );
 
+  const handleDialogKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (isDeleting) return;
+      if (isEditableElement(e.target)) return;
+
+      if (matchesKeybind(e, KEYBINDS.CONFIRM_DIALOG_YES)) {
+        e.preventDefault();
+        stopKeyboardPropagation(e);
+        handleForceDelete();
+      } else if (matchesKeybind(e, KEYBINDS.CONFIRM_DIALOG_NO)) {
+        e.preventDefault();
+        stopKeyboardPropagation(e);
+        onClose();
+      }
+    },
+    [isDeleting, handleForceDelete, onClose]
+  );
+
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
-      <DialogContent maxWidth="600px" maxHeight="90vh" showCloseButton={false}>
+      <DialogContent
+        maxWidth="600px"
+        maxHeight="90vh"
+        showCloseButton={false}
+        onKeyDown={handleDialogKeyDown}
+      >
         <DialogHeader>
           <DialogTitle>Force Delete Workspace?</DialogTitle>
           <DialogDescription>The workspace could not be removed normally</DialogDescription>
@@ -81,9 +106,21 @@ export const ForceDeleteModal: React.FC<ForceDeleteModalProps> = ({
         <DialogFooter className="justify-center">
           <Button variant="secondary" onClick={onClose} disabled={isDeleting}>
             Cancel
+            <span
+              aria-hidden="true"
+              className="border-border-medium text-muted ml-2 inline-flex items-center rounded border px-1 py-[1px] text-[10px] leading-none font-mono"
+            >
+              N
+            </span>
           </Button>
           <Button variant="destructive" onClick={handleForceDelete} disabled={isDeleting}>
             {isDeleting ? "Deleting..." : "Force Delete"}
+            <span
+              aria-hidden="true"
+              className="border-border-medium text-muted ml-2 inline-flex items-center rounded border px-1 py-[1px] text-[10px] leading-none font-mono"
+            >
+              Y
+            </span>
           </Button>
         </DialogFooter>
       </DialogContent>
