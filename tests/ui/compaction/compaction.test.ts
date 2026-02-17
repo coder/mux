@@ -54,6 +54,19 @@ async function waitForForegroundToolCallId(
   }
 }
 
+async function setDeterministicForceCompactionThreshold(
+  env: TestEnvironment,
+  workspaceId: string
+): Promise<void> {
+  // Keep force-compaction tests deterministic even if persisted settings enable 1M context
+  // or raise the auto-compaction threshold. 10% threshold + 5% force buffer => trigger at 15%.
+  const result = await env.orpc.workspace.setAutoCompactionThreshold({
+    workspaceId,
+    threshold: 0.1,
+  });
+  expect(result.success).toBe(true);
+}
+
 describe("Compaction UI (mock AI router)", () => {
   beforeAll(async () => {
     await preloadTestModules();
@@ -107,10 +120,12 @@ describe("Compaction UI (mock AI router)", () => {
     }
   }, 60_000);
 
-  test("force compaction triggers during streaming and resumes with Continue", async () => {
+  test("force compaction triggers during streaming", async () => {
     const app = await createAppHarness({ branchPrefix: "compaction-ui" });
 
     try {
+      await setDeterministicForceCompactionThreshold(app.env, app.workspaceId);
+
       const seedMessage = "Seed conversation for compaction";
       const triggerMessage = "[force] Trigger force compaction";
 
@@ -209,6 +224,8 @@ describe("Compaction UI (mock AI router)", () => {
     let unregister: (() => void) | undefined;
 
     try {
+      await setDeterministicForceCompactionThreshold(app.env, app.workspaceId);
+
       const manager = getBackgroundProcessManager(app.env);
 
       const toolCallId = "bash-foreground";
@@ -241,12 +258,9 @@ describe("Compaction UI (mock AI router)", () => {
       expect(seedResult.success).toBe(true);
       await app.chat.expectTranscriptContains(`Mock response: ${seedMessage}`);
 
-      const triggerResult = await app.env.orpc.workspace.sendMessage({
-        workspaceId: app.workspaceId,
-        message: triggerMessage,
-        options: { model: WORKSPACE_DEFAULTS.model, agentId: WORKSPACE_DEFAULTS.agentId },
-      });
-      expect(triggerResult.success).toBe(true);
+      // Send via the UI path so the foreground bash auto-background logic runs exactly
+      // as it does for real user sends, while backend mid-stream compaction handles the rest.
+      await app.chat.send(triggerMessage);
 
       await app.chat.expectTranscriptContains("Mock compaction summary:", 60_000);
 
