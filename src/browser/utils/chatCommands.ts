@@ -14,7 +14,6 @@ import {
   type CompactionRequestData,
   type CompactionFollowUpRequest,
   type CompactionFollowUpInput,
-  isDefaultSourceContent,
   pickPreservedSendOptions,
 } from "@/common/types/message";
 import type { ReviewNoteData } from "@/common/types/review";
@@ -39,11 +38,7 @@ import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput"
 import type { ChatAttachment } from "../components/ChatAttachments";
 import { dispatchWorkspaceSwitch } from "./workspaceEvents";
 import { getRuntimeKey, copyWorkspaceStorage } from "@/common/constants/storage";
-import {
-  DEFAULT_COMPACTION_WORD_TARGET,
-  WORDS_TO_TOKENS_RATIO,
-  buildCompactionPrompt,
-} from "@/common/constants/ui";
+import { buildCompactionMessageText } from "@/common/utils/compaction/compactionPrompt";
 import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
 import { openInEditor } from "@/browser/utils/openInEditor";
 
@@ -775,13 +770,6 @@ export function prepareCompactionMessage(options: CompactionOptions): {
   metadata: MuxFrontendMetadata;
   sendOptions: SendMessageOptions;
 } {
-  const targetWords = options.maxOutputTokens
-    ? Math.round(options.maxOutputTokens / WORDS_TO_TOKENS_RATIO)
-    : DEFAULT_COMPACTION_WORD_TARGET;
-
-  // Build compaction message with optional continue context
-  let messageText = buildCompactionPrompt(targetWords);
-
   // followUpContent is the content that will be auto-sent after compaction.
   // For forced compaction (no explicit follow-up), we inject a short resume sentinel ("Continue").
   // Keep that sentinel out of the *compaction prompt* (summarization request), otherwise the model can
@@ -818,11 +806,13 @@ export function prepareCompactionMessage(options: CompactionOptions): {
       ...pickPreservedSendOptions(options.sendMessageOptions),
     };
   }
-  const isDefaultResume = isDefaultSourceContent(fc);
 
-  if (fc && !isDefaultResume) {
-    messageText += `\n\nThe user wants to continue with: ${fc.text}`;
-  }
+  // Build compaction message with optional continue context.
+  // Shared helper is also used by backend-triggered idle compaction.
+  const messageText = buildCompactionMessageText({
+    maxOutputTokens: options.maxOutputTokens,
+    followUpContent: fc,
+  });
 
   // Handle model preference (sticky globally)
   const effectiveModel = resolveCompactionModel(options.model);
