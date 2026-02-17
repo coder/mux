@@ -1,0 +1,613 @@
+import assert from "node:assert/strict";
+import type {
+  Agent,
+  AgentSideConnection,
+  AuthenticateRequest,
+  AuthenticateResponse,
+  CancelNotification,
+  ContentBlock,
+  ForkSessionRequest,
+  ForkSessionResponse,
+  InitializeRequest,
+  InitializeResponse,
+  LoadSessionRequest,
+  LoadSessionResponse,
+  NewSessionRequest,
+  NewSessionResponse,
+  PromptRequest,
+  PromptResponse,
+  SetSessionConfigOptionRequest,
+  SetSessionConfigOptionResponse,
+  Usage,
+} from "@agentclientprotocol/sdk";
+import { RuntimeConfigSchema } from "@/common/orpc/schemas";
+import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import { isWorktreeRuntime, type RuntimeConfig, type RuntimeMode } from "@/common/types/runtime";
+import { negotiateCapabilities, type NegotiatedCapabilities } from "./capabilities";
+import { buildConfigOptions, handleSetConfigOption } from "./configOptions";
+import { forkSessionFromWorkspace } from "./experimental/sessionFork";
+import { loadSessionFromWorkspace } from "./experimental/sessionResume";
+import { convertToAcpUsage } from "./experimental/sessionUsage";
+import { resolveAgentAiSettings, type ResolvedAiSettings } from "./resolveAgentAiSettings";
+import type { ServerConnection } from "./serverConnection";
+import { SessionManager } from "./sessionManager";
+import { StreamTranslator } from "./streamTranslator";
+import { ToolRouter } from "./toolRouter";
+
+const DEFAULT_AGENT_ID = "exec";
+const DEFAULT_BRANCH_PREFIX = "acp";
+
+interface SessionState {
+  workspaceId: string;
+  runtimeMode: RuntimeMode;
+  agentId: string;
+  aiSettings: ResolvedAiSettings;
+}
+
+interface TurnResult {
+  stopReason: PromptResponse["stopReason"];
+  usage?: Usage;
+}
+
+interface TurnCompletion {
+  resolve: (result: TurnResult) => void;
+  reject: (error: Error) => void;
+}
+
+interface ParsedMuxMeta {
+  projectPath?: string;
+  branchName?: string;
+  trunkBranch?: string;
+  title?: string;
+  runtimeConfig?: RuntimeConfig;
+  agentId?: string;
+  forkName?: string;
+}
+
+type MetaRecord = Record<string, unknown>;
+
+export class MuxAgent implements Agent {
+  private readonly sessionManager = new SessionManager();
+  private readonly toolRouter: ToolRouter;
+  private readonly streamTranslator: StreamTranslator;
+
+  private negotiatedCapabilities: NegotiatedCapabilities | null = null;
+  private initialized = false;
+
+  private readonly sessionStateById = new Map<string, SessionState>();
+  private readonly chatSubscriptions = new Map<string, Promise<void>>();
+  private readonly turnCompletions = new Map<string, TurnCompletion>();
+  private readonly latestUsageBySessionId = new Map<string, Usage>();
+
+  constructor(
+    private readonly connection: AgentSideConnection,
+    private readonly server: ServerConnection
+  ) {
+    assert(connection != null, "MuxAgent: connection is required");
+    assert(server != null, "MuxAgent: server connection is required");
+
+    this.toolRouter = new ToolRouter(connection);
+    this.streamTranslator = new StreamTranslator(connection);
+
+    this.connection.signal.addEventListener(
+      "abort",
+      () => {
+        const disconnectError = new Error("Mux ACP connection closed");
+        for (const [sessionId] of this.turnCompletions) {
+          this.rejectTurn(sessionId, disconnectError);
+        }
+      },
+      { once: true }
+    );
+  }
+
+  async initialize(params: InitializeRequest): Promise<InitializeResponse> {
+    assert(params != null, "initialize: params are required");
+
+    const negotiated = negotiateCapabilities(params.clientCapabilities);
+    this.negotiatedCapabilities = negotiated;
+    this.toolRouter.setEditorCapabilities(negotiated);
+    this.initialized = true;
+
+    return {
+      protocolVersion: params.protocolVersion,
+      agentInfo: {
+        name: "mux",
+        version: process.env.MUX_VERSION ?? "dev",
+      },
+      agentCapabilities: {
+        loadSession: true,
+        sessionCapabilities: {
+          fork: {},
+        },
+      },
+    };
+  }
+
+  async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
+    this.assertInitialized("newSession");
+
+    const meta = parseMuxMeta(params._meta);
+    const projectPath = meta.projectPath ?? params.cwd.trim();
+    assert(projectPath.length > 0, "newSession: projectPath/cwd must be non-empty");
+
+    const createResult = await this.server.client.workspace.create({
+      projectPath,
+      branchName: meta.branchName ?? generateDefaultBranchName(),
+      trunkBranch: meta.trunkBranch,
+      title: meta.title,
+      runtimeConfig: meta.runtimeConfig,
+    });
+
+    if (!createResult.success) {
+      throw new Error(`newSession: workspace.create failed: ${createResult.error}`);
+    }
+
+    const workspace = createResult.metadata;
+    const sessionId = workspace.id;
+    const workspaceId = workspace.id;
+    const runtimeMode = runtimeModeFromConfig(workspace.runtimeConfig);
+
+    this.sessionManager.registerSession(
+      sessionId,
+      workspaceId,
+      runtimeMode,
+      this.negotiatedCapabilities ?? undefined
+    );
+    this.toolRouter.registerSession(sessionId, runtimeMode);
+
+    const agentId = meta.agentId ?? workspace.agentId ?? DEFAULT_AGENT_ID;
+    const aiSettings = await resolveAgentAiSettings(this.server.client, agentId, workspaceId);
+    await this.persistAiSettings(workspaceId, agentId, aiSettings);
+
+    this.sessionStateById.set(sessionId, {
+      workspaceId,
+      runtimeMode,
+      agentId,
+      aiSettings,
+    });
+
+    this.ensureChatSubscription(sessionId, workspaceId);
+
+    return {
+      sessionId,
+      configOptions: await buildConfigOptions(this.server.client, workspaceId),
+    };
+  }
+
+  async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
+    this.assertInitialized("loadSession");
+
+    const resumed = await loadSessionFromWorkspace(params, {
+      server: this.server,
+      sessionManager: this.sessionManager,
+      toolRouter: this.toolRouter,
+      negotiatedCapabilities: this.negotiatedCapabilities,
+      defaultAgentId: DEFAULT_AGENT_ID,
+    });
+
+    this.sessionStateById.set(resumed.sessionId, {
+      workspaceId: resumed.workspaceId,
+      runtimeMode: resumed.runtimeMode,
+      agentId: resumed.agentId,
+      aiSettings: resumed.aiSettings,
+    });
+
+    this.ensureChatSubscription(resumed.sessionId, resumed.workspaceId);
+
+    return resumed.response;
+  }
+
+  async unstable_forkSession(params: ForkSessionRequest): Promise<ForkSessionResponse> {
+    this.assertInitialized("unstable_forkSession");
+
+    const meta = parseMuxMeta(params._meta);
+    const forked = await forkSessionFromWorkspace(
+      params,
+      {
+        server: this.server,
+        sessionManager: this.sessionManager,
+        toolRouter: this.toolRouter,
+        negotiatedCapabilities: this.negotiatedCapabilities,
+        defaultAgentId: DEFAULT_AGENT_ID,
+      },
+      meta.forkName
+    );
+
+    await this.persistAiSettings(forked.workspaceId, forked.agentId, forked.aiSettings);
+
+    this.sessionStateById.set(forked.sessionId, {
+      workspaceId: forked.workspaceId,
+      runtimeMode: forked.runtimeMode,
+      agentId: forked.agentId,
+      aiSettings: forked.aiSettings,
+    });
+
+    this.ensureChatSubscription(forked.sessionId, forked.workspaceId);
+
+    return forked.response;
+  }
+
+  async prompt(params: PromptRequest): Promise<PromptResponse> {
+    this.assertInitialized("prompt");
+
+    const sessionId = params.sessionId.trim();
+    assert(sessionId.length > 0, "prompt: sessionId must be non-empty");
+
+    const workspaceId = this.sessionManager.getWorkspaceId(sessionId);
+    const sessionState = await this.refreshSessionState(sessionId);
+    const message = promptBlocksToText(params.prompt);
+
+    const turnPromise = this.beginTurn(sessionId);
+
+    try {
+      const sendResult = await this.server.client.workspace.sendMessage({
+        workspaceId,
+        message,
+        options: {
+          model: sessionState.aiSettings.model,
+          thinkingLevel: sessionState.aiSettings.thinkingLevel,
+          agentId: sessionState.agentId,
+        },
+      });
+
+      if (!sendResult.success) {
+        throw new Error(
+          `prompt: workspace.sendMessage failed: ${stringifyUnknown(sendResult.error)}`
+        );
+      }
+
+      const turn = await turnPromise;
+      const usage = turn.usage ?? this.latestUsageBySessionId.get(sessionId);
+      this.latestUsageBySessionId.delete(sessionId);
+
+      return {
+        stopReason: turn.stopReason,
+        usage,
+      };
+    } catch (error) {
+      this.rejectTurn(sessionId, asError(error, "prompt: prompt turn failed"));
+      throw error;
+    }
+  }
+
+  async cancel(params: CancelNotification): Promise<void> {
+    this.assertInitialized("cancel");
+
+    const sessionId = params.sessionId.trim();
+    assert(sessionId.length > 0, "cancel: sessionId must be non-empty");
+
+    const workspaceId = this.sessionManager.getWorkspaceId(sessionId);
+    const interruptResult = await this.server.client.workspace.interruptStream({ workspaceId });
+
+    if (!interruptResult.success) {
+      throw new Error(`cancel: workspace.interruptStream failed: ${interruptResult.error}`);
+    }
+  }
+
+  async setSessionConfigOption(
+    params: SetSessionConfigOptionRequest
+  ): Promise<SetSessionConfigOptionResponse> {
+    this.assertInitialized("setSessionConfigOption");
+
+    const sessionId = params.sessionId.trim();
+    assert(sessionId.length > 0, "setSessionConfigOption: sessionId must be non-empty");
+
+    const workspaceId = this.sessionManager.getWorkspaceId(sessionId);
+    const configOptions = await handleSetConfigOption(
+      this.server.client,
+      workspaceId,
+      params.configId,
+      params.value
+    );
+
+    await this.refreshSessionState(sessionId);
+
+    return { configOptions };
+  }
+
+  async authenticate(_params: AuthenticateRequest): Promise<AuthenticateResponse> {
+    this.assertInitialized("authenticate");
+
+    // Local mux server connections do not currently require ACP-level auth.
+    return {};
+  }
+
+  private ensureChatSubscription(sessionId: string, workspaceId: string): void {
+    if (this.chatSubscriptions.has(sessionId)) {
+      return;
+    }
+
+    const subscription = this.runChatSubscription(sessionId, workspaceId)
+      .catch((error) => {
+        if (this.connection.signal.aborted) {
+          return;
+        }
+
+        this.rejectTurn(sessionId, asError(error, "onChat subscription failed"));
+      })
+      .finally(() => {
+        this.chatSubscriptions.delete(sessionId);
+      });
+
+    this.chatSubscriptions.set(sessionId, subscription);
+  }
+
+  private async runChatSubscription(sessionId: string, workspaceId: string): Promise<void> {
+    const chatStream = await this.server.client.workspace.onChat({ workspaceId });
+    const observedStream = this.observeChatStream(sessionId, chatStream);
+    await this.streamTranslator.consumeAndForward(sessionId, observedStream);
+  }
+
+  private async *observeChatStream(
+    sessionId: string,
+    chatStream: AsyncIterable<WorkspaceChatMessage>
+  ): AsyncIterable<WorkspaceChatMessage> {
+    for await (const event of chatStream) {
+      this.handleStreamEvent(sessionId, event);
+      yield event;
+    }
+  }
+
+  private handleStreamEvent(sessionId: string, event: WorkspaceChatMessage): void {
+    if (event.type === "usage-delta") {
+      this.latestUsageBySessionId.set(sessionId, convertToAcpUsage(event.cumulativeUsage));
+      return;
+    }
+
+    if (event.type === "stream-end") {
+      const usage =
+        event.metadata.usage != null
+          ? convertToAcpUsage(event.metadata.usage)
+          : this.latestUsageBySessionId.get(sessionId);
+      this.resolveTurn(sessionId, { stopReason: "end_turn", usage });
+      return;
+    }
+
+    if (event.type === "stream-abort") {
+      const usage =
+        event.metadata?.usage != null
+          ? convertToAcpUsage(event.metadata.usage)
+          : this.latestUsageBySessionId.get(sessionId);
+      this.resolveTurn(sessionId, { stopReason: "cancelled", usage });
+      return;
+    }
+
+    if (event.type === "stream-error") {
+      this.rejectTurn(sessionId, new Error(`prompt stream failed: ${event.error}`));
+    }
+  }
+
+  private beginTurn(sessionId: string): Promise<TurnResult> {
+    assert(
+      !this.turnCompletions.has(sessionId),
+      `prompt: session '${sessionId}' already has a running turn`
+    );
+
+    // Replay events from loadSession can include historical usage deltas; clear stale usage before
+    // starting a fresh turn so prompt responses only reflect the in-flight request.
+    this.latestUsageBySessionId.delete(sessionId);
+
+    return new Promise<TurnResult>((resolve, reject) => {
+      this.turnCompletions.set(sessionId, { resolve, reject });
+    });
+  }
+
+  private resolveTurn(sessionId: string, result: TurnResult): void {
+    const completion = this.turnCompletions.get(sessionId);
+    if (!completion) {
+      return;
+    }
+
+    this.turnCompletions.delete(sessionId);
+    completion.resolve(result);
+  }
+
+  private rejectTurn(sessionId: string, error: Error): void {
+    const completion = this.turnCompletions.get(sessionId);
+    if (!completion) {
+      return;
+    }
+
+    this.turnCompletions.delete(sessionId);
+    completion.reject(error);
+  }
+
+  private async refreshSessionState(sessionId: string): Promise<SessionState> {
+    const workspaceId = this.sessionManager.getWorkspaceId(sessionId);
+    const workspace = await this.server.client.workspace.getInfo({ workspaceId });
+
+    if (!workspace) {
+      throw new Error(`refreshSessionState: workspace '${workspaceId}' was not found`);
+    }
+
+    const runtimeMode = runtimeModeFromConfig(workspace.runtimeConfig);
+    const existing = this.sessionStateById.get(sessionId);
+    const agentId = workspace.agentId ?? existing?.agentId ?? DEFAULT_AGENT_ID;
+    const aiSettings =
+      workspace.aiSettingsByAgent?.[agentId] ??
+      workspace.aiSettings ??
+      (await resolveAgentAiSettings(this.server.client, agentId, workspaceId));
+
+    const nextState: SessionState = {
+      workspaceId,
+      runtimeMode,
+      agentId,
+      aiSettings,
+    };
+
+    this.sessionStateById.set(sessionId, nextState);
+    return nextState;
+  }
+
+  private async persistAiSettings(
+    workspaceId: string,
+    agentId: string,
+    aiSettings: ResolvedAiSettings
+  ): Promise<void> {
+    if (agentId === "plan" || agentId === "exec") {
+      const updateModeResult = await this.server.client.workspace.updateModeAISettings({
+        workspaceId,
+        mode: agentId,
+        aiSettings,
+      });
+
+      if (!updateModeResult.success) {
+        throw new Error(`workspace.updateModeAISettings failed: ${updateModeResult.error}`);
+      }
+
+      return;
+    }
+
+    const updateAgentResult = await this.server.client.workspace.updateAgentAISettings({
+      workspaceId,
+      agentId,
+      aiSettings,
+    });
+
+    if (!updateAgentResult.success) {
+      throw new Error(`workspace.updateAgentAISettings failed: ${updateAgentResult.error}`);
+    }
+  }
+
+  private assertInitialized(methodName: string): void {
+    assert(this.initialized, `${methodName}: initialize must be called first`);
+  }
+}
+
+function parseMuxMeta(rawMeta: MetaRecord | null | undefined): ParsedMuxMeta {
+  const source = getMuxMetaSource(rawMeta);
+
+  return {
+    projectPath: readOptionalString(source, "projectPath"),
+    branchName: readOptionalString(source, "branchName"),
+    trunkBranch: readOptionalString(source, "trunkBranch"),
+    title: readOptionalString(source, "title"),
+    runtimeConfig: parseOptionalRuntimeConfig(source.runtimeConfig),
+    agentId: readOptionalString(source, "agentId"),
+    forkName:
+      readOptionalString(source, "forkName") ??
+      readOptionalString(source, "newName") ??
+      readOptionalString(source, "title"),
+  };
+}
+
+function getMuxMetaSource(rawMeta: MetaRecord | null | undefined): MetaRecord {
+  if (!isRecord(rawMeta)) {
+    return {};
+  }
+
+  const nestedMuxMeta = rawMeta.mux;
+  if (isRecord(nestedMuxMeta)) {
+    return nestedMuxMeta;
+  }
+
+  return rawMeta;
+}
+
+function parseOptionalRuntimeConfig(value: unknown): RuntimeConfig | undefined {
+  if (value == null) {
+    return undefined;
+  }
+
+  const parsed = RuntimeConfigSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new Error(
+      `invalid runtimeConfig in ACP _meta: ${parsed.error.issues[0]?.message ?? "unknown"}`
+    );
+  }
+
+  return parsed.data;
+}
+
+function readOptionalString(record: MetaRecord, key: string): string | undefined {
+  const value = record[key];
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function runtimeModeFromConfig(runtimeConfig: RuntimeConfig | undefined): RuntimeMode {
+  if (!runtimeConfig) {
+    return "worktree";
+  }
+
+  if (isWorktreeRuntime(runtimeConfig)) {
+    return "worktree";
+  }
+
+  return runtimeConfig.type;
+}
+
+function generateDefaultBranchName(): string {
+  const timestamp = Date.now().toString(36);
+  const randomSuffix = Math.random().toString(36).slice(2, 8);
+  return `${DEFAULT_BRANCH_PREFIX}-${timestamp}-${randomSuffix}`;
+}
+
+function promptBlocksToText(blocks: ContentBlock[]): string {
+  assert(Array.isArray(blocks), "prompt: prompt blocks must be an array");
+
+  const parts: string[] = [];
+
+  for (const block of blocks) {
+    if (block.type === "text") {
+      if (block.text.trim().length > 0) {
+        parts.push(block.text);
+      }
+      continue;
+    }
+
+    if (block.type === "resource") {
+      const resource = block.resource;
+      if ("text" in resource && resource.text.trim().length > 0) {
+        parts.push(resource.text);
+      } else {
+        parts.push(`[resource:${resource.uri}]`);
+      }
+      continue;
+    }
+
+    if (block.type === "resource_link") {
+      parts.push(`[resource_link:${block.name}] ${block.uri}`);
+      continue;
+    }
+
+    if (block.type === "image") {
+      parts.push(`[image:${block.mimeType}]`);
+      continue;
+    }
+
+    parts.push(`[audio:${block.mimeType}]`);
+  }
+
+  const message = parts.join("\n\n").trim();
+  return message.length > 0 ? message : "[No textual prompt content provided]";
+}
+
+function isRecord(value: unknown): value is MetaRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function asError(error: unknown, fallbackMessage: string): Error {
+  if (error instanceof Error) {
+    return error;
+  }
+
+  return new Error(fallbackMessage, { cause: error });
+}
+
+function stringifyUnknown(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
