@@ -477,11 +477,19 @@ export class TaskService {
         continue;
       }
 
+      const isPlanLike = await this.isPlanLikeTaskWorkspace({
+        projectPath: task.projectPath,
+        workspace: task,
+      });
+
       const model = task.taskModelString ?? defaultModel;
       await this.workspaceService.sendMessage(
         task.id,
-        "Mux restarted while this task was running. Continue where you left off. " +
-          "When you have a final answer, call agent_report exactly once.",
+        isPlanLike
+          ? "Mux restarted while this task was running. Continue where you left off. " +
+              "When you have a final plan, call propose_plan exactly once."
+          : "Mux restarted while this task was running. Continue where you left off. " +
+              "When you have a final answer, call agent_report exactly once.",
         {
           model,
           agentId: task.agentId ?? WORKSPACE_DEFAULTS.agentId,
