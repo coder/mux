@@ -1,14 +1,7 @@
 import Lottie from "lottie-react";
-import type { SVGRendererConfig } from "lottie-web";
 import dancingBlinkAnimation from "@/browser/assets/animations/dancing-blink.json";
 import { useTheme } from "@/browser/contexts/ThemeContext";
-
-// Safari/WebKit has rendering issues with Lottie SVGs where the bounding box
-// can appear as a black rectangle. Setting viewBoxOnly avoids injecting extra
-// sizing attributes that confuse WebKit's compositor.
-const svgRendererSettings: SVGRendererConfig = {
-  viewBoxOnly: true,
-};
+import { Shimmer } from "@/browser/components/ai-elements/shimmer";
 
 interface CreationCenterContentProps {
   projectName: string;
@@ -37,10 +30,9 @@ export function CreationCenterContent(props: CreationCenterContentProps) {
             animationData={dancingBlinkAnimation}
             loop
             renderer="svg"
-            rendererSettings={svgRendererSettings}
-            className="h-[50vh] w-[50vw]"
+            className={`w-[150px] ${isDark ? "brightness-0 invert" : ""}`}
           />
-          <div className="-mt-32 max-w-xl px-8 text-center">
+          <div className="mt-8 max-w-xl px-8 text-center">
             <h2 className="text-foreground mb-2 text-2xl font-medium">Creating workspace</h2>
             <p className="text-muted text-sm leading-relaxed">
               {props.workspaceName ? (
@@ -51,7 +43,7 @@ export function CreationCenterContent(props: CreationCenterContentProps) {
                   )}
                 </>
               ) : (
-                "Generating name…"
+                <Shimmer>Generating name…</Shimmer>
               )}
             </p>
           </div>
