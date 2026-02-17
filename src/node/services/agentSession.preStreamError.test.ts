@@ -9,7 +9,11 @@ import type { SendMessageError } from "@/common/types/errors";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
-import type { StreamErrorMessage, WorkspaceChatMessage } from "@/common/orpc/types";
+import {
+  isMuxMessage,
+  type StreamErrorMessage,
+  type WorkspaceChatMessage,
+} from "@/common/orpc/types";
 import { AgentSession } from "./agentSession";
 import { createTestHistoryService } from "./testHistoryService";
 
@@ -239,7 +243,91 @@ describe("AgentSession pre-stream errors", () => {
       return ids;
     }, []);
 
-    expect(replayedMessageIds).toEqual([secondPersisted.id]);
+    expect(replayedMessageIds).toEqual([firstPersisted.id, secondPersisted.id]);
+  });
+
+  it("replays cursor-boundary message when stream completed while offline", async () => {
+    const workspaceId = "ws-replay-since-boundary-message";
+    const { session, cleanup, replayInit, historyService } =
+      await createReplaySessionHarness(workspaceId);
+    historyCleanup = cleanup;
+
+    const inFlightPlaceholder = createMuxMessage("msg-stream-1", "assistant", "partial");
+    const appendPlaceholder = await historyService.appendToHistory(
+      workspaceId,
+      inFlightPlaceholder
+    );
+    expect(appendPlaceholder.success).toBe(true);
+
+    const beforeUpdateHistory = await historyService.getHistoryFromLatestBoundary(workspaceId);
+    if (!beforeUpdateHistory.success) {
+      throw new Error(`Failed to read history before update: ${beforeUpdateHistory.error}`);
+    }
+
+    const persistedPlaceholder = beforeUpdateHistory.data.find(
+      (message) => message.id === inFlightPlaceholder.id
+    );
+    if (!persistedPlaceholder) {
+      throw new Error("Expected persisted placeholder message before update");
+    }
+
+    const placeholderHistorySequence = persistedPlaceholder.metadata?.historySequence;
+    if (placeholderHistorySequence === undefined) {
+      throw new Error("Expected persisted placeholder to have historySequence");
+    }
+
+    const finalizedMessage = createMuxMessage("msg-stream-1", "assistant", "finalized", {
+      historySequence: placeholderHistorySequence,
+    });
+    const updateResult = await historyService.updateHistory(workspaceId, finalizedMessage);
+    expect(updateResult.success).toBe(true);
+
+    const events: WorkspaceChatMessage[] = [];
+    await session.replayHistory(
+      ({ message }) => {
+        events.push(message);
+      },
+      {
+        type: "since",
+        cursor: {
+          history: {
+            messageId: persistedPlaceholder.id,
+            historySequence: placeholderHistorySequence,
+            oldestHistorySequence: placeholderHistorySequence,
+          },
+          stream: {
+            messageId: "ended-stream",
+            lastTimestamp: 9_999,
+          },
+        },
+      }
+    );
+
+    expect(replayInit).toHaveBeenCalledWith(workspaceId);
+
+    const caughtUp = events.find(
+      (event): event is Extract<WorkspaceChatMessage, { type: "caught-up" }> =>
+        "type" in event && event.type === "caught-up"
+    );
+    expect(caughtUp).toBeDefined();
+    expect(caughtUp?.replay).toBe("since");
+
+    const replayedMessages = events
+      .filter(isMuxMessage)
+      .filter((event) => event.role === "assistant");
+    expect(replayedMessages).toHaveLength(1);
+    expect(replayedMessages[0].id).toBe("msg-stream-1");
+
+    const replayedText = replayedMessages[0].parts
+      .filter(
+        (
+          part
+        ): part is Extract<(typeof replayedMessages)[number]["parts"][number], { type: "text" }> =>
+          part.type === "text"
+      )
+      .map((part) => part.text)
+      .join("");
+    expect(replayedText).toContain("finalized");
   });
 
   it("replays init state for live-mode reconnects", async () => {

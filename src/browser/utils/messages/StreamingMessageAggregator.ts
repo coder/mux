@@ -839,9 +839,23 @@ export class StreamingMessageAggregator {
       this.lastResponseCompletedAt = null;
     }
 
+    const overwrittenMessageIds: string[] = [];
+
     // Add/overwrite messages in the map
     for (const message of messages) {
+      if (mode === "append" && this.messages.has(message.id)) {
+        overwrittenMessageIds.push(message.id);
+      }
       this.messages.set(message.id, message);
+    }
+
+    if (mode === "append") {
+      for (const messageId of overwrittenMessageIds) {
+        // Append replay can overwrite an existing message ID (e.g., partial -> finalized).
+        // Bump per-message version so displayed row caches are invalidated and rebuilt.
+        this.bumpMessageVersion(messageId);
+        this.displayedMessageCache.delete(messageId);
+      }
     }
 
     // Use "streaming" context if there's an active stream (reconnection), otherwise "historical"

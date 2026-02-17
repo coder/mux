@@ -517,12 +517,15 @@ export class AgentSession {
             continue;
           }
 
-          // Incremental replay skips persisted messages the client already has.
+          // Incremental replay skips strictly older persisted messages.
+          // We intentionally keep the cursor-boundary sequence (==) so reconnects can
+          // replace an in-flight placeholder with the finalized turn when the stream
+          // completed while the client was offline.
           if (sinceHistorySequence !== undefined) {
             const messageHistorySequence = message.metadata?.historySequence;
             if (
               messageHistorySequence !== undefined &&
-              messageHistorySequence <= sinceHistorySequence
+              messageHistorySequence < sinceHistorySequence
             ) {
               continue;
             }

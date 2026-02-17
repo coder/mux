@@ -1106,6 +1106,42 @@ describe("StreamingMessageAggregator", () => {
     });
   });
 
+  describe("append replay cache invalidation", () => {
+    test("rebuilds displayed rows when append replay overwrites an existing message id", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const partialMessage = createMuxMessage("msg-overwrite-1", "assistant", "partial", {
+        historySequence: 1,
+        timestamp: 1,
+      });
+      aggregator.loadHistoricalMessages([partialMessage], false);
+
+      const initialDisplayed = aggregator.getDisplayedMessages();
+      const initialAssistant = initialDisplayed.find(
+        (message): message is Extract<(typeof initialDisplayed)[number], { type: "assistant" }> =>
+          message.type === "assistant" && message.historyId === "msg-overwrite-1"
+      );
+      expect(initialAssistant).toBeDefined();
+      expect(initialAssistant?.content).toBe("partial");
+
+      const finalizedMessage = createMuxMessage("msg-overwrite-1", "assistant", "finalized", {
+        historySequence: 1,
+        timestamp: 2,
+      });
+      aggregator.loadHistoricalMessages([finalizedMessage], false, { mode: "append" });
+
+      const updatedDisplayed = aggregator.getDisplayedMessages();
+      const updatedAssistant = updatedDisplayed.find(
+        (message): message is Extract<(typeof updatedDisplayed)[number], { type: "assistant" }> =>
+          message.type === "assistant" && message.historyId === "msg-overwrite-1"
+      );
+
+      expect(updatedAssistant).toBeDefined();
+      expect(updatedAssistant?.content).toBe("finalized");
+      expect(updatedAssistant).not.toBe(initialAssistant);
+    });
+  });
+
   describe("compaction detection", () => {
     test("treats active stream as compacting on reconnect when stream-start has no mode", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
