@@ -76,7 +76,7 @@ describeIntegration("System1 reasoning policy", () => {
       }
       await user.click(agentsTabButton);
 
-      await canvas.findByText(/System1 Defaults \(internal\)/i);
+      await canvas.findByRole("heading", { name: /internal/i });
 
       const system1BashTitle = await canvas.findByText("System1 Bash");
       const system1BashCard = system1BashTitle.closest("div.rounded-md") as HTMLElement | null;
