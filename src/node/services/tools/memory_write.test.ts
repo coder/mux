@@ -132,6 +132,39 @@ describe("memory_write tool", () => {
     });
   });
 
+  it("fails when replace_count is non-positive (except -1)", async () => {
+    using muxRoot = new TestTempDir("test-memory-write");
+    process.env.MUX_ROOT = muxRoot.path;
+
+    const projectPath = path.join(muxRoot.path, "project");
+    const { memoriesDir, memoryPath } = getMemoryFilePathForProject(projectPath);
+    await fs.mkdir(memoriesDir, { recursive: true });
+    await fs.writeFile(memoryPath, "hello", "utf8");
+
+    const config = createConfig(muxRoot.path, projectPath);
+    const tool = createMemoryWriteTool(config);
+
+    const zero = (await tool.execute!(
+      { old_string: "hello", new_string: "updated", replace_count: 0 },
+      mockToolCallOptions
+    )) as MemoryWriteToolResult;
+    expect(zero).toEqual({
+      success: false,
+      error: "replace_count must be a positive integer or -1.",
+    });
+
+    const negative = (await tool.execute!(
+      { old_string: "hello", new_string: "updated", replace_count: -2 },
+      mockToolCallOptions
+    )) as MemoryWriteToolResult;
+    expect(negative).toEqual({
+      success: false,
+      error: "replace_count must be a positive integer or -1.",
+    });
+
+    expect(await fs.readFile(memoryPath, "utf8")).toBe("hello");
+  });
+
   it("fails when old_string is non-unique and replace_count is 1", async () => {
     using muxRoot = new TestTempDir("test-memory-write");
     process.env.MUX_ROOT = muxRoot.path;

@@ -103,6 +103,86 @@ describe("system1MemoryWriter", () => {
     }
   });
 
+  it("passes truly empty memory content for first-write CAS updates", async () => {
+    const runtime = createRuntime({ type: "local", srcBaseDir: process.cwd() });
+
+    const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "system1-memory-project-"));
+    const muxRoot = await fs.mkdtemp(path.join(os.tmpdir(), "system1-memory-root-"));
+
+    const previousMuxRoot = process.env.MUX_ROOT;
+    process.env.MUX_ROOT = muxRoot;
+
+    try {
+      await fs.writeFile(path.join(muxRoot, "AGENTS.md"), "# Global\n", "utf8");
+      await fs.writeFile(path.join(projectDir, "AGENTS.md"), "# Agents\n", "utf8");
+
+      const history: MuxMessage[] = [
+        {
+          id: "u1",
+          role: "user",
+          parts: [{ type: "text", text: "Seed memory." }],
+          metadata: { historySequence: 1 },
+        },
+      ];
+
+      const result = await runSystem1WriteProjectMemories({
+        runtime,
+        agentDiscoveryPath: projectDir,
+        runtimeTempDir: os.tmpdir(),
+        model: {} as unknown as LanguageModel,
+        modelString: "openai:gpt-5.1-codex-mini",
+        providerOptions: {},
+        workspaceId: "ws_1",
+        workspaceName: "main",
+        triggerMessageId: "assistant-test",
+        projectPath: projectDir,
+        workspacePath: projectDir,
+        history,
+        timeoutMs: 5_000,
+        generateTextImpl: async (args) => {
+          const messages = (args as { messages?: unknown }).messages as
+            | Array<{ content?: unknown }>
+            | undefined;
+          const userMessage = messages?.[0]?.content;
+          expect(typeof userMessage).toBe("string");
+          expect(userMessage).not.toContain("(empty)");
+
+          const openTag = "<memory-file>\n";
+          const closeTag = "\n</memory-file>";
+          const start = (userMessage as string).indexOf(openTag);
+          const end = (userMessage as string).indexOf(closeTag, start + openTag.length);
+          expect(start).toBeGreaterThanOrEqual(0);
+          expect(end).toBeGreaterThan(start);
+
+          const memoryBody = (userMessage as string).slice(start + openTag.length, end);
+          expect(memoryBody).toBe("");
+
+          const tools = (args as { tools?: unknown }).tools as Record<string, unknown> | undefined;
+          expect(tools && "memory_write" in tools).toBe(true);
+
+          const writeTool = tools!.memory_write as {
+            execute: (input: unknown, options: unknown) => Promise<unknown>;
+          };
+
+          await writeTool.execute({ old_string: "", new_string: "first memory" }, {});
+          return { finishReason: "stop" };
+        },
+      });
+
+      const { memoryPath } = getMemoryFilePathForProject(projectDir);
+      expect(result).toEqual({ finishReason: "stop", timedOut: false });
+      expect(await fs.readFile(memoryPath, "utf8")).toBe("first memory");
+    } finally {
+      if (previousMuxRoot === undefined) {
+        delete process.env.MUX_ROOT;
+      } else {
+        process.env.MUX_ROOT = previousMuxRoot;
+      }
+      await fs.rm(projectDir, { recursive: true, force: true });
+      await fs.rm(muxRoot, { recursive: true, force: true });
+    }
+  });
+
   it("keeps conversation events JSON within budget when latest event is oversized", async () => {
     const runtime = createRuntime({ type: "local", srcBaseDir: process.cwd() });
 

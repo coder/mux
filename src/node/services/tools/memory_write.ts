@@ -77,6 +77,13 @@ export const createMemoryWriteTool: ToolFactory = (config: ToolConfiguration) =>
 
           const replaceCount = args.replace_count ?? 1;
 
+          if (!Number.isInteger(replaceCount) || (replaceCount <= 0 && replaceCount !== -1)) {
+            return {
+              success: false,
+              error: "replace_count must be a positive integer or -1.",
+            };
+          }
+
           // Special-case: allow CAS-style writes for empty files.
           // Using the generic string-replace logic with an empty old_string would match
           // at every position and produce unusable results.

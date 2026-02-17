@@ -342,7 +342,9 @@ export async function runSystem1WriteProjectMemories(
     "</context-instructions>",
     "",
     "<memory-file>",
-    existingMemory.length > 0 ? existingMemory : "(empty)",
+    // Keep truly-empty content empty so first-write CAS updates can pass
+    // old_string: "" to memory_write without an extra recovery turn.
+    existingMemory,
     "</memory-file>",
     "",
     "Conversation events (JSON):",
