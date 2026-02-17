@@ -2,6 +2,7 @@ import React from "react";
 import {
   RIGHT_SIDEBAR_COLLAPSED_KEY,
   RIGHT_SIDEBAR_TAB_KEY,
+  getReviewImmersiveKey,
   getRightSidebarLayoutKey,
   getTerminalTitlesKey,
 } from "@/common/constants/storage";
@@ -20,7 +21,13 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { StatsTab } from "./RightSidebar/StatsTab";
 import { OutputTab } from "./OutputTab";
 
-import { matchesKeybind, KEYBINDS, formatKeybind, isDialogOpen } from "@/browser/utils/ui/keybinds";
+import {
+  matchesKeybind,
+  KEYBINDS,
+  formatKeybind,
+  isDialogOpen,
+  isEditableElement,
+} from "@/browser/utils/ui/keybinds";
 import { SidebarCollapseButton } from "./ui/SidebarCollapseButton";
 import { cn } from "@/common/lib/utils";
 import type { ReviewNoteData } from "@/common/types/review";
@@ -51,6 +58,7 @@ import {
   removeTabEverywhere,
   reorderTabInTabset,
   selectTabByIndex,
+  selectOrAddTab,
   selectTabInTabset,
   setFocusedTabset,
   updateSplitSizes,
@@ -611,6 +619,11 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const [collapsed, setCollapsed] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false, {
     listener: true,
   });
+  const [isReviewImmersive, setIsReviewImmersive] = usePersistedState<boolean>(
+    getReviewImmersiveKey(workspaceId),
+    false,
+    { listener: true }
+  );
 
   // Stats tab feature flag
   const { statsTabState } = useFeatureFlags();
@@ -735,6 +748,11 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     [initialActiveTab, setLayoutRaw]
   );
 
+  const selectOrOpenReviewTab = React.useCallback(() => {
+    setLayout((prev) => selectOrAddTab(prev, "review"));
+    _setFocusTrigger((prev) => prev + 1);
+  }, [setLayout]);
+
   // Keyboard shortcuts for tab switching by position (Cmd/Ctrl+1-9)
   // Auto-expands sidebar if collapsed
   React.useEffect(() => {
@@ -782,6 +800,26 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [initialActiveTab, setAutoFocusTerminalSession, setCollapsed, setLayout, _setFocusTrigger]);
+
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!matchesKeybind(e, KEYBINDS.TOGGLE_REVIEW_IMMERSIVE)) {
+        return;
+      }
+
+      if (isEditableElement(e.target)) {
+        return;
+      }
+
+      e.preventDefault();
+      setCollapsed(false);
+      selectOrOpenReviewTab();
+      setIsReviewImmersive(!isReviewImmersive);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isReviewImmersive, selectOrOpenReviewTab, setCollapsed, setIsReviewImmersive]);
 
   const baseId = `right-sidebar-${workspaceId}`;
 

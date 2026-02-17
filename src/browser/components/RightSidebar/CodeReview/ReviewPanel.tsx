@@ -1157,7 +1157,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     isImmersive,
   ]);
 
-  // Global keyboard shortcuts (refresh/search/immersive toggle)
+  // Global keyboard shortcuts (refresh/search)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (matchesKeybind(e, KEYBINDS.REFRESH_REVIEW)) {
@@ -1170,16 +1170,12 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         if (isEditableElement(e.target)) return;
         e.preventDefault();
         searchInputRef.current?.focus();
-      } else if (matchesKeybind(e, KEYBINDS.TOGGLE_REVIEW_IMMERSIVE)) {
-        if (isEditableElement(e.target)) return;
-        e.preventDefault();
-        setIsImmersive((prev) => !prev);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [setIsImmersive]);
+  }, []);
 
   const isNonGitWorkspace =
     diffState.status === "error" &&

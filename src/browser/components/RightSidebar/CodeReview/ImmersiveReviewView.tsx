@@ -22,9 +22,7 @@ import {
   getAdjacentFilePath,
   getFileHunks,
 } from "@/browser/utils/review/navigation";
-import { buildQuickLineReviewNote } from "@/browser/utils/review/quickReviewNotes";
 import { isEditableElement, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
-import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
 import type { DiffHunk, Review, ReviewNoteData } from "@/common/types/review";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
@@ -49,8 +47,8 @@ interface ImmersiveReviewViewProps {
   firstSeenMap: Record<string, number>;
 }
 
-/** Quick feedback composer state */
-interface ComposerState {
+interface InlineComposerRequest {
+  requestId: number;
   prefill: string;
   hunkId: string;
   startIndex: number;
@@ -87,18 +85,9 @@ function countHunkChanges(hunk: DiffHunk): {
 
 export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const composerRef = useRef<HTMLTextAreaElement>(null);
 
-  const {
-    fileTree,
-    hunks,
-    allHunks,
-    selectedHunkId,
-    onSelectHunk,
-    onToggleRead,
-    onExit,
-    onReviewNote,
-  } = props;
+  const { fileTree, hunks, selectedHunkId, onSelectHunk, onToggleRead, onExit, onReviewNote } =
+    props;
 
   // Flatten file tree into ordered file list
   const fileList = useMemo(() => flattenFileTreeLeaves(fileTree), [fileTree]);
@@ -148,9 +137,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     }
   }, [currentFileHunks, selectedHunkId, onSelectHunk]);
 
-  // Quick feedback composer
-  const [composer, setComposer] = useState<ComposerState | null>(null);
-  const [composerText, setComposerText] = useState("");
+  const [inlineComposerRequest, setInlineComposerRequest] = useState<InlineComposerRequest | null>(
+    null
+  );
+  const nextComposerRequestIdRef = useRef(0);
 
   // Keyboard line cursor state (scoped to the currently selected hunk)
   const [activeLineIndex, setActiveLineIndex] = useState<number | null>(null);
@@ -236,44 +226,17 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         return;
       }
 
-      setComposer({
+      nextComposerRequestIdRef.current += 1;
+      setInlineComposerRequest({
+        requestId: nextComposerRequestIdRef.current,
         prefill,
         hunkId: selectedHunk.id,
         startIndex: selection.startIndex,
         endIndex: selection.endIndex,
       });
-      setComposerText(prefill);
     },
-    [selectedHunk, getCurrentLineSelection]
+    [getCurrentLineSelection, selectedHunk]
   );
-
-  const submitComposer = useCallback(() => {
-    if (!composer || !composerText.trim()) return;
-
-    // Use allHunks (unfiltered) so submission works even if the hunk was filtered out during editing
-    const hunk = allHunks.find((item) => item.id === composer.hunkId);
-    if (!hunk || !onReviewNote) return;
-
-    const noteData = buildQuickLineReviewNote({
-      hunk,
-      startIndex: composer.startIndex,
-      endIndex: composer.endIndex,
-      userNote: composerText.trim(),
-    });
-
-    onReviewNote(noteData);
-
-    setComposer(null);
-    setComposerText("");
-    // Restore focus to container
-    containerRef.current?.focus();
-  }, [composer, composerText, allHunks, onReviewNote]);
-
-  const cancelComposer = useCallback(() => {
-    setComposer(null);
-    setComposerText("");
-    containerRef.current?.focus();
-  }, []);
 
   const moveLineCursor = useCallback(
     (delta: number, extendRange: boolean) => {
@@ -321,14 +284,6 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     [selectedHunkId, onSelectHunk, selectedLineRange, activeLineIndex]
   );
 
-  // Focus composer when it opens
-  useEffect(() => {
-    if (composer) {
-      composerRef.current?.focus();
-      composerRef.current?.select();
-    }
-  }, [composer]);
-
   // Auto-focus container on mount
   useEffect(() => {
     containerRef.current?.focus();
@@ -337,7 +292,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   // --- Keyboard handler ---
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't intercept when typing in composer or other editable elements
+      // Don't intercept when typing in editable elements
       if (isEditableElement(e.target)) return;
 
       // Esc: exit immersive
@@ -556,51 +511,6 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         )}
       </div>
 
-      {/* Quick feedback composer */}
-      {composer && (
-        <div className="border-border-light bg-dark border-b px-3 py-2">
-          <div className="flex items-center gap-2">
-            <div
-              className="flex flex-1 overflow-hidden rounded border border-[var(--color-review-accent)]/30"
-              style={{
-                background: "hsl(from var(--color-review-accent) h s l / 0.08)",
-              }}
-            >
-              <div
-                className="w-[3px] shrink-0"
-                style={{ background: "var(--color-review-accent)" }}
-              />
-              <textarea
-                ref={composerRef}
-                className="text-primary placeholder:text-muted/70 min-w-0 flex-1 resize-none bg-transparent px-2 py-1.5 text-[12px] leading-[1.5] focus:outline-none"
-                style={{ minHeight: "calc(12px * 1.5 + 12px)" }}
-                value={composerText}
-                onChange={(e) => setComposerText(e.target.value)}
-                onKeyDown={(e) => {
-                  stopKeyboardPropagation(e);
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    submitComposer();
-                  } else if (e.key === "Escape") {
-                    e.preventDefault();
-                    cancelComposer();
-                  }
-                }}
-                placeholder="Add your note... (Enter to submit, Esc to cancel)"
-              />
-            </div>
-            <button
-              type="button"
-              onClick={submitComposer}
-              className="text-muted hover:text-primary shrink-0 cursor-pointer border-none bg-transparent px-1 text-xs"
-              aria-label="Submit review note"
-            >
-              ↵
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* File hunks (always expanded, grouped by file) */}
       <div className="flex-1 overflow-y-auto p-3">
         {currentFileHunks.length === 0 ? (
@@ -675,11 +585,25 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                     fontSize="11px"
                     maxHeight="none"
                     className="rounded-none border-0 [&>div]:overflow-x-visible"
+                    onReviewNote={onReviewNote}
+                    onLineClick={() => onSelectHunk(hunk.id)}
                     reviewActions={props.reviewActions}
                     activeLineIndex={isSelected ? activeLineIndex : null}
                     selectedLineRange={isSelected ? selectedLineRange : null}
                     onLineIndexSelect={(lineIndex, shiftKey) =>
                       handleLineIndexSelect(hunk.id, lineIndex, shiftKey)
+                    }
+                    externalSelectionRequest={
+                      isSelected && inlineComposerRequest?.hunkId === hunk.id
+                        ? {
+                            requestId: inlineComposerRequest.requestId,
+                            selection: {
+                              startIndex: inlineComposerRequest.startIndex,
+                              endIndex: inlineComposerRequest.endIndex,
+                            },
+                            initialNoteText: inlineComposerRequest.prefill,
+                          }
+                        : null
                     }
                   />
                 </section>
@@ -700,7 +624,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         <KeycapGroup keys={["m"]} label="read" />
         <KeycapGroup keys={["Shift", "l"]} label="comment" />
         <KeycapGroup keys={["Shift", "d"]} label="dislike" />
-        {composer && <KeycapGroup keys={["Enter"]} label="submit" />}
+        <KeycapGroup keys={["Enter"]} label="submit" />
       </div>
     </div>
   );

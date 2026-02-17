@@ -647,6 +647,12 @@ interface SelectableDiffRendererProps extends Omit<DiffRendererProps, "filePath"
   selectedLineRange?: LineSelection | null;
   /** Called when user selects a line via click in immersive mode */
   onLineIndexSelect?: (lineIndex: number, shiftKey: boolean) => void;
+  /** External request to open/update inline composer at a specific line selection */
+  externalSelectionRequest?: {
+    requestId: number;
+    selection: LineSelection;
+    initialNoteText?: string;
+  } | null;
 }
 
 interface LineSelection {
@@ -673,6 +679,7 @@ interface ReviewNoteInputProps {
   lineNumberWidths: { oldWidthCh: number; newWidthCh: number };
   onSubmit: (data: ReviewNoteData) => void;
   onCancel: () => void;
+  initialNoteText?: string;
 }
 
 const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
@@ -685,15 +692,20 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
     lineNumberWidths,
     onSubmit,
     onCancel,
+    initialNoteText,
   }) => {
     const { showOld, showNew } = getLineNumberModeFlags(lineNumberMode);
-    const [noteText, setNoteText] = React.useState("");
+    const [noteText, setNoteText] = React.useState(initialNoteText ?? "");
     const textareaRef = React.useRef<HTMLTextAreaElement>(null);
 
     // Auto-focus on mount
     React.useEffect(() => {
       textareaRef.current?.focus();
     }, []);
+
+    React.useEffect(() => {
+      setNoteText(initialNoteText ?? "");
+    }, [initialNoteText]);
 
     // Auto-expand textarea as user types
     React.useEffect(() => {
@@ -940,6 +952,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     activeLineIndex,
     selectedLineRange,
     onLineIndexSelect,
+    externalSelectionRequest,
   }) => {
     const dragAnchorRef = React.useRef<number | null>(null);
     const [isDragging, setIsDragging] = React.useState(false);
@@ -960,6 +973,26 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     }, []);
     const { theme } = useTheme();
     const [selection, setSelection] = React.useState<LineSelection | null>(null);
+    const [selectionInitialNoteText, setSelectionInitialNoteText] = React.useState("");
+
+    const lastExternalSelectionRequestIdRef = React.useRef<number | null>(null);
+
+    React.useEffect(() => {
+      if (!externalSelectionRequest) {
+        return;
+      }
+
+      if (lastExternalSelectionRequestIdRef.current === externalSelectionRequest.requestId) {
+        return;
+      }
+
+      lastExternalSelectionRequestIdRef.current = externalSelectionRequest.requestId;
+      setSelection({
+        startIndex: externalSelectionRequest.selection.startIndex,
+        endIndex: externalSelectionRequest.selection.endIndex,
+      });
+      setSelectionInitialNoteText(externalSelectionRequest.initialNoteText ?? "");
+    }, [externalSelectionRequest]);
 
     // Notify parent when composition state changes
     React.useEffect(() => {
@@ -1112,6 +1145,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
         const anchor = shiftKey && selection ? selection.startIndex : lineIndex;
         dragAnchorRef.current = anchor;
         setIsDragging(true);
+        setSelectionInitialNoteText("");
         setSelection({ startIndex: anchor, endIndex: lineIndex });
       },
       [onLineClick, onReviewNote, selection]
@@ -1135,6 +1169,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       // Shift-click: extend existing selection
       if (shiftKey && selection) {
         const start = selection.startIndex;
+        setSelectionInitialNoteText("");
         setSelection({
           startIndex: start,
           endIndex: lineIndex,
@@ -1143,6 +1178,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       }
 
       // Regular click: start new selection
+      setSelectionInitialNoteText("");
       setSelection({
         startIndex: lineIndex,
         endIndex: lineIndex,
@@ -1153,10 +1189,12 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       if (!onReviewNote) return;
       onReviewNote(data);
       setSelection(null);
+      setSelectionInitialNoteText("");
     };
 
     const handleCancelNote = () => {
       setSelection(null);
+      setSelectionInitialNoteText("");
     };
 
     const isLineInSelection = (index: number, lineSelection: LineSelection | null | undefined) => {
@@ -1303,6 +1341,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                     lineNumberWidths={lineNumberWidths}
                     onSubmit={handleSubmitNote}
                     onCancel={handleCancelNote}
+                    initialNoteText={selectionInitialNoteText}
                   />
                 )}
 
