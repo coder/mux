@@ -1122,6 +1122,36 @@ describe("StreamManager - replayStream", () => {
   });
 });
 
+describe("StreamManager - getStreamInfo", () => {
+  test("returns startTime so reconnect cursors can preserve live-only boundaries", () => {
+    const streamManager = new StreamManager(historyService);
+    const workspaceId = "ws-get-stream-info";
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
+    if (!(workspaceStreamsValue instanceof Map)) {
+      throw new Error("StreamManager.workspaceStreams is not a Map");
+    }
+    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
+
+    workspaceStreams.set(workspaceId, {
+      state: "starting",
+      messageId: "msg-starting",
+      model: "claude-sonnet-4",
+      historySequence: 1,
+      startTime: 4_321,
+      initialMetadata: {},
+      parts: [],
+      toolCompletionTimestamps: new Map<string, number>(),
+    });
+
+    const streamInfo = streamManager.getStreamInfo(workspaceId);
+
+    expect(streamInfo?.messageId).toBe("msg-starting");
+    expect(streamInfo?.startTime).toBe(4_321);
+  });
+});
+
 describe("StreamManager - categorizeError", () => {
   test("unwraps RetryError.lastError to classify model_not_found", () => {
     const streamManager = new StreamManager(historyService);

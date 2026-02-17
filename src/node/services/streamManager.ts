@@ -2877,6 +2877,7 @@ export class StreamManager extends EventEmitter {
         messageId: string;
         model: string;
         historySequence: number;
+        startTime: number;
         parts: CompletedMessagePart[];
         toolCompletionTimestamps: Map<string, number>;
       }
@@ -2893,6 +2894,7 @@ export class StreamManager extends EventEmitter {
         messageId: streamInfo.messageId,
         model: streamInfo.model,
         historySequence: streamInfo.historySequence,
+        startTime: streamInfo.startTime,
         toolCompletionTimestamps: streamInfo.toolCompletionTimestamps ?? new Map(),
         parts: streamInfo.parts,
       };
