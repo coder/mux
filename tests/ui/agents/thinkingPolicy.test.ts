@@ -49,10 +49,11 @@ describeIntegration("System1 reasoning policy", () => {
       await user.click(settingsButton);
 
       const body = within(doc.body);
-      const dialog = await body.findByRole("dialog", {}, { timeout: 10_000 });
-      const dialogCanvas = within(dialog);
 
-      const agentsTabButton = await dialogCanvas.findByRole(
+      // Settings now render in the main pane (route-based), not a modal dialog.
+      await canvas.findByRole("button", { name: /^General$/i }, { timeout: 10_000 });
+
+      const agentsTabButton = await canvas.findByRole(
         "button",
         {
           name: /agents/i,
@@ -61,9 +62,9 @@ describeIntegration("System1 reasoning policy", () => {
       );
       await user.click(agentsTabButton);
 
-      await dialogCanvas.findByText(/System1 Defaults \(internal\)/i);
+      await canvas.findByText(/System1 Defaults \(internal\)/i);
 
-      const system1BashTitle = await dialogCanvas.findByText("System1 Bash");
+      const system1BashTitle = await canvas.findByText("System1 Bash");
       const system1BashCard = system1BashTitle.closest("div.rounded-md") as HTMLElement | null;
       if (!system1BashCard) {
         throw new Error("System1 Bash defaults card not found");
