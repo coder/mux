@@ -1142,6 +1142,59 @@ describe("StreamingMessageAggregator", () => {
     });
   });
 
+  test("keeps richer in-memory parts when append replay sends a stale duplicate", () => {
+    const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+    aggregator.handleStreamStart({
+      type: "stream-start",
+      workspaceId: "test-workspace",
+      messageId: "msg-stale-append",
+      historySequence: 1,
+      model: "claude-3-5-sonnet-20241022",
+      startTime: 1_000,
+    });
+
+    aggregator.handleToolCallStart({
+      type: "tool-call-start",
+      workspaceId: "test-workspace",
+      messageId: "msg-stale-append",
+      toolCallId: "tool-stale-append",
+      toolName: "bash",
+      args: { command: "echo hi" },
+      tokens: 1,
+      timestamp: 1_100,
+    });
+
+    aggregator.handleStreamDelta({
+      type: "stream-delta",
+      workspaceId: "test-workspace",
+      messageId: "msg-stale-append",
+      delta: "tool output pending",
+      tokens: 1,
+      timestamp: 1_200,
+    });
+
+    const existingMessage = aggregator
+      .getAllMessages()
+      .find((message) => message.id === "msg-stale-append");
+    expect(existingMessage).toBeDefined();
+    expect(existingMessage?.parts.length).toBeGreaterThan(1);
+
+    const staleReplayMessage = createMuxMessage("msg-stale-append", "assistant", "placeholder", {
+      historySequence: 1,
+      timestamp: 1_050,
+    });
+    aggregator.loadHistoricalMessages([staleReplayMessage], true, { mode: "append" });
+
+    const updatedMessage = aggregator
+      .getAllMessages()
+      .find((message) => message.id === "msg-stale-append");
+    expect(updatedMessage).toBeDefined();
+    expect(updatedMessage).toBe(existingMessage);
+    expect(updatedMessage?.parts.length).toBeGreaterThan(1);
+    expect(updatedMessage?.parts.some((part) => part.type === "dynamic-tool")).toBe(true);
+  });
+
   describe("compaction detection", () => {
     test("treats active stream as compacting on reconnect when stream-start has no mode", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);

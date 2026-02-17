@@ -840,13 +840,28 @@ export class StreamingMessageAggregator {
     }
 
     const overwrittenMessageIds: string[] = [];
+    const appliedMessages: MuxMessage[] = [];
 
     // Add/overwrite messages in the map
     for (const message of messages) {
-      if (mode === "append" && this.messages.has(message.id)) {
+      const existing = mode === "append" ? this.messages.get(message.id) : undefined;
+
+      if (existing) {
+        const existingParts = Array.isArray(existing.parts) ? existing.parts.length : 0;
+        const incomingParts = Array.isArray(message.parts) ? message.parts.length : 0;
+
+        // Since-replay can include a stale boundary row for an active stream message while
+        // richer in-memory parts already exist. Keep the richer message to avoid dropping
+        // in-flight tool/text parts that filtered replay deltas may not resend.
+        if (incomingParts < existingParts) {
+          continue;
+        }
+
         overwrittenMessageIds.push(message.id);
       }
+
       this.messages.set(message.id, message);
+      appliedMessages.push(message);
     }
 
     if (mode === "append") {
@@ -861,8 +876,8 @@ export class StreamingMessageAggregator {
     // Use "streaming" context if there's an active stream (reconnection), otherwise "historical"
     const context = hasActiveStream ? "streaming" : "historical";
 
-    // Sort messages in chronological order for processing
-    const chronologicalMessages = [...messages].sort(
+    // Sort applied messages in chronological order for processing
+    const chronologicalMessages = [...appliedMessages].sort(
       (a, b) => (a.metadata?.historySequence ?? 0) - (b.metadata?.historySequence ?? 0)
     );
 
