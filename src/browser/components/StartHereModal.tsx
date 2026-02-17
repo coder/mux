@@ -49,16 +49,19 @@ export const StartHereModal: React.FC<StartHereModalProps> = ({ isOpen, onClose,
 
   const handleDialogKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (isExecuting) return;
       if (isEditableElement(e.target)) return;
+
+      // Block all global shortcuts while dialog is active.
+      // Radix handles Escape in capture phase (via onEscapeKeyDown) before this fires.
+      stopKeyboardPropagation(e);
+
+      if (isExecuting) return;
 
       if (matchesKeybind(e, KEYBINDS.CONFIRM_DIALOG_YES)) {
         e.preventDefault();
-        stopKeyboardPropagation(e);
         void handleConfirm();
       } else if (matchesKeybind(e, KEYBINDS.CONFIRM_DIALOG_NO)) {
         e.preventDefault();
-        stopKeyboardPropagation(e);
         handleCancel();
       }
     },

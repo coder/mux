@@ -59,16 +59,19 @@ export const ForceDeleteModal: React.FC<ForceDeleteModalProps> = ({
 
   const handleDialogKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (isDeleting) return;
       if (isEditableElement(e.target)) return;
+
+      // Block all global shortcuts while dialog is active.
+      // Radix handles Escape in capture phase (via onEscapeKeyDown) before this fires.
+      stopKeyboardPropagation(e);
+
+      if (isDeleting) return;
 
       if (matchesKeybind(e, KEYBINDS.CONFIRM_DIALOG_YES)) {
         e.preventDefault();
-        stopKeyboardPropagation(e);
         handleForceDelete();
       } else if (matchesKeybind(e, KEYBINDS.CONFIRM_DIALOG_NO)) {
         e.preventDefault();
-        stopKeyboardPropagation(e);
         onClose();
       }
     },

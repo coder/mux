@@ -59,16 +59,19 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = (props) => {
 
   const handleDialogKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (isConfirming) return;
       if (isEditableElement(e.target)) return;
+
+      // Block all global shortcuts while dialog is active.
+      // Radix handles Escape in capture phase (via onEscapeKeyDown) before this fires.
+      stopKeyboardPropagation(e);
+
+      if (isConfirming) return;
 
       if (matchesKeybind(e, KEYBINDS.CONFIRM_DIALOG_YES)) {
         e.preventDefault();
-        stopKeyboardPropagation(e);
         void handleConfirm();
       } else if (matchesKeybind(e, KEYBINDS.CONFIRM_DIALOG_NO)) {
         e.preventDefault();
-        stopKeyboardPropagation(e);
         onCancel();
       }
     },
