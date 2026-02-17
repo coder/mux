@@ -27,6 +27,8 @@ export interface SessionForkDependencies {
   toolRouter: ToolRouter;
   negotiatedCapabilities: NegotiatedCapabilities | null;
   defaultAgentId: string;
+  /** The source ACP session's current agent selection, if available. */
+  sourceSessionAgentId?: string;
 }
 
 function resolveRuntimeMode(workspace: WorkspaceInfo): RuntimeMode {
@@ -75,7 +77,9 @@ export async function forkSessionFromWorkspace(
   );
   deps.toolRouter.registerSession(sessionId, runtimeMode);
 
-  const agentId = sourceWorkspace.agentId ?? deps.defaultAgentId;
+  // Prefer the source ACP session's active agent selection over workspace
+  // metadata, so forks inherit the mode the user switched to in-session.
+  const agentId = deps.sourceSessionAgentId ?? sourceWorkspace.agentId ?? deps.defaultAgentId;
   const aiSettings = await resolveAgentAiSettings(deps.server.client, agentId, workspaceId);
   const configOptions = await buildConfigOptions(deps.server.client, workspaceId);
 

@@ -202,6 +202,8 @@ export class MuxAgent implements Agent {
     this.assertInitialized("unstable_forkSession");
 
     const meta = parseMuxMeta(params._meta);
+    // Pass the source session's active agent so forks inherit mode switches
+    const sourceSessionState = this.sessionStateById.get(params.sessionId);
     const forked = await forkSessionFromWorkspace(
       params,
       {
@@ -210,6 +212,7 @@ export class MuxAgent implements Agent {
         toolRouter: this.toolRouter,
         negotiatedCapabilities: this.negotiatedCapabilities,
         defaultAgentId: DEFAULT_AGENT_ID,
+        sourceSessionAgentId: sourceSessionState?.agentId,
       },
       meta.forkName
     );
@@ -458,7 +461,11 @@ export class MuxAgent implements Agent {
 
     const runtimeMode = runtimeModeFromConfig(workspace.runtimeConfig);
     const existing = this.sessionStateById.get(sessionId);
-    const agentId = workspace.agentId ?? existing?.agentId ?? DEFAULT_AGENT_ID;
+    // Prefer the ACP session's agent selection over workspace metadata.
+    // The user may have switched mode via session/set_config_option; that
+    // selection lives in sessionStateById and must not be reverted by a
+    // workspace.agentId value from the backend.
+    const agentId = existing?.agentId ?? workspace.agentId ?? DEFAULT_AGENT_ID;
     const aiSettings =
       workspace.aiSettingsByAgent?.[agentId] ??
       workspace.aiSettings ??
