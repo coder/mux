@@ -25,12 +25,13 @@ describe("RetryManager", () => {
       if (typeof handler !== "function") {
         throw new Error("RetryManager tests only support function timer handlers");
       }
+      const fn = handler as () => void;
 
       const timerId = nextTimerId;
       nextTimerId += 1;
       scheduledTimers.set(timerId, {
         callback: () => {
-          handler();
+          fn();
         },
         delayMs: timeout ?? 0,
       });
@@ -64,7 +65,7 @@ describe("RetryManager", () => {
   }
 
   function createRetryManager() {
-    const onRetry = vi.fn(async () => undefined);
+    const onRetry = vi.fn(() => Promise.resolve());
     const events: RetryStatusEvent[] = [];
     const onStatusChange = vi.fn((event: RetryStatusEvent) => {
       events.push(event);

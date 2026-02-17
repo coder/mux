@@ -1,5 +1,5 @@
 import type { DisplayedMessage } from "@/common/types/message";
-import type { StreamErrorType, SendMessageError } from "@/common/types/errors";
+import type { StreamErrorType } from "@/common/types/errors";
 import type { RuntimeStatusEvent, StreamAbortReasonSnapshot } from "@/common/types/stream";
 
 /**
@@ -48,9 +48,7 @@ const NON_RETRYABLE_STREAM_ERROR_SET = new Set<string>(NON_RETRYABLE_STREAM_ERRO
 /**
  * Check if a SendMessageError (from resumeStream failures) is non-retryable
  */
-export function isNonRetryableSendError(error: {
-  type: SendMessageError["type"] | string;
-}): boolean {
+export function isNonRetryableSendError(error: { type: string }): boolean {
   // Debug flag: force all errors to be retryable
   if (isForceAllRetryableEnabled()) {
     return false;
@@ -76,7 +74,7 @@ export function isNonRetryableSendError(error: {
 /**
  * Check if a stream-error type is non-retryable.
  */
-export function isNonRetryableStreamError(error: { type: StreamErrorType | string }): boolean {
+export function isNonRetryableStreamError(error: { type: string }): boolean {
   // Debug flag: force all errors to be retryable
   if (isForceAllRetryableEnabled()) {
     return false;

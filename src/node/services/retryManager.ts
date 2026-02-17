@@ -10,16 +10,30 @@ import {
   isNonRetryableStreamError,
 } from "@/common/utils/messages/retryEligibility";
 
-export type RetryFailureError = {
+export interface RetryFailureError {
   type: string;
   message?: string;
-};
+}
 
-// Key interface for status events
+// Status events emitted during auto-retry lifecycle
+export interface AutoRetryScheduledEvent {
+  type: "auto-retry-scheduled";
+  attempt: number;
+  delayMs: number;
+  scheduledAt: number;
+}
+export interface AutoRetryStartingEvent {
+  type: "auto-retry-starting";
+  attempt: number;
+}
+export interface AutoRetryAbandonedEvent {
+  type: "auto-retry-abandoned";
+  reason: string;
+}
 export type RetryStatusEvent =
-  | { type: "auto-retry-scheduled"; attempt: number; delayMs: number; scheduledAt: number }
-  | { type: "auto-retry-starting"; attempt: number }
-  | { type: "auto-retry-abandoned"; reason: string };
+  | AutoRetryScheduledEvent
+  | AutoRetryStartingEvent
+  | AutoRetryAbandonedEvent;
 
 export class RetryManager {
   private state: RetryState<RetryFailureError>;
