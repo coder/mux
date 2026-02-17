@@ -956,7 +956,8 @@ export class AIService extends EventEmitter {
         hasQueuedMessage,
         metadata.name,
         effectiveThinkingLevel,
-        requestHeaders
+        requestHeaders,
+        effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined
       );
 
       if (!streamResult.success) {
