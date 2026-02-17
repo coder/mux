@@ -81,7 +81,9 @@ export async function forkSessionFromWorkspace(
   // metadata, so forks inherit the mode the user switched to in-session.
   const agentId = deps.sourceSessionAgentId ?? sourceWorkspace.agentId ?? deps.defaultAgentId;
   const aiSettings = await resolveAgentAiSettings(deps.server.client, agentId, workspaceId);
-  const configOptions = await buildConfigOptions(deps.server.client, workspaceId);
+  const configOptions = await buildConfigOptions(deps.server.client, workspaceId, {
+    activeAgentId: agentId,
+  });
 
   return {
     sessionId,
