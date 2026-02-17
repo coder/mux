@@ -92,6 +92,29 @@ if (typeof globalFetchWithExtras.certificate === "function") {
 // Fetch wrappers
 // ---------------------------------------------------------------------------
 
+function mergeAnthropicCacheControl(
+  existing: unknown,
+  cacheTtl?: AnthropicCacheTtl | null
+): Record<string, string> {
+  const merged: Record<string, string> = { type: "ephemeral" };
+
+  if (typeof existing === "object" && existing !== null) {
+    const existingRecord = existing as Record<string, unknown>;
+    if (typeof existingRecord.type === "string") {
+      merged.type = existingRecord.type;
+    }
+    if (typeof existingRecord.ttl === "string") {
+      merged.ttl = existingRecord.ttl;
+    }
+  }
+
+  if (cacheTtl) {
+    merged.ttl = cacheTtl;
+  }
+
+  return merged;
+}
+
 /**
  * Wrap fetch to inject Anthropic cache_control directly into the request body.
  * The AI SDK's providerOptions.anthropic.cacheControl doesn't get translated
@@ -106,12 +129,6 @@ function wrapFetchWithAnthropicCacheControl(
   baseFetch: typeof fetch,
   cacheTtl?: AnthropicCacheTtl | null
 ): typeof fetch {
-  // Build the cache_control value once — include ttl only when explicitly set.
-  const cacheControlValue: Record<string, string> = { type: "ephemeral" };
-  if (cacheTtl) {
-    cacheControlValue.ttl = cacheTtl;
-  }
-
   const cachingFetch = async (
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1]
@@ -124,10 +141,12 @@ function wrapFetchWithAnthropicCacheControl(
     try {
       const json = JSON.parse(init.body) as Record<string, unknown>;
 
-      // Inject cache_control on the last tool if tools array exists
+      // Inject cache_control on the last tool if tools array exists.
+      // If the SDK already populated cache_control, preserve it but override ttl
+      // when a higher-level cacheTtl is configured.
       if (Array.isArray(json.tools) && json.tools.length > 0) {
         const lastTool = json.tools[json.tools.length - 1] as Record<string, unknown>;
-        lastTool.cache_control ??= cacheControlValue;
+        lastTool.cache_control = mergeAnthropicCacheControl(lastTool.cache_control, cacheTtl);
       }
 
       // Inject cache_control on last message's last content part
@@ -149,7 +168,10 @@ function wrapFetchWithAnthropicCacheControl(
         if (Array.isArray(json.prompt)) {
           const providerOpts = (lastMsg.providerOptions ?? {}) as Record<string, unknown>;
           const anthropicOpts = (providerOpts.anthropic ?? {}) as Record<string, unknown>;
-          anthropicOpts.cacheControl ??= cacheControlValue;
+          anthropicOpts.cacheControl = mergeAnthropicCacheControl(
+            anthropicOpts.cacheControl,
+            cacheTtl
+          );
           providerOpts.anthropic = anthropicOpts;
           lastMsg.providerOptions = providerOpts;
         }
@@ -158,7 +180,7 @@ function wrapFetchWithAnthropicCacheControl(
         const content = lastMsg.content;
         if (Array.isArray(content) && content.length > 0) {
           const lastPart = content[content.length - 1] as Record<string, unknown>;
-          lastPart.cache_control ??= cacheControlValue;
+          lastPart.cache_control = mergeAnthropicCacheControl(lastPart.cache_control, cacheTtl);
         }
       }
 
