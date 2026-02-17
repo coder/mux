@@ -830,9 +830,10 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Works for terminal tabs and file tabs
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't process shortcuts when a dialog is open (dialogs block all background interaction).
-      if (isDialogOpen()) return;
       if (!matchesKeybind(e, KEYBINDS.CLOSE_TAB)) return;
+      // Always prevent platform default (Cmd/Ctrl+W closes window), even during dialogs.
+      e.preventDefault();
+      if (isDialogOpen()) return;
 
       const focusedTabset = findTabset(layout.root, layout.focusedTabsetId);
       if (focusedTabset?.type !== "tabset") return;
