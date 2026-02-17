@@ -237,20 +237,10 @@ export class MuxAcpAgent implements AcpAgent {
       );
     }
 
-    // Snapshot the latest historySequence before sending so the resolver only
-    // binds to stream-starts with a strictly higher sequence — this filters
-    // out pre-existing in-flight streams from other producers.
-    const minHistorySequence = session.lastSeenHistorySequence;
-
-    const promptPromise = new Promise<acpSchema.PromptResponse>((resolve, reject) => {
-      this.sessionManager.setPromptResolver(params.sessionId, {
-        resolve,
-        reject,
-        messageId: "",
-        minHistorySequence,
-      });
-    });
-
+    // Send the message first, before installing the resolver. This ensures the
+    // historySequence snapshot (taken after sendMessage returns) is as close to
+    // the send boundary as possible, minimizing the window where another
+    // producer's stream-start could be mis-correlated.
     let sendResult: Awaited<ReturnType<OrpcClient["workspace"]["sendMessage"]>>;
     try {
       sendResult = await this.deps.orpcClient.workspace.sendMessage({
@@ -263,7 +253,6 @@ export class MuxAcpAgent implements AcpAgent {
         },
       });
     } catch (error) {
-      this.sessionManager.clearPromptResolver(params.sessionId);
       throw this.deps.sdk.RequestError.internalError(
         undefined,
         `workspace.sendMessage failed: ${this.describeUnknownError(error)}`
@@ -271,12 +260,26 @@ export class MuxAcpAgent implements AcpAgent {
     }
 
     if (!sendResult.success) {
-      this.sessionManager.clearPromptResolver(params.sessionId);
       throw this.deps.sdk.RequestError.internalError(
         undefined,
         `workspace.sendMessage failed: ${this.describeUnknownError(sendResult.error)}`
       );
     }
+
+    // Snapshot historySequence immediately after sendMessage returns — this is
+    // the tightest correlation boundary possible without a server-returned
+    // correlation ID. Only stream-starts with a strictly higher sequence will
+    // bind to this resolver.
+    const minHistorySequence = session.lastSeenHistorySequence;
+
+    const promptPromise = new Promise<acpSchema.PromptResponse>((resolve, reject) => {
+      this.sessionManager.setPromptResolver(params.sessionId, {
+        resolve,
+        reject,
+        messageId: "",
+        minHistorySequence,
+      });
+    });
 
     // Only auto-generate a title for sessions created via newSession, not
     // loadSession — reconnecting to an existing workspace should not overwrite
