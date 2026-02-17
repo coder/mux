@@ -27,6 +27,7 @@ export function computePriorHistoryFingerprint(
     historySequence: number;
     timestamp: number;
     role: MuxMessage["role"];
+    partsFingerprint: string;
   }> = [];
 
   for (const message of messages) {
@@ -40,6 +41,9 @@ export function computePriorHistoryFingerprint(
       historySequence,
       timestamp: message.metadata?.timestamp ?? MISSING_TIMESTAMP,
       role: message.role,
+      // Include serialized part content so in-place rewrites that keep id/seq/timestamp
+      // still invalidate the fingerprint and force a safe full replay fallback.
+      partsFingerprint: JSON.stringify(message.parts),
     });
   }
 
@@ -55,7 +59,7 @@ export function computePriorHistoryFingerprint(
   for (const entry of priorEntries) {
     hash = updateFnv1a(
       hash,
-      `${entry.historySequence}|${entry.id}|${entry.timestamp}|${entry.role};`
+      `${entry.historySequence}|${entry.id}|${entry.timestamp}|${entry.role}|${entry.partsFingerprint};`
     );
   }
 
