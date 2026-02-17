@@ -43,17 +43,11 @@ function getProjectPathFromConfig(config: ToolConfiguration): string | null {
   return null;
 }
 
-function formatLoggableMemory(memory: string): { preview: string; truncated: boolean } {
-  const MAX_INFO_CHARS = 8_000;
-  if (memory.length <= MAX_INFO_CHARS) {
-    return { preview: memory, truncated: false };
-  }
-
-  return {
-    preview:
-      `${memory.slice(0, MAX_INFO_CHARS)}\n\n... (truncated; see debug_obj for full content)`.trimEnd(),
-    truncated: true,
-  };
+function logMemoryWrite(projectId: string, memory: string): void {
+  // Keep info logs metadata-only so sensitive memory contents never land in
+  // default desktop logs. Full content remains available via debug_obj.
+  log.info(`[system1][memory] wrote memory for ${projectId} (chars=${memory.length})`);
+  log.debug_obj(`memories/${projectId}.md`, memory);
 }
 
 export const createMemoryWriteTool: ToolFactory = (config: ToolConfiguration) => {
@@ -104,9 +98,7 @@ export const createMemoryWriteTool: ToolFactory = (config: ToolConfiguration) =>
 
             await writeFileAtomic(memoryPath, args.new_string);
 
-            const { preview } = formatLoggableMemory(args.new_string);
-            log.info(`[system1][memory] wrote memory for ${projectId}:\n${preview}`);
-            log.debug_obj(`memories/${projectId}.md`, args.new_string);
+            logMemoryWrite(projectId, args.new_string);
 
             return { success: true };
           }
@@ -128,9 +120,7 @@ export const createMemoryWriteTool: ToolFactory = (config: ToolConfiguration) =>
 
           await writeFileAtomic(memoryPath, outcome.newContent);
 
-          const { preview } = formatLoggableMemory(outcome.newContent);
-          log.info(`[system1][memory] wrote memory for ${projectId}:\n${preview}`);
-          log.debug_obj(`memories/${projectId}.md`, outcome.newContent);
+          logMemoryWrite(projectId, outcome.newContent);
 
           return { success: true };
         });
