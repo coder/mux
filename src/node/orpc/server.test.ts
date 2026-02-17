@@ -282,6 +282,14 @@ describe("createOrpcServer", () => {
       }
       expect(unauthenticatedError).toBeTruthy();
 
+      const duplicateCookieClient = createHttpClient(server.baseUrl, {
+        Cookie: "mux_session=invalid-session-token; mux_session=valid-session-token",
+      });
+      const duplicateCookiePing = await Promise.resolve(
+        duplicateCookieClient.general.ping("cookie-auth")
+      );
+      expect(duplicateCookiePing).toBe("Pong: cookie-auth");
+
       const cookieClient = createHttpClient(server.baseUrl, {
         Cookie: "mux_session=valid-session-token",
       });

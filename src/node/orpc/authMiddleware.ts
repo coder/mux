@@ -61,43 +61,61 @@ export function extractClientIpAddress(
   return first?.length ? first : undefined;
 }
 
+export function extractCookieValues(
+  cookieHeader: string | string[] | undefined,
+  cookieName: string
+): string[] {
+  const rawCookieHeaders = Array.isArray(cookieHeader)
+    ? cookieHeader.filter((value): value is string => typeof value === "string")
+    : typeof cookieHeader === "string"
+      ? [cookieHeader]
+      : [];
+
+  if (rawCookieHeaders.length === 0) {
+    return [];
+  }
+
+  const tokens: string[] = [];
+
+  for (const rawCookieHeader of rawCookieHeaders) {
+    if (rawCookieHeader.trim().length === 0) {
+      continue;
+    }
+
+    const cookiePairs = rawCookieHeader.split(";");
+    for (const pair of cookiePairs) {
+      const separatorIndex = pair.indexOf("=");
+      if (separatorIndex <= 0) {
+        continue;
+      }
+
+      const key = pair.slice(0, separatorIndex).trim();
+      if (key !== cookieName) {
+        continue;
+      }
+
+      const value = pair.slice(separatorIndex + 1).trim();
+      if (value.length === 0) {
+        continue;
+      }
+
+      try {
+        tokens.push(decodeURIComponent(value));
+      } catch {
+        tokens.push(value);
+      }
+    }
+  }
+
+  return tokens;
+}
+
 export function extractCookieValue(
   cookieHeader: string | string[] | undefined,
   cookieName: string
 ): string | null {
-  const rawCookieHeader = Array.isArray(cookieHeader)
-    ? cookieHeader.find((value) => typeof value === "string" && value.trim().length > 0)
-    : cookieHeader;
-
-  if (!rawCookieHeader) {
-    return null;
-  }
-
-  const cookiePairs = rawCookieHeader.split(";");
-  for (const pair of cookiePairs) {
-    const separatorIndex = pair.indexOf("=");
-    if (separatorIndex <= 0) {
-      continue;
-    }
-
-    const key = pair.slice(0, separatorIndex).trim();
-    if (key !== cookieName) {
-      continue;
-    }
-
-    const value = pair.slice(separatorIndex + 1).trim();
-    if (value.length === 0) {
-      return null;
-    }
-
-    try {
-      return decodeURIComponent(value);
-    } catch {
-      return value;
-    }
-  }
-
-  return null;
+  const values = extractCookieValues(cookieHeader, cookieName);
+  return values[0] ?? null;
 }
 
 /** Create auth middleware that validates Authorization header or session cookie from context */
@@ -122,11 +140,11 @@ export function createAuthMiddleware(authToken?: string) {
         return next();
       }
 
-      const sessionToken = extractCookieValue(
+      const sessionTokens = extractCookieValues(
         context.headers?.cookie,
         SERVER_AUTH_SESSION_COOKIE_NAME
       );
-      if (sessionToken) {
+      for (const sessionToken of sessionTokens) {
         const sessionResult = await context.serverAuthService.validateSessionToken(sessionToken, {
           userAgent: getFirstHeaderValue(context.headers, "user-agent"),
           ipAddress: extractClientIpAddress(context.headers),

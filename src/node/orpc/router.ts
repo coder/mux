@@ -19,7 +19,7 @@ import type { WorkspaceMetadata } from "@/common/types/workspace";
 import {
   createAuthMiddleware,
   extractClientIpAddress,
-  extractCookieValue,
+  extractCookieValues,
   getFirstHeaderValue,
 } from "./authMiddleware";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
@@ -279,17 +279,26 @@ async function findSubagentTranscriptEntryByScanningSessions(params: {
 }
 
 async function getCurrentServerAuthSessionId(context: ORPCContext): Promise<string | null> {
-  const sessionToken = extractCookieValue(context.headers?.cookie, SERVER_AUTH_SESSION_COOKIE_NAME);
-  if (!sessionToken) {
+  const sessionTokens = extractCookieValues(
+    context.headers?.cookie,
+    SERVER_AUTH_SESSION_COOKIE_NAME
+  );
+  if (sessionTokens.length === 0) {
     return null;
   }
 
-  const validation = await context.serverAuthService.validateSessionToken(sessionToken, {
-    userAgent: getFirstHeaderValue(context.headers, "user-agent"),
-    ipAddress: extractClientIpAddress(context.headers),
-  });
+  for (const sessionToken of sessionTokens) {
+    const validation = await context.serverAuthService.validateSessionToken(sessionToken, {
+      userAgent: getFirstHeaderValue(context.headers, "user-agent"),
+      ipAddress: extractClientIpAddress(context.headers),
+    });
 
-  return validation?.sessionId ?? null;
+    if (validation?.sessionId) {
+      return validation.sessionId;
+    }
+  }
+
+  return null;
 }
 
 export const router = (authToken?: string) => {

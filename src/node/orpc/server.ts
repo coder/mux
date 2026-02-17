@@ -18,7 +18,7 @@ import { OpenAPIHandler } from "@orpc/openapi/node";
 import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
 import { router, type AppRouter } from "@/node/orpc/router";
 import type { ORPCContext } from "@/node/orpc/context";
-import { extractCookieValue, extractWsHeaders, safeEq } from "@/node/orpc/authMiddleware";
+import { extractCookieValues, extractWsHeaders, safeEq } from "@/node/orpc/authMiddleware";
 import { VERSION } from "@/version";
 import { formatOrpcError } from "@/node/orpc/formatOrpcError";
 import { log } from "@/node/services/log";
@@ -570,17 +570,23 @@ export async function createOrpcServer({
       return true;
     }
 
-    const sessionToken = extractCookieValue(req.headers.cookie, SERVER_AUTH_SESSION_COOKIE_NAME);
-    if (!sessionToken) {
+    const sessionTokens = extractCookieValues(req.headers.cookie, SERVER_AUTH_SESSION_COOKIE_NAME);
+    if (sessionTokens.length === 0) {
       return false;
     }
 
-    const validation = await context.serverAuthService.validateSessionToken(sessionToken, {
-      userAgent: req.header("user-agent") ?? undefined,
-      ipAddress: getRequestIpAddress(req),
-    });
+    for (const sessionToken of sessionTokens) {
+      const validation = await context.serverAuthService.validateSessionToken(sessionToken, {
+        userAgent: req.header("user-agent") ?? undefined,
+        ipAddress: getRequestIpAddress(req),
+      });
 
-    return validation != null;
+      if (validation != null) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   function getStringParamFromQueryOrBody(req: express.Request, key: string): string | null {
