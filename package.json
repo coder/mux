@@ -45,6 +45,7 @@
     "postinstall": "sh scripts/postinstall.sh"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^0.14.1",
     "@ai-sdk/amazon-bedrock": "^4.0.49",
     "@ai-sdk/anthropic": "^3.0.37",
     "@ai-sdk/deepseek": "^2.0.17",
