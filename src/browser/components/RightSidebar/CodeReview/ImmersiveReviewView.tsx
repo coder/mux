@@ -56,6 +56,7 @@ interface SelectedLineRange {
 interface HunkLineRange {
   startIndex: number;
   endIndex: number;
+  firstModifiedIndex: number | null;
 }
 
 interface ImmersiveOverlayData {
@@ -120,11 +121,16 @@ function buildOverlayFromFileContent(
     }
 
     const hunkStartIndex = lineHunkIds.length;
+    let firstModifiedIndex: number | null = null;
 
     for (const line of splitDiffLines(hunk.content)) {
       const prefix = line[0] ?? " ";
       if (prefix !== "+" && prefix !== "-" && prefix !== " ") {
         continue;
+      }
+
+      if (firstModifiedIndex === null && (prefix === "+" || prefix === "-")) {
+        firstModifiedIndex = lineHunkIds.length;
       }
 
       pushDisplayLine(`${prefix}${line.slice(1)}`, hunk.id);
@@ -137,6 +143,7 @@ function buildOverlayFromFileContent(
       hunkLineRanges.set(hunk.id, {
         startIndex: hunkStartIndex,
         endIndex: lineHunkIds.length - 1,
+        firstModifiedIndex,
       });
     }
   }
@@ -175,11 +182,16 @@ function buildOverlayFromHunks(sortedHunks: DiffHunk[]): ImmersiveOverlayData {
     pushHeaderLine(`@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`);
 
     const hunkStartIndex = lineHunkIds.length;
+    let firstModifiedIndex: number | null = null;
 
     for (const line of splitDiffLines(hunk.content)) {
       const prefix = line[0] ?? " ";
       if (prefix !== "+" && prefix !== "-" && prefix !== " ") {
         continue;
+      }
+
+      if (firstModifiedIndex === null && (prefix === "+" || prefix === "-")) {
+        firstModifiedIndex = lineHunkIds.length;
       }
 
       pushDisplayLine(`${prefix}${line.slice(1)}`, hunk.id);
@@ -189,6 +201,7 @@ function buildOverlayFromHunks(sortedHunks: DiffHunk[]): ImmersiveOverlayData {
       hunkLineRanges.set(hunk.id, {
         startIndex: hunkStartIndex,
         endIndex: lineHunkIds.length - 1,
+        firstModifiedIndex,
       });
     }
   });
@@ -208,6 +221,7 @@ function isSelectionInsideRange(selection: SelectedLineRange, range: HunkLineRan
 
 export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const hunkJumpRef = useRef(false);
   const { api } = useAPI();
 
   const { fileTree, hunks, selectedHunkId, onSelectHunk, onToggleRead, onExit, onReviewNote } =
@@ -363,7 +377,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       ) {
         return previousLineIndex;
       }
-      return selectedHunkRange.startIndex;
+      return selectedHunkRange.firstModifiedIndex ?? selectedHunkRange.startIndex;
     });
 
     setSelectedLineRange((previousSelection) => {
@@ -399,6 +413,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       // Select first hunk in the new file
       const fileHunks = sortHunksInFileOrder(getFileHunks(hunks, nextFile));
       if (fileHunks.length > 0) {
+        hunkJumpRef.current = true;
         onSelectHunk(fileHunks[0].id);
       }
     },
@@ -421,6 +436,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         if (nextIdx < 0 || nextIdx >= currentFileHunks.length) return;
       }
 
+      hunkJumpRef.current = true;
       onSelectHunk(currentFileHunks[nextIdx].id);
     },
     [currentFileHunks, selectedHunkId, onSelectHunk]
@@ -450,17 +466,21 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       }
 
       const selection = getCurrentLineSelection();
-      if (!selection || !isSelectionInsideRange(selection, selectedHunkRange)) {
-        return;
-      }
+      const effectiveSelection =
+        selection && isSelectionInsideRange(selection, selectedHunkRange)
+          ? selection
+          : {
+              startIndex: selectedHunkRange.startIndex,
+              endIndex: selectedHunkRange.startIndex,
+            };
 
       nextComposerRequestIdRef.current += 1;
       setInlineComposerRequest({
         requestId: nextComposerRequestIdRef.current,
         prefill,
         hunkId: selectedHunk.id,
-        startIndex: selection.startIndex,
-        endIndex: selection.endIndex,
+        startIndex: effectiveSelection.startIndex,
+        endIndex: effectiveSelection.endIndex,
       });
     },
     [getCurrentLineSelection, selectedHunk, selectedHunkRange]
@@ -627,7 +647,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     const lineElement = document.querySelector(
       `[data-testid="review-immersive-root"] [data-line-index="${activeLineIndex}"]`
     );
-    lineElement?.scrollIntoView({ behavior: "auto", block: "nearest" });
+
+    const block = hunkJumpRef.current ? "center" : "nearest";
+    hunkJumpRef.current = false;
+
+    lineElement?.scrollIntoView({ behavior: "auto", block });
   }, [activeLineIndex]);
 
   const currentHunkIdx = selectedHunkId
