@@ -95,6 +95,17 @@ export interface TranscriptContextMenuTextOptions {
 export function getTranscriptContextMenuText(
   options: TranscriptContextMenuTextOptions
 ): string | null {
+  // Interactive transcript targets should keep native browser context-menu actions
+  // (e.g. open/copy link) even when a transcript selection currently exists.
+  const targetElement = getEventTargetElement(options.target);
+  if (
+    targetElement &&
+    options.transcriptRoot.contains(targetElement) &&
+    targetElement.closest(INTERACTIVE_SELECTOR)
+  ) {
+    return null;
+  }
+
   const selectedText = getSelectedTranscriptText(options.transcriptRoot, options.selection);
   if (selectedText) {
     return selectedText;

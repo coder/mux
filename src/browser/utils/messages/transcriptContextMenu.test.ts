@@ -55,6 +55,33 @@ describe("transcriptContextMenu", () => {
     expect(result).toBe("beta");
   });
 
+  test("returns null for interactive targets even when transcript selection exists", () => {
+    const transcriptRoot = createTranscriptRoot(
+      `<div data-message-content><p id="message">Alpha beta gamma</p><a id="message-link" href="https://example.com">Example</a></div>`
+    );
+    const paragraph = transcriptRoot.querySelector("#message");
+    const link = transcriptRoot.querySelector("#message-link");
+    expect(paragraph).not.toBeNull();
+    expect(link).not.toBeNull();
+
+    const textNode = getFirstTextNode(paragraph);
+    const range = document.createRange();
+    range.setStart(textNode, 0);
+    range.setEnd(textNode, 5);
+
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const result = getTranscriptContextMenuText({
+      transcriptRoot,
+      target: link,
+      selection,
+    });
+
+    expect(result).toBeNull();
+  });
+
   test("falls back to hovered transcript text when selection is outside transcript", () => {
     const transcriptRoot = createTranscriptRoot(
       `<div data-message-content><p id="message">Hovered transcript text</p></div>`
