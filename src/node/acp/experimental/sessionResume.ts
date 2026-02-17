@@ -27,6 +27,12 @@ export interface SessionResumeDependencies {
   toolRouter: ToolRouter;
   negotiatedCapabilities: NegotiatedCapabilities | null;
   defaultAgentId: string;
+  /**
+   * Agent ID from prior ACP in-memory session state (set via
+   * session/set_config_option mode switches).  Takes precedence over
+   * workspace.agentId so that mode selections survive reconnect/reload.
+   */
+  existingSessionAgentId?: string;
 }
 
 function resolveRuntimeMode(workspace: WorkspaceInfo): RuntimeMode {
@@ -60,13 +66,17 @@ export async function loadSessionFromWorkspace(
   );
   deps.toolRouter.registerSession(requestedSessionId, runtimeMode);
 
-  const agentId = workspace.agentId ?? deps.defaultAgentId;
+  // Prefer the ACP session's prior agent selection (from set_config_option)
+  // over workspace.agentId so that mode switches survive reconnect/reload.
+  const agentId = deps.existingSessionAgentId ?? workspace.agentId ?? deps.defaultAgentId;
   const aiSettings =
     workspace.aiSettingsByAgent?.[agentId] ??
     workspace.aiSettings ??
     (await resolveAgentAiSettings(deps.server.client, agentId, workspaceId));
 
-  const configOptions = await buildConfigOptions(deps.server.client, workspaceId);
+  const configOptions = await buildConfigOptions(deps.server.client, workspaceId, {
+    activeAgentId: agentId,
+  });
 
   return {
     sessionId: requestedSessionId,

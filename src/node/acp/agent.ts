@@ -180,12 +180,17 @@ export class MuxAgent implements Agent {
   async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
     this.assertInitialized("loadSession");
 
+    // Pass any prior in-memory agent selection so mode switches survive
+    // reconnect/reload (agent mode set via set_config_option is only stored
+    // in ACP session state, not persisted as the workspace's active agent).
+    const existingState = this.sessionStateById.get(params.sessionId);
     const resumed = await loadSessionFromWorkspace(params, {
       server: this.server,
       sessionManager: this.sessionManager,
       toolRouter: this.toolRouter,
       negotiatedCapabilities: this.negotiatedCapabilities,
       defaultAgentId: DEFAULT_AGENT_ID,
+      existingSessionAgentId: existingState?.agentId,
     });
 
     this.sessionStateById.set(resumed.sessionId, {

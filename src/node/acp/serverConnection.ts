@@ -52,10 +52,17 @@ export async function connectToServer(options: {
   const lockData = await lockfile.read();
 
   if (lockData?.baseUrl) {
-    return connectToExistingServer({
-      baseUrl: lockData.baseUrl,
-      authToken: explicitAuthToken ?? normalizeToken(lockData.token),
-    });
+    // The lockfile PID is alive but the WebSocket endpoint may be unreachable
+    // (startup race, stale-but-live process, etc.).  Fall back to spinning up
+    // an in-process server instead of failing hard.
+    try {
+      return await connectToExistingServer({
+        baseUrl: lockData.baseUrl,
+        authToken: explicitAuthToken ?? normalizeToken(lockData.token),
+      });
+    } catch {
+      // Lockfile endpoint unreachable — fall through to in-process server.
+    }
   }
 
   return connectToInProcessServer(explicitAuthToken);
