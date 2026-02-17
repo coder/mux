@@ -6,6 +6,7 @@ import { KebabMenu, type KebabMenuItem } from "@/browser/components/KebabMenu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useUILayouts } from "@/browser/contexts/UILayoutsContext";
+import { useConfirmDialog } from "@/browser/contexts/ConfirmDialogContext";
 import { getEffectiveSlotKeybind } from "@/browser/utils/uiLayouts";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { formatKeybind, isMac, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
@@ -108,6 +109,7 @@ export function LayoutsSection() {
     setSlotKeybindOverride,
   } = useUILayouts();
   const { selectedWorkspace } = useWorkspaceContext();
+  const { confirm: confirmDialog } = useConfirmDialog();
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [editingName, setEditingName] = useState<{
@@ -318,8 +320,12 @@ export function LayoutsSection() {
               },
               {
                 label: "Delete layout",
-                onClick: () => {
-                  const ok = confirm(`Delete layout "${preset.name}"?`);
+                onClick: async () => {
+                  const ok = await confirmDialog({
+                    title: `Delete layout "${preset.name}"?`,
+                    confirmLabel: "Delete",
+                    confirmVariant: "destructive",
+                  });
                   if (!ok) return;
 
                   setActionError(null);

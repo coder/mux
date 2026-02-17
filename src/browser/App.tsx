@@ -66,6 +66,7 @@ import { ProjectPage } from "@/browser/components/ProjectPage";
 
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
 import { AboutDialogProvider } from "./contexts/AboutDialogContext";
+import { ConfirmDialogProvider, useConfirmDialog } from "./contexts/ConfirmDialogContext";
 import { AboutDialog } from "./components/About/AboutDialog";
 import { SettingsPage } from "@/browser/components/Settings/SettingsPage";
 import { MuxGatewaySessionExpiredDialog } from "./components/MuxGatewaySessionExpiredDialog";
@@ -103,6 +104,7 @@ function AppInner() {
   const { currentWorkspaceId, currentSettingsSection } = useRouter();
   const { theme, setTheme, toggleTheme } = useTheme();
   const { open: openSettings, isOpen: isSettingsOpen } = useSettings();
+  const { confirm: confirmDialog } = useConfirmDialog();
   const setThemePreference = useCallback(
     (nextTheme: ThemeMode) => {
       setTheme(nextTheme);
@@ -628,6 +630,7 @@ function AppInner() {
     },
     onClearTimingStats: (workspaceId: string) => workspaceStore.clearTimingStats(workspaceId),
     api,
+    confirmDialog,
   };
 
   useEffect(() => {
@@ -1141,7 +1144,9 @@ function App() {
                     <TutorialProvider>
                       <CommandRegistryProvider>
                         <PowerModeProvider>
-                          <AppInner />
+                          <ConfirmDialogProvider>
+                            <AppInner />
+                          </ConfirmDialogProvider>
                         </PowerModeProvider>
                       </CommandRegistryProvider>
                     </TutorialProvider>

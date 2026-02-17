@@ -1,6 +1,7 @@
 import { THEME_OPTIONS, type ThemeMode } from "@/browser/contexts/ThemeContext";
 import type { CommandAction } from "@/browser/contexts/CommandRegistryContext";
 import type { APIClient } from "@/browser/contexts/API";
+import type { ConfirmDialogOptions } from "@/browser/contexts/ConfirmDialogContext";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import { getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
@@ -44,6 +45,8 @@ export interface BuildSourcesParams {
   projects: Map<string, ProjectConfig>;
   /** Map of workspace ID to workspace metadata (keyed by metadata.id, not path) */
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
+  /** In-app confirmation dialog (replaces window.confirm) */
+  confirmDialog: (opts: ConfirmDialogOptions) => Promise<boolean>;
   theme: ThemeMode;
   selectedWorkspaceState?: WorkspaceState | null;
   selectedWorkspace: {
@@ -257,9 +260,13 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
             selectedMeta?.name ??
             selected.namedWorkspacePath.split("/").pop() ??
             selected.namedWorkspacePath;
-          const ok = confirm(
-            `Remove current workspace? This will delete the worktree and local branch "${branchName}". This cannot be undone.`
-          );
+          const ok = await p.confirmDialog({
+            title: "Remove current workspace?",
+            description: `This will delete the worktree and local branch "${branchName}".`,
+            warning: "This cannot be undone.",
+            confirmLabel: "Remove",
+            confirmVariant: "destructive",
+          });
           if (ok) await p.onRemoveWorkspace(selected.workspaceId);
         },
       });
@@ -434,9 +441,13 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
             );
             const workspaceName = meta ? `${meta.projectName}/${meta.name}` : vals.workspaceId;
             const branchName = meta?.name ?? workspaceName.split("/").pop() ?? workspaceName;
-            const ok = confirm(
-              `Remove workspace ${workspaceName}? This will delete the worktree and local branch "${branchName}". This cannot be undone.`
-            );
+            const ok = await p.confirmDialog({
+              title: `Remove workspace ${workspaceName}?`,
+              description: `This will delete the worktree and local branch "${branchName}".`,
+              warning: "This cannot be undone.",
+              confirmLabel: "Remove",
+              confirmVariant: "destructive",
+            });
             if (ok) {
               await p.onRemoveWorkspace(vals.workspaceId);
             }
@@ -923,9 +934,12 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
             const projectPath = vals.projectPath;
             const projectName = projectPath.split("/").pop() ?? projectPath;
 
-            const ok = confirm(
-              `Archive merged workspaces in ${projectName}?\n\nThis will archive (not delete) workspaces in this project whose GitHub PR is merged. This is reversible.\n\nThis may start/wake workspace runtimes and can take a while.\n\nThis uses GitHub via the gh CLI. Make sure gh is installed and authenticated.`
-            );
+            const ok = await p.confirmDialog({
+              title: `Archive merged workspaces in ${projectName}?`,
+              description:
+                "This will archive (not delete) workspaces in this project whose GitHub PR is merged. This is reversible.\n\nThis may start/wake workspace runtimes and can take a while.\n\nThis uses GitHub via the gh CLI. Make sure gh is installed and authenticated.",
+              confirmLabel: "Archive",
+            });
             if (!ok) return;
 
             await p.onArchiveMergedWorkspacesInProject(projectPath);

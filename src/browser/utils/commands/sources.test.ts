@@ -40,6 +40,7 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
       namedWorkspacePath: "/repo/a/feat-x",
       workspaceId: "w1",
     },
+    confirmDialog: () => Promise.resolve(true),
     streamingModels: new Map<string, string>(),
     getThinkingLevel: () => "off",
     onSetThinkingLevel: () => undefined,
