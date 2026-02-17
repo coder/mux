@@ -104,6 +104,62 @@ async function getValidationContext(): Promise<QuickJSAsyncContext> {
 // ============================================================================
 
 /**
+ * Use TypeScript's lenient parser to detect top-level await expressions.
+ * Returns the 1-indexed line numbers where illegal awaits occur.
+ * Returns empty set if TS itself has parse diagnostics (ambiguous source — don't guess).
+ */
+function findIllegalAwaitLines(code: string): Set<number> {
+  const sourceFile = ts.createSourceFile(
+    "analysis.ts",
+    code,
+    ts.ScriptTarget.ES2020,
+    true,
+    ts.ScriptKind.JS
+  );
+
+  // parseDiagnostics exists at runtime but is not declared on this ts.SourceFile type.
+  const parseDiagnostics = (sourceFile as ts.SourceFile & { parseDiagnostics?: ts.Diagnostic[] })
+    .parseDiagnostics;
+  if (parseDiagnostics && parseDiagnostics.length > 0) {
+    return new Set();
+  }
+
+  const lines = new Set<number>();
+
+  const isAsyncFunctionLike = (node: ts.Node): boolean => {
+    if (!ts.isFunctionLike(node) || !ts.canHaveModifiers(node)) {
+      return false;
+    }
+
+    return (
+      ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ??
+      false
+    );
+  };
+
+  const hasAsyncAncestor = (node: ts.Node): boolean => {
+    let parent = node.parent;
+    while (parent) {
+      if (ts.isFunctionLike(parent)) {
+        return isAsyncFunctionLike(parent);
+      }
+      parent = parent.parent;
+    }
+    return false;
+  };
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isAwaitExpression(node) && !hasAsyncAncestor(node)) {
+      lines.add(sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1);
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return lines;
+}
+
+/**
  * Validate JavaScript syntax using QuickJS parser.
  * Returns syntax error if code is invalid.
  */
@@ -126,14 +182,22 @@ async function validateSyntax(code: string): Promise<AnalysisError | null> {
     let message =
       typeof errorObj.message === "string" ? errorObj.message : JSON.stringify(errorObj);
 
+    const rawLine = typeof errorObj.lineNumber === "number" ? errorObj.lineNumber : undefined;
+
     // Enhance obtuse "expecting ';'" error when await expression is detected.
     // In non-async context, `await foo()` parses as identifier `await` + stray `foo()`,
-    // giving unhelpful "expecting ';'". Detect this pattern and give a clearer message.
-    if (message === "expecting ';'" && /\bawait\s+\w/.test(code)) {
-      message =
-        "`await` is not supported - mux.* functions return results directly (no await needed)";
+    // giving unhelpful "expecting ';'". Use AST-based detection (not raw regex) to avoid
+    // false positives when `await` appears inside string literals or template content.
+    if (message === "expecting ';'") {
+      const illegalAwaitLines = findIllegalAwaitLines(code);
+      const likelyAwaitFailure =
+        illegalAwaitLines.size > 0 && (rawLine === undefined || illegalAwaitLines.has(rawLine));
+
+      if (likelyAwaitFailure) {
+        message =
+          "`await` is not supported - mux.* functions return results directly (no await needed)";
+      }
     }
-    const rawLine = typeof errorObj.lineNumber === "number" ? errorObj.lineNumber : undefined;
 
     // Only report line if it's within agent code bounds.
     // The wrapper is `(function() { ${code} })` - all on one line with code inlined.
