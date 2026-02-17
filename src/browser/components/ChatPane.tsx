@@ -8,6 +8,12 @@ import React, {
   useMemo,
 } from "react";
 import { Lightbulb } from "lucide-react";
+import { copyToClipboard } from "@/browser/utils/clipboard";
+import {
+  formatTranscriptTextAsQuote,
+  getTranscriptContextMenuText,
+} from "@/browser/utils/messages/transcriptContextMenu";
+import { Popover, PopoverAnchor, PopoverContent } from "./ui/popover";
 import { MessageListProvider } from "./Messages/MessageListContext";
 import { cn } from "@/common/lib/utils";
 import { MessageRenderer } from "./Messages/MessageRenderer";
@@ -357,6 +363,72 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   // ChatInput API for focus management
   const chatInputAPI = useRef<ChatInputAPI | null>(null);
 
+  const [transcriptContextMenu, setTranscriptContextMenu] = useState<{
+    x: number;
+    y: number;
+    text: string;
+  } | null>(null);
+
+  const closeTranscriptContextMenu = useCallback(() => {
+    setTranscriptContextMenu(null);
+  }, []);
+
+  // Right-clicking transcript text should offer quick quote/copy actions,
+  // using selection first and hovered text as a fallback when nothing is selected.
+  const handleTranscriptContextMenu = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      const transcriptRoot = contentRef.current;
+      if (!transcriptRoot) {
+        return;
+      }
+
+      const selection = typeof window === "undefined" ? null : window.getSelection();
+      const text = getTranscriptContextMenuText({
+        transcriptRoot,
+        target: event.target,
+        selection,
+      });
+
+      if (!text) {
+        closeTranscriptContextMenu();
+        return;
+      }
+
+      event.preventDefault();
+      setTranscriptContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        text,
+      });
+    },
+    [closeTranscriptContextMenu, contentRef]
+  );
+
+  const handleQuoteHoveredText = useCallback(() => {
+    if (!transcriptContextMenu) {
+      return;
+    }
+
+    const quotedText = formatTranscriptTextAsQuote(transcriptContextMenu.text);
+    if (!quotedText) {
+      closeTranscriptContextMenu();
+      return;
+    }
+
+    chatInputAPI.current?.appendText(quotedText);
+    chatInputAPI.current?.focus();
+    closeTranscriptContextMenu();
+  }, [closeTranscriptContextMenu, transcriptContextMenu]);
+
+  const handleCopyHoveredText = useCallback(() => {
+    if (!transcriptContextMenu) {
+      return;
+    }
+
+    void copyToClipboard(transcriptContextMenu.text);
+    closeTranscriptContextMenu();
+  }, [closeTranscriptContextMenu, transcriptContextMenu]);
+
   // ChatPane is keyed by workspaceId (WorkspaceShell), so per-workspace UI state naturally
   // resets on workspace switches. Clear background errors so they don't leak across workspaces.
   useEffect(() => {
@@ -648,6 +720,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               onWheel={markUserInteraction}
               onTouchMove={markUserInteraction}
               onScroll={handleScroll}
+              onContextMenu={handleTranscriptContextMenu}
               role="log"
               aria-live={canInterrupt ? "polite" : "off"}
               aria-busy={canInterrupt}
@@ -799,6 +872,49 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                 />
               </div>
             </div>
+            <Popover
+              open={transcriptContextMenu !== null}
+              onOpenChange={(open) => {
+                if (!open) {
+                  closeTranscriptContextMenu();
+                }
+              }}
+            >
+              {transcriptContextMenu && (
+                <PopoverAnchor asChild>
+                  <span
+                    style={{
+                      position: "fixed",
+                      left: transcriptContextMenu.x,
+                      top: transcriptContextMenu.y,
+                      width: 0,
+                      height: 0,
+                    }}
+                  />
+                </PopoverAnchor>
+              )}
+              <PopoverContent
+                align="start"
+                side="right"
+                className="w-[170px] !min-w-0 p-1"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs"
+                  onClick={handleQuoteHoveredText}
+                >
+                  Quote in input
+                </button>
+                <button
+                  type="button"
+                  className="text-foreground bg-background hover:bg-hover mt-1 w-full rounded-sm px-2 py-1.5 text-left text-xs"
+                  onClick={handleCopyHoveredText}
+                >
+                  Copy
+                </button>
+              </PopoverContent>
+            </Popover>
             {!autoScroll && (
               <button
                 onClick={jumpToBottom}
