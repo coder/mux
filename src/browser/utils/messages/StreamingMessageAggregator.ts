@@ -2210,9 +2210,7 @@ export class StreamingMessageAggregator {
         this.currentTodos = [];
 
         // Capture pending compaction metadata for pre-stream UI ("starting" phase).
-        const muxMetadata = incomingMessage.metadata?.muxMetadata as
-          | MuxMessageMetadata
-          | undefined;
+        const muxMetadata = incomingMessage.metadata?.muxMetadata as MuxMessageMetadata | undefined;
         this.pendingCompactionRequest =
           muxMetadata?.type === "compaction-request" ? muxMetadata.parsed : null;
 
