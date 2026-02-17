@@ -256,12 +256,17 @@ CHECK_PR_CHECKS_ONCE() {
       return 1
     fi
 
-    if [ "$merge_state" = "BLOCKED" ]; then
-      return 10
-    fi
-
-    echo "❌ assertion failed: checks passed but merge state '$merge_state' is not supported" >&2
-    return 1
+    # GitHub can transiently report UNKNOWN/UNSTABLE/HAS_HOOKS even when checks have
+    # passed; treat these as still-pending rather than a terminal assertion failure.
+    case "$merge_state" in
+      BLOCKED | DRAFT | HAS_HOOKS | UNKNOWN | UNSTABLE)
+        return 10
+        ;;
+      *)
+        echo "❌ assertion failed: checks passed but merge state '$merge_state' is not supported" >&2
+        return 1
+        ;;
+    esac
   fi
 
   return 10
