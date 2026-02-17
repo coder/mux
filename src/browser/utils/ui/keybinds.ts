@@ -433,10 +433,10 @@ export const KEYBINDS = {
   REVIEW_PREV_FILE: { key: "p" },
 
   /** Navigate to next hunk in immersive review */
-  REVIEW_NEXT_HUNK: { key: "j" },
+  REVIEW_NEXT_HUNK: { key: "k" },
 
   /** Navigate to previous hunk in immersive review */
-  REVIEW_PREV_HUNK: { key: "k" },
+  REVIEW_PREV_HUNK: { key: "j" },
 
   /** Move line cursor down in immersive review */
   REVIEW_CURSOR_DOWN: { key: "ArrowDown", allowShift: true },
