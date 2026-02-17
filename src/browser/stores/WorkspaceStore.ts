@@ -2128,6 +2128,11 @@ export class WorkspaceStore {
         // queuedMessage is safe to clear because backend now replays a fresh
         // queued-message-changed snapshot before caught-up.
         transient.queuedMessage = null;
+
+        // Server can downgrade a requested since reconnect to full replay.
+        // Clear stale interruption suppression state so retry UI is derived solely
+        // from the replayed transcript instead of a pre-disconnect abort reason.
+        aggregator.clearLastAbortReason();
       }
 
       if (replay === "full" || !data.cursor?.stream || streamContextMismatched) {

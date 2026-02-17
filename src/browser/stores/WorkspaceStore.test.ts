@@ -1055,6 +1055,78 @@ describe("WorkspaceStore", () => {
       expect(switchedToNewStream).toBe(true);
     });
 
+    it("clears stale abort reason when since reconnect is downgraded to full replay", async () => {
+      const workspaceId = "task-created-workspace-6";
+      let subscriptionCount = 0;
+      let releaseFirstSubscription: (() => void) | undefined;
+      const holdFirstSubscription = new Promise<void>((resolve) => {
+        releaseFirstSubscription = resolve;
+      });
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        subscriptionCount += 1;
+
+        if (subscriptionCount === 1) {
+          yield { type: "caught-up" };
+          await Promise.resolve();
+          yield {
+            type: "stream-start",
+            workspaceId,
+            messageId: "msg-abort-old-stream",
+            historySequence: 1,
+            model: "claude-3-5-sonnet-20241022",
+            startTime: 1_000,
+          };
+          yield {
+            type: "stream-abort",
+            workspaceId,
+            messageId: "msg-abort-old-stream",
+            abortReason: "user",
+            metadata: {},
+          };
+
+          await holdFirstSubscription;
+          return;
+        }
+
+        yield {
+          type: "caught-up",
+          replay: "full",
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const seededAbortReason = await waitUntil(() => {
+        return store.getWorkspaceState(workspaceId).lastAbortReason?.reason === "user";
+      });
+      expect(seededAbortReason).toBe(true);
+
+      releaseFirstSubscription?.();
+
+      const clearedAbortReason = await waitUntil(() => {
+        return (
+          subscriptionCount >= 2 && store.getWorkspaceState(workspaceId).lastAbortReason === null
+        );
+      });
+      expect(clearedAbortReason).toBe(true);
+    });
+
     it("replays pre-caught-up task-created after full replay catches up", async () => {
       const workspaceId = "task-created-workspace-3";
 
