@@ -297,7 +297,17 @@ fetch_result_via_api() {
 
 echo "Checking for unresolved Codex comments in PR #${PR_NUMBER}..."
 
-if ! load_result_from_cache; then
+loaded_from_cache=0
+if load_result_from_cache; then
+  loaded_from_cache=1
+else
+  fetch_result_via_api
+fi
+
+# The shared cache is fetched earlier in wait_pr_ready's loop and can become stale
+# before this final Codex comment gate executes. Re-query before returning either
+# success or failure so recently-added/resolved Codex comments are not misclassified.
+if [ "$loaded_from_cache" -eq 1 ]; then
   fetch_result_via_api
 fi
 
