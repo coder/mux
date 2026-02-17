@@ -9,14 +9,11 @@
 import "../dom";
 import { fireEvent, waitFor } from "@testing-library/react";
 
-import { shouldRunIntegrationTests } from "../../testUtils";
 import { preloadTestModules } from "../../ipc/setup";
 
 import { createAppHarness } from "../harness";
 
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
-describeIntegration("Workspace Fork (UI)", () => {
+describe("Workspace Fork (UI)", () => {
   beforeAll(async () => {
     await preloadTestModules();
   });

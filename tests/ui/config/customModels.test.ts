@@ -24,7 +24,6 @@ import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import type { ProviderModelEntry } from "@/common/orpc/types";
 import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
 
-import { shouldRunIntegrationTests } from "../../testUtils";
 import {
   cleanupSharedRepo,
   createSharedRepo,
@@ -32,8 +31,6 @@ import {
 } from "../../ipc/sendMessageTestHelpers";
 
 import { installDom } from "../dom";
-
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 function AddCustomModelHarness(props: {
   provider: string;
@@ -71,7 +68,7 @@ function AddCustomModelHarness(props: {
   return React.createElement("div", { "data-testid": "harness" }, loading ? "loading" : "ready");
 }
 
-describeIntegration("Custom Models", () => {
+describe("Custom Models", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });

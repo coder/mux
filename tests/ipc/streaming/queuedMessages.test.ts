@@ -1,4 +1,4 @@
-import { setupWorkspace, shouldRunIntegrationTests, validateApiKeys } from "../setup";
+import { setupWorkspace } from "../setup";
 import {
   sendMessageWithModel,
   sendMessage,
@@ -17,13 +17,9 @@ import type { WorkspaceChatMessage } from "@/common/orpc/types";
 type QueuedMessageChangedEvent = Extract<WorkspaceChatMessage, { type: "queued-message-changed" }>;
 type RestoreToInputEvent = Extract<WorkspaceChatMessage, { type: "restore-to-input" }>;
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
+jest.setTimeout(600_000);
 
 // Validate API keys before running tests
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["ANTHROPIC_API_KEY"]);
-}
 
 // Helper: Get queued messages from latest queued-message-changed event
 // If wait=true, waits for a new event first (use when expecting a change)
@@ -86,7 +82,7 @@ async function waitForRestoreToInputEvent(
   return event;
 }
 
-describeIntegration("Queued messages", () => {
+describe("Queued messages", () => {
   // Enable retries in CI for flaky API tests
   configureTestRetries(3);
 

@@ -1,3 +1,5 @@
+jest.setTimeout(600_000);
+
 /**
  * sendMessage context handling integration tests.
  *
@@ -10,7 +12,6 @@
 
 import * as path from "path";
 import * as fs from "fs/promises";
-import { shouldRunIntegrationTests, validateApiKeys } from "../setup";
 import { sendMessageWithModel, modelString } from "../helpers";
 import {
   createSharedRepo,
@@ -21,13 +22,7 @@ import {
 } from "../sendMessageTestHelpers";
 import { KNOWN_MODELS } from "../../../src/common/constants/knownModels";
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
 // Validate API keys before running tests
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]);
-}
 
 // Test both providers
 const PROVIDER_CONFIGS: Array<[string, string]> = [
@@ -38,7 +33,7 @@ const PROVIDER_CONFIGS: Array<[string, string]> = [
 beforeAll(createSharedRepo);
 afterAll(cleanupSharedRepo);
 
-describeIntegration("sendMessage context handling tests", () => {
+describe("sendMessage context handling tests", () => {
   configureTestRetries(3);
 
   describe.each(PROVIDER_CONFIGS)("%s conversation continuity", (provider, model) => {

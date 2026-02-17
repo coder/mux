@@ -1,9 +1,7 @@
-import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "./setup";
+import { createTestEnvironment, cleanupTestEnvironment } from "./setup";
 import { resolveOrpcClient } from "./helpers";
 
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
-describeIntegration("Service double registration", () => {
+describe("Service double registration", () => {
   test.concurrent(
     "should not throw when register() is called multiple times",
     async () => {

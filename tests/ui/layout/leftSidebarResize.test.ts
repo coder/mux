@@ -5,7 +5,6 @@
 import "../dom";
 import { fireEvent, waitFor } from "@testing-library/react";
 
-import { shouldRunIntegrationTests } from "../../testUtils";
 import {
   cleanupSharedRepo,
   createSharedRepo,
@@ -18,9 +17,7 @@ import { cleanupView, setupWorkspaceView } from "../helpers";
 import { LEFT_SIDEBAR_COLLAPSED_KEY, LEFT_SIDEBAR_WIDTH_KEY } from "@/common/constants/storage";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
-describeIntegration("LeftSidebar (UI)", () => {
+describe("LeftSidebar (UI)", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });

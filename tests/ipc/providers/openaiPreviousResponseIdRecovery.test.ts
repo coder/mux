@@ -1,3 +1,5 @@
+jest.setTimeout(600_000);
+
 /**
  * OpenAI previousResponseId recovery integration test.
  *
@@ -6,7 +8,7 @@
  */
 
 import { randomBytes } from "crypto";
-import { setupWorkspace, shouldRunIntegrationTests, validateApiKeys } from "../setup";
+import { setupWorkspace } from "../setup";
 import {
   sendMessageWithModel,
   createStreamCollector,
@@ -17,13 +19,7 @@ import { KNOWN_MODELS } from "../../../src/common/constants/knownModels";
 import type { ToolPolicy } from "../../../src/common/utils/tools/toolPolicy";
 import { createMuxMessage } from "../../../src/common/types/message";
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
 // Validate API keys before running tests
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["OPENAI_API_KEY"]);
-}
 
 const OPENAI_MODEL = modelString("openai", KNOWN_MODELS.GPT.providerModelId);
 const DISABLE_TOOLS: ToolPolicy = [{ regex_match: ".*", action: "disable" }];
@@ -32,7 +28,7 @@ function createInvalidResponseId(): string {
   return `resp_${randomBytes(12).toString("hex")}`;
 }
 
-describeIntegration("OpenAI previousResponseId recovery", () => {
+describe("OpenAI previousResponseId recovery", () => {
   configureTestRetries(3);
 
   test.concurrent(

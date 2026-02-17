@@ -335,7 +335,7 @@ check-deadcode: node_modules/.installed ## Check for potential dead code (manual
 ## Testing
 test-integration: node_modules/.installed build-main ## Run all tests (unit + integration)
 	@bun test src
-	@TEST_INTEGRATION=1 bun x jest tests
+	@bun x jest tests
 
 test-unit: node_modules/.installed build-main ## Run unit tests
 	@bun test src

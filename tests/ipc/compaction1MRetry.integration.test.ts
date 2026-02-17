@@ -1,3 +1,5 @@
+jest.setTimeout(600_000);
+
 /**
  * Integration test: Compaction 1M context retry.
  *
@@ -9,18 +11,11 @@
  * the compaction should succeed rather than returning context_exceeded.
  */
 
-import { setupWorkspace, shouldRunIntegrationTests, validateApiKeys } from "./setup";
+import { setupWorkspace } from "./setup";
 import { createStreamCollector, resolveOrpcClient } from "./helpers";
 import { HistoryService } from "../../src/node/services/historyService";
 import { createMuxMessage } from "../../src/common/types/message";
 import { KNOWN_MODELS } from "../../src/common/constants/knownModels";
-
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["ANTHROPIC_API_KEY"]);
-}
 
 // ~1 token ≈ 4 chars in English text. To exceed 200k tokens we need ~800k chars.
 // Use ~260k tokens of padding to comfortably exceed the 200k default context.
@@ -40,7 +35,7 @@ function buildFillerText(charCount: number): string {
   return base.repeat(repeats).slice(0, charCount);
 }
 
-describeIntegration("compaction 1M context retry", () => {
+describe("compaction 1M context retry", () => {
   // Compaction with 1M retry can take a while — summarizing 250k+ tokens of content
   const TEST_TIMEOUT_MS = 120_000;
 

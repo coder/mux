@@ -19,7 +19,6 @@
 import "../dom";
 import { act, fireEvent, waitFor } from "@testing-library/react";
 
-import { shouldRunIntegrationTests } from "../../testUtils";
 import {
   cleanupSharedRepo,
   createSharedRepo,
@@ -33,8 +32,6 @@ import { installDom } from "../dom";
 import { renderApp } from "../renderReviewPanel";
 import { cleanupView, setupWorkspaceView } from "../helpers";
 import { expandProjects } from "@/browser/stories/storyHelpers";
-
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
@@ -120,7 +117,7 @@ async function createSectionViaAPI(
 // TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describeIntegration("Workspace Sections", () => {
+describe("Workspace Sections", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });

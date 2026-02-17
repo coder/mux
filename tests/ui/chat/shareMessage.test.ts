@@ -9,20 +9,17 @@
  */
 
 import "../dom";
-import { shouldRunIntegrationTests } from "../../testUtils";
 import { uploadToMuxMd, deleteFromMuxMd, getMuxMdBaseUrl } from "../../../src/common/lib/muxMd";
 
 if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
   jest.retryTimes(2, { logErrorsBeforeRetry: true });
 }
 
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // MUX.MD UPLOAD TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describeIntegration("mux.md sharing (upload integration)", () => {
+describe("mux.md sharing (upload integration)", () => {
   test("should upload encrypted content and return valid URL", async () => {
     const testContent =
       "# Test Message\n\nThis is a test message for sharing.\n\n```typescript\nconst x = 42;\n```";

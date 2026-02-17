@@ -1,9 +1,7 @@
-import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "./setup";
+import { createTestEnvironment, cleanupTestEnvironment } from "./setup";
 import { resolveOrpcClient } from "./helpers";
 
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
-describeIntegration("Window title IPC", () => {
+describe("Window title IPC", () => {
   test.concurrent(
     "should update window title via IPC",
     async () => {

@@ -1,3 +1,5 @@
+jest.setTimeout(600_000);
+
 /**
  * Integration tests for file editing tools across Local and SSH runtimes
  *
@@ -7,14 +9,7 @@
  * Uses toolPolicy to restrict AI to only file tools (prevents bash circumvention).
  */
 
-import {
-  createTestEnvironment,
-  cleanupTestEnvironment,
-  shouldRunIntegrationTests,
-  validateApiKeys,
-  getApiKey,
-  setupProviders,
-} from "../setup";
+import { createTestEnvironment, cleanupTestEnvironment, getApiKey, setupProviders } from "../setup";
 import {
   createTempGitRepo,
   cleanupTempGitRepo,
@@ -47,13 +42,7 @@ const FILE_TOOLS_ONLY: ToolPolicy = [
   { regex_match: "bash", action: "disable" },
 ];
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
 // Validate API keys before running tests
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["ANTHROPIC_API_KEY"]);
-}
 
 // Retry flaky tests in CI (API latency/rate limiting)
 configureTestRetries();
@@ -65,12 +54,12 @@ let sshConfig: SSHServerConfig | undefined;
 // Tests
 // ============================================================================
 
-describeIntegration("Runtime File Editing Tools", () => {
+describe("Runtime File Editing Tools", () => {
   beforeAll(async () => {
     // Check if Docker is available (required for SSH tests)
     if (!(await isDockerAvailable())) {
       throw new Error(
-        "Docker is required for SSH runtime tests. Please install Docker or skip tests by unsetting TEST_INTEGRATION."
+        "Docker is required for SSH runtime tests. Please install Docker or skip this test suite."
       );
     }
 

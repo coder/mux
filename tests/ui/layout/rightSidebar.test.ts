@@ -13,7 +13,6 @@
 import "../dom";
 import { fireEvent, waitFor } from "@testing-library/react";
 
-import { getApiKey, shouldRunIntegrationTests } from "../../testUtils";
 import {
   cleanupSharedRepo,
   createSharedRepo,
@@ -38,10 +37,9 @@ import {
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 // RightSidebarLayoutState used for initial setup via persisted-state helpers - acceptable for test fixtures
 import type { RightSidebarLayoutState } from "@/browser/utils/rightSidebarLayout";
+import { getApiKey } from "../../testUtils";
 
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
-describeIntegration("RightSidebar (UI)", () => {
+describe("RightSidebar (UI)", () => {
   let env: TestEnvironment;
   let workspaceId: string;
   let metadata: FrontendWorkspaceMetadata;

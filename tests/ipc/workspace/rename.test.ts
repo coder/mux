@@ -10,7 +10,7 @@
  * Uses real IPC handlers, real git operations, and Docker SSH server.
  */
 
-import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "../setup";
+import { createTestEnvironment, cleanupTestEnvironment } from "../setup";
 import {
   createTempGitRepo,
   cleanupTempGitRepo,
@@ -32,9 +32,6 @@ import { ssh2ConnectionPool } from "../../../src/node/runtime/SSH2ConnectionPool
 // Test constants
 const TEST_TIMEOUT_MS = TEST_TIMEOUT_SSH_MS; // Use SSH timeout for consistency
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
 // SSH server config (shared across all SSH tests)
 let sshConfig: SSHServerConfig | undefined;
 
@@ -42,12 +39,12 @@ let sshConfig: SSHServerConfig | undefined;
 // Tests
 // ============================================================================
 
-describeIntegration("WORKSPACE_RENAME with both runtimes", () => {
+describe("WORKSPACE_RENAME with both runtimes", () => {
   beforeAll(async () => {
     // Check if Docker is available (required for SSH tests)
     if (!(await isDockerAvailable())) {
       throw new Error(
-        "Docker is required for SSH runtime tests. Please install Docker or skip tests by unsetting TEST_INTEGRATION."
+        "Docker is required for SSH runtime tests. Please install Docker or skip this test suite."
       );
     }
 

@@ -1,4 +1,4 @@
-import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "../setup";
+import { createTestEnvironment, cleanupTestEnvironment } from "../setup";
 import {
   createTempGitRepo,
   cleanupTempGitRepo,
@@ -67,13 +67,11 @@ function expectWorkspaceCreationSuccess(result: WorkspaceCreationResult): Worksp
 
 const GIT_FETCH_TIMEOUT_SECS = process.platform === "win32" ? 15 : 5;
 const TEST_TIMEOUT_MS = process.platform === "win32" ? 60_000 : 15_000;
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 // Retry flaky integration tests in CI (Windows shell startup / IO jitter)
 configureTestRetries(2);
 
-describeIntegration("executeBash", () => {
+describe("executeBash", () => {
   test.concurrent(
     "should execute bash command in workspace context",
     async () => {

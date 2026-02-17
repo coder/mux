@@ -1,4 +1,4 @@
-import { setupWorkspace, shouldRunIntegrationTests, validateApiKeys } from "../setup";
+import { setupWorkspace } from "../setup";
 import {
   sendMessageWithModel,
   createStreamCollector,
@@ -10,15 +10,11 @@ import { HistoryService } from "../../../src/node/services/historyService";
 import { createMuxMessage } from "../../../src/common/types/message";
 import type { DeleteMessage } from "@/common/orpc/types";
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
+jest.setTimeout(600_000);
 
 // Validate API keys before running tests
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["ANTHROPIC_API_KEY"]);
-}
 
-describeIntegration("truncateHistory", () => {
+describe("truncateHistory", () => {
   test.concurrent(
     "should truncate 50% of chat history and verify context is updated",
     async () => {

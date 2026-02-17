@@ -1,3 +1,5 @@
+jest.setTimeout(600_000);
+
 /**
  * sendMessage heavy/load integration tests.
  *
@@ -6,7 +8,6 @@
  * - Context limit error handling
  */
 
-import { shouldRunIntegrationTests, validateApiKeys } from "../setup";
 import { sendMessageWithModel, modelString } from "../helpers";
 import {
   createSharedRepo,
@@ -16,18 +17,12 @@ import {
 } from "../sendMessageTestHelpers";
 import { KNOWN_MODELS } from "../../../src/common/constants/knownModels";
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
 // Validate API keys before running tests
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]);
-}
 
 beforeAll(createSharedRepo);
 afterAll(cleanupSharedRepo);
 
-describeIntegration("sendMessage heavy/load tests", () => {
+describe("sendMessage heavy/load tests", () => {
   configureTestRetries(3);
 
   describe("OpenAI context limit error (forced)", () => {

@@ -1,3 +1,5 @@
+jest.setTimeout(600_000);
+
 /**
  * sendMessage error handling integration tests.
  *
@@ -8,12 +10,7 @@
  * - Stream errors
  */
 
-import {
-  shouldRunIntegrationTests,
-  validateApiKeys,
-  createTestEnvironment,
-  cleanupTestEnvironment,
-} from "../setup";
+import { createTestEnvironment, cleanupTestEnvironment } from "../setup";
 import { sendMessage, sendMessageWithModel, modelString, generateBranchName } from "../helpers";
 import {
   createSharedRepo,
@@ -25,18 +22,12 @@ import {
 import { KNOWN_MODELS } from "../../../src/common/constants/knownModels";
 import { detectDefaultTrunkBranch } from "../../../src/node/git";
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
 // Validate API keys before running tests
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]);
-}
 
 beforeAll(createSharedRepo);
 afterAll(cleanupSharedRepo);
 
-describeIntegration("sendMessage error handling tests", () => {
+describe("sendMessage error handling tests", () => {
   configureTestRetries(3);
 
   describe("validation errors", () => {

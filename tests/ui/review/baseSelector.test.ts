@@ -8,7 +8,6 @@
 import "../dom";
 import { fireEvent, waitFor } from "@testing-library/react";
 
-import { shouldRunIntegrationTests } from "../../testUtils";
 import {
   cleanupSharedRepo,
   configureTestRetries,
@@ -22,8 +21,6 @@ import { cleanupView, setupWorkspaceView } from "../helpers";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 
 configureTestRetries(2);
-
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
@@ -117,7 +114,7 @@ function getDisplayedBase(container: HTMLElement): string {
 // BASE SELECTOR TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describeIntegration("ReviewPanel base selector", () => {
+describe("ReviewPanel base selector", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });

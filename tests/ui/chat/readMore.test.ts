@@ -12,7 +12,6 @@
 import "../dom";
 import { fireEvent, waitFor } from "@testing-library/react";
 
-import { shouldRunIntegrationTests } from "../../testUtils";
 import {
   cleanupSharedRepo,
   createSharedRepo,
@@ -26,8 +25,6 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { APIClient } from "@/browser/contexts/API";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { STORAGE_KEYS } from "@/constants/workspaceDefaults";
-
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 type ExecuteBashResult = Awaited<ReturnType<APIClient["workspace"]["executeBash"]>>;
 type ExecuteBashSuccess = Extract<ExecuteBashResult, { success: true }>;
@@ -221,7 +218,7 @@ git diff HEAD -- test-readmore.ts | grep -q "MODIFIED FOR TEST"`,
 // READ-MORE CONTEXT EXPANSION TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describeIntegration("ReadMore context expansion (UI + ORPC)", () => {
+describe("ReadMore context expansion (UI + ORPC)", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });

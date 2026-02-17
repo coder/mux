@@ -1,7 +1,6 @@
 import "../dom";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 
-import { shouldRunIntegrationTests } from "../../testUtils";
 import { STORAGE_KEYS } from "@/constants/workspaceDefaults";
 import { REVIEW_FILE_TREE_VIEW_MODE_KEY } from "@/common/constants/storage";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
@@ -18,9 +17,7 @@ import { cleanupView, setupWorkspaceView } from "../helpers";
 
 configureTestRetries(2);
 
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
-describeIntegration("ReviewPanel FileTree view mode (UI + ORPC)", () => {
+describe("ReviewPanel FileTree view mode (UI + ORPC)", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });

@@ -1,3 +1,5 @@
+jest.setTimeout(600_000);
+
 /**
  * interruptStream "starting..." integration tests.
  *
@@ -5,14 +7,7 @@
  * stream-start (e.g., while AIService is blocked on initStateManager.waitForInit).
  */
 
-import {
-  shouldRunIntegrationTests,
-  validateApiKeys,
-  createTestEnvironment,
-  cleanupTestEnvironment,
-  setupProviders,
-  getApiKey,
-} from "../setup";
+import { createTestEnvironment, cleanupTestEnvironment, setupProviders, getApiKey } from "../setup";
 import {
   createTempGitRepo,
   cleanupTempGitRepo,
@@ -32,13 +27,6 @@ import { promisify } from "util";
 
 const execAsync = promisify(exec);
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["ANTHROPIC_API_KEY"]);
-}
-
 async function addInitHook(repoPath: string, scriptBody: string): Promise<void> {
   const muxDir = path.join(repoPath, ".mux");
   await fs.mkdir(muxDir, { recursive: true });
@@ -52,7 +40,7 @@ async function addInitHook(repoPath: string, scriptBody: string): Promise<void> 
   await execAsync(`git -c commit.gpgsign=false commit -m "Add init hook"`, { cwd: repoPath });
 }
 
-describeIntegration("interruptStream during startup", () => {
+describe("interruptStream during startup", () => {
   test("should emit stream-abort without stream-start when interrupted before stream-start", async () => {
     const env = await createTestEnvironment();
     const repoPath = await createTempGitRepo();

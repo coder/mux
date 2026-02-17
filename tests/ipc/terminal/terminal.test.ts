@@ -1,4 +1,4 @@
-import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "../setup";
+import { createTestEnvironment, cleanupTestEnvironment } from "../setup";
 import {
   createTempGitRepo,
   cleanupTempGitRepo,
@@ -17,10 +17,7 @@ function expectWorkspaceCreationSuccess(result: WorkspaceCreationResult): Worksp
   return result.metadata;
 }
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
-describeIntegration("terminal PTY", () => {
+describe("terminal PTY", () => {
   test.concurrent(
     "should create terminal session, send command, receive output, and close",
     async () => {

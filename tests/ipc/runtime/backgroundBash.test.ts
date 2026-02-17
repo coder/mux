@@ -1,3 +1,5 @@
+jest.setTimeout(600_000);
+
 /**
  * Integration tests for background bash process execution
  *
@@ -8,14 +10,7 @@
  * is covered by unit tests in backgroundProcessManager.test.ts
  */
 
-import {
-  createTestEnvironment,
-  cleanupTestEnvironment,
-  shouldRunIntegrationTests,
-  validateApiKeys,
-  getApiKey,
-  setupProviders,
-} from "../setup";
+import { createTestEnvironment, cleanupTestEnvironment, getApiKey, setupProviders } from "../setup";
 import {
   createTempGitRepo,
   cleanupTempGitRepo,
@@ -123,18 +118,12 @@ function extractTerminatedTaskIds(events: WorkspaceChatMessage[]): string[] {
   return [];
 }
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
 // Validate API keys before running tests
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["ANTHROPIC_API_KEY"]);
-}
 
 // Retry flaky tests in CI (API latency / rate limiting)
 configureTestRetries(3);
 
-describeIntegration("Background Bash Execution", () => {
+describe("Background Bash Execution", () => {
   test.concurrent(
     "should start a background process and list it",
     async () => {

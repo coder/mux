@@ -172,7 +172,7 @@ jobs:
 
           # Manual override (workflow_dispatch input)
           if [[ -n "${{ github.event.inputs.test_filter }}" ]]; then
-            TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent ${{ github.event.inputs.test_filter }}
+            bun x jest --coverage --maxWorkers=100% --silent ${{ github.event.inputs.test_filter }}
             exit 0
           fi
           
@@ -185,11 +185,11 @@ jobs:
           # Backend changed: run ALL integration tests (includes tests/ui)
           if [[ "$BACKEND" == "true" ]]; then
             echo "Backend changes detected - running all integration tests"
-            TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent tests/
+            bun x jest --coverage --maxWorkers=100% --silent tests/
           else
             # Browser-only changes: run tests/ui
             echo "Browser changes detected - running tests/ui"
-            TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent tests/ui/
+            bun x jest --coverage --maxWorkers=100% --silent tests/ui/
           fi
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -296,7 +296,6 @@ jobs:
           bun x jest --silent tests/ipc/runtime/backgroundBashDirect.test.ts tests/ipc/runtime/executeBash.test.ts tests/ipc/projects/create.test.ts tests/ipc/agents/planCommands.test.ts
         env:
           BACKEND: ${{ needs.changes.outputs.backend }}
-          TEST_INTEGRATION: "1"
 
   smoke-server:
     name: Smoke / Server

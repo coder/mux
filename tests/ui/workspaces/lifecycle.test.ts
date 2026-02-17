@@ -13,7 +13,6 @@
 import "../dom";
 import { fireEvent, waitFor } from "@testing-library/react";
 
-import { shouldRunIntegrationTests } from "../../testUtils";
 import {
   cleanupSharedRepo,
   createSharedRepo,
@@ -28,9 +27,7 @@ import { installDom } from "../dom";
 import { renderApp } from "../renderReviewPanel";
 import { cleanupView, openProjectCreationView, setupWorkspaceView } from "../helpers";
 
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
-describeIntegration("Workspace Creation (UI)", () => {
+describe("Workspace Creation (UI)", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });
@@ -101,7 +98,7 @@ describeIntegration("Workspace Creation (UI)", () => {
   }, 30_000);
 });
 
-describeIntegration("Workspace Archive (UI)", () => {
+describe("Workspace Archive (UI)", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });
@@ -307,7 +304,7 @@ describeIntegration("Workspace Archive (UI)", () => {
   }, 30_000);
 });
 
-describeIntegration("Workspace Archive List Reactivity (UI)", () => {
+describe("Workspace Archive List Reactivity (UI)", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });
@@ -466,7 +463,7 @@ describeIntegration("Workspace Archive List Reactivity (UI)", () => {
   }, 60_000);
 });
 
-describeIntegration("Workspace Delete from Archive (UI)", () => {
+describe("Workspace Delete from Archive (UI)", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });

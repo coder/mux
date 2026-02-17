@@ -12,7 +12,6 @@
 import "../dom";
 import { act, waitFor } from "@testing-library/react";
 
-import { shouldRunIntegrationTests } from "../../testUtils";
 import {
   cleanupSharedRepo,
   createSharedRepo,
@@ -31,9 +30,7 @@ import {
   waitForLatestDraftId,
 } from "../helpers";
 
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
-describeIntegration("Name generation UI flow", () => {
+describe("Name generation UI flow", () => {
   beforeAll(async () => {
     await createSharedRepo();
   }, 30_000);

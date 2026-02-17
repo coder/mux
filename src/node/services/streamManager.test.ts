@@ -7,17 +7,12 @@ import { APICallError, RetryError, type ModelMessage } from "ai";
 import type { HistoryService } from "./historyService";
 import { createTestHistoryService } from "./testHistoryService";
 import { createAnthropic } from "@ai-sdk/anthropic";
-import { shouldRunIntegrationTests, validateApiKeys } from "../../../tests/testUtils";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 
-// Skip integration tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
-// Validate API keys before running tests
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["ANTHROPIC_API_KEY"]);
-}
+// The "with real API" section calls Anthropic — gate on key availability
+const hasAnthropicKey = Boolean(process.env.ANTHROPIC_API_KEY);
+const describeWithApi = hasAnthropicKey ? describe : describe.skip;
 
 // Real HistoryService backed by a temp directory (created fresh per test)
 let historyService: HistoryService;
@@ -266,8 +261,8 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
     streamManager.on("error", () => undefined);
   });
 
-  // Integration test - requires API key and TEST_INTEGRATION=1
-  describeIntegration("with real API", () => {
+  // Integration test - requires ANTHROPIC_API_KEY
+  describeWithApi("with real API", () => {
     test("should prevent concurrent streams for the same workspace", async () => {
       const workspaceId = "test-workspace-concurrent";
       const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });

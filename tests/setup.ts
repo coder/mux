@@ -51,17 +51,5 @@ if (typeof globalThis.File === "undefined") {
   };
 }
 
-// Preload tokenizer and AI SDK modules for integration tests
-// This eliminates ~10s initialization delay on first use
-if (process.env.TEST_INTEGRATION === "1") {
-  // Store promise globally to ensure it blocks subsequent test execution
-  (globalThis as any).__muxPreloadPromise = (async () => {
-    const { preloadTestModules } = await import("./ipc/setup");
-    await preloadTestModules();
-  })();
-
-  // Add a global beforeAll to block until preload completes
-  beforeAll(async () => {
-    await (globalThis as any).__muxPreloadPromise;
-  }, 30000); // 30s timeout for preload
-}
+// Tests that need AI SDK preloading call preloadTestModules() in their own
+// beforeAll hook — see tests/ipc/setup.ts. No global preload needed.

@@ -10,7 +10,6 @@
 import "../dom";
 import { fireEvent, waitFor } from "@testing-library/react";
 
-import { shouldRunIntegrationTests } from "../../testUtils";
 import { installDom } from "../dom";
 import { renderApp } from "../renderReviewPanel";
 import { cleanupView, openProjectCreationView } from "../helpers";
@@ -19,15 +18,13 @@ import type { ProjectConfig } from "@/node/config";
 import { expandProjects } from "@/browser/stories/storyHelpers";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
 /** Helper to create a project config for a path with no workspaces */
 
 function projectWithNoWorkspaces(path: string): [string, ProjectConfig] {
   return [path, { workspaces: [] }];
 }
 
-describeIntegration("Git Init Banner (UI)", () => {
+describe("Git Init Banner (UI)", () => {
   test("shows git init banner when project is not a git repository", async () => {
     const cleanupDom = installDom();
 

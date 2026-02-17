@@ -7,13 +7,11 @@
  * - Model selection fallback works correctly
  */
 
-import { shouldRunIntegrationTests } from "../../testUtils";
 import { createTestEnvironment, cleanupTestEnvironment, type TestEnvironment } from "../setup";
 
 // Skip if integration tests are disabled (requires real API keys)
-const describeIfIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
-describeIfIntegration("Name generation with real LLM", () => {
+describe("Name generation with real LLM", () => {
   let env: TestEnvironment;
 
   beforeAll(async () => {

@@ -22,7 +22,7 @@ import * as path from "path";
 import * as os from "os";
 import { exec } from "child_process";
 import { promisify } from "util";
-import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "../setup";
+import { createTestEnvironment, cleanupTestEnvironment } from "../setup";
 import { generateBranchName, cleanupTempGitRepo, waitForInitComplete } from "../helpers";
 import { detectDefaultTrunkBranch } from "../../../src/node/git";
 import {
@@ -40,8 +40,6 @@ const execAsync = promisify(exec);
 const TEST_TIMEOUT_MS = 60000;
 const SSH_INIT_WAIT_MS = 15000; // SSH init includes sync + checkout, needs more time
 const ORIGIN_COMMIT_MARKER = "ORIGIN_ONLY_COMMIT_MARKER";
-
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 // SSH server config (shared across all SSH tests)
 let sshConfig: SSHServerConfig | undefined;
@@ -124,11 +122,11 @@ async function cleanupTestRepos(repoPath: string, originPath: string): Promise<v
   ]);
 }
 
-describeIntegration("Origin fetch ordering during workspace creation", () => {
+describe("Origin fetch ordering during workspace creation", () => {
   beforeAll(async () => {
     if (!(await isDockerAvailable())) {
       throw new Error(
-        "Docker is required for SSH runtime tests. Please install Docker or skip tests by unsetting TEST_INTEGRATION."
+        "Docker is required for SSH runtime tests. Please install Docker or skip this test suite."
       );
     }
 

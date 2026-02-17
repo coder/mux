@@ -1,4 +1,4 @@
-import { setupWorkspace, shouldRunIntegrationTests, validateApiKeys } from "../setup";
+import { setupWorkspace } from "../setup";
 import {
   sendMessageWithModel,
   createStreamCollector,
@@ -9,15 +9,11 @@ import {
 import { isUsageDelta } from "../../../src/common/orpc/types";
 import { KNOWN_MODELS } from "../../../src/common/constants/knownModels";
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
+jest.setTimeout(600_000);
 
 // Validate API keys before running tests
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["ANTHROPIC_API_KEY"]);
-}
 
-describeIntegration("usage-delta events", () => {
+describe("usage-delta events", () => {
   // Enable retries in CI for flaky API tests
   configureTestRetries(3);
 

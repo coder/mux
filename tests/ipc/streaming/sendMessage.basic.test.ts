@@ -1,3 +1,5 @@
+jest.setTimeout(600_000);
+
 /**
  * Basic sendMessage integration tests.
  *
@@ -8,7 +10,6 @@
  * - Provider parity (OpenAI and Anthropic)
  */
 
-import { shouldRunIntegrationTests, validateApiKeys } from "../setup";
 import { sendMessageWithModel, modelString, assertStreamSuccess } from "../helpers";
 import {
   createSharedRepo,
@@ -18,13 +19,7 @@ import {
 } from "../sendMessageTestHelpers";
 import { KNOWN_MODELS } from "../../../src/common/constants/knownModels";
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
 // Validate API keys before running tests
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]);
-}
 
 // Test both providers with their respective models
 const PROVIDER_CONFIGS: Array<[string, string]> = [
@@ -41,7 +36,7 @@ const PROVIDER_CONFIGS: Array<[string, string]> = [
 beforeAll(createSharedRepo);
 afterAll(cleanupSharedRepo);
 
-describeIntegration("sendMessage basic integration tests", () => {
+describe("sendMessage basic integration tests", () => {
   configureTestRetries(3);
 
   // Run tests for each provider concurrently

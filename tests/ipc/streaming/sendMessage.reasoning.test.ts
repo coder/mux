@@ -1,3 +1,5 @@
+jest.setTimeout(600_000);
+
 /**
  * Integration tests for reasoning/thinking functionality across Anthropic models.
  *
@@ -7,7 +9,6 @@
  * - Reasoning events are properly streamed
  */
 
-import { shouldRunIntegrationTests, validateApiKeys } from "../setup";
 import { sendMessage } from "../helpers";
 import {
   createSharedRepo,
@@ -17,18 +18,12 @@ import {
 } from "../sendMessageTestHelpers";
 import { KNOWN_MODELS } from "../../../src/common/constants/knownModels";
 
-// Skip all tests if TEST_INTEGRATION is not set
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
 // Validate API keys before running tests
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["ANTHROPIC_API_KEY"]);
-}
 
 beforeAll(createSharedRepo);
 afterAll(cleanupSharedRepo);
 
-describeIntegration("Anthropic reasoning parameter tests", () => {
+describe("Anthropic reasoning parameter tests", () => {
   configureTestRetries(3);
 
   test.concurrent(

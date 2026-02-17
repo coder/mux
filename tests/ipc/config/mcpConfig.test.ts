@@ -1,12 +1,6 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import {
-  shouldRunIntegrationTests,
-  cleanupTestEnvironment,
-  createTestEnvironment,
-  setupWorkspace,
-  validateApiKeys,
-} from "../setup";
+import { cleanupTestEnvironment, createTestEnvironment, setupWorkspace } from "../setup";
 import {
   createTempGitRepo,
   cleanupTempGitRepo,
@@ -19,7 +13,7 @@ import {
 } from "../helpers";
 import type { StreamCollector } from "../streamCollector";
 
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
+jest.setTimeout(600_000);
 
 const CHROME_DEVTOOLS_MCP_VERSION = "0.12.1";
 const CHROME_DEVTOOLS_MCP_NPX = `npx -y chrome-devtools-mcp@${CHROME_DEVTOOLS_MCP_VERSION}`;
@@ -31,9 +25,6 @@ const TEST_SCREENSHOT_MCP_SERVER_PATH = path.join(
   "mcp-screenshot-server.js"
 );
 const TEST_SCREENSHOT_MCP_SERVER_COMMAND = `node "${TEST_SCREENSHOT_MCP_SERVER_PATH}"`;
-if (shouldRunIntegrationTests()) {
-  validateApiKeys(["ANTHROPIC_API_KEY"]);
-}
 
 // Shared types for MCP content parsing
 type MediaItem = { type: "media"; data: string; mediaType: string };
@@ -131,7 +122,7 @@ function assertValidScreenshotResult(
   return { mediaItems, textItems };
 }
 
-describeIntegration("MCP global configuration", () => {
+describe("MCP global configuration", () => {
   test.concurrent("add, list, and remove MCP servers", async () => {
     const env = await createTestEnvironment();
     const repoPath = await createTempGitRepo();
@@ -294,7 +285,7 @@ describeIntegration("MCP global configuration", () => {
   });
 });
 
-describeIntegration("MCP server integration with model", () => {
+describe("MCP server integration with model", () => {
   // Test matrix for image format handling
   const imageFormatCases = [
     {
