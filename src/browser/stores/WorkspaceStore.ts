@@ -433,7 +433,7 @@ export class WorkspaceStore {
 
   private sessionUsage = new Map<string, z.infer<typeof SessionUsageFileSchema>>();
 
-  // Idle compaction notification callbacks (called when backend signals idle compaction needed)
+  // Idle compaction notification callbacks (called when backend signals idle compaction started)
   private idleCompactionCallbacks = new Set<(workspaceId: string) => void>();
 
   // Global callback for navigating to a workspace (set by App, used for notification clicks)
@@ -2605,18 +2605,18 @@ export class WorkspaceStore {
 
   /**
    * Subscribe to idle compaction events.
-   * Callback is called when backend signals a workspace needs idle compaction.
+   * Callback is called when backend signals a workspace started idle compaction.
    * Returns unsubscribe function.
    */
-  onIdleCompactionNeeded(callback: (workspaceId: string) => void): () => void {
+  onIdleCompactionStarted(callback: (workspaceId: string) => void): () => void {
     this.idleCompactionCallbacks.add(callback);
     return () => this.idleCompactionCallbacks.delete(callback);
   }
 
   /**
-   * Notify all listeners that a workspace needs idle compaction.
+   * Notify all listeners that a workspace started idle compaction.
    */
-  private notifyIdleCompactionNeeded(workspaceId: string): void {
+  private notifyIdleCompactionStarted(workspaceId: string): void {
     for (const callback of this.idleCompactionCallbacks) {
       try {
         callback(workspaceId);
@@ -2841,9 +2841,9 @@ export class WorkspaceStore {
       return;
     }
 
-    // Handle idle-compaction-needed event (workspace became eligible while connected)
-    if ("type" in data && data.type === "idle-compaction-needed") {
-      this.notifyIdleCompactionNeeded(workspaceId);
+    // Handle idle-compaction-started event from backend execution.
+    if ("type" in data && data.type === "idle-compaction-started") {
+      this.notifyIdleCompactionStarted(workspaceId);
       return;
     }
 
@@ -3031,8 +3031,8 @@ function getStoreInstance(): WorkspaceStore {
  * Use this for non-hook subscriptions (e.g., in useEffect callbacks).
  */
 export const workspaceStore = {
-  onIdleCompactionNeeded: (callback: (workspaceId: string) => void) =>
-    getStoreInstance().onIdleCompactionNeeded(callback),
+  onIdleCompactionStarted: (callback: (workspaceId: string) => void) =>
+    getStoreInstance().onIdleCompactionStarted(callback),
   subscribeFileModifyingTool: (listener: (workspaceId: string) => void, workspaceId?: string) =>
     getStoreInstance().subscribeFileModifyingTool(listener, workspaceId),
   getFileModifyingToolMs: (workspaceId: string) =>

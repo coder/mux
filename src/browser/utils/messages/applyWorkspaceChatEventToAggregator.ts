@@ -193,7 +193,7 @@ export function applyWorkspaceChatEventToAggregator(
     isRestoreToInput(event) ||
     isBashOutputEvent(event) ||
     ("type" in event && event.type === "session-usage-delta") ||
-    ("type" in event && event.type === "idle-compaction-needed")
+    ("type" in event && event.type === "idle-compaction-started")
   ) {
     return "ignored";
   }

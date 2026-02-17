@@ -12,7 +12,6 @@ import { ProjectProvider, useProjectContext } from "../contexts/ProjectContext";
 import { PolicyProvider, usePolicy } from "@/browser/contexts/PolicyContext";
 import { PolicyBlockedScreen } from "@/browser/components/PolicyBlockedScreen";
 import { APIProvider, useAPI, type APIClient } from "@/browser/contexts/API";
-import { useIdleCompactionHandler } from "@/browser/hooks/useIdleCompactionHandler";
 import { WorkspaceProvider, useWorkspaceContext } from "../contexts/WorkspaceContext";
 import { RouterProvider } from "../contexts/RouterContext";
 import { TelemetryEnabledProvider } from "../contexts/TelemetryEnabledContext";
@@ -63,13 +62,6 @@ function AppLoaderInner() {
   const projectContext = useProjectContext();
   const apiState = useAPI();
   const api = apiState.api;
-
-  // Idle compaction should be registered at the app level so it can serialize across
-  // all workspaces (and won't reset when switching workspaces).
-  //
-  // Avoid triggering background compactions when mux is blocked by policy.
-  const idleCompactionApi = policyState.status.state === "blocked" ? null : api;
-  useIdleCompactionHandler({ api: idleCompactionApi });
 
   // Get store instances
   const workspaceStoreInstance = useWorkspaceStoreRaw();
