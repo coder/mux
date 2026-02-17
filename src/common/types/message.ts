@@ -286,8 +286,13 @@ export type MuxFrontendMetadata = MuxFrontendMetadataBase &
         type: "compaction-request";
         rawCommand: string; // The original /compact command as typed by user (for display)
         parsed: CompactionRequestData;
-        /** Source of compaction request: user-initiated (undefined) or idle-compaction (auto) */
-        source?: "idle-compaction";
+        /**
+         * Source of compaction request:
+         * - undefined: user-initiated (/compact)
+         * - idle-compaction: backend idle compaction
+         * - auto-compaction: threshold-triggered compaction (on-send / mid-stream)
+         */
+        source?: "idle-compaction" | "auto-compaction";
         /** Transient status to display in sidebar during this operation */
         displayStatus?: DisplayStatus;
       }

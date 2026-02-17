@@ -3,6 +3,7 @@ import { EventEmitter } from "events";
 import * as path from "path";
 import { createHash } from "crypto";
 import { readFile } from "fs/promises";
+import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import YAML from "yaml";
 import { PlatformPaths } from "@/common/utils/paths";
 import { log } from "@/node/services/log";
@@ -50,6 +51,7 @@ import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import {
   createMuxMessage,
   isCompactionSummaryMetadata,
+  pickPreservedSendOptions,
   prepareUserMessageForSend,
   type CompactionFollowUpRequest,
   type MuxFrontendMetadata,
@@ -80,11 +82,19 @@ import type { PostCompactionAttachment, PostCompactionExclusions } from "@/commo
 import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 
 import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
+import { buildCompactionMessageText } from "@/common/utils/compaction/compactionPrompt";
+import type { AutoCompactionUsageState } from "@/common/utils/compaction/autoCompactionCheck";
 import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
-import { normalizeGatewayModel, isValidModelFormat } from "@/common/utils/ai/models";
+import {
+  normalizeGatewayModel,
+  isValidModelFormat,
+  supports1MContext,
+} from "@/common/utils/ai/models";
+import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
 import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
 import { getErrorMessage } from "@/common/utils/errors";
+import { CompactionMonitor, type CompactionStatusEvent } from "./compactionMonitor";
 
 /**
  * Tracked file state for detecting external edits.
@@ -97,6 +107,7 @@ export type { FileState, EditedFileAttachment } from "@/node/services/utils/file
 // Supports both new `followUpContent` and legacy `continueMessage` for backwards compatibility
 interface CompactionRequestMetadata {
   type: "compaction-request";
+  source?: "idle-compaction" | "auto-compaction";
   parsed: {
     followUpContent?: CompactionFollowUpRequest;
     // Legacy field - older persisted requests may use this instead of followUpContent
@@ -217,9 +228,16 @@ export class AgentSession {
   private idleWaiters: Array<() => void> = [];
   private readonly messageQueue = new MessageQueue();
   private readonly compactionHandler: CompactionHandler;
+  private readonly compactionMonitor: CompactionMonitor;
 
   private readonly retryManager: RetryManager;
   private lastAutoRetryOptions?: SendMessageOptions;
+
+  /** Latest context-usage snapshot used for on-send compaction checks. */
+  private lastUsageState?: AutoCompactionUsageState;
+
+  /** Prevent duplicate mid-stream compaction interrupts while we are already transitioning. */
+  private midStreamCompactionPending = false;
 
   /** Tracks file state for detecting external edits. */
   private readonly fileChangeTracker = new FileChangeTracker();
@@ -278,6 +296,7 @@ export class AgentSession {
     id: string;
     modelString: string;
     options?: SendMessageOptions;
+    source?: "idle-compaction" | "auto-compaction";
   };
 
   constructor(options: AgentSessionOptions) {
@@ -317,6 +336,11 @@ export class AgentSession {
       emitter: this.emitter,
       onCompactionComplete,
     });
+
+    this.compactionMonitor = new CompactionMonitor(
+      this.workspaceId,
+      (event: CompactionStatusEvent) => this.emitChatEvent(event)
+    );
 
     this.retryManager = new RetryManager(
       this.workspaceId,
@@ -1048,10 +1072,8 @@ export class AgentSession {
 
     // Preserve explicit mux-gateway prefixes from legacy clients so backend routing can
     // honor the opt-in even before muxGatewayModels has synchronized.
-    const modelForStream = rawModelString.startsWith("mux-gateway:")
-      ? rawModelString
-      : options.model;
-    const optionsForStream = rawSystem1Model?.startsWith("mux-gateway:")
+    let modelForStream = rawModelString.startsWith("mux-gateway:") ? rawModelString : options.model;
+    let optionsForStream = rawSystem1Model?.startsWith("mux-gateway:")
       ? { ...options, system1Model: rawSystem1Model }
       : options;
 
@@ -1170,6 +1192,73 @@ export class AgentSession {
       return Ok(undefined);
     }
 
+    let autoCompactionMessage: MuxMessage | null = null;
+
+    // Move threshold checks into the backend so all send paths (UI + IPC + recovery) behave consistently.
+    if (!isCompactionRequest && !editMessageId) {
+      const compactionResult = this.compactionMonitor.checkBeforeSend({
+        model: modelForStream,
+        usage: this.getUsageState(),
+        use1MContext: this.is1MContextEnabledForModel(modelForStream, optionsForStream),
+        providersConfig: null,
+      });
+
+      if (compactionResult.shouldForceCompact) {
+        const followUpFileParts = effectiveFileParts?.map((part) => ({
+          url: part.url,
+          mediaType: part.mediaType,
+          filename: part.filename,
+        }));
+
+        const followUpContent = this.buildAutoCompactionFollowUp({
+          messageText: message,
+          options: optionsForStream,
+          modelForStream,
+          fileParts: followUpFileParts,
+          muxMetadata: typedMuxMetadata,
+        });
+
+        const autoCompactionRequest = this.buildAutoCompactionRequest({
+          followUpContent,
+          baseOptions: optionsForStream,
+          reason: "on-send",
+        });
+
+        autoCompactionMessage = createMuxMessage(
+          createUserMessageId(),
+          "user",
+          autoCompactionRequest.messageText,
+          {
+            timestamp: Date.now(),
+            toolPolicy: autoCompactionRequest.sendOptions.toolPolicy,
+            muxMetadata: autoCompactionRequest.metadata,
+            synthetic: true,
+            uiVisible: true,
+          }
+        );
+
+        const appendCompactionResult = await this.historyService.appendToHistory(
+          this.workspaceId,
+          autoCompactionMessage
+        );
+        if (!appendCompactionResult.success) {
+          return Err(createUnknownSendMessageError(appendCompactionResult.error));
+        }
+
+        this.emitChatEvent({
+          type: "auto-compaction-triggered",
+          reason: "on-send",
+          usagePercent: Math.round(compactionResult.usagePercentage),
+        });
+
+        modelForStream = autoCompactionRequest.sendOptions.model;
+        optionsForStream = {
+          ...autoCompactionRequest.sendOptions,
+          muxMetadata: autoCompactionRequest.metadata,
+        };
+      }
+    }
+
     // Emit snapshots first (if any), then user message - maintains prompt ordering in UI
     if (snapshotResult?.snapshotMessage) {
       this.emitChatEvent({ ...snapshotResult.snapshotMessage, type: "message" });
@@ -1182,12 +1271,17 @@ export class AgentSession {
     // Add type: "message" for discriminated union (createMuxMessage doesn't add it)
     this.emitChatEvent({ ...userMessage, type: "message" });
 
+    if (autoCompactionMessage) {
+      this.emitChatEvent({ ...autoCompactionMessage, type: "message" });
+    }
+
     this.setTurnPhase(TurnPhase.PREPARING);
 
     try {
-      // If this is a compaction request, terminate background processes first
-      // They won't be included in the summary, so continuing with orphaned processes would be confusing
-      if (isCompactionRequest && !this.keepBackgroundProcesses) {
+      // If this is a compaction request, terminate background processes first.
+      // They won't be included in the summary, so continuing with orphaned processes would be confusing.
+      const isCompactionStreamRequest = isCompactionRequest || autoCompactionMessage !== null;
+      if (isCompactionStreamRequest && !this.keepBackgroundProcesses) {
         await this.backgroundProcessManager.cleanup(this.workspaceId);
 
         if (this.disposed) {
@@ -1261,6 +1355,216 @@ export class AgentSession {
     this.retryManager.setEnabled(enabled);
     if (!enabled) {
       this.retryManager.cancel();
+    }
+  }
+
+  setAutoCompactionThreshold(threshold: number): void {
+    this.assertNotDisposed("setAutoCompactionThreshold");
+    this.compactionMonitor.setThreshold(threshold);
+  }
+
+  private getUsageState(): AutoCompactionUsageState | undefined {
+    return this.lastUsageState;
+  }
+
+  private is1MContextEnabledForModel(modelString: string, options?: SendMessageOptions): boolean {
+    const normalizedModel = normalizeGatewayModel(modelString);
+    if (!supports1MContext(normalizedModel)) {
+      return false;
+    }
+
+    const anthropicOptions = options?.providerOptions?.anthropic;
+    if (!anthropicOptions) {
+      return false;
+    }
+
+    return (
+      anthropicOptions.use1MContext === true ||
+      anthropicOptions.use1MContextModels?.includes(normalizedModel) === true ||
+      anthropicOptions.use1MContextModels?.includes(modelString) === true
+    );
+  }
+
+  private updateUsageStateFromModelUsage(params: {
+    model: string;
+    usage: LanguageModelV2Usage | undefined;
+    providerMetadata?: Record<string, unknown>;
+    live: boolean;
+  }): void {
+    if (!params.usage) {
+      return;
+    }
+
+    const usageForDisplay = createDisplayUsage(params.usage, params.model, params.providerMetadata);
+    if (!usageForDisplay) {
+      return;
+    }
+
+    const totalTokens = params.usage.totalTokens ?? this.lastUsageState?.totalTokens;
+    if (params.live) {
+      this.lastUsageState = {
+        ...this.lastUsageState,
+        liveUsage: usageForDisplay,
+        totalTokens,
+      };
+      return;
+    }
+
+    this.lastUsageState = {
+      ...this.lastUsageState,
+      lastContextUsage: usageForDisplay,
+      liveUsage: undefined,
+      totalTokens,
+    };
+  }
+
+  private clearLiveUsageState(): void {
+    if (!this.lastUsageState?.liveUsage) {
+      return;
+    }
+
+    this.lastUsageState = {
+      ...this.lastUsageState,
+      liveUsage: undefined,
+    };
+  }
+
+  private buildAutoCompactionFollowUp(params: {
+    messageText: string;
+    options: SendMessageOptions;
+    modelForStream: string;
+    fileParts?: FilePart[];
+    muxMetadata?: MuxFrontendMetadata;
+  }): CompactionFollowUpRequest {
+    const followUp: CompactionFollowUpRequest = {
+      text: params.messageText,
+      model: params.modelForStream,
+      agentId: params.options.agentId,
+      ...pickPreservedSendOptions(params.options),
+    };
+
+    if (params.fileParts && params.fileParts.length > 0) {
+      followUp.fileParts = params.fileParts;
+    }
+
+    if (params.muxMetadata) {
+      followUp.muxMetadata = params.muxMetadata;
+    }
+
+    return followUp;
+  }
+
+  private buildAutoCompactionRequest(params: {
+    followUpContent: CompactionFollowUpRequest;
+    baseOptions: SendMessageOptions;
+    reason: "on-send" | "mid-stream";
+  }): {
+    messageText: string;
+    metadata: MuxFrontendMetadata;
+    sendOptions: SendMessageOptions;
+  } {
+    const compactionModel = params.baseOptions.model;
+    assert(
+      typeof compactionModel === "string" && compactionModel.trim().length > 0,
+      "auto-compaction requires a non-empty model"
+    );
+
+    const sendOptions: SendMessageOptions = {
+      ...params.baseOptions,
+      agentId: "compact",
+      skipAiSettingsPersistence: true,
+      model: compactionModel,
+      thinkingLevel: enforceThinkingPolicy(
+        compactionModel,
+        params.baseOptions.thinkingLevel ?? "off"
+      ),
+      maxOutputTokens: undefined,
+      toolPolicy: [{ regex_match: ".*", action: "disable" }],
+    };
+
+    const messageText = buildCompactionMessageText({ followUpContent: params.followUpContent });
+
+    const metadata: MuxFrontendMetadata = {
+      type: "compaction-request",
+      rawCommand: "/compact",
+      commandPrefix: "/compact",
+      parsed: {
+        model: sendOptions.model,
+        followUpContent: params.followUpContent,
+      },
+      requestedModel: sendOptions.model,
+      source: "auto-compaction",
+      displayStatus: {
+        emoji: "🔄",
+        message:
+          params.reason === "on-send"
+            ? "Auto-compacting before sending..."
+            : "Auto-compacting to continue...",
+      },
+    };
+
+    return {
+      messageText,
+      metadata,
+      sendOptions,
+    };
+  }
+
+  private async interruptForCompaction(): Promise<void> {
+    if (this.midStreamCompactionPending || this.disposed) {
+      return;
+    }
+
+    const streamContext = this.activeStreamContext;
+    if (!streamContext?.modelString || !streamContext.options) {
+      return;
+    }
+
+    this.midStreamCompactionPending = true;
+    try {
+      const stopResult = await this.aiService.stopStream(this.workspaceId, {
+        abortReason: "system",
+      });
+      if (!stopResult.success) {
+        log.warn("Failed to stop stream for mid-stream compaction", {
+          workspaceId: this.workspaceId,
+          error: stopResult.error,
+        });
+        return;
+      }
+
+      await this.waitForIdle();
+      if (this.disposed) {
+        return;
+      }
+
+      const followUpContent = this.buildAutoCompactionFollowUp({
+        messageText: "[CONTINUE]",
+        options: streamContext.options,
+        modelForStream: streamContext.modelString,
+      });
+      const autoCompactionRequest = this.buildAutoCompactionRequest({
+        followUpContent,
+        baseOptions: streamContext.options,
+        reason: "mid-stream",
+      });
+
+      const sendResult = await this.sendMessage(
+        autoCompactionRequest.messageText,
+        {
+          ...autoCompactionRequest.sendOptions,
+          muxMetadata: autoCompactionRequest.metadata,
+        },
+        { synthetic: true }
+      );
+      if (!sendResult.success) {
+        log.warn("Failed to dispatch mid-stream compaction request", {
+          workspaceId: this.workspaceId,
+          error: sendResult.error,
+        });
+      }
+    } finally {
+      this.midStreamCompactionPending = false;
     }
   }
 
@@ -1374,6 +1678,8 @@ export class AgentSession {
     }
 
     // Reset per-stream flags (used for retries / crash-safe bookkeeping).
+    this.compactionMonitor.resetForNewStream();
+    this.clearLiveUsageState();
     this.ackPendingPostCompactionStateOnStreamEnd = false;
     this.activeStreamHadAnyDelta = false;
     this.activeStreamHadPostCompactionInjection = false;
@@ -1498,19 +1804,28 @@ export class AgentSession {
     history: MuxMessage[],
     modelString: string,
     options?: SendMessageOptions
-  ): { id: string; modelString: string; options?: SendMessageOptions } | undefined {
+  ):
+    | {
+        id: string;
+        modelString: string;
+        options?: SendMessageOptions;
+        source?: "idle-compaction" | "auto-compaction";
+      }
+    | undefined {
     for (let index = history.length - 1; index >= 0; index -= 1) {
       const message = history[index];
       if (message.role !== "user") {
         continue;
       }
-      if (!isCompactionRequestMetadata(message.metadata?.muxMetadata)) {
+      const muxMetadata = message.metadata?.muxMetadata;
+      if (!isCompactionRequestMetadata(muxMetadata)) {
         return undefined;
       }
       return {
         id: message.id,
         modelString,
         options,
+        source: muxMetadata.source,
       };
     }
     return undefined;
@@ -2067,6 +2382,7 @@ export class AgentSession {
   private async handleStreamError(data: StreamErrorPayload): Promise<void> {
     this.setTurnPhase(TurnPhase.COMPLETING);
 
+    this.clearLiveUsageState();
     const hadCompactionRequest = this.activeCompactionRequest !== undefined;
     if (
       await this.maybeRetryCompactionOnContextExceeded({
@@ -2183,8 +2499,48 @@ export class AgentSession {
       this.emitChatEvent(payload);
     });
     forward("reasoning-end", (payload) => this.emitChatEvent(payload));
-    forward("usage-delta", (payload) => this.emitChatEvent(payload));
+    forward("usage-delta", async (payload) => {
+      this.emitChatEvent(payload);
+
+      if (payload.type !== "usage-delta") {
+        return;
+      }
+
+      const modelForUsage = this.activeStreamContext?.modelString;
+      if (!modelForUsage) {
+        return;
+      }
+
+      this.updateUsageStateFromModelUsage({
+        model: modelForUsage,
+        usage: payload.usage,
+        providerMetadata: payload.providerMetadata,
+        live: true,
+      });
+
+      // Never recurse compaction while we're already running a compaction request.
+      if (this.activeCompactionRequest || this.midStreamCompactionPending) {
+        return;
+      }
+
+      const streamOptions = this.activeStreamContext?.options;
+      const shouldInterruptForCompaction = this.compactionMonitor.checkMidStream({
+        model: modelForUsage,
+        usage: payload.usage,
+        use1MContext: this.is1MContextEnabledForModel(modelForUsage, streamOptions),
+        providersConfig: null,
+      });
+
+      if (shouldInterruptForCompaction) {
+        await this.interruptForCompaction();
+      }
+    });
     forward("stream-abort", (payload) => {
+      if (payload.type !== "stream-abort") {
+        this.emitChatEvent(payload);
+        return;
+      }
+
       // stopStream() emits synthetic aborts even when no real stream is active
       // (e.g., during PREPARING or after COMPLETING). We must still forward the
       // event to the renderer so it clears "starting…" / "interrupting…" UI, but
@@ -2202,6 +2558,18 @@ export class AgentSession {
       }
 
       this.setTurnPhase(TurnPhase.COMPLETING);
+      const activeModelForAbort = this.activeStreamContext?.modelString;
+      if (activeModelForAbort) {
+        this.updateUsageStateFromModelUsage({
+          model: activeModelForAbort,
+          usage: payload.metadata?.contextUsage,
+          providerMetadata:
+            payload.metadata?.contextProviderMetadata ?? payload.metadata?.providerMetadata,
+          live: false,
+        });
+      }
+      this.clearLiveUsageState();
+
       const hadCompactionRequest = this.activeCompactionRequest !== undefined;
       this.activeCompactionRequest = undefined;
       this.resetActiveStreamState();
@@ -2220,6 +2588,11 @@ export class AgentSession {
     forward("runtime-status", (payload) => this.emitChatEvent(payload));
 
     forward("stream-end", async (payload) => {
+      if (payload.type !== "stream-end") {
+        this.emitChatEvent(payload);
+        return;
+      }
+
       this.setTurnPhase(TurnPhase.COMPLETING);
       this.retryManager.handleStreamSuccess();
 
@@ -2228,7 +2601,18 @@ export class AgentSession {
 
       let emittedStreamEnd = false;
       try {
+        const completedCompactionRequest = this.activeCompactionRequest;
         this.activeCompactionRequest = undefined;
+        this.updateUsageStateFromModelUsage({
+          model: streamEndPayload.metadata.model,
+          usage: streamEndPayload.metadata.contextUsage,
+          providerMetadata:
+            streamEndPayload.metadata.contextProviderMetadata ??
+            streamEndPayload.metadata.providerMetadata,
+          live: false,
+        });
+        this.clearLiveUsageState();
+
         const handled = await this.compactionHandler.handleCompletion(streamEndPayload);
 
         if (!handled) {
@@ -2251,6 +2635,18 @@ export class AgentSession {
           // CompactionHandler emits its own sanitized stream-end; mark as handled
           // so the catch block doesn't re-emit the unsanitized original payload.
           emittedStreamEnd = true;
+
+          // Compaction collapses history to a boundary summary, so prior context-usage snapshots
+          // are stale. Clear them to prevent immediate re-trigger loops on the follow-up turn.
+          this.lastUsageState = undefined;
+
+          if (completedCompactionRequest?.source === "auto-compaction") {
+            this.emitChatEvent({
+              type: "auto-compaction-completed",
+              newUsagePercent: 0,
+            });
+          }
+
           this.onCompactionComplete?.();
         }
 
