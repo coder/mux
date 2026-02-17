@@ -214,9 +214,9 @@ else
 fi
 
 # The shared cache is fetched earlier in wait_pr_ready's loop and can become stale
-# before the checks gate runs. Re-query before returning a clean result so newly
-# created unresolved threads are not missed.
-if [ "$loaded_from_cache" -eq 1 ] && [ -z "$UNRESOLVED" ]; then
+# before the checks gate runs. Re-query before returning either success or failure
+# so newly-created or recently-resolved threads are not misclassified.
+if [ "$loaded_from_cache" -eq 1 ]; then
   fetch_unresolved_via_api
 fi
 
