@@ -27,7 +27,12 @@ import {
 } from "@/browser/utils/review/navigation";
 import { isEditableElement, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 import { buildReadFileScript, processFileContents } from "@/browser/utils/fileExplorer";
-import type { DiffHunk, Review, ReviewNoteData } from "@/common/types/review";
+import {
+  parseReviewLineRange,
+  type DiffHunk,
+  type Review,
+  type ReviewNoteData,
+} from "@/common/types/review";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import type { ReviewActionCallbacks } from "../../shared/InlineReviewNote";
 
@@ -217,7 +222,10 @@ function buildOverlayFromHunks(sortedHunks: DiffHunk[]): ImmersiveOverlayData {
   };
 
   const pushHeaderLine = (line: string) => {
+    // Keep lineHunkIds aligned with every rendered row so keyboard/click line indices
+    // always map to the same row in fallback hunk rendering mode.
     contentLines.push(line);
+    lineHunkIds.push(null);
   };
 
   sortedHunks.forEach((hunk, index) => {
@@ -263,6 +271,44 @@ function isSelectionInsideRange(selection: SelectedLineRange, range: HunkLineRan
   const start = Math.min(selection.startIndex, selection.endIndex);
   const end = Math.max(selection.startIndex, selection.endIndex);
   return start >= range.startIndex && end <= range.endIndex;
+}
+
+function getLineSpan(start: number, lineCount: number): { start: number; end: number } | null {
+  if (lineCount <= 0) {
+    return null;
+  }
+
+  return {
+    start,
+    end: start + lineCount - 1,
+  };
+}
+
+function rangesOverlap(
+  lhs: { start: number; end: number } | undefined,
+  rhs: { start: number; end: number } | null
+): boolean {
+  if (!lhs || !rhs) {
+    return false;
+  }
+
+  return lhs.start <= rhs.end && rhs.start <= lhs.end;
+}
+
+function findReviewHunkId(review: Review, fileHunks: DiffHunk[]): string | null {
+  const parsedRange = parseReviewLineRange(review.data.lineRange);
+  if (!parsedRange) {
+    return null;
+  }
+
+  const matchingHunk = fileHunks.find((hunk) => {
+    const oldSpan = getLineSpan(hunk.oldStart, hunk.oldLines);
+    const newSpan = getLineSpan(hunk.newStart, hunk.newLines);
+
+    return rangesOverlap(parsedRange.old, oldSpan) || rangesOverlap(parsedRange.new, newSpan);
+  });
+
+  return matchingHunk?.id ?? null;
 }
 
 export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) => {
@@ -532,15 +578,16 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     [currentFileHunks, selectedHunkId, onSelectHunk]
   );
 
-  const navigateToReviewFile = useCallback(
-    (filePath: string) => {
-      const fileHunks = sortHunksInFileOrder(getFileHunks(hunks, filePath));
+  const navigateToReview = useCallback(
+    (review: Review) => {
+      const fileHunks = sortHunksInFileOrder(getFileHunks(hunks, review.data.filePath));
       if (fileHunks.length === 0) {
         return;
       }
 
+      const targetHunkId = findReviewHunkId(review, fileHunks) ?? fileHunks[0].id;
       hunkJumpRef.current = true;
-      onSelectHunk(fileHunks[0].id);
+      onSelectHunk(targetHunkId);
     },
     [hunks, onSelectHunk]
   );
@@ -961,11 +1008,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                         "group/review-item border-border-light hover:bg-muted/10 focus-visible:ring-primary/40 flex w-full cursor-pointer overflow-hidden rounded border text-left outline-none transition-colors focus-visible:ring-2",
                         isActiveFileReview && "bg-muted/10"
                       )}
-                      onClick={() => navigateToReviewFile(review.data.filePath)}
+                      onClick={() => navigateToReview(review)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter" || event.key === " ") {
                           event.preventDefault();
-                          navigateToReviewFile(review.data.filePath);
+                          navigateToReview(review);
                         }
                       }}
                     >
