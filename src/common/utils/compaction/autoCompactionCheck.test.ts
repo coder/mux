@@ -1,6 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { checkAutoCompaction } from "./autoCompactionCheck";
-import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
+import { checkAutoCompaction, type AutoCompactionUsageState } from "./autoCompactionCheck";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 
@@ -25,13 +24,13 @@ const createUsageEntry = (
   };
 };
 
-// Helper to create mock WorkspaceUsageState
+// Helper to create mock AutoCompactionUsageState
 const createMockUsage = (
   lastEntryTokens: number,
   _historicalTokens?: number, // Kept for backward compat but unused (session-usage.json handles historical)
   model: string = KNOWN_MODELS.SONNET.id,
   liveUsage?: ChatUsageDisplay
-): WorkspaceUsageState => {
+): AutoCompactionUsageState => {
   // Create lastContextUsage representing the most recent context window state
   const lastContextUsage = createUsageEntry(lastEntryTokens, model);
 
@@ -53,7 +52,7 @@ describe("checkAutoCompaction", () => {
     });
 
     test("returns false when no context usage data", () => {
-      const usage: WorkspaceUsageState = { totalTokens: 0 };
+      const usage: AutoCompactionUsageState = { totalTokens: 0 };
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
 
       expect(result.shouldShowWarning).toBe(false);
@@ -155,7 +154,7 @@ describe("checkAutoCompaction", () => {
         reasoning: { tokens: 1_000 },
         model: KNOWN_MODELS.SONNET.id,
       };
-      const usage: WorkspaceUsageState = {
+      const usage: AutoCompactionUsageState = {
         lastContextUsage: usageEntry,
         totalTokens: 0,
       };
@@ -178,7 +177,7 @@ describe("checkAutoCompaction", () => {
         reasoning: { tokens: 50_000 }, // High reasoning from Extended Thinking
         model: KNOWN_MODELS.SONNET.id,
       };
-      const usage: WorkspaceUsageState = {
+      const usage: AutoCompactionUsageState = {
         lastContextUsage: usageEntry,
         totalTokens: 0,
       };
@@ -231,7 +230,7 @@ describe("checkAutoCompaction", () => {
 
   describe("Edge Cases", () => {
     test("missing context usage returns safe defaults", () => {
-      const usage: WorkspaceUsageState = { totalTokens: 0 };
+      const usage: AutoCompactionUsageState = { totalTokens: 0 };
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
 
       expect(result.shouldShowWarning).toBe(false);
@@ -276,7 +275,7 @@ describe("checkAutoCompaction", () => {
         reasoning: { tokens: 0 },
         model: KNOWN_MODELS.SONNET.id,
       };
-      const usage: WorkspaceUsageState = {
+      const usage: AutoCompactionUsageState = {
         lastContextUsage: zeroEntry,
         totalTokens: 0,
       };
@@ -392,7 +391,7 @@ describe("checkAutoCompaction", () => {
 
     test("shouldForceCompact triggers with liveUsage at force threshold (no lastContextUsage)", () => {
       const liveUsage = createUsageEntry(150_000); // 75%
-      const usage: WorkspaceUsageState = {
+      const usage: AutoCompactionUsageState = {
         totalTokens: 0,
         liveUsage,
       };
@@ -405,7 +404,7 @@ describe("checkAutoCompaction", () => {
     test("shouldShowWarning uses live usage when no lastContextUsage exists", () => {
       // No lastContextUsage, liveUsage at 65% - should show warning (65% >= 60%)
       const liveUsage = createUsageEntry(130_000); // 65%
-      const usage: WorkspaceUsageState = {
+      const usage: AutoCompactionUsageState = {
         totalTokens: 0,
         liveUsage,
       };

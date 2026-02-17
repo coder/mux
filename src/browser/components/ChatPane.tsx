@@ -58,7 +58,7 @@ import { CompactionWarning } from "./CompactionWarning";
 import { ContextSwitchWarning as ContextSwitchWarningBanner } from "./ContextSwitchWarning";
 import { ConcurrentLocalWarning } from "./ConcurrentLocalWarning";
 import { BackgroundProcessesBanner } from "./BackgroundProcessesBanner";
-import { checkAutoCompaction } from "@/browser/utils/compaction/autoCompactionCheck";
+import { checkAutoCompaction } from "@/common/utils/compaction/autoCompactionCheck";
 import { cancelCompaction } from "@/browser/utils/compaction/handler";
 import type { ContextSwitchWarning } from "@/browser/utils/compaction/contextSwitchCheck";
 import { executeCompaction } from "@/browser/utils/chatCommands";

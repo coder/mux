@@ -23,7 +23,7 @@ import { FileBreakdown } from "./FileBreakdown";
 import { ContextUsageBar } from "./ContextUsageBar";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
-import { getEffectiveContextLimit } from "@/browser/utils/compaction/contextLimit";
+import { getEffectiveContextLimit } from "@/common/utils/compaction/contextLimit";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { PostCompactionSection } from "./PostCompactionSection";
 import { usePostCompactionState } from "@/browser/hooks/usePostCompactionState";

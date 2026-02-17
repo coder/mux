@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { checkContextSwitch } from "./contextSwitchCheck";
-import { getEffectiveContextLimit } from "./contextLimit";
+import { getEffectiveContextLimit } from "@/common/utils/compaction/contextLimit";
 
 const OPTIONS = { providersConfig: null, policy: null };
 

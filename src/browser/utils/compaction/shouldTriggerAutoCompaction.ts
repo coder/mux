@@ -1,4 +1,4 @@
-import type { AutoCompactionCheckResult } from "./autoCompactionCheck";
+import type { AutoCompactionCheckResult } from "@/common/utils/compaction/autoCompactionCheck";
 
 /**
  * Determines if auto-compaction should trigger based on usage check result.

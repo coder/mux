@@ -15,7 +15,6 @@
  * - Never triggers in edit mode (caller's responsibility to check)
  */
 
-import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import {
@@ -44,6 +43,18 @@ export interface AutoCompactionCheckResult {
   thresholdPercentage: number;
 }
 
+/**
+ * Minimal usage state required for compaction checks.
+ *
+ * Both frontend and backend can provide this shape directly without depending on
+ * renderer-only workspace store types.
+ */
+export interface AutoCompactionUsageState {
+  totalTokens?: number;
+  lastContextUsage?: ChatUsageDisplay;
+  liveUsage?: ChatUsageDisplay;
+}
+
 // Show warning this many percentage points before threshold
 const WARNING_ADVANCE_PERCENT = 10;
 
@@ -54,7 +65,7 @@ const WARNING_ADVANCE_PERCENT = 10;
  * This matches the UI token meter display and excludes historical usage from compaction,
  * preventing infinite compaction loops after the first compaction completes.
  *
- * @param usage - Current workspace usage state (from useWorkspaceUsage)
+ * @param usage - Current context usage state (live + last completed)
  * @param model - Current model string (optional - returns safe default if not provided)
  * @param use1M - Whether 1M context is enabled
  * @param threshold - Usage percentage threshold (0.0-1.0, default 0.7 = 70%). If >= 1.0, auto-compaction is considered disabled.
@@ -63,7 +74,7 @@ const WARNING_ADVANCE_PERCENT = 10;
  * @returns Check result with warning flag and usage percentage
  */
 export function checkAutoCompaction(
-  usage: WorkspaceUsageState | undefined,
+  usage: AutoCompactionUsageState | undefined,
   model: string | null,
   use1M: boolean,
   threshold: number = DEFAULT_AUTO_COMPACTION_THRESHOLD,

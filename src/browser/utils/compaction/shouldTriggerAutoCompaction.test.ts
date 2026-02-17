@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import type { AutoCompactionCheckResult } from "./autoCompactionCheck";
+import type { AutoCompactionCheckResult } from "@/common/utils/compaction/autoCompactionCheck";
 import { shouldTriggerAutoCompaction } from "./shouldTriggerAutoCompaction";
 
 describe("shouldTriggerAutoCompaction", () => {
