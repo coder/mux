@@ -21,12 +21,15 @@ jobs:
     outputs:
       release_tag: ${{ steps.compute.outputs.release_tag }}
       nightly_version: ${{ steps.compute.outputs.nightly_version }}
+      build_sha: ${{ steps.compute.outputs.build_sha }}
       should_build: ${{ steps.create-release.outputs.should_build }}
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ github.sha }}
+          # Use main HEAD at execution time so rerunning an old workflow run
+          # cannot rebuild/publish an older commit.
+          ref: refs/heads/main
           fetch-depth: 0 # Required for git describe to find tags
           persist-credentials: false
 
@@ -34,6 +37,7 @@ jobs:
         id: compute
         shell: bash
         run: |
+          BUILD_SHA=$(git rev-parse HEAD)
           # --exclude 'v*-*' skips pre-release tags (e.g. v1.2.3-nightly.5)
           # so we always base version computation on the last stable release.
           TAG_BASE=$(git describe --tags --abbrev=0 --match 'v*' --exclude 'v*-*')
@@ -44,14 +48,18 @@ jobs:
           NIGHTLY_VERSION="${NEXT_PATCH}-nightly.${COMMITS}"
           RELEASE_TAG="v${NIGHTLY_VERSION}"
 
-          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
-          echo "nightly_version=$NIGHTLY_VERSION" >> "$GITHUB_OUTPUT"
+          {
+            echo "release_tag=$RELEASE_TAG"
+            echo "nightly_version=$NIGHTLY_VERSION"
+            echo "build_sha=$BUILD_SHA"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create nightly pre-release
         id: create-release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.compute.outputs.release_tag }}
+          BUILD_SHA: ${{ steps.compute.outputs.build_sha }}
         shell: bash
         run: |
           REQUIRED_ASSETS=(
@@ -83,7 +91,7 @@ jobs:
             gh release delete "$RELEASE_TAG" --yes --cleanup-tag
           fi
 
-          gh release create "$RELEASE_TAG" --prerelease --target "$GITHUB_SHA" --title "$RELEASE_TAG" --notes "Automated nightly build from main ($(date -u +%Y-%m-%d))"
+          gh release create "$RELEASE_TAG" --prerelease --target "$BUILD_SHA" --title "$RELEASE_TAG" --notes "Automated nightly build from main ($(date -u +%Y-%m-%d))"
           echo "should_build=true" >> "$GITHUB_OUTPUT"
 
   desktop-builds:
@@ -92,7 +100,7 @@ jobs:
     if: needs.compute-version.outputs.should_build == 'true'
     uses: ./.github/workflows/_desktop-release.yml
     with:
-      ref: ${{ github.sha }}
+      ref: ${{ needs.compute-version.outputs.build_sha }}
       release_tag: ${{ needs.compute-version.outputs.release_tag }}
       version_override: ${{ needs.compute-version.outputs.nightly_version }}
     secrets: inherit # zizmor: ignore[secrets-inherit] -- reusable workflow needs platform signing secrets
