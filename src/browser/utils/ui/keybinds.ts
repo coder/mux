@@ -423,6 +423,39 @@ export const KEYBINDS = {
   /** Cancel/dismiss confirmation dialogs */
   CONFIRM_DIALOG_NO: { key: "n", allowShift: true },
 
+  /** Toggle immersive review mode */
+  TOGGLE_REVIEW_IMMERSIVE: { key: "i", shift: true },
+
+  /** Navigate to next file in immersive review */
+  REVIEW_NEXT_FILE: { key: "J", shift: true },
+
+  /** Navigate to previous file in immersive review */
+  REVIEW_PREV_FILE: { key: "K", shift: true },
+
+  /** Navigate to next hunk in immersive review */
+  REVIEW_NEXT_HUNK: { key: "j" },
+
+  /** Navigate to previous hunk in immersive review */
+  REVIEW_PREV_HUNK: { key: "k" },
+
+  /** Move line cursor down in immersive review */
+  REVIEW_CURSOR_DOWN: { key: "ArrowDown" },
+
+  /** Move line cursor up in immersive review */
+  REVIEW_CURSOR_UP: { key: "ArrowUp" },
+
+  /** Jump line cursor 10 lines down in immersive review */
+  REVIEW_CURSOR_JUMP_DOWN: { key: "ArrowDown", ctrl: true },
+
+  /** Jump line cursor 10 lines up in immersive review */
+  REVIEW_CURSOR_JUMP_UP: { key: "ArrowUp", ctrl: true },
+
+  /** Quick "I like this" feedback in immersive review */
+  REVIEW_QUICK_LIKE: { key: "l", shift: true },
+
+  /** Quick "I don't like this" feedback in immersive review */
+  REVIEW_QUICK_DISLIKE: { key: "d", shift: true },
+
   TOGGLE_POWER_MODE: { key: "F12", shift: true },
 } as const;
 

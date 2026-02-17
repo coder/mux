@@ -59,6 +59,17 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   // Modal-only keybinds; intentionally omitted from KEYBIND_GROUPS.
   CONFIRM_DIALOG_YES: "Confirm dialog action",
   CONFIRM_DIALOG_NO: "Cancel dialog action",
+  TOGGLE_REVIEW_IMMERSIVE: "Toggle immersive review",
+  REVIEW_NEXT_FILE: "Next file (immersive)",
+  REVIEW_PREV_FILE: "Previous file (immersive)",
+  REVIEW_NEXT_HUNK: "Next hunk (immersive)",
+  REVIEW_PREV_HUNK: "Previous hunk (immersive)",
+  REVIEW_CURSOR_DOWN: "Line cursor down (immersive)",
+  REVIEW_CURSOR_UP: "Line cursor up (immersive)",
+  REVIEW_CURSOR_JUMP_DOWN: "Jump 10 lines down (immersive)",
+  REVIEW_CURSOR_JUMP_UP: "Jump 10 lines up (immersive)",
+  REVIEW_QUICK_LIKE: "Quick like (immersive)",
+  REVIEW_QUICK_DISLIKE: "Quick dislike (immersive)",
   // Easter egg keybind; intentionally omitted from KEYBIND_GROUPS.
   TOGGLE_POWER_MODE: "",
 };
