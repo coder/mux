@@ -17,7 +17,8 @@ interface NegotiatedCapabilities {
 interface SessionRouting {
   workspaceId: string;
   runtimeMode: RuntimeMode;
-  editorHandlesFs: boolean;
+  editorHandlesFsRead: boolean;
+  editorHandlesFsWrite: boolean;
   editorHandlesTerminal: boolean;
 }
 
@@ -69,7 +70,8 @@ export class ToolRouter {
       const isLocal = routing.runtimeMode === "local";
       this.sessionRouting.set(sessionId, {
         ...routing,
-        editorHandlesFs: isLocal && this.supportsAnyFsCapability(caps),
+        editorHandlesFsRead: isLocal && caps.editorSupportsFsRead,
+        editorHandlesFsWrite: isLocal && caps.editorSupportsFsWrite,
         editorHandlesTerminal: isLocal && caps.editorSupportsTerminal,
       });
     }
@@ -86,7 +88,8 @@ export class ToolRouter {
     this.sessionRouting.set(sessionId, {
       workspaceId: sessionId,
       runtimeMode,
-      editorHandlesFs: isLocal && this.supportsAnyFsCapability(editorCaps),
+      editorHandlesFsRead: isLocal && (editorCaps?.editorSupportsFsRead ?? false),
+      editorHandlesFsWrite: isLocal && (editorCaps?.editorSupportsFsWrite ?? false),
       editorHandlesTerminal: isLocal && (editorCaps?.editorSupportsTerminal ?? false),
     });
   }
@@ -99,8 +102,17 @@ export class ToolRouter {
 
     const normalizedToolName = normalizeToolName(toolName);
 
+    // Distinguish read vs write fs tools so a client advertising only
+    // readTextFile does not receive delegated write calls.
+    if (isTypedReadTool(normalizedToolName)) {
+      return routing.editorHandlesFsRead;
+    }
+    if (isTypedWriteTool(normalizedToolName)) {
+      return routing.editorHandlesFsWrite;
+    }
     if (isFilesystemTool(normalizedToolName)) {
-      return routing.editorHandlesFs;
+      // Unknown fs tool — require both capabilities
+      return routing.editorHandlesFsRead && routing.editorHandlesFsWrite;
     }
 
     if (isTerminalTool(normalizedToolName)) {
@@ -194,13 +206,6 @@ export class ToolRouter {
     });
 
     return this.isPermissionAllowed(response.outcome);
-  }
-
-  private supportsAnyFsCapability(caps: NegotiatedCapabilities | null): boolean {
-    if (caps == null) {
-      return false;
-    }
-    return caps.editorSupportsFsRead || caps.editorSupportsFsWrite;
   }
 
   private buildReadTextFileRequest(

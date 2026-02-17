@@ -128,9 +128,16 @@ export class StreamTranslator {
         return this.translateReplayMessage(event);
 
       case "stream-end":
-      case "stream-abort":
         this.clearMessageToolCalls(event.messageId);
         return [];
+
+      case "stream-abort": {
+        // Emit terminal "failed" updates for any tool calls still in progress
+        // so ACP clients don't see started-but-never-finished tool calls.
+        const abortUpdates = this.terminateActiveToolCalls(event.messageId, "failed");
+        this.clearMessageToolCalls(event.messageId);
+        return abortUpdates;
+      }
 
       // Informational/no-op events for ACP stream output.
       case "heartbeat":
@@ -339,6 +346,42 @@ export class StreamTranslator {
     }
 
     this.toolCallsById.delete(toolCallId);
+  }
+
+  /**
+   * Emit terminal status updates for all active tool calls on a message.
+   * Called before clearMessageToolCalls so each in-progress tool call gets a
+   * proper ACP status transition (e.g., "failed" on abort).
+   */
+  private terminateActiveToolCalls(
+    messageId: string,
+    status: "failed" | "completed"
+  ): SessionUpdate[] {
+    const activeForMessage = this.activeToolCalls.get(messageId);
+    if (activeForMessage == null || activeForMessage.length === 0) {
+      return [];
+    }
+
+    const updates: SessionUpdate[] = [];
+    for (const toolCallId of activeForMessage) {
+      const tool = this.toolCallsById.get(toolCallId);
+      if (tool == null) {
+        continue;
+      }
+      const update: ToolCallUpdateSessionUpdate = {
+        sessionUpdate: "tool_call_update",
+        toolCallId,
+        status,
+        content: [
+          {
+            type: "content",
+            content: { type: "text", text: status === "failed" ? "Cancelled" : "" },
+          },
+        ],
+      };
+      updates.push(update);
+    }
+    return updates;
   }
 
   private clearMessageToolCalls(messageId: string): void {
