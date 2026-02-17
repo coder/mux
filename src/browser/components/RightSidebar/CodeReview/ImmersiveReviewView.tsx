@@ -5,11 +5,21 @@
  */
 
 import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { ArrowLeft, Check, ChevronLeft, ChevronRight, Circle } from "lucide-react";
+import {
+  ArrowLeft,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Circle,
+  MessageSquare,
+  ThumbsDown,
+  Trash2,
+} from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { SelectableDiffRenderer } from "../../shared/DiffRenderer";
 import { KeycapGroup } from "@/browser/components/ui/Keycap";
 import { useAPI } from "@/browser/contexts/API";
+import { formatLineRangeCompact } from "@/browser/utils/review/lineRange";
 import {
   flattenFileTreeLeaves,
   getAdjacentFilePath,
@@ -66,6 +76,40 @@ interface ImmersiveOverlayData {
 }
 
 const LINE_JUMP_SIZE = 10;
+const DISLIKE_NOTE_PREFIX = "I don't like this change";
+
+function getFileBaseName(filePath: string): string {
+  const segments = filePath.split(/[\\/]/);
+  return segments[segments.length - 1] || filePath;
+}
+
+function getReviewStatusSidebarClasses(status: Review["status"]): {
+  accent: string;
+  badge: string;
+  icon: string;
+} {
+  if (status === "checked") {
+    return {
+      accent: "bg-success",
+      badge: "bg-success/20 text-success",
+      icon: "text-success",
+    };
+  }
+
+  if (status === "attached") {
+    return {
+      accent: "bg-warning",
+      badge: "bg-warning/20 text-warning",
+      icon: "text-warning",
+    };
+  }
+
+  return {
+    accent: "bg-muted",
+    badge: "bg-muted/25 text-muted",
+    icon: "text-muted",
+  };
+}
 
 function splitDiffLines(content: string): string[] {
   const lines = content.split(/\r?\n/);
@@ -352,6 +396,21 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     ? selectedHunkRange.endIndex - selectedHunkRange.startIndex + 1
     : 0;
 
+  const allReviews = useMemo(
+    () =>
+      Array.from(props.reviewsByFilePath.values())
+        .flat()
+        .sort((a, b) => {
+          const createdAtDelta = b.createdAt - a.createdAt;
+          if (createdAtDelta !== 0) {
+            return createdAtDelta;
+          }
+
+          return a.id.localeCompare(b.id);
+        }),
+    [props.reviewsByFilePath]
+  );
+
   const [inlineComposerRequest, setInlineComposerRequest] = useState<InlineComposerRequest | null>(
     null
   );
@@ -440,6 +499,19 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       onSelectHunk(currentFileHunks[nextIdx].id);
     },
     [currentFileHunks, selectedHunkId, onSelectHunk]
+  );
+
+  const navigateToReviewFile = useCallback(
+    (filePath: string) => {
+      const fileHunks = sortHunksInFileOrder(getFileHunks(hunks, filePath));
+      if (fileHunks.length === 0) {
+        return;
+      }
+
+      hunkJumpRef.current = true;
+      onSelectHunk(fileHunks[0].id);
+    },
+    [hunks, onSelectHunk]
   );
 
   const getCurrentLineSelection = useCallback((): SelectedLineRange | null => {
@@ -759,46 +831,145 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         </div>
       </div>
 
-      {/* Unified whole-file diff with hunk overlays */}
-      <div className="flex-1 overflow-y-auto p-3">
-        {currentFileHunks.length === 0 ? (
-          <div className="text-muted flex items-center justify-center py-12 text-sm">
-            {activeFilePath ? "No hunks for this file" : "No files to review"}
+      {/* Unified whole-file diff with hunk overlays + notes sidebar */}
+      <div className="flex min-h-0 flex-1">
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-3">
+          {currentFileHunks.length === 0 ? (
+            <div className="text-muted flex items-center justify-center py-12 text-sm">
+              {activeFilePath ? "No hunks for this file" : "No files to review"}
+            </div>
+          ) : (
+            <div className="border-border-light bg-dark overflow-hidden rounded border">
+              <SelectableDiffRenderer
+                content={overlayData.content}
+                filePath={activeFilePath ?? currentFileHunks[0].filePath}
+                inlineReviews={
+                  activeFilePath ? props.reviewsByFilePath.get(activeFilePath) : undefined
+                }
+                oldStart={1}
+                newStart={1}
+                fontSize="11px"
+                maxHeight="none"
+                className="rounded-none border-0 [&>div]:overflow-x-visible"
+                onReviewNote={onReviewNote}
+                reviewActions={props.reviewActions}
+                activeLineIndex={activeLineIndex}
+                selectedLineRange={selectedLineRange}
+                onLineIndexSelect={handleLineIndexSelect}
+                externalSelectionRequest={
+                  inlineComposerRequest?.hunkId != null &&
+                  inlineComposerRequest.hunkId === selectedHunk?.id
+                    ? {
+                        requestId: inlineComposerRequest.requestId,
+                        selection: {
+                          startIndex: inlineComposerRequest.startIndex,
+                          endIndex: inlineComposerRequest.endIndex,
+                        },
+                        initialNoteText: inlineComposerRequest.prefill,
+                      }
+                    : null
+                }
+              />
+            </div>
+          )}
+        </div>
+
+        <aside className="border-border-light bg-dark flex w-[280px] min-w-[280px] flex-col border-l">
+          <div className="border-border-light flex items-center justify-between border-b px-3 py-2">
+            <h2 className="text-foreground text-xs font-medium">Notes</h2>
+            <span className="bg-muted/20 text-muted rounded px-1.5 py-0.5 font-mono text-[10px]">
+              {allReviews.length}
+            </span>
           </div>
-        ) : (
-          <div className="border-border-light bg-dark overflow-hidden rounded border">
-            <SelectableDiffRenderer
-              content={overlayData.content}
-              filePath={activeFilePath ?? currentFileHunks[0].filePath}
-              inlineReviews={
-                activeFilePath ? props.reviewsByFilePath.get(activeFilePath) : undefined
-              }
-              oldStart={1}
-              newStart={1}
-              fontSize="11px"
-              maxHeight="none"
-              className="rounded-none border-0 [&>div]:overflow-x-visible"
-              onReviewNote={onReviewNote}
-              reviewActions={props.reviewActions}
-              activeLineIndex={activeLineIndex}
-              selectedLineRange={selectedLineRange}
-              onLineIndexSelect={handleLineIndexSelect}
-              externalSelectionRequest={
-                inlineComposerRequest?.hunkId != null &&
-                inlineComposerRequest.hunkId === selectedHunk?.id
-                  ? {
-                      requestId: inlineComposerRequest.requestId,
-                      selection: {
-                        startIndex: inlineComposerRequest.startIndex,
-                        endIndex: inlineComposerRequest.endIndex,
-                      },
-                      initialNoteText: inlineComposerRequest.prefill,
-                    }
-                  : null
-              }
-            />
+
+          <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+            {allReviews.length === 0 ? (
+              <div className="text-muted flex h-full flex-col items-center justify-center text-center text-xs">
+                <p>No notes yet</p>
+                <p className="text-dim mt-1">Press Shift+L to add one</p>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {allReviews.map((review) => {
+                  const isDislike = review.data.userNote
+                    .trimStart()
+                    .startsWith(DISLIKE_NOTE_PREFIX);
+                  const statusClasses = getReviewStatusSidebarClasses(review.status);
+                  const ReviewTypeIcon = isDislike ? ThumbsDown : MessageSquare;
+                  const isActiveFileReview = review.data.filePath === activeFilePath;
+
+                  return (
+                    <div
+                      key={review.id}
+                      role="button"
+                      tabIndex={0}
+                      className={cn(
+                        "group/review-item border-border-light hover:bg-muted/10 focus-visible:ring-primary/40 flex w-full cursor-pointer overflow-hidden rounded border text-left outline-none transition-colors focus-visible:ring-2",
+                        isActiveFileReview && "bg-muted/10"
+                      )}
+                      onClick={() => navigateToReviewFile(review.data.filePath)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          navigateToReviewFile(review.data.filePath);
+                        }
+                      }}
+                    >
+                      <div className={cn("w-[3px] shrink-0", statusClasses.accent)} />
+
+                      <div className="min-w-0 flex-1 px-2 py-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <ReviewTypeIcon className={cn("size-3 shrink-0", statusClasses.icon)} />
+
+                          <span
+                            className="text-muted min-w-0 flex-1 truncate font-mono text-[10px]"
+                            title={`${review.data.filePath}:L${formatLineRangeCompact(review.data.lineRange)}`}
+                          >
+                            {`${getFileBaseName(review.data.filePath)}:L${formatLineRangeCompact(review.data.lineRange)}`}
+                          </span>
+
+                          <span
+                            className={cn(
+                              "shrink-0 rounded px-1 py-0.5 text-[9px] uppercase",
+                              statusClasses.badge
+                            )}
+                          >
+                            {review.status}
+                          </span>
+
+                          {props.reviewActions?.onDelete && (
+                            <button
+                              type="button"
+                              className="text-muted hover:text-error ml-0.5 hidden cursor-pointer items-center rounded p-0.5 transition-colors group-hover/review-item:inline-flex"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                props.reviewActions?.onDelete?.(review.id);
+                              }}
+                              aria-label="Delete review note"
+                            >
+                              <Trash2 className="size-3" />
+                            </button>
+                          )}
+                        </div>
+
+                        <p
+                          className="text-foreground mt-1 overflow-hidden text-[11px] leading-[1.4] break-words whitespace-pre-wrap"
+                          style={{
+                            display: "-webkit-box",
+                            WebkitBoxOrient: "vertical",
+                            WebkitLineClamp: 2,
+                          }}
+                        >
+                          {review.data.userNote || "(No note text)"}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        )}
+        </aside>
       </div>
 
       {/* Shortcut bar */}
