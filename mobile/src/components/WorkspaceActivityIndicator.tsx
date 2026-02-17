@@ -30,11 +30,7 @@ export function WorkspaceActivityIndicator(props: WorkspaceActivityIndicatorProp
           },
         ]}
       />
-      <ThemedText
-        variant="caption"
-        numberOfLines={1}
-        style={{ color: theme.colors.foregroundMuted, flexShrink: 1, textAlign: "right" }}
-      >
+      <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
         {label}
       </ThemedText>
     </View>
@@ -45,8 +41,6 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: "row",
     alignItems: "center",
-    minWidth: 0,
-    maxWidth: "100%",
   },
   dot: {
     width: 8,

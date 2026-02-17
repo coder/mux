@@ -913,7 +913,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                   <span>Add Project</span>
                 </button>
               </div>
-              <div className="flex-1 overflow-y-auto">
+              <div className="flex-1 overflow-x-hidden overflow-y-auto">
                 {visibleProjectPaths.length === 0 ? (
                   <div className="px-4 py-8 text-center">
                     <p className="text-muted mb-4 text-[13px]">No projects</p>

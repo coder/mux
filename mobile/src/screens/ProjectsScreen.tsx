@@ -343,9 +343,6 @@ export function ProjectsScreen(): JSX.Element {
   const renderWorkspaceRow = (item: WorkspaceListItem) => {
     const { metadata, lastActive, isOld } = item;
     const accentWidth = 3;
-    // Keep the activity/status column fixed so long status text cannot widen the row
-    // and introduce horizontal scrolling in the mobile projects menu.
-    const activityIndicatorWidth = 136;
     const formattedTimestamp = lastActive ? formatRelativeTime(lastActive) : "Unknown";
     const activity = activityMap[metadata.id];
 
@@ -405,17 +402,15 @@ export function ProjectsScreen(): JSX.Element {
             backgroundColor: isOld ? theme.colors.borderSubtle : theme.colors.accent,
           }}
         />
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <ThemedText variant="titleSmall" weight="semibold" numberOfLines={1}>
+        <View style={{ flex: 1 }}>
+          <ThemedText variant="titleSmall" weight="semibold">
             {metadata.name}
           </ThemedText>
           <ThemedText variant="caption" numberOfLines={1}>
             {metadata.namedWorkspacePath}
           </ThemedText>
         </View>
-        <View
-          style={{ marginLeft: spacing.md, width: activityIndicatorWidth, alignItems: "flex-end" }}
-        >
+        <View style={{ marginLeft: spacing.md }}>
           <WorkspaceActivityIndicator activity={activity} fallbackLabel={formattedTimestamp} />
         </View>
       </Pressable>

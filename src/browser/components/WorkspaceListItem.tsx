@@ -823,7 +823,9 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div
             className={cn(
-              "grid min-w-0 grid-cols-[1fr_auto] items-center gap-1.5",
+              // Keep the title column shrinkable on narrow/mobile viewports so the
+              // right-side git indicator never forces horizontal sidebar scrolling.
+              "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5",
               !hasSecondaryRow && "py-0.5"
             )}
           >
