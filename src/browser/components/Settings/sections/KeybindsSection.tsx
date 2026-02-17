@@ -153,6 +153,18 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
     ],
   },
   {
+    label: "Immersive Review",
+    keys: [
+      "TOGGLE_REVIEW_IMMERSIVE",
+      "REVIEW_NEXT_FILE",
+      "REVIEW_PREV_FILE",
+      "REVIEW_NEXT_HUNK",
+      "REVIEW_PREV_HUNK",
+      "REVIEW_QUICK_LIKE",
+      "REVIEW_QUICK_DISLIKE",
+    ],
+  },
+  {
     label: "External",
     keys: ["OPEN_TERMINAL", "OPEN_IN_EDITOR"],
   },

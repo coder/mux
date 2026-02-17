@@ -36,6 +36,8 @@ interface ImmersiveReviewViewProps {
   onReviewNote?: (data: ReviewNoteData) => void;
   reviewActions?: ReviewActionCallbacks;
   reviewsByFilePath: Map<string, Review[]>;
+  /** Map of hunkId -> first-seen timestamp */
+  firstSeenMap: Record<string, number>;
 }
 
 /** Quick feedback composer state */
@@ -48,25 +50,36 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const containerRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
+  const {
+    fileTree,
+    hunks,
+    allHunks,
+    selectedHunkId,
+    onSelectHunk,
+    onToggleRead,
+    onExit,
+    onReviewNote,
+  } = props;
+
   // Flatten file tree into ordered file list
-  const fileList = useMemo(() => flattenFileTreeLeaves(props.fileTree), [props.fileTree]);
+  const fileList = useMemo(() => flattenFileTreeLeaves(fileTree), [fileTree]);
 
   // Determine active file from selected hunk or first file
   const activeFilePath = useMemo(() => {
-    if (props.selectedHunkId) {
-      const hunk = props.hunks.find((item) => item.id === props.selectedHunkId);
+    if (selectedHunkId) {
+      const hunk = hunks.find((item) => item.id === selectedHunkId);
       if (hunk) return hunk.filePath;
     }
     // Fallback: first file that has hunks
-    if (props.hunks.length > 0) return props.hunks[0].filePath;
+    if (hunks.length > 0) return hunks[0].filePath;
     if (fileList.length > 0) return fileList[0];
     return null;
-  }, [props.selectedHunkId, props.hunks, fileList]);
+  }, [selectedHunkId, hunks, fileList]);
 
   // Hunks for the active file only
   const currentFileHunks = useMemo(
-    () => (activeFilePath ? getFileHunks(props.hunks, activeFilePath) : []),
-    [props.hunks, activeFilePath]
+    () => (activeFilePath ? getFileHunks(hunks, activeFilePath) : []),
+    [hunks, activeFilePath]
   );
 
   // Quick feedback composer
@@ -86,20 +99,20 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       if (!nextFile || nextFile === activeFilePath) return;
 
       // Select first hunk in the new file
-      const fileHunks = getFileHunks(props.hunks, nextFile);
+      const fileHunks = getFileHunks(hunks, nextFile);
       if (fileHunks.length > 0) {
-        props.onSelectHunk(fileHunks[0].id);
+        onSelectHunk(fileHunks[0].id);
       }
     },
-    [activeFilePath, fileList, props.hunks, props.onSelectHunk]
+    [activeFilePath, fileList, hunks, onSelectHunk]
   );
 
   const navigateHunk = useCallback(
     (direction: 1 | -1) => {
       if (currentFileHunks.length === 0) return;
 
-      const currentIdx = props.selectedHunkId
-        ? currentFileHunks.findIndex((hunk) => hunk.id === props.selectedHunkId)
+      const currentIdx = selectedHunkId
+        ? currentFileHunks.findIndex((hunk) => hunk.id === selectedHunkId)
         : -1;
 
       let nextIdx: number;
@@ -110,38 +123,39 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         if (nextIdx < 0 || nextIdx >= currentFileHunks.length) return;
       }
 
-      props.onSelectHunk(currentFileHunks[nextIdx].id);
+      onSelectHunk(currentFileHunks[nextIdx].id);
     },
-    [currentFileHunks, props.selectedHunkId, props.onSelectHunk]
+    [currentFileHunks, selectedHunkId, onSelectHunk]
   );
 
   // Quick feedback
   const openComposer = useCallback(
     (prefill: string) => {
-      if (!props.selectedHunkId) return;
-      setComposer({ prefill, hunkId: props.selectedHunkId });
+      if (!selectedHunkId) return;
+      setComposer({ prefill, hunkId: selectedHunkId });
       setComposerText(prefill);
     },
-    [props.selectedHunkId]
+    [selectedHunkId]
   );
 
   const submitComposer = useCallback(() => {
     if (!composer || !composerText.trim()) return;
 
-    const hunk = props.hunks.find((item) => item.id === composer.hunkId);
-    if (!hunk || !props.onReviewNote) return;
+    // Use allHunks (unfiltered) so submission works even if the hunk was filtered out during editing
+    const hunk = allHunks.find((item) => item.id === composer.hunkId);
+    if (!hunk || !onReviewNote) return;
 
     const noteData = buildQuickHunkReviewNote({
       hunk,
       userNote: composerText.trim(),
     });
-    props.onReviewNote(noteData);
+    onReviewNote(noteData);
 
     setComposer(null);
     setComposerText("");
     // Restore focus to container
     containerRef.current?.focus();
-  }, [composer, composerText, props.hunks, props.onReviewNote]);
+  }, [composer, composerText, allHunks, onReviewNote]);
 
   const cancelComposer = useCallback(() => {
     setComposer(null);
@@ -166,17 +180,17 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const handleHunkClick = useCallback(
     (e: React.MouseEvent<HTMLElement>) => {
       const hunkId = e.currentTarget.dataset.hunkId;
-      if (hunkId) props.onSelectHunk(hunkId);
+      if (hunkId) onSelectHunk(hunkId);
     },
-    [props.onSelectHunk]
+    [onSelectHunk]
   );
 
   const handleHunkToggleRead = useCallback(
     (e: React.MouseEvent<HTMLElement>) => {
       const hunkId = e.currentTarget.dataset.hunkId;
-      if (hunkId) props.onToggleRead(hunkId);
+      if (hunkId) onToggleRead(hunkId);
     },
-    [props.onToggleRead]
+    [onToggleRead]
   );
 
   // --- Keyboard handler ---
@@ -188,7 +202,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       // Esc: exit immersive
       if (matchesKeybind(e, KEYBINDS.CANCEL)) {
         e.preventDefault();
-        props.onExit();
+        onExit();
         return;
       }
 
@@ -233,32 +247,26 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       // Toggle hunk read
       if (matchesKeybind(e, KEYBINDS.TOGGLE_HUNK_READ)) {
         e.preventDefault();
-        if (props.selectedHunkId) props.onToggleRead(props.selectedHunkId);
+        if (selectedHunkId) onToggleRead(selectedHunkId);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [
-    props.onExit,
-    navigateFile,
-    navigateHunk,
-    openComposer,
-    props.selectedHunkId,
-    props.onToggleRead,
-  ]);
+  }, [onExit, navigateFile, navigateHunk, openComposer, selectedHunkId, onToggleRead]);
 
   // Scroll selected hunk into view
   useEffect(() => {
-    if (!props.selectedHunkId) return;
+    if (!selectedHunkId) return;
     const element = document.querySelector(
-      `[data-testid="review-immersive-root"] [data-hunk-id="${props.selectedHunkId}"]`
+      `[data-testid="review-immersive-root"] [data-hunk-id="${selectedHunkId}"]`
     );
-    element?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }, [props.selectedHunkId]);
+    // Use "auto" instead of "smooth" for keyboard nav — smooth creates queued animations during rapid j/k
+    element?.scrollIntoView({ behavior: "auto", block: "nearest" });
+  }, [selectedHunkId]);
 
-  const currentHunkIdx = props.selectedHunkId
-    ? currentFileHunks.findIndex((hunk) => hunk.id === props.selectedHunkId)
+  const currentHunkIdx = selectedHunkId
+    ? currentFileHunks.findIndex((hunk) => hunk.id === selectedHunkId)
     : -1;
 
   return (
@@ -272,7 +280,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       <div className="border-border-light bg-dark flex items-center gap-2 border-b px-3 py-2">
         {/* Back button */}
         <button
-          onClick={props.onExit}
+          onClick={onExit}
           className="text-muted hover:text-foreground flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 text-xs transition-colors"
           aria-label="Exit immersive review"
         >
@@ -324,11 +332,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         <div className="flex-1" />
 
         {/* Quick feedback buttons */}
-        {props.onReviewNote && (
+        {onReviewNote && (
           <div className="flex items-center gap-1.5">
             <button
               onClick={() => openComposer("I like this change")}
-              disabled={!props.selectedHunkId}
+              disabled={!selectedHunkId}
               className={cn(
                 "flex cursor-pointer items-center gap-1 rounded border-none bg-transparent px-1.5 py-0.5 text-[11px] transition-colors",
                 "text-muted hover:text-success-light disabled:text-dim disabled:cursor-default"
@@ -340,7 +348,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
             </button>
             <button
               onClick={() => openComposer("I don't like this change")}
-              disabled={!props.selectedHunkId}
+              disabled={!selectedHunkId}
               className={cn(
                 "flex cursor-pointer items-center gap-1 rounded border-none bg-transparent px-1.5 py-0.5 text-[11px] transition-colors",
                 "text-muted hover:text-warning-light disabled:text-dim disabled:cursor-default"
@@ -413,12 +421,12 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
               hunkId={hunk.id}
               workspaceId={props.workspaceId}
               inlineReviews={props.reviewsByFilePath.get(hunk.filePath)}
-              isSelected={hunk.id === props.selectedHunkId}
+              isSelected={hunk.id === selectedHunkId}
               isRead={props.isRead(hunk.id)}
-              firstSeenAt={Date.now()}
+              firstSeenAt={props.firstSeenMap[hunk.id] ?? Date.now()}
               onClick={handleHunkClick}
               onToggleRead={handleHunkToggleRead}
-              onReviewNote={props.onReviewNote}
+              onReviewNote={onReviewNote}
               diffBase="HEAD"
               includeUncommitted={false}
               reviewActions={props.reviewActions}

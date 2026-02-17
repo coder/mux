@@ -3,7 +3,7 @@
  * These pure functions compute the next/previous hunk to navigate to.
  */
 
-import type { FileTreeNode } from "@/common/utils/git/numstatParser";
+import { extractNewPath, type FileTreeNode } from "@/common/utils/git/numstatParser";
 import type { DiffHunk } from "@/common/types/review";
 
 /**
@@ -82,8 +82,8 @@ export function flattenFileTreeLeaves(root: FileTreeNode | null): string[] {
         walk(child, path);
       }
     } else {
-      // Leaf node = file
-      result.push(path);
+      // Leaf node = file; normalize rename syntax (e.g., "src/{old.ts => new.ts}" → "src/new.ts")
+      result.push(extractNewPath(path));
     }
   }
 
@@ -115,4 +115,3 @@ export function getAdjacentFilePath(
 export function getFileHunks(hunks: DiffHunk[], filePath: string): DiffHunk[] {
   return hunks.filter((h) => h.filePath === filePath);
 }
-

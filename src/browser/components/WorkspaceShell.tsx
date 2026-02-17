@@ -1,7 +1,7 @@
 import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
 import React, { useCallback, useRef } from "react";
 import { cn } from "@/common/lib/utils";
-import { RIGHT_SIDEBAR_WIDTH_KEY } from "@/common/constants/storage";
+import { RIGHT_SIDEBAR_WIDTH_KEY, getReviewImmersiveKey } from "@/common/constants/storage";
 import { useResizableSidebar } from "@/browser/hooks/useResizableSidebar";
 import { useResizeObserver } from "@/browser/hooks/useResizeObserver";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
@@ -128,11 +128,9 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
   );
 
   const workspaceState = useWorkspaceState(props.workspaceId);
-  const [isReviewImmersive] = usePersistedState(
-    `review-immersive:${props.workspaceId}`,
-    false,
-    { listener: true }
-  );
+  const [isReviewImmersive] = usePersistedState(getReviewImmersiveKey(props.workspaceId), false, {
+    listener: true,
+  });
   const backgroundBashError = useBackgroundBashError();
 
   if (!workspaceState || workspaceState.loading) {
@@ -192,7 +190,7 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
       <div
         id="review-immersive-root"
         hidden={!isReviewImmersive}
-        className="absolute inset-0 z-50 bg-dark"
+        className="bg-dark absolute inset-0 z-50"
         data-testid="review-immersive-root"
       />
 

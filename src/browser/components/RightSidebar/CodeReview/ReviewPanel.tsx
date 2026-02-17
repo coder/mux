@@ -40,7 +40,11 @@ import { useReviews } from "@/browser/hooks/useReviews";
 import { useHunkFirstSeen } from "@/browser/hooks/useHunkFirstSeen";
 import { RefreshController, type LastRefreshInfo } from "@/browser/utils/RefreshController";
 import { parseDiff, extractAllHunks, buildGitDiffCommand } from "@/common/utils/git/diffParser";
-import { getReviewSearchStateKey, REVIEW_SORT_ORDER_KEY } from "@/common/constants/storage";
+import {
+  getReviewImmersiveKey,
+  getReviewSearchStateKey,
+  REVIEW_SORT_ORDER_KEY,
+} from "@/common/constants/storage";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
 import { parseNumstat, buildFileTree, extractNewPath } from "@/common/utils/git/numstatParser";
 import { parseNameStatus } from "@/common/utils/git/nameStatusParser";
@@ -368,7 +372,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
   // Immersive review mode - persisted so WorkspaceShell overlay can react
   const [isImmersive, setIsImmersive] = usePersistedState<boolean>(
-    `review-immersive:${workspaceId}`,
+    getReviewImmersiveKey(workspaceId),
     false,
     { listener: true }
   );
@@ -1094,6 +1098,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         }
       }
 
+      // Immersive mode has its own keyboard handler; don't double-handle
+      if (isImmersive) return;
+
       if (!selectedHunkId) return;
 
       const currentIndex = filteredHunks.findIndex((h) => h.id === selectedHunkId);
@@ -1147,6 +1154,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     handleMarkAsRead,
     handleMarkAsUnread,
     handleMarkFileAsRead,
+    isImmersive,
   ]);
 
   // Global keyboard shortcuts (refresh/search/immersive toggle)
@@ -1434,6 +1442,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
               onReviewNote={onReviewNote}
               reviewActions={reviewActions}
               reviewsByFilePath={reviewsByFilePath}
+              firstSeenMap={firstSeenMap}
             />,
             root
           );

@@ -560,6 +560,15 @@ export function getReviewsKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for immersive review mode state per workspace
+ * Tracks whether immersive mode is active
+ * Format: "review-immersive:{workspaceId}"
+ */
+export function getReviewImmersiveKey(workspaceId: string): string {
+  return `review-immersive:${workspaceId}`;
+}
+
+/**
  * Get the localStorage key for auto-compaction enabled preference per workspace
  * Format: "autoCompaction:enabled:{workspaceId}"
  */
@@ -597,6 +606,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getFileTreeExpandStateKey,
   getReviewSearchStateKey,
   getReviewsKey,
+  getReviewImmersiveKey,
   getAutoCompactionEnabledKey,
   getWorkspaceLastReadKey,
   getStatusStateKey,

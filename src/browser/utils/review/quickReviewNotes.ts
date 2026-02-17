@@ -17,11 +17,15 @@ export function buildQuickHunkReviewNote(params: {
 
   const lines = hunk.content.split("\n").filter((line) => line.length > 0);
 
-  // Compute line number ranges
-  const oldEnd = hunk.oldStart + hunk.oldLines - 1;
-  const newEnd = hunk.newStart + hunk.newLines - 1;
+  // Compute line number ranges, omitting segments for pure additions/deletions
+  const oldRange =
+    hunk.oldLines > 0 ? `-${hunk.oldStart}-${hunk.oldStart + hunk.oldLines - 1}` : null;
+  const newRange =
+    hunk.newLines > 0 ? `+${hunk.newStart}-${hunk.newStart + hunk.newLines - 1}` : null;
+  const lineRange = [oldRange, newRange].filter(Boolean).join(" ");
 
-  const lineRange = `-${hunk.oldStart}-${oldEnd} +${hunk.newStart}-${newEnd}`;
+  const oldEnd = hunk.oldLines > 0 ? hunk.oldStart + hunk.oldLines - 1 : hunk.oldStart;
+  const newEnd = hunk.newLines > 0 ? hunk.newStart + hunk.newLines - 1 : hunk.newStart;
 
   // Build selectedCode with line numbers (matching DiffRenderer format)
   const oldWidth = Math.max(1, String(oldEnd).length);
