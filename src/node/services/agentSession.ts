@@ -405,6 +405,25 @@ export class AgentSession {
       listener({ workspaceId: this.workspaceId, message });
     };
 
+    let emittedReplayStreamEvents = false;
+    const replayStreamEventTracker = (event: AgentSessionChatEvent) => {
+      if (event.workspaceId !== this.workspaceId) {
+        return;
+      }
+
+      const message = event.message;
+      if (typeof message !== "object" || message === null) {
+        return;
+      }
+
+      if (!("replay" in message) || message.replay !== true) {
+        return;
+      }
+
+      emittedReplayStreamEvents = true;
+    };
+    this.emitter.on("chat-event", replayStreamEventTracker);
+
     // try/catch/finally guarantees caught-up is always sent, even if replay fails.
     // Without caught-up, the frontend stays in "Loading workspace..." forever.
     try {
@@ -625,13 +644,15 @@ export class AgentSession {
       // Keep append/live semantics when we've already emitted incremental payload.
       // Downgrading to full at that point would make the frontend apply replace-mode to
       // a partial replay buffer and temporarily hide older transcript rows.
-      if (replayMode !== "full" && !emittedReplayMessages) {
+      if (replayMode !== "full" && !emittedReplayMessages && !emittedReplayStreamEvents) {
         replayMode = "full";
       }
 
       // Replay failed, so do not advertise a trustworthy reconnect cursor.
       serverCursor = undefined;
     } finally {
+      this.emitter.off("chat-event", replayStreamEventTracker);
+
       // Replay queued-message snapshot before caught-up so reconnect clients can
       // rebuild queue UI state even when history replay errored mid-flight.
       listener({

@@ -72,7 +72,7 @@ async function createReplaySessionHarness(
     backgroundProcessManager,
   });
 
-  return { session, cleanup, replayInit, replayStream, historyService };
+  return { session, cleanup, replayInit, replayStream, historyService, aiEmitter };
 }
 describe("AgentSession pre-stream errors", () => {
   let historyCleanup: (() => Promise<void>) | undefined;
@@ -456,6 +456,83 @@ describe("AgentSession pre-stream errors", () => {
             messageId: persistedSeeded.id,
             historySequence: seededHistorySequence,
             oldestHistorySequence: seededHistorySequence,
+          },
+        },
+      }
+    );
+
+    const caughtUp = events.find(
+      (event): event is Extract<WorkspaceChatMessage, { type: "caught-up" }> =>
+        "type" in event && event.type === "caught-up"
+    );
+    expect(caughtUp).toBeDefined();
+    expect(caughtUp?.replay).toBe("since");
+    expect(caughtUp?.cursor).toBeUndefined();
+  });
+
+  it("keeps incremental replay mode when replay stream events were already emitted", async () => {
+    const workspaceId = "ws-replay-since-error-after-stream-events";
+    const { session, cleanup, historyService, replayStream, aiEmitter } =
+      await createReplaySessionHarness(workspaceId, {
+        streamInfo: {
+          messageId: "msg-live-stream-events",
+          startTime: 8_500,
+          parts: [],
+          toolCompletionTimestamps: new Map(),
+        },
+      });
+    historyCleanup = cleanup;
+
+    const placeholder = createMuxMessage("msg-history-stream-events", "assistant", "placeholder");
+    expect((await historyService.appendToHistory(workspaceId, placeholder)).success).toBe(true);
+
+    const historyResult = await historyService.getHistoryFromLatestBoundary(workspaceId);
+    if (!historyResult.success) {
+      throw new Error(`Failed to read seeded history: ${historyResult.error}`);
+    }
+
+    const persistedPlaceholder = historyResult.data.find(
+      (message) => message.id === placeholder.id
+    );
+    if (!persistedPlaceholder) {
+      throw new Error("Expected placeholder history row");
+    }
+
+    const placeholderHistorySequence = persistedPlaceholder.metadata?.historySequence;
+    if (placeholderHistorySequence === undefined) {
+      throw new Error("Expected placeholder row to include historySequence");
+    }
+
+    const partial = createMuxMessage("msg-partial-stream-events", "assistant", "partial", {
+      historySequence: placeholderHistorySequence,
+    });
+    expect((await historyService.writePartial(workspaceId, partial)).success).toBe(true);
+
+    replayStream.mockImplementationOnce(() => {
+      aiEmitter.emit("stream-start", {
+        type: "stream-start",
+        workspaceId,
+        messageId: "msg-live-stream-events",
+        replay: true,
+        model: "claude-3-5-sonnet-20241022",
+        historySequence: placeholderHistorySequence,
+        startTime: 8_500,
+      });
+      return Promise.reject(new Error("replay stream failed after events"));
+    });
+
+    const events: WorkspaceChatMessage[] = [];
+    await session.replayHistory(
+      ({ message }) => {
+        events.push(message);
+      },
+      {
+        type: "since",
+        cursor: {
+          history: {
+            messageId: persistedPlaceholder.id,
+            historySequence: placeholderHistorySequence,
+            oldestHistorySequence: placeholderHistorySequence,
           },
         },
       }
