@@ -62,35 +62,59 @@ mux_use_nix_devshell_path() {
 	fi
 
 	local refresh_log="${cache_file}.refresh.log"
+		local nix_refresh_timeout_seconds=8
 
-	if [[ "${should_refresh}" -eq 1 ]]; then
-		local tmp_cache_file
-		tmp_cache_file="$(mktemp "${cache_file}.tmp.XXXXXX")"
+		if [[ "${should_refresh}" -eq 1 ]]; then
+			local tmp_cache_file
+			tmp_cache_file="$(mktemp "${cache_file}.tmp.XXXXXX")"
 
-		if nix --extra-experimental-features 'nix-command flakes' develop "${flake_root}#default" -c bash -c "echo \"\$PATH\"" >"${tmp_cache_file}" 2>"${refresh_log}"; then
-			if [[ -s "${tmp_cache_file}" ]]; then
-				mv "${tmp_cache_file}" "${cache_file}"
-				printf '%s' "nix" >"${cache_state_file}"
+			local timeout_cmd=""
+			if command -v timeout >/dev/null 2>&1; then
+				timeout_cmd="timeout"
+			elif command -v gtimeout >/dev/null 2>&1; then
+				timeout_cmd="gtimeout"
+			fi
+
+			local refresh_exit_code=0
+			if [[ -n "${timeout_cmd}" ]]; then
+				"${timeout_cmd}" --signal=TERM "${nix_refresh_timeout_seconds}s" \
+					nix --extra-experimental-features 'nix-command flakes' develop "${flake_root}#default" -c bash -c "echo \"\$PATH\"" \
+					>"${tmp_cache_file}" 2>"${refresh_log}" || refresh_exit_code=$?
+			else
+				refresh_exit_code=124
+				echo "warning: no timeout command available; skipping nix devshell PATH refresh to keep tool hooks responsive" >&2
+			fi
+
+			if [[ "${refresh_exit_code}" -eq 0 ]]; then
+				if [[ -s "${tmp_cache_file}" ]]; then
+					mv "${tmp_cache_file}" "${cache_file}"
+					printf '%s' "nix" >"${cache_state_file}"
+				else
+					rm -f "${tmp_cache_file}"
+					echo "warning: nix develop returned an empty PATH; keeping existing PATH" >&2
+				fi
 			else
 				rm -f "${tmp_cache_file}"
-				echo "warning: nix develop returned an empty PATH; keeping existing PATH" >&2
-			fi
-		else
-			rm -f "${tmp_cache_file}"
-			echo "warning: failed to refresh nix devshell PATH cache (${cache_file}); keeping existing PATH" >&2
-			echo "warning: nix develop stderr logged at ${refresh_log}" >&2
-			if [[ -s "${cache_file}" ]]; then
-				if [[ ! -f "${cache_state_file}" ]]; then
-					printf '%s' "inherited" >"${cache_state_file}" 2>/dev/null || true
+				if [[ "${refresh_exit_code}" -eq 124 ]]; then
+					echo "warning: timed out refreshing nix devshell PATH cache after ${nix_refresh_timeout_seconds}s; keeping existing PATH" >&2
+				else
+					echo "warning: failed to refresh nix devshell PATH cache (${cache_file}); keeping existing PATH" >&2
 				fi
-				if [[ "$(<"${cache_state_file}")" != "nix" ]]; then
-					touch "${cache_file}" 2>/dev/null || true
+				if [[ -s "${refresh_log}" ]]; then
+					echo "warning: nix develop stderr logged at ${refresh_log}" >&2
+				fi
+				if [[ -s "${cache_file}" ]]; then
+					if [[ ! -f "${cache_state_file}" ]]; then
+						printf '%s' "inherited" >"${cache_state_file}" 2>/dev/null || true
+					fi
+					if [[ "$(<"${cache_state_file}")" != "nix" ]]; then
+						touch "${cache_file}" 2>/dev/null || true
+					fi
 				fi
 			fi
 		fi
-	fi
 
-	if [[ ! -s "${cache_file}" && -n "${PATH:-}" ]]; then
+if [[ ! -s "${cache_file}" && -n "${PATH:-}" ]]; then
 		if printf '%s' "${PATH}" >"${cache_file}" 2>/dev/null; then
 			printf '%s' "inherited" >"${cache_state_file}" 2>/dev/null || true
 			echo "warning: seeded nix PATH cache with inherited PATH (${cache_file})" >&2
