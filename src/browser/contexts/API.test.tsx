@@ -51,6 +51,10 @@ class MockWebSocket {
   }
 }
 
+function createOrpcPongResponseFrame(id: number): string {
+  return JSON.stringify({ i: id, p: { b: "pong" } });
+}
+
 const originalFetch = globalThis.fetch;
 let fetchImpl: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> = () =>
   Promise.resolve({
@@ -489,6 +493,68 @@ describe("API reconnection", () => {
     { timeout: 15000 }
   );
   test(
+    "counts stream traffic while liveness probes are in flight",
+    async () => {
+      let pingCallCount = 0;
+      let isAuthCheck = true;
+
+      pingImpl = () => {
+        pingCallCount++;
+
+        if (isAuthCheck) {
+          isAuthCheck = false;
+          return Promise.resolve("pong");
+        }
+
+        // Keep liveness probes pending long enough to overlap with the next interval.
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            resolve("pong");
+          }, 9000);
+        });
+      };
+
+      render(
+        <APIProvider createWebSocket={createMockWebSocket}>
+          <APIStateObserver onState={() => undefined} />
+        </APIProvider>
+      );
+
+      const ws1 = MockWebSocket.lastInstance();
+      expect(ws1).toBeDefined();
+
+      await act(async () => {
+        ws1!.simulateOpen();
+        await new Promise((r) => setTimeout(r, 10));
+      });
+
+      await waitFor(
+        () => {
+          expect(pingCallCount).toBeGreaterThanOrEqual(2);
+        },
+        { timeout: 7000 }
+      );
+
+      const pingCallsWhenProbeStarted = pingCallCount;
+
+      const messageInterval = setInterval(() => {
+        ws1!.simulateMessage({ type: "stream-delta" });
+      }, 250);
+
+      try {
+        await new Promise((r) => setTimeout(r, 6000));
+      } finally {
+        clearInterval(messageInterval);
+      }
+
+      // Stream traffic during an in-flight probe should keep the connection healthy and
+      // suppress additional liveness probes for the next interval.
+      expect(pingCallCount).toBe(pingCallsWhenProbeStarted);
+    },
+    { timeout: 20000 }
+  );
+
+  test(
     "does not treat delayed liveness ping replies as stream traffic",
     async () => {
       const states: string[] = [];
@@ -502,7 +568,7 @@ describe("API reconnection", () => {
         // The delayed reply is emitted as a WS message to mimic network delivery.
         return new Promise((resolve) => {
           setTimeout(() => {
-            activeSocket?.simulateMessage({ type: "delayed-liveness-reply" });
+            activeSocket?.simulateMessage(createOrpcPongResponseFrame(pingCallCount));
             resolve("pong");
           }, 3500);
         });

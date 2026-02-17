@@ -84,6 +84,56 @@ function closeWebSocketSafely(ws: WebSocket) {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function tryParseJSONFramePayload(data: unknown): Record<string, unknown> | null {
+  if (typeof data !== "string" && !(data instanceof ArrayBuffer) && !ArrayBuffer.isView(data)) {
+    return null;
+  }
+
+  const rawPayload =
+    typeof data === "string"
+      ? data
+      : new TextDecoder().decode(
+          data instanceof ArrayBuffer
+            ? new Uint8Array(data)
+            : new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+        );
+
+  try {
+    const parsed: unknown = JSON.parse(rawPayload);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function isLikelyOrpcPongResponseFrame(data: unknown): boolean {
+  const payload = tryParseJSONFramePayload(data);
+  if (!payload) {
+    return false;
+  }
+
+  // Defensive guard: ORPC frames should always carry a numeric request id.
+  if (typeof payload.i !== "number") {
+    return false;
+  }
+
+  // Event iterator and abort frames are never ping responses.
+  if (payload.t === 3 || payload.t === 4) {
+    return false;
+  }
+
+  if (!isRecord(payload.p)) {
+    return false;
+  }
+
+  // ORPC encodes normal response bodies at payload.p.b.
+  return payload.p.b === "pong";
+}
+
 function createElectronClient(): { client: APIClient; cleanup: () => void } {
   const { port1: clientPort, port2: serverPort } = new MessageChannel();
   window.postMessage("start-orpc-client", "*", [serverPort]);
@@ -209,7 +259,7 @@ export const APIProvider = (props: APIProviderProps) => {
 
       setState({ status: "connecting" });
       const { client, cleanup, ws } = createBrowserClient(token, wsFactory);
-      ws.addEventListener("message", () => {
+      ws.addEventListener("message", (event) => {
         // User rationale: during large catch-up streams, ORPC ping responses can be delayed
         // behind data frames. Treat inbound non-probe traffic as proof of liveness to avoid
         // unnecessary reconnect loops for healthy-but-busy connections.
@@ -217,9 +267,14 @@ export const APIProvider = (props: APIProviderProps) => {
           return;
         }
 
-        // Exclude delayed responses for in-flight liveness probes so probe replies
-        // do not mask repeated timeout failures.
-        if (livenessPingsInFlightCountRef.current > 0) {
+        // Keep counting stream frames while liveness probes are in flight; otherwise a slow
+        // probe could incorrectly hide active traffic and trigger false reconnects.
+        //
+        // Only ignore frames that look like ORPC "pong" responses from those probes.
+        const isLikelyProbeReply =
+          livenessPingsInFlightCountRef.current > 0 && isLikelyOrpcPongResponseFrame(event.data);
+
+        if (isLikelyProbeReply) {
           return;
         }
 
