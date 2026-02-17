@@ -30,7 +30,9 @@ jobs:
         id: compute
         shell: bash
         run: |
-          TAG_BASE=$(git describe --tags --abbrev=0 --match 'v*')
+          # --exclude 'v*-*' skips pre-release tags (e.g. v1.2.3-nightly.5)
+          # so we always base version computation on the last stable release.
+          TAG_BASE=$(git describe --tags --abbrev=0 --match 'v*' --exclude 'v*-*')
           IFS='.' read -r MAJOR MINOR PATCH <<< "${TAG_BASE#v}"
           PATCH="${PATCH%%-*}"
           NEXT_PATCH="${MAJOR}.${MINOR}.$((PATCH + 1))"
