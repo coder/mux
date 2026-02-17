@@ -65,18 +65,18 @@ export class RetryManager {
       return;
     }
 
-    // Check non-retryable errors using extracted common utils
+    // Check non-retryable errors using extracted common utils.
+    // Cancel any pending retry first — a retryable error may have scheduled
+    // a timer, but a later non-retryable error supersedes it.
     if (isNonRetryableSendError(error) || isNonRetryableStreamError(error)) {
+      this.cancelPendingTimer();
       this.onStatusChange({ type: "auto-retry-abandoned", reason: error.type });
       return;
     }
 
     // If a retry is already pending, cancel it and reschedule with updated backoff.
     // This can happen when multiple error events arrive before the timer fires.
-    if (this.retryTimer !== null) {
-      clearTimeout(this.retryTimer);
-      this.retryTimer = null;
-    }
+    this.cancelPendingTimer();
 
     this.state = createFailedRetryState(this.state.attempt, error);
     const delay = calculateBackoffDelay(this.state.attempt);
@@ -105,11 +105,16 @@ export class RetryManager {
     this.state = createFreshRetryState<RetryFailureError>();
   }
 
-  cancel(): void {
-    if (this.retryTimer) {
+  /** Cancel any pending retry timer without resetting state. */
+  private cancelPendingTimer(): void {
+    if (this.retryTimer !== null) {
       clearTimeout(this.retryTimer);
+      this.retryTimer = null;
     }
-    this.retryTimer = null;
+  }
+
+  cancel(): void {
+    this.cancelPendingTimer();
     this.state = createFreshRetryState<RetryFailureError>();
   }
 
@@ -118,12 +123,11 @@ export class RetryManager {
     if (!enabled) {
       // Cancel any pending retry and notify the frontend so the UI clears
       // the retry status (e.g., "Retrying…" or countdown).
-      if (this.retryTimer !== null) {
-        clearTimeout(this.retryTimer);
-        this.retryTimer = null;
+      const hadPendingRetry = this.isRetryPending;
+      this.cancel();
+      if (hadPendingRetry) {
         this.onStatusChange({ type: "auto-retry-abandoned", reason: "disabled_by_user" });
       }
-      this.state = createFreshRetryState<RetryFailureError>();
     }
   }
 

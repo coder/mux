@@ -228,7 +228,7 @@ export class MockAiStreamPlayer {
       type: "stream-abort",
       workspaceId,
       messageId: active.messageId,
-      reason: "user_cancelled",
+      abortReason: "user",
     });
 
     this.cleanup(workspaceId);

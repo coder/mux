@@ -96,6 +96,20 @@ describe("RetryManager", () => {
     expect(onRetry).not.toHaveBeenCalled();
   });
 
+  it("non-retryable error cancels pending retryable timer", () => {
+    const { manager, events } = createRetryManager();
+
+    // Schedule a retryable error first
+    manager.handleStreamFailure({ type: "unknown" });
+    expect(manager.isRetryPending).toBe(true);
+
+    // Then a non-retryable error arrives — should cancel the pending timer
+    manager.handleStreamFailure({ type: "api_key_not_found" });
+    expect(manager.isRetryPending).toBe(false);
+    expect(scheduledTimers.size).toBe(0);
+    expect(events).toContainEqual({ type: "auto-retry-abandoned", reason: "api_key_not_found" });
+  });
+
   it("schedules and runs retry after backoff delay", async () => {
     const { manager, onRetry, events } = createRetryManager();
 
