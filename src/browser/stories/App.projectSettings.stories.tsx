@@ -788,51 +788,42 @@ export const ToolSelectorInteraction: AppStory = {
     const modal = createWorkspaceMCPModalScope(canvasElement);
 
     // Normalize to the "all selected" baseline before testing None→All.
-    // This story can inherit transient state from remount retries, where "All"
-    // starts enabled; clicking it first makes the transition deterministic.
-    const initialAllButton = await (
-      await modal.find(10000)
-    ).findByRole("button", { name: /^All$/i }, { timeout: 10000 });
-    if (!initialAllButton.hasAttribute("disabled")) {
-      await userEvent.click(initialAllButton);
-    }
+    // Queries + clicks inside waitFor so we always target the live DOM node
+    // (prevents flakes from React re-renders replacing the button mid-step).
     await modal.assert(async (scope) => {
-      await expect(scope.getByRole("button", { name: /^All$/i })).toBeDisabled();
+      const allBtn = scope.getByRole("button", { name: /^All$/i }) as HTMLElement;
+      if (!allBtn.hasAttribute("disabled")) {
+        await userEvent.click(allBtn);
+      }
+      await expect(allBtn).toBeDisabled();
     });
 
     // Click "None" to deselect all tools.
-    const noneButton = await (
-      await modal.find(10000)
-    ).findByRole("button", { name: /^None$/i }, { timeout: 10000 });
-    await userEvent.click(noneButton);
-
-    // "None" should be disabled and "0 of X tools enabled" should appear.
     await modal.assert(async (scope) => {
-      await expect(scope.getByRole("button", { name: /^None$/i })).toBeDisabled();
+      const noneBtn = scope.getByRole("button", { name: /^None$/i }) as HTMLElement;
+      if (!noneBtn.hasAttribute("disabled")) {
+        await userEvent.click(noneBtn);
+      }
+      await expect(noneBtn).toBeDisabled();
       scope.getByText((_content: string, element: Element | null) => {
         const t = (element?.textContent ?? "").replace(/\s+/g, " ").trim();
         return /^0 of \d+ tools enabled$/i.test(t);
       });
     });
 
-    // "All" must be enabled (not all tools selected) before we click it.
-    // This guards against a Storybook remount silently resetting to the
-    // default state where All is already disabled — without this check
-    // the click would be a no-op and the final assertion would pass
-    // vacuously, masking regressions in the None→All transition.
+    // "All" must be enabled before we click. This guards against a Storybook
+    // remount silently resetting state — the click would be a no-op otherwise.
     await modal.assert(async (scope) => {
       await expect(scope.getByRole("button", { name: /^All$/i })).toBeEnabled();
     });
 
     // Click "All" to re-select all tools.
-    const allButton = await (
-      await modal.find(10000)
-    ).findByRole("button", { name: /^All$/i }, { timeout: 10000 });
-    await userEvent.click(allButton);
-
-    // "All" should be disabled again.
     await modal.assert(async (scope) => {
-      await expect(scope.getByRole("button", { name: /^All$/i })).toBeDisabled();
+      const allBtn = scope.getByRole("button", { name: /^All$/i }) as HTMLElement;
+      if (!allBtn.hasAttribute("disabled")) {
+        await userEvent.click(allBtn);
+      }
+      await expect(allBtn).toBeDisabled();
     });
   },
 };
