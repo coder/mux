@@ -171,7 +171,9 @@ export class MuxAgent implements Agent {
 
     return {
       sessionId,
-      configOptions: await buildConfigOptions(this.server.client, workspaceId),
+      configOptions: await buildConfigOptions(this.server.client, workspaceId, {
+        activeAgentId: agentId,
+      }),
     };
   }
 
@@ -240,6 +242,11 @@ export class MuxAgent implements Agent {
     const workspaceId = this.sessionManager.getWorkspaceId(sessionId);
     const sessionState = await this.refreshSessionState(sessionId);
     const message = promptBlocksToText(params.prompt);
+
+    // Re-establish chat subscription if a prior one dropped (e.g., transient
+    // websocket interruption). Without a live subscription, stream-end events
+    // never arrive and the turn promise hangs indefinitely.
+    this.ensureChatSubscription(sessionId, workspaceId);
 
     const turnPromise = this.beginTurn(sessionId);
 
