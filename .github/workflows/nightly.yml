@@ -97,11 +97,13 @@ jobs:
       version_override: ${{ needs.compute-version.outputs.nightly_version }}
     secrets: inherit # zizmor: ignore[secrets-inherit] -- reusable workflow needs platform signing secrets
 
-  # Clean up old nightly releases only AFTER the new build succeeds.
-  # This preserves the last-known-good nightly as a fallback if builds fail.
+  # Clean up old nightly releases after version computation.
+  # - Reuse path (should_build=false): run cleanup to enforce single-nightly policy.
+  # - Build path (should_build=true): run cleanup only after desktop-builds succeeds.
   cleanup-old-nightlies:
     name: Clean up old nightly releases
     needs: [compute-version, desktop-builds]
+    if: needs.compute-version.result == 'success' && (needs.compute-version.outputs.should_build != 'true' || needs.desktop-builds.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: write # Delete old pre-releases
