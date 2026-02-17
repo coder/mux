@@ -1464,10 +1464,11 @@ code {
 
 .plan-content blockquote {
   border-left: 3px solid var(--color-plan-mode);
-  padding-left: 12px;
+  background: color-mix(in srgb, var(--color-plan-mode) 8%, transparent);
+  padding: 6px 12px;
   margin: 8px 0;
-  color: var(--color-secondary);
-  font-style: italic;
+  color: var(--color-muted-foreground);
+  border-radius: 0 4px 4px 0;
 }
 
 [title]:hover::before {
@@ -1587,11 +1588,12 @@ code {
 }
 
 .markdown-content blockquote {
-  border-left: 3px solid var(--color-border);
-  padding-left: 12px;
+  border-left: 3px solid var(--color-muted);
+  background: color-mix(in srgb, var(--color-border) 15%, transparent);
+  padding: 6px 12px;
   margin: 1em 0;
-  color: var(--color-secondary);
-  font-style: italic;
+  color: var(--color-muted-foreground);
+  border-radius: 0 4px 4px 0;
 }
 
 .markdown-content strong {

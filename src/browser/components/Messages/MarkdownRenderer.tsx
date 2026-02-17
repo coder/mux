@@ -39,7 +39,6 @@ export const PlanMarkdownContainer: React.FC<{ children: React.ReactNode; classN
       style={{
         // Plan-specific overrides
         // @ts-expect-error CSS custom property
-        "--blockquote-color": "var(--color-plan-mode)",
         "--code-color": "var(--color-plan-mode-hover)",
       }}
     >
