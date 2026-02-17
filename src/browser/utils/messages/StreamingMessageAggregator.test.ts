@@ -1062,6 +1062,50 @@ describe("StreamingMessageAggregator", () => {
     });
   });
 
+  describe("incremental stream replay", () => {
+    test("preserves last stream timestamp when replayed stream-start re-establishes context", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const startTime = 1_000;
+      const deltaTimestamp = 1_250;
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-replay-1",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+        startTime,
+      });
+
+      aggregator.handleStreamDelta({
+        type: "stream-delta",
+        workspaceId: "test-workspace",
+        messageId: "msg-replay-1",
+        delta: "partial",
+        tokens: 1,
+        timestamp: deltaTimestamp,
+      });
+
+      const beforeReplayCursor = aggregator.getOnChatCursor();
+      expect(beforeReplayCursor?.stream?.lastTimestamp).toBe(deltaTimestamp);
+
+      // Since-mode reconnect can replay stream-start without replaying additional parts.
+      // Cursor timestamp must remain monotonic to avoid requesting duplicate events.
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-replay-1",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+        startTime,
+        replay: true,
+      });
+
+      const afterReplayCursor = aggregator.getOnChatCursor();
+      expect(afterReplayCursor?.stream?.lastTimestamp).toBe(deltaTimestamp);
+    });
+  });
+
   describe("compaction detection", () => {
     test("treats active stream as compacting on reconnect when stream-start has no mode", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);

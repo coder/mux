@@ -1371,7 +1371,24 @@ export class StreamingMessageAggregator {
     // For incremental replay: stream-start may be re-emitted to re-establish context.
     // If we already have this message with accumulated parts, don't wipe its content.
     const existingMessage = this.messages.get(data.messageId);
+    const existingContext = this.activeStreams.get(data.messageId);
     if (data.replay && existingMessage && existingMessage.parts.length > 0) {
+      if (existingContext) {
+        // Preserve the highest observed server timestamp across reconnect boundaries.
+        // If replay emits only stream-start (no newer parts), regressing this value
+        // would cause the next since cursor to request already-seen stream events.
+        context.lastServerTimestamp = Math.max(
+          context.lastServerTimestamp,
+          existingContext.lastServerTimestamp
+        );
+        context.clockOffsetMs = Date.now() - context.lastServerTimestamp;
+
+        // Preserve in-flight timing context so reconnect doesn't reset active tool timing stats.
+        context.serverFirstTokenTime = existingContext.serverFirstTokenTime;
+        context.toolExecutionMs = existingContext.toolExecutionMs;
+        context.pendingToolStarts = new Map(existingContext.pendingToolStarts);
+      }
+
       this.activeStreams.set(data.messageId, context);
       if (existingMessage.metadata) {
         existingMessage.metadata.model = data.model;
