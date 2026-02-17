@@ -296,6 +296,9 @@ function getPathnameFromRequestUrl(requestUrl: string | undefined): string | nul
   }
 }
 
+// Non-greedy so we match the first "/apps/<slug>" segment in nested routes.
+const APP_PROXY_BASE_PATH_RE = /(.*?\/apps\/[^/]+)(?:\/|$)/;
+
 const OAUTH_CALLBACK_ORIGIN_BYPASS_PATHS = new Set<string>([
   "/auth/mux-gateway/callback",
   "/auth/mux-governor/callback",
@@ -463,9 +466,97 @@ export async function createOrpcServer({
     return Boolean((req.socket as { encrypted?: boolean }).encrypted);
   }
 
-  function buildServerSessionCookie(sessionToken: string, secure: boolean): string {
+  function parsePathnameFromRequestValue(value: string | null | undefined): string | null {
+    if (!value) {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    try {
+      if (trimmed.startsWith("/")) {
+        return new URL(trimmed, "http://localhost").pathname;
+      }
+
+      return new URL(trimmed).pathname;
+    } catch {
+      return null;
+    }
+  }
+
+  function normalizeCookiePath(pathname: string | null): string | null {
+    if (!pathname) {
+      return null;
+    }
+
+    const trimmed = pathname.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const withLeadingSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+    const withoutTrailing = withLeadingSlash.replace(/\/+$/, "");
+
+    return withoutTrailing.length > 0 ? withoutTrailing : "/";
+  }
+
+  function getAppProxyBasePathFromPathname(pathname: string | null): string | null {
+    if (!pathname) {
+      return null;
+    }
+
+    const match = APP_PROXY_BASE_PATH_RE.exec(pathname);
+    if (!match) {
+      return null;
+    }
+
+    return normalizeCookiePath(match[1]);
+  }
+
+  function getServerSessionCookiePath(req: express.Request): string {
+    const forwardedPrefix = normalizeCookiePath(getFirstHeaderValue(req, "x-forwarded-prefix"));
+    if (forwardedPrefix) {
+      return forwardedPrefix;
+    }
+
+    const forwardedUriPath = parsePathnameFromRequestValue(
+      getFirstHeaderValue(req, "x-forwarded-uri") ?? getFirstHeaderValue(req, "x-original-uri")
+    );
+    const forwardedUriBasePath = getAppProxyBasePathFromPathname(forwardedUriPath);
+    if (forwardedUriBasePath) {
+      return forwardedUriBasePath;
+    }
+
+    const originalUrlBasePath = getAppProxyBasePathFromPathname(
+      parsePathnameFromRequestValue(req.originalUrl)
+    );
+    if (originalUrlBasePath) {
+      return originalUrlBasePath;
+    }
+
+    // Browser mode requests include Referer by default; this keeps cookie scope
+    // aligned with app-proxy base paths even when the reverse proxy strips prefixes
+    // before forwarding to mux.
+    const refererBasePath = getAppProxyBasePathFromPathname(
+      parsePathnameFromRequestValue(req.header("referer"))
+    );
+    if (refererBasePath) {
+      return refererBasePath;
+    }
+
+    return "/";
+  }
+
+  function buildServerSessionCookie(
+    sessionToken: string,
+    secure: boolean,
+    cookiePath: string
+  ): string {
     const encoded = encodeURIComponent(sessionToken);
-    return `${SERVER_AUTH_SESSION_COOKIE_NAME}=${encoded}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SERVER_AUTH_SESSION_MAX_AGE_SECONDS}${secure ? "; Secure" : ""}`;
+    return `${SERVER_AUTH_SESSION_COOKIE_NAME}=${encoded}; Path=${cookiePath}; HttpOnly; SameSite=Strict; Max-Age=${SERVER_AUTH_SESSION_MAX_AGE_SECONDS}${secure ? "; Secure" : ""}`;
   }
 
   async function isHttpRequestAuthenticated(req: express.Request): Promise<boolean> {
@@ -507,7 +598,10 @@ export async function createOrpcServer({
   app.post("/auth/server-login/github/start", async (_req, res) => {
     const startResult = await context.serverAuthService.startGithubDeviceFlow();
     if (!startResult.success) {
-      res.status(400).json({ error: startResult.error });
+      const status = startResult.error.includes("Too many concurrent GitHub login attempts")
+        ? 429
+        : 400;
+      res.status(status).json({ error: startResult.error });
       return;
     }
 
@@ -521,21 +615,63 @@ export async function createOrpcServer({
       return;
     }
 
-    const waitResult = await context.serverAuthService.waitForGithubDeviceFlow(flowId, {
-      userAgent: req.header("user-agent") ?? undefined,
-      ipAddress: getRequestIpAddress(req),
-    });
+    let canceledByDisconnect = false;
+    const cancelFlowForDisconnect = () => {
+      if (canceledByDisconnect) {
+        return;
+      }
 
-    if (!waitResult.success) {
-      res.status(400).json({ error: waitResult.error });
-      return;
+      canceledByDisconnect = true;
+      context.serverAuthService.cancelGithubDeviceFlow(flowId);
+    };
+
+    const handleRequestAborted = () => {
+      cancelFlowForDisconnect();
+    };
+    const handleRequestClose = () => {
+      if (req.aborted && !res.writableEnded) {
+        cancelFlowForDisconnect();
+      }
+    };
+    const handleResponseClose = () => {
+      if (!res.writableEnded) {
+        cancelFlowForDisconnect();
+      }
+    };
+
+    req.once("aborted", handleRequestAborted);
+    req.once("close", handleRequestClose);
+    res.once("close", handleResponseClose);
+
+    try {
+      const waitResult = await context.serverAuthService.waitForGithubDeviceFlow(flowId, {
+        userAgent: req.header("user-agent") ?? undefined,
+        ipAddress: getRequestIpAddress(req),
+      });
+
+      if (canceledByDisconnect || res.writableEnded) {
+        return;
+      }
+
+      if (!waitResult.success) {
+        res.status(400).json({ error: waitResult.error });
+        return;
+      }
+
+      res.setHeader(
+        "Set-Cookie",
+        buildServerSessionCookie(
+          waitResult.data.sessionToken,
+          isSecureRequest(req),
+          getServerSessionCookiePath(req)
+        )
+      );
+      res.json({ ok: true });
+    } finally {
+      req.off("aborted", handleRequestAborted);
+      req.off("close", handleRequestClose);
+      res.off("close", handleResponseClose);
     }
-
-    res.setHeader(
-      "Set-Cookie",
-      buildServerSessionCookie(waitResult.data.sessionToken, isSecureRequest(req))
-    );
-    res.json({ ok: true });
   });
 
   // --- Mux Gateway OAuth (unauthenticated bootstrap routes) ---

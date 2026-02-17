@@ -179,6 +179,77 @@ describe("createOrpcServer", () => {
     await runCase(true);
   });
 
+  test("returns 429 when GitHub device-flow start is rate limited", async () => {
+    const stubContext: Partial<ORPCContext> = {
+      serverAuthService: {
+        startGithubDeviceFlow: () =>
+          Promise.resolve({
+            success: false,
+            error: "Too many concurrent GitHub login attempts. Please wait and try again.",
+          }),
+      } as unknown as ORPCContext["serverAuthService"],
+    };
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+      });
+
+      const response = await fetch(`${server.baseUrl}/auth/server-login/github/start`, {
+        method: "POST",
+      });
+      expect(response.status).toBe(429);
+    } finally {
+      await server?.close();
+    }
+  });
+
+  test("scopes mux_session cookie path to forwarded app base path", async () => {
+    const stubContext: Partial<ORPCContext> = {
+      serverAuthService: {
+        waitForGithubDeviceFlow: () =>
+          Promise.resolve({
+            success: true,
+            data: { sessionId: "session-1", sessionToken: "session-token-1" },
+          }),
+        cancelGithubDeviceFlow: () => {
+          // no-op for this test
+        },
+      } as unknown as ORPCContext["serverAuthService"],
+    };
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+      });
+
+      const response = await fetch(`${server.baseUrl}/auth/server-login/github/wait`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Forwarded-Prefix": "/@test/workspace/apps/mux/",
+        },
+        body: JSON.stringify({ flowId: "flow-1" }),
+      });
+
+      expect(response.status).toBe(200);
+      const cookieHeader = response.headers.get("set-cookie");
+      expect(cookieHeader).toBeTruthy();
+      expect(cookieHeader).toContain("mux_session=session-token-1");
+      expect(cookieHeader).toContain("Path=/@test/workspace/apps/mux;");
+    } finally {
+      await server?.close();
+    }
+  });
+
   test("accepts ORPC requests authenticated via mux_session cookie", async () => {
     const stubContext: Partial<ORPCContext> = {
       serverAuthService: {
