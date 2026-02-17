@@ -52,6 +52,12 @@ jobs:
           RELEASE_TAG: ${{ steps.compute.outputs.release_tag }}
         shell: bash
         run: |
+          # If the same nightly tag already exists (re-run with no new commits),
+          # delete it first so gh release create doesn't fail.
+          if gh release view "$RELEASE_TAG" &>/dev/null; then
+            echo "Release $RELEASE_TAG already exists — deleting before recreate"
+            gh release delete "$RELEASE_TAG" --yes --cleanup-tag
+          fi
           gh release create "$RELEASE_TAG" --prerelease --target "$GITHUB_SHA" --title "$RELEASE_TAG" --notes "Automated nightly build from main ($(date -u +%Y-%m-%d))"
 
   desktop-builds:
