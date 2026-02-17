@@ -512,16 +512,15 @@ export class CompactionHandler {
   }
 
   private sanitizeCompactionStreamEndEvent(event: StreamEndEvent): StreamEndEvent {
+    // Destructure to truly omit fields — setting undefined would create own
+    // properties that overwrite the compacted summary's metadata during the
+    // frontend's { ...message.metadata, ...data.metadata } merge.
+    const { providerMetadata, contextProviderMetadata, contextUsage, timestamp, ...cleanMetadata } =
+      event.metadata;
+
     const sanitizedEvent: StreamEndEvent = {
       ...event,
-      metadata: {
-        ...event.metadata,
-        providerMetadata: undefined,
-        contextProviderMetadata: undefined,
-        // contextUsage reflects the pre-compaction context window; keeping it
-        // would inflate the usage indicator until the next real request.
-        contextUsage: undefined,
-      },
+      metadata: cleanMetadata,
     };
 
     assert(

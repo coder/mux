@@ -44,6 +44,7 @@ import {
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
+  getWorkspaceLastReadKey,
   EXPANDED_PROJECTS_KEY,
   LEFT_SIDEBAR_COLLAPSED_KEY,
   LEFT_SIDEBAR_WIDTH_KEY,
@@ -198,6 +199,9 @@ function AppInner() {
   // Ref for selectedWorkspace to access in callbacks without stale closures
   const selectedWorkspaceRef = useRef(selectedWorkspace);
   selectedWorkspaceRef.current = selectedWorkspace;
+  // Ref for route-level workspace visibility to avoid stale closure in response callbacks
+  const currentWorkspaceIdRef = useRef(currentWorkspaceId);
+  currentWorkspaceIdRef.current = currentWorkspaceId;
   useEffect(() => {
     const prev = prevWorkspaceRef.current;
     if (prev && selectedWorkspace && prev.workspaceId !== selectedWorkspace.workspaceId) {
@@ -206,8 +210,9 @@ function AppInner() {
     prevWorkspaceRef.current = selectedWorkspace;
   }, [selectedWorkspace, telemetry]);
 
-  // Track last-read timestamps for unread indicators
-  useUnreadTracking(selectedWorkspace);
+  // Track last-read timestamps for unread indicators.
+  // Read-marking is gated on chat-route visibility (currentWorkspaceId).
+  useUnreadTracking(selectedWorkspace, currentWorkspaceId);
 
   const workspaceMetadataRef = useRef(workspaceMetadata);
   useEffect(() => {
@@ -855,17 +860,28 @@ function AppInner() {
       _messageId: string,
       isFinal: boolean,
       finalText: string,
-      compaction?: { hasContinueMessage: boolean }
+      compaction?: { hasContinueMessage: boolean },
+      completedAt?: number | null
     ) => {
       // Only notify on final message (when assistant is done with all work)
       if (!isFinal) return;
+
+      // Only mark read when the user is actively viewing this workspace's chat.
+      // Checking currentWorkspaceIdRef ensures we don't advance lastRead when
+      // a non-chat route (e.g. /settings) is active — the workspace remains
+      // "selected" but the chat content is not visible.
+      const isChatVisible = document.hasFocus() && currentWorkspaceIdRef.current === workspaceId;
+      if (completedAt != null && isChatVisible) {
+        updatePersistedState(getWorkspaceLastReadKey(workspaceId), completedAt);
+      }
 
       // Skip notification if compaction completed with a continue message.
       // We use the compaction metadata instead of queued state since the queue
       // can be drained before compaction finishes.
       if (compaction?.hasContinueMessage) return;
 
-      // Skip notification if workspace is focused (like Slack behavior)
+      // Skip notification if the selected workspace is focused (Slack-like behavior).
+      // Notification suppression intentionally follows selection state, not chat-route visibility.
       const isWorkspaceFocused =
         document.hasFocus() && selectedWorkspaceRef.current?.workspaceId === workspaceId;
       if (isWorkspaceFocused) return;

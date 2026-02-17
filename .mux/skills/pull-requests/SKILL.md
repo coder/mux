@@ -27,6 +27,7 @@ Always check `$MUX_MODEL_STRING`, `$MUX_THINKING_LEVEL`, and `$MUX_COSTS_USD` vi
 - Reuse existing PRs; never close or recreate without instruction.
 - Force-push minor PR updates; otherwise add a new commit to preserve the change timeline.
 - If a PR is already open for your change, keep it up to date with the latest commits; don't leave it stale.
+- When updating a PR, ensure the title and body describe the **entire** diff against the base branch—not just the most recent commit or push.
 - Never enable auto-merge or merge into `main` yourself. The user must explicitly merge PRs.
 
 ## CI & Validation

@@ -882,6 +882,186 @@ describe("StreamingMessageAggregator", () => {
     });
   });
 
+  describe("recency on stream completion", () => {
+    test("bumps recency on final non-compaction stream end", () => {
+      let callbackCompletedAt: number | null | undefined;
+      const aggregator = new StreamingMessageAggregator(
+        TEST_CREATED_AT,
+        "test-workspace-recency-final"
+      );
+      aggregator.onResponseComplete = (_wid, _mid, _isFinal, _text, _compaction, completedAt) => {
+        callbackCompletedAt = completedAt;
+      };
+      const initialRecency = aggregator.getRecencyTimestamp();
+      expect(initialRecency).not.toBeNull();
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace-recency-final",
+        messageId: "msg-1",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+        startTime: Date.now(),
+      });
+
+      const beforeEnd = Date.now();
+      aggregator.handleStreamEnd({
+        type: "stream-end",
+        workspaceId: "test-workspace-recency-final",
+        messageId: "msg-1",
+        metadata: {
+          historySequence: 1,
+          timestamp: Date.now(),
+          model: "claude-3-5-sonnet-20241022",
+        },
+        parts: [],
+      });
+
+      const recency = aggregator.getRecencyTimestamp();
+      expect(recency).not.toBeNull();
+      if (recency === null) {
+        throw new Error("Expected recency timestamp after stream end");
+      }
+      expect(recency).toBeGreaterThanOrEqual(beforeEnd);
+
+      // The same completion timestamp is passed to the callback so App.tsx
+      // can write an identical lastRead value — no ms-boundary race.
+      expect(callbackCompletedAt).toBe(recency);
+    });
+
+    test("does not bump on compaction stream end", () => {
+      const aggregator = new StreamingMessageAggregator(
+        TEST_CREATED_AT,
+        "test-workspace-recency-compaction"
+      );
+
+      let callbackCompletedAt: number | null | undefined;
+      aggregator.onResponseComplete = (_wid, _mid, _isFinal, _text, _compaction, completedAt) => {
+        callbackCompletedAt = completedAt;
+      };
+
+      const initialRecency = aggregator.getRecencyTimestamp();
+      expect(initialRecency).not.toBeNull();
+      if (initialRecency === null) {
+        throw new Error("Expected initial recency timestamp");
+      }
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace-recency-compaction",
+        messageId: "msg-1",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+        startTime: Date.now(),
+        mode: "compact",
+      });
+
+      const beforeEnd = Date.now();
+      aggregator.handleStreamEnd({
+        type: "stream-end",
+        workspaceId: "test-workspace-recency-compaction",
+        messageId: "msg-1",
+        metadata: {
+          historySequence: 1,
+          timestamp: Date.now(),
+          model: "claude-3-5-sonnet-20241022",
+        },
+        parts: [],
+      });
+
+      const recency = aggregator.getRecencyTimestamp();
+      expect(recency).toBe(initialRecency);
+      if (recency !== null) {
+        expect(recency).toBeLessThan(beforeEnd);
+      }
+
+      // completedAt IS passed to callback — App.tsx can mark active workspace as read
+      // even after compaction, preventing false unread indicators.
+      expect(callbackCompletedAt).not.toBeNull();
+      expect(callbackCompletedAt).toBeGreaterThanOrEqual(beforeEnd);
+    });
+
+    test("does not bump on non-final stream end", () => {
+      const aggregator = new StreamingMessageAggregator(
+        TEST_CREATED_AT,
+        "test-workspace-recency-non-final"
+      );
+      const initialRecency = aggregator.getRecencyTimestamp();
+      expect(initialRecency).not.toBeNull();
+      if (initialRecency === null) {
+        throw new Error("Expected initial recency timestamp");
+      }
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace-recency-non-final",
+        messageId: "msg-1",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+        startTime: Date.now(),
+      });
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace-recency-non-final",
+        messageId: "msg-2",
+        historySequence: 2,
+        model: "claude-3-5-sonnet-20241022",
+        startTime: Date.now(),
+      });
+
+      const beforeFirstEnd = Date.now();
+      aggregator.handleStreamEnd({
+        type: "stream-end",
+        workspaceId: "test-workspace-recency-non-final",
+        messageId: "msg-1",
+        metadata: {
+          historySequence: 1,
+          timestamp: Date.now(),
+          model: "claude-3-5-sonnet-20241022",
+        },
+        parts: [],
+      });
+
+      const recency = aggregator.getRecencyTimestamp();
+      expect(recency).toBe(initialRecency);
+      if (recency !== null) {
+        expect(recency).toBeLessThan(beforeFirstEnd);
+      }
+    });
+
+    test("does not bump in reconnection branch", () => {
+      const aggregator = new StreamingMessageAggregator(
+        TEST_CREATED_AT,
+        "test-workspace-recency-reconnect"
+      );
+      const initialRecency = aggregator.getRecencyTimestamp();
+      expect(initialRecency).not.toBeNull();
+      if (initialRecency === null) {
+        throw new Error("Expected initial recency timestamp");
+      }
+
+      const beforeEnd = Date.now();
+      aggregator.handleStreamEnd({
+        type: "stream-end",
+        workspaceId: "test-workspace-recency-reconnect",
+        messageId: "msg-1",
+        metadata: {
+          historySequence: 1,
+          timestamp: Date.now(),
+          model: "claude-3-5-sonnet-20241022",
+        },
+        parts: [],
+      });
+
+      const recency = aggregator.getRecencyTimestamp();
+      expect(recency).toBe(initialRecency);
+      if (recency !== null) {
+        expect(recency).toBeLessThan(beforeEnd);
+      }
+    });
+  });
+
   describe("compaction detection", () => {
     test("treats active stream as compacting on reconnect when stream-start has no mode", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);

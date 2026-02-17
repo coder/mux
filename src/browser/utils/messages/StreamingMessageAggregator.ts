@@ -258,6 +258,7 @@ export class StreamingMessageAggregator {
     latestStreamingBashToolCallId?: string | null; // null = computed, none found
   } = {};
   private recencyTimestamp: number | null = null;
+  private lastResponseCompletedAt: number | null = null;
 
   // Delta history for token counting and TPS calculation
   private deltaHistory = new Map<string, DeltaRecordStorage>();
@@ -388,12 +389,15 @@ export class StreamingMessageAggregator {
   // isFinal is true when no more active streams remain (assistant done with all work)
   // finalText is the text content after any tool calls (the final response to show in notification)
   // compaction is provided when this was a compaction stream (includes continue metadata)
+  // completedAt: non-null for all final streams. Drives read-marking in App.tsx.
+  // Only non-compaction completions also bump lastResponseCompletedAt (recency).
   onResponseComplete?: (
     workspaceId: string,
     messageId: string,
     isFinal: boolean,
     finalText: string,
-    compaction?: { hasContinueMessage: boolean }
+    compaction?: { hasContinueMessage: boolean },
+    completedAt?: number | null
   ) => void;
 
   constructor(createdAt: string, workspaceId?: string, unarchivedAt?: string) {
@@ -530,7 +534,11 @@ export class StreamingMessageAggregator {
    */
   private updateRecency(): void {
     const messages = this.getAllMessages();
-    this.recencyTimestamp = computeRecencyTimestamp(messages, this.createdAt, this.unarchivedAt);
+    const messageRecency = computeRecencyTimestamp(messages, this.createdAt, this.unarchivedAt);
+    const candidates = [messageRecency, this.lastResponseCompletedAt].filter(
+      (t): t is number => t !== null
+    );
+    this.recencyTimestamp = candidates.length > 0 ? Math.max(...candidates) : null;
   }
 
   /**
@@ -816,6 +824,7 @@ export class StreamingMessageAggregator {
     this.loadedSkillsCache = [];
     this.skillLoadErrors.clear();
     this.skillLoadErrorsCache = [];
+    this.lastResponseCompletedAt = null;
 
     // Add all messages to the map
     for (const message of messages) {
@@ -1230,6 +1239,7 @@ export class StreamingMessageAggregator {
     this.messageVersions.clear();
     this.interruptingMessageId = null;
     this.lastAbortReason = null;
+    this.lastResponseCompletedAt = null;
     this.invalidateCache();
   }
 
@@ -1387,12 +1397,30 @@ export class StreamingMessageAggregator {
       // Clean up stream-scoped state (active stream tracking, TODOs)
       this.cleanupStreamState(data.messageId);
 
+      const isFinal = this.activeStreams.size === 0;
+
+      // Completion timestamp for ALL final streams — the "stream ended" fact.
+      // Read-marking uses this to keep the active workspace current.
+      const completedAt = isFinal ? Date.now() : null;
+
+      // Recency policy: only non-compaction finals inflate lastResponseCompletedAt.
+      // Compaction recency comes from the compacted summary's own timestamp.
+      if (completedAt !== null && !activeStream.isCompacting) {
+        this.lastResponseCompletedAt = completedAt;
+      }
+
       // Notify on normal stream completion (skip replay-only reconstruction)
       // isFinal = true when this was the last active stream (assistant done with all work)
       if (this.workspaceId && this.onResponseComplete) {
-        const isFinal = this.activeStreams.size === 0;
         const finalText = this.extractFinalResponseText(message);
-        this.onResponseComplete(this.workspaceId, data.messageId, isFinal, finalText, compaction);
+        this.onResponseComplete(
+          this.workspaceId,
+          data.messageId,
+          isFinal,
+          finalText,
+          compaction,
+          completedAt
+        );
       }
     } else {
       // Reconnection case: user reconnected after stream completed

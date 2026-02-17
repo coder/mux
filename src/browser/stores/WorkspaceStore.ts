@@ -387,7 +387,8 @@ export class WorkspaceStore {
         messageId: string,
         isFinal: boolean,
         finalText: string,
-        compaction?: { hasContinueMessage: boolean }
+        compaction?: { hasContinueMessage: boolean },
+        completedAt?: number | null
       ) => void)
     | null = null;
 
@@ -747,7 +748,8 @@ export class WorkspaceStore {
       messageId: string,
       isFinal: boolean,
       finalText: string,
-      compaction?: { hasContinueMessage: boolean }
+      compaction?: { hasContinueMessage: boolean },
+      completedAt?: number | null
     ) => void
   ): void {
     this.responseCompleteCallback = callback;

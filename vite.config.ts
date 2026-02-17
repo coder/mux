@@ -164,12 +164,15 @@ export default defineConfig(({ mode }) => {
       proxy: {
         "/orpc": {
           target: backendProxyTarget,
-          changeOrigin: true,
+          // Preserve the original Host so backend origin validation compares against
+          // the public dev-server origin (localhost:5173) instead of 127.0.0.1:3000.
+          changeOrigin: false,
           ws: true,
         },
         "/api": {
           target: backendProxyTarget,
-          changeOrigin: true,
+          // Preserve Host for backend origin validation (same rationale as /orpc).
+          changeOrigin: false,
         },
         "/auth": {
           target: backendProxyTarget,

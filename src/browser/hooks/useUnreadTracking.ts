@@ -12,7 +12,10 @@ const LEGACY_LAST_READ_KEY = "workspaceLastRead";
  *
  * This hook only manages the timestamps, not the unread computation.
  */
-export function useUnreadTracking(selectedWorkspace: WorkspaceSelection | null) {
+export function useUnreadTracking(
+  selectedWorkspace: WorkspaceSelection | null,
+  currentWorkspaceId: string | null
+) {
   const didMigrateRef = useRef(false);
 
   useEffect(() => {
@@ -39,10 +42,25 @@ export function useUnreadTracking(selectedWorkspace: WorkspaceSelection | null) 
     updatePersistedState(getWorkspaceLastReadKey(workspaceId), Date.now());
   }, []);
 
-  // Mark workspace as read when user switches to it
+  const selectedWorkspaceId = selectedWorkspace?.workspaceId ?? null;
+  const visibleSelectedWorkspaceId =
+    selectedWorkspaceId != null && currentWorkspaceId === selectedWorkspaceId
+      ? selectedWorkspaceId
+      : null;
+
+  const markSelectedAsReadIfVisible = useCallback(() => {
+    if (visibleSelectedWorkspaceId == null) return;
+    markAsRead(visibleSelectedWorkspaceId);
+  }, [visibleSelectedWorkspaceId, markAsRead]);
+
+  // Mark as read when visibility changes (workspace selected + chat route active).
   useEffect(() => {
-    if (selectedWorkspace) {
-      markAsRead(selectedWorkspace.workspaceId);
-    }
-  }, [selectedWorkspace, markAsRead]);
+    markSelectedAsReadIfVisible();
+  }, [markSelectedAsReadIfVisible]);
+
+  // Mark as read when window regains focus — only when chat is visible.
+  useEffect(() => {
+    window.addEventListener("focus", markSelectedAsReadIfVisible);
+    return () => window.removeEventListener("focus", markSelectedAsReadIfVisible);
+  }, [markSelectedAsReadIfVisible]);
 }
