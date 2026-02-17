@@ -544,7 +544,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           !isArchiving && "hover:bg-hover [&:hover_button]:opacity-100",
           isArchiving && "pointer-events-none opacity-70",
           isDisabled ? "cursor-default" : "cursor-pointer",
-          // isSelected pill is on title text only, not the row
+          isSelected && !isDisabled && "bg-hover",
         )}
         style={{ paddingLeft }}
         onClick={() => {
@@ -616,8 +616,8 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           <span
             className="absolute bg-neutral-600"
             style={{
-              left: `${paddingLeft + 6}px`,
-              top: '50%',
+              left: `${paddingLeft + 7}px`,
+              top: '15px',
               bottom: 0,
               width: '1px',
             }}
@@ -628,9 +628,9 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           <span
             className="absolute bg-neutral-600"
             style={{
-              left: `${paddingLeft + 6}px`,
+              left: `${paddingLeft + 7}px`,
               top: 0,
-              bottom: isLastChild ? '50%' : 0,
+              bottom: isLastChild ? 'calc(100% - 15px)' : 0,
               width: '1px',
             }}
             aria-hidden
@@ -809,7 +809,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
             className={cn(
               "grid min-w-0 grid-cols-[1fr_auto] items-center gap-1.5",
               !hasSecondaryRow && "py-0.5",
-              isSelected && !isDisabled && "bg-hover rounded px-1.5 -mx-1.5 py-0.5"
+              
             )}
           >
             {isEditing ? (
