@@ -346,7 +346,32 @@ export class MuxAcpAgent implements AcpAgent {
       });
     }
 
-    return promptPromise;
+    // Safety timeout: if the prompt was queued behind another producer's active
+    // stream and that entry is later removed (e.g. by an external interruptStream
+    // or clearQueue), no stream-start/stream-end events fire, so the resolver's
+    // messageId stays empty and promptPromise hangs indefinitely. A 5-minute
+    // safety timeout prevents this by force-rejecting stale prompts.
+    const PROMPT_SAFETY_TIMEOUT_MS = 5 * 60 * 1000;
+    let safetyTimer: ReturnType<typeof setTimeout> | undefined;
+    const safetyTimeoutPromise = new Promise<acpSchema.PromptResponse>((_, reject) => {
+      safetyTimer = setTimeout(() => {
+        // Only reject if the prompt is still active (messageId empty means
+        // stream-start never arrived for this prompt).
+        const currentSession = this.sessionManager.getSession(params.sessionId);
+        if (currentSession?.promptResolver?.messageId.length === 0) {
+          this.sessionManager.clearPromptResolver(params.sessionId);
+          reject(new Error("Prompt timed out — no stream activity received"));
+        }
+      }, PROMPT_SAFETY_TIMEOUT_MS);
+    });
+
+    try {
+      return await Promise.race([promptPromise, safetyTimeoutPromise]);
+    } finally {
+      if (safetyTimer != null) {
+        clearTimeout(safetyTimer);
+      }
+    }
   }
 
   async cancel(params: acpSchema.CancelNotification): Promise<void> {
