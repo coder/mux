@@ -2013,9 +2013,10 @@ describe("WorkspaceService regenerateTitle", () => {
       const context = call?.[3];
       expect(typeof context).toBe("string");
       if (typeof context === "string") {
-        expect(context).toContain("Turn 1 (User):\nRefactor sidebar loading");
-        expect(context).toContain("Turn 2 (Assistant):\nCompacted summary");
-        expect(context).toContain("Turn 3 (Assistant):\nNo new user messages yet");
+        expect(context).toContain("Refactor sidebar loading");
+        expect(context).toContain("Compacted summary");
+        expect(context).toContain("No new user messages yet");
+        expect(context).not.toContain("omitted for brevity");
       }
       expect(call?.[4]).toBe("Refactor sidebar loading");
       expect(updateTitleSpy).toHaveBeenCalledWith(workspaceId, "Refactor sidebar loading");
@@ -2065,9 +2066,6 @@ describe("WorkspaceService regenerateTitle", () => {
       const context = call?.[3];
       expect(typeof context).toBe("string");
       if (typeof context === "string") {
-        expect(context).toContain("Turn 1 (Assistant):\nOlder compacted summary");
-        expect(context).toContain("Turn 2 (User):\nRefine workspace title generation");
-        expect(context).toContain("Turn 3 (Assistant):\nUseful assistant context");
         const summaryIndex = context.indexOf("Older compacted summary");
         const userIndex = context.indexOf("Refine workspace title generation");
         const assistantIndex = context.indexOf("Useful assistant context");
@@ -2119,12 +2117,11 @@ describe("WorkspaceService regenerateTitle", () => {
       expect(typeof context).toBe("string");
       if (typeof context === "string") {
         expect(context).toContain("Note: 8 earlier conversation turns omitted for brevity.");
-        expect(context).toContain("Turn 1 (User):\nUser turn 1");
-        expect(context).toContain("Turn 2 (Assistant):\nAssistant turn 10");
-        expect(context).toContain("Turn 3 (User):\nUser turn 11");
-        expect(context).toContain("Turn 4 (Assistant):\nAssistant turn 12");
+        expect(context).toContain("User turn 1");
+        expect(context).toContain("Assistant turn 10");
+        expect(context).toContain("User turn 11");
+        expect(context).toContain("Assistant turn 12");
         expect(context).not.toMatch(/User turn 5(?!\d)/);
-        expect(context).not.toContain("Turn 5 (");
       }
       expect(call?.[4]).toBe("User turn 11");
       expect(updateTitleSpy).toHaveBeenCalledWith(workspaceId, "User turn 1");

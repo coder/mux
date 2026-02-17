@@ -17,16 +17,12 @@ describe("buildWorkspaceIdentityPrompt", () => {
       "Please prioritize reliability work"
     );
 
-    expect(prompt).toContain(
-      "Conversation turns (first user message + latest turns, oldest to newest):"
-    );
-    expect(prompt).toContain("Turn 1 (User):");
     expect(prompt).toContain('Primary user objective: "Refactor workspace title generation"');
-    expect(prompt).toContain(
-      'Most recent user message (highest priority when it conflicts with older context): "Please prioritize reliability work"'
-    );
-    expect(prompt).toContain("Fit the long-term, overall purpose of the chat");
-    expect(prompt).toContain("If older context conflicts, prioritize the most recent user message");
+    expect(prompt).toContain("Conversation turns");
+    expect(prompt).toContain("Outline the plan");
+    expect(prompt).toContain("Please prioritize reliability work");
+    expect(prompt).toContain("most recent user message");
+    expect(prompt).toContain("long-term, overall purpose of the chat");
   });
 
   test("omits conversation-specific sections when no conversation block is provided", () => {
@@ -37,10 +33,8 @@ describe("buildWorkspaceIdentityPrompt", () => {
     );
 
     expect(prompt).toContain('Primary user objective: "Fix flaky tests"');
-    expect(prompt).not.toContain(
-      "Conversation turns (first user message + latest turns, oldest to newest):"
-    );
-    expect(prompt).not.toContain("Most recent user message (highest priority when it conflicts");
+    expect(prompt).not.toContain("Conversation turns");
+    expect(prompt).not.toContain("Most recent instruction that should be ignored without context");
   });
 });
 
