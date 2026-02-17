@@ -458,7 +458,16 @@ export class ServerAuthService {
       if (normalizedIpAddress) {
         session.ipAddress = normalizedIpAddress;
       }
-      await this.savePersistedSessionsLocked(data);
+
+      try {
+        await this.savePersistedSessionsLocked(data);
+      } catch (error) {
+        // Best-effort metadata update: auth should succeed as long as token validation passes.
+        log.warn("Failed to persist server auth session metadata", {
+          sessionId: session.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
 
     return { sessionId: session.id };

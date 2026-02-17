@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -165,6 +165,28 @@ describe("ServerAuthService", () => {
 
     const sessionBValidation = await service.validateSessionToken(sessionB.sessionToken);
     expect(sessionBValidation).toEqual({ sessionId: sessionB.sessionId });
+  });
+
+  it("treats session metadata persistence failures as non-fatal", async () => {
+    const service = createService(config);
+    const session = await createSessionViaGithubDeviceFlow(service);
+
+    const saveSpy = spyOn(
+      service as unknown as {
+        savePersistedSessionsLocked: (data: unknown) => Promise<void>;
+      },
+      "savePersistedSessionsLocked"
+    ).mockImplementationOnce(() => {
+      throw new Error("disk full");
+    });
+
+    const validation = await service.validateSessionToken(session.sessionToken, {
+      userAgent: "Mozilla/5.0 (X11; Linux x86_64) Chrome/125.0.0.0 Safari/537.36",
+      ipAddress: "203.0.113.77",
+    });
+
+    expect(saveSpy).toHaveBeenCalled();
+    expect(validation).toEqual({ sessionId: session.sessionId });
   });
 
   it("returns an error when GitHub owner login is not configured", async () => {
