@@ -354,7 +354,16 @@ export async function createOrpcServer({
       log.error("Failed to read index.html for SPA fallback:", error);
     }
 
-    app.use(express.static(staticDir));
+    app.use(express.static(staticDir, {
+      setHeaders: (res, filePath) => {
+        // Never cache index.html so users always get the latest bundle references.
+        if (filePath.endsWith("index.html") || filePath.endsWith(".html")) {
+          res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+          res.setHeader("Pragma", "no-cache");
+          res.setHeader("Expires", "0");
+        }
+      },
+    }));
   }
 
   // Health check endpoint
@@ -914,6 +923,9 @@ export async function createOrpcServer({
 
       if (spaIndexHtml !== null) {
         res.setHeader("Content-Type", "text/html");
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        res.setHeader("Pragma", "no-cache");
+        res.setHeader("Expires", "0");
         res.send(spaIndexHtml);
         return;
       }

@@ -360,15 +360,20 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   return (
     <HoverCard open={isOpen} onOpenChange={onOpenChange} openDelay={0} closeDelay={150}>
       <HoverCardTrigger asChild>
-        <span
+        <button
+          type="button"
+          onClick={() => onOpenChange(!isOpen)}
           className={cn(
             "relative flex items-center gap-1 font-mono text-xs transition-colors",
+            "rounded border border-border-light px-1.5 py-0.5",
+            "hover:border-border-medium/80 hover:bg-toggle-bg/70",
+            "cursor-pointer",
             statusColor,
             isRefreshing && "animate-pulse"
           )}
         >
           {triggerContent}
-        </span>
+        </button>
       </HoverCardTrigger>
       <HoverCardContent
         side={tooltipPosition === "right" ? "right" : "bottom"}

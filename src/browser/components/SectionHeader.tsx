@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect } from "react";
 import { cn } from "@/common/lib/utils";
-import { ChevronRight, Pencil, Trash2, Palette } from "lucide-react";
+import { ChevronRight, Pencil, Trash2, Palette, MoreVertical } from "lucide-react";
 import type { SectionConfig } from "@/common/types/project";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "./ui/context-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { resolveSectionColor, SECTION_COLOR_PALETTE } from "@/common/constants/ui";
 import { HexColorPicker } from "react-colorful";
 
@@ -72,8 +72,6 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
   }, [sectionColor]);
 
   return (
-    <ContextMenu>
-    <ContextMenuTrigger asChild>
     <div
       className="group relative flex items-center gap-1 border-t border-white/5 px-2 py-1.5"
       style={{
@@ -86,7 +84,8 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
       {/* Expand/Collapse Button */}
       <button
         onClick={onToggleExpand}
-        className="text-secondary hover:text-foreground flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 transition-colors"
+        className="hover:text-foreground flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 transition-colors"
+        style={{ color: sectionColor }}
         aria-label={isExpanded ? "Collapse section" : "Expand section"}
         aria-expanded={isExpanded}
       >
@@ -126,6 +125,26 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
           <span className="text-muted ml-1.5 font-normal">({workspaceCount})</span>
         </button>
       )}
+
+      {/* Kebab menu */}
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            onClick={(e) => e.stopPropagation()}
+            className="text-muted-foreground hover:text-foreground hover:bg-hover ml-auto flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 hover:border-border-light"
+            aria-label="Section menu"
+          >
+            <MoreVertical size={14} />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent align="start" side="bottom" sideOffset={4} className="w-52 p-1">
+          <button className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap" onClick={() => onAddWorkspace?.()}>New workspace</button>
+          <button className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap" onClick={() => setShowColorPicker(true)}>Change section color</button>
+          <button className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap" onClick={() => setIsEditing(true)}>Rename section</button>
+          <div className="my-1 h-px bg-white/10" />
+          <button className="text-danger hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap flex items-center gap-2" onClick={() => onDelete?.({} as React.MouseEvent<HTMLButtonElement>)}><Trash2 className="h-3 w-3 shrink-0" />Delete...</button>
+        </PopoverContent>
+      </Popover>
 
       {/* Action Buttons (visible on hover) */}
       <div className="hidden flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
@@ -238,14 +257,5 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
         </div>
       )}
     </div>
-    </ContextMenuTrigger>
-    <ContextMenuContent className="w-56">
-      <ContextMenuItem onSelect={() => onAddWorkspace?.()}>New workspace</ContextMenuItem>
-      <ContextMenuItem onSelect={() => setShowColorPicker(true)}>Change section color</ContextMenuItem>
-      <ContextMenuItem onSelect={() => setIsEditing(true)}>Rename section</ContextMenuItem>
-      <ContextMenuSeparator />
-      <ContextMenuItem className="text-danger focus:text-danger" onSelect={() => onDelete?.({} as React.MouseEvent<HTMLButtonElement>)}><Trash2 className="mr-2 h-3.5 w-3.5" />Delete...</ContextMenuItem>
-    </ContextMenuContent>
-    </ContextMenu>
   );
 };

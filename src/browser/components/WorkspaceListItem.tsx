@@ -16,7 +16,7 @@ import { WorkspaceHoverPreview } from "./WorkspaceHoverPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
-import { Pencil, Trash2, Loader2, Link2 } from "lucide-react";
+import { Pencil, Trash2, Loader2, Link2, MoreHorizontal } from "lucide-react";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
 import { WORKSPACE_DRAG_TYPE, type WorkspaceDragItem } from "./WorkspaceSectionDropZone";
@@ -387,6 +387,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
 
   // Hover hamburger menu for discoverable title editing (requested to replace the double-click hint).
   const [isTitleMenuOpen, setIsTitleMenuOpen] = useState(false);
+  const [isRowHovered, setIsRowHovered] = useState(false);
   const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(
     null
   );
@@ -548,6 +549,8 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           isSelected && !isDisabled && "bg-hover",
         )}
         style={{ paddingLeft }}
+        onMouseEnter={() => setIsRowHovered(true)}
+        onMouseLeave={() => setIsRowHovered(false)}
         onClick={() => {
           if (isDisabled) return;
           // Suppress click after a long-press triggered the context menu on mobile
@@ -637,24 +640,37 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
             aria-hidden
           />
         )}
-        {/* Status dot with solid background ring so line goes behind it */}
-        <div className="absolute z-10 flex shrink-0 items-start" style={{ left: '10px', top: '12px' }}>
-          <span className="inline-flex items-center justify-center rounded-full bg-sidebar" style={{ padding: '2px' }}>
-            <span className={cn(
-              "inline-block h-2.5 w-2.5 rounded-full shrink-0 border",
-              isWorking || isInitializing
-                ? "bg-green-500 border-green-800 animate-pulse shadow-[0_0_6px_rgba(34,197,94,0.5)]"
-                : isAwaitingInput
-                  ? "bg-amber-500 border-amber-700 animate-pulse shadow-[0_0_6px_rgba(245,158,11,0.4)]"
-                  : hasError
-                    ? "bg-red-500 border-red-800"
-                    : isStoppedIncomplete
-                      ? "bg-orange-400 border-orange-700"
-                      : isUnread
-                        ? "bg-white border-gray-300"
-                        : "bg-gray-500 border-gray-600"
-            )} />
-          </span>
+        {/* Status dot / meatball menu trigger */}
+        <div
+          className="absolute z-10 flex shrink-0 items-start cursor-pointer"
+          style={{ left: '4px', top: '8px', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={(e) => {
+            e.stopPropagation();
+            const rect = e.currentTarget.getBoundingClientRect();
+            setContextMenuPosition({ x: rect.right, y: rect.top });
+            setIsTitleMenuOpen(true);
+          }}
+        >
+          {(isRowHovered || isTitleMenuOpen) && !isInitializing ? (
+            <MoreHorizontal size={14} className="text-muted-foreground hover:text-foreground transition-colors" />
+          ) : (
+            <span className="inline-flex items-center justify-center rounded-full" style={{ padding: '2px', backgroundColor: 'inherit' }}>
+              <span className={cn(
+                "inline-block h-2.5 w-2.5 rounded-full shrink-0 border",
+                isWorking || isInitializing
+                  ? "bg-green-500 border-green-800 animate-pulse shadow-[0_0_6px_rgba(34,197,94,0.5)]"
+                  : isAwaitingInput
+                    ? "bg-amber-500 border-amber-700 animate-pulse shadow-[0_0_6px_rgba(245,158,11,0.4)]"
+                    : hasError
+                      ? "bg-red-500 border-red-800"
+                      : isStoppedIncomplete
+                        ? "bg-orange-400 border-orange-700"
+                        : isUnread
+                          ? "bg-white border-gray-300"
+                          : "bg-gray-500 border-gray-600"
+              )} />
+            </span>
+          )}
         </div>
 
         {/* Action button: cancel/delete spinner for initializing workspaces, overflow menu otherwise */}
@@ -706,13 +722,14 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
             <ActionButtonWrapper hasSubtitle={hasStatusText}>
               {/* Keep the overflow menu in the left action slot to avoid duplicate affordances. */}
               <Popover
+                modal={false}
                 open={isTitleMenuOpen}
                 onOpenChange={(open) => {
                   setIsTitleMenuOpen(open);
                   if (!open) setContextMenuPosition(null);
                 }}
               >
-                {/* When opened via right-click, anchor at click position */}
+                {/* Anchor: right-click position or dot area */}
                 {contextMenuPosition && (
                   <PopoverAnchor asChild>
                     <span
@@ -731,9 +748,9 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 </PopoverTrigger>
 
                 <PopoverContent
-                  align={contextMenuPosition ? "start" : "end"}
-                  side={contextMenuPosition ? "right" : "bottom"}
-                  sideOffset={contextMenuPosition ? 0 : 6}
+                  align="start"
+                  side="right"
+                  sideOffset={0}
                   className="w-[250px] !min-w-0 p-1"
                   onClick={(e) => e.stopPropagation()}
                 >

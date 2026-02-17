@@ -134,3 +134,4 @@ benchmarks/terminal_bench/.leaderboard_cache/
 jobs/
 
 .env.local
+server.pid

@@ -49,8 +49,8 @@ import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem"
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
-import { ChevronRight, MessageCircle, KeyRound, PanelLeftClose, PanelLeftOpen, Plus, Trash2 } from "lucide-react";
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "./ui/context-menu";
+import { ChevronRight, MessageCircle, KeyRound, PanelLeftClose, PanelLeftOpen, Plus, Trash2, MoreVertical } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
 import { useRouter } from "@/browser/contexts/RouterContext";
@@ -110,7 +110,7 @@ const MuxChatHelpButton: React.FC<{
 
 // Keep the project header visible while scrolling through long workspace lists.
 const PROJECT_ITEM_BASE_CLASS =
-  "sticky top-0 z-10 py-2 pl-2 pr-3 flex items-center border-l-transparent bg-sidebar transition-colors duration-150";
+  "sticky top-0 z-10 py-2 pl-2 pr-2 flex items-center border-l-transparent bg-sidebar transition-colors duration-150";
 
 function getProjectItemClassName(opts: {
   isDragging: boolean;
@@ -119,6 +119,7 @@ function getProjectItemClassName(opts: {
 }): string {
   return cn(
     PROJECT_ITEM_BASE_CLASS,
+    "group",
     opts.isDragging ? "cursor-grabbing opacity-35 [&_*]:!cursor-grabbing" : "cursor-pointer",
     opts.isOver && "bg-accent/[0.08]",
     opts.selected && "bg-hover border-l-accent",
@@ -137,7 +138,7 @@ type DraggableProjectItemProps = {
   "aria-controls"?: string;
   "aria-label"?: string;
   "data-project-path"?: string;
-  children: (dragHandleRef: React.RefCallback<HTMLElement>) => React.ReactNode;
+  children: React.ReactNode;
 };
 
 const DraggableProjectItemBase: React.FC<DraggableProjectItemProps> = ({
@@ -174,25 +175,18 @@ const DraggableProjectItemBase: React.FC<DraggableProjectItemProps> = ({
     [projectPath, onReorder]
   );
 
-  // Pass drag connector as a ref callback so the chevron button
-  // can be the drag handle instead of making the entire row
-  // draggable (which causes grab cursor and swallows clicks).
-  const dragRef: React.RefCallback<HTMLElement> = useCallback(
-    (node: HTMLElement | null) => { drag(node); },
-    [drag]
-  );
-
   return (
     <div
-      ref={(node) => drop(node)}
+      ref={(node) => { drag(drop(node)); }}
       className={getProjectItemClassName({
         isDragging,
         isOver,
         selected: !!selected,
       })}
+      style={{ cursor: 'pointer' }}
       {...rest}
     >
-      {children(dragRef)}
+      {children}
     </div>
   );
 };
@@ -641,17 +635,21 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const handleRemoveSection = async (
     projectPath: string,
     sectionId: string,
-    buttonElement: HTMLElement
+    buttonElement?: HTMLElement | null
   ) => {
     const result = await removeSection(projectPath, sectionId);
     if (!result.success) {
       const error = result.error ?? "Failed to remove section";
-      const rect = buttonElement.getBoundingClientRect();
-      const anchor = {
-        top: rect.top + window.scrollY,
-        left: rect.right + 10,
-      };
-      sectionRemoveError.showError(sectionId, error, anchor);
+      if (buttonElement) {
+        const rect = buttonElement.getBoundingClientRect();
+        const anchor = {
+          top: rect.top + window.scrollY,
+          left: rect.right + 10,
+        };
+        sectionRemoveError.showError(sectionId, error, anchor);
+      } else {
+        sectionRemoveError.showError(sectionId, error, { top: 100, left: 100 });
+      }
     }
   };
 
@@ -770,7 +768,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         >
           {!collapsed && (
             <>
-              <div className="border-dark flex flex-col border-b py-3 pr-3 pl-4">
+              <div className="border-border-light flex flex-col border-b py-3 pr-3 pl-4">
                 <div className="flex items-center justify-between">
                   <div className="flex min-w-0 items-center gap-2">
                     <button
@@ -837,13 +835,18 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
                     return (
                       <div key={projectPath} className="border-hover border-b">
-                        <ContextMenu>
-                        <ContextMenuTrigger asChild>
                         <DraggableProjectItem
                           projectPath={projectPath}
                           onReorder={handleReorder}
                           selected={false}
-                          onClick={() => toggleProject(projectPath)}
+                          onClick={(e) => {
+                            // Don't toggle if clicking the kebab menu button
+                            const target = e.target as HTMLElement;
+                            if (target.closest('[data-kebab-menu]')) {
+                              return;
+                            }
+                            toggleProject(projectPath);
+                          }}
                           onKeyDown={(e: React.KeyboardEvent) => {
                             // Ignore key events from child buttons
                             if (e.target instanceof HTMLElement && e.target !== e.currentTarget) {
@@ -861,16 +864,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                           aria-label={`${isExpanded ? "Collapse" : "Expand"} project ${projectName}`}
                           data-project-path={projectPath}
                         >
-                          {(dragHandleRef) => (<>
                           <button
-                            ref={dragHandleRef}
                             onClick={(event) => {
                               event.stopPropagation();
                               toggleProject(projectPath);
                             }}
                             aria-label={`${isExpanded ? "Collapse" : "Expand"} project ${projectName}`}
                             data-project-path={projectPath}
-                            className="text-secondary hover:bg-hover hover:border-border-light mr-1.5 flex h-5 w-5 shrink-0 cursor-grab items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200"
+                            className="text-secondary hover:bg-hover hover:border-border-light mr-1.5 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200"
                           >
                             <ChevronRight
                               size={16}
@@ -896,6 +897,25 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               <TooltipContent align="start">{projectPath}</TooltipContent>
                             </Tooltip>
                           </div>
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <button
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-muted-foreground hover:text-foreground hover:bg-hover ml-auto flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 hover:border-border-light"
+                                aria-label={`Project menu for ${projectName}`}
+                                data-kebab-menu
+                              >
+                                <MoreVertical size={14} />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent align="start" side="bottom" sideOffset={4} className="w-52 p-1">
+                              <button className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap" onClick={(e) => { e.stopPropagation(); handleAddWorkspace(projectPath); }}>New workspace</button>
+                              <button className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap" onClick={(e) => { e.stopPropagation(); handleCreateSection(projectPath, "New section"); }}>Add section</button>
+                              <button className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap" onClick={(e) => { e.stopPropagation(); void handleOpenSecrets(projectPath); }}>Manage secrets</button>
+                              <div className="my-1 h-px bg-white/10" />
+                              <button className="text-danger hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap flex items-center gap-2" onClick={(e) => { e.stopPropagation(); console.log('DELETE CLICKED for', projectPath); onRemoveProject(projectPath).then(r => console.log('DELETE RESULT', r)).catch(e => console.error('DELETE ERROR', e)); }}><Trash2 className="h-3 w-3 shrink-0" />Delete...</button>
+                            </PopoverContent>
+                          </Popover>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <button
@@ -958,17 +978,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               New chat ({formatKeybind(KEYBINDS.NEW_WORKSPACE)})
                             </TooltipContent>
                           </Tooltip>
-                          </>)}
                         </DraggableProjectItem>
-                        </ContextMenuTrigger>
-                        <ContextMenuContent className="w-52">
-                          <ContextMenuItem onSelect={() => handleAddWorkspace(projectPath)}>New workspace</ContextMenuItem>
-                          <ContextMenuItem onSelect={() => handleCreateSection(projectPath, "New section")}>Add section</ContextMenuItem>
-                          <ContextMenuItem onSelect={() => handleOpenSecrets(projectPath)}>Manage secrets</ContextMenuItem>
-                          <ContextMenuSeparator />
-                          <ContextMenuItem className="text-danger focus:text-danger" onSelect={() => onRemoveProject(projectPath)}><Trash2 className="mr-2 h-3.5 w-3.5" />Delete...</ContextMenuItem>
-                        </ContextMenuContent>
-                        </ContextMenu>
 
                         {isExpanded && (
                           <div
@@ -1332,7 +1342,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                         }}
                                       />
                                       {isSectionExpanded && (
-                                        <div className="pb-1" style={{ backgroundColor: '#1e1e1e' }}>
+                                        <div className="" style={{ backgroundColor: '#1e1e1e' }}>
                                           {sectionDrafts.map((draft) => renderDraft(draft))}
                                           {sectionWorkspaces.length > 0 ? (
                                             renderAgeTiers(
@@ -1345,8 +1355,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                               resolveSectionColor(section.color)
                                             )
                                           ) : sectionDrafts.length === 0 ? (
-                                            <div className="text-muted px-3 py-2 text-center text-xs italic">
-                                              No workspaces in this section
+                                            <div className="text-muted px-3 py-1.5 pb-2 text-center text-xs" style={{ borderLeftWidth: 1, borderLeftColor: resolveSectionColor(section.color) }}>
+                                              No workspaces.{' '}
+                                              <button
+                                                className="text-muted-foreground hover:text-foreground cursor-pointer underline"
+                                                onClick={() => handleAddWorkspace(projectPath, section.id)}
+                                              >
+                                                Add
+                                              </button>
                                             </div>
                                           ) : null}
                                         </div>
@@ -1402,7 +1418,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             </>
           )}
           {!collapsed ? (
-            <div className="border-dark mt-auto flex shrink-0 items-center justify-center border-t py-2">
+            <div className="border-border-light mt-auto flex shrink-0 items-center justify-center border-t py-2">
               <button
                 onClick={onAddProject}
                 aria-label="Add project"

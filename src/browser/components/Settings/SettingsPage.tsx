@@ -1,7 +1,5 @@
 import React from "react";
 import {
-  ArrowLeft,
-  Menu,
   Settings,
   Key,
   Cpu,
@@ -137,44 +135,17 @@ export function SettingsPage(props: SettingsPageProps) {
   const SectionComponent = currentSection.component;
 
   return (
-    <div className="bg-dark flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div className="fixed inset-0 z-50 flex min-h-0 flex-1 flex-col overflow-hidden bg-dark">
       {/*
         Keep explicit mobile escape controls in the page chrome:
         - The desktop close button is hidden below md.
         - On touch layouts, the left sidebar is often off-canvas by default.
         Without back + menu actions here, /settings/:section can trap users in-pane.
       */}
-      <div className="bg-sidebar border-border-light flex shrink-0 items-center justify-between border-b px-2 md:hidden [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:py-2">
-        <div className="flex min-w-0 items-center gap-2">
-          {props.leftSidebarCollapsed && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={props.onToggleLeftSidebarCollapsed}
-              title="Open sidebar"
-              aria-label="Open sidebar menu"
-              className="mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0"
-            >
-              <Menu className="h-4 w-4" />
-            </Button>
-          )}
-          <span className="text-foreground text-sm font-semibold">Settings</span>
-        </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={close}
-          title="Back"
-          aria-label="Back to previous page"
-          className="text-muted hover:text-foreground px-2"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          Back
-        </Button>
-      </div>
+
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <aside className="border-border-medium hidden w-48 shrink-0 flex-col border-r md:flex">
+        <aside className="border-border-medium flex w-48 shrink-0 flex-col border-r">
           <div className="border-border-medium flex h-12 items-center border-b px-4">
             <span className="text-foreground text-sm font-semibold">Settings</span>
           </div>
@@ -198,27 +169,9 @@ export function SettingsPage(props: SettingsPageProps) {
         </aside>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div className="border-border-medium shrink-0 border-b md:hidden">
-            <nav className="flex gap-1 overflow-x-auto p-2">
-              {sections.map((section) => (
-                <Button
-                  key={section.id}
-                  variant="ghost"
-                  onClick={() => setActiveSection(section.id)}
-                  className={`flex h-auto shrink-0 items-center justify-start gap-2 rounded-md px-3 py-2 text-left text-sm whitespace-nowrap ${
-                    activeSection === section.id
-                      ? "bg-accent/20 text-accent hover:bg-accent/20 hover:text-accent"
-                      : "text-muted hover:bg-hover hover:text-foreground"
-                  }`}
-                >
-                  {section.icon}
-                  {section.label}
-                </Button>
-              ))}
-            </nav>
-          </div>
 
-          <div className="border-border-medium hidden h-12 items-center justify-between border-b px-6 md:flex">
+
+          <div className="border-border-medium flex h-12 items-center justify-between border-b px-6">
             <span className="text-foreground text-sm font-medium">{currentSection.label}</span>
             <Button
               variant="ghost"
