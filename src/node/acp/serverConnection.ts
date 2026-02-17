@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import { createORPCClient, type ClientContext } from "@orpc/client";
 import { RPCLink as WebSocketRPCLink } from "@orpc/client/websocket";
+import type { RouterClient } from "@orpc/server";
 import WebSocket from "ws";
 import { getMuxHome } from "../../common/constants/paths";
 import { Config } from "../config";
-import { type AppRouter } from "../orpc/router";
+import type { AppRouter } from "../orpc/router";
 import { createOrpcServer } from "../orpc/server";
 import { ServiceContainer } from "../services/serviceContainer";
 import { ServerLockfile } from "../services/serverLockfile";
@@ -18,11 +19,11 @@ interface ConnectViaWebSocketResult {
 
 type InProcessOrpcServer = Awaited<ReturnType<typeof createOrpcServer>>;
 
-function createTypedClient(link: WebSocketRPCLink<ClientContext>) {
-  return createORPCClient<AppRouter>(link);
-}
+export type ORPCClient = RouterClient<AppRouter>;
 
-export type ORPCClient = ReturnType<typeof createTypedClient>;
+function createTypedClient(link: WebSocketRPCLink<ClientContext>): ORPCClient {
+  return createORPCClient(link) as ORPCClient;
+}
 
 export interface ServerConnection {
   client: ORPCClient;
@@ -95,11 +96,17 @@ async function connectToInProcessServer(requestedAuthToken?: string): Promise<Se
       context,
     });
 
-    const connection = await connectViaWebSocket(inProcessServer.baseUrl, authToken);
+    const activeServer = inProcessServer;
+    assert(
+      activeServer != null,
+      "connectToInProcessServer: expected createOrpcServer to return a server instance"
+    );
+
+    const connection = await connectViaWebSocket(activeServer.baseUrl, authToken);
 
     return {
       client: connection.client,
-      inProcessServer,
+      inProcessServer: activeServer,
       baseUrl: connection.baseUrl,
       close: async () => {
         let firstError: unknown;
@@ -111,7 +118,7 @@ async function connectToInProcessServer(requestedAuthToken?: string): Promise<Se
         };
 
         await closeWebSocket(connection.websocket).catch(captureError);
-        await inProcessServer.close().catch(captureError);
+        await activeServer.close().catch(captureError);
         await serviceContainer.dispose().catch(captureError);
 
         if (firstError !== undefined) {

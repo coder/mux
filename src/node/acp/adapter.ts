@@ -8,7 +8,7 @@ export async function runAcpAdapter(server: ServerConnection): Promise<void> {
   assert(server != null, "runAcpAdapter: server connection is required");
 
   // ACP SDK expects Web streams; process stdio is Node stream instances.
-  const input = Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>;
+  const input = Readable.toWeb(process.stdin) as unknown as ReadableStream<Uint8Array>;
   const output = Writable.toWeb(process.stdout) as WritableStream<Uint8Array>;
   const stream = ndJsonStream(output, input);
 
