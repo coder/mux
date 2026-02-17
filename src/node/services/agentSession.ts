@@ -398,6 +398,12 @@ export class AgentSession {
   ): Promise<void> {
     let replayMode: "full" | "since" | "live" = "full";
     let serverCursor: OnChatCursor | undefined;
+    let emittedReplayMessages = false;
+
+    const emitReplayMessage = (message: WorkspaceChatMessage): void => {
+      emittedReplayMessages = true;
+      listener({ workspaceId: this.workspaceId, message });
+    };
 
     // try/catch/finally guarantees caught-up is always sent, even if replay fails.
     // Without caught-up, the frontend stays in "Loading workspace..." forever.
@@ -558,7 +564,7 @@ export class AgentSession {
           }
 
           // Add type: "message" for discriminated union (messages from chat.jsonl don't have it)
-          listener({ workspaceId: this.workspaceId, message: { ...message, type: "message" } });
+          emitReplayMessage({ ...message, type: "message" });
         }
 
         for (let index = history.length - 1; index >= 0; index -= 1) {
@@ -604,7 +610,7 @@ export class AgentSession {
         // Only emit disk partial when we did not replay an active stream.
         // If a stream was replayed and then ended, this stale pre-replay partial can
         // duplicate text/tool output when combined with replayed stream events.
-        listener({ workspaceId: this.workspaceId, message: { ...partial, type: "message" } });
+        emitReplayMessage({ ...partial, type: "message" });
       }
 
       // Re-emit current init state for all replay modes. Incremental reconnects can
@@ -616,9 +622,14 @@ export class AgentSession {
         error,
       });
 
-      // If replay failed mid-flight, force frontend into safe replace semantics.
-      // Reporting incremental mode here can preserve stale local rows/tool state.
-      replayMode = "full";
+      // Keep append/live semantics when we've already emitted incremental payload.
+      // Downgrading to full at that point would make the frontend apply replace-mode to
+      // a partial replay buffer and temporarily hide older transcript rows.
+      if (replayMode !== "full" && !emittedReplayMessages) {
+        replayMode = "full";
+      }
+
+      // Replay failed, so do not advertise a trustworthy reconnect cursor.
       serverCursor = undefined;
     } finally {
       // Replay queued-message snapshot before caught-up so reconnect clients can

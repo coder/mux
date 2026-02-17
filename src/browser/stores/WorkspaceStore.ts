@@ -2105,7 +2105,6 @@ export class WorkspaceStore {
       const localActiveStreamMessageId = aggregator.getActiveStreamMessageId();
       const streamContextMismatched =
         serverActiveStreamMessageId !== undefined &&
-        localActiveStreamMessageId !== undefined &&
         serverActiveStreamMessageId !== localActiveStreamMessageId;
 
       // Defensive cleanup:

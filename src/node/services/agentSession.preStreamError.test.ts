@@ -409,7 +409,7 @@ describe("AgentSession pre-stream errors", () => {
     expect(replayedMessageIds).not.toContain(persistedSecond.id);
   });
 
-  it("reports full replay when since replay errors mid-flight", async () => {
+  it("keeps since replay mode when failure occurs after incremental payload is emitted", async () => {
     const workspaceId = "ws-replay-since-error-downgrade";
     const { session, cleanup, historyService, replayStream } = await createReplaySessionHarness(
       workspaceId,
@@ -456,6 +456,74 @@ describe("AgentSession pre-stream errors", () => {
             messageId: persistedSeeded.id,
             historySequence: seededHistorySequence,
             oldestHistorySequence: seededHistorySequence,
+          },
+        },
+      }
+    );
+
+    const caughtUp = events.find(
+      (event): event is Extract<WorkspaceChatMessage, { type: "caught-up" }> =>
+        "type" in event && event.type === "caught-up"
+    );
+    expect(caughtUp).toBeDefined();
+    expect(caughtUp?.replay).toBe("since");
+    expect(caughtUp?.cursor).toBeUndefined();
+  });
+
+  it("reports full replay when since replay fails before emitting incremental payload", async () => {
+    const workspaceId = "ws-replay-since-error-before-payload";
+    const { session, cleanup, historyService, replayStream } = await createReplaySessionHarness(
+      workspaceId,
+      {
+        streamInfo: {
+          messageId: "msg-live-prepayload",
+          startTime: 8_000,
+          parts: [],
+          toolCompletionTimestamps: new Map(),
+        },
+      }
+    );
+    historyCleanup = cleanup;
+
+    const placeholder = createMuxMessage("msg-history-placeholder", "assistant", "placeholder");
+    expect((await historyService.appendToHistory(workspaceId, placeholder)).success).toBe(true);
+
+    const historyResult = await historyService.getHistoryFromLatestBoundary(workspaceId);
+    if (!historyResult.success) {
+      throw new Error(`Failed to read seeded history: ${historyResult.error}`);
+    }
+
+    const persistedPlaceholder = historyResult.data.find(
+      (message) => message.id === placeholder.id
+    );
+    if (!persistedPlaceholder) {
+      throw new Error("Expected placeholder history row");
+    }
+
+    const placeholderHistorySequence = persistedPlaceholder.metadata?.historySequence;
+    if (placeholderHistorySequence === undefined) {
+      throw new Error("Expected placeholder row to include historySequence");
+    }
+
+    const partial = createMuxMessage("msg-partial-prepayload", "assistant", "partial", {
+      historySequence: placeholderHistorySequence,
+    });
+    expect((await historyService.writePartial(workspaceId, partial)).success).toBe(true);
+
+    replayStream.mockImplementationOnce(() => Promise.reject(new Error("replay stream failed")));
+
+    const events: WorkspaceChatMessage[] = [];
+    await session.replayHistory(
+      ({ message }) => {
+        events.push(message);
+      },
+      {
+        type: "since",
+        cursor: {
+          history: {
+            messageId: persistedPlaceholder.id,
+            historySequence: placeholderHistorySequence,
+            oldestHistorySequence: placeholderHistorySequence,
           },
         },
       }
