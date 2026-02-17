@@ -200,11 +200,15 @@ export async function handleSetConfigOption(
 
   if (trimmedConfigId === AGENT_MODE_CONFIG_ID) {
     const nextAgentId = trimmedValue;
-    const resolvedAiSettings = await resolveAgentAiSettings(
-      client,
-      nextAgentId,
-      trimmedWorkspaceId
-    );
+
+    // Prefer workspace-specific settings already saved for the target agent
+    // (e.g., user customized model/thinking for this mode).  Only fall back
+    // to resolved defaults when no prior settings exist for the agent.
+    const existingSettings = workspace.aiSettingsByAgent?.[nextAgentId];
+    const resolvedAiSettings =
+      existingSettings?.model != null && existingSettings?.thinkingLevel != null
+        ? { model: existingSettings.model, thinkingLevel: existingSettings.thinkingLevel }
+        : await resolveAgentAiSettings(client, nextAgentId, trimmedWorkspaceId);
 
     await persistAgentAiSettings(client, trimmedWorkspaceId, nextAgentId, resolvedAiSettings);
     if (args?.onAgentModeChanged != null) {

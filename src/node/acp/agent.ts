@@ -167,7 +167,7 @@ export class MuxAgent implements Agent {
       aiSettings,
     });
 
-    this.ensureChatSubscription(sessionId, workspaceId);
+    await this.ensureChatSubscription(sessionId, workspaceId);
 
     return {
       sessionId,
@@ -200,7 +200,7 @@ export class MuxAgent implements Agent {
       aiSettings: resumed.aiSettings,
     });
 
-    this.ensureChatSubscription(resumed.sessionId, resumed.workspaceId);
+    await this.ensureChatSubscription(resumed.sessionId, resumed.workspaceId);
 
     return resumed.response;
   }
@@ -233,7 +233,7 @@ export class MuxAgent implements Agent {
       aiSettings: forked.aiSettings,
     });
 
-    this.ensureChatSubscription(forked.sessionId, forked.workspaceId);
+    await this.ensureChatSubscription(forked.sessionId, forked.workspaceId);
 
     return forked.response;
   }
@@ -251,7 +251,7 @@ export class MuxAgent implements Agent {
     // Re-establish chat subscription if a prior one dropped (e.g., transient
     // websocket interruption). Without a live subscription, stream-end events
     // never arrive and the turn promise hangs indefinitely.
-    this.ensureChatSubscription(sessionId, workspaceId);
+    await this.ensureChatSubscription(sessionId, workspaceId);
 
     const turnPromise = this.beginTurn(sessionId);
 
@@ -342,12 +342,22 @@ export class MuxAgent implements Agent {
     return Promise.resolve({});
   }
 
-  private ensureChatSubscription(sessionId: string, workspaceId: string): void {
+  /**
+   * Ensure a chat subscription exists for the given session.  Returns a promise
+   * that resolves once the underlying `onChat` stream is connected (so callers
+   * like `prompt()` can safely send messages without racing the subscription).
+   */
+  private async ensureChatSubscription(sessionId: string, workspaceId: string): Promise<void> {
     if (this.chatSubscriptions.has(sessionId)) {
       return;
     }
 
-    const subscription = this.runChatSubscription(sessionId, workspaceId)
+    // `connectedPromise` resolves once `onChat` returns the async iterable,
+    // signalling the subscription is live.  The long-running consumption loop
+    // continues in the background via `subscription`.
+    const { promise: connectedPromise, resolve: onConnected } = Promise.withResolvers<void>();
+
+    const subscription = this.runChatSubscription(sessionId, workspaceId, onConnected)
       .catch((error) => {
         if (this.connection.signal.aborted) {
           return;
@@ -360,10 +370,16 @@ export class MuxAgent implements Agent {
       });
 
     this.chatSubscriptions.set(sessionId, subscription);
+    await connectedPromise;
   }
 
-  private async runChatSubscription(sessionId: string, workspaceId: string): Promise<void> {
+  private async runChatSubscription(
+    sessionId: string,
+    workspaceId: string,
+    onConnected: () => void
+  ): Promise<void> {
     const chatStream = await this.server.client.workspace.onChat({ workspaceId });
+    onConnected();
     const observedStream = this.observeChatStream(sessionId, chatStream);
     await this.streamTranslator.consumeAndForward(sessionId, observedStream);
   }
