@@ -24,7 +24,7 @@ import { RuntimeConfigSchema } from "@/common/orpc/schemas";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { isWorktreeRuntime, type RuntimeConfig, type RuntimeMode } from "@/common/types/runtime";
 import { negotiateCapabilities, type NegotiatedCapabilities } from "./capabilities";
-import { buildConfigOptions, handleSetConfigOption } from "./configOptions";
+import { AGENT_MODE_CONFIG_ID, buildConfigOptions, handleSetConfigOption } from "./configOptions";
 import { forkSessionFromWorkspace } from "./experimental/sessionFork";
 import { loadSessionFromWorkspace } from "./experimental/sessionResume";
 import { convertToAcpUsage } from "./experimental/sessionUsage";
@@ -266,7 +266,9 @@ export class MuxAgent implements Agent {
         usage,
       };
     } catch (error) {
-      this.rejectTurn(sessionId, asError(error, "prompt: prompt turn failed"));
+      // workspace.sendMessage failures happen before stream events can settle the turn promise.
+      // Clear turn state without rejecting to avoid detached/unhandled promise rejections.
+      this.turnCompletions.delete(sessionId);
       throw error;
     }
   }
@@ -294,14 +296,26 @@ export class MuxAgent implements Agent {
     assert(sessionId.length > 0, "setSessionConfigOption: sessionId must be non-empty");
 
     const workspaceId = this.sessionManager.getWorkspaceId(sessionId);
+    const trimmedConfigId = params.configId.trim();
+    assert(trimmedConfigId.length > 0, "setSessionConfigOption: configId must be non-empty");
+
+    const activeAgentId = this.sessionStateById.get(sessionId)?.agentId;
     const configOptions = await handleSetConfigOption(
       this.server.client,
       workspaceId,
       params.configId,
-      params.value
+      params.value,
+      {
+        activeAgentId,
+        onAgentModeChanged: (agentId, aiSettings) => {
+          this.updateSessionAgentState(sessionId, agentId, aiSettings);
+        },
+      }
     );
 
-    await this.refreshSessionState(sessionId);
+    if (trimmedConfigId !== AGENT_MODE_CONFIG_ID) {
+      await this.refreshSessionState(sessionId);
+    }
 
     return { configOptions };
   }
@@ -411,6 +425,27 @@ export class MuxAgent implements Agent {
 
     this.turnCompletions.delete(sessionId);
     completion.reject(error);
+  }
+
+  private updateSessionAgentState(
+    sessionId: string,
+    agentId: string,
+    aiSettings: ResolvedAiSettings
+  ): void {
+    const normalizedAgentId = agentId.trim();
+    assert(normalizedAgentId.length > 0, "updateSessionAgentState: agentId must be non-empty");
+
+    const existingState = this.sessionStateById.get(sessionId);
+    assert(
+      existingState != null,
+      `updateSessionAgentState: missing state for session '${sessionId}'`
+    );
+
+    this.sessionStateById.set(sessionId, {
+      ...existingState,
+      agentId: normalizedAgentId,
+      aiSettings,
+    });
   }
 
   private async refreshSessionState(sessionId: string): Promise<SessionState> {

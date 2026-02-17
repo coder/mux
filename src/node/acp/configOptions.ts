@@ -5,7 +5,7 @@ import { THINKING_LEVELS, isThinkingLevel } from "@/common/types/thinking";
 import type { ORPCClient } from "./serverConnection";
 import { resolveAgentAiSettings, type ResolvedAiSettings } from "./resolveAgentAiSettings";
 
-const AGENT_MODE_CONFIG_ID = "agentMode";
+export const AGENT_MODE_CONFIG_ID = "agentMode";
 const MODEL_CONFIG_ID = "model";
 const THINKING_LEVEL_CONFIG_ID = "thinkingLevel";
 
@@ -19,6 +19,15 @@ type WorkspaceInfo = NonNullable<Awaited<ReturnType<ORPCClient["workspace"]["get
 type UpdateAgentAiSettingsResult = Awaited<
   ReturnType<ORPCClient["workspace"]["updateAgentAISettings"]>
 >;
+
+interface BuildConfigOptionsArgs {
+  activeAgentId?: string;
+}
+
+interface HandleSetConfigOptionArgs {
+  activeAgentId?: string;
+  onAgentModeChanged?: (agentId: string, aiSettings: ResolvedAiSettings) => Promise<void> | void;
+}
 
 function isModeAgentId(agentId: string): agentId is "plan" | "exec" {
   return agentId === "plan" || agentId === "exec";
@@ -119,12 +128,17 @@ async function persistAgentAiSettings(
 
 export async function buildConfigOptions(
   client: ORPCClient,
-  workspaceId: string
+  workspaceId: string,
+  args?: BuildConfigOptionsArgs
 ): Promise<SessionConfigOption[]> {
   assert(workspaceId.trim().length > 0, "buildConfigOptions: workspaceId must be non-empty");
 
   const workspace = await getWorkspaceInfoOrThrow(client, workspaceId);
-  const currentAgentId = getCurrentAgentId(workspace);
+  const overrideAgentId = args?.activeAgentId?.trim();
+  const currentAgentId =
+    typeof overrideAgentId === "string" && overrideAgentId.length > 0
+      ? overrideAgentId
+      : getCurrentAgentId(workspace);
   const currentAiSettings = await resolveCurrentAiSettings(
     client,
     workspace,
@@ -166,7 +180,8 @@ export async function handleSetConfigOption(
   client: ORPCClient,
   workspaceId: string,
   configId: string,
-  value: string
+  value: string,
+  args?: HandleSetConfigOptionArgs
 ): Promise<SessionConfigOption[]> {
   const trimmedWorkspaceId = workspaceId.trim();
   const trimmedConfigId = configId.trim();
@@ -177,7 +192,11 @@ export async function handleSetConfigOption(
   assert(trimmedValue.length > 0, "handleSetConfigOption: value must be non-empty");
 
   const workspace = await getWorkspaceInfoOrThrow(client, trimmedWorkspaceId);
-  const currentAgentId = getCurrentAgentId(workspace);
+  const overrideAgentId = args?.activeAgentId?.trim();
+  const currentAgentId =
+    typeof overrideAgentId === "string" && overrideAgentId.length > 0
+      ? overrideAgentId
+      : getCurrentAgentId(workspace);
 
   if (trimmedConfigId === AGENT_MODE_CONFIG_ID) {
     const nextAgentId = trimmedValue;
@@ -188,7 +207,11 @@ export async function handleSetConfigOption(
     );
 
     await persistAgentAiSettings(client, trimmedWorkspaceId, nextAgentId, resolvedAiSettings);
-    return buildConfigOptions(client, trimmedWorkspaceId);
+    if (args?.onAgentModeChanged != null) {
+      await args.onAgentModeChanged(nextAgentId, resolvedAiSettings);
+    }
+
+    return buildConfigOptions(client, trimmedWorkspaceId, { activeAgentId: nextAgentId });
   }
 
   const currentAiSettings = await resolveCurrentAiSettings(
@@ -204,7 +227,7 @@ export async function handleSetConfigOption(
       thinkingLevel: currentAiSettings.thinkingLevel,
     });
 
-    return buildConfigOptions(client, trimmedWorkspaceId);
+    return buildConfigOptions(client, trimmedWorkspaceId, { activeAgentId: currentAgentId });
   }
 
   if (trimmedConfigId === THINKING_LEVEL_CONFIG_ID) {
@@ -219,7 +242,7 @@ export async function handleSetConfigOption(
       thinkingLevel: trimmedValue,
     });
 
-    return buildConfigOptions(client, trimmedWorkspaceId);
+    return buildConfigOptions(client, trimmedWorkspaceId, { activeAgentId: currentAgentId });
   }
 
   throw new Error(`Unsupported config option id '${trimmedConfigId}'`);
