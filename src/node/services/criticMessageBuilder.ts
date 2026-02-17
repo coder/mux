@@ -147,6 +147,30 @@ export function buildCriticRequestHistory(history: MuxMessage[]): MuxMessage[] {
  * Critic assistant messages are transformed into user feedback messages so the actor can
  * treat them as actionable critique without mutating persisted chat history.
  */
+function getCriticDoneCandidateText(parts: Array<{ type: string; text?: string }>): string | null {
+  if (parts.length === 0) {
+    return null;
+  }
+
+  // Thinking-enabled critics may emit reasoning parts alongside visible text.
+  // Treat reasoning as non-user-visible metadata when checking the /done sentinel.
+  if (parts.some((part) => part.type !== "text" && part.type !== "reasoning")) {
+    return null;
+  }
+
+  const textParts = parts.filter((part): part is { type: "text"; text: string } => {
+    return part.type === "text" && typeof part.text === "string";
+  });
+  if (textParts.length === 0) {
+    return null;
+  }
+
+  return textParts
+    .map((part) => part.text)
+    .join("")
+    .trim();
+}
+
 export function buildActorRequestHistoryWithCriticFeedback(history: MuxMessage[]): MuxMessage[] {
   const transformed: MuxMessage[] = [];
 
@@ -156,11 +180,11 @@ export function buildActorRequestHistoryWithCriticFeedback(history: MuxMessage[]
       continue;
     }
 
-    const serialized = serializeMessageParts(message);
-    if (serialized.trim() === CRITIC_DONE_SENTINEL) {
+    if (getCriticDoneCandidateText(message.parts) === CRITIC_DONE_SENTINEL) {
       continue;
     }
 
+    const serialized = serializeMessageParts(message);
     transformed.push(buildTextMessage(message, "user", serialized));
   }
 
@@ -168,27 +192,5 @@ export function buildActorRequestHistoryWithCriticFeedback(history: MuxMessage[]
 }
 
 export function isCriticDoneResponse(parts: CompletedMessagePart[]): boolean {
-  if (parts.length === 0) {
-    return false;
-  }
-
-  // Thinking-enabled critics may emit reasoning parts alongside visible text.
-  // Treat reasoning as non-user-visible metadata when checking the /done sentinel.
-  if (parts.some((part) => part.type !== "text" && part.type !== "reasoning")) {
-    return false;
-  }
-
-  const textParts = parts.filter(
-    (part): part is Extract<CompletedMessagePart, { type: "text" }> => part.type === "text"
-  );
-  if (textParts.length === 0) {
-    return false;
-  }
-
-  const combined = textParts
-    .map((part) => part.text)
-    .join("")
-    .trim();
-
-  return combined === CRITIC_DONE_SENTINEL;
+  return getCriticDoneCandidateText(parts) === CRITIC_DONE_SENTINEL;
 }
