@@ -206,7 +206,17 @@ fetch_unresolved_via_api() {
   done
 }
 
-if ! load_unresolved_from_cache; then
+loaded_from_cache=0
+if load_unresolved_from_cache; then
+  loaded_from_cache=1
+else
+  fetch_unresolved_via_api
+fi
+
+# The shared cache is fetched earlier in wait_pr_ready's loop and can become stale
+# before the checks gate runs. Re-query before returning a clean result so newly
+# created unresolved threads are not missed.
+if [ "$loaded_from_cache" -eq 1 ] && [ -z "$UNRESOLVED" ]; then
   fetch_unresolved_via_api
 fi
 
