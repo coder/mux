@@ -1,4 +1,4 @@
-import { useTheme, THEME_OPTIONS, type ThemeMode } from "@/browser/contexts/ThemeContext";
+import { useTheme, THEME_OPTIONS, type ThemePreference } from "@/browser/contexts/ThemeContext";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import {
   Select,
@@ -9,13 +9,16 @@ import {
 } from "@/browser/components/ui/select";
 
 export function ThemeSelector() {
-  const { theme, setTheme } = useTheme();
-  const currentLabel = THEME_OPTIONS.find((t) => t.value === theme)?.label ?? theme;
+  const { themePreference, setTheme } = useTheme();
+  const currentLabel = THEME_OPTIONS.find((theme) => theme.value === themePreference)?.label;
 
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Select value={theme} onValueChange={(value) => setTheme(value as ThemeMode)}>
+        <Select
+          value={themePreference}
+          onValueChange={(value) => setTheme(value as ThemePreference)}
+        >
           <SelectTrigger
             className="border-border-light text-muted-foreground hover:border-border-medium/80 hover:bg-toggle-bg/70 h-5 w-auto cursor-pointer border bg-transparent px-1.5 text-[11px] transition-colors duration-150"
             aria-label="Select theme"
@@ -32,7 +35,7 @@ export function ThemeSelector() {
           </SelectContent>
         </Select>
       </TooltipTrigger>
-      <TooltipContent align="end">Theme: {currentLabel}</TooltipContent>
+      <TooltipContent align="end">Theme: {currentLabel ?? themePreference}</TooltipContent>
     </Tooltip>
   );
 }

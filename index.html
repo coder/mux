@@ -106,7 +106,13 @@
     <script>
       (function () {
         const THEME_KEY = "uiTheme";
-        const VALID_THEMES = new Set(["light", "dark", "flexoki-light", "flexoki-dark"]);
+        const VALID_THEME_PREFERENCES = new Set([
+          "auto",
+          "light",
+          "dark",
+          "flexoki-light",
+          "flexoki-dark",
+        ]);
 
         const THEME_COLORS = {
           dark: "#1e1e1e",
@@ -114,6 +120,14 @@
           "flexoki-light": "#fffcf0",
           "flexoki-dark": "#100f0f",
         };
+
+        function resolveSystemTheme() {
+          if (!window.matchMedia) {
+            return "dark";
+          }
+
+          return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+        }
 
         function getColorScheme(theme) {
           return theme === "light" || theme.endsWith("-light") ? "light" : "dark";
@@ -132,23 +146,18 @@
             }
           }
 
-          const prefersLight = window.matchMedia
-            ? window.matchMedia("(prefers-color-scheme: light)").matches
-            : false;
-
-          const fallbackTheme = prefersLight ? "light" : "dark";
-          let theme = fallbackTheme;
-
+          let themePreference = "auto";
           if (typeof parsed === "string") {
-            if (VALID_THEMES.has(parsed)) {
-              theme = parsed;
+            if (VALID_THEME_PREFERENCES.has(parsed)) {
+              themePreference = parsed;
             } else if (parsed.endsWith("-light")) {
-              theme = "light";
+              themePreference = "light";
             } else if (parsed.endsWith("-dark")) {
-              theme = "dark";
+              themePreference = "dark";
             }
           }
 
+          const theme = themePreference === "auto" ? resolveSystemTheme() : themePreference;
           const colorScheme = getColorScheme(theme);
 
           document.documentElement.dataset.theme = theme;

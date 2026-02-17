@@ -6,74 +6,190 @@ const dom = new GlobalWindow();
 (global as any).window = dom.window;
 (global as any).document = dom.window.document;
 (global as any).location = new URL("https://example.com/");
-// Polyfill console since happy-dom might interfere or we just want standard console
 (global as any).console = console;
 /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access */
 
-import { afterEach, describe, expect, mock, test, beforeEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 
-import { render, cleanup } from "@testing-library/react";
 import { ThemeProvider, useTheme } from "./ThemeContext";
 import { UI_THEME_KEY } from "@/common/constants/storage";
 
-// Helper to access internals
+let prefersLight = false;
+const mediaQueryListeners = new Set<(event: MediaQueryListEvent) => void>();
+
+const mediaQueryList = {
+  get matches() {
+    return prefersLight;
+  },
+  media: "(prefers-color-scheme: light)",
+  onchange: null as ((this: MediaQueryList, event: MediaQueryListEvent) => void) | null,
+  addListener: (listener: (event: MediaQueryListEvent) => void) => {
+    mediaQueryListeners.add(listener);
+  },
+  removeListener: (listener: (event: MediaQueryListEvent) => void) => {
+    mediaQueryListeners.delete(listener);
+  },
+  addEventListener: (
+    type: string,
+    listener: EventListenerOrEventListenerObject | null,
+    _options?: boolean | AddEventListenerOptions
+  ) => {
+    if (type !== "change") {
+      return;
+    }
+
+    if (typeof listener === "function") {
+      mediaQueryListeners.add(listener as (event: MediaQueryListEvent) => void);
+    }
+  },
+  removeEventListener: (
+    type: string,
+    listener: EventListenerOrEventListenerObject | null,
+    _options?: boolean | EventListenerOptions
+  ) => {
+    if (type !== "change") {
+      return;
+    }
+
+    if (typeof listener === "function") {
+      mediaQueryListeners.delete(listener as (event: MediaQueryListEvent) => void);
+    }
+  },
+  dispatchEvent: () => true,
+} as MediaQueryList;
+
+function setSystemTheme(theme: "light" | "dark") {
+  prefersLight = theme === "light";
+
+  const event = {
+    matches: prefersLight,
+    media: mediaQueryList.media,
+  } as MediaQueryListEvent;
+
+  for (const listener of mediaQueryListeners) {
+    listener(event);
+  }
+
+  mediaQueryList.onchange?.call(mediaQueryList, event);
+}
+
+const mockMatchMedia = mock(() => mediaQueryList);
+
 const TestComponent = () => {
-  const { theme, toggleTheme } = useTheme();
+  const { theme, themePreference, toggleTheme, setTheme } = useTheme();
+
   return (
     <div>
       <span data-testid="theme-value">{theme}</span>
+      <span data-testid="theme-preference">{themePreference}</span>
       <button onClick={toggleTheme} data-testid="toggle-btn">
         Toggle
+      </button>
+      <button onClick={() => setTheme("auto")} data-testid="set-auto-btn">
+        Auto
+      </button>
+      <button onClick={() => setTheme("flexoki-dark")} data-testid="set-flexoki-dark-btn">
+        Flexoki Dark
       </button>
     </div>
   );
 };
 
 describe("ThemeContext", () => {
-  // Mock matchMedia
-  const mockMatchMedia = mock(() => ({
-    matches: false,
-    media: "",
-    onchange: null,
-    addListener: () => {
-      // no-op
-    },
-    removeListener: () => {
-      // no-op
-    },
-    addEventListener: () => {
-      // no-op
-    },
-    removeEventListener: () => {
-      // no-op
-    },
-    dispatchEvent: () => true,
-  }));
-
   beforeEach(() => {
-    // Ensure window exists (Bun test with happy-dom should provide it)
-    if (typeof window !== "undefined") {
-      window.matchMedia = mockMatchMedia;
-      window.localStorage.clear();
-    }
+    prefersLight = false;
+    mediaQueryListeners.clear();
+    mockMatchMedia.mockClear();
+
+    window.matchMedia = mockMatchMedia;
+    window.localStorage.clear();
   });
 
   afterEach(() => {
     cleanup();
-    if (typeof window !== "undefined") {
-      window.localStorage.clear();
-    }
+    window.localStorage.clear();
   });
 
-  test("uses persisted state by default", () => {
+  test("defaults to auto preference and resolves theme from system", () => {
     const { getByTestId } = render(
       <ThemeProvider>
         <TestComponent />
       </ThemeProvider>
     );
-    // If matchMedia matches is false (default mock), resolveSystemTheme returns 'dark' (since it checks prefers-color-scheme: light)
-    // resolveSystemTheme logic: window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"
+
+    expect(getByTestId("theme-preference").textContent).toBe("auto");
     expect(getByTestId("theme-value").textContent).toBe("dark");
+  });
+
+  test("normalizes invalid stored preferences to auto", () => {
+    window.localStorage.setItem(UI_THEME_KEY, JSON.stringify("totally-invalid"));
+
+    const { getByTestId } = render(
+      <ThemeProvider>
+        <TestComponent />
+      </ThemeProvider>
+    );
+
+    expect(getByTestId("theme-preference").textContent).toBe("auto");
+    expect(JSON.parse(window.localStorage.getItem(UI_THEME_KEY)!)).toBe("auto");
+  });
+
+  test("follows OS theme changes while preference is auto", () => {
+    const { getByTestId } = render(
+      <ThemeProvider>
+        <TestComponent />
+      </ThemeProvider>
+    );
+
+    expect(getByTestId("theme-preference").textContent).toBe("auto");
+    expect(getByTestId("theme-value").textContent).toBe("dark");
+
+    act(() => {
+      setSystemTheme("light");
+    });
+
+    expect(getByTestId("theme-value").textContent).toBe("light");
+
+    act(() => {
+      setSystemTheme("dark");
+    });
+
+    expect(getByTestId("theme-value").textContent).toBe("dark");
+  });
+
+  test("stops following OS changes when a manual theme is selected", () => {
+    const { getByTestId } = render(
+      <ThemeProvider>
+        <TestComponent />
+      </ThemeProvider>
+    );
+
+    fireEvent.click(getByTestId("set-flexoki-dark-btn"));
+    expect(getByTestId("theme-preference").textContent).toBe("flexoki-dark");
+    expect(getByTestId("theme-value").textContent).toBe("flexoki-dark");
+
+    act(() => {
+      setSystemTheme("light");
+    });
+
+    expect(getByTestId("theme-value").textContent).toBe("flexoki-dark");
+  });
+
+  test("cycle toggle uses manual themes only", () => {
+    const { getByTestId } = render(
+      <ThemeProvider>
+        <TestComponent />
+      </ThemeProvider>
+    );
+
+    expect(getByTestId("theme-preference").textContent).toBe("auto");
+
+    fireEvent.click(getByTestId("toggle-btn"));
+
+    // Auto resolves to dark by default in this test, so the next manual theme is flexoki-light.
+    expect(getByTestId("theme-preference").textContent).toBe("flexoki-light");
+    expect(getByTestId("theme-value").textContent).toBe("flexoki-light");
   });
 
   test("respects forcedTheme prop", () => {
@@ -90,19 +206,5 @@ describe("ThemeContext", () => {
       </ThemeProvider>
     );
     expect(getByTestId("theme-value").textContent).toBe("dark");
-  });
-
-  test("forcedTheme overrides persisted state", () => {
-    window.localStorage.setItem(UI_THEME_KEY, JSON.stringify("light"));
-
-    const { getByTestId } = render(
-      <ThemeProvider forcedTheme="dark">
-        <TestComponent />
-      </ThemeProvider>
-    );
-    expect(getByTestId("theme-value").textContent).toBe("dark");
-
-    // Check that localStorage is still light (since forcedTheme doesn't write to storage by itself)
-    expect(JSON.parse(window.localStorage.getItem(UI_THEME_KEY)!)).toBe("light");
   });
 });
