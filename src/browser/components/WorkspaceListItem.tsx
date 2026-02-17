@@ -529,8 +529,9 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   // Determine workspace status for colored dot
   const isSubAgent = (depth ?? 0) > 0;
   const hasError = metadata.taskStatus === "reported" && metadata.incompatibleRuntime != null;
-  // For now, treat "reported" tasks as completed and non-reported non-working as idle
-  const isCompleted = !isWorking && !isInitializing && !hasError;
+  const isAwaitingInput = awaitingUserQuestion;
+  const isStoppedIncomplete = !isWorking && !isInitializing && !hasError && !isAwaitingInput && metadata.taskStatus === "running";
+  const isCompleted = !isWorking && !isInitializing && !hasError && !isAwaitingInput && !isStoppedIncomplete;
 
   return (
     <React.Fragment>
@@ -616,7 +617,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           <span
             className="absolute bg-neutral-600"
             style={{
-              left: `${paddingLeft + 7}px`,
+              left: '15px',
               top: '15px',
               bottom: 0,
               width: '1px',
@@ -628,7 +629,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           <span
             className="absolute bg-neutral-600"
             style={{
-              left: `${paddingLeft + 7}px`,
+              left: '15px',
               top: 0,
               bottom: isLastChild ? 'calc(100% - 15px)' : 0,
               width: '1px',
@@ -637,19 +638,21 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           />
         )}
         {/* Status dot with solid background ring so line goes behind it */}
-        <div className="absolute z-10 flex shrink-0 items-start" style={{ left: `${paddingLeft}px`, top: '12px' }}>
+        <div className="absolute z-10 flex shrink-0 items-start" style={{ left: '8px', top: '12px' }}>
           <span className="inline-flex items-center justify-center rounded-full bg-sidebar" style={{ padding: '2px' }}>
             <span className={cn(
               "inline-block h-2.5 w-2.5 rounded-full shrink-0 border",
               isWorking || isInitializing
-                ? "bg-green-500 border-green-700 animate-pulse shadow-[0_0_6px_rgba(34,197,94,0.5)]"
-                : hasError
-                  ? "bg-red-500 border-red-700"
-                  : isCompleted && !isUnread
-                    ? "bg-muted-dark border-neutral-600"
-                    : isUnread
-                      ? "bg-gray-300 border-gray-500"
-                      : "bg-muted-dark border-neutral-600"
+                ? "bg-green-500 border-green-800 animate-pulse shadow-[0_0_6px_rgba(34,197,94,0.5)]"
+                : isAwaitingInput
+                  ? "bg-yellow-400 border-yellow-700 animate-pulse shadow-[0_0_6px_rgba(250,204,21,0.4)]"
+                  : hasError
+                    ? "bg-red-500 border-red-800"
+                    : isStoppedIncomplete
+                      ? "bg-orange-400 border-orange-700"
+                      : isUnread
+                        ? "bg-gray-300 border-gray-500"
+                        : "bg-gray-500 border-gray-600"
             )} />
           </span>
         </div>

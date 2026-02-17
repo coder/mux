@@ -128,7 +128,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
       )}
 
       {/* Action Buttons (visible on hover) */}
-      <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+      <div className="hidden flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
         {/* Color Picker */}
         <div className="relative" ref={colorPickerRef}>
           <Tooltip>
