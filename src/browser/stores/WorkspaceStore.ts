@@ -634,6 +634,16 @@ export class WorkspaceStore {
       applyWorkspaceChatEventToAggregator(aggregator, data);
       this.states.bump(workspaceId);
     },
+    "auto-compaction-triggered": (workspaceId) => {
+      // Informational event from backend auto-compaction monitor.
+      // We bump workspace state so warning/banner components can react immediately.
+      this.states.bump(workspaceId);
+    },
+    "auto-compaction-completed": (workspaceId) => {
+      // Compaction resets context usage; force both stores to recompute from compacted history.
+      this.usageStore.bump(workspaceId);
+      this.states.bump(workspaceId);
+    },
     "auto-retry-scheduled": (workspaceId, _aggregator, data) => {
       const transient = this.assertChatTransientState(workspaceId);
       transient.autoRetryStatus = data as Extract<

@@ -51,13 +51,11 @@ import {
   getWorkspaceLastReadKey,
 } from "@/common/constants/storage";
 import {
-  executeCompaction,
   prepareCompactionMessage,
   processSlashCommand,
   type SlashCommandContext,
 } from "@/browser/utils/chatCommands";
 import { Button } from "../ui/button";
-import { shouldTriggerAutoCompaction } from "@/browser/utils/compaction/shouldTriggerAutoCompaction";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { findAtMentionAtCursor } from "@/common/utils/atMentions";
 import {
@@ -181,8 +179,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const editingMessage = variant === "workspace" ? props.editingMessage : undefined;
   const isStreamStarting = variant === "workspace" ? (props.isStreamStarting ?? false) : false;
   const isCompacting = variant === "workspace" ? (props.isCompacting ?? false) : false;
-  const hasQueuedCompaction =
-    variant === "workspace" ? (props.hasQueuedCompaction ?? false) : false;
   const [isMobileTouch, setIsMobileTouch] = useState(
     () =>
       typeof window !== "undefined" &&
@@ -1867,89 +1863,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       // Save current draft state for restoration on error
       const preSendDraft = getDraft();
       const preSendReviews = draftReviews;
-
-      // Auto-compaction check (workspace variant only)
-      // Check if we should auto-compact before sending this message
-      // Result is computed in parent (AIView) and passed down to avoid duplicate calculation
-      if (
-        variant === "workspace" &&
-        shouldTriggerAutoCompaction(
-          props.autoCompactionCheck,
-          isCompacting || isStreamStarting,
-          !!editingMessage,
-          hasQueuedCompaction
-        )
-      ) {
-        // Prepare file parts for the continue message
-        const fileParts = chatAttachmentsToFileParts(attachments);
-
-        // Prepare reviews data for the continue message
-        const reviewsData = reviewData;
-
-        // Capture review IDs for marking as checked on success
-        const sentReviewIds = reviewIdsForCheck;
-
-        // Clear input immediately for responsive UX
-        setInput("");
-        setDraftReviews(null);
-
-        const compactionSendMessageOptions: SendMessageOptions = {
-          ...sendMessageOptions,
-        };
-
-        setAttachments([]);
-        setHideReviewsDuringSend(true);
-
-        try {
-          const result = await executeCompaction({
-            api,
-            workspaceId: props.workspaceId,
-            followUpContent: {
-              text: messageTextForSend,
-              fileParts,
-              reviews: reviewsData,
-              muxMetadata: skillMuxMetadata,
-            },
-            sendMessageOptions: compactionSendMessageOptions,
-          });
-
-          if (!result.success) {
-            // Restore on error
-            setDraft(preSendDraft);
-            setDraftReviews(preSendReviews);
-            pushToast({
-              type: "error",
-              title: "Auto-Compaction Failed",
-              message: result.error ?? "Failed to start auto-compaction",
-            });
-          } else {
-            // Mark reviews as checked on success
-            if (sentReviewIds.length > 0) {
-              props.onCheckReviews?.(sentReviewIds);
-            }
-            pushToast({
-              type: "success",
-              message: "Context threshold reached - auto-compacting...",
-            });
-            props.onMessageSent?.();
-          }
-        } catch (error) {
-          // Restore on unexpected error
-          setDraft(preSendDraft);
-          setDraftReviews(preSendReviews);
-          pushToast({
-            type: "error",
-            title: "Auto-Compaction Failed",
-            message:
-              error instanceof Error ? error.message : "Unexpected error during auto-compaction",
-          });
-        } finally {
-          setSendingCount((c) => c - 1);
-          setHideReviewsDuringSend(false);
-        }
-
-        return; // Skip normal send
-      }
 
       try {
         // Prepare file parts if any

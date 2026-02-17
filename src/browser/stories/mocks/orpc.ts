@@ -1113,6 +1113,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       sendMessage: () => Promise.resolve({ success: true, data: undefined }),
       resumeStream: () => Promise.resolve({ success: true, data: undefined }),
       setAutoRetryEnabled: () => Promise.resolve({ success: true, data: undefined }),
+      setAutoCompactionThreshold: () => Promise.resolve({ success: true, data: undefined }),
       interruptStream: () => Promise.resolve({ success: true, data: undefined }),
       clearQueue: () => Promise.resolve({ success: true, data: undefined }),
       truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
