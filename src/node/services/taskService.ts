@@ -2338,34 +2338,26 @@ export class TaskService {
           { synthetic: true }
         );
         if (!sendKickoffResult.success) {
-          log.error("Plan-task auto-handoff failed to send kickoff message", {
-            workspaceId: args.workspaceId,
-            targetAgentId,
-            error: sendKickoffResult.error,
-          });
-          await this.setTaskStatus(args.workspaceId, "awaiting_report").catch(
-            (statusError: unknown) => {
-              log.error("Plan-task auto-handoff could not reset status after kickoff failure", {
-                workspaceId: args.workspaceId,
-                targetAgentId,
-                error: statusError,
-              });
+          // Keep status as "running" so the restart handler in initialize() can
+          // re-attempt the kickoff on next startup, rather than moving to
+          // "awaiting_report" which could finalize the task prematurely.
+          log.error(
+            "Plan-task auto-handoff failed to send kickoff message; task stays running for retry on restart",
+            {
+              workspaceId: args.workspaceId,
+              targetAgentId,
+              error: sendKickoffResult.error,
             }
           );
         }
       } catch (error: unknown) {
-        log.error("Plan-task auto-handoff failed to send kickoff message", {
-          workspaceId: args.workspaceId,
-          targetAgentId,
-          error,
-        });
-        await this.setTaskStatus(args.workspaceId, "awaiting_report").catch(
-          (statusError: unknown) => {
-            log.error("Plan-task auto-handoff could not reset status after kickoff failure", {
-              workspaceId: args.workspaceId,
-              targetAgentId,
-              error: statusError,
-            });
+        // Same as above: leave status as "running" for restart recovery.
+        log.error(
+          "Plan-task auto-handoff failed to send kickoff message; task stays running for retry on restart",
+          {
+            workspaceId: args.workspaceId,
+            targetAgentId,
+            error,
           }
         );
       }

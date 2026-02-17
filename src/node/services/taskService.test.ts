@@ -3367,7 +3367,7 @@ describe("TaskService", () => {
     expect(updatedTask?.taskStatus).toBe("running");
   });
 
-  test("handoff kickoff sendMessage failure resets task status to awaiting_report", async () => {
+  test("handoff kickoff sendMessage failure keeps task status as running for restart recovery", async () => {
     const sendMessageFailure = mock(
       (): Promise<Result<void>> => Promise.resolve(Err("kickoff failed"))
     );
@@ -3384,7 +3384,9 @@ describe("TaskService", () => {
       .flatMap((project) => project.workspaces)
       .find((workspace) => workspace.id === childId);
 
-    expect(updatedTask?.taskStatus).toBe("awaiting_report");
+    // Task stays "running" so initialize() can retry the kickoff on next startup,
+    // rather than "awaiting_report" which could finalize it prematurely.
+    expect(updatedTask?.taskStatus).toBe("running");
   });
 
   test("falls back to default trunk when parent branch does not exist locally", async () => {
