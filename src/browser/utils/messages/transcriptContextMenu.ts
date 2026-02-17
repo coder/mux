@@ -43,14 +43,21 @@ function getSelectedTranscriptText(
     return null;
   }
 
-  const anchorInsideTranscript =
-    selection.anchorNode !== null && transcriptRoot.contains(selection.anchorNode);
-  const focusInsideTranscript =
-    selection.focusNode !== null && transcriptRoot.contains(selection.focusNode);
+  const anchorElement = getEventTargetElement(selection.anchorNode);
+  const focusElement = getEventTargetElement(selection.focusNode);
 
-  // Require the full selection range to stay within transcript content so we
-  // don't accidentally quote/copy text from outside the transcript.
-  if (!anchorInsideTranscript || !focusInsideTranscript) {
+  const anchorInsideMessageContent =
+    anchorElement !== null &&
+    transcriptRoot.contains(anchorElement) &&
+    anchorElement.closest("[data-message-content]") !== null;
+  const focusInsideMessageContent =
+    focusElement !== null &&
+    transcriptRoot.contains(focusElement) &&
+    focusElement.closest("[data-message-content]") !== null;
+
+  // Require the full selection range to stay within transcript message content
+  // so we don't accidentally quote/copy text from outside transcript messages.
+  if (!anchorInsideMessageContent || !focusInsideMessageContent) {
     return null;
   }
 

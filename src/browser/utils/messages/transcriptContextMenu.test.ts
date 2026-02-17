@@ -137,6 +137,34 @@ describe("transcriptContextMenu", () => {
     expect(result).toBe("Hovered transcript text");
   });
 
+  test("falls back to hovered text when selection is inside transcript root but outside message content", () => {
+    const transcriptRoot = createTranscriptRoot(
+      `<div id="notice">System notice text</div><div data-message-content><p id="message">Hovered transcript text</p></div>`
+    );
+    const paragraph = transcriptRoot.querySelector("#message");
+    const notice = transcriptRoot.querySelector("#notice");
+    expect(paragraph).not.toBeNull();
+    expect(notice).not.toBeNull();
+
+    const noticeTextNode = getFirstTextNode(notice);
+
+    const range = document.createRange();
+    range.setStart(noticeTextNode, 0);
+    range.setEnd(noticeTextNode, "System".length);
+
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const result = getTranscriptContextMenuText({
+      transcriptRoot,
+      target: paragraph,
+      selection,
+    });
+
+    expect(result).toBe("Hovered transcript text");
+  });
+
   test("falls back to hovered transcript text when selection crosses transcript boundary", () => {
     const transcriptRoot = createTranscriptRoot(
       `<div data-message-content><p id="message">Hovered transcript text</p></div>`
