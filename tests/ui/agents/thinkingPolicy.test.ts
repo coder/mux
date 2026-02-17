@@ -51,15 +51,29 @@ describeIntegration("System1 reasoning policy", () => {
       const body = within(doc.body);
 
       // Settings now render in the main pane (route-based), not a modal dialog.
-      await canvas.findByRole("button", { name: /^General$/i }, { timeout: 10_000 });
+      // In responsive layouts both desktop/mobile nav variants may be mounted, so
+      // target the first matching section button instead of requiring uniqueness.
+      const generalSectionButtons = await canvas.findAllByRole(
+        "button",
+        { name: /^General$/i },
+        { timeout: 10_000 }
+      );
+      const generalSectionButton = generalSectionButtons[0];
+      if (!generalSectionButton) {
+        throw new Error("General section button not found");
+      }
 
-      const agentsTabButton = await canvas.findByRole(
+      const agentsTabButtons = await canvas.findAllByRole(
         "button",
         {
           name: /agents/i,
         },
         { timeout: 10_000 }
       );
+      const agentsTabButton = agentsTabButtons[0];
+      if (!agentsTabButton) {
+        throw new Error("Agents section button not found");
+      }
       await user.click(agentsTabButton);
 
       await canvas.findByText(/System1 Defaults \(internal\)/i);
