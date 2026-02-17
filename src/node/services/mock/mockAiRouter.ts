@@ -358,7 +358,7 @@ function buildReviewShowDocReply(): MockAiRouterReply {
 
 function buildModelStatusReply(): MockAiRouterReply {
   return {
-    assistantText: "Claude Sonnet 4.5 is now responding with standard reasoning capacity.",
+    assistantText: "Claude Sonnet 4.6 is now responding with standard reasoning capacity.",
   };
 }
 
