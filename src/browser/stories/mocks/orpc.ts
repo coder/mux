@@ -35,6 +35,8 @@ import {
   MUX_HELP_CHAT_WORKSPACE_NAME,
   MUX_HELP_CHAT_WORKSPACE_TITLE,
 } from "@/common/constants/muxChat";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { getWorkspaceLastReadKey } from "@/common/constants/storage";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import {
   DEFAULT_TASK_SETTINGS,
@@ -347,6 +349,13 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     ? inputWorkspaces
     : [muxChatWorkspace, ...inputWorkspaces];
 
+  // Keep Storybook's built-in mux-help workspace behavior deterministic:
+  // if stories haven't seeded a read baseline, treat it as "known but never read"
+  // rather than "unknown workspace" so the unread badge can render when recency exists.
+  const muxHelpLastReadKey = getWorkspaceLastReadKey(MUX_HELP_CHAT_WORKSPACE_ID);
+  if (readPersistedState<number | null>(muxHelpLastReadKey, null) === null) {
+    updatePersistedState(muxHelpLastReadKey, 0);
+  }
   const workspaceMap = new Map(workspaces.map((w) => [w.id, w]));
 
   let createdWorkspaceCounter = 0;
