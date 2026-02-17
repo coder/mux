@@ -315,8 +315,16 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const hunkJumpRef = useRef(false);
   const { api } = useAPI();
 
-  const { fileTree, hunks, selectedHunkId, onSelectHunk, onToggleRead, onExit, onReviewNote } =
-    props;
+  const {
+    fileTree,
+    hunks,
+    allHunks,
+    selectedHunkId,
+    onSelectHunk,
+    onToggleRead,
+    onExit,
+    onReviewNote,
+  } = props;
 
   // Flatten file tree into ordered file list
   const fileList = useMemo(() => flattenFileTreeLeaves(fileTree), [fileTree]);
@@ -324,14 +332,25 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   // Determine active file from selected hunk or first file
   const activeFilePath = useMemo(() => {
     if (selectedHunkId) {
-      const hunk = hunks.find((item) => item.id === selectedHunkId);
-      if (hunk) return hunk.filePath;
+      const selectedHunk =
+        hunks.find((item) => item.id === selectedHunkId) ??
+        allHunks.find((item) => item.id === selectedHunkId);
+      if (selectedHunk) {
+        return selectedHunk.filePath;
+      }
     }
-    // Fallback: first file that has hunks
-    if (hunks.length > 0) return hunks[0].filePath;
-    if (fileList.length > 0) return fileList[0];
+
+    // Fallback: first file that has currently visible hunks.
+    if (hunks.length > 0) {
+      return hunks[0].filePath;
+    }
+
+    if (fileList.length > 0) {
+      return fileList[0];
+    }
+
     return null;
-  }, [selectedHunkId, hunks, fileList]);
+  }, [selectedHunkId, hunks, allHunks, fileList]);
 
   // Hunks for the active file only, always sorted in file order
   const currentFileHunks = useMemo(
@@ -579,7 +598,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
   const navigateToReview = useCallback(
     (review: Review) => {
-      const fileHunks = sortHunksInFileOrder(getFileHunks(hunks, review.data.filePath));
+      const fileHunks = sortHunksInFileOrder(getFileHunks(allHunks, review.data.filePath));
       if (fileHunks.length === 0) {
         return;
       }
@@ -588,7 +607,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       hunkJumpRef.current = true;
       onSelectHunk(targetHunkId);
     },
-    [hunks, onSelectHunk]
+    [allHunks, onSelectHunk]
   );
 
   const getCurrentLineSelection = useCallback((): SelectedLineRange | null => {
