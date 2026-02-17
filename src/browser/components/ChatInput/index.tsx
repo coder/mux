@@ -2432,7 +2432,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     </span>
                     <span>
                       <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_AGENT)}</span>
-                      <span> - change agent mode</span>
+                      <span> - change agent</span>
                     </span>
                   </div>
                 )}
