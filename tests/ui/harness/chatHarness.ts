@@ -98,13 +98,20 @@ export class ChatHarness {
 
   /**
    * Wait for the workspace to finish streaming (handleStreamEnd fully processed).
-   * Use after expectTranscriptContains when asserting post-stream state
-   * (recencyTimestamp, lastRead, etc.).
+   * Waits through both the start-pending phase (isStarting) and active streaming
+   * phase (canInterrupt) before resolving — ensuring all lifecycle callbacks
+   * (recency update, onResponseComplete) have completed.
    */
   async expectStreamComplete(timeoutMs: number = 30_000): Promise<void> {
     await waitFor(
       () => {
         const state = workspaceStore.getWorkspaceSidebarState(this.workspaceId);
+        // isStarting = pendingStreamStartTime !== null && !canInterrupt.
+        // In gated flows ([mock:wait-start]), the stream hasn't started yet
+        // so canInterrupt is false but isStarting is true — we must wait.
+        if (state.isStarting) {
+          throw new Error("Workspace still waiting for stream-start");
+        }
         // canInterrupt = activeStreams.length > 0; false = no active streams.
         // By the time WorkspaceStore bumps state after handleStreamEnd,
         // all synchronous work (recency update, onResponseComplete callback)

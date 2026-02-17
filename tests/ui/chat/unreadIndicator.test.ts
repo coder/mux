@@ -347,6 +347,35 @@ describe("Unread indicator (mock AI router)", () => {
         expect(isUnread(lastReadAfterFocus)).toBe(true);
       });
     }, 60_000);
+    test("expectStreamComplete does not resolve before stream-start in gated flows", async () => {
+      // Regression: expectStreamComplete() used to check only canInterrupt,
+      // which is false before stream-start — allowing early resolution in
+      // gated flows before handleStreamEnd finalizes state.
+
+      await app.chat.send("[mock:wait-start] gated stream-complete wait");
+
+      // Verify the workspace entered the start-pending phase.
+      await waitFor(() => {
+        const state = workspaceStore.getWorkspaceSidebarState(app.workspaceId);
+        expect(state.isStarting).toBe(true);
+        expect(state.canInterrupt).toBe(false);
+      });
+
+      // Start the stream-complete wait BEFORE releasing the gate.
+      let resolved = false;
+      const waitPromise = app.chat.expectStreamComplete(10_000).then(() => {
+        resolved = true;
+      });
+
+      // Flush microtasks — if expectStreamComplete incorrectly resolves
+      // during isStarting, `resolved` would become true here.
+      await Promise.resolve();
+      expect(resolved).toBe(false);
+
+      // Release the gate and let the stream complete normally.
+      app.env.services.aiService.releaseMockStreamStartGate(app.workspaceId);
+      await waitPromise;
+    }, 60_000);
   });
 
   describe("unread bar visibility", () => {
