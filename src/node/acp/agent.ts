@@ -433,15 +433,17 @@ export class MuxAgent implements Agent {
       return;
     }
 
-    // Capture the messageId from the first stream event if the turn hasn't
-    // been associated with a specific message yet.  This locks the turn to
-    // the correct message so events from other messages are ignored.
-    // (usage-delta events are already handled above and returned early.)
-    if ("messageId" in event && typeof event.messageId === "string") {
+    // Correlate the turn with the correct message.  `stream-start` is emitted
+    // exactly once per new assistant message and carries the definitive
+    // messageId.  We latch on `stream-start` (rather than the first arbitrary
+    // event) to avoid binding to a stale in-flight message when the workspace
+    // has queued the new prompt behind a still-running stream.
+    if (event.type === "stream-start") {
       const completion = this.turnCompletions.get(sessionId);
       if (completion != null && completion.messageId == null) {
         completion.messageId = event.messageId;
       }
+      return;
     }
 
     if (event.type === "stream-end") {
