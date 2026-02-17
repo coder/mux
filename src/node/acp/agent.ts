@@ -384,11 +384,12 @@ export class MuxAgent implements Agent {
     // signalling the subscription is live.  If `onChat` fails before the
     // stream is established, the promise is rejected so callers get a proper
     // error instead of hanging indefinitely.
-    const {
-      promise: connectedPromise,
-      resolve: onConnected,
-      reject: onConnectFailed,
-    } = Promise.withResolvers<void>();
+    let onConnected!: () => void;
+    let onConnectFailed!: (reason: unknown) => void;
+    const connectedPromise = new Promise<void>((resolve, reject) => {
+      onConnected = resolve;
+      onConnectFailed = reject;
+    });
 
     // Store the readiness promise *before* spawning the subscription so that
     // concurrent callers will find and await it.
