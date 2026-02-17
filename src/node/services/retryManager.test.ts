@@ -12,7 +12,6 @@ describe("RetryManager", () => {
   let nextTimerId: number;
 
   beforeEach(() => {
-    vi.useFakeTimers();
     setSystemTime(new Date("2026-01-01T00:00:00Z"));
 
     scheduledTimers = new Map();
@@ -49,7 +48,6 @@ describe("RetryManager", () => {
 
   afterEach(() => {
     setSystemTime();
-    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -147,6 +145,43 @@ describe("RetryManager", () => {
     expect(onStatusChange).not.toHaveBeenCalled();
     expect(manager.isRetryPending).toBe(false);
     expect(scheduledTimers.size).toBe(0);
+  });
+
+  it("setEnabled(false) cancels pending retry and emits abandoned event", () => {
+    const { manager, events } = createRetryManager();
+
+    manager.handleStreamFailure({ type: "unknown" });
+    expect(manager.isRetryPending).toBe(true);
+
+    manager.setEnabled(false);
+    expect(manager.isRetryPending).toBe(false);
+    expect(scheduledTimers.size).toBe(0);
+    expect(events).toContainEqual({
+      type: "auto-retry-abandoned",
+      reason: "disabled_by_user",
+    });
+  });
+
+  it("reschedules when a second failure arrives while retry is pending", () => {
+    const { manager, events } = createRetryManager();
+
+    // First failure schedules a retry
+    manager.handleStreamFailure({ type: "unknown" });
+    expect(manager.isRetryPending).toBe(true);
+    expect(scheduledTimers.size).toBe(1);
+
+    // Second failure should cancel the first and reschedule with higher backoff
+    manager.handleStreamFailure({ type: "network" });
+    expect(manager.isRetryPending).toBe(true);
+    expect(scheduledTimers.size).toBe(1); // only one timer active
+
+    const scheduleEvents = events.filter(
+      (event): event is Extract<RetryStatusEvent, { type: "auto-retry-scheduled" }> =>
+        event.type === "auto-retry-scheduled"
+    );
+    expect(scheduleEvents).toHaveLength(2);
+    // Second attempt should have higher backoff than first
+    expect(scheduleEvents[1].attempt).toBeGreaterThan(scheduleEvents[0].attempt);
   });
 
   it("handleStreamSuccess resets retry attempt progression", () => {

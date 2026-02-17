@@ -71,8 +71,12 @@ export class RetryManager {
       return;
     }
 
-    // Assert no pending retry
-    assert(this.retryTimer === null, `RetryManager[${this.workspaceId}]: retry already pending`);
+    // If a retry is already pending, cancel it and reschedule with updated backoff.
+    // This can happen when multiple error events arrive before the timer fires.
+    if (this.retryTimer !== null) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
 
     this.state = createFailedRetryState(this.state.attempt, error);
     const delay = calculateBackoffDelay(this.state.attempt);
@@ -111,6 +115,16 @@ export class RetryManager {
 
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
+    if (!enabled) {
+      // Cancel any pending retry and notify the frontend so the UI clears
+      // the retry status (e.g., "Retrying…" or countdown).
+      if (this.retryTimer !== null) {
+        clearTimeout(this.retryTimer);
+        this.retryTimer = null;
+        this.onStatusChange({ type: "auto-retry-abandoned", reason: "disabled_by_user" });
+      }
+      this.state = createFreshRetryState<RetryFailureError>();
+    }
   }
 
   get isRetryPending(): boolean {
