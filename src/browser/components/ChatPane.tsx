@@ -7,7 +7,7 @@ import React, {
   useDeferredValue,
   useMemo,
 } from "react";
-import { Lightbulb } from "lucide-react";
+import { Clipboard, Lightbulb, TextQuote } from "lucide-react";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 import {
   formatTranscriptTextAsQuote,
@@ -896,22 +896,29 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               <PopoverContent
                 align="start"
                 side="right"
-                className="w-[170px] !min-w-0 p-1"
+                sideOffset={0}
+                className="w-[180px] !min-w-0 p-1"
                 onClick={(event) => event.stopPropagation()}
               >
                 <button
                   type="button"
-                  className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs"
+                  className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
                   onClick={handleQuoteHoveredText}
                 >
-                  Quote in input
+                  <span className="flex items-center gap-2">
+                    <TextQuote className="h-3 w-3 shrink-0" />
+                    Quote in input
+                  </span>
                 </button>
                 <button
                   type="button"
-                  className="text-foreground bg-background hover:bg-hover mt-1 w-full rounded-sm px-2 py-1.5 text-left text-xs"
+                  className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
                   onClick={handleCopyHoveredText}
                 >
-                  Copy
+                  <span className="flex items-center gap-2">
+                    <Clipboard className="h-3 w-3 shrink-0" />
+                    Copy text
+                  </span>
                 </button>
               </PopoverContent>
             </Popover>
