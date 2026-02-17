@@ -55,6 +55,31 @@ describe("transcriptContextMenu", () => {
     expect(result).toBe("beta");
   });
 
+  test("preserves leading and trailing whitespace in selected transcript text", () => {
+    const transcriptRoot = createTranscriptRoot(
+      `<div data-message-content><p id="message">  keep this whitespace  </p></div>`
+    );
+    const paragraph = transcriptRoot.querySelector("#message");
+    expect(paragraph).not.toBeNull();
+
+    const textNode = getFirstTextNode(paragraph);
+    const range = document.createRange();
+    range.setStart(textNode, 0);
+    range.setEnd(textNode, "  keep this whitespace  ".length);
+
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const result = getTranscriptContextMenuText({
+      transcriptRoot,
+      target: paragraph,
+      selection,
+    });
+
+    expect(result).toBe("  keep this whitespace  ");
+  });
+
   test("returns null for interactive targets even when transcript selection exists", () => {
     const transcriptRoot = createTranscriptRoot(
       `<div data-message-content><p id="message">Alpha beta gamma</p><a id="message-link" href="https://example.com">Example</a></div>`
@@ -183,6 +208,7 @@ describe("transcriptContextMenu", () => {
 
   test("formats transcript text as markdown quote", () => {
     expect(formatTranscriptTextAsQuote("Line one\nLine two")).toBe("> Line one\n> Line two\n\n");
+    expect(formatTranscriptTextAsQuote("  indented\nline\n")).toBe(">   indented\n> line\n>\n\n");
     expect(formatTranscriptTextAsQuote("\n\n")).toBe("");
   });
 });

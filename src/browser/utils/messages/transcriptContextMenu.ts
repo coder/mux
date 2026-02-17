@@ -6,10 +6,11 @@ const TRANSCRIPT_TEXT_BLOCK_SELECTOR =
 const INTERACTIVE_SELECTOR = "button, [role='button'], input, textarea, select, a[href]";
 
 function normalizeTranscriptText(rawText: string): string {
-  return rawText
-    .replace(/\r\n?/g, "\n")
-    .replace(/\u00a0/g, " ")
-    .trim();
+  return rawText.replace(/\r\n?/g, "\n").replace(/\u00a0/g, " ");
+}
+
+function hasNonWhitespaceTranscriptText(text: string): boolean {
+  return text.trim().length > 0;
 }
 
 function getEventTargetElement(target: EventTarget | null): Element | null {
@@ -38,7 +39,7 @@ function getSelectedTranscriptText(
   }
 
   const selectedText = normalizeTranscriptText(selection.toString());
-  if (!selectedText) {
+  if (!hasNonWhitespaceTranscriptText(selectedText)) {
     return null;
   }
 
@@ -76,7 +77,7 @@ function getHoveredTranscriptText(
 
   const textContainer = targetElement.closest(TRANSCRIPT_TEXT_BLOCK_SELECTOR) ?? targetElement;
   const hoveredText = normalizeTranscriptText(textContainer.textContent ?? "");
-  return hoveredText || null;
+  return hasNonWhitespaceTranscriptText(hoveredText) ? hoveredText : null;
 }
 
 export interface TranscriptContextMenuTextOptions {
@@ -120,7 +121,7 @@ export function getTranscriptContextMenuText(
  */
 export function formatTranscriptTextAsQuote(text: string): string {
   const normalizedText = normalizeTranscriptText(text);
-  if (!normalizedText) {
+  if (!hasNonWhitespaceTranscriptText(normalizedText)) {
     return "";
   }
 
