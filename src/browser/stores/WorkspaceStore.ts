@@ -2130,8 +2130,9 @@ export class WorkspaceStore {
         transient.queuedMessage = null;
       }
 
-      if (replay === "full" || !data.cursor?.stream) {
-        // No active stream cursor means any previously live tool-call UI is stale.
+      if (replay === "full" || !data.cursor?.stream || streamContextMismatched) {
+        // Live tool-call UI is tied to the active stream context; clear it when replay
+        // replaces history, reports no active stream, or reports a different stream ID.
         transient.liveBashOutput.clear();
         transient.liveTaskIds.clear();
       }

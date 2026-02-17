@@ -982,6 +982,21 @@ describe("WorkspaceStore", () => {
             model: "claude-3-5-sonnet-20241022",
             startTime: 1_000,
           };
+          yield {
+            type: "bash-output",
+            workspaceId,
+            toolCallId: "call-bash-5",
+            text: "old-stream-output\n",
+            isError: false,
+            timestamp: 1_001,
+          };
+          yield {
+            type: "task-created",
+            workspaceId,
+            toolCallId: "call-task-5",
+            taskId: "child-workspace-5",
+            timestamp: 1_002,
+          };
 
           await holdFirstSubscription;
           return;
@@ -1021,6 +1036,10 @@ describe("WorkspaceStore", () => {
         );
       });
       expect(seededOldStream).toBe(true);
+      expect(store.getBashToolLiveOutput(workspaceId, "call-bash-5")?.stdout).toContain(
+        "old-stream-output"
+      );
+      expect(store.getTaskToolLiveTaskId(workspaceId, "call-task-5")).toBe("child-workspace-5");
 
       releaseFirstSubscription?.();
 
@@ -1028,7 +1047,9 @@ describe("WorkspaceStore", () => {
         return (
           subscriptionCount >= 2 &&
           store.getAggregator(workspaceId)?.getOnChatCursor()?.stream?.messageId ===
-            "msg-new-stream"
+            "msg-new-stream" &&
+          store.getBashToolLiveOutput(workspaceId, "call-bash-5") === null &&
+          store.getTaskToolLiveTaskId(workspaceId, "call-task-5") === null
         );
       });
       expect(switchedToNewStream).toBe(true);
