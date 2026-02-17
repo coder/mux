@@ -473,7 +473,9 @@ describe("Actor-Critic mode", () => {
     router?.prependHandlers([
       {
         match: (request) => request.isCriticTurn === true,
-        respond: () => ({ assistantText: "Critic feedback ".repeat(4_000) }),
+        // Keep critic streaming long enough to queue a follow-up, but not so long that
+        // overloaded CI workers time out waiting for the stream to finish.
+        respond: () => ({ assistantText: "Critic feedback ".repeat(600) }),
       },
       {
         match: (request) => request.isCriticTurn !== true,
