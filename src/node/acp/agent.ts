@@ -353,12 +353,21 @@ export class MuxAgent implements Agent {
     }
 
     // `connectedPromise` resolves once `onChat` returns the async iterable,
-    // signalling the subscription is live.  The long-running consumption loop
-    // continues in the background via `subscription`.
-    const { promise: connectedPromise, resolve: onConnected } = Promise.withResolvers<void>();
+    // signalling the subscription is live.  If `onChat` fails before the
+    // stream is established, the promise is rejected so callers get a proper
+    // error instead of hanging indefinitely.
+    const {
+      promise: connectedPromise,
+      resolve: onConnected,
+      reject: onConnectFailed,
+    } = Promise.withResolvers<void>();
 
     const subscription = this.runChatSubscription(sessionId, workspaceId, onConnected)
       .catch((error) => {
+        // Reject the connected promise in case it hasn't been settled yet
+        // (e.g., `onChat` itself threw before calling `onConnected`).
+        onConnectFailed(error);
+
         if (this.connection.signal.aborted) {
           return;
         }
