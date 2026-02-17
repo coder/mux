@@ -156,7 +156,13 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
         wrapper?.removeAttribute("inert");
       }
     };
-  }, [isReviewImmersive, workspaceState?.loading, props.projectName, props.workspaceName]);
+  }, [
+    isReviewImmersive,
+    props.workspaceId,
+    workspaceState?.loading,
+    props.projectName,
+    props.workspaceName,
+  ]);
 
   const backgroundBashError = useBackgroundBashError();
 
