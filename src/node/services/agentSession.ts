@@ -513,7 +513,12 @@ export class AgentSession {
           // Stream cursor is advisory: only apply it when the same stream is still active.
           // If the stream ended or rotated while offline, keep since-mode history replay
           // and skip stream filtering by leaving afterTimestamp undefined.
-          afterTimestamp = streamCursor.lastTimestamp;
+          const streamLastTimestamp = this.getStreamLastTimestamp(streamInfo);
+
+          // Reconnect cursors can be ahead of server stream timestamps (e.g. replay events
+          // stamped on the client clock). Clamp to server state so we never skip unseen
+          // buffered deltas/tool completions on the next reconnect.
+          afterTimestamp = Math.min(streamCursor.lastTimestamp, streamLastTimestamp);
         }
 
         // Since replay safety is anchored by a valid persisted-history cursor.

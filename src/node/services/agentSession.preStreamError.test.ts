@@ -258,6 +258,69 @@ describe("AgentSession pre-stream errors", () => {
     expect(replayedMessageIds).toEqual([firstPersisted.id, secondPersisted.id]);
   });
 
+  it("clamps since stream cursor timestamp to current server stream timeline", async () => {
+    const workspaceId = "ws-replay-since-clamp-stream-cursor";
+    const { session, cleanup, replayStream, historyService } = await createReplaySessionHarness(
+      workspaceId,
+      {
+        streamInfo: {
+          messageId: "msg-live-clamp",
+          startTime: 1_000,
+          parts: [{ timestamp: 100 }],
+          toolCompletionTimestamps: new Map(),
+        },
+      }
+    );
+    historyCleanup = cleanup;
+
+    const seedMessage = createMuxMessage("msg-history-seed", "assistant", "seed");
+    expect((await historyService.appendToHistory(workspaceId, seedMessage)).success).toBe(true);
+
+    const historyResult = await historyService.getHistoryFromLatestBoundary(workspaceId);
+    if (!historyResult.success) {
+      throw new Error(`Failed to read seeded history: ${historyResult.error}`);
+    }
+
+    const persistedSeed = historyResult.data.find((message) => message.id === seedMessage.id);
+    if (!persistedSeed) {
+      throw new Error("Expected seeded history message");
+    }
+
+    const seedHistorySequence = persistedSeed.metadata?.historySequence;
+    if (seedHistorySequence === undefined) {
+      throw new Error("Expected seeded history message to include historySequence");
+    }
+
+    const events: WorkspaceChatMessage[] = [];
+    await session.replayHistory(
+      ({ message }) => {
+        events.push(message);
+      },
+      {
+        type: "since",
+        cursor: {
+          history: {
+            messageId: persistedSeed.id,
+            historySequence: seedHistorySequence,
+            oldestHistorySequence: seedHistorySequence,
+          },
+          stream: {
+            messageId: "msg-live-clamp",
+            lastTimestamp: 9_999,
+          },
+        },
+      }
+    );
+
+    expect(replayStream).toHaveBeenCalledWith(workspaceId, { afterTimestamp: 100 });
+
+    const caughtUp = events.find(
+      (event): event is Extract<WorkspaceChatMessage, { type: "caught-up" }> =>
+        "type" in event && event.type === "caught-up"
+    );
+    expect(caughtUp?.replay).toBe("since");
+  });
+
   it("falls back to full replay when history below since cursor changed", async () => {
     const workspaceId = "ws-replay-since-history-changed-below-cursor";
     const { session, cleanup, historyService } = await createReplaySessionHarness(workspaceId);
