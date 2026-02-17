@@ -156,6 +156,8 @@ export const APIProvider = (props: APIProviderProps) => {
   const consecutivePingFailuresRef = useRef(0);
   const connectionIdRef = useRef(0);
   const forceReconnectInProgressRef = useRef(false);
+  const livenessPingsInFlightCountRef = useRef(0);
+  const lastInboundBrowserFrameAtRef = useRef(0);
 
   // When we decide the user needs to provide a token, stop the reconnect loop.
   //
@@ -173,6 +175,10 @@ export const APIProvider = (props: APIProviderProps) => {
   const connect = useCallback(
     (token: string | null) => {
       const connectionId = ++connectionIdRef.current;
+      // Reset per-connection inbound traffic tracking so stale timestamps from a prior
+      // socket cannot suppress liveness pings on the next connection.
+      lastInboundBrowserFrameAtRef.current = 0;
+      livenessPingsInFlightCountRef.current = 0;
 
       authRequiredRef.current = false;
 
@@ -203,6 +209,22 @@ export const APIProvider = (props: APIProviderProps) => {
 
       setState({ status: "connecting" });
       const { client, cleanup, ws } = createBrowserClient(token, wsFactory);
+      ws.addEventListener("message", () => {
+        // User rationale: during large catch-up streams, ORPC ping responses can be delayed
+        // behind data frames. Treat inbound non-probe traffic as proof of liveness to avoid
+        // unnecessary reconnect loops for healthy-but-busy connections.
+        if (connectionId !== connectionIdRef.current) {
+          return;
+        }
+
+        // Exclude delayed responses for in-flight liveness probes so probe replies
+        // do not mask repeated timeout failures.
+        if (livenessPingsInFlightCountRef.current > 0) {
+          return;
+        }
+
+        lastInboundBrowserFrameAtRef.current = Date.now();
+      });
 
       ws.addEventListener("open", () => {
         // Ignore stale connections (can happen if we force reconnect while the old socket is mid-flight).
@@ -431,10 +453,51 @@ export const APIProvider = (props: APIProviderProps) => {
     const client = state.client;
     const cleanup = state.cleanup;
 
+    const markConnectionHealthy = () => {
+      consecutivePingFailuresRef.current = 0;
+      forceReconnectInProgressRef.current = false;
+      if (state.status === "degraded") {
+        setState({ status: "connected", client, cleanup });
+      }
+    };
+
     const checkLiveness = async () => {
+      const timeSinceLastInboundFrameMs = Date.now() - lastInboundBrowserFrameAtRef.current;
+      const hasRecentInboundTraffic =
+        lastInboundBrowserFrameAtRef.current > 0 &&
+        timeSinceLastInboundFrameMs >= 0 &&
+        timeSinceLastInboundFrameMs <= LIVENESS_TIMEOUT_MS;
+
+      if (hasRecentInboundTraffic) {
+        // User rationale: if we're still receiving stream frames, the connection is alive
+        // even when application-level ping responses are delayed behind backlog.
+        markConnectionHealthy();
+        return;
+      }
+
       try {
         // Race ping against timeout
+        const livenessPingConnectionId = connectionIdRef.current;
         const pingPromise = client.general.ping("liveness");
+        livenessPingsInFlightCountRef.current += 1;
+        const finalizeLivenessProbe = () => {
+          // Ignore stale probes from an older socket after reconnect.
+          if (livenessPingConnectionId !== connectionIdRef.current) {
+            return;
+          }
+
+          // Multiple probes can overlap when a ping exceeds LIVENESS_INTERVAL_MS.
+          // Track count instead of boolean so one delayed probe cannot clear
+          // in-flight state for a newer still-pending probe.
+          livenessPingsInFlightCountRef.current = Math.max(
+            0,
+            livenessPingsInFlightCountRef.current - 1
+          );
+        };
+
+        // Handle both resolve/reject explicitly to avoid an unhandled rejection chain.
+        void pingPromise.then(finalizeLivenessProbe, finalizeLivenessProbe);
+
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("Ping timeout")), LIVENESS_TIMEOUT_MS)
         );
@@ -442,11 +505,7 @@ export const APIProvider = (props: APIProviderProps) => {
         await Promise.race([pingPromise, timeoutPromise]);
 
         // Ping succeeded - reset failure count and restore connected state if degraded
-        consecutivePingFailuresRef.current = 0;
-        forceReconnectInProgressRef.current = false;
-        if (state.status === "degraded") {
-          setState({ status: "connected", client, cleanup });
-        }
+        markConnectionHealthy();
       } catch {
         // Ping failed
         consecutivePingFailuresRef.current++;
