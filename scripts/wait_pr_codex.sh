@@ -109,23 +109,11 @@ if [[ "$LOCAL_HASH" != "$REMOTE_HASH" ]]; then
 fi
 
 # shellcheck disable=SC2016 # Single quotes are intentional - these are GraphQL queries.
-PR_STATE_QUERY='query($owner: String!, $repo: String!, $pr: Int!) {
+GRAPHQL_QUERY='query($owner: String!, $repo: String!, $pr: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $pr) {
       state
-    }
-  }
-}'
-
-# shellcheck disable=SC2016 # Single quotes are intentional - these are GraphQL queries.
-COMMENTS_QUERY='query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
-  repository(owner: $owner, name: $repo) {
-    pullRequest(number: $pr) {
-      comments(first: 100, after: $cursor) {
-        pageInfo {
-          hasNextPage
-          endCursor
-        }
+      comments(last: 100) {
         nodes {
           id
           author { login }
@@ -134,19 +122,7 @@ COMMENTS_QUERY='query($owner: String!, $repo: String!, $pr: Int!, $cursor: Strin
           isMinimized
         }
       }
-    }
-  }
-}'
-
-# shellcheck disable=SC2016 # Single quotes are intentional - these are GraphQL queries.
-THREADS_QUERY='query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
-  repository(owner: $owner, name: $repo) {
-    pullRequest(number: $pr) {
-      reviewThreads(first: 100, after: $cursor) {
-        pageInfo {
-          hasNextPage
-          endCursor
-        }
+      reviewThreads(last: 100) {
         nodes {
           id
           isResolved
@@ -175,21 +151,17 @@ REPO=$(echo "$REPO_INFO" | jq -r '.name')
 MAX_ATTEMPTS=5
 BACKOFF_SECS=2
 
-FETCH_GRAPHQL_WITH_RETRY() {
-  local query="$1"
-  shift
-
+FETCH_PR_DATA() {
   local attempt
   local backoff
   backoff="$BACKOFF_SECS"
 
   for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
     if gh api graphql \
-      -f query="$query" \
+      -f query="$GRAPHQL_QUERY" \
       -F owner="$OWNER" \
       -F repo="$REPO" \
-      -F pr="$PR_NUMBER" \
-      "$@"; then
+      -F pr="$PR_NUMBER"; then
       return 0
     fi
 
@@ -204,88 +176,10 @@ FETCH_GRAPHQL_WITH_RETRY() {
   done
 }
 
-FETCH_PR_STATE() {
-  FETCH_GRAPHQL_WITH_RETRY "$PR_STATE_QUERY"
-}
-
-FETCH_ALL_COMMENTS() {
-  local comments_cursor=""
-  local all_comments='[]'
-  local result
-  local page_comments
-  local has_next
-
-  while true; do
-    if [ -n "$comments_cursor" ]; then
-      result=$(FETCH_GRAPHQL_WITH_RETRY "$COMMENTS_QUERY" -F cursor="$comments_cursor")
-    else
-      result=$(FETCH_GRAPHQL_WITH_RETRY "$COMMENTS_QUERY")
-    fi
-
-    if [ "$(echo "$result" | jq -r '.data.repository.pullRequest == null')" = "true" ]; then
-      echo "❌ PR #${PR_NUMBER} does not exist in ${OWNER}/${REPO}." >&2
-      return 1
-    fi
-
-    page_comments=$(echo "$result" | jq '.data.repository.pullRequest.comments.nodes')
-    all_comments=$(jq -cn --argjson all "$all_comments" --argjson page "$page_comments" '$all + $page')
-
-    has_next=$(echo "$result" | jq -r '.data.repository.pullRequest.comments.pageInfo.hasNextPage')
-    if [ "$has_next" != "true" ]; then
-      break
-    fi
-
-    comments_cursor=$(echo "$result" | jq -r '.data.repository.pullRequest.comments.pageInfo.endCursor')
-    if [ -z "$comments_cursor" ] || [ "$comments_cursor" = "null" ]; then
-      echo "❌ Assertion failed: comments pagination cursor missing while hasNextPage=true" >&2
-      return 1
-    fi
-  done
-
-  echo "$all_comments"
-}
-
-FETCH_ALL_THREADS() {
-  local threads_cursor=""
-  local all_threads='[]'
-  local result
-  local page_threads
-  local has_next
-
-  while true; do
-    if [ -n "$threads_cursor" ]; then
-      result=$(FETCH_GRAPHQL_WITH_RETRY "$THREADS_QUERY" -F cursor="$threads_cursor")
-    else
-      result=$(FETCH_GRAPHQL_WITH_RETRY "$THREADS_QUERY")
-    fi
-
-    if [ "$(echo "$result" | jq -r '.data.repository.pullRequest == null')" = "true" ]; then
-      echo "❌ PR #${PR_NUMBER} does not exist in ${OWNER}/${REPO}." >&2
-      return 1
-    fi
-
-    page_threads=$(echo "$result" | jq '.data.repository.pullRequest.reviewThreads.nodes')
-    all_threads=$(jq -cn --argjson all "$all_threads" --argjson page "$page_threads" '$all + $page')
-
-    has_next=$(echo "$result" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')
-    if [ "$has_next" != "true" ]; then
-      break
-    fi
-
-    threads_cursor=$(echo "$result" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor')
-    if [ -z "$threads_cursor" ] || [ "$threads_cursor" = "null" ]; then
-      echo "❌ Assertion failed: review thread pagination cursor missing while hasNextPage=true" >&2
-      return 1
-    fi
-  done
-
-  echo "$all_threads"
-}
-
 LAST_REQUEST_AT=""
 
 CHECK_CODEX_STATUS_ONCE() {
-  local pr_state_result
+  local pr_data
   local pr_state
   local all_comments
   local all_threads
@@ -297,8 +191,14 @@ CHECK_CODEX_STATUS_ONCE() {
   local codex_response_count
   local check_output
 
-  pr_state_result=$(FETCH_PR_STATE)
-  pr_state=$(echo "$pr_state_result" | jq -r '.data.repository.pullRequest.state // empty')
+  pr_data=$(FETCH_PR_DATA)
+
+  if [ "$(echo "$pr_data" | jq -r '.data.repository.pullRequest == null')" = "true" ]; then
+    echo "❌ PR #${PR_NUMBER} does not exist in ${OWNER}/${REPO}." >&2
+    return 1
+  fi
+
+  pr_state=$(echo "$pr_data" | jq -r '.data.repository.pullRequest.state // empty')
 
   if [[ -z "$pr_state" ]]; then
     echo "❌ Unable to fetch PR state for #$PR_NUMBER in ${OWNER}/${REPO}." >&2
@@ -321,8 +221,8 @@ CHECK_CODEX_STATUS_ONCE() {
       ;;
   esac
 
-  all_comments=$(FETCH_ALL_COMMENTS)
-  all_threads=$(FETCH_ALL_THREADS)
+  all_comments=$(echo "$pr_data" | jq '.data.repository.pullRequest.comments.nodes')
+  all_threads=$(echo "$pr_data" | jq '.data.repository.pullRequest.reviewThreads.nodes')
 
   # Ignore Codex's own comments since they mention "@codex review" in boilerplate.
   request_at=$(echo "$all_comments" | jq -r --arg bot "$BOT_LOGIN_GRAPHQL" '[.[] | select(.author.login != $bot and (.body | contains("@codex review")))] | sort_by(.createdAt) | last | .createdAt // empty')
