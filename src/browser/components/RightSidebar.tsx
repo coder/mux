@@ -693,8 +693,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   );
 
   const hasReviewPanelMounted = React.useMemo(
-    () => hasMountedReviewPanel(layout.root),
-    [layout.root]
+    () => !collapsed && hasMountedReviewPanel(layout.root),
+    [collapsed, layout.root]
   );
 
   // If immersive mode is active but no ReviewPanel is mounted (e.g., user switched tabs),
