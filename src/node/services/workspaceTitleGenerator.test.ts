@@ -10,25 +10,37 @@ import {
 } from "./workspaceTitleGenerator";
 
 describe("buildWorkspaceIdentityPrompt", () => {
-  test("includes long-term title guidance and formatted conversation turns", () => {
+  test("includes long-term guidance, recent-turn context, and latest-user precedence", () => {
     const prompt = buildWorkspaceIdentityPrompt(
       "Refactor workspace title generation",
-      "Turn 1 (User):\nOutline the plan\n\nTurn 2 (Assistant):\nImplement incrementally"
+      "Turn 1 (User):\nOutline the plan\n\nTurn 2 (Assistant):\nImplement incrementally",
+      "Please prioritize reliability work"
     );
 
-    expect(prompt).toContain("Conversation turns (oldest to newest; recent user/assistant turns):");
+    expect(prompt).toContain(
+      "Conversation turns (first user message + latest turns, oldest to newest):"
+    );
     expect(prompt).toContain("Turn 1 (User):");
     expect(prompt).toContain('Primary user objective: "Refactor workspace title generation"');
+    expect(prompt).toContain(
+      'Most recent user message (highest priority when it conflicts with older context): "Please prioritize reliability work"'
+    );
     expect(prompt).toContain("Fit the long-term, overall purpose of the chat");
+    expect(prompt).toContain("If older context conflicts, prioritize the most recent user message");
   });
 
-  test("omits conversation block when no context is provided", () => {
-    const prompt = buildWorkspaceIdentityPrompt("Fix flaky tests");
+  test("omits conversation-specific sections when no conversation block is provided", () => {
+    const prompt = buildWorkspaceIdentityPrompt(
+      "Fix flaky tests",
+      undefined,
+      "Most recent instruction that should be ignored without context"
+    );
 
     expect(prompt).toContain('Primary user objective: "Fix flaky tests"');
     expect(prompt).not.toContain(
-      "Conversation turns (oldest to newest; recent user/assistant turns):"
+      "Conversation turns (first user message + latest turns, oldest to newest):"
     );
+    expect(prompt).not.toContain("Most recent user message (highest priority when it conflicts");
   });
 });
 

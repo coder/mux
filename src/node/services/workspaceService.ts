@@ -148,11 +148,16 @@ function appendCollisionSuffix(baseName: string): string {
   return `${baseName}-${suffix}`;
 }
 
-const MAX_REGENERATE_TITLE_CONTEXT_TURNS = 10;
+const MAX_REGENERATE_TITLE_RECENT_TURNS = 3;
 
 interface WorkspaceTitleContextTurn {
   role: "user" | "assistant";
   text: string;
+}
+
+interface WorkspaceTitleConversationContext {
+  conversationContext: string | undefined;
+  latestUserText: string | undefined;
 }
 
 function extractMuxMessageText(message: MuxMessage): string {
@@ -193,6 +198,50 @@ function formatWorkspaceTitleContextTurns(turns: readonly WorkspaceTitleContextT
         `Turn ${index + 1} (${turn.role === "user" ? "User" : "Assistant"}):\n${turn.text}`
     )
     .join("\n\n");
+}
+
+function buildWorkspaceTitleConversationContext(
+  turns: readonly WorkspaceTitleContextTurn[]
+): WorkspaceTitleConversationContext {
+  const firstUserIndex = turns.findIndex((turn) => turn.role === "user");
+
+  let latestUserText: string | undefined;
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (turns[i].role === "user") {
+      latestUserText = turns[i].text;
+      break;
+    }
+  }
+
+  const selectedIndexes = new Set<number>();
+  if (firstUserIndex >= 0) {
+    selectedIndexes.add(firstUserIndex);
+  }
+  const recentStartIndex = Math.max(0, turns.length - MAX_REGENERATE_TITLE_RECENT_TURNS);
+  for (let i = recentStartIndex; i < turns.length; i++) {
+    selectedIndexes.add(i);
+  }
+
+  const selectedTurns = [...selectedIndexes].sort((a, b) => a - b).map((index) => turns[index]);
+  const omittedTurns = turns.length - selectedTurns.length;
+
+  // If there is only the first user message, avoid adding a redundant conversation block.
+  if (selectedTurns.length <= 1 && omittedTurns === 0) {
+    return { conversationContext: undefined, latestUserText };
+  }
+
+  const formattedTurns = formatWorkspaceTitleContextTurns(selectedTurns);
+  const omissionSummary =
+    omittedTurns > 0
+      ? `Note: ${omittedTurns} earlier conversation turn${omittedTurns === 1 ? "" : "s"} omitted for brevity.`
+      : undefined;
+
+  return {
+    conversationContext: omissionSummary
+      ? `${omissionSummary}\n\n${formattedTurns}`
+      : formattedTurns,
+    latestUserText,
+  };
 }
 
 /**
@@ -2104,8 +2153,8 @@ export class WorkspaceService extends EventEmitter {
 
   /**
    * Regenerate the workspace title from chat history using AI.
-   * Uses the first user message as the durable objective and the latest turns as context,
-   * then calls generateWorkspaceIdentity and persists the result via updateTitle.
+   * Uses the first user message as the durable objective, plus a context block with
+   * that first user message and the latest turns, then persists the generated title.
    */
   async regenerateTitle(workspaceId: string): Promise<Result<{ title: string }>> {
     const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
@@ -2146,8 +2195,8 @@ export class WorkspaceService extends EventEmitter {
       return Err("No user messages in workspace history");
     }
 
-    const recentContextTurns = contextTurns.slice(-MAX_REGENERATE_TITLE_CONTEXT_TURNS);
-    const conversationContext = formatWorkspaceTitleContextTurns(recentContextTurns);
+    const { conversationContext, latestUserText } =
+      buildWorkspaceTitleConversationContext(contextTurns);
 
     const candidates: string[] = [...NAME_GEN_PREFERRED_MODELS];
     const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
@@ -2169,7 +2218,8 @@ export class WorkspaceService extends EventEmitter {
       firstUserText,
       candidates,
       this.aiService,
-      conversationContext
+      conversationContext,
+      latestUserText
     );
     if (!result.success) {
       return Err("Title generation failed");
