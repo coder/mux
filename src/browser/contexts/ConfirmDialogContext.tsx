@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useRef, useState, useCallback } from "react";
 import { ConfirmationModal } from "@/browser/components/ConfirmationModal";
-import type { ButtonProps } from "@/browser/components/ui/button";
+
+type ConfirmVariant = "default" | "destructive" | "secondary" | "outline" | "ghost" | "link";
 
 export interface ConfirmDialogOptions {
   title: string;
@@ -9,7 +10,7 @@ export interface ConfirmDialogOptions {
   warning?: string;
   confirmLabel?: string;
   cancelLabel?: string;
-  confirmVariant?: ButtonProps["variant"];
+  confirmVariant?: ConfirmVariant;
 }
 
 interface ConfirmDialogContextValue {
@@ -57,28 +58,22 @@ export function ConfirmDialogProvider(props: { children: React.ReactNode }) {
     setDialogState(null);
   }, []);
 
-  const modalProps:
-    | (React.ComponentProps<typeof ConfirmationModal> & {
-        confirmVariant?: ButtonProps["variant"];
-      })
-    | null = dialogState
-    ? {
-        isOpen: dialogState.isOpen,
-        title: dialogState.title,
-        description: dialogState.description,
-        warning: dialogState.warning,
-        confirmLabel: dialogState.confirmLabel,
-        cancelLabel: dialogState.cancelLabel,
-        confirmVariant: dialogState.confirmVariant,
-        onConfirm: handleConfirm,
-        onCancel: handleCancel,
-      }
-    : null;
-
   return (
     <ConfirmDialogContext.Provider value={{ confirm }}>
       {props.children}
-      {modalProps && <ConfirmationModal {...modalProps} />}
+      {dialogState && (
+        <ConfirmationModal
+          isOpen={dialogState.isOpen}
+          title={dialogState.title}
+          description={dialogState.description}
+          warning={dialogState.warning}
+          confirmLabel={dialogState.confirmLabel}
+          cancelLabel={dialogState.cancelLabel}
+          confirmVariant={dialogState.confirmVariant}
+          onConfirm={handleConfirm}
+          onCancel={handleCancel}
+        />
+      )}
     </ConfirmDialogContext.Provider>
   );
 }
