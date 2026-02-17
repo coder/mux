@@ -637,7 +637,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           />
         )}
         {/* Status dot with solid background ring so line goes behind it */}
-        <div className="absolute z-10 flex shrink-0 items-start" style={{ left: `${paddingLeft}px`, top: '8px' }}>
+        <div className="absolute z-10 flex shrink-0 items-start" style={{ left: `${paddingLeft}px`, top: '12px' }}>
           <span className="inline-flex items-center justify-center rounded-full bg-sidebar" style={{ padding: '2px' }}>
             <span className={cn(
               "inline-block h-2.5 w-2.5 rounded-full shrink-0 border",

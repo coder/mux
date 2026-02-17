@@ -3,6 +3,7 @@ import { cn } from "@/common/lib/utils";
 import { ChevronRight, Pencil, Trash2, Palette } from "lucide-react";
 import type { SectionConfig } from "@/common/types/project";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "./ui/context-menu";
 import { resolveSectionColor, SECTION_COLOR_PALETTE } from "@/common/constants/ui";
 import { HexColorPicker } from "react-colorful";
 
@@ -71,6 +72,8 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
   }, [sectionColor]);
 
   return (
+    <ContextMenu>
+    <ContextMenuTrigger asChild>
     <div
       className="group relative flex items-center gap-1 border-t border-white/5 px-2 py-1.5"
       style={{
@@ -88,7 +91,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
         aria-expanded={isExpanded}
       >
         <ChevronRight
-          size={12}
+          size={16}
           className="transition-transform duration-200"
           style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
         />
@@ -232,5 +235,14 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
         </Tooltip>
       </div>
     </div>
+    </ContextMenuTrigger>
+    <ContextMenuContent className="w-56">
+      <ContextMenuItem onSelect={() => onAddWorkspace?.()}>New workspace</ContextMenuItem>
+      <ContextMenuItem onSelect={() => setShowColorPicker(true)}>Change section color</ContextMenuItem>
+      <ContextMenuItem onSelect={() => setIsEditing(true)}>Rename section</ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem className="text-danger focus:text-danger" onSelect={() => onDelete?.({} as React.MouseEvent<HTMLButtonElement>)}><Trash2 className="mr-2 h-3.5 w-3.5" />Delete...</ContextMenuItem>
+    </ContextMenuContent>
+    </ContextMenu>
   );
 };

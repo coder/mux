@@ -49,7 +49,8 @@ import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem"
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
-import { ChevronRight, MessageCircle, KeyRound, PanelLeftClose, PanelLeftOpen, Plus } from "lucide-react";
+import { ChevronRight, MessageCircle, KeyRound, PanelLeftClose, PanelLeftOpen, Plus, Trash2 } from "lucide-react";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "./ui/context-menu";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
 import { useRouter } from "@/browser/contexts/RouterContext";
@@ -57,7 +58,6 @@ import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "./PopoverError";
 import { SectionHeader } from "./SectionHeader";
 import { resolveSectionColor } from "@/common/constants/ui";
-import { AddSectionButton } from "./AddSectionButton";
 import { Button } from "@/browser/components/ui/button";
 import { SettingsButton } from "./SettingsButton";
 import { WorkspaceSectionDropZone } from "./WorkspaceSectionDropZone";
@@ -301,7 +301,7 @@ const ProjectDragLayer: React.FC = () => {
       <div style={{ transform: `translate(${currentOffset.x + 10}px, ${currentOffset.y + 10}px)` }}>
         <div className={cn(PROJECT_ITEM_BASE_CLASS, "w-fit max-w-64 rounded-sm shadow-lg")}>
           <span className="text-secondary mr-2 flex h-5 w-5 shrink-0 items-center justify-center">
-            <ChevronRight size={12} />
+            <ChevronRight size={16} />
           </span>
           <div className="flex min-w-0 flex-1 items-center pr-2">
             <span className="text-foreground truncate text-sm font-semibold">{basename}</span>
@@ -828,6 +828,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
                     return (
                       <div key={projectPath} className="border-hover border-b">
+                        <ContextMenu>
+                        <ContextMenuTrigger asChild>
                         <DraggableProjectItem
                           projectPath={projectPath}
                           onReorder={handleReorder}
@@ -860,7 +862,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             className="text-secondary hover:bg-hover hover:border-border-light mr-1.5 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200"
                           >
                             <ChevronRight
-                              size={12}
+                              size={16}
                               className="transition-transform duration-200"
                               style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
                             />
@@ -946,6 +948,15 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             </TooltipContent>
                           </Tooltip>
                         </DraggableProjectItem>
+                        </ContextMenuTrigger>
+                        <ContextMenuContent className="w-52">
+                          <ContextMenuItem onSelect={() => handleAddWorkspace(projectPath)}>New workspace</ContextMenuItem>
+                          <ContextMenuItem onSelect={() => handleCreateSection(projectPath, "New section")}>Add section</ContextMenuItem>
+                          <ContextMenuItem onSelect={() => handleOpenSecrets(projectPath)}>Manage secrets</ContextMenuItem>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem className="text-danger focus:text-danger" onSelect={() => onRemoveProject(projectPath)}><Trash2 className="mr-2 h-3.5 w-3.5" />Delete...</ContextMenuItem>
+                        </ContextMenuContent>
+                        </ContextMenu>
 
                         {isExpanded && (
                           <div
@@ -1180,7 +1191,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                               : "rotate(0deg)",
                                           }}
                                         >
-                                          <ChevronRight size={12} />
+                                          <ChevronRight size={16} />
                                         </span>
                                       </button>
                                       {isTierExpanded && (
@@ -1349,10 +1360,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                           unsectioned,
                                           getTierKey(projectPath, 0).replace(":0", "")
                                         )
-                                      ) : unsectionedDrafts.length === 0 ? (
-                                        <div className="text-muted px-3 py-2 text-center text-xs italic">
-                                          No unsectioned workspaces
-                                        </div>
                                       ) : null}
                                     </WorkspaceSectionDropZone>
                                   ) : (
@@ -1369,12 +1376,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   {/* Sections */}
                                   {sections.map(renderSection)}
 
-                                  {/* Add Section button */}
-                                  <AddSectionButton
-                                    onCreateSection={(name) => {
-                                      void handleCreateSection(projectPath, name);
-                                    }}
-                                  />
+                                  
                                 </>
                               );
                             })()}

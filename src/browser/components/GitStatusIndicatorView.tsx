@@ -104,7 +104,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   if (!gitStatus) {
     return (
       <span
-        className="text-accent relative flex items-center gap-1 font-mono text-[11px]"
+        className="text-accent relative flex items-center gap-1 font-mono text-xs"
         aria-hidden="true"
       />
     );
@@ -122,7 +122,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   if (isEmpty) {
     return (
       <span
-        className="text-accent relative flex items-center gap-1 font-mono text-[11px]"
+        className="text-accent relative flex items-center gap-1 font-mono text-xs"
         aria-hidden="true"
       />
     );
@@ -184,7 +184,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
           {displayFiles.map((line, index) => (
             <div
               key={index}
-              className="text-foreground font-mono text-[11px] leading-snug whitespace-pre"
+              className="text-foreground font-mono text-xs leading-snug whitespace-pre"
             >
               {line}
             </div>
@@ -277,7 +277,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
           <span className="text-muted-light">Overview:</span>
           {outgoingHasDelta ? (
             <span className="flex items-center gap-2">
@@ -362,7 +362,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
       <HoverCardTrigger asChild>
         <span
           className={cn(
-            "relative flex items-center gap-1 font-mono text-[11px] transition-colors",
+            "relative flex items-center gap-1 font-mono text-xs transition-colors",
             statusColor,
             isRefreshing && "animate-pulse"
           )}
@@ -375,7 +375,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
         align={tooltipPosition === "right" ? "center" : "start"}
         sideOffset={26}
         collisionPadding={8}
-        className="bg-modal-bg text-foreground border-separator-light z-[10000] max-h-[400px] w-auto max-w-96 min-w-0 overflow-auto px-3 py-2 font-mono text-[11px] whitespace-pre shadow-[0_4px_12px_rgba(0,0,0,0.5)]"
+        className="bg-modal-bg text-foreground border-separator-light z-[10000] max-h-[400px] w-auto max-w-96 min-w-0 overflow-auto px-3 py-2 font-mono text-xs whitespace-pre shadow-[0_4px_12px_rgba(0,0,0,0.5)]"
         onPointerDownOutside={preventHoverCardDismissForRadixPortals}
         onFocusOutside={preventHoverCardDismissForRadixPortals}
       >
