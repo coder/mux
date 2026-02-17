@@ -334,6 +334,11 @@ cache_pr_data() {
 }
 
 LAST_REQUEST_AT=""
+# When reactions(last: 100) is incomplete, avoid paginating on every poll while Codex is
+# still pending. We do one full scan per @codex request (and at most every 5 minutes after).
+FULL_REACTIONS_SCAN_INTERVAL_SECS=300
+LAST_FULL_REACTIONS_SCAN_REQUEST_AT=""
+LAST_FULL_REACTIONS_SCAN_EPOCH=0
 
 CHECK_CODEX_STATUS_ONCE() {
   local pr_data
@@ -346,6 +351,8 @@ CHECK_CODEX_STATUS_ONCE() {
   local approval_reaction_at
   local reactions_has_previous
   local all_thumbs_up_reactions
+  local should_scan_full_reactions
+  local now_epoch
   local codex_response_count_comments
   local codex_response_count_threads
   local codex_response_count
@@ -433,22 +440,25 @@ CHECK_CODEX_STATUS_ONCE() {
     return 0
   fi
 
+  codex_response_count_comments=$(echo "$all_comments" | jq -r --arg bot "$BOT_LOGIN_GRAPHQL" --arg request_at "$request_at" '[.[] | select(.author.login == $bot and .createdAt > $request_at)] | length')
+  codex_response_count_threads=$(echo "$all_threads" | jq -r --arg bot "$BOT_LOGIN_GRAPHQL" --arg request_at "$request_at" '[.[] | select((.comments.nodes | length) > 0 and .comments.nodes[0].author.login == $bot and .comments.nodes[0].createdAt > $request_at)] | length')
+  codex_response_count=$((codex_response_count_comments + codex_response_count_threads))
+
   reactions_has_previous=$(echo "$pr_data" | jq -r '(.data.repository.pullRequest.reactions.pageInfo.hasPreviousPage | if . == null then "unknown" else tostring end)')
 
+  should_scan_full_reactions=0
   case "$reactions_has_previous" in
     false) ;;
     true)
-      # Codex may react early and later reactions can push that approval out of the
-      # most-recent 100 window. Paginate the full thumbs-up set before rejecting.
-      all_thumbs_up_reactions=$(FETCH_ALL_THUMBS_UP_REACTIONS) || return 1
-      approval_reaction_at=$(echo "$all_thumbs_up_reactions" | jq -r --arg bot "$BOT_LOGIN_GRAPHQL" --arg request_at "$request_at" '[.[] | select(.user.login == $bot and .createdAt > $request_at) | .createdAt] | sort | last // empty')
-
-      if [[ -n "$approval_reaction_at" ]]; then
-        echo ""
-        echo "✅ Codex approved PR #$PR_NUMBER via thumbs-up on the PR description"
-        echo ""
-        echo "Reaction timestamp: $approval_reaction_at"
-        return 0
+      if [ "$codex_response_count" -gt 0 ]; then
+        should_scan_full_reactions=1
+      else
+        # While waiting on Codex, avoid paginating the entire thumbs-up history every poll.
+        # Scan once per @codex request and then at a coarse interval.
+        now_epoch=$(date +%s)
+        if [[ "$LAST_FULL_REACTIONS_SCAN_REQUEST_AT" != "$request_at" ]] || ((now_epoch - LAST_FULL_REACTIONS_SCAN_EPOCH >= FULL_REACTIONS_SCAN_INTERVAL_SECS)); then
+          should_scan_full_reactions=1
+        fi
       fi
       ;;
     unknown)
@@ -461,9 +471,22 @@ CHECK_CODEX_STATUS_ONCE() {
       ;;
   esac
 
-  codex_response_count_comments=$(echo "$all_comments" | jq -r --arg bot "$BOT_LOGIN_GRAPHQL" --arg request_at "$request_at" '[.[] | select(.author.login == $bot and .createdAt > $request_at)] | length')
-  codex_response_count_threads=$(echo "$all_threads" | jq -r --arg bot "$BOT_LOGIN_GRAPHQL" --arg request_at "$request_at" '[.[] | select((.comments.nodes | length) > 0 and .comments.nodes[0].author.login == $bot and .comments.nodes[0].createdAt > $request_at)] | length')
-  codex_response_count=$((codex_response_count_comments + codex_response_count_threads))
+  if [ "$should_scan_full_reactions" -eq 1 ]; then
+    # Codex may react early and later reactions can push that approval out of the
+    # most-recent 100 window. Only paginate when needed to keep API churn bounded.
+    all_thumbs_up_reactions=$(FETCH_ALL_THUMBS_UP_REACTIONS) || return 1
+    LAST_FULL_REACTIONS_SCAN_REQUEST_AT="$request_at"
+    LAST_FULL_REACTIONS_SCAN_EPOCH=$(date +%s)
+    approval_reaction_at=$(echo "$all_thumbs_up_reactions" | jq -r --arg bot "$BOT_LOGIN_GRAPHQL" --arg request_at "$request_at" '[.[] | select(.user.login == $bot and .createdAt > $request_at) | .createdAt] | sort | last // empty')
+
+    if [[ -n "$approval_reaction_at" ]]; then
+      echo ""
+      echo "✅ Codex approved PR #$PR_NUMBER via thumbs-up on the PR description"
+      echo ""
+      echo "Reaction timestamp: $approval_reaction_at"
+      return 0
+    fi
+  fi
 
   if [ "$codex_response_count" -eq 0 ]; then
     return 10
