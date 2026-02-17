@@ -281,6 +281,61 @@ describe("useContextSwitchWarning", () => {
     expect(result.current.warning?.targetLimit).toBe(100_000);
   });
 
+  test("re-evaluates explicit switches when providers config updates non-null to non-null", async () => {
+    const previousModel = "anthropic:claude-sonnet-4-5";
+    const nextModel = "openai:custom-context-model";
+    const initialProvidersConfig = buildProvidersConfigWithCustomContext(
+      "openai",
+      "other-model",
+      200_000
+    );
+    const updatedProvidersConfig = buildProvidersConfigWithCustomContext(
+      "openai",
+      "custom-context-model",
+      90_000
+    );
+
+    const props = {
+      workspaceId: "workspace-custom-context-config-refresh",
+      messages: [buildAssistantMessage(previousModel)],
+      pendingModel: previousModel,
+      use1M: false,
+      workspaceUsage: buildUsage(95_000, previousModel),
+      api: undefined,
+      pendingSendOptions: buildSendOptions(previousModel),
+      providersConfig: initialProvidersConfig,
+    };
+
+    const { result, rerender } = renderHook(
+      (hookProps: typeof props) => useContextSwitchWarning(hookProps),
+      { initialProps: props, wrapper }
+    );
+
+    act(() => {
+      recordWorkspaceModelChange(props.workspaceId, nextModel, "user");
+      rerender({
+        ...props,
+        pendingModel: nextModel,
+        pendingSendOptions: buildSendOptions(nextModel),
+        providersConfig: initialProvidersConfig,
+      });
+    });
+
+    await waitFor(() => expect(result.current.warning).toBeNull());
+
+    act(() => {
+      rerender({
+        ...props,
+        pendingModel: nextModel,
+        pendingSendOptions: buildSendOptions(nextModel),
+        providersConfig: updatedProvidersConfig,
+      });
+    });
+
+    await waitFor(() => expect(result.current.warning?.targetModel).toBe(nextModel));
+    expect(result.current.warning?.targetLimit).toBe(90_000);
+  });
+
   test("does not re-show dismissed warnings when config arrives", async () => {
     const previousModel = "anthropic:claude-sonnet-4-5";
     const nextModel = "openai:gpt-5.2-codex";

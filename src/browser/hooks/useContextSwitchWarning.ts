@@ -338,10 +338,6 @@ export function useContextSwitchWarning(
       return;
     }
 
-    const gainedAccessData =
-      (prevCheckOptions.providersConfig === null && checkOptions.providersConfig !== null) ||
-      (prevCheckOptions.policy === null && checkOptions.policy !== null);
-
     if (warning) {
       // User request: keep explicit warnings tied to the model that triggered them.
       // If a background model change happens, skip refresh instead of re-warning.
@@ -365,12 +361,13 @@ export function useContextSwitchWarning(
       return;
     }
 
-    if (!gainedAccessData || tokens === 0) {
+    if (tokens === 0) {
       return;
     }
 
-    // Re-evaluate explicit switches that happened before provider/policy config loaded.
-    // Without this, custom-model overrides may arrive after we already concluded "no warning".
+    // Re-evaluate the most recent explicit switch whenever provider/policy access changes.
+    // This includes non-null -> non-null updates (e.g. custom model override added later)
+    // so we don't miss warnings after an earlier "no limit known" evaluation.
     if (lastEvaluatedTargetModelRef.current !== pendingModel) {
       return;
     }
