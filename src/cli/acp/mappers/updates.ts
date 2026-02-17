@@ -233,6 +233,12 @@ export function mapWorkspaceChatEventToAcp(
       return { kind: "ignore" };
     }
 
+    // Ignore stale usage events from a prior stream to avoid attributing
+    // wrong token counts to the current prompt during stream overlap.
+    if (state.activeMessageId != null && event.messageId !== state.activeMessageId) {
+      return { kind: "ignore" };
+    }
+
     const tokenCount = toUsageTokenCount(event.cumulativeUsage);
 
     return {
@@ -272,6 +278,14 @@ export function mapWorkspaceChatEventToAcp(
   }
 
   if (isStreamError(event)) {
+    // Only treat stream errors as fatal if they belong to the active message.
+    // During reconnect/interruption races, stale errors from a previous stream
+    // should be ignored rather than aborting the current prompt.
+    const match = ensureMessageId(state, event.messageId, event.type);
+    if (!match.ok) {
+      return { kind: "ignore" };
+    }
+
     return {
       kind: "error",
       error: new Error(event.error),

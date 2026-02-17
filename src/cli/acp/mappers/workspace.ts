@@ -225,9 +225,16 @@ export async function createWorkspaceBackedSession(
   const meta = parseMuxMeta(params._meta ?? undefined);
 
   const runtimeConfig: RuntimeConfig = meta.runtimeConfig ?? { type: "local" };
-  // Let the backend detect the default branch when trunkBranch is not specified,
-  // rather than assuming "main" — repositories may use "master" or other names.
+  // For non-local runtimes (worktree/ssh/etc.), the backend requires a trunk branch.
+  // Let the backend detect it for local runtimes when not specified, rather than
+  // assuming "main" — repositories may use "master" or other branch naming conventions.
   const trunkBranch = meta.trunkBranch;
+  if (runtimeConfig.type !== "local" && !trunkBranch) {
+    throw new Error(
+      `Trunk branch (_meta.mux.trunkBranch) is required for non-local runtimes (type: "${runtimeConfig.type}"). ` +
+        "Specify it in the session metadata or use a local runtime."
+    );
+  }
 
   const createResult = await client.workspace.create({
     projectPath,
