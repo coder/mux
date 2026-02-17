@@ -1,7 +1,9 @@
 const TRANSCRIPT_TEXT_BLOCK_SELECTOR =
   "p, li, blockquote, pre, code, td, th, h1, h2, h3, h4, h5, h6";
 
-const INTERACTIVE_SELECTOR = "button, [role='button'], input, textarea, select";
+// Preserve native link context-menu actions (open/copy link, etc.) by treating
+// anchors as interactive targets that should bypass transcript quote/copy actions.
+const INTERACTIVE_SELECTOR = "button, [role='button'], input, textarea, select, a[href]";
 
 function normalizeTranscriptText(rawText: string): string {
   return rawText

@@ -85,6 +85,37 @@ describe("transcriptContextMenu", () => {
     expect(result).toBe("Hovered transcript text");
   });
 
+  test("falls back to hovered transcript text when selection crosses transcript boundary", () => {
+    const transcriptRoot = createTranscriptRoot(
+      `<div data-message-content><p id="message">Hovered transcript text</p></div>`
+    );
+    const paragraph = transcriptRoot.querySelector("#message");
+    expect(paragraph).not.toBeNull();
+
+    const outsideParagraph = document.createElement("p");
+    outsideParagraph.textContent = "Outside selection";
+    document.body.appendChild(outsideParagraph);
+
+    const outsideTextNode = getFirstTextNode(outsideParagraph);
+    const insideTextNode = getFirstTextNode(paragraph);
+
+    const range = document.createRange();
+    range.setStart(outsideTextNode, 0);
+    range.setEnd(insideTextNode, "Hovered".length);
+
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const result = getTranscriptContextMenuText({
+      transcriptRoot,
+      target: paragraph,
+      selection,
+    });
+
+    expect(result).toBe("Hovered transcript text");
+  });
+
   test("returns null when target is outside message content", () => {
     const transcriptRoot = createTranscriptRoot(`<p id="outside-message">No message wrapper</p>`);
     const target = transcriptRoot.querySelector("#outside-message");
@@ -99,20 +130,28 @@ describe("transcriptContextMenu", () => {
     expect(result).toBeNull();
   });
 
-  test("returns null for interactive elements", () => {
+  test("returns null for interactive elements including links", () => {
     const transcriptRoot = createTranscriptRoot(
-      `<div data-message-content><button id="action">Open menu</button></div>`
+      `<div data-message-content><button id="action">Open menu</button><a id="message-link" href="https://example.com">Example</a></div>`
     );
     const button = transcriptRoot.querySelector("#action");
+    const link = transcriptRoot.querySelector("#message-link");
     expect(button).not.toBeNull();
+    expect(link).not.toBeNull();
 
-    const result = getTranscriptContextMenuText({
+    const buttonResult = getTranscriptContextMenuText({
       transcriptRoot,
       target: button,
       selection: null,
     });
+    const linkResult = getTranscriptContextMenuText({
+      transcriptRoot,
+      target: link,
+      selection: null,
+    });
 
-    expect(result).toBeNull();
+    expect(buttonResult).toBeNull();
+    expect(linkResult).toBeNull();
   });
 
   test("formats transcript text as markdown quote", () => {
