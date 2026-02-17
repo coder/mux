@@ -135,6 +135,10 @@ GRAPHQL_QUERY='query($owner: String!, $repo: String!, $pr: Int!) {
     pullRequest(number: $pr) {
       state
       comments(last: 100) {
+        pageInfo {
+          hasPreviousPage
+          hasNextPage
+        }
         nodes {
           id
           author { login }
