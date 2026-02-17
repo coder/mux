@@ -42,6 +42,9 @@ jobs:
   desktop-builds:
     name: Build and Release Desktop Apps
     needs: preflight
+    permissions:
+      contents: write # Upload release assets
+      id-token: write # GCP workload identity for Windows code signing
     uses: ./.github/workflows/_desktop-release.yml
     with:
       ref: ${{ inputs.tag || github.ref }}
