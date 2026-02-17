@@ -12,6 +12,7 @@ import {
   RIGHT_SIDEBAR_TAB_KEY,
 } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { disableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
 import { CommandIds } from "@/browser/utils/commandIds";
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
@@ -66,7 +67,7 @@ export interface BuildSourcesParams {
     workspaceId: string;
   }) => void;
   onRemoveWorkspace: (workspaceId: string) => Promise<{ success: boolean; error?: string }>;
-  onRenameWorkspace: (
+  onUpdateTitle: (
     workspaceId: string,
     newName: string
   ) => Promise<{ success: boolean; error?: string }>;
@@ -263,30 +264,52 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         },
       });
       list.push({
-        id: CommandIds.workspaceRename(),
-        title: "Rename Current Workspace…",
+        id: CommandIds.workspaceEditTitle(),
+        title: "Edit Current Workspace Title…",
         subtitle: workspaceDisplayName,
+        shortcutHint: formatKeybind(KEYBINDS.EDIT_WORKSPACE_TITLE),
         section: section.workspaces,
         run: () => undefined,
         prompt: {
-          title: "Rename Workspace",
+          title: "Edit Workspace Title",
           fields: [
             {
               type: "text",
-              name: "newName",
-              label: "New name",
-              placeholder: "Enter new workspace name",
-              // Use workspace metadata name (not path) for initial value
-              initialValue: p.workspaceMetadata.get(selected.workspaceId)?.name ?? "",
-              getInitialValue: () => p.workspaceMetadata.get(selected.workspaceId)?.name ?? "",
-              validate: (v) => (!v.trim() ? "Name is required" : null),
+              name: "newTitle",
+              label: "New title",
+              placeholder: "Enter new workspace title",
+              initialValue:
+                p.workspaceMetadata.get(selected.workspaceId)?.title ??
+                p.workspaceMetadata.get(selected.workspaceId)?.name ??
+                "",
+              getInitialValue: () => {
+                const current = p.workspaceMetadata.get(selected.workspaceId);
+                return current?.title ?? current?.name ?? "";
+              },
+              validate: (v) => (!v.trim() ? "Title is required" : null),
             },
           ],
           onSubmit: async (vals) => {
-            await p.onRenameWorkspace(selected.workspaceId, vals.newName.trim());
+            await p.onUpdateTitle(selected.workspaceId, vals.newTitle.trim());
           },
         },
       });
+      if (selected.workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID) {
+        list.push({
+          id: CommandIds.workspaceGenerateTitle(),
+          title: "Generate New Title for Current Workspace",
+          subtitle: workspaceDisplayName,
+          shortcutHint: formatKeybind(KEYBINDS.GENERATE_WORKSPACE_TITLE),
+          section: section.workspaces,
+          run: () => {
+            window.dispatchEvent(
+              createCustomEvent(CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED, {
+                workspaceId: selected.workspaceId,
+              })
+            );
+          },
+        });
+      }
     }
 
     if (p.workspaceMetadata.size > 0) {
@@ -328,12 +351,12 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         },
       });
       list.push({
-        id: CommandIds.workspaceRenameAny(),
-        title: "Rename Workspace…",
+        id: CommandIds.workspaceEditTitleAny(),
+        title: "Edit Workspace Title…",
         section: section.workspaces,
         run: () => undefined,
         prompt: {
-          title: "Rename Workspace",
+          title: "Edit Workspace Title",
           fields: [
             {
               type: "select",
@@ -358,20 +381,20 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
             },
             {
               type: "text",
-              name: "newName",
-              label: "New name",
-              placeholder: "Enter new workspace name",
+              name: "newTitle",
+              label: "New title",
+              placeholder: "Enter new workspace title",
               getInitialValue: (values) => {
                 const meta = Array.from(p.workspaceMetadata.values()).find(
                   (m) => m.id === values.workspaceId
                 );
-                return meta ? meta.name : "";
+                return meta?.title ?? meta?.name ?? "";
               },
-              validate: (v) => (!v.trim() ? "Name is required" : null),
+              validate: (v) => (!v.trim() ? "Title is required" : null),
             },
           ],
           onSubmit: async (vals) => {
-            await p.onRenameWorkspace(vals.workspaceId, vals.newName.trim());
+            await p.onUpdateTitle(vals.workspaceId, vals.newTitle.trim());
           },
         },
       });

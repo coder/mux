@@ -3,6 +3,9 @@ import { buildCoreSources } from "./sources";
 import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
+import { GlobalWindow } from "happy-dom";
+import { CUSTOM_EVENTS } from "@/common/constants/events";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { APIClient } from "@/browser/contexts/API";
 
 const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
@@ -44,7 +47,7 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
     onArchiveMergedWorkspacesInProject: () => Promise.resolve(),
     onSelectWorkspace: () => undefined,
     onRemoveWorkspace: () => Promise.resolve({ success: true }),
-    onRenameWorkspace: () => Promise.resolve({ success: true }),
+    onUpdateTitle: () => Promise.resolve({ success: true }),
     onAddProject: () => undefined,
     onRemoveProject: () => undefined,
     onToggleSidebar: () => undefined,
@@ -181,4 +184,54 @@ test("archive merged workspaces prompt submits selected project", async () => {
 
   expect(onArchiveMergedWorkspacesInProject).toHaveBeenCalledTimes(1);
   expect(onArchiveMergedWorkspacesInProject).toHaveBeenCalledWith("/repo/a");
+});
+
+test("workspace generate title command is hidden for Chat with Mux workspace", () => {
+  const sources = mk({
+    selectedWorkspace: {
+      projectPath: "/repo/a",
+      projectName: "a",
+      namedWorkspacePath: "/repo/a/mux-help",
+      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+    },
+  });
+  const actions = sources.flatMap((s) => s());
+
+  expect(actions.some((action) => action.id === "ws:generate-title")).toBe(false);
+});
+
+test("workspace generate title command dispatches a title-generation request event", async () => {
+  const testWindow = new GlobalWindow();
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalCustomEvent = globalThis.CustomEvent;
+
+  globalThis.window = testWindow as unknown as Window & typeof globalThis;
+  globalThis.document = testWindow.document as unknown as Document;
+  globalThis.CustomEvent = testWindow.CustomEvent as unknown as typeof CustomEvent;
+
+  const receivedWorkspaceIds: string[] = [];
+  const handleRequest = (event: Event) => {
+    const detail = (event as CustomEvent<{ workspaceId: string }>).detail;
+    receivedWorkspaceIds.push(detail.workspaceId);
+  };
+
+  window.addEventListener(CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED, handleRequest);
+
+  try {
+    const sources = mk();
+    const actions = sources.flatMap((s) => s());
+    const generateTitleAction = actions.find((a) => a.id === "ws:generate-title");
+
+    expect(generateTitleAction).toBeDefined();
+
+    await generateTitleAction!.run();
+
+    expect(receivedWorkspaceIds).toEqual(["w1"]);
+  } finally {
+    window.removeEventListener(CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED, handleRequest);
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.CustomEvent = originalCustomEvent;
+  }
 });

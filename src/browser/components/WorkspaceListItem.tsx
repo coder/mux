@@ -1,4 +1,4 @@
-import { useRename } from "@/browser/contexts/WorkspaceRenameContext";
+import { useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
@@ -16,7 +16,7 @@ import { WorkspaceHoverPreview } from "./WorkspaceHoverPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
-import { Pencil, Trash2, Ellipsis, Loader2, Link2 } from "lucide-react";
+import { Pencil, Trash2, Ellipsis, Loader2, Link2, Sparkles, GitBranch } from "lucide-react";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
@@ -24,6 +24,7 @@ import { WORKSPACE_DRAG_TYPE, type WorkspaceDragItem } from "./WorkspaceSectionD
 import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ShareTranscriptDialog } from "./ShareTranscriptDialog";
+import { useAPI } from "@/browser/contexts/API";
 
 const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
 
@@ -75,6 +76,7 @@ export interface WorkspaceListItemProps extends WorkspaceListItemBaseProps {
   /** Section ID this workspace belongs to (for drag-drop targeting) */
   sectionId?: string;
   onSelectWorkspace: (selection: WorkspaceSelection) => void;
+  onForkWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
   onArchiveWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
   onCancelCreation: (workspaceId: string) => Promise<void>;
 }
@@ -348,6 +350,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     depth,
     sectionId,
     onSelectWorkspace,
+    onForkWorkspace,
     onArchiveWorkspace,
     onCancelCreation,
   } = props;
@@ -362,8 +365,17 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   const { isUnread } = useWorkspaceUnread(workspaceId);
   const gitStatus = useGitStatus(workspaceId);
 
-  // Get title edit context (renamed from rename context since we now edit titles, not names)
-  const { editingWorkspaceId, requestRename, confirmRename, cancelRename } = useRename();
+  // Get title edit context — manages inline title editing state across the sidebar
+  const {
+    editingWorkspaceId,
+    requestEdit,
+    confirmEdit,
+    cancelEdit,
+    generatingTitleWorkspaceIds,
+    wrapGenerateTitle,
+  } = useTitleEdit();
+  const isGeneratingTitle = generatingTitleWorkspaceIds.has(workspaceId);
+  const { api } = useAPI();
 
   // Local state for title editing
   const [editingTitle, setEditingTitle] = useState<string>("");
@@ -394,6 +406,15 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     }
   }, [isEditing]);
 
+  const wasEditingRef = useRef(false);
+  useEffect(() => {
+    if (isEditing && !wasEditingRef.current) {
+      setEditingTitle(displayTitle);
+      setTitleError(null);
+    }
+    wasEditingRef.current = isEditing;
+  }, [isEditing, displayTitle]);
+
   // Clean up long-press timer on unmount
   useEffect(() => {
     return () => {
@@ -407,7 +428,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   // so it works even when the sidebar is collapsed and list items are unmounted.
 
   const startEditing = () => {
-    if (requestRename(workspaceId, displayTitle)) {
+    if (requestEdit(workspaceId, displayTitle)) {
       setEditingTitle(displayTitle);
       setTitleError(null);
     }
@@ -419,7 +440,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
       return;
     }
 
-    const result = await confirmRename(workspaceId, editingTitle);
+    const result = await confirmEdit(workspaceId, editingTitle);
     if (!result.success) {
       setTitleError(result.error ?? "Failed to update title");
     } else {
@@ -428,7 +449,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   };
 
   const handleCancelEdit = () => {
-    cancelRename();
+    cancelEdit();
     setEditingTitle("");
     setTitleError(null);
   };
@@ -695,9 +716,53 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   >
                     <span className="flex items-center gap-2">
                       <Pencil className="h-3 w-3 shrink-0" />
-                      Edit chat title
+                      Edit chat title{" "}
+                      <span className="text-muted text-[10px]">
+                        ({formatKeybind(KEYBINDS.EDIT_WORKSPACE_TITLE)})
+                      </span>
                     </span>
                   </button>
+                  <button
+                    className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsTitleMenuOpen(false);
+                      wrapGenerateTitle(workspaceId, () => {
+                        if (!api) {
+                          return Promise.resolve({
+                            success: false,
+                            error: "Not connected to server",
+                          });
+                        }
+                        return api.workspace.regenerateTitle({ workspaceId });
+                      });
+                    }}
+                  >
+                    <span className="flex items-center gap-2">
+                      <Sparkles className="h-3 w-3 shrink-0" />
+                      Generate new title{" "}
+                      <span className="text-muted text-[10px]">
+                        ({formatKeybind(KEYBINDS.GENERATE_WORKSPACE_TITLE)})
+                      </span>
+                    </span>
+                  </button>
+                  {!isMuxHelpChat && (
+                    // Expose fork in the row menu so users can quickly branch off a chat
+                    // without needing to remember the /fork slash command.
+                    <button
+                      className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsTitleMenuOpen(false);
+                        void onForkWorkspace(workspaceId, e.currentTarget);
+                      }}
+                    >
+                      <span className="flex items-center gap-2">
+                        <GitBranch className="h-3 w-3 shrink-0" />
+                        Fork chat
+                      </span>
+                    </button>
+                  )}
                   {/* Share transcript link (gated on telemetry/link-sharing being enabled). */}
                   {linkSharingEnabled === true && !isMuxHelpChat && (
                     <button
@@ -780,7 +845,8 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   <span
                     className={cn(
                       "text-foreground block truncate text-left text-[13px] transition-colors duration-200",
-                      !isDisabled && "cursor-pointer"
+                      !isDisabled && "cursor-pointer",
+                      isGeneratingTitle && "italic"
                     )}
                     onDoubleClick={(e) => {
                       if (isDisabled) return;
@@ -792,7 +858,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                     <Shimmer
                       className={cn(
                         "w-full truncate",
-                        !(isWorking || isInitializing) && "no-shimmer"
+                        !(isWorking || isInitializing || isGeneratingTitle) && "no-shimmer"
                       )}
                       colorClass="var(--color-foreground)"
                     >

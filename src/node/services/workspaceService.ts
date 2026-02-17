@@ -28,10 +28,13 @@ import {
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
+import { listLocalBranches } from "@/node/git";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
+import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
+import { NAME_GEN_PREFERRED_MODELS } from "@/common/constants/nameGeneration";
 import type { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
 import { getDevcontainerContainerName } from "@/node/runtime/devcontainerCli";
 import { expandTilde, expandTildeForSSH } from "@/node/runtime/tildeExpansion";
@@ -145,8 +148,74 @@ function appendCollisionSuffix(baseName: string): string {
   return `${baseName}-${suffix}`;
 }
 
+/**
+ * Generate a unique fork branch name from the parent workspace name.
+ * Scans existing workspace names for the `{parentName}-fork-N` pattern
+ * and picks N+1, guaranteeing a valid git-safe branch name.
+ */
+export function generateForkBranchName(parentName: string, existingNames: string[]): string {
+  const prefix = `${parentName}-fork-`;
+  let max = 0;
+  for (const name of existingNames) {
+    if (!name.startsWith(prefix)) {
+      continue;
+    }
+
+    const suffix = name.slice(prefix.length);
+    if (!/^\d+$/.test(suffix)) {
+      continue;
+    }
+
+    const n = Number(suffix);
+    if (n > max) {
+      max = n;
+    }
+  }
+  return `${prefix}${max + 1}`;
+}
+
+/**
+ * Generate a forked workspace title by appending a " (N)" suffix to the parent title.
+ * Scans existing titles in the same project to pick the next available number.
+ */
+export function generateForkTitle(parentTitle: string, existingTitles: string[]): string {
+  // Strip any existing " (N)" suffix from the parent title to get the base
+  const base = parentTitle.replace(/ \(\d+\)$/, "");
+  const prefix = `${base} (`;
+
+  let max = 0;
+  for (const title of existingTitles) {
+    if (!title.startsWith(prefix) || !title.endsWith(")")) {
+      continue;
+    }
+
+    const suffix = title.slice(prefix.length, -1);
+    if (!/^\d+$/.test(suffix)) {
+      continue;
+    }
+
+    const n = Number(suffix);
+    if (n > max) {
+      max = n;
+    }
+  }
+  // If parent title itself exists in the list (without suffix), start at (1)
+  // Otherwise continue from the highest found suffix
+  return `${base} (${max + 1})`;
+}
+
 function isErrnoWithCode(error: unknown, code: string): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
+}
+
+async function copyIfExists(sourcePath: string, destinationPath: string): Promise<void> {
+  try {
+    await fsPromises.copyFile(sourcePath, destinationPath);
+  } catch (error) {
+    if (!isErrnoWithCode(error, "ENOENT")) {
+      throw error;
+    }
+  }
 }
 
 function isPathInsideDir(dirPath: string, filePath: string): boolean {
@@ -1987,6 +2056,115 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
+   * Regenerate the workspace title from its chat history using AI.
+   * Reads the first user message (and optional first assistant reply) as context,
+   * then calls generateWorkspaceIdentity and persists the result via updateTitle.
+   */
+  async regenerateTitle(workspaceId: string): Promise<Result<{ title: string }>> {
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+    if (!historyResult.success) {
+      return Err("Could not read workspace history");
+    }
+
+    const firstUserIndex = historyResult.data.findIndex((m) => m.role === "user");
+    let firstUserMsg = firstUserIndex >= 0 ? historyResult.data[firstUserIndex] : undefined;
+    let firstAssistantMsg =
+      firstUserIndex >= 0
+        ? historyResult.data.slice(firstUserIndex + 1).find((m) => m.role === "assistant")
+        : undefined;
+
+    if (!firstUserMsg) {
+      // Compaction boundaries can leave the latest epoch with only an assistant summary.
+      // Fall back to scanning full history so regenerateTitle still works for compacted chats.
+      let fallbackFirstUser: MuxMessage | undefined;
+      let fallbackFirstAssistant: MuxMessage | undefined;
+      const fullHistoryResult = await this.historyService.iterateFullHistory(
+        workspaceId,
+        "forward",
+        (messages) => {
+          for (const message of messages) {
+            if (!fallbackFirstUser && message.role === "user") {
+              fallbackFirstUser = message;
+              continue;
+            }
+            if (fallbackFirstUser && !fallbackFirstAssistant && message.role === "assistant") {
+              fallbackFirstAssistant = message;
+            }
+          }
+
+          // Stop scanning once we have both context messages.
+          if (fallbackFirstUser && fallbackFirstAssistant) {
+            return false;
+          }
+        }
+      );
+      if (!fullHistoryResult.success) {
+        return Err("Could not read workspace history");
+      }
+
+      firstUserMsg = fallbackFirstUser;
+      firstAssistantMsg ??= fallbackFirstAssistant;
+    }
+
+    if (!firstUserMsg) {
+      return Err("No user messages in workspace history");
+    }
+
+    const userText =
+      firstUserMsg.parts
+        ?.filter((p) => p.type === "text")
+        .map((p) => p.text)
+        .join("\n") || "";
+
+    if (!userText) {
+      return Err("First user message has no text content");
+    }
+
+    // Use the first assistant reply for richer context
+    let assistantContext: string | undefined;
+    if (firstAssistantMsg) {
+      assistantContext =
+        firstAssistantMsg.parts
+          ?.filter((p) => p.type === "text")
+          .map((p) => p.text)
+          .join("\n") ?? undefined;
+    }
+
+    const candidates: string[] = [...NAME_GEN_PREFERRED_MODELS];
+    const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+    if (metadataResult.success) {
+      const fallbackModels = [
+        metadataResult.data.aiSettings?.model,
+        ...Object.values(metadataResult.data.aiSettingsByAgent ?? {}).map(
+          (settings) => settings.model
+        ),
+      ];
+      for (const model of fallbackModels) {
+        if (model && !candidates.includes(model)) {
+          candidates.push(model);
+        }
+      }
+    }
+
+    const result = await generateWorkspaceIdentity(
+      userText,
+      candidates,
+      this.aiService,
+      assistantContext
+    );
+    if (!result.success) {
+      return Err("Title generation failed");
+    }
+
+    const updateTitleResult = await this.updateTitle(workspaceId, result.data.title);
+    if (!updateTitleResult.success) {
+      return Err(updateTitleResult.error);
+    }
+
+    return Ok({ title: result.data.title });
+  }
+
+  /**
    * Archive a workspace. Archived workspaces are hidden from the main sidebar
    * but can be viewed on the project page.
    *
@@ -2521,16 +2699,11 @@ export class WorkspaceService extends EventEmitter {
 
   async fork(
     sourceWorkspaceId: string,
-    newName: string
+    newName?: string
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata; projectPath: string }>> {
     try {
       if (sourceWorkspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
         return Err("Cannot fork the Chat with Mux system workspace");
-      }
-
-      const validation = validateWorkspaceName(newName);
-      if (!validation.valid) {
-        return Err(validation.error ?? "Invalid workspace name");
       }
 
       if (this.aiService.isStreaming(sourceWorkspaceId)) {
@@ -2559,6 +2732,68 @@ export class WorkspaceService extends EventEmitter {
         return Err("Forking Docker workspaces is not supported. Create a new workspace instead.");
       }
 
+      // Auto-generate branch name (and title) when user omits one (seamless fork).
+      // Uses pattern: {parentName}-fork-{N} for branch, "{parentTitle} (N)" for title.
+      const isAutoName = newName == null;
+      // Fetch all metadata upfront for both branch name and title collision checks.
+      const allMetadata = isAutoName ? await this.config.getAllWorkspaceMetadata() : [];
+      let resolvedName: string;
+      if (isAutoName) {
+        const existingNamesSet = new Set(
+          allMetadata.filter((m) => m.projectPath === foundProjectPath).map((m) => m.name)
+        );
+        // Also include local branch names to avoid silently reusing stale branches that
+        // were left behind on disk but no longer exist in config metadata.
+        try {
+          for (const branchName of await listLocalBranches(foundProjectPath)) {
+            existingNamesSet.add(branchName);
+          }
+        } catch (error) {
+          log.debug("Failed to list local branches for fork auto-name preflight", {
+            projectPath: foundProjectPath,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+
+        const existingNames = [...existingNamesSet];
+        resolvedName = generateForkBranchName(sourceMetadata.name, existingNames);
+
+        if (!validateWorkspaceName(resolvedName).valid) {
+          // Legacy workspace names can violate current naming rules (invalid
+          // chars / length). Normalize and shrink the parent base until the
+          // generated fork name satisfies current invariants.
+          let normalizedParent = sourceMetadata.name
+            .toLowerCase()
+            .replace(/[^a-z0-9_-]+/g, "-")
+            .replace(/-+/g, "-")
+            .replace(/^[-_]+|[-_]+$/g, "");
+
+          if (!normalizedParent) {
+            normalizedParent = "workspace";
+          }
+
+          let candidateParent = normalizedParent;
+          while (candidateParent.length > 1) {
+            resolvedName = generateForkBranchName(candidateParent, existingNames);
+            if (validateWorkspaceName(resolvedName).valid) {
+              break;
+            }
+            candidateParent = candidateParent.slice(0, -1);
+          }
+
+          if (!validateWorkspaceName(resolvedName).valid) {
+            resolvedName = generateForkBranchName(candidateParent, existingNames);
+          }
+        }
+      } else {
+        resolvedName = newName;
+      }
+
+      const resolvedNameValidation = validateWorkspaceName(resolvedName);
+      if (!resolvedNameValidation.valid) {
+        return Err(resolvedNameValidation.error ?? "Invalid workspace name");
+      }
+
       const runtime = createRuntime(sourceRuntimeConfig, {
         projectPath: foundProjectPath,
         workspaceName: sourceMetadata.name,
@@ -2573,7 +2808,7 @@ export class WorkspaceService extends EventEmitter {
       const forkResult = await runtime.forkWorkspace({
         projectPath: foundProjectPath,
         sourceWorkspaceName: sourceMetadata.name,
-        newWorkspaceName: newName,
+        newWorkspaceName: resolvedName,
         initLogger,
       });
 
@@ -2592,7 +2827,7 @@ export class WorkspaceService extends EventEmitter {
         runtime,
         {
           projectPath: foundProjectPath,
-          branchName: newName,
+          branchName: resolvedName,
           trunkBranch: forkResult.sourceBranch ?? "main",
           workspacePath: forkResult.workspacePath!,
           initLogger,
@@ -2609,46 +2844,20 @@ export class WorkspaceService extends EventEmitter {
       try {
         await fsPromises.mkdir(newSessionDir, { recursive: true });
 
-        const sourceChatPath = path.join(sourceSessionDir, "chat.jsonl");
-        const newChatPath = path.join(newSessionDir, "chat.jsonl");
-        try {
-          await fsPromises.copyFile(sourceChatPath, newChatPath);
-        } catch (error) {
-          if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
-            throw error;
-          }
-        }
-
-        const sourcePartialPath = path.join(sourceSessionDir, "partial.json");
-        const newPartialPath = path.join(newSessionDir, "partial.json");
-        try {
-          await fsPromises.copyFile(sourcePartialPath, newPartialPath);
-        } catch (error) {
-          if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
-            throw error;
-          }
-        }
-
-        const sourceTimingPath = path.join(sourceSessionDir, "session-timing.json");
-        const newTimingPath = path.join(newSessionDir, "session-timing.json");
-        try {
-          await fsPromises.copyFile(sourceTimingPath, newTimingPath);
-        } catch (error) {
-          if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
-            throw error;
-          }
-        }
-        const sourceUsagePath = path.join(sourceSessionDir, "session-usage.json");
-        const newUsagePath = path.join(newSessionDir, "session-usage.json");
-        try {
-          await fsPromises.copyFile(sourceUsagePath, newUsagePath);
-        } catch (error) {
-          if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
-            throw error;
-          }
+        const sessionFiles = [
+          "chat.jsonl",
+          "partial.json",
+          "session-timing.json",
+          "session-usage.json",
+        ] as const;
+        for (const fileName of sessionFiles) {
+          await copyIfExists(
+            path.join(sourceSessionDir, fileName),
+            path.join(newSessionDir, fileName)
+          );
         }
       } catch (copyError) {
-        await runtime.deleteWorkspace(foundProjectPath, newName, true);
+        await runtime.deleteWorkspace(foundProjectPath, resolvedName, true);
         try {
           await fsPromises.rm(newSessionDir, { recursive: true, force: true });
         } catch (cleanupError) {
@@ -2660,7 +2869,13 @@ export class WorkspaceService extends EventEmitter {
       }
 
       // Copy plan file if it exists (checks both new and legacy paths)
-      await copyPlanFile(runtime, sourceMetadata.name, sourceWorkspaceId, newName, projectName);
+      await copyPlanFile(
+        runtime,
+        sourceMetadata.name,
+        sourceWorkspaceId,
+        resolvedName,
+        projectName
+      );
 
       // Apply runtime-provided config updates (e.g., Coder marks shared workspaces)
       const { forkedRuntimeConfig } = await applyForkRuntimeUpdates(
@@ -2683,11 +2898,11 @@ export class WorkspaceService extends EventEmitter {
       }
 
       // Compute namedWorkspacePath for frontend metadata
-      const namedWorkspacePath = runtime.getWorkspacePath(foundProjectPath, newName);
+      const namedWorkspacePath = runtime.getWorkspacePath(foundProjectPath, resolvedName);
 
       const metadata: FrontendWorkspaceMetadata = {
         id: newWorkspaceId,
-        name: newName,
+        name: resolvedName,
         projectName,
         projectPath: foundProjectPath,
         createdAt: new Date().toISOString(),
@@ -2695,6 +2910,17 @@ export class WorkspaceService extends EventEmitter {
         namedWorkspacePath,
         // Preserve workspace organization when forking via /fork.
         sectionId: sourceMetadata.sectionId,
+        // Seamless fork: generate a numbered title like "Parent Title (1)".
+        ...(isAutoName
+          ? {
+              title: generateForkTitle(
+                sourceMetadata.title ?? sourceMetadata.name,
+                allMetadata
+                  .filter((m) => m.projectPath === foundProjectPath)
+                  .map((m) => m.title ?? m.name)
+              ),
+            }
+          : {}),
       };
 
       await this.config.addWorkspace(foundProjectPath, metadata);

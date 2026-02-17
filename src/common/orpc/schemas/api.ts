@@ -820,6 +820,10 @@ export const workspace = {
     input: z.object({ workspaceId: z.string(), title: z.string() }),
     output: ResultSchema(z.void(), z.string()),
   },
+  regenerateTitle: {
+    input: z.object({ workspaceId: z.string() }),
+    output: ResultSchema(z.object({ title: z.string() }), z.string()),
+  },
   updateAgentAISettings: {
     input: z.object({
       workspaceId: z.string(),
@@ -861,7 +865,7 @@ export const workspace = {
     ),
   },
   fork: {
-    input: z.object({ sourceWorkspaceId: z.string(), newName: z.string() }),
+    input: z.object({ sourceWorkspaceId: z.string(), newName: z.string().optional() }),
     output: z.discriminatedUnion("success", [
       z.object({
         success: z.literal(true),
@@ -1254,7 +1258,7 @@ export const nameGeneration = {
   generate: {
     input: z.object({
       message: z.string(),
-      /** Ordered list of model candidates to try (frontend applies gateway prefs) */
+      /** Ordered list of model candidates to try (backend resolves gateway routing in createModel) */
       candidates: z.array(z.string()),
     }),
     output: ResultSchema(

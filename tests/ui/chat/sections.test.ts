@@ -18,7 +18,6 @@
 
 import "../dom";
 import { act, fireEvent, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 
 import { shouldRunIntegrationTests } from "../../testUtils";
 import {
@@ -46,17 +45,6 @@ const describeIntegration = shouldRunIntegrationTests() ? describe : describe.sk
  */
 function findWorkspaceRow(container: HTMLElement, workspaceId: string): HTMLElement | null {
   return container.querySelector(`[data-workspace-id="${workspaceId}"]`);
-}
-
-/**
- * Find a workspace row in the sidebar by its displayed title (usually the workspace name).
- *
- * Note: We include `data-workspace-path` to avoid matching nested buttons/inputs that also
- * carry `data-workspace-id`.
- */
-function findWorkspaceRowByTitle(container: HTMLElement, title: string): HTMLElement | null {
-  const rows = container.querySelectorAll<HTMLElement>("[data-workspace-id][data-workspace-path]");
-  return Array.from(rows).find((row) => row.getAttribute("aria-label")?.includes(title)) ?? null;
 }
 
 /**
@@ -328,7 +316,7 @@ describeIntegration("Workspace Sections", () => {
     }
   }, 60_000);
 
-  test("/fork preserves section assignment", async () => {
+  test("fork API preserves section assignment", async () => {
     const env = getSharedEnv();
     const projectPath = getSharedRepoPath();
     const trunkBranch = await detectDefaultTrunkBranch(projectPath);
@@ -359,102 +347,43 @@ describeIntegration("Workspace Sections", () => {
       }
 
       sourceWorkspaceId = sourceWsResult.metadata.id;
-      const sourceMetadata = sourceWsResult.metadata;
 
-      const cleanupDom = installDom();
-      expandProjects([projectPath]);
-
-      // Render with the source workspace selected so we can run /fork from the chat input.
-      const view = renderApp({ apiClient: env.orpc, metadata: sourceMetadata });
-
-      try {
-        await setupWorkspaceView(view, sourceMetadata, sourceWorkspaceId);
-
-        const forkedName = generateBranchName("forked-in-section");
-
-        const user = userEvent.setup({ document: view.container.ownerDocument });
-        const textarea = await waitFor(
-          () => {
-            // There can be multiple ChatInput instances mounted (e.g., ProjectPage + Workspace view).
-            // Use the last enabled textarea in DOM order to target the active workspace view.
-            const textareas = Array.from(
-              view.container.querySelectorAll('textarea[aria-label="Message Claude"]')
-            ) as HTMLTextAreaElement[];
-
-            if (textareas.length === 0) {
-              throw new Error("Chat textarea not found");
-            }
-
-            const enabled = [...textareas].reverse().find((el) => !el.disabled);
-            if (!enabled) {
-              throw new Error(`Chat textarea is disabled (found ${textareas.length})`);
-            }
-
-            return enabled;
-          },
-          { timeout: 10_000 }
-        );
-
-        textarea.focus();
-        await user.clear(textarea);
-        await user.type(textarea, `/fork ${forkedName}`);
-
-        const chatInputSection = textarea.closest('[data-component="ChatInputSection"]');
-        if (!chatInputSection) {
-          throw new Error("ChatInputSection not found for textarea");
-        }
-
-        const sendButton = await waitFor(
-          () => {
-            const el = chatInputSection.querySelector(
-              'button[aria-label="Send message"]'
-            ) as HTMLButtonElement | null;
-            if (!el) {
-              throw new Error("Send button not found");
-            }
-            if (el.disabled) {
-              throw new Error("Send button disabled");
-            }
-            return el;
-          },
-          { timeout: 10_000 }
-        );
-
-        await user.click(sendButton);
-
-        // Wait for the forked workspace to appear in the sidebar.
-        // The fork may navigate to the new workspace immediately (navigation
-        // is synchronous / normal priority), so we verify success through the
-        // sidebar rather than checking for a transient chat message.
-        await waitFor(
-          () => {
-            const workspaceRow = findWorkspaceRowByTitle(view.container, forkedName);
-            if (!workspaceRow) {
-              throw new Error(`Forked workspace row "${forkedName}" not found in sidebar`);
-            }
-
-            forkedWorkspaceId = workspaceRow.getAttribute("data-workspace-id") ?? undefined;
-            if (!forkedWorkspaceId) {
-              throw new Error("Forked workspace row missing data-workspace-id");
-            }
-
-            // The key behavior: the forked workspace stays in the same section.
-            expect(workspaceRow.getAttribute("data-section-id")).toBe(sectionId);
-          },
-          { timeout: 30_000 }
-        );
-      } finally {
-        await cleanupView(view, cleanupDom);
+      const forkedName = generateBranchName("forked-in-section");
+      const forkResult = await env.orpc.workspace.fork({
+        sourceWorkspaceId,
+        newName: forkedName,
+      });
+      if (!forkResult.success) {
+        throw new Error(`Failed to fork workspace: ${forkResult.error}`);
       }
+
+      forkedWorkspaceId = forkResult.metadata.id;
+      expect(forkResult.metadata.sectionId).toBe(sectionId);
     } finally {
+      // Best-effort cleanup: remove any workspaces still assigned to this section,
+      // even if the assertion failed before we captured forkedWorkspaceId.
+      const activeWorkspaces = await env.orpc.workspace.list();
+      const sectionWorkspaceIds = activeWorkspaces
+        .filter((workspace) => workspace.sectionId === sectionId)
+        .map((workspace) => workspace.id);
+
       if (forkedWorkspaceId) {
-        await env.orpc.workspace.remove({ workspaceId: forkedWorkspaceId });
+        sectionWorkspaceIds.push(forkedWorkspaceId);
       }
       if (sourceWorkspaceId) {
-        await env.orpc.workspace.remove({ workspaceId: sourceWorkspaceId });
+        sectionWorkspaceIds.push(sourceWorkspaceId);
       }
-      await env.orpc.workspace.remove({ workspaceId: setupWs.metadata.id });
-      await env.orpc.projects.sections.remove({ projectPath, sectionId });
+
+      const uniqueWorkspaceIds = [...new Set(sectionWorkspaceIds)].filter(
+        (workspaceId) => workspaceId !== setupWs.metadata.id
+      );
+
+      for (const workspaceId of uniqueWorkspaceIds) {
+        await env.orpc.workspace.remove({ workspaceId }).catch(() => {});
+      }
+
+      await env.orpc.workspace.remove({ workspaceId: setupWs.metadata.id }).catch(() => {});
+      await env.orpc.projects.sections.remove({ projectPath, sectionId }).catch(() => {});
     }
   }, 60_000);
   // ─────────────────────────────────────────────────────────────────────────────
@@ -494,9 +423,13 @@ describeIntegration("Workspace Sections", () => {
     if (!sectionC.success) throw new Error(`Failed to create section: ${sectionC.error}`);
 
     try {
-      // Verify initial order
+      // Verify initial order for the sections created in this test.
       let sections = await env.orpc.projects.sections.list({ projectPath });
-      expect(sections.map((s) => s.name)).toEqual(["Section A", "Section B", "Section C"]);
+      const trackedSectionIds = [sectionA.data.id, sectionB.data.id, sectionC.data.id];
+      const trackedInitialOrder = sections
+        .filter((section) => trackedSectionIds.includes(section.id))
+        .map((section) => section.name);
+      expect(trackedInitialOrder).toEqual(["Section A", "Section B", "Section C"]);
 
       // Reorder to C, A, B
       const reorderResult = await env.orpc.projects.sections.reorder({
@@ -505,9 +438,12 @@ describeIntegration("Workspace Sections", () => {
       });
       expect(reorderResult.success).toBe(true);
 
-      // Verify new order
+      // Verify new order for the sections created in this test.
       sections = await env.orpc.projects.sections.list({ projectPath });
-      expect(sections.map((s) => s.name)).toEqual(["Section C", "Section A", "Section B"]);
+      const trackedReordered = sections
+        .filter((section) => trackedSectionIds.includes(section.id))
+        .map((section) => section.name);
+      expect(trackedReordered).toEqual(["Section C", "Section A", "Section B"]);
     } finally {
       await env.orpc.workspace.remove({ workspaceId: setupWs.metadata.id });
       await env.orpc.projects.sections.remove({ projectPath, sectionId: sectionA.data.id });
@@ -558,9 +494,13 @@ describeIntegration("Workspace Sections", () => {
       await waitForSection(view.container, sectionFirst.data.id);
       await waitForSection(view.container, sectionSecond.data.id);
 
-      // Verify DOM order matches linked-list order (First -> Second)
+      // Verify DOM order matches linked-list order (First -> Second) for the
+      // sections created in this test. Other sections may exist from unrelated setup.
       const orderedIds = getSectionIdsInOrder(view.container);
-      expect(orderedIds).toEqual([sectionFirst.data.id, sectionSecond.data.id]);
+      const trackedOrder = orderedIds.filter(
+        (id) => id === sectionFirst.data.id || id === sectionSecond.data.id
+      );
+      expect(trackedOrder).toEqual([sectionFirst.data.id, sectionSecond.data.id]);
     } finally {
       await cleanupView(view, cleanupDom);
       await env.orpc.workspace.remove({ workspaceId: setupWs.metadata.id });

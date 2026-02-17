@@ -17,7 +17,7 @@ import {
   readPersistedState,
 } from "./hooks/usePersistedState";
 import { useResizableSidebar } from "./hooks/useResizableSidebar";
-import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
+import { matchesKeybind, KEYBINDS, isEditableElement } from "./utils/ui/keybinds";
 import { handleLayoutSlotHotkeys } from "./utils/ui/layoutSlotHotkeys";
 import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
 import { getVisibleWorkspaceIds } from "./utils/ui/workspaceDomNav";
@@ -90,7 +90,7 @@ function AppInner() {
     loading,
     setWorkspaceMetadata,
     removeWorkspace,
-    renameWorkspace,
+    updateWorkspaceTitle,
     refreshWorkspaceMetadata,
     selectedWorkspace,
     setSelectedWorkspace,
@@ -555,9 +555,9 @@ function AppInner() {
     [removeWorkspace]
   );
 
-  const renameWorkspaceFromPalette = useCallback(
-    async (workspaceId: string, newName: string) => renameWorkspace(workspaceId, newName),
-    [renameWorkspace]
+  const updateTitleFromPalette = useCallback(
+    async (workspaceId: string, newTitle: string) => updateWorkspaceTitle(workspaceId, newTitle),
+    [updateWorkspaceTitle]
   );
 
   const addProjectFromPalette = useCallback(() => {
@@ -594,7 +594,7 @@ function AppInner() {
     getBranchesForProject,
     onSelectWorkspace: selectWorkspaceFromPalette,
     onRemoveWorkspace: removeWorkspaceFromPalette,
-    onRenameWorkspace: renameWorkspaceFromPalette,
+    onUpdateTitle: updateTitleFromPalette,
     onAddProject: addProjectFromPalette,
     onRemoveProject: removeProjectFromPalette,
     onToggleSidebar: toggleSidebarFromPalette,
@@ -659,12 +659,26 @@ function AppInner() {
   // Handle keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) {
+        return;
+      }
+
       if (matchesKeybind(e, KEYBINDS.NEXT_WORKSPACE)) {
         e.preventDefault();
         handleNavigateWorkspace("next");
       } else if (matchesKeybind(e, KEYBINDS.PREV_WORKSPACE)) {
         e.preventDefault();
         handleNavigateWorkspace("prev");
+      } else if (
+        matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE_ALT) &&
+        !sidebarCollapsed &&
+        selectedWorkspace &&
+        selectedWorkspace.workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID &&
+        !isEditableElement(e.target)
+      ) {
+        // F2 edits the selected workspace title in the expanded sidebar; skip
+        // command palette handling so both shortcuts don't fire.
+        return;
       } else if (
         matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE) ||
         matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE_ALT)
@@ -704,10 +718,12 @@ function AppInner() {
     handleNavigateWorkspace,
     handleOpenMuxChat,
     setSidebarCollapsed,
+    sidebarCollapsed,
     isCommandPaletteOpen,
     closeCommandPalette,
     openCommandPalette,
     creationProjectPath,
+    selectedWorkspace,
     openSettings,
     navigate,
   ]);

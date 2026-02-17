@@ -62,7 +62,7 @@ const BUILT_IN_MODEL_SET = new Set<string>(Object.values(KNOWN_MODELS).map((mode
 export interface ForkOptions {
   client: RouterClient<AppRouter>;
   sourceWorkspaceId: string;
-  newName: string;
+  newName?: string;
   startMessage?: string;
   sendMessageOptions?: SendMessageOptions;
 }
@@ -328,8 +328,6 @@ export async function processSlashCommand(
       case "command-invalid-args":
       case "unknown-command":
         return parsed.command;
-      case "fork-help":
-        return "fork";
       default:
         return null;
     }
@@ -510,7 +508,6 @@ async function handleForkCommand(
     const forkResult = await forkWorkspace({
       client,
       sourceWorkspaceId: workspaceId,
-      newName: parsed.newName,
       startMessage: parsed.startMessage,
       sendMessageOptions,
     });
@@ -527,10 +524,12 @@ async function handleForkCommand(
       return { clearInput: false, toastShown: true };
     } else {
       trackCommandUsed("fork");
+      const displayName =
+        forkResult.workspaceInfo?.title ?? forkResult.workspaceInfo?.name ?? "new workspace";
       setToast({
         id: Date.now().toString(),
         type: "success",
-        message: `Forked to workspace "${parsed.newName}"`,
+        message: `Forked to workspace "${displayName}"`,
       });
       return { clearInput: true, toastShown: true };
     }
