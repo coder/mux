@@ -2,7 +2,7 @@
  * Integration tests for reasoning/thinking functionality across Anthropic models.
  *
  * Verifies:
- * - Sonnet 4.5 uses thinking.budgetTokens parameter
+ * - Sonnet 4.6 uses effort parameter + adaptive thinking
  * - Opus 4.6 uses effort parameter + adaptive thinking
  * - Reasoning events are properly streamed
  */
@@ -32,7 +32,7 @@ describeIntegration("Anthropic reasoning parameter tests", () => {
   configureTestRetries(3);
 
   test.concurrent(
-    "Sonnet 4.5 with thinking (budgetTokens)",
+    "Sonnet 4.6 with thinking (effort + adaptive)",
     async () => {
       await withSharedWorkspace("anthropic", async ({ env, workspaceId, collector }) => {
         const result = await sendMessage(env, workspaceId, "What is 2+2? Answer in one word.", {
