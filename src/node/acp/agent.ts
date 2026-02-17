@@ -98,7 +98,12 @@ export class MuxAgent implements Agent {
 
     this.toolRouter = new ToolRouter(connection);
     this.streamTranslator = new StreamTranslator(connection);
+  }
 
+  initialize(params: InitializeRequest): Promise<InitializeResponse> {
+    // The ACP SDK invokes the agent factory during AgentSideConnection
+    // construction, before connection.signal is available. Defer installing
+    // the abort listener until initialize() runs after construction completes.
     this.connection.signal.addEventListener(
       "abort",
       () => {
@@ -109,9 +114,7 @@ export class MuxAgent implements Agent {
       },
       { once: true }
     );
-  }
 
-  initialize(params: InitializeRequest): Promise<InitializeResponse> {
     assert(params != null, "initialize: params are required");
 
     const negotiated = negotiateCapabilities(params.clientCapabilities);
