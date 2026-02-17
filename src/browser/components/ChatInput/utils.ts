@@ -4,7 +4,7 @@ import type { APIClient } from "@/browser/contexts/API";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { SendMessageError } from "@/common/types/errors";
 import type { ParsedRuntime } from "@/common/types/runtime";
-import { buildAgentSkillMetadata, type MuxFrontendMetadata } from "@/common/types/message";
+import { buildAgentSkillMetadata, type MuxMessageMetadata } from "@/common/types/message";
 import type { FilePart } from "@/common/orpc/types";
 import type { ChatAttachment } from "../ChatAttachments";
 import type { Review } from "@/common/types/review";
@@ -50,7 +50,7 @@ function isUnknownSlashCommand(value: ParsedCommand): value is UnknownSlashComma
 export function buildSkillInvocationMetadata(
   rawCommand: string,
   descriptor: AgentSkillDescriptor
-): MuxFrontendMetadata {
+): MuxMessageMetadata {
   return buildAgentSkillMetadata({
     rawCommand,
     commandPrefix: `/${descriptor.name}`,

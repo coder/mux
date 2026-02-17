@@ -62,7 +62,7 @@ import {
   AskUserQuestionToolResultSchema,
 } from "@/common/utils/tools/toolDefinitions";
 import type { UIMode } from "@/common/types/mode";
-import type { MuxFrontendMetadata, MuxMessage } from "@/common/types/message";
+import type { MuxMessageMetadata, MuxMessage } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import {
   hasSrcBaseDir,
@@ -4304,7 +4304,7 @@ export class WorkspaceService extends EventEmitter {
 
     const sendOptions = await this.buildIdleCompactionSendOptions(workspaceId);
 
-    const muxMetadata: MuxFrontendMetadata = {
+    const muxMetadata: MuxMessageMetadata = {
       type: "compaction-request",
       rawCommand: "/compact",
       commandPrefix: "/compact",

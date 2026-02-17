@@ -54,7 +54,7 @@ import {
   pickPreservedSendOptions,
   prepareUserMessageForSend,
   type CompactionFollowUpRequest,
-  type MuxFrontendMetadata,
+  type MuxMessageMetadata,
   type MuxFilePart,
   type MuxMessage,
   type ReviewNoteDataForDisplay,
@@ -115,7 +115,7 @@ interface CompactionRequestMetadata {
       text?: string;
       imageParts?: FilePart[];
       reviews?: ReviewNoteDataForDisplay[];
-      muxMetadata?: MuxFrontendMetadata;
+      muxMetadata?: MuxMessageMetadata;
       model?: string;
       agentId?: string;
       mode?: "exec" | "plan"; // Legacy: older versions stored mode instead of agentId
@@ -1055,7 +1055,7 @@ export class AgentSession {
     // toolPolicy is properly typed via Zod schema inference
     const typedToolPolicy = options?.toolPolicy;
     // muxMetadata is z.any() in schema - cast to proper type
-    const typedMuxMetadata = options?.muxMetadata as MuxFrontendMetadata | undefined;
+    const typedMuxMetadata = options?.muxMetadata as MuxMessageMetadata | undefined;
     const isCompactionRequest = isCompactionRequestMetadata(typedMuxMetadata);
 
     // Validate model BEFORE persisting message to prevent orphaned messages on invalid model
@@ -1434,7 +1434,7 @@ export class AgentSession {
     options: SendMessageOptions;
     modelForStream: string;
     fileParts?: FilePart[];
-    muxMetadata?: MuxFrontendMetadata;
+    muxMetadata?: MuxMessageMetadata;
   }): CompactionFollowUpRequest {
     const followUp: CompactionFollowUpRequest = {
       text: params.messageText,
@@ -1460,7 +1460,7 @@ export class AgentSession {
     reason: "on-send" | "mid-stream";
   }): {
     messageText: string;
-    metadata: MuxFrontendMetadata;
+    metadata: MuxMessageMetadata;
     sendOptions: SendMessageOptions;
   } {
     const compactionModel = params.baseOptions.model;
@@ -1484,7 +1484,7 @@ export class AgentSession {
 
     const messageText = buildCompactionMessageText({ followUpContent: params.followUpContent });
 
-    const metadata: MuxFrontendMetadata = {
+    const metadata: MuxMessageMetadata = {
       type: "compaction-request",
       rawCommand: "/compact",
       commandPrefix: "/compact",
@@ -3298,7 +3298,7 @@ export class AgentSession {
     // that were captured from the original user message in prepareCompactionMessage().
     const options: SendMessageOptions & {
       fileParts?: FilePart[];
-      muxMetadata?: MuxFrontendMetadata;
+      muxMetadata?: MuxMessageMetadata;
     } = {
       ...followUp,
       model: effectiveModel,
@@ -3539,7 +3539,7 @@ export class AgentSession {
   }
 
   private async materializeAgentSkillSnapshot(
-    muxMetadata: MuxFrontendMetadata | undefined,
+    muxMetadata: MuxMessageMetadata | undefined,
     disableWorkspaceAgents: boolean | undefined
   ): Promise<{ snapshotMessage: MuxMessage } | null> {
     if (!muxMetadata || muxMetadata.type !== "agent-skill") {

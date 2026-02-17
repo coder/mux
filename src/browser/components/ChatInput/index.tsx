@@ -96,7 +96,7 @@ import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import { resolveThinkingInput } from "@/common/utils/thinking/policy";
 import {
-  type MuxFrontendMetadata,
+  type MuxMessageMetadata,
   type ReviewNoteDataForDisplay,
   prepareUserMessageForSend,
 } from "@/common/types/message";
@@ -1878,7 +1878,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
         // When editing a /compact command, regenerate the actual summarization request
         let actualMessageText = messageTextForSend;
-        let muxMetadata: MuxFrontendMetadata | undefined = skillMuxMetadata;
+        let muxMetadata: MuxMessageMetadata | undefined = skillMuxMetadata;
         let compactionOptions: Partial<SendMessageOptions> = {};
 
         if (editingMessage && actualMessageText.startsWith("/")) {

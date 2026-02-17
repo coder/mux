@@ -33,8 +33,8 @@ export interface UserMessageContent {
  * Does not include model/agentId since those come from sendMessageOptions.
  */
 export interface CompactionFollowUpInput extends UserMessageContent {
-  /** Frontend metadata to apply to the queued follow-up user message (e.g., preserve /skill display) */
-  muxMetadata?: MuxFrontendMetadata;
+  /** Message metadata to apply to the queued follow-up user message (e.g., preserve /skill display) */
+  muxMetadata?: MuxMessageMetadata;
 }
 
 /**
@@ -99,8 +99,8 @@ export type ContinueMessage = UserMessageContent & {
   model?: string;
   /** Agent ID for the continue message (determines tool policy via agent definitions). Defaults to 'exec'. */
   agentId?: string;
-  /** Frontend metadata to apply to the queued follow-up user message (e.g., preserve /skill display) */
-  muxMetadata?: MuxFrontendMetadata;
+  /** Message metadata to apply to the queued follow-up user message (e.g., preserve /skill display) */
+  muxMetadata?: MuxMessageMetadata;
   /** Brand marker - not present at runtime, enforces factory usage at compile time */
   readonly [ContinueMessageBrand]: true;
 };
@@ -113,8 +113,8 @@ export interface BuildContinueMessageOptions {
   text?: string;
   fileParts?: FilePart[];
   reviews?: ReviewNoteDataForDisplay[];
-  /** Optional frontend metadata to carry through to the queued follow-up user message */
-  muxMetadata?: MuxFrontendMetadata;
+  /** Optional message metadata to carry through to the queued follow-up user message */
+  muxMetadata?: MuxMessageMetadata;
   model: string;
   agentId: string;
 }
@@ -220,10 +220,10 @@ export interface CompactionRequestData {
  */
 export function prepareUserMessageForSend(
   content: UserMessageContent,
-  existingMetadata?: MuxFrontendMetadata
+  existingMetadata?: MuxMessageMetadata
 ): {
   finalText: string;
-  metadata: MuxFrontendMetadata | undefined;
+  metadata: MuxMessageMetadata | undefined;
 } {
   const { text, reviews } = content;
 
@@ -232,7 +232,7 @@ export function prepareUserMessageForSend(
   const finalText = reviewsText ? reviewsText + (text ? "\n\n" + text : "") : text;
 
   // Build metadata with reviews for display
-  let metadata: MuxFrontendMetadata | undefined = existingMetadata;
+  let metadata: MuxMessageMetadata | undefined = existingMetadata;
   if (reviews?.length) {
     metadata = metadata ? { ...metadata, reviews } : { type: "normal", reviews };
   }
@@ -249,7 +249,7 @@ export interface BuildAgentSkillMetadataOptions {
 
 export function buildAgentSkillMetadata(
   options: BuildAgentSkillMetadataOptions
-): MuxFrontendMetadata {
+): MuxMessageMetadata {
   return {
     type: "agent-skill",
     rawCommand: options.rawCommand,
@@ -260,7 +260,7 @@ export function buildAgentSkillMetadata(
 }
 
 /** Base fields common to all metadata types */
-interface MuxFrontendMetadataBase {
+interface MuxMessageMetadataBase {
   /** Structured review data for rich UI display (orthogonal to message type) */
   reviews?: ReviewNoteDataForDisplay[];
   /** Command prefix to highlight in UI (e.g., "/compact -m sonnet" or "/react-effects") */
@@ -280,7 +280,7 @@ export interface DisplayStatus {
   message: string;
 }
 
-export type MuxFrontendMetadata = MuxFrontendMetadataBase &
+export type MuxMessageMetadata = MuxMessageMetadataBase &
   (
     | {
         type: "compaction-request";
@@ -324,7 +324,7 @@ export type MuxFrontendMetadata = MuxFrontendMetadataBase &
   );
 
 export function getCompactionFollowUpContent(
-  metadata?: MuxFrontendMetadata
+  metadata?: MuxMessageMetadata
 ): CompactionRequestData["followUpContent"] | undefined {
   // Keep follow-up extraction centralized so callers don't duplicate legacy handling.
   if (!metadata || metadata.type !== "compaction-request") {
@@ -339,14 +339,11 @@ export function getCompactionFollowUpContent(
 }
 
 /** Type for compaction-summary metadata variant */
-export type CompactionSummaryMetadata = Extract<
-  MuxFrontendMetadata,
-  { type: "compaction-summary" }
->;
+export type CompactionSummaryMetadata = Extract<MuxMessageMetadata, { type: "compaction-summary" }>;
 
 /** Type guard for compaction-summary metadata */
 export function isCompactionSummaryMetadata(
-  metadata: MuxFrontendMetadata | undefined
+  metadata: MuxMessageMetadata | undefined
 ): metadata is CompactionSummaryMetadata {
   return metadata?.type === "compaction-summary";
 }
@@ -405,8 +402,8 @@ export interface MuxMetadata {
   compactionBoundary?: boolean;
   toolPolicy?: ToolPolicy; // Tool policy active when this message was sent (user messages only)
   agentId?: string; // Agent id active when this message was sent (assistant messages only)
-  cmuxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
-  muxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
+  cmuxMetadata?: MuxMessageMetadata; // Command metadata persisted for legacy message formats
+  muxMetadata?: MuxMessageMetadata; // Command metadata used by both frontend and backend message flows
   /**
    * @file mention snapshot token(s) this message provides content for.
    * When present, injectFileAtMentions() skips re-reading these tokens,

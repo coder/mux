@@ -23,7 +23,6 @@ Object.freeze(STORAGE_KEYS);
  * - `model:{workspaceId}`
  * - `thinkingLevel:{workspaceId}`
  * - `input:{workspaceId}`
- * - `{workspaceId}-autoRetry`
  *
  * The global defaults themselves CANNOT be changed by users.
  * Only per-workspace overrides are mutable.
@@ -51,9 +50,6 @@ export const WORKSPACE_DEFAULTS = {
    * Uses the centralized default from knownModels.ts.
    */
   model: DEFAULT_MODEL as string,
-
-  /** Default auto-retry preference for new workspaces */
-  autoRetry: true as boolean,
 
   /** Default input text for new workspaces (empty) */
   input: "" as string,

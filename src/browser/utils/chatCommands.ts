@@ -10,7 +10,7 @@ import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { FilePart, ProviderModelEntry, SendMessageOptions } from "@/common/orpc/types";
 import {
-  type MuxFrontendMetadata,
+  type MuxMessageMetadata,
   type CompactionRequestData,
   type CompactionFollowUpRequest,
   type CompactionFollowUpInput,
@@ -767,7 +767,7 @@ export interface CompactionResult {
  */
 export function prepareCompactionMessage(options: CompactionOptions): {
   messageText: string;
-  metadata: MuxFrontendMetadata;
+  metadata: MuxMessageMetadata;
   sendOptions: SendMessageOptions;
 } {
   // followUpContent is the content that will be auto-sent after compaction.
@@ -830,7 +830,7 @@ export function prepareCompactionMessage(options: CompactionOptions): {
   // Apply compaction overrides
   const sendOptions = applyCompactionOverrides(options.sendMessageOptions, compactData);
 
-  const metadata: MuxFrontendMetadata = {
+  const metadata: MuxMessageMetadata = {
     type: "compaction-request",
     rawCommand: fullRawCommand,
     commandPrefix: commandLine,
