@@ -1,5 +1,5 @@
 import type React from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 export interface ContextMenuPosition {
   x: number;
@@ -49,6 +49,11 @@ export function useContextMenuPosition(
   const touchStartPosRef = useRef<ContextMenuPosition | null>(null);
   const longPressTriggeredRef = useRef(false);
 
+  // When opening at cursor coordinates, render once with the anchor mounted first,
+  // then flip open in a layout effect. This avoids a one-frame "flash" at an
+  // incorrect fallback anchor before Popover finishes resolving the new anchor.
+  const pendingPositionOpenRef = useRef(false);
+
   // Clean up timer on unmount
   useEffect(() => {
     return () => {
@@ -58,7 +63,14 @@ export function useContextMenuPosition(
     };
   }, []);
 
+  const openAtPosition = useCallback((nextPosition: ContextMenuPosition) => {
+    pendingPositionOpenRef.current = true;
+    setIsOpen(false);
+    setPosition(nextPosition);
+  }, []);
+
   const close = useCallback(() => {
+    pendingPositionOpenRef.current = false;
     setIsOpen(false);
     setPosition(null);
   }, []);
@@ -68,16 +80,31 @@ export function useContextMenuPosition(
       if (options?.canOpen && !options.canOpen()) return;
       e.preventDefault();
       e.stopPropagation();
-      setPosition({ x: e.clientX, y: e.clientY });
-      setIsOpen(true);
+      openAtPosition({ x: e.clientX, y: e.clientY });
     },
-    [options]
+    [openAtPosition, options]
   );
 
   const onOpenChange = useCallback((open: boolean) => {
-    setIsOpen(open);
-    if (!open) setPosition(null);
+    if (!open) {
+      pendingPositionOpenRef.current = false;
+      setIsOpen(false);
+      setPosition(null);
+      return;
+    }
+
+    // Trigger-based openings (e.g. overflow button) should open immediately.
+    setIsOpen(true);
   }, []);
+
+  useLayoutEffect(() => {
+    if (!pendingPositionOpenRef.current || position === null) {
+      return;
+    }
+
+    pendingPositionOpenRef.current = false;
+    setIsOpen(true);
+  }, [position]);
 
   // Long-press touch handlers
   const onTouchStart = useCallback(
@@ -85,16 +112,16 @@ export function useContextMenuPosition(
       if (!options?.longPress) return;
       if (options.canOpen && !options.canOpen()) return;
       const touch = e.touches[0];
-      touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
+      const touchPosition = { x: touch.clientX, y: touch.clientY };
+      touchStartPosRef.current = touchPosition;
       longPressTriggeredRef.current = false;
       longPressTimerRef.current = setTimeout(() => {
         longPressTriggeredRef.current = true;
-        setPosition({ x: touch.clientX, y: touch.clientY });
-        setIsOpen(true);
+        openAtPosition(touchPosition);
         longPressTimerRef.current = null;
       }, 500);
     },
-    [options]
+    [openAtPosition, options]
   );
 
   const onTouchEnd = useCallback(() => {
