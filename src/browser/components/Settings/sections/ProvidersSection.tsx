@@ -1511,22 +1511,22 @@ export function ProvidersSection() {
                     </div>
 
                     <Select
-                      value={config?.anthropic?.cacheTtl ?? "default"}
+                      value={config?.anthropic?.cacheTtl === "1h" ? "1h" : "default"}
                       onValueChange={(next) => {
                         if (!api) {
                           return;
                         }
-                        if (next !== "default" && next !== "5m" && next !== "1h") {
+                        if (next !== "default" && next !== "1h") {
                           return;
                         }
 
-                        const cacheTtl = next === "default" ? undefined : next;
+                        const cacheTtl = next === "1h" ? "1h" : undefined;
                         updateOptimistically("anthropic", { cacheTtl });
                         void api.providers.setProviderConfig({
                           provider: "anthropic",
                           keyPath: ["cacheTtl"],
                           // Empty string clears providers.jsonc key; backend defaults to 5m when unset.
-                          value: next === "default" ? "" : next,
+                          value: next === "1h" ? "1h" : "",
                         });
                       }}
                     >
@@ -1535,7 +1535,6 @@ export function ProvidersSection() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="default">Default (5m)</SelectItem>
-                        <SelectItem value="5m">5 minutes</SelectItem>
                         <SelectItem value="1h">1 hour</SelectItem>
                       </SelectContent>
                     </Select>
