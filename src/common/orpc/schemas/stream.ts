@@ -93,6 +93,17 @@ export const IdleCompactionStartedEventSchema = z.object({
   type: z.literal("idle-compaction-started"),
 });
 
+export const AutoCompactionTriggeredEventSchema = z.object({
+  type: z.literal("auto-compaction-triggered"),
+  reason: z.enum(["on-send", "mid-stream", "idle"]),
+  usagePercent: z.number(),
+});
+
+export const AutoCompactionCompletedEventSchema = z.object({
+  type: z.literal("auto-compaction-completed"),
+  newUsagePercent: z.number(),
+});
+
 export const AutoRetryScheduledEventSchema = z.object({
   type: z.literal("auto-retry-scheduled"),
   attempt: z.number(),
@@ -494,6 +505,9 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   SessionUsageDeltaEventSchema,
   QueuedMessageChangedEventSchema,
   RestoreToInputEventSchema,
+  // Auto-compaction status events
+  AutoCompactionTriggeredEventSchema,
+  AutoCompactionCompletedEventSchema,
   // Idle compaction notification
   IdleCompactionStartedEventSchema,
   // Auto-retry status events
