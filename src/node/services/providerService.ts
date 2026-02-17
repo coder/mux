@@ -370,8 +370,8 @@ export class ProviderService {
         const existingModels = normalizeProviderModelEntries(providerConfig.models);
         if (existingModels.length === 0) {
           providerConfig.models = [
-            "anthropic/claude-sonnet-4-5",
-            "anthropic/claude-opus-4-5",
+            "anthropic/claude-sonnet-4-6",
+            "anthropic/claude-opus-4-6",
             "openai/gpt-5.2",
             "openai/gpt-5.1-codex",
           ];

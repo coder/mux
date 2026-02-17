@@ -194,6 +194,31 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
+  test("returns 5 levels including xhigh for Sonnet 4.6", () => {
+    expect(getThinkingPolicyForModel("anthropic:claude-sonnet-4-6")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(getThinkingPolicyForModel("anthropic:claude-sonnet-4-6-20260201")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    // Behind gateway
+    expect(getThinkingPolicyForModel("mux-gateway:anthropic/claude-sonnet-4-6")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+  });
+
   test("returns low/high for Gemini 3 Pro", () => {
     expect(getThinkingPolicyForModel("google:gemini-3-pro-preview")).toEqual(["low", "high"]);
   });
@@ -300,6 +325,16 @@ describe("enforceThinkingPolicy", () => {
       expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "medium")).toBe("medium");
       expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "high")).toBe("high");
       expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "xhigh")).toBe("xhigh");
+    });
+  });
+
+  describe("Sonnet 4.6 (5 levels including xhigh)", () => {
+    test("allows all 5 levels including xhigh", () => {
+      expect(enforceThinkingPolicy("anthropic:claude-sonnet-4-6", "off")).toBe("off");
+      expect(enforceThinkingPolicy("anthropic:claude-sonnet-4-6", "low")).toBe("low");
+      expect(enforceThinkingPolicy("anthropic:claude-sonnet-4-6", "medium")).toBe("medium");
+      expect(enforceThinkingPolicy("anthropic:claude-sonnet-4-6", "high")).toBe("high");
+      expect(enforceThinkingPolicy("anthropic:claude-sonnet-4-6", "xhigh")).toBe("xhigh");
     });
   });
 

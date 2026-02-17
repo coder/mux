@@ -45,6 +45,25 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_response_schema: true,
   },
 
+  // Claude Sonnet 4.6 - Released February 2026
+  // $3/M input, $15/M output (same as Sonnet 4.5)
+  // 64K max output tokens, supports adaptive thinking + effort parameter
+  "claude-sonnet-4-6": {
+    max_input_tokens: 200000,
+    max_output_tokens: 64000,
+    input_cost_per_token: 0.000003, // $3 per million input tokens
+    output_cost_per_token: 0.000015, // $15 per million output tokens
+    cache_creation_input_token_cost: 0.00000375, // $3.75 per million tokens
+    cache_read_input_token_cost: 0.0000003, // $0.30 per million tokens
+    litellm_provider: "anthropic",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_pdf_input: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+
   // Claude Opus 4.5 - Released November 24, 2025
   // $5/M input, $25/M output (price drop from Opus 4.1's $15/$75)
   // 64K max output tokens (matches Sonnet 4.5)

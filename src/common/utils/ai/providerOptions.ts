@@ -96,19 +96,21 @@ export function buildProviderOptions(
     const cacheTtl = muxProviderOptions?.anthropic?.cacheTtl;
     const cacheControl = cacheTtl ? { type: "ephemeral" as const, ttl: cacheTtl } : undefined;
 
-    // Opus 4.5+ use the effort parameter for reasoning control.
-    // Opus 4.6 uses adaptive thinking (model decides when/how much to think).
+    // Opus 4.5+ and Sonnet 4.6 use the effort parameter for reasoning control.
+    // Opus 4.6 / Sonnet 4.6 use adaptive thinking (model decides when/how much to think).
     // Opus 4.5 uses enabled thinking with a budgetTokens ceiling.
     const isOpus45 = modelName?.includes("opus-4-5") ?? false;
     const isOpus46 = modelName?.includes("opus-4-6") ?? false;
+    const isSonnet46 = modelName?.includes("sonnet-4-6") ?? false;
+    const usesAdaptiveThinking = isOpus46 || isSonnet46;
 
-    if (isOpus45 || isOpus46) {
+    if (isOpus45 || usesAdaptiveThinking) {
       // xhigh maps to "max" effort; policy clamps Opus 4.5 to "high" max
       const effortLevel = getAnthropicEffort(effectiveThinking);
       const budgetTokens = ANTHROPIC_THINKING_BUDGETS[effectiveThinking];
-      // Opus 4.6: adaptive thinking when on, disabled when off
+      // Opus 4.6 / Sonnet 4.6: adaptive thinking when on, disabled when off
       // Opus 4.5: enabled thinking with budgetTokens ceiling (only when not "off")
-      const thinking: AnthropicProviderOptions["thinking"] = isOpus46
+      const thinking: AnthropicProviderOptions["thinking"] = usesAdaptiveThinking
         ? effectiveThinking === "off"
           ? { type: "disabled" }
           : { type: "adaptive" }

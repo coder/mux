@@ -109,7 +109,7 @@ describe("isValidModelFormat", () => {
 describe("resolveModelAlias", () => {
   it("resolves known aliases to full model strings", () => {
     expect(resolveModelAlias("haiku")).toBe("anthropic:claude-haiku-4-5");
-    expect(resolveModelAlias("sonnet")).toBe("anthropic:claude-sonnet-4-5");
+    expect(resolveModelAlias("sonnet")).toBe("anthropic:claude-sonnet-4-6");
     expect(resolveModelAlias("opus")).toBe("anthropic:claude-opus-4-6");
     expect(resolveModelAlias("grok")).toBe("xai:grok-4-1-fast");
     expect(resolveModelAlias("codex")).toBe("openai:gpt-5.2-codex");

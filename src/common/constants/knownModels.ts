@@ -35,9 +35,10 @@ const MODEL_DEFINITIONS = {
   },
   SONNET: {
     provider: "anthropic",
-    providerModelId: "claude-sonnet-4-5",
+    providerModelId: "claude-sonnet-4-6",
     aliases: ["sonnet"],
     warm: true,
+    // Sonnet 4.6 tokenizer not yet available upstream; reuse 4.5 for approximate counting
     tokenizerOverride: "anthropic/claude-sonnet-4.5",
   },
   HAIKU: {

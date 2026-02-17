@@ -97,6 +97,34 @@ describe("buildProviderOptions - Anthropic", () => {
     });
   });
 
+  describe("Sonnet 4.6 (adaptive thinking + effort)", () => {
+    test("should use adaptive thinking and effort for claude-sonnet-4-6", () => {
+      const result = buildProviderOptions("anthropic:claude-sonnet-4-6", "medium");
+      const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
+
+      expect(anthropic.disableParallelToolUse).toBe(false);
+      expect(anthropic.sendReasoning).toBe(true);
+      expect(anthropic.thinking).toEqual({ type: "adaptive" });
+      expect(anthropic.effort).toBe("medium");
+    });
+
+    test("should map xhigh to max effort for Sonnet 4.6", () => {
+      const result = buildProviderOptions("anthropic:claude-sonnet-4-6", "xhigh");
+      const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
+
+      expect(anthropic.thinking).toEqual({ type: "adaptive" });
+      expect(anthropic.effort).toBe("max");
+    });
+
+    test("should use disabled thinking when off for Sonnet 4.6", () => {
+      const result = buildProviderOptions("anthropic:claude-sonnet-4-6", "off");
+      const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
+
+      expect(anthropic.thinking).toEqual({ type: "disabled" });
+      expect(anthropic.effort).toBe("low");
+    });
+  });
+
   describe("Other Anthropic models (thinking/budgetTokens)", () => {
     test("should use thinking.budgetTokens for claude-sonnet-4-5", () => {
       const result = buildProviderOptions("anthropic:claude-sonnet-4-5", "medium");
