@@ -224,6 +224,26 @@ while true; do
   fi
 
   if [ "$CODEX_RC" -eq 0 ] && [ "$CHECKS_RC" -eq 0 ]; then
+    # Avoid a false "not ready" result for already-merged PRs: historical unresolved
+    # Codex threads should not block a merged terminal state.
+    PR_STATE=$(gh pr view "$PR_NUMBER" --json state --jq '.state' 2>/dev/null || echo "error")
+
+    case "$PR_STATE" in
+      MERGED)
+        echo ""
+        echo ""
+        echo "🎉 PR #$PR_NUMBER is already merged."
+        exit 0
+        ;;
+      OPEN) ;;
+      *)
+        echo ""
+        echo ""
+        echo "❌ assertion failed: unable to classify PR state '$PR_STATE' for PR #$PR_NUMBER" >&2
+        exit 1
+        ;;
+    esac
+
     if CODEX_COMMENTS_OUT=$("$CHECK_CODEX_COMMENTS_SCRIPT" "$PR_NUMBER" 2>&1); then
       echo ""
       echo ""
