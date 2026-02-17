@@ -157,34 +157,39 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
       style={{ containerType: "inline-size" }}
     >
       {/* Keyed by workspaceId to prevent cross-workspace message-list flashes. */}
-      <ChatPane
+      <div
         key={`chat-${props.workspaceId}`}
-        workspaceId={props.workspaceId}
-        workspaceState={workspaceState}
-        projectPath={props.projectPath}
-        projectName={props.projectName}
-        workspaceName={props.workspaceName}
-        namedWorkspacePath={props.namedWorkspacePath}
-        leftSidebarCollapsed={props.leftSidebarCollapsed}
-        onToggleLeftSidebarCollapsed={props.onToggleLeftSidebarCollapsed}
-        runtimeConfig={props.runtimeConfig}
-        onOpenTerminal={handleOpenTerminal}
+        className="min-h-0 min-w-0 flex-1"
         aria-hidden={isReviewImmersive || undefined}
-      />
+      >
+        <ChatPane
+          workspaceId={props.workspaceId}
+          workspaceState={workspaceState}
+          projectPath={props.projectPath}
+          projectName={props.projectName}
+          workspaceName={props.workspaceName}
+          namedWorkspacePath={props.namedWorkspacePath}
+          leftSidebarCollapsed={props.leftSidebarCollapsed}
+          onToggleLeftSidebarCollapsed={props.onToggleLeftSidebarCollapsed}
+          runtimeConfig={props.runtimeConfig}
+          onOpenTerminal={handleOpenTerminal}
+        />
+      </div>
 
-      <RightSidebar
-        key={props.workspaceId}
-        workspaceId={props.workspaceId}
-        workspacePath={props.namedWorkspacePath}
-        projectPath={props.projectPath}
-        width={sidebarWidth}
-        onStartResize={startResize}
-        isResizing={isResizing}
-        onReviewNote={handleReviewNote}
-        isCreating={props.isInitializing === true}
-        addTerminalRef={addTerminalRef}
-        aria-hidden={isReviewImmersive || undefined}
-      />
+      <div className="min-h-0" aria-hidden={isReviewImmersive || undefined}>
+        <RightSidebar
+          key={props.workspaceId}
+          workspaceId={props.workspaceId}
+          workspacePath={props.namedWorkspacePath}
+          projectPath={props.projectPath}
+          width={sidebarWidth}
+          onStartResize={startResize}
+          isResizing={isResizing}
+          onReviewNote={handleReviewNote}
+          isCreating={props.isInitializing === true}
+          addTerminalRef={addTerminalRef}
+        />
+      </div>
 
       {/* Portal target for immersive review mode overlay */}
       <div

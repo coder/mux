@@ -59,8 +59,8 @@ interface InlineComposerRequest {
   requestId: number;
   prefill: string;
   hunkId: string;
-  startIndex: number;
-  endIndex: number;
+  startOffset: number;
+  endOffset: number;
 }
 
 interface SelectedLineRange {
@@ -500,6 +500,16 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const [activeLineIndex, setActiveLineIndex] = useState<number | null>(null);
   const [selectedLineRange, setSelectedLineRange] = useState<SelectedLineRange | null>(null);
 
+  useEffect(() => {
+    if (!inlineComposerRequest) {
+      return;
+    }
+
+    if (!selectedHunk || inlineComposerRequest.hunkId !== selectedHunk.id) {
+      setInlineComposerRequest(null);
+    }
+  }, [inlineComposerRequest, selectedHunk]);
+
   // Refs keep hot-path callbacks stable so cursor movement doesn't trigger expensive re-renders.
   const activeLineIndexRef = useRef<number | null>(null);
   const selectedLineRangeRef = useRef<SelectedLineRange | null>(null);
@@ -661,8 +671,8 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         requestId: nextComposerRequestIdRef.current,
         prefill,
         hunkId: selectedHunk.id,
-        startIndex: effectiveSelection.startIndex,
-        endIndex: effectiveSelection.endIndex,
+        startOffset: effectiveSelection.startIndex - selectedHunkRange.startIndex,
+        endOffset: effectiveSelection.endIndex - selectedHunkRange.startIndex,
       });
     },
     [getCurrentLineSelection, selectedHunk, selectedHunkRange]
@@ -875,6 +885,28 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     return `${relativeStart}-${relativeEnd}`;
   }, [selectedLineSummary, selectedHunkRange]);
 
+  const externalComposerSelectionRequest = useMemo(() => {
+    if (!inlineComposerRequest || !selectedHunk || !selectedHunkRange) {
+      return null;
+    }
+
+    if (inlineComposerRequest.hunkId !== selectedHunk.id) {
+      return null;
+    }
+
+    const clampToHunk = (lineIndex: number) =>
+      Math.max(selectedHunkRange.startIndex, Math.min(selectedHunkRange.endIndex, lineIndex));
+
+    return {
+      requestId: inlineComposerRequest.requestId,
+      selection: {
+        startIndex: clampToHunk(selectedHunkRange.startIndex + inlineComposerRequest.startOffset),
+        endIndex: clampToHunk(selectedHunkRange.startIndex + inlineComposerRequest.endOffset),
+      },
+      initialNoteText: inlineComposerRequest.prefill,
+    };
+  }, [inlineComposerRequest, selectedHunk, selectedHunkRange]);
+
   const shouldEnableHighlighting = overlayData.lineHunkIds.length <= MAX_HIGHLIGHTED_DIFF_LINES;
 
   return (
@@ -989,19 +1021,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                 enableHighlighting={shouldEnableHighlighting}
                 selectedLineRange={selectedLineRange}
                 onLineIndexSelect={handleLineIndexSelect}
-                externalSelectionRequest={
-                  inlineComposerRequest?.hunkId != null &&
-                  inlineComposerRequest.hunkId === selectedHunk?.id
-                    ? {
-                        requestId: inlineComposerRequest.requestId,
-                        selection: {
-                          startIndex: inlineComposerRequest.startIndex,
-                          endIndex: inlineComposerRequest.endIndex,
-                        },
-                        initialNoteText: inlineComposerRequest.prefill,
-                      }
-                    : null
-                }
+                externalSelectionRequest={externalComposerSelectionRequest}
               />
             </div>
           )}

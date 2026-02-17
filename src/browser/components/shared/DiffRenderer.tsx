@@ -975,23 +975,24 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     const [selection, setSelection] = React.useState<LineSelection | null>(null);
     const [selectionInitialNoteText, setSelectionInitialNoteText] = React.useState("");
 
-    const lastExternalSelectionRequestIdRef = React.useRef<number | null>(null);
+    const lastExternalSelectionSignatureRef = React.useRef<string | null>(null);
 
     React.useEffect(() => {
       if (!externalSelectionRequest) {
-        if (lastExternalSelectionRequestIdRef.current !== null) {
-          lastExternalSelectionRequestIdRef.current = null;
+        if (lastExternalSelectionSignatureRef.current !== null) {
+          lastExternalSelectionSignatureRef.current = null;
           setSelection(null);
           setSelectionInitialNoteText("");
         }
         return;
       }
 
-      if (lastExternalSelectionRequestIdRef.current === externalSelectionRequest.requestId) {
+      const signature = `${externalSelectionRequest.requestId}:${externalSelectionRequest.selection.startIndex}:${externalSelectionRequest.selection.endIndex}:${externalSelectionRequest.initialNoteText ?? ""}`;
+      if (lastExternalSelectionSignatureRef.current === signature) {
         return;
       }
 
-      lastExternalSelectionRequestIdRef.current = externalSelectionRequest.requestId;
+      lastExternalSelectionSignatureRef.current = signature;
       setSelection({
         startIndex: externalSelectionRequest.selection.startIndex,
         endIndex: externalSelectionRequest.selection.endIndex,
