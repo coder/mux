@@ -16,6 +16,7 @@
     "src/cli/index.ts",
     "src/cli/run.ts",
     "src/cli/server.ts",
+    "src/cli/acp.ts",
     "src/desktop/**/*",
     "src/node/**/*",
     "src/common/**/*"
