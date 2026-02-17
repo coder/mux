@@ -24,11 +24,13 @@ import { AgentSkillParseError, parseSkillMarkdown } from "./parseSkillMarkdown";
 import { getBuiltInSkillByName, getBuiltInSkillDescriptors } from "./builtInSkillDefinitions";
 
 const GLOBAL_SKILLS_ROOT = "~/.mux/skills";
+const WORKSPACE_UNIVERSAL_SKILLS_SUBPATH = ".agent/skills";
 const UNIVERSAL_SKILLS_ROOT = "~/.agents/skills";
 
 export interface AgentSkillsRoots {
   projectRoot: string;
   globalRoot: string;
+  workspaceUniversalRoot?: string;
   universalRoot?: string;
 }
 
@@ -43,16 +45,44 @@ export function getDefaultAgentSkillsRoots(
   return {
     projectRoot: runtime.normalizePath(".mux/skills", workspacePath),
     globalRoot: GLOBAL_SKILLS_ROOT,
+    workspaceUniversalRoot: runtime.normalizePath(
+      WORKSPACE_UNIVERSAL_SKILLS_SUBPATH,
+      workspacePath
+    ),
     universalRoot: UNIVERSAL_SKILLS_ROOT,
   };
 }
 
 function getGlobalSkillRoots(roots: AgentSkillsRoots): string[] {
-  const orderedRoots = [roots.globalRoot, roots.universalRoot].filter(
+  const orderedRoots = [roots.globalRoot, roots.workspaceUniversalRoot, roots.universalRoot].filter(
     (root): root is string => root != null && root.length > 0
   );
 
   return Array.from(new Set(orderedRoots));
+}
+
+interface SkillRootScan {
+  scope: AgentSkillScope;
+  root: string;
+}
+
+interface ListedSkillRoot {
+  scope: AgentSkillScope;
+  resolvedRoot: string;
+  directoryNames: string[];
+}
+
+interface SkillDescriptorCandidate {
+  scope: AgentSkillScope;
+  directoryName: SkillName;
+  skillDir: string;
+}
+
+function buildSkillRootScans(roots: AgentSkillsRoots): SkillRootScan[] {
+  return [
+    { scope: "project", root: roots.projectRoot },
+    ...getGlobalSkillRoots(roots).map((root) => ({ scope: "global" as const, root })),
+  ];
 }
 
 function formatError(error: unknown): string {
@@ -97,6 +127,102 @@ async function listSkillDirectoriesFromRuntime(
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+async function listSkillRoots(
+  runtime: Runtime,
+  workspacePath: string,
+  scans: SkillRootScan[]
+): Promise<ListedSkillRoot[]> {
+  const listed = await Promise.all(
+    scans.map(async (scan): Promise<ListedSkillRoot | null> => {
+      let resolvedRoot: string;
+      try {
+        resolvedRoot = await runtime.resolvePath(scan.root);
+      } catch (err) {
+        log.warn(`Failed to resolve skills root ${scan.root}: ${formatError(err)}`);
+        return null;
+      }
+
+      const directoryNames =
+        runtime instanceof SSHRuntime
+          ? await listSkillDirectoriesFromRuntime(runtime, resolvedRoot, { cwd: workspacePath })
+          : await listSkillDirectoriesFromLocalFs(resolvedRoot);
+
+      return {
+        scope: scan.scope,
+        resolvedRoot,
+        directoryNames,
+      };
+    })
+  );
+
+  return listed.filter((entry): entry is ListedSkillRoot => entry != null);
+}
+
+function collectSkillDescriptorCandidates(
+  runtime: Runtime,
+  listedRoots: ListedSkillRoot[],
+  options?: { invalidSkills?: AgentSkillIssue[] }
+): Map<SkillName, SkillDescriptorCandidate[]> {
+  const candidatesByName = new Map<SkillName, SkillDescriptorCandidate[]>();
+
+  for (const listedRoot of listedRoots) {
+    for (const directoryNameRaw of listedRoot.directoryNames) {
+      const nameParsed = SkillNameSchema.safeParse(directoryNameRaw);
+      if (!nameParsed.success) {
+        log.warn(
+          `Skipping invalid skill directory name '${directoryNameRaw}' in ${listedRoot.resolvedRoot}`
+        );
+        options?.invalidSkills?.push({
+          directoryName: directoryNameRaw,
+          scope: listedRoot.scope,
+          displayPath: runtime.normalizePath(directoryNameRaw, listedRoot.resolvedRoot),
+          message: `Invalid skill directory name '${directoryNameRaw}'.`,
+          hint: "Rename the directory to kebab-case (lowercase letters/numbers/hyphens).",
+        });
+        continue;
+      }
+
+      const directoryName = nameParsed.data;
+      const candidate: SkillDescriptorCandidate = {
+        scope: listedRoot.scope,
+        directoryName,
+        skillDir: runtime.normalizePath(directoryName, listedRoot.resolvedRoot),
+      };
+
+      const existing = candidatesByName.get(directoryName);
+      if (existing) {
+        existing.push(candidate);
+      } else {
+        candidatesByName.set(directoryName, [candidate]);
+      }
+    }
+  }
+
+  return candidatesByName;
+}
+
+async function resolveBestSkillDescriptorCandidate(
+  runtime: Runtime,
+  candidates: SkillDescriptorCandidate[],
+  options?: { invalidSkills?: AgentSkillIssue[] }
+): Promise<AgentSkillDescriptor | null> {
+  for (const candidate of candidates) {
+    const descriptor = await readSkillDescriptorFromDir(
+      runtime,
+      candidate.skillDir,
+      candidate.directoryName,
+      candidate.scope,
+      options
+    );
+
+    if (descriptor) {
+      return descriptor;
+    }
+  }
+
+  return null;
 }
 
 async function readSkillDescriptorFromDir(
@@ -218,54 +344,25 @@ export async function discoverAgentSkills(
 
   const byName = new Map<SkillName, AgentSkillDescriptor>();
 
-  // Project skills take precedence over global roots.
-  const scans: Array<{ scope: AgentSkillScope; root: string }> = [
-    { scope: "project", root: roots.projectRoot },
-    ...getGlobalSkillRoots(roots).map((root) => ({ scope: "global" as const, root })),
-  ];
+  const scans = buildSkillRootScans(roots);
+  const listedRoots = await listSkillRoots(runtime, workspacePath, scans);
+  const candidatesByName = collectSkillDescriptorCandidates(runtime, listedRoots);
 
-  for (const scan of scans) {
-    let resolvedRoot: string;
-    try {
-      resolvedRoot = await runtime.resolvePath(scan.root);
-    } catch (err) {
-      log.warn(`Failed to resolve skills root ${scan.root}: ${formatError(err)}`);
+  const resolvedDescriptors = await Promise.all(
+    Array.from(candidatesByName.values()).map((candidates) =>
+      resolveBestSkillDescriptorCandidate(runtime, candidates)
+    )
+  );
+
+  for (const descriptor of resolvedDescriptors) {
+    if (!descriptor) {
       continue;
     }
 
-    const directoryNames =
-      runtime instanceof SSHRuntime
-        ? await listSkillDirectoriesFromRuntime(runtime, resolvedRoot, { cwd: workspacePath })
-        : await listSkillDirectoriesFromLocalFs(resolvedRoot);
-
-    for (const directoryNameRaw of directoryNames) {
-      const nameParsed = SkillNameSchema.safeParse(directoryNameRaw);
-      if (!nameParsed.success) {
-        log.warn(`Skipping invalid skill directory name '${directoryNameRaw}' in ${resolvedRoot}`);
-        continue;
-      }
-
-      const directoryName = nameParsed.data;
-
-      if (scan.scope === "global" && byName.has(directoryName)) {
-        continue;
-      }
-
-      const skillDir = runtime.normalizePath(directoryName, resolvedRoot);
-      const descriptor = await readSkillDescriptorFromDir(
-        runtime,
-        skillDir,
-        directoryName,
-        scan.scope
-      );
-      if (!descriptor) continue;
-
-      // Precedence: project overwrites global.
-      byName.set(descriptor.name, descriptor);
-    }
+    byName.set(descriptor.name, descriptor);
   }
 
-  // Add built-in skills (lowest precedence - only if not overridden by project/global)
+  // Add built-in skills (lowest precedence - only if not overridden by project/global/universal)
   for (const builtIn of getBuiltInSkillDescriptors()) {
     if (!byName.has(builtIn.name)) {
       byName.set(builtIn.name, builtIn);
@@ -294,64 +391,29 @@ export async function discoverAgentSkillsDiagnostics(
   const byName = new Map<SkillName, AgentSkillDescriptor>();
   const invalidSkills: AgentSkillIssue[] = [];
 
-  // Project skills take precedence over global roots.
-  const scans: Array<{ scope: AgentSkillScope; root: string }> = [
-    { scope: "project", root: roots.projectRoot },
-    ...getGlobalSkillRoots(roots).map((root) => ({ scope: "global" as const, root })),
-  ];
+  const scans = buildSkillRootScans(roots);
+  const listedRoots = await listSkillRoots(runtime, workspacePath, scans);
+  const candidatesByName = collectSkillDescriptorCandidates(runtime, listedRoots, {
+    invalidSkills,
+  });
 
-  for (const scan of scans) {
-    let resolvedRoot: string;
-    try {
-      resolvedRoot = await runtime.resolvePath(scan.root);
-    } catch (err) {
-      log.warn(`Failed to resolve skills root ${scan.root}: ${formatError(err)}`);
+  const resolvedDescriptors = await Promise.all(
+    Array.from(candidatesByName.values()).map((candidates) =>
+      resolveBestSkillDescriptorCandidate(runtime, candidates, {
+        invalidSkills,
+      })
+    )
+  );
+
+  for (const descriptor of resolvedDescriptors) {
+    if (!descriptor) {
       continue;
     }
 
-    const directoryNames =
-      runtime instanceof SSHRuntime
-        ? await listSkillDirectoriesFromRuntime(runtime, resolvedRoot, { cwd: workspacePath })
-        : await listSkillDirectoriesFromLocalFs(resolvedRoot);
-
-    for (const directoryNameRaw of directoryNames) {
-      const nameParsed = SkillNameSchema.safeParse(directoryNameRaw);
-      if (!nameParsed.success) {
-        log.warn(`Skipping invalid skill directory name '${directoryNameRaw}' in ${resolvedRoot}`);
-        invalidSkills.push({
-          directoryName: directoryNameRaw,
-          scope: scan.scope,
-          displayPath: runtime.normalizePath(directoryNameRaw, resolvedRoot),
-          message: `Invalid skill directory name '${directoryNameRaw}'.`,
-          hint: "Rename the directory to kebab-case (lowercase letters/numbers/hyphens).",
-        });
-        continue;
-      }
-
-      const directoryName = nameParsed.data;
-
-      if (scan.scope === "global" && byName.has(directoryName)) {
-        continue;
-      }
-
-      const skillDir = runtime.normalizePath(directoryName, resolvedRoot);
-      const descriptor = await readSkillDescriptorFromDir(
-        runtime,
-        skillDir,
-        directoryName,
-        scan.scope,
-        {
-          invalidSkills,
-        }
-      );
-      if (!descriptor) continue;
-
-      // Precedence: project overwrites global.
-      byName.set(descriptor.name, descriptor);
-    }
+    byName.set(descriptor.name, descriptor);
   }
 
-  // Add built-in skills (lowest precedence - only if not overridden by project/global)
+  // Add built-in skills (lowest precedence - only if not overridden by project/global/universal)
   for (const builtIn of getBuiltInSkillDescriptors()) {
     if (!byName.has(builtIn.name)) {
       byName.set(builtIn.name, builtIn);
@@ -440,30 +502,36 @@ export async function readAgentSkill(
 
   const roots = options?.roots ?? getDefaultAgentSkillsRoots(runtime, workspacePath);
 
-  // Project overrides all global roots.
-  const candidates: Array<{ scope: AgentSkillScope; root: string }> = [
-    { scope: "project", root: roots.projectRoot },
-    ...getGlobalSkillRoots(roots).map((root) => ({ scope: "global" as const, root })),
-  ];
+  // Project overrides all global/universal roots.
+  const candidates = buildSkillRootScans(roots);
 
-  for (const candidate of candidates) {
-    let resolvedRoot: string;
-    try {
-      resolvedRoot = await runtime.resolvePath(candidate.root);
-    } catch {
-      continue;
-    }
+  const resolvedCandidates = await Promise.all(
+    candidates.map(async (candidate): Promise<ResolvedAgentSkill | null> => {
+      let resolvedRoot: string;
+      try {
+        resolvedRoot = await runtime.resolvePath(candidate.root);
+      } catch {
+        return null;
+      }
 
-    const skillDir = runtime.normalizePath(name, resolvedRoot);
+      const skillDir = runtime.normalizePath(name, resolvedRoot);
 
-    try {
-      const stat = await runtime.stat(skillDir);
-      if (!stat.isDirectory) continue;
+      try {
+        const stat = await runtime.stat(skillDir);
+        if (!stat.isDirectory) {
+          return null;
+        }
 
-      return await readAgentSkillFromDir(runtime, skillDir, name, candidate.scope);
-    } catch {
-      continue;
-    }
+        return await readAgentSkillFromDir(runtime, skillDir, name, candidate.scope);
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  const resolved = resolvedCandidates.find((candidate) => candidate != null);
+  if (resolved) {
+    return resolved;
   }
 
   // Check built-in skills as fallback
