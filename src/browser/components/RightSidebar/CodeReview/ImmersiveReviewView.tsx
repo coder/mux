@@ -76,6 +76,8 @@ interface ImmersiveOverlayData {
 }
 
 const LINE_JUMP_SIZE = 10;
+const MAX_HIGHLIGHTED_DIFF_LINES = 1600;
+const ACTIVE_LINE_OUTLINE = "1px solid hsl(from var(--color-review-accent) h s l / 0.45)";
 const DISLIKE_NOTE_PREFIX = "I don't like this change";
 
 function getFileBaseName(filePath: string): string {
@@ -420,6 +422,24 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const [activeLineIndex, setActiveLineIndex] = useState<number | null>(null);
   const [selectedLineRange, setSelectedLineRange] = useState<SelectedLineRange | null>(null);
 
+  // Refs keep hot-path callbacks stable so cursor movement doesn't trigger expensive re-renders.
+  const activeLineIndexRef = useRef<number | null>(null);
+  const selectedLineRangeRef = useRef<SelectedLineRange | null>(null);
+  const selectedHunkIdRef = useRef<string | null>(selectedHunkId);
+  const highlightedLineElementRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    activeLineIndexRef.current = activeLineIndex;
+  }, [activeLineIndex]);
+
+  useEffect(() => {
+    selectedLineRangeRef.current = selectedLineRange;
+  }, [selectedLineRange]);
+
+  useEffect(() => {
+    selectedHunkIdRef.current = selectedHunkId;
+  }, [selectedHunkId]);
+
   // Keep cursor and selection aligned to the selected hunk when hunk navigation changes.
   useEffect(() => {
     if (!selectedHunkRange) {
@@ -565,42 +585,35 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         return;
       }
 
-      const currentIndex = activeLineIndex ?? selectedHunkRange?.startIndex ?? 0;
+      const currentIndex = activeLineIndexRef.current ?? selectedHunkRange?.startIndex ?? 0;
       const nextIndex = Math.max(0, Math.min(lineCount - 1, currentIndex + delta));
 
       setActiveLineIndex(nextIndex);
 
       if (extendRange) {
-        const anchorIndex = selectedLineRange?.startIndex ?? currentIndex;
+        const anchorIndex = selectedLineRangeRef.current?.startIndex ?? currentIndex;
         setSelectedLineRange({ startIndex: anchorIndex, endIndex: nextIndex });
       } else {
         setSelectedLineRange(null);
       }
 
       const lineHunkId = overlayData.lineHunkIds[nextIndex];
-      if (lineHunkId && lineHunkId !== selectedHunkId) {
+      if (lineHunkId && lineHunkId !== selectedHunkIdRef.current) {
         onSelectHunk(lineHunkId);
       }
     },
-    [
-      overlayData.lineHunkIds,
-      activeLineIndex,
-      selectedHunkRange?.startIndex,
-      selectedLineRange,
-      selectedHunkId,
-      onSelectHunk,
-    ]
+    [overlayData.lineHunkIds, selectedHunkRange?.startIndex, onSelectHunk]
   );
 
   const handleLineIndexSelect = useCallback(
     (lineIndex: number, shiftKey: boolean) => {
       const lineHunkId = overlayData.lineHunkIds[lineIndex];
-      if (lineHunkId && selectedHunkId !== lineHunkId) {
+      if (lineHunkId && selectedHunkIdRef.current !== lineHunkId) {
         onSelectHunk(lineHunkId);
       }
 
       const anchorIndex = shiftKey
-        ? (selectedLineRange?.startIndex ?? activeLineIndex ?? lineIndex)
+        ? (selectedLineRangeRef.current?.startIndex ?? activeLineIndexRef.current ?? lineIndex)
         : lineIndex;
       setActiveLineIndex(lineIndex);
 
@@ -610,7 +623,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         setSelectedLineRange(null);
       }
     },
-    [overlayData.lineHunkIds, selectedHunkId, onSelectHunk, selectedLineRange, activeLineIndex]
+    [overlayData.lineHunkIds, onSelectHunk]
   );
 
   // Auto-focus container on mount
@@ -710,21 +723,49 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     onToggleRead,
   ]);
 
-  // Keep the active line visible while moving with keyboard shortcuts.
+  // Keep the active line visible while moving with keyboard shortcuts, without
+  // forcing the full diff tree to re-render on every cursor move.
   useEffect(() => {
+    const previousLineElement = highlightedLineElementRef.current;
+    if (previousLineElement) {
+      previousLineElement.style.outline = "";
+      previousLineElement.style.outlineOffset = "";
+      highlightedLineElementRef.current = null;
+    }
+
     if (activeLineIndex === null) {
       return;
     }
 
-    const lineElement = document.querySelector(
-      `[data-testid="review-immersive-root"] [data-line-index="${activeLineIndex}"]`
+    const lineElement = containerRef.current?.querySelector<HTMLElement>(
+      `[data-line-index="${activeLineIndex}"]`
     );
+    if (!lineElement) {
+      return;
+    }
+
+    lineElement.style.outline = ACTIVE_LINE_OUTLINE;
+    lineElement.style.outlineOffset = "-1px";
+    highlightedLineElementRef.current = lineElement;
 
     const block = hunkJumpRef.current ? "center" : "nearest";
     hunkJumpRef.current = false;
 
-    lineElement?.scrollIntoView({ behavior: "auto", block });
-  }, [activeLineIndex]);
+    lineElement.scrollIntoView({ behavior: "auto", block });
+  }, [activeLineIndex, overlayData.content]);
+
+  useEffect(() => {
+    return () => {
+      const previousLineElement = highlightedLineElementRef.current;
+      if (!previousLineElement) {
+        return;
+      }
+
+      previousLineElement.style.outline = "";
+      previousLineElement.style.outlineOffset = "";
+      highlightedLineElementRef.current = null;
+    };
+  }, []);
 
   const currentHunkIdx = selectedHunkId
     ? currentFileHunks.findIndex((hunk) => hunk.id === selectedHunkId)
@@ -743,6 +784,8 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     const relativeEnd = selectedLineSummary.endIndex - selectedHunkRange.startIndex + 1;
     return `${relativeStart}-${relativeEnd}`;
   }, [selectedLineSummary, selectedHunkRange]);
+
+  const shouldEnableHighlighting = overlayData.lineHunkIds.length <= MAX_HIGHLIGHTED_DIFF_LINES;
 
   return (
     <div
@@ -853,7 +896,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                 className="rounded-none border-0 [&>div]:overflow-x-visible"
                 onReviewNote={onReviewNote}
                 reviewActions={props.reviewActions}
-                activeLineIndex={activeLineIndex}
+                enableHighlighting={shouldEnableHighlighting}
                 selectedLineRange={selectedLineRange}
                 onLineIndexSelect={handleLineIndexSelect}
                 externalSelectionRequest={
