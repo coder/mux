@@ -474,6 +474,12 @@ export class MuxAcpAgent implements Agent {
         unstableEnabled: this.options.unstable,
         signal: combinedSignal.signal,
         onReady: async () => {
+          // Guard against cancellation that arrived during the caught-up wait.
+          // Without this check, sendMessage could start a new backend stream
+          // after the ACP prompt has already been cancelled.
+          if (combinedSignal.signal.aborted) {
+            return;
+          }
           await sendPromptToWorkspace(this.orpcClient, session, params);
         },
       });
