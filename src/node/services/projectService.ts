@@ -630,9 +630,12 @@ export class ProjectService {
         return Err("Project not found");
       }
 
-      if (projectConfig.workspaces.length > 0) {
+      const activeWorkspaces = projectConfig.workspaces.filter(
+        (w) => !isWorkspaceArchived(w.archivedAt, w.unarchivedAt)
+      );
+      if (activeWorkspaces.length > 0) {
         return Err(
-          `Cannot remove project with active workspaces. Please remove all ${projectConfig.workspaces.length} workspace(s) first.`
+          `Cannot remove project with active workspaces. Please remove all ${activeWorkspaces.length} workspace(s) first.`
         );
       }
 
