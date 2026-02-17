@@ -11,7 +11,6 @@ import {
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { isCompactingStream, cancelCompaction } from "@/browser/utils/compaction/handler";
 import { useAPI } from "@/browser/contexts/API";
-import { disableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
 import type { EditingMessageState } from "@/browser/utils/chatEditing";
 
 interface UseAIViewKeybindsParams {
@@ -95,7 +94,7 @@ export function useAIViewKeybinds({
           if (api) {
             void cancelCompaction(api, workspaceId, aggregator, setEditingMessage);
           }
-          disableAutoRetryPreference(workspaceId);
+          void api?.workspace.setAutoRetryEnabled?.({ workspaceId, enabled: false });
           return;
         }
 
@@ -104,7 +103,7 @@ export function useAIViewKeybinds({
         // Non-vim mode: Esc interrupts (except when typing in inputs, unless explicitly opted in)
         if (canInterrupt || showRetryBarrier) {
           e.preventDefault();
-          disableAutoRetryPreference(workspaceId); // User explicitly stopped - don't auto-retry
+          void api?.workspace.setAutoRetryEnabled?.({ workspaceId, enabled: false });
           void api?.workspace.interruptStream({ workspaceId });
           return;
         }

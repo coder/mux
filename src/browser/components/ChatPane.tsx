@@ -34,7 +34,6 @@ import {
 } from "@/browser/utils/messages/messageUtils";
 import { computeTaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
 import { BashOutputCollapsedIndicator } from "./tools/BashOutputCollapsedIndicator";
-import { enableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
 import {
   getInterruptionContext,
   getLastNonDecorativeMessage,
@@ -556,11 +555,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
 
     // Enable auto-scroll when user sends a message
     setAutoScroll(true);
-
-    // Reset autoRetry when user sends a message
-    // User action = clear intent: "I'm actively using this workspace"
-    enableAutoRetryPreference(workspaceId);
-  }, [setAutoScroll, autoBackgroundOnSend, workspaceId]);
+  }, [setAutoScroll, autoBackgroundOnSend]);
 
   const handleClearHistory = useCallback(
     async (percentage = 1.0) => {
@@ -601,9 +596,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, workspaceState?.loading]);
 
-  // Compute showRetryBarrier once for both keybinds and UI
-  // Track if last message was interrupted or errored (for RetryBarrier)
-  // Uses same logic as useResumeManager for DRY
+  // Compute showRetryBarrier once for both keybinds and UI.
+  // Track if last message was interrupted or errored (for RetryBarrier).
   const interruption = workspaceState
     ? getInterruptionContext(
         workspaceState.messages,

@@ -16,9 +16,7 @@ import {
   type LoadedSkill,
   type SkillLoadError,
 } from "@/browser/utils/messages/StreamingMessageAggregator";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { isAbortError } from "@/browser/utils/isAbortError";
-import { getRetryStateKey } from "@/common/constants/storage";
 import { BASH_TRUNCATE_MAX_TOTAL_BYTES } from "@/common/constants/toolLimits";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { useCallback, useSyncExternalStore } from "react";
@@ -49,13 +47,19 @@ import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import type { z } from "zod";
 import type { SessionUsageFileSchema } from "@/common/orpc/schemas/chatStats";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
-import { createFreshRetryState } from "@/common/utils/messages/retryState";
 import {
   appendLiveBashOutputChunk,
   type LiveBashOutputInternal,
   type LiveBashOutputView,
 } from "@/browser/utils/messages/liveBashOutputBuffer";
 import { trackStreamCompleted } from "@/common/telemetry";
+
+export type AutoRetryStatus = Extract<
+  WorkspaceChatMessage,
+  | { type: "auto-retry-scheduled" }
+  | { type: "auto-retry-starting" }
+  | { type: "auto-retry-abandoned" }
+>;
 
 export interface WorkspaceState {
   name: string; // User-facing workspace name (e.g., "feature-branch")
@@ -82,6 +86,7 @@ export interface WorkspaceState {
   pendingStreamModel: string | null;
   // Runtime status from ensureReady (for Coder workspace starting UX)
   runtimeStatus: RuntimeStatusEvent | null;
+  autoRetryStatus: AutoRetryStatus | null;
   // Live streaming stats (updated on each stream-delta)
   streamingTokenCount: number | undefined;
   streamingTPS: number | undefined;
@@ -233,6 +238,7 @@ interface WorkspaceChatTransientState {
   queuedMessage: QueuedMessage | null;
   liveBashOutput: Map<string, LiveBashOutputInternal>;
   liveTaskIds: Map<string, string>;
+  autoRetryStatus: AutoRetryStatus | null;
 }
 
 interface HistoryPaginationCursor {
@@ -281,6 +287,7 @@ function createInitialChatTransientState(): WorkspaceChatTransientState {
     queuedMessage: null,
     liveBashOutput: new Map(),
     liveTaskIds: new Map(),
+    autoRetryStatus: null,
   };
 }
 
@@ -487,8 +494,11 @@ export class WorkspaceStore {
       if (this.onModelUsed) {
         this.onModelUsed((data as { model: string }).model);
       }
-      // Don't reset retry state here - stream might still fail after starting
-      // Retry state will be reset on stream-end (successful completion)
+
+      // A new stream supersedes any prior retry banner state.
+      const transient = this.assertChatTransientState(workspaceId);
+      transient.autoRetryStatus = null;
+
       this.states.bump(workspaceId);
       // Bump usage store so liveUsage is recomputed with new activeStreamId
       this.usageStore.bump(workspaceId);
@@ -504,8 +514,8 @@ export class WorkspaceStore {
       // Track stream completion telemetry
       this.trackStreamCompletedTelemetry(streamEndData, false);
 
-      // Reset retry state on successful stream completion
-      updatePersistedState(getRetryStateKey(workspaceId), createFreshRetryState());
+      const transient = this.assertChatTransientState(workspaceId);
+      transient.autoRetryStatus = null;
 
       // Update local session usage (mirrors backend's addUsage)
       const model = streamEndData.metadata?.model;
@@ -555,7 +565,6 @@ export class WorkspaceStore {
       // Flush any pending debounced bump before final bump to avoid double-bump
       this.cancelPendingIdleBump(workspaceId);
       this.states.bump(workspaceId);
-      this.dispatchResumeCheck(workspaceId);
       this.finalizeUsageStats(workspaceId, streamAbortData.metadata);
     },
     "tool-call-start": (workspaceId, aggregator, data) => {
@@ -623,6 +632,30 @@ export class WorkspaceStore {
     },
     "runtime-status": (workspaceId, aggregator, data) => {
       applyWorkspaceChatEventToAggregator(aggregator, data);
+      this.states.bump(workspaceId);
+    },
+    "auto-retry-scheduled": (workspaceId, _aggregator, data) => {
+      const transient = this.assertChatTransientState(workspaceId);
+      transient.autoRetryStatus = data as Extract<
+        WorkspaceChatMessage,
+        { type: "auto-retry-scheduled" }
+      >;
+      this.states.bump(workspaceId);
+    },
+    "auto-retry-starting": (workspaceId, _aggregator, data) => {
+      const transient = this.assertChatTransientState(workspaceId);
+      transient.autoRetryStatus = data as Extract<
+        WorkspaceChatMessage,
+        { type: "auto-retry-starting" }
+      >;
+      this.states.bump(workspaceId);
+    },
+    "auto-retry-abandoned": (workspaceId, _aggregator, data) => {
+      const transient = this.assertChatTransientState(workspaceId);
+      transient.autoRetryStatus = data as Extract<
+        WorkspaceChatMessage,
+        { type: "auto-retry-abandoned" }
+      >;
       this.states.bump(workspaceId);
     },
     "session-usage-delta": (workspaceId, _aggregator, data) => {
@@ -940,18 +973,6 @@ export class WorkspaceStore {
     for (const aggregator of this.aggregators.values()) {
       aggregator.onResponseComplete = callback;
     }
-  }
-
-  /**
-   * Dispatch resume check event for a workspace.
-   * Triggers useResumeManager to check if interrupted stream can be resumed.
-   */
-  private dispatchResumeCheck(workspaceId: string): void {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.RESUME_CHECK_REQUESTED, { workspaceId }));
   }
 
   /**
@@ -1325,6 +1346,7 @@ export class WorkspaceStore {
         agentStatus: aggregator.getAgentStatus(),
         pendingStreamStartTime,
         pendingStreamModel: aggregator.getPendingStreamModel(),
+        autoRetryStatus: transient.autoRetryStatus,
         runtimeStatus: aggregator.getRuntimeStatus(),
         streamingTokenCount,
         streamingTPS,
@@ -2892,24 +2914,7 @@ export class WorkspaceStore {
 
       applyWorkspaceChatEventToAggregator(aggregator, data, { allowSideEffects });
 
-      // Increment retry attempt counter when stream fails.
-      updatePersistedState(
-        getRetryStateKey(workspaceId),
-        (prev) => {
-          const newAttempt = prev.attempt + 1;
-          console.debug(
-            `[retry] ${workspaceId} stream-error: incrementing attempt ${prev.attempt} → ${newAttempt}`
-          );
-          return {
-            attempt: newAttempt,
-            retryStartTime: Date.now(),
-          };
-        },
-        { attempt: 0, retryStartTime: Date.now() }
-      );
-
       this.states.bump(workspaceId);
-      this.dispatchResumeCheck(workspaceId);
       return;
     }
 

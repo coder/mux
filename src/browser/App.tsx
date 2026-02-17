@@ -21,7 +21,6 @@ import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
 import { handleLayoutSlotHotkeys } from "./utils/ui/layoutSlotHotkeys";
 import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
 import { getVisibleWorkspaceIds } from "./utils/ui/workspaceDomNav";
-import { useResumeManager } from "./hooks/useResumeManager";
 import { useUnreadTracking } from "./hooks/useUnreadTracking";
 import { useWorkspaceStoreRaw, useWorkspaceRecency } from "./stores/WorkspaceStore";
 
@@ -243,9 +242,6 @@ function AppInner() {
       });
     }
   }, [refreshWorkspaceMetadata, setSelectedWorkspace]);
-
-  // Auto-resume interrupted streams on app startup and when failures occur
-  useResumeManager();
 
   // Update window title based on selected workspace
   // URL syncing is now handled by RouterContext

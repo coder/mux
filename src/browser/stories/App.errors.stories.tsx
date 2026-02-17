@@ -15,7 +15,6 @@ import {
   createFileEditTool,
   createStaticChatHandler,
 } from "./mockFactory";
-import { disableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
 import {
   collapseRightSidebar,
   createOnChatAdapter,
@@ -178,9 +177,6 @@ export const ContextExceededSuggestion: AppStory = {
     <AppWithMocks
       setup={() => {
         const workspaceId = "ws-context-exceeded";
-        // Disable auto-retry to keep this story deterministic (no countdown timer)
-        disableAutoRetryPreference(workspaceId);
-
         return setupCustomChatStory({
           workspaceId,
           providersConfig: {
@@ -231,7 +227,6 @@ export const DebugLlmRequestModal: AppStory = {
     <AppWithMocks
       setup={() => {
         const workspaceId = "ws-debug-request";
-        disableAutoRetryPreference(workspaceId);
 
         const workspaces = [
           createWorkspace({ id: workspaceId, name: "debug", projectName: "my-app" }),
@@ -306,8 +301,6 @@ export const StreamError: AppStory = {
     <AppWithMocks
       setup={() => {
         const workspaceId = "ws-error";
-        // Disable auto-retry to show deterministic "Retry" button instead of countdown timer
-        disableAutoRetryPreference(workspaceId);
 
         return setupCustomChatStory({
           workspaceId,
@@ -343,8 +336,6 @@ export const AnthropicOverloaded: AppStory = {
     <AppWithMocks
       setup={() => {
         const workspaceId = "ws-anthropic-overloaded";
-        // Disable auto-retry to show deterministic "Retry" button instead of countdown timer
-        disableAutoRetryPreference(workspaceId);
 
         return setupCustomChatStory({
           workspaceId,

@@ -47,19 +47,6 @@ export const CUSTOM_EVENTS = {
   AGENTS_REFRESH_REQUESTED: "mux:agentsRefreshRequested",
 
   /**
-   * Event to trigger resume check for a workspace
-   * Detail: { workspaceId: string }
-   *
-   * Emitted when:
-   * - Stream error occurs
-   * - Stream aborted
-   * - App startup (for all workspaces with interrupted streams)
-   *
-   * useResumeManager handles this idempotently - safe to emit multiple times
-   */
-  RESUME_CHECK_REQUESTED: "mux:resumeCheckRequested",
-
-  /**
    * Event emitted when the mux gateway session expires.
    * No detail
    */
@@ -120,10 +107,6 @@ export interface CustomEventPayloads {
   [CUSTOM_EVENTS.CLOSE_AGENT_PICKER]: never; // No payload
   [CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED]: never; // No payload
   [CUSTOM_EVENTS.OPEN_MODEL_SELECTOR]: never; // No payload
-  [CUSTOM_EVENTS.RESUME_CHECK_REQUESTED]: {
-    workspaceId: string;
-    isManual?: boolean; // true when user explicitly clicks retry (bypasses eligibility checks)
-  };
   [CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED]: never; // No payload
   [CUSTOM_EVENTS.WORKSPACE_FORK_SWITCH]: {
     workspaceId: string;
@@ -151,7 +134,7 @@ export interface CustomEventPayloads {
 
 /**
  * Type-safe custom event type
- * Usage: CustomEventType<typeof CUSTOM_EVENTS.RESUME_CHECK_REQUESTED>
+ * Usage: CustomEventType<typeof CUSTOM_EVENTS.THINKING_LEVEL_TOAST>
  */
 export type CustomEventType<K extends keyof CustomEventPayloads> = CustomEvent<
   CustomEventPayloads[K]
@@ -162,9 +145,9 @@ export type CustomEventType<K extends keyof CustomEventPayloads> = CustomEvent<
  *
  * @example
  * ```typescript
- * const event = createCustomEvent(CUSTOM_EVENTS.RESUME_CHECK_REQUESTED, {
- *   workspaceId: 'abc123',
- *   isManual: true
+ * const event = createCustomEvent(CUSTOM_EVENTS.THINKING_LEVEL_TOAST, {
+ *   workspaceId: "abc123",
+ *   level: "high",
  * });
  * window.dispatchEvent(event);
  * ```

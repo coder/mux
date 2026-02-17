@@ -254,7 +254,7 @@ export function hasInterruptedStream(
 /**
  * Check if messages are eligible for automatic retry
  *
- * Used by useResumeManager to determine if workspace should be auto-retried.
+ * Used by retry status consumers to determine if a stream interruption is auto-retry eligible.
  * Returns false for errors that require user action (authentication, quota, etc.),
  * but still allows manual retry via RetryBarrier UI.
  *

@@ -3,8 +3,8 @@ import assert from "@/common/utils/assert";
 import { AlertTriangle, Check } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { useAPI } from "@/browser/contexts/API";
+import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import { useAutoResizeTextarea } from "@/browser/hooks/useAutoResizeTextarea";
 import { Checkbox } from "@/browser/components/ui/checkbox";
 import { cn } from "@/common/lib/utils";
@@ -345,14 +345,13 @@ export function AskUserQuestionToolCall(props: {
           return;
         }
 
-        // If the stream was interrupted (e.g. app restart) we need to explicitly
-        // kick the resume manager so the assistant continues after answers.
-        window.dispatchEvent(
-          createCustomEvent(CUSTOM_EVENTS.RESUME_CHECK_REQUESTED, {
-            workspaceId,
-            isManual: true,
-          })
-        );
+        // If the stream was interrupted (e.g. app restart), explicitly resume using
+        // the latest persisted send options for this workspace.
+        void api.workspace.setAutoRetryEnabled?.({ workspaceId, enabled: true });
+        void api.workspace.resumeStream({
+          workspaceId,
+          options: getSendOptionsFromStorage(workspaceId),
+        });
       })
       .catch((error) => {
         const errorMessage = getErrorMessage(error);

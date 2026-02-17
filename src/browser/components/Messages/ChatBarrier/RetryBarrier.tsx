@@ -1,187 +1,126 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { AlertTriangle, RefreshCw } from "lucide-react";
-import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
-import type { RetryState } from "@/common/utils/messages/retryState";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { useAPI } from "@/browser/contexts/API";
 import { useWorkspaceState } from "@/browser/stores/WorkspaceStore";
-import {
-  disableAutoRetryPreference,
-  enableAutoRetryPreference,
-  useAutoRetryPreference,
-} from "@/browser/utils/messages/autoRetryPreference";
-import {
-  getInterruptionContext,
-  getLastNonDecorativeMessage,
-  isNonRetryableSendError,
-} from "@/common/utils/messages/retryEligibility";
-import { calculateBackoffDelay, createManualRetryState } from "@/common/utils/messages/retryState";
+import { getLastNonDecorativeMessage } from "@/common/utils/messages/retryEligibility";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
-import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import { getRetryStateKey, VIM_ENABLED_KEY } from "@/common/constants/storage";
+import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { cn } from "@/common/lib/utils";
-import { formatSendMessageError } from "@/common/utils/errors/formatSendError";
+import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
+import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
 
 interface RetryBarrierProps {
   workspaceId: string;
   className?: string;
 }
 
-const defaultRetryState: RetryState = {
-  attempt: 0,
-  retryStartTime: Date.now(),
-};
-
 export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
-  // Get workspace state for computing effective autoRetry
+  const { api } = useAPI();
   const workspaceState = useWorkspaceState(props.workspaceId);
+  const [countdown, setCountdown] = useState(0);
 
-  const [autoRetry] = useAutoRetryPreference(props.workspaceId);
-
-  // Read vim mode for displaying correct stop keybind
   const [vimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, { listener: true });
   const stopKeybind = formatKeybind(
     vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL
   );
 
-  // Use persisted state for retry tracking (survives workspace switches)
-  // Read retry state (managed by useResumeManager)
-  const [retryState] = usePersistedState<RetryState>(
-    getRetryStateKey(props.workspaceId),
-    defaultRetryState,
-    { listener: true }
-  );
+  const autoRetryStatus = workspaceState.autoRetryStatus;
+  const isAutoRetryScheduled = autoRetryStatus?.type === "auto-retry-scheduled";
+  const isAutoRetryActive =
+    autoRetryStatus?.type === "auto-retry-scheduled" ||
+    autoRetryStatus?.type === "auto-retry-starting";
 
-  const { attempt, retryStartTime, lastError } = retryState || defaultRetryState;
-
-  // Compute effective autoRetry state: user preference AND error is retryable
-  // This ensures UI shows "Retry" button (not "Retrying...") for non-retryable errors
-  const effectiveAutoRetry = useMemo(() => {
-    if (!autoRetry || !workspaceState) {
-      return false;
-    }
-
-    // Check if current state is eligible for auto-retry
-    const { isEligibleForAutoRetry: messagesEligible } = getInterruptionContext(
-      workspaceState.messages,
-      workspaceState.pendingStreamStartTime,
-      workspaceState.runtimeStatus,
-      workspaceState.lastAbortReason
-    );
-
-    // Also check RetryState for SendMessageErrors (from resumeStream failures)
-    // Note: isNonRetryableSendError already respects window.__MUX_FORCE_ALL_RETRYABLE
-    if (lastError && isNonRetryableSendError(lastError)) {
-      return false; // Non-retryable SendMessageError
-    }
-
-    return messagesEligible;
-  }, [autoRetry, workspaceState, lastError]);
-
-  // Local state for UI
-  const [countdown, setCountdown] = useState(0);
-
-  // Update countdown display (pure display logic, no side effects)
-  // useResumeManager handles the actual retry logic
   useEffect(() => {
-    if (!autoRetry) return;
+    if (!isAutoRetryScheduled) {
+      setCountdown(0);
+      return;
+    }
 
-    const interval = setInterval(() => {
-      const delay = calculateBackoffDelay(attempt);
-      const nextRetryTime = retryStartTime + delay;
-      const timeUntilRetry = Math.max(0, nextRetryTime - Date.now());
-
+    const updateCountdown = () => {
+      const retryAt = autoRetryStatus.scheduledAt + autoRetryStatus.delayMs;
+      const timeUntilRetry = Math.max(0, retryAt - Date.now());
       setCountdown(Math.ceil(timeUntilRetry / 1000));
-    }, 100);
+    };
 
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 100);
     return () => clearInterval(interval);
-  }, [autoRetry, attempt, retryStartTime]);
+  }, [autoRetryStatus, isAutoRetryScheduled]);
 
-  // Manual retry handler (user-initiated, immediate)
-  // Emits event to useResumeManager instead of calling resumeStream directly
-  // This keeps all retry logic centralized in one place
   const handleManualRetry = () => {
-    const resetBackoff = !autoRetry;
-    enableAutoRetryPreference(props.workspaceId); // Re-enable auto-retry for next failure
+    if (!api) {
+      return;
+    }
 
-    // User rationale: after explicitly stopping auto-retry, hitting Retry should
-    // start a fresh backoff window instead of inheriting a long prior delay.
-    updatePersistedState(
-      getRetryStateKey(props.workspaceId),
-      createManualRetryState(attempt, { resetBackoff })
-    );
+    let options = getSendOptionsFromStorage(props.workspaceId);
+    const lastUserMessage = [...workspaceState.messages]
+      .reverse()
+      .find(
+        (message): message is Extract<typeof message, { type: "user" }> => message.type === "user"
+      );
 
-    // Emit event to useResumeManager - it will handle the actual resume
-    // Pass isManual flag to bypass eligibility checks (user explicitly wants to retry)
-    window.dispatchEvent(
-      createCustomEvent(CUSTOM_EVENTS.RESUME_CHECK_REQUESTED, {
-        workspaceId: props.workspaceId,
-        isManual: true,
-      })
-    );
+    if (lastUserMessage?.compactionRequest) {
+      options = applyCompactionOverrides(options, lastUserMessage.compactionRequest.parsed);
+    }
+
+    void api.workspace.setAutoRetryEnabled?.({ workspaceId: props.workspaceId, enabled: true });
+    void api.workspace.resumeStream({ workspaceId: props.workspaceId, options });
   };
 
-  // Stop auto-retry handler
   const handleStopAutoRetry = () => {
     setCountdown(0);
-    disableAutoRetryPreference(props.workspaceId);
+    void api?.workspace.setAutoRetryEnabled?.({ workspaceId: props.workspaceId, enabled: false });
   };
-
-  // Format error message for display (centralized logic)
-  const getErrorMessage = (error: typeof lastError): string => {
-    if (!error) return "";
-    const formatted = formatSendMessageError(error);
-    // Combine message with a resolution hint if available
-    return formatted.resolutionHint
-      ? `${formatted.message} ${formatted.resolutionHint}`
-      : formatted.message;
-  };
-
-  const details = lastError ? (
-    <div className="font-primary text-foreground/80 pl-8 text-[12px]">
-      <span className="text-warning font-semibold">Error:</span> {getErrorMessage(lastError)}
-    </div>
-  ) : null;
 
   const barrierClassName = cn(
     "my-5 px-5 py-4 bg-gradient-to-br from-[rgba(255,165,0,0.1)] to-[rgba(255,140,0,0.1)] border-l-4 border-warning rounded flex flex-col gap-3",
     props.className
   );
 
-  const lastMessage = workspaceState
-    ? getLastNonDecorativeMessage(workspaceState.messages)
-    : undefined;
+  const lastMessage = getLastNonDecorativeMessage(workspaceState.messages);
   const lastStreamError = lastMessage?.type === "stream-error" ? lastMessage : null;
-
   const interruptionReason = lastStreamError?.errorType === "rate_limit" ? "Rate limited" : null;
 
   let statusIcon: React.ReactNode = (
     <AlertTriangle aria-hidden="true" className="text-warning h-4 w-4 shrink-0" />
   );
   let statusText: React.ReactNode = <>{interruptionReason ?? "Stream interrupted"}</>;
-  let actionButton: React.ReactNode;
+  let actionButton: React.ReactNode = (
+    <button
+      className="bg-warning font-primary text-background cursor-pointer rounded border-none px-4 py-2 text-xs font-semibold whitespace-nowrap transition-all duration-200 hover:-translate-y-px hover:brightness-120 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50"
+      onClick={handleManualRetry}
+    >
+      Retry
+    </button>
+  );
 
-  if (effectiveAutoRetry) {
-    // Auto-retry mode: show countdown and stop button.
-    // useResumeManager handles the actual retry logic.
+  if (isAutoRetryActive) {
     statusIcon = (
       <RefreshCw aria-hidden="true" className="text-warning h-4 w-4 shrink-0 animate-spin" />
     );
-    const reasonPrefix = interruptionReason ? <>{interruptionReason} — </> : null;
 
-    statusText =
-      countdown === 0 ? (
+    const reasonPrefix = interruptionReason ? <>{interruptionReason} — </> : null;
+    const retryAttempt = autoRetryStatus.attempt;
+
+    if (autoRetryStatus.type === "auto-retry-starting" || countdown === 0) {
+      statusText = (
         <>
           {reasonPrefix}
-          Retrying... (attempt {attempt + 1})
+          Retrying... (attempt {retryAttempt})
         </>
-      ) : (
+      );
+    } else {
+      statusText = (
         <>
           {reasonPrefix}
           Retrying in <span className="text-warning font-mono font-semibold">
             {countdown}s
           </span>{" "}
-          (attempt {attempt + 1})
+          (attempt {retryAttempt})
         </>
       );
+    }
 
     actionButton = (
       <button
@@ -191,16 +130,15 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
         Stop <span className="mobile-hide-shortcut-hints">({stopKeybind})</span>
       </button>
     );
-  } else {
-    actionButton = (
-      <button
-        className="bg-warning font-primary text-background cursor-pointer rounded border-none px-4 py-2 text-xs font-semibold whitespace-nowrap transition-all duration-200 hover:-translate-y-px hover:brightness-120 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50"
-        onClick={handleManualRetry}
-      >
-        Retry
-      </button>
-    );
   }
+
+  const details =
+    autoRetryStatus?.type === "auto-retry-abandoned" ? (
+      <div className="font-primary text-foreground/80 pl-8 text-[12px]">
+        <span className="text-warning font-semibold">Auto-retry stopped:</span>{" "}
+        {autoRetryStatus.reason}
+      </div>
+    ) : null;
 
   return (
     <div className={barrierClassName}>
