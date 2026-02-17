@@ -352,10 +352,24 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     return null;
   }, [selectedHunkId, hunks, allHunks, fileList]);
 
-  // Hunks for the active file only, always sorted in file order
+  const selectedHunkFromAll = useMemo(
+    () => (selectedHunkId ? (allHunks.find((item) => item.id === selectedHunkId) ?? null) : null),
+    [selectedHunkId, allHunks]
+  );
+
+  const selectedHunkIsFilteredOut = Boolean(
+    selectedHunkFromAll && !hunks.some((item) => item.id === selectedHunkFromAll.id)
+  );
+
+  const activeFileHunks = selectedHunkIsFilteredOut ? allHunks : hunks;
+
+  // Hunks for the active file only, always sorted in file order.
+  // When the selected hunk is filtered out, keep using unfiltered hunks so
+  // note-driven navigation can still land on the review context.
   const currentFileHunks = useMemo(
-    () => (activeFilePath ? sortHunksInFileOrder(getFileHunks(hunks, activeFilePath)) : []),
-    [hunks, activeFilePath]
+    () =>
+      activeFilePath ? sortHunksInFileOrder(getFileHunks(activeFileHunks, activeFilePath)) : [],
+    [activeFileHunks, activeFilePath]
   );
 
   const selectedHunk = useMemo(() => {

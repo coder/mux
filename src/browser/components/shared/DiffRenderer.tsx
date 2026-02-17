@@ -979,6 +979,11 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
 
     React.useEffect(() => {
       if (!externalSelectionRequest) {
+        if (lastExternalSelectionRequestIdRef.current !== null) {
+          lastExternalSelectionRequestIdRef.current = null;
+          setSelection(null);
+          setSelectionInitialNoteText("");
+        }
         return;
       }
 
