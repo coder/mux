@@ -23,6 +23,9 @@ if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
+# Polling every 30s reduces GitHub API churn while still giving timely readiness updates.
+POLL_INTERVAL_SECS=30
+
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 WAIT_CODEX_SCRIPT="$SCRIPT_DIR/wait_pr_codex.sh"
 WAIT_CHECKS_SCRIPT="$SCRIPT_DIR/wait_pr_checks.sh"
@@ -266,5 +269,5 @@ while true; do
     exit 1
   fi
 
-  sleep 5
+  sleep "$POLL_INTERVAL_SECS"
 done

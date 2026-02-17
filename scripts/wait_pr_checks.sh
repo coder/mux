@@ -27,6 +27,9 @@ if [ $# -eq 2 ]; then
   fi
 fi
 
+# Polling every 30s reduces GitHub API churn while still giving timely readiness updates.
+POLL_INTERVAL_SECS=30
+
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 CHECK_REVIEWS_SCRIPT="$SCRIPT_DIR/check_pr_reviews.sh"
 SKIP_FETCH_SYNC="${MUX_SKIP_FETCH_SYNC:-0}"
@@ -306,7 +309,7 @@ while true; do
       ;;
     10)
       echo -ne "\r⏳ Checks in progress... (${LAST_MERGE_STATE})  "
-      sleep 5
+      sleep "$POLL_INTERVAL_SECS"
       ;;
     *)
       echo "❌ assertion failed: unexpected checks status code '$rc'" >&2

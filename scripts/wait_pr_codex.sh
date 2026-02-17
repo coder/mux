@@ -28,6 +28,9 @@ if [ $# -eq 2 ]; then
   fi
 fi
 
+# Polling every 30s reduces GitHub API churn while still giving timely readiness updates.
+POLL_INTERVAL_SECS=30
+
 BOT_LOGIN_GRAPHQL="chatgpt-codex-connector"
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 CHECK_CODEX_COMMENTS_SCRIPT="$SCRIPT_DIR/check_codex_comments.sh"
@@ -522,7 +525,7 @@ while true; do
       ;;
     10)
       echo -ne "\r⏳ Waiting for Codex response... (requested at ${LAST_REQUEST_AT})  "
-      sleep 5
+      sleep "$POLL_INTERVAL_SECS"
       ;;
     *)
       echo "❌ assertion failed: unexpected Codex status code '$rc'" >&2
