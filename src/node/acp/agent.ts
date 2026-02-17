@@ -52,6 +52,8 @@ interface TurnResult {
 interface TurnCompletion {
   resolve: (result: TurnResult) => void;
   reject: (error: Error) => void;
+  /** Set after sendMessage returns; only events with this messageId resolve/reject the turn. */
+  messageId?: string;
 }
 
 interface ParsedMuxMeta {
@@ -133,10 +135,19 @@ export class MuxAgent implements Agent {
     const projectPath = meta.projectPath ?? params.cwd.trim();
     assert(projectPath.length > 0, "newSession: projectPath/cwd must be non-empty");
 
+    // When the ACP client doesn't supply a trunk branch (typical — editors only
+    // send `cwd`, not mux-specific `_meta`), derive it from the project's git
+    // repo.  Worktree/SSH runtimes require a trunk branch for workspace creation.
+    let trunkBranch = meta.trunkBranch;
+    if (trunkBranch == null || trunkBranch.trim().length === 0) {
+      const branchInfo = await this.server.client.projects.listBranches({ projectPath });
+      trunkBranch = branchInfo.recommendedTrunk ?? "main";
+    }
+
     const createResult = await this.server.client.workspace.create({
       projectPath,
       branchName: meta.branchName ?? generateDefaultBranchName(),
-      trunkBranch: meta.trunkBranch,
+      trunkBranch,
       title: meta.title,
       runtimeConfig: meta.runtimeConfig,
     });
@@ -422,7 +433,21 @@ export class MuxAgent implements Agent {
       return;
     }
 
+    // Capture the messageId from the first stream event if the turn hasn't
+    // been associated with a specific message yet.  This locks the turn to
+    // the correct message so events from other messages are ignored.
+    // (usage-delta events are already handled above and returned early.)
+    if ("messageId" in event && typeof event.messageId === "string") {
+      const completion = this.turnCompletions.get(sessionId);
+      if (completion != null && completion.messageId == null) {
+        completion.messageId = event.messageId;
+      }
+    }
+
     if (event.type === "stream-end") {
+      if (!this.isActiveTurnMessage(sessionId, event.messageId)) {
+        return;
+      }
       const usage =
         event.metadata.usage != null
           ? convertToAcpUsage(event.metadata.usage)
@@ -432,6 +457,9 @@ export class MuxAgent implements Agent {
     }
 
     if (event.type === "stream-abort") {
+      if (!this.isActiveTurnMessage(sessionId, event.messageId)) {
+        return;
+      }
       const usage =
         event.metadata?.usage != null
           ? convertToAcpUsage(event.metadata.usage)
@@ -441,6 +469,9 @@ export class MuxAgent implements Agent {
     }
 
     if (event.type === "stream-error") {
+      if (!this.isActiveTurnMessage(sessionId, event.messageId)) {
+        return;
+      }
       this.rejectTurn(sessionId, new Error(`prompt stream failed: ${event.error}`));
     }
   }
@@ -458,6 +489,22 @@ export class MuxAgent implements Agent {
     return new Promise<TurnResult>((resolve, reject) => {
       this.turnCompletions.set(sessionId, { resolve, reject });
     });
+  }
+  /**
+   * Check if a stream event's messageId matches the active turn.  If no
+   * messageId was set yet (e.g., sendMessage hasn't returned), allow all
+   * events to pass through to avoid blocking the turn.
+   */
+  private isActiveTurnMessage(sessionId: string, eventMessageId: string): boolean {
+    const completion = this.turnCompletions.get(sessionId);
+    if (completion == null) {
+      return false;
+    }
+    // If the turn's messageId hasn't been set yet, accept all events.
+    if (completion.messageId == null) {
+      return true;
+    }
+    return completion.messageId === eventMessageId;
   }
 
   private resolveTurn(sessionId: string, result: TurnResult): void {
