@@ -235,6 +235,45 @@ describe("ServerAuthService", () => {
     expect(deviceCodeRequests).toBe(successCount);
   });
 
+  it("keeps throttling start requests after flows are canceled", async () => {
+    const service = createService(config);
+
+    let deviceCodeRequests = 0;
+    mockFetch((input) => {
+      const url = String(input);
+
+      if (url.endsWith("/login/device/code")) {
+        deviceCodeRequests += 1;
+        return jsonResponse({
+          verification_uri: "https://github.com/login/device",
+          user_code: `CANCEL-${deviceCodeRequests}`,
+          device_code: `cancel-device-code-${deviceCodeRequests}`,
+          interval: 5,
+        });
+      }
+
+      return new Response("Not found", { status: 404 });
+    });
+
+    const attempts = 40;
+    let successCount = 0;
+    let rejectedCount = 0;
+
+    for (let i = 0; i < attempts; i += 1) {
+      const result = await service.startGithubDeviceFlow();
+      if (result.success) {
+        successCount += 1;
+        service.cancelGithubDeviceFlow(result.data.flowId);
+      } else {
+        rejectedCount += 1;
+        expect(result.error).toContain("Too many concurrent GitHub login attempts");
+      }
+    }
+
+    expect(successCount).toBeLessThan(attempts);
+    expect(rejectedCount).toBeGreaterThan(0);
+  });
+
   it("does not persist orphan sessions when a device flow is canceled while polling", async () => {
     const service = createService(config);
 

@@ -290,15 +290,10 @@ export class ServerAuthService {
     return this.getAllowedGithubOwner() != null;
   }
 
-  private getOpenGithubDeviceFlowCount(): number {
-    let count = 0;
-    for (const flow of this.githubDeviceFlows.values()) {
-      if (!flow.cancelled) {
-        count += 1;
-      }
-    }
-
-    return count;
+  private getTrackedGithubDeviceFlowCount(): number {
+    // Count all tracked flows (including canceled/completed ones waiting for cleanup)
+    // so disconnect/cancel loops cannot bypass unauthenticated start throttling.
+    return this.githubDeviceFlows.size;
   }
 
   async startGithubDeviceFlow(): Promise<
@@ -309,8 +304,8 @@ export class ServerAuthService {
       return Err("GitHub owner login is not configured");
     }
 
-    const openFlows = this.getOpenGithubDeviceFlowCount();
-    if (openFlows + this.githubDeviceFlowStartsInFlight >= MAX_CONCURRENT_GITHUB_DEVICE_FLOWS) {
+    const trackedFlows = this.getTrackedGithubDeviceFlowCount();
+    if (trackedFlows + this.githubDeviceFlowStartsInFlight >= MAX_CONCURRENT_GITHUB_DEVICE_FLOWS) {
       return Err("Too many concurrent GitHub login attempts. Please wait and try again.");
     }
 
