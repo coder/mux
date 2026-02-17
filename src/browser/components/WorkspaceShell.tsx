@@ -1,5 +1,5 @@
 import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
-import React, { useCallback, useRef } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import { RIGHT_SIDEBAR_WIDTH_KEY, getReviewImmersiveKey } from "@/common/constants/storage";
 import { useResizableSidebar } from "@/browser/hooks/useResizableSidebar";
@@ -66,6 +66,8 @@ const WorkspacePlaceholder: React.FC<{
 
 export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
   const shellRef = useRef<HTMLDivElement>(null);
+  const chatPaneWrapperRef = useRef<HTMLDivElement>(null);
+  const rightSidebarWrapperRef = useRef<HTMLDivElement>(null);
   const shellSize = useResizeObserver(shellRef);
 
   // WorkspaceShell switches to flex-col at this breakpoint, so in that stacked mode the
@@ -131,6 +133,31 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
   const [isReviewImmersive] = usePersistedState(getReviewImmersiveKey(props.workspaceId), false, {
     listener: true,
   });
+  // `aria-hidden` is not enough to block focus/keyboard interaction behind immersive mode.
+  // Apply/remove `inert` imperatively on the rendered pane wrappers so background controls
+  // cannot steal focus while the immersive overlay is active.
+  useEffect(() => {
+    const wrappers = [chatPaneWrapperRef.current, rightSidebarWrapperRef.current];
+
+    for (const wrapper of wrappers) {
+      if (!wrapper) {
+        continue;
+      }
+
+      if (isReviewImmersive) {
+        wrapper.setAttribute("inert", "");
+      } else {
+        wrapper.removeAttribute("inert");
+      }
+    }
+
+    return () => {
+      for (const wrapper of wrappers) {
+        wrapper?.removeAttribute("inert");
+      }
+    };
+  }, [isReviewImmersive]);
+
   const backgroundBashError = useBackgroundBashError();
 
   if (!workspaceState || workspaceState.loading) {
@@ -158,6 +185,7 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
     >
       {/* Keyed by workspaceId to prevent cross-workspace message-list flashes. */}
       <div
+        ref={chatPaneWrapperRef}
         key={`chat-${props.workspaceId}`}
         className="min-h-0 min-w-0 flex-1"
         aria-hidden={isReviewImmersive || undefined}
@@ -176,7 +204,11 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
         />
       </div>
 
-      <div className="min-h-0" aria-hidden={isReviewImmersive || undefined}>
+      <div
+        ref={rightSidebarWrapperRef}
+        className="min-h-0"
+        aria-hidden={isReviewImmersive || undefined}
+      >
         <RightSidebar
           key={props.workspaceId}
           workspaceId={props.workspaceId}
