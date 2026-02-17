@@ -12,10 +12,16 @@ import type { ServerConnection } from "./serverConnection";
  * Call this **before** any code that may log to stdout (including
  * `connectToServer`, which may start an in-process server).
  *
+ * In Node.js, `console.log`, `console.info`, `console.debug`, and
+ * `console.dir` all write to stdout.  We redirect every one of them to stderr
+ * (via `console.error`) so only ACP JSON-RPC frames appear on stdout.
  * `console.error`/`console.warn` already target stderr and are unaffected.
  */
 export function isolateStdoutForAcp(): void {
   console.log = console.error;
+  console.info = console.error;
+  console.debug = console.error;
+  console.dir = console.error;
 }
 
 export async function runAcpAdapter(server: ServerConnection): Promise<void> {

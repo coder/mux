@@ -82,6 +82,12 @@ export class MuxAgent implements Agent {
   private readonly chatSubscriptionReady = new Map<string, Promise<void>>();
   private readonly turnCompletions = new Map<string, TurnCompletion>();
   private readonly latestUsageBySessionId = new Map<string, Usage>();
+  /**
+   * Tracks the last messageId we saw via `stream-start` for each session.
+   * Used to distinguish prior-stream abort/error events from events belonging
+   * to a freshly queued (but not yet identified) turn.
+   */
+  private readonly lastStreamMessageIdBySession = new Map<string, string>();
 
   constructor(
     private readonly connection: AgentSideConnection,
@@ -446,6 +452,11 @@ export class MuxAgent implements Agent {
     // event) to avoid binding to a stale in-flight message when the workspace
     // has queued the new prompt behind a still-running stream.
     if (event.type === "stream-start") {
+      // Always record the latest stream-start messageId so that
+      // isActiveTurnMessageOrPending can distinguish prior-stream
+      // abort/error events from events for a pending turn.
+      this.lastStreamMessageIdBySession.set(sessionId, event.messageId);
+
       const completion = this.turnCompletions.get(sessionId);
       if (completion != null && completion.messageId == null) {
         completion.messageId = event.messageId;
@@ -530,17 +541,28 @@ export class MuxAgent implements Agent {
    * Like `isActiveTurnMessage` but also returns `true` when the turn exists
    * but hasn't been identified yet (messageId is null).  Used for error/abort
    * events that must be processed even before `stream-start` arrives.
+   *
+   * When the turn is pending (messageId not yet set), we reject events whose
+   * messageId matches the most recent `stream-start` we recorded — those
+   * belong to a prior stream, not to the freshly queued prompt.  Only truly
+   * unknown messageIds (or sessions with no prior stream) pass through.
    */
   private isActiveTurnMessageOrPending(sessionId: string, eventMessageId: string): boolean {
     const completion = this.turnCompletions.get(sessionId);
     if (completion == null) {
       return false;
     }
-    // Turn exists but hasn't been identified — accept the event (abort/error).
-    if (completion.messageId == null) {
-      return true;
+    // Turn already identified — exact match only.
+    if (completion.messageId != null) {
+      return completion.messageId === eventMessageId;
     }
-    return completion.messageId === eventMessageId;
+    // Turn pending (not yet identified).  Reject events from a known prior
+    // stream to avoid a stale abort/error resolving the new turn.
+    const lastKnown = this.lastStreamMessageIdBySession.get(sessionId);
+    if (lastKnown != null && eventMessageId === lastKnown) {
+      return false;
+    }
+    return true;
   }
 
   private resolveTurn(sessionId: string, result: TurnResult): void {
