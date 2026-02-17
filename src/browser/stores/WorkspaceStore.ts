@@ -49,7 +49,7 @@ import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import type { z } from "zod";
 import type { SessionUsageFileSchema } from "@/common/orpc/schemas/chatStats";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
-import { createFreshRetryState } from "@/browser/utils/messages/retryState";
+import { createFreshRetryState } from "@/common/utils/messages/retryState";
 import {
   appendLiveBashOutputChunk,
   type LiveBashOutputInternal,

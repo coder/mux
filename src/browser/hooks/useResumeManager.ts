@@ -8,21 +8,16 @@ import { readAutoRetryPreference } from "@/browser/utils/messages/autoRetryPrefe
 import {
   getInterruptionContext,
   isNonRetryableSendError,
-} from "@/browser/utils/messages/retryEligibility";
+} from "@/common/utils/messages/retryEligibility";
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
 import type { SendMessageError } from "@/common/types/errors";
 import {
   createFailedRetryState,
   calculateBackoffDelay,
   INITIAL_DELAY,
-} from "@/browser/utils/messages/retryState";
+  type RetryState,
+} from "@/common/utils/messages/retryState";
 import { useAPI } from "@/browser/contexts/API";
-
-export interface RetryState {
-  attempt: number;
-  retryStartTime: number;
-  lastError?: SendMessageError;
-}
 
 /**
  * Centralized auto-resume manager for interrupted streams

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
-import type { RetryState } from "@/browser/hooks/useResumeManager";
+import type { RetryState } from "@/common/utils/messages/retryState";
 import { useWorkspaceState } from "@/browser/stores/WorkspaceStore";
 import {
   disableAutoRetryPreference,
@@ -12,8 +12,8 @@ import {
   getInterruptionContext,
   getLastNonDecorativeMessage,
   isNonRetryableSendError,
-} from "@/browser/utils/messages/retryEligibility";
-import { calculateBackoffDelay, createManualRetryState } from "@/browser/utils/messages/retryState";
+} from "@/common/utils/messages/retryEligibility";
+import { calculateBackoffDelay, createManualRetryState } from "@/common/utils/messages/retryState";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { getRetryStateKey, VIM_ENABLED_KEY } from "@/common/constants/storage";

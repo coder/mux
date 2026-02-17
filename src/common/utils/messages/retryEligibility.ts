@@ -3,7 +3,7 @@ import type { StreamErrorType, SendMessageError } from "@/common/types/errors";
 import type { RuntimeStatusEvent, StreamAbortReasonSnapshot } from "@/common/types/stream";
 
 /**
- * Debug flag to force all errors to be retryable
+ * Debug flag to force all errors to be retryable.
  * Set in browser console: window.__MUX_FORCE_ALL_RETRYABLE = true
  *
  * Useful for testing retry/backoff logic without needing to simulate
@@ -13,33 +13,37 @@ import type { RuntimeStatusEvent, StreamAbortReasonSnapshot } from "@/common/typ
  * trigger a manual retry first (click "Retry" button) to clear the
  * stored non-retryable error state.
  */
-declare global {
-  interface Window {
-    __MUX_FORCE_ALL_RETRYABLE?: boolean;
-  }
-}
+const FORCE_ALL_RETRYABLE_FLAG = "__MUX_FORCE_ALL_RETRYABLE";
 
 export const PENDING_STREAM_START_GRACE_PERIOD_MS = 15000; // 15 seconds
 
 /**
- * Check if the debug flag to force all errors to be retryable is enabled
+ * Check if the debug flag to force all errors to be retryable is enabled.
+ *
+ * Uses globalThis instead of window so this utility stays safe for backend usage.
  */
 function isForceAllRetryableEnabled(): boolean {
-  return typeof window !== "undefined" && window.__MUX_FORCE_ALL_RETRYABLE === true;
+  const runtime = globalThis as typeof globalThis & {
+    __MUX_FORCE_ALL_RETRYABLE?: boolean;
+  };
+
+  return runtime[FORCE_ALL_RETRYABLE_FLAG] === true;
 }
 
 /**
  * Error types that should NOT be auto-retried because they require user action
  * These errors won't resolve on their own - the user must fix the underlying issue
  */
-const NON_RETRYABLE_STREAM_ERRORS: StreamErrorType[] = [
+const NON_RETRYABLE_STREAM_ERRORS = [
   "authentication", // Bad API key - user must fix credentials
   "quota", // Billing/usage limits - user must upgrade or wait for reset
   "model_not_found", // Invalid model - user must select different model
   "context_exceeded", // Message too long - user must reduce context
   "aborted", // User cancelled - should not auto-retry
   "runtime_not_ready", // Container/runtime unavailable - permanent failure
-];
+] as const satisfies readonly StreamErrorType[];
+
+const NON_RETRYABLE_STREAM_ERROR_SET = new Set<string>(NON_RETRYABLE_STREAM_ERRORS);
 
 /**
  * Check if a SendMessageError (from resumeStream failures) is non-retryable
@@ -65,6 +69,18 @@ export function isNonRetryableSendError(error: SendMessageError): boolean {
     case "policy_denied": // Policy blocks won't resolve automatically
       return true;
   }
+}
+
+/**
+ * Check if a stream-error type is non-retryable.
+ */
+export function isNonRetryableStreamError(error: { type: StreamErrorType | string }): boolean {
+  // Debug flag: force all errors to be retryable
+  if (isForceAllRetryableEnabled()) {
+    return false;
+  }
+
+  return NON_RETRYABLE_STREAM_ERROR_SET.has(error.type);
 }
 
 interface InterruptionContext {
@@ -215,7 +231,7 @@ export function getInterruptionContext(
     }
     return {
       hasInterruptedStream: true,
-      isEligibleForAutoRetry: !NON_RETRYABLE_STREAM_ERRORS.includes(lastMessage.errorType),
+      isEligibleForAutoRetry: !isNonRetryableStreamError({ type: lastMessage.errorType }),
     };
   }
 

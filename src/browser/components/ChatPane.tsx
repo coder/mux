@@ -38,7 +38,7 @@ import { enableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPre
 import {
   getInterruptionContext,
   getLastNonDecorativeMessage,
-} from "@/browser/utils/messages/retryEligibility";
+} from "@/common/utils/messages/retryEligibility";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
