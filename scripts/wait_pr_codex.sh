@@ -31,6 +31,7 @@ fi
 BOT_LOGIN_GRAPHQL="chatgpt-codex-connector"
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 CHECK_CODEX_COMMENTS_SCRIPT="$SCRIPT_DIR/check_codex_comments.sh"
+SKIP_FETCH_SYNC="${MUX_SKIP_FETCH_SYNC:-0}"
 
 if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
   echo "❌ PR number must be numeric. Got: '$PR_NUMBER'"
@@ -42,70 +43,77 @@ if [ ! -x "$CHECK_CODEX_COMMENTS_SCRIPT" ]; then
   exit 1
 fi
 
+if [ "$SKIP_FETCH_SYNC" != "0" ] && [ "$SKIP_FETCH_SYNC" != "1" ]; then
+  echo "❌ assertion failed: MUX_SKIP_FETCH_SYNC must be '0' or '1' (got '$SKIP_FETCH_SYNC')" >&2
+  exit 1
+fi
+
 # Keep these regexes in sync with ./scripts/check_codex_comments.sh.
 CODEX_APPROVAL_REGEX="Didn't find any major issues"
 CODEX_RATE_LIMIT_REGEX="usage limits have been reached"
 
-# Check for dirty working tree
-if ! git diff-index --quiet HEAD --; then
-  echo "❌ Error: You have uncommitted changes in your working directory." >&2
-  echo "" >&2
-  git status --short >&2
-  echo "" >&2
-  echo "Please commit or stash your changes before checking PR status." >&2
-  exit 1
-fi
-
-# Get current branch name
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-
-# Get remote tracking branch
-REMOTE_BRANCH=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || echo "")
-
-if [[ -z "$REMOTE_BRANCH" ]]; then
-  echo "⚠️  Current branch '$CURRENT_BRANCH' has no upstream branch." >&2
-  echo "Setting upstream to origin/$CURRENT_BRANCH..." >&2
-
-  # Try to set upstream
-  if git push -u origin "$CURRENT_BRANCH" 2>&1; then
-    echo "✅ Upstream set successfully!" >&2
-    REMOTE_BRANCH="origin/$CURRENT_BRANCH"
-  else
-    echo "❌ Error: Failed to set upstream branch." >&2
-    echo "You may need to push manually: git push -u origin $CURRENT_BRANCH" >&2
+if [ "$SKIP_FETCH_SYNC" = "0" ]; then
+  # Check for dirty working tree
+  if ! git diff-index --quiet HEAD --; then
+    echo "❌ Error: You have uncommitted changes in your working directory." >&2
+    echo "" >&2
+    git status --short >&2
+    echo "" >&2
+    echo "Please commit or stash your changes before checking PR status." >&2
     exit 1
   fi
-fi
 
-# Fetch latest remote state before comparing
-git fetch origin "$CURRENT_BRANCH" --quiet 2>/dev/null || true
+  # Get current branch name
+  CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
-# Check if local and remote are in sync
-LOCAL_HASH=$(git rev-parse HEAD)
-REMOTE_HASH=$(git rev-parse "$REMOTE_BRANCH")
+  # Get remote tracking branch
+  REMOTE_BRANCH=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || echo "")
 
-if [[ "$LOCAL_HASH" != "$REMOTE_HASH" ]]; then
-  echo "❌ Error: Local branch is not in sync with remote." >&2
-  echo "" >&2
-  echo "Local:  $LOCAL_HASH" >&2
-  echo "Remote: $REMOTE_HASH" >&2
-  echo "" >&2
+  if [[ -z "$REMOTE_BRANCH" ]]; then
+    echo "⚠️  Current branch '$CURRENT_BRANCH' has no upstream branch." >&2
+    echo "Setting upstream to origin/$CURRENT_BRANCH..." >&2
 
-  # Check if we're ahead, behind, or diverged
-  if git merge-base --is-ancestor "$REMOTE_HASH" HEAD 2>/dev/null; then
-    AHEAD=$(git rev-list --count "$REMOTE_BRANCH"..HEAD)
-    echo "Your branch is $AHEAD commit(s) ahead of '$REMOTE_BRANCH'." >&2
-    echo "Push your changes with: git push" >&2
-  elif git merge-base --is-ancestor HEAD "$REMOTE_HASH" 2>/dev/null; then
-    BEHIND=$(git rev-list --count HEAD.."$REMOTE_BRANCH")
-    echo "Your branch is $BEHIND commit(s) behind '$REMOTE_BRANCH'." >&2
-    echo "Pull the latest changes with: git pull" >&2
-  else
-    echo "Your branch has diverged from '$REMOTE_BRANCH'." >&2
-    echo "You may need to rebase or merge." >&2
+    # Try to set upstream
+    if git push -u origin "$CURRENT_BRANCH" 2>&1; then
+      echo "✅ Upstream set successfully!" >&2
+      REMOTE_BRANCH="origin/$CURRENT_BRANCH"
+    else
+      echo "❌ Error: Failed to set upstream branch." >&2
+      echo "You may need to push manually: git push -u origin $CURRENT_BRANCH" >&2
+      exit 1
+    fi
   fi
 
-  exit 1
+  # Fetch latest remote state before comparing
+  git fetch origin "$CURRENT_BRANCH" --quiet 2>/dev/null || true
+
+  # Check if local and remote are in sync
+  LOCAL_HASH=$(git rev-parse HEAD)
+  REMOTE_HASH=$(git rev-parse "$REMOTE_BRANCH")
+
+  if [[ "$LOCAL_HASH" != "$REMOTE_HASH" ]]; then
+    echo "❌ Error: Local branch is not in sync with remote." >&2
+    echo "" >&2
+    echo "Local:  $LOCAL_HASH" >&2
+    echo "Remote: $REMOTE_HASH" >&2
+    echo "" >&2
+
+    # Check if we're ahead, behind, or diverged
+    if git merge-base --is-ancestor "$REMOTE_HASH" HEAD 2>/dev/null; then
+      AHEAD=$(git rev-list --count "$REMOTE_BRANCH"..HEAD)
+      echo "Your branch is $AHEAD commit(s) ahead of '$REMOTE_BRANCH'." >&2
+      echo "Push your changes with: git push" >&2
+    elif git merge-base --is-ancestor HEAD "$REMOTE_HASH" 2>/dev/null; then
+      BEHIND=$(git rev-list --count HEAD.."$REMOTE_BRANCH")
+      echo "Your branch is $BEHIND commit(s) behind '$REMOTE_BRANCH'." >&2
+      echo "Pull the latest changes with: git pull" >&2
+    else
+      echo "Your branch has diverged from '$REMOTE_BRANCH'." >&2
+      echo "You may need to rebase or merge." >&2
+    fi
+
+    exit 1
+  fi
 fi
 
 # shellcheck disable=SC2016 # Single quotes are intentional - these are GraphQL queries.
@@ -142,9 +150,23 @@ GRAPHQL_QUERY='query($owner: String!, $repo: String!, $pr: Int!) {
   }
 }'
 
-REPO_INFO=$(gh repo view --json owner,name --jq '{owner: .owner.login, name: .name}')
-OWNER=$(echo "$REPO_INFO" | jq -r '.owner')
-REPO=$(echo "$REPO_INFO" | jq -r '.name')
+if [[ -n "${MUX_GH_OWNER:-}" || -n "${MUX_GH_REPO:-}" ]]; then
+  if [[ -z "${MUX_GH_OWNER:-}" || -z "${MUX_GH_REPO:-}" ]]; then
+    echo "❌ assertion failed: MUX_GH_OWNER and MUX_GH_REPO must both be set when one is provided" >&2
+    exit 1
+  fi
+  OWNER="$MUX_GH_OWNER"
+  REPO="$MUX_GH_REPO"
+else
+  REPO_INFO=$(gh repo view --json owner,name --jq '{owner: .owner.login, name: .name}')
+  OWNER=$(echo "$REPO_INFO" | jq -r '.owner')
+  REPO=$(echo "$REPO_INFO" | jq -r '.name')
+fi
+
+if [[ -z "$OWNER" || -z "$REPO" ]]; then
+  echo "❌ assertion failed: owner/repo must be non-empty" >&2
+  exit 1
+fi
 
 # Depot runners sometimes hit transient network timeouts to api.github.com.
 # Retry the GraphQL request a few times before failing.

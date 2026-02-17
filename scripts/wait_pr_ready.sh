@@ -7,9 +7,10 @@ set -euo pipefail
 # This script orchestrates Codex + checks in one polling loop:
 #   1) wait_pr_codex.sh --once
 #   2) wait_pr_checks.sh --once
+#   3) check_codex_comments.sh (only when both gates pass)
 #
 # It exits immediately on the first terminal failure and succeeds only when
-# both gates report success.
+# all gates report success.
 
 if [ $# -ne 1 ]; then
   echo "Usage: $0 <pr_number>" >&2
@@ -25,8 +26,9 @@ fi
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 WAIT_CODEX_SCRIPT="$SCRIPT_DIR/wait_pr_codex.sh"
 WAIT_CHECKS_SCRIPT="$SCRIPT_DIR/wait_pr_checks.sh"
+CHECK_CODEX_COMMENTS_SCRIPT="$SCRIPT_DIR/check_codex_comments.sh"
 
-for required in "$WAIT_CODEX_SCRIPT" "$WAIT_CHECKS_SCRIPT"; do
+for required in "$WAIT_CODEX_SCRIPT" "$WAIT_CHECKS_SCRIPT" "$CHECK_CODEX_COMMENTS_SCRIPT"; do
   if [ ! -x "$required" ]; then
     echo "❌ Required executable script is missing or not executable: $required" >&2
     exit 1
@@ -59,6 +61,96 @@ status_from_rc() {
       ;;
   esac
 }
+
+load_repo_context() {
+  local repo_info
+
+  if ! repo_info=$(gh repo view --json owner,name --jq '{owner: .owner.login, name: .name}' 2>/dev/null); then
+    echo "❌ Failed to resolve repository owner/name via 'gh repo view'." >&2
+    return 1
+  fi
+
+  MUX_GH_OWNER=$(echo "$repo_info" | jq -r '.owner // empty')
+  MUX_GH_REPO=$(echo "$repo_info" | jq -r '.name // empty')
+
+  if [[ -z "$MUX_GH_OWNER" || -z "$MUX_GH_REPO" ]]; then
+    echo "❌ assertion failed: unable to parse repository owner/name from gh output" >&2
+    echo "$repo_info" >&2
+    return 1
+  fi
+}
+
+assert_clean_and_synced_branch() {
+  local current_branch
+  local remote_branch
+  local local_hash
+  local remote_hash
+
+  if ! git diff-index --quiet HEAD --; then
+    echo "❌ Error: You have uncommitted changes in your working directory." >&2
+    echo "" >&2
+    git status --short >&2
+    echo "" >&2
+    echo "Please commit or stash your changes before checking PR status." >&2
+    return 1
+  fi
+
+  current_branch=$(git rev-parse --abbrev-ref HEAD)
+  remote_branch=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || echo "")
+
+  if [[ -z "$remote_branch" ]]; then
+    echo "⚠️  Current branch '$current_branch' has no upstream branch." >&2
+    echo "Setting upstream to origin/$current_branch..." >&2
+
+    if git push -u origin "$current_branch" 2>&1; then
+      echo "✅ Upstream set successfully!" >&2
+      remote_branch="origin/$current_branch"
+    else
+      echo "❌ Error: Failed to set upstream branch." >&2
+      echo "You may need to push manually: git push -u origin $current_branch" >&2
+      return 1
+    fi
+  fi
+
+  # Perform one fetch per orchestrator iteration context and let child scripts reuse it.
+  git fetch origin "$current_branch" --quiet 2>/dev/null || true
+
+  local_hash=$(git rev-parse HEAD)
+  remote_hash=$(git rev-parse "$remote_branch")
+
+  if [[ "$local_hash" != "$remote_hash" ]]; then
+    echo "❌ Error: Local branch is not in sync with remote." >&2
+    echo "" >&2
+    echo "Local:  $local_hash" >&2
+    echo "Remote: $remote_hash" >&2
+    echo "" >&2
+
+    if git merge-base --is-ancestor "$remote_hash" HEAD 2>/dev/null; then
+      local ahead
+      ahead=$(git rev-list --count "$remote_branch"..HEAD)
+      echo "Your branch is $ahead commit(s) ahead of '$remote_branch'." >&2
+      echo "Push your changes with: git push" >&2
+    elif git merge-base --is-ancestor HEAD "$remote_hash" 2>/dev/null; then
+      local behind
+      behind=$(git rev-list --count HEAD.."$remote_branch")
+      echo "Your branch is $behind commit(s) behind '$remote_branch'." >&2
+      echo "Pull the latest changes with: git pull" >&2
+    else
+      echo "Your branch has diverged from '$remote_branch'." >&2
+      echo "You may need to rebase or merge." >&2
+    fi
+
+    return 1
+  fi
+}
+
+load_repo_context
+assert_clean_and_synced_branch
+
+# Child scripts reuse this context to avoid repeated gh repo lookups and duplicate git fetch calls.
+export MUX_GH_OWNER
+export MUX_GH_REPO
+export MUX_SKIP_FETCH_SYNC=1
 
 echo "🚦 Waiting for PR #$PR_NUMBER to become ready (Codex + CI, fail-fast)..."
 echo ""
@@ -123,10 +215,26 @@ while true; do
   fi
 
   if [ "$CODEX_RC" -eq 0 ] && [ "$CHECKS_RC" -eq 0 ]; then
+    if CODEX_COMMENTS_OUT=$("$CHECK_CODEX_COMMENTS_SCRIPT" "$PR_NUMBER" 2>&1); then
+      echo ""
+      echo ""
+      echo "🎉 PR #$PR_NUMBER is ready: Codex approved, required checks passed, and no unresolved Codex comments remain."
+      exit 0
+    fi
+
     echo ""
     echo ""
-    echo "🎉 PR #$PR_NUMBER is ready: Codex approved and required checks passed."
-    exit 0
+    echo "❌ PR #$PR_NUMBER is not ready."
+    echo ""
+    echo "--- Codex comment gate output ---"
+    if [ -n "$CODEX_COMMENTS_OUT" ]; then
+      echo "$CODEX_COMMENTS_OUT"
+    else
+      echo "(no output)"
+    fi
+    echo ""
+    echo "Resolve outstanding Codex comments (or request another @codex review) and rerun this script."
+    exit 1
   fi
 
   sleep 5

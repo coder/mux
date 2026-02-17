@@ -9,6 +9,24 @@ fi
 PR_NUMBER=$1
 BOT_LOGIN_GRAPHQL="chatgpt-codex-connector"
 
+if [[ -n "${MUX_GH_OWNER:-}" || -n "${MUX_GH_REPO:-}" ]]; then
+  if [[ -z "${MUX_GH_OWNER:-}" || -z "${MUX_GH_REPO:-}" ]]; then
+    echo "❌ assertion failed: MUX_GH_OWNER and MUX_GH_REPO must both be set when one is provided" >&2
+    exit 1
+  fi
+  OWNER="$MUX_GH_OWNER"
+  REPO="$MUX_GH_REPO"
+else
+  REPO_INFO=$(gh repo view --json owner,name --jq '{owner: .owner.login, name: .name}')
+  OWNER=$(echo "$REPO_INFO" | jq -r '.owner')
+  REPO=$(echo "$REPO_INFO" | jq -r '.name')
+fi
+
+if [[ -z "$OWNER" || -z "$REPO" ]]; then
+  echo "❌ assertion failed: owner/repo must be non-empty" >&2
+  exit 1
+fi
+
 echo "Checking for unresolved Codex comments in PR #${PR_NUMBER}..."
 
 # Use GraphQL to get all comments (including minimized status)
@@ -44,10 +62,6 @@ GRAPHQL_QUERY='query($owner: String!, $repo: String!, $pr: Int!) {
     }
   }
 }'
-
-REPO_INFO=$(gh repo view --json owner,name --jq '{owner: .owner.login, name: .name}')
-OWNER=$(echo "$REPO_INFO" | jq -r '.owner')
-REPO=$(echo "$REPO_INFO" | jq -r '.name')
 
 # Depot runners sometimes hit transient network timeouts to api.github.com.
 # Retry the GraphQL request a few times before failing the required check.
