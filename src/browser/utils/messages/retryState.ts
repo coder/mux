@@ -36,16 +36,22 @@ export function createFreshRetryState(): RetryState {
 /**
  * Create retry state for manual retry (user-initiated)
  *
- * Makes the retry immediately eligible BUT preserves the attempt counter
- * to maintain backoff progression if the retry fails.
+ * Makes the retry immediately eligible while allowing callers to choose whether
+ * the attempt counter should be preserved or reset.
  *
- * This prevents infinite retry loops without backoff.
+ * Preserving the attempt keeps exponential backoff progression if the retry
+ * fails again. Resetting the attempt is useful when the user explicitly stopped
+ * auto-retry and wants a fresh retry cycle.
  *
- * @param currentAttempt - Current attempt count to preserve backoff progression
+ * @param currentAttempt - Current attempt count
+ * @param options.resetBackoff - When true, reset attempt to 0 for a fresh cycle
  */
-export function createManualRetryState(currentAttempt: number): RetryState {
+export function createManualRetryState(
+  currentAttempt: number,
+  options?: { resetBackoff?: boolean }
+): RetryState {
   return {
-    attempt: currentAttempt,
+    attempt: options?.resetBackoff ? 0 : currentAttempt,
     retryStartTime: Date.now() - INITIAL_DELAY, // Make immediately eligible
     lastError: undefined, // Clear error (user is manually retrying)
   };

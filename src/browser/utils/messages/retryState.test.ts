@@ -41,6 +41,11 @@ describe("retryState utilities", () => {
       expect(state.attempt).toBe(currentAttempt);
     });
 
+    it("resets attempt counter when resetBackoff is requested", () => {
+      const state = createManualRetryState(5, { resetBackoff: true });
+      expect(state.attempt).toBe(0);
+    });
+
     it("makes retry immediately eligible by backdating retryStartTime", () => {
       const state = createManualRetryState(0);
       const expectedTime = Date.now() - INITIAL_DELAY;
@@ -84,6 +89,18 @@ describe("retryState utilities", () => {
 
       state = createFailedRetryState(state.attempt, { type: "unknown" as const, raw: "Error" });
       expect(state.attempt).toBe(4); // Continues progression
+    });
+
+    it("supports fresh cycle after user stops auto-retry and manually retries", () => {
+      let state = createFailedRetryState(0, { type: "unknown" as const, raw: "Error" });
+      state = createFailedRetryState(state.attempt, { type: "unknown" as const, raw: "Error" });
+      expect(state.attempt).toBe(2);
+
+      state = createManualRetryState(state.attempt, { resetBackoff: true });
+      expect(state.attempt).toBe(0);
+
+      state = createFailedRetryState(state.attempt, { type: "unknown" as const, raw: "Error" });
+      expect(state.attempt).toBe(1);
     });
 
     it("resets backoff on successful stream start", () => {
