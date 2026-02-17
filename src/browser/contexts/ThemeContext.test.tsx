@@ -18,12 +18,12 @@ import { UI_THEME_KEY } from "@/common/constants/storage";
 let prefersLight = false;
 const mediaQueryListeners = new Set<(event: MediaQueryListEvent) => void>();
 
-const mediaQueryList = {
+const mediaQueryList: MediaQueryList = {
   get matches() {
     return prefersLight;
   },
   media: "(prefers-color-scheme: light)",
-  onchange: null as ((this: MediaQueryList, event: MediaQueryListEvent) => void) | null,
+  onchange: null,
   addListener: (listener: (event: MediaQueryListEvent) => void) => {
     mediaQueryListeners.add(listener);
   },
@@ -56,16 +56,16 @@ const mediaQueryList = {
       mediaQueryListeners.delete(listener as (event: MediaQueryListEvent) => void);
     }
   },
-  dispatchEvent: () => true,
-} as MediaQueryList;
+  dispatchEvent: (_event: Event) => true,
+};
 
 function setSystemTheme(theme: "light" | "dark") {
   prefersLight = theme === "light";
 
-  const event = {
+  const event = new dom.window.MediaQueryListEvent("change", {
     matches: prefersLight,
     media: mediaQueryList.media,
-  } as MediaQueryListEvent;
+  });
 
   for (const listener of mediaQueryListeners) {
     listener(event);
