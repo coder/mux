@@ -23,6 +23,8 @@ if (shouldRunIntegrationTests()) {
 
 const BUILD_OUTPUT_LIMIT = 8_000;
 const ACP_TEST_TIMEOUT_MS = Math.max(TEST_TIMEOUT_LOCAL_MS, 120_000);
+// createTempGitRepo always creates this branch, so passing it avoids ACP-side git branch detection.
+const ACP_TEST_TRUNK_BRANCH = "test-branch";
 
 type AgentMessageChunkUpdate = Extract<
   schema.SessionUpdate,
@@ -242,11 +244,17 @@ async function createAcpClient(): Promise<AcpTestClient> {
   void processExited.catch(() => {});
 
   const runRpc = async <T>(label: string, operation: Promise<T>): Promise<T> => {
-    return await Promise.race([
-      operation,
-      processExited,
-      rejectAfter(60_000, `${label} timed out waiting for ACP response.\n${stderr}`),
-    ]);
+    try {
+      return await Promise.race([
+        operation,
+        processExited,
+        rejectAfter(60_000, `${label} timed out waiting for ACP response.\n${stderr}`),
+      ]);
+    } catch (error) {
+      // Include child stderr so ACP SDK "Internal error" failures retain agent-side context.
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`${label}: ${message}\n\nACP stderr:\n${stderr}`);
+    }
   };
 
   let closed = false;
@@ -347,6 +355,9 @@ describeIntegration("ACP built CLI integration", () => {
           acpClient.client.newSession({
             cwd: repoPath,
             mcpServers: [],
+            _meta: {
+              trunkBranch: ACP_TEST_TRUNK_BRANCH,
+            },
           })
         );
 
@@ -377,6 +388,9 @@ describeIntegration("ACP built CLI integration", () => {
           acpClient.client.newSession({
             cwd: repoPath,
             mcpServers: [],
+            _meta: {
+              trunkBranch: ACP_TEST_TRUNK_BRANCH,
+            },
           })
         );
         const sessionId = sessionResponse.sessionId;
