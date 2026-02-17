@@ -30,7 +30,6 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   SHARE_TRANSCRIPT: "Share transcript",
   CONFIGURE_MCP: "Configure MCP servers",
   OPEN_COMMAND_PALETTE: "Command palette",
-  OPEN_COMMAND_PALETTE_ALT: "Command palette (alternate)",
   OPEN_MUX_CHAT: "Open Chat with Mux",
   TOGGLE_THINKING: "Toggle thinking",
   FOCUS_CHAT: "Focus chat input",
@@ -148,9 +147,7 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
 // Some actions have multiple equivalent shortcuts; render alternates on the same row.
 const KEYBIND_DISPLAY_ALTERNATES: Partial<
   Record<keyof typeof KEYBINDS, Array<keyof typeof KEYBINDS>>
-> = {
-  OPEN_COMMAND_PALETTE: ["OPEN_COMMAND_PALETTE_ALT"],
-};
+> = {};
 
 export function KeybindsSection() {
   return (

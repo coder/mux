@@ -481,7 +481,6 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   }, [configuredProviders.length, hasConfiguredProvidersAtStart, providersLoading]);
 
   const commandPaletteShortcut = formatKeybind(KEYBINDS.OPEN_COMMAND_PALETTE);
-  const commandPaletteShortcutAlt = formatKeybind(KEYBINDS.OPEN_COMMAND_PALETTE_ALT);
   const agentPickerShortcut = formatKeybind(KEYBINDS.TOGGLE_AGENT);
   const cycleAgentShortcut = formatKeybind(KEYBINDS.CYCLE_AGENT);
 
@@ -871,8 +870,6 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <span className="text-muted text-sm">Open command palette</span>
             <kbd className={KBD_CLASSNAME}>{commandPaletteShortcut}</kbd>
-            <span className="text-muted text-sm">or</span>
-            <kbd className={KBD_CLASSNAME}>{commandPaletteShortcutAlt}</kbd>
           </div>
 
           <div className="mt-3">
@@ -893,7 +890,6 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     agentPickerShortcut,
     cancelMuxGatewayLogin,
     commandPaletteShortcut,
-    commandPaletteShortcutAlt,
     configuredProviders.length,
     configuredProvidersSummary,
     cycleAgentShortcut,

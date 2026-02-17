@@ -17,7 +17,7 @@ import {
   readPersistedState,
 } from "./hooks/usePersistedState";
 import { useResizableSidebar } from "./hooks/useResizableSidebar";
-import { matchesKeybind, KEYBINDS, isEditableElement } from "./utils/ui/keybinds";
+import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
 import { handleLayoutSlotHotkeys } from "./utils/ui/layoutSlotHotkeys";
 import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
 import { getVisibleWorkspaceIds } from "./utils/ui/workspaceDomNav";
@@ -674,30 +674,12 @@ function AppInner() {
       } else if (matchesKeybind(e, KEYBINDS.PREV_WORKSPACE)) {
         e.preventDefault();
         handleNavigateWorkspace("prev");
-      } else if (
-        matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE_ALT) &&
-        !sidebarCollapsed &&
-        selectedWorkspace &&
-        selectedWorkspace.workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID &&
-        !isEditableElement(e.target)
-      ) {
-        // F2 edits the selected workspace title in the expanded sidebar; skip
-        // command palette handling so both shortcuts don't fire.
-        return;
-      } else if (
-        matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE) ||
-        matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE_ALT)
-      ) {
+      } else if (matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE)) {
         e.preventDefault();
         if (isCommandPaletteOpen) {
           closeCommandPalette();
         } else {
-          // Alternate palette shortcut opens in command mode (with ">") while the
-          // primary Ctrl/Cmd+Shift+P shortcut opens default workspace-switch mode.
-          const initialQuery = matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE_ALT)
-            ? ">"
-            : undefined;
-          openCommandPalette(initialQuery);
+          openCommandPalette();
         }
       } else if (matchesKeybind(e, KEYBINDS.OPEN_MUX_CHAT)) {
         e.preventDefault();
@@ -723,12 +705,9 @@ function AppInner() {
     handleNavigateWorkspace,
     handleOpenMuxChat,
     setSidebarCollapsed,
-    sidebarCollapsed,
     isCommandPaletteOpen,
     closeCommandPalette,
     openCommandPalette,
-    creationProjectPath,
-    selectedWorkspace,
     openSettings,
     navigate,
   ]);
