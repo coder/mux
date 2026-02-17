@@ -641,6 +641,12 @@ interface SelectableDiffRendererProps extends Omit<DiffRendererProps, "filePath"
   onComposingChange?: (isComposing: boolean) => void;
   /** Action callbacks for inline review notes (edit, check, delete, etc.) */
   reviewActions?: ReviewActionCallbacks;
+  /** Active line for immersive keyboard navigation */
+  activeLineIndex?: number | null;
+  /** Selected line range for immersive keyboard navigation */
+  selectedLineRange?: LineSelection | null;
+  /** Called when user selects a line via click in immersive mode */
+  onLineIndexSelect?: (lineIndex: number, shiftKey: boolean) => void;
 }
 
 interface LineSelection {
@@ -931,6 +937,9 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     enableHighlighting = true,
     onComposingChange,
     reviewActions,
+    activeLineIndex,
+    selectedLineRange,
+    onLineIndexSelect,
   }) => {
     const dragAnchorRef = React.useRef<number | null>(null);
     const [isDragging, setIsDragging] = React.useState(false);
@@ -1150,9 +1159,12 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       setSelection(null);
     };
 
-    const isLineSelected = (index: number) => {
-      if (!selection) return false;
-      const [start, end] = [selection.startIndex, selection.endIndex].sort((a, b) => a - b);
+    const isLineInSelection = (index: number, lineSelection: LineSelection | null | undefined) => {
+      if (!lineSelection) {
+        return false;
+      }
+
+      const [start, end] = [lineSelection.startIndex, lineSelection.endIndex].sort((a, b) => a - b);
       return index >= start && index <= end;
     };
 
@@ -1160,9 +1172,12 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     const firstLineType = highlightedLineData[0]?.type;
     const lastLineType = highlightedLineData[highlightedLineData.length - 1]?.type;
 
-    // Selection highlight overlay - applied via box-shadow to avoid affecting grid layout
-    const selectionHighlight =
+    // Selection highlights are applied via box-shadow to avoid affecting grid layout.
+    const reviewSelectionHighlight =
       "inset 0 0 0 100vmax hsl(from var(--color-review-accent) h s l / 0.16)";
+    const rangeSelectionHighlight =
+      "inset 0 0 0 100vmax hsl(from var(--color-review-accent) h s l / 0.12)";
+    const activeLineHighlight = "inset 0 0 0 1px hsl(from var(--color-review-accent) h s l / 0.45)";
 
     return (
       <DiffContainer
@@ -1173,7 +1188,9 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
         lastLineType={lastLineType}
       >
         {highlightedLineData.map((lineInfo, displayIndex) => {
-          const isSelected = isLineSelected(displayIndex);
+          const isComposerSelected = isLineInSelection(displayIndex, selection);
+          const isRangeSelected = isLineInSelection(displayIndex, selectedLineRange);
+          const isActiveLine = activeLineIndex === displayIndex;
           const isInReviewRange = reviewRangeByLineIndex[displayIndex] ?? false;
           const baseCodeBg = getDiffLineBackground(lineInfo.type);
           const codeBg = applyReviewRangeOverlay(baseCodeBg, isInReviewRange);
@@ -1183,6 +1200,16 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
           );
           const anchoredReviews = inlineReviewsByAnchor.get(displayIndex);
 
+          const lineShadows: string[] = [];
+          if (isComposerSelected) {
+            lineShadows.push(reviewSelectionHighlight);
+          } else if (isRangeSelected) {
+            lineShadows.push(rangeSelectionHighlight);
+          }
+          if (isActiveLine) {
+            lineShadows.push(activeLineHighlight);
+          }
+
           // Each line renders as 3 CSS Grid cells: gutter | indicator | code
           // Use display:contents wrapper for selection state + group hover behavior
           return (
@@ -1190,9 +1217,18 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
               <div
                 className={cn(
                   SELECTABLE_DIFF_LINE_CLASS,
-                  "group relative col-span-3 grid cursor-text grid-cols-subgrid"
+                  "group relative col-span-3 grid grid-cols-subgrid",
+                  onLineIndexSelect ? "cursor-pointer" : "cursor-text"
                 )}
-                data-selected={isSelected ? "true" : "false"}
+                data-line-index={displayIndex}
+                data-selected={isComposerSelected || isRangeSelected ? "true" : "false"}
+                onClick={(e) => {
+                  if (!onLineIndexSelect) {
+                    return;
+                  }
+                  onLineClick?.();
+                  onLineIndexSelect(displayIndex, e.shiftKey);
+                }}
               >
                 <DiffLineGutter
                   type={lineInfo.type}
@@ -1207,7 +1243,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                   type={lineInfo.type}
                   background={codeBg}
                   lineIndex={displayIndex}
-                  isInteractive={Boolean(onReviewNote)}
+                  isInteractive={Boolean(onReviewNote ?? onLineIndexSelect)}
                   onMouseDown={(e) => {
                     if (!onReviewNote) return;
                     if (e.button !== 0) return;
@@ -1248,14 +1284,14 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                   style={{
                     background: codeBg,
                     color: getLineContentColor(lineInfo.type),
-                    boxShadow: isSelected ? selectionHighlight : undefined,
+                    boxShadow: lineShadows.length > 0 ? lineShadows.join(", ") : undefined,
                   }}
                   dangerouslySetInnerHTML={{ __html: lineInfo.html }}
                 />
               </div>
 
               {/* Show textarea after the last selected line */}
-              {isSelected &&
+              {isComposerSelected &&
                 selection &&
                 displayIndex === Math.max(selection.startIndex, selection.endIndex) && (
                   <ReviewNoteInput

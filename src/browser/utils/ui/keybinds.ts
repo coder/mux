@@ -427,10 +427,10 @@ export const KEYBINDS = {
   TOGGLE_REVIEW_IMMERSIVE: { key: "i", shift: true },
 
   /** Navigate to next file in immersive review */
-  REVIEW_NEXT_FILE: { key: "J", shift: true },
+  REVIEW_NEXT_FILE: { key: "n" },
 
   /** Navigate to previous file in immersive review */
-  REVIEW_PREV_FILE: { key: "K", shift: true },
+  REVIEW_PREV_FILE: { key: "p" },
 
   /** Navigate to next hunk in immersive review */
   REVIEW_NEXT_HUNK: { key: "j" },
@@ -439,18 +439,18 @@ export const KEYBINDS = {
   REVIEW_PREV_HUNK: { key: "k" },
 
   /** Move line cursor down in immersive review */
-  REVIEW_CURSOR_DOWN: { key: "ArrowDown" },
+  REVIEW_CURSOR_DOWN: { key: "ArrowDown", allowShift: true },
 
   /** Move line cursor up in immersive review */
-  REVIEW_CURSOR_UP: { key: "ArrowUp" },
+  REVIEW_CURSOR_UP: { key: "ArrowUp", allowShift: true },
 
   /** Jump line cursor 10 lines down in immersive review */
-  REVIEW_CURSOR_JUMP_DOWN: { key: "ArrowDown", ctrl: true },
+  REVIEW_CURSOR_JUMP_DOWN: { key: "ArrowDown", ctrl: true, allowShift: true },
 
   /** Jump line cursor 10 lines up in immersive review */
-  REVIEW_CURSOR_JUMP_UP: { key: "ArrowUp", ctrl: true },
+  REVIEW_CURSOR_JUMP_UP: { key: "ArrowUp", ctrl: true, allowShift: true },
 
-  /** Quick "I like this" feedback in immersive review */
+  /** Add comment in immersive review (keeps legacy keybind ID to minimize churn) */
   REVIEW_QUICK_LIKE: { key: "l", shift: true },
 
   /** Quick "I don't like this" feedback in immersive review */

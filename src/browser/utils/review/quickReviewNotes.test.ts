@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import type { DiffHunk } from "@/common/types/review";
-import { buildQuickHunkReviewNote } from "./quickReviewNotes";
+import { buildQuickHunkReviewNote, buildQuickLineReviewNote } from "./quickReviewNotes";
 
 function makeHunk(overrides: Partial<DiffHunk> = {}): DiffHunk {
   return {
@@ -121,5 +121,102 @@ describe("buildQuickHunkReviewNote", () => {
     expect(note.selectedCode).toContain("const line25 = 25;");
     expect(note.selectedCode).not.toContain("const line11 = 11;");
     expect(note.selectedCode).not.toContain("const line15 = 15;");
+  });
+});
+
+describe("buildQuickLineReviewNote", () => {
+  test("builds note data for a single selected line", () => {
+    const hunk = makeHunk({
+      content: "-const a = 1;\n+const a = 2;\n const b = a;",
+    });
+
+    const note = buildQuickLineReviewNote({
+      hunk,
+      startIndex: 1,
+      endIndex: 1,
+      userNote: "Use a constant here",
+    });
+
+    expect(note.lineRange).toBe("+10");
+    expect(note.selectedDiff).toBe("+const a = 2;");
+    expect(note.selectedCode).toContain("+ const a = 2;");
+    expect(note.oldStart).toBe(1);
+    expect(note.newStart).toBe(10);
+    expect(note.userNote).toBe("Use a constant here");
+  });
+
+  test("builds ranges from selected line span", () => {
+    const hunk = makeHunk({
+      oldStart: 50,
+      oldLines: 4,
+      newStart: 50,
+      newLines: 4,
+      content: "-const a = 1;\n+const a = 2;\n const b = 3;\n-console.log(a);\n+console.log(a, b);",
+      header: "@@ -50,4 +50,4 @@",
+    });
+
+    const note = buildQuickLineReviewNote({
+      hunk,
+      startIndex: 0,
+      endIndex: 2,
+      userNote: "Please revisit this block",
+    });
+
+    expect(note.lineRange).toBe("-50-51 +50-51");
+    expect(note.selectedDiff).toBe("-const a = 1;\n+const a = 2;\n const b = 3;");
+    expect(note.oldStart).toBe(50);
+    expect(note.newStart).toBe(50);
+  });
+
+  test("clamps out-of-bounds selection indices", () => {
+    const hunk = makeHunk({
+      content: "-old\n+new\n context",
+      oldStart: 7,
+      oldLines: 2,
+      newStart: 7,
+      newLines: 2,
+    });
+
+    const note = buildQuickLineReviewNote({
+      hunk,
+      startIndex: -50,
+      endIndex: 99,
+      userNote: "Clamp selection",
+    });
+
+    expect(note.lineRange).toBe("-7-8 +7-8");
+    expect(note.selectedDiff).toBe("-old\n+new\n context");
+  });
+
+  test("elides selectedCode for ranges longer than 20 lines", () => {
+    const content = Array.from(
+      { length: 30 },
+      (_, index) => `+const line${index + 1} = ${index + 1};`
+    ).join("\n");
+
+    const hunk = makeHunk({
+      oldStart: 1,
+      oldLines: 30,
+      newStart: 100,
+      newLines: 30,
+      content,
+      header: "@@ -1,30 +100,30 @@",
+    });
+
+    const note = buildQuickLineReviewNote({
+      hunk,
+      startIndex: 0,
+      endIndex: 29,
+      userNote: "Large range",
+    });
+
+    const selectedLines = note.selectedCode.split("\n");
+    expect(selectedLines).toHaveLength(21);
+    expect(note.selectedCode).toContain("(10 lines omitted)");
+    expect(note.selectedCode).toContain("const line1 = 1;");
+    expect(note.selectedCode).toContain("const line10 = 10;");
+    expect(note.selectedCode).toContain("const line21 = 21;");
+    expect(note.selectedCode).toContain("const line30 = 30;");
+    expect(note.selectedCode).not.toContain("const line11 = 11;");
   });
 });
