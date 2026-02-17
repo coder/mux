@@ -43,21 +43,30 @@ function getSelectedTranscriptText(
     return null;
   }
 
-  const anchorElement = getEventTargetElement(selection.anchorNode);
-  const focusElement = getEventTargetElement(selection.focusNode);
+  if (selection.rangeCount === 0) {
+    return null;
+  }
 
-  const anchorInsideMessageContent =
-    anchorElement !== null &&
-    transcriptRoot.contains(anchorElement) &&
-    anchorElement.closest("[data-message-content]") !== null;
-  const focusInsideMessageContent =
-    focusElement !== null &&
-    transcriptRoot.contains(focusElement) &&
-    focusElement.closest("[data-message-content]") !== null;
+  const selectedRange = selection.getRangeAt(0);
+  const startElement = getEventTargetElement(selectedRange.startContainer);
+  const endElement = getEventTargetElement(selectedRange.endContainer);
 
-  // Require the full selection range to stay within transcript message content
-  // so we don't accidentally quote/copy text from outside transcript messages.
-  if (!anchorInsideMessageContent || !focusInsideMessageContent) {
+  const startMessageContent =
+    startElement !== null && transcriptRoot.contains(startElement)
+      ? startElement.closest("[data-message-content]")
+      : null;
+  const endMessageContent =
+    endElement !== null && transcriptRoot.contains(endElement)
+      ? endElement.closest("[data-message-content]")
+      : null;
+
+  // Require the full selection range to stay within a single transcript message
+  // so we don't accidentally quote/copy text from non-message interstitial UI.
+  if (
+    startMessageContent === null ||
+    endMessageContent === null ||
+    startMessageContent !== endMessageContent
+  ) {
     return null;
   }
 

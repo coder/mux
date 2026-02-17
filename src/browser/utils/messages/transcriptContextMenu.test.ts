@@ -165,6 +165,35 @@ describe("transcriptContextMenu", () => {
     expect(result).toBe("Hovered transcript text");
   });
 
+  test("falls back to hovered text when selection spans multiple message-content blocks", () => {
+    const transcriptRoot = createTranscriptRoot(
+      `<div data-message-content><p id="message-a">First message</p></div><div id="notice">System notice text</div><div data-message-content><p id="message-b">Second message</p></div>`
+    );
+    const messageA = transcriptRoot.querySelector("#message-a");
+    const messageB = transcriptRoot.querySelector("#message-b");
+    expect(messageA).not.toBeNull();
+    expect(messageB).not.toBeNull();
+
+    const messageATextNode = getFirstTextNode(messageA);
+    const messageBTextNode = getFirstTextNode(messageB);
+
+    const range = document.createRange();
+    range.setStart(messageATextNode, 0);
+    range.setEnd(messageBTextNode, "Second".length);
+
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const result = getTranscriptContextMenuText({
+      transcriptRoot,
+      target: messageB,
+      selection,
+    });
+
+    expect(result).toBe("Second message");
+  });
+
   test("falls back to hovered transcript text when selection crosses transcript boundary", () => {
     const transcriptRoot = createTranscriptRoot(
       `<div data-message-content><p id="message">Hovered transcript text</p></div>`
