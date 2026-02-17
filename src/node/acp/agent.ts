@@ -415,6 +415,13 @@ export class MuxAgent implements Agent {
     onConnected();
     const observedStream = this.observeChatStream(sessionId, chatStream);
     await this.streamTranslator.consumeAndForward(sessionId, observedStream);
+
+    // If the stream ends without a terminal event (e.g., transient transport
+    // closure), reject any pending turn so `prompt()` doesn't hang forever.
+    this.rejectTurn(
+      sessionId,
+      new Error("Chat stream ended unexpectedly without a terminal event")
+    );
   }
 
   private async *observeChatStream(
@@ -493,18 +500,21 @@ export class MuxAgent implements Agent {
     });
   }
   /**
-   * Check if a stream event's messageId matches the active turn.  If no
-   * messageId was set yet (e.g., sendMessage hasn't returned), allow all
-   * events to pass through to avoid blocking the turn.
+   * Check if a stream event's messageId matches the active turn.  Before
+   * `stream-start` sets the turn's messageId, terminal events (stream-end,
+   * stream-abort, stream-error) are ignored to prevent an older in-flight
+   * message from prematurely resolving a freshly queued prompt.
    */
   private isActiveTurnMessage(sessionId: string, eventMessageId: string): boolean {
     const completion = this.turnCompletions.get(sessionId);
     if (completion == null) {
       return false;
     }
-    // If the turn's messageId hasn't been set yet, accept all events.
+    // Until stream-start identifies the turn's message, reject all terminal
+    // events so stale stream-end/abort from a prior message can't resolve
+    // the new turn.
     if (completion.messageId == null) {
-      return true;
+      return false;
     }
     return completion.messageId === eventMessageId;
   }
