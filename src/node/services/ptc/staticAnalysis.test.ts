@@ -57,6 +57,20 @@ describe("staticAnalysis", () => {
       expect(result.errors[0].message).toContain("await");
       expect(result.errors[0].message).toContain("not supported");
     });
+    test("await in class field inside async function gets clear error", async () => {
+      const result = await analyzeCode("async function f() { class C { x = await foo(); } }");
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].message).toContain("await");
+      expect(result.errors[0].message).toContain("not supported");
+    });
+
+    test("await in async function default param gets clear error", async () => {
+      // QuickJS gives "await in default expression" (not "expecting ';'"),
+      // so the rewrite doesn't apply — but the message is already clear.
+      const result = await analyzeCode("async function f(a = await foo()) {}");
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].message).toContain("await");
+    });
 
     test("does not mislabel malformed template literal containing await text", async () => {
       // Unescaped backticks break the template; `await` appears in string content, not code.

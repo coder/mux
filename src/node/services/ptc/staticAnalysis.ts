@@ -104,11 +104,18 @@ async function getValidationContext(): Promise<QuickJSAsyncContext> {
 // ============================================================================
 
 /**
- * Use TypeScript's lenient parser to detect top-level await expressions.
- * Returns the 1-indexed line numbers where illegal awaits occur.
- * Returns empty set if TS itself has parse diagnostics (ambiguous source — don't guess).
+ * Find lines containing AwaitExpression nodes in the TypeScript AST.
+ *
+ * We intentionally do NOT filter by async context. QuickJS wraps agent code
+ * in a non-async function, so every `await` is illegal from its perspective.
+ * Legal awaits inside user-written `async function` blocks parse fine in
+ * QuickJS and never produce "expecting ';'" — so they never reach the
+ * rewrite path. The only job here is distinguishing real `await` tokens
+ * from `await` text inside strings, comments, or templates.
+ *
+ * Returns empty set when TS has parse diagnostics (ambiguous — don't guess).
  */
-function findIllegalAwaitLines(code: string): Set<number> {
+function findAwaitLines(code: string): Set<number> {
   const sourceFile = ts.createSourceFile(
     "analysis.ts",
     code,
@@ -125,36 +132,12 @@ function findIllegalAwaitLines(code: string): Set<number> {
   }
 
   const lines = new Set<number>();
-
-  const isAsyncFunctionLike = (node: ts.Node): boolean => {
-    if (!ts.isFunctionLike(node) || !ts.canHaveModifiers(node)) {
-      return false;
-    }
-
-    return (
-      ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ??
-      false
-    );
-  };
-
-  const hasAsyncAncestor = (node: ts.Node): boolean => {
-    let parent = node.parent;
-    while (parent) {
-      if (ts.isFunctionLike(parent)) {
-        return isAsyncFunctionLike(parent);
-      }
-      parent = parent.parent;
-    }
-    return false;
-  };
-
   const visit = (node: ts.Node): void => {
-    if (ts.isAwaitExpression(node) && !hasAsyncAncestor(node)) {
+    if (ts.isAwaitExpression(node)) {
       lines.add(sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1);
     }
     ts.forEachChild(node, visit);
   };
-
   visit(sourceFile);
   return lines;
 }
@@ -189,9 +172,9 @@ async function validateSyntax(code: string): Promise<AnalysisError | null> {
     // giving unhelpful "expecting ';'". Use AST-based detection (not raw regex) to avoid
     // false positives when `await` appears inside string literals or template content.
     if (message === "expecting ';'") {
-      const illegalAwaitLines = findIllegalAwaitLines(code);
+      const awaitLines = findAwaitLines(code);
       const likelyAwaitFailure =
-        illegalAwaitLines.size > 0 && (rawLine === undefined || illegalAwaitLines.has(rawLine));
+        awaitLines.size > 0 && (rawLine === undefined || awaitLines.has(rawLine));
 
       if (likelyAwaitFailure) {
         message =
