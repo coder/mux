@@ -222,10 +222,9 @@ function buildOverlayFromHunks(sortedHunks: DiffHunk[]): ImmersiveOverlayData {
   };
 
   const pushHeaderLine = (line: string) => {
-    // Keep lineHunkIds aligned with every rendered row so keyboard/click line indices
-    // always map to the same row in fallback hunk rendering mode.
+    // Header rows are intentionally excluded from lineHunkIds because DiffRenderer
+    // does not render @@ header lines in selectable output.
     contentLines.push(line);
-    lineHunkIds.push(null);
   };
 
   sortedHunks.forEach((hunk, index) => {
