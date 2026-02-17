@@ -69,6 +69,7 @@ import { AgentModePicker } from "../AgentModePicker";
 import { ContextUsageIndicatorButton } from "../ContextUsageIndicatorButton";
 import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
 import { useIdleCompactionHours } from "@/browser/hooks/useIdleCompactionHours";
 import { calculateTokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
@@ -512,6 +513,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const workspaceIdForUsage = variant === "workspace" ? props.workspaceId : "";
   const usage = useWorkspaceUsage(workspaceIdForUsage);
   const { has1MContext } = useProviderOptions();
+  const { config: providersConfig } = useProvidersConfig();
   const lastUsage = usage?.liveUsage ?? usage?.lastContextUsage;
   // Token counts come from usage metadata, but context limits/1M eligibility should
   // follow the currently selected model unless a stream is actively running.
@@ -520,9 +522,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const use1M = has1MContext(contextDisplayModel);
   const contextUsageData = useMemo(() => {
     return lastUsage
-      ? calculateTokenMeterData(lastUsage, contextDisplayModel, use1M, false)
+      ? calculateTokenMeterData(lastUsage, contextDisplayModel, use1M, false, providersConfig)
       : { segments: [], totalTokens: 0, totalPercentage: 0 };
-  }, [lastUsage, contextDisplayModel, use1M]);
+  }, [lastUsage, contextDisplayModel, use1M, providersConfig]);
   const { threshold: autoCompactThreshold, setThreshold: setAutoCompactThreshold } =
     useAutoCompactionSettings(workspaceIdForUsage, contextDisplayModel);
   const autoCompactionProps = useMemo(
