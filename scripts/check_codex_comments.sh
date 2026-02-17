@@ -43,6 +43,39 @@ resolve_repo_context() {
   fi
 }
 
+# Retry GraphQL calls to avoid transient network/API hiccups from failing readiness checks.
+MAX_ATTEMPTS=5
+BACKOFF_SECS=2
+
+graphql_with_retries() {
+  local query="$1"
+  local cursor="$2"
+  local attempt
+  local backoff="$BACKOFF_SECS"
+  local response
+
+  for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
+    if response=$(gh api graphql \
+      -f query="$query" \
+      -F owner="$OWNER" \
+      -F repo="$REPO" \
+      -F pr="$PR_NUMBER" \
+      -F cursor="$cursor"); then
+      printf '%s\n' "$response"
+      return 0
+    fi
+
+    if [ "$attempt" -eq "$MAX_ATTEMPTS" ]; then
+      echo "❌ GraphQL query failed after ${MAX_ATTEMPTS} attempts" >&2
+      return 1
+    fi
+
+    echo "⚠️ GraphQL query failed (attempt ${attempt}/${MAX_ATTEMPTS}); retrying in ${backoff}s..." >&2
+    sleep "$backoff"
+    backoff=$((backoff * 2))
+  done
+}
+
 compute_codex_sets_from_arrays() {
   local comments_json="$1"
   local threads_json="$2"
@@ -146,12 +179,9 @@ fetch_all_comments_via_api() {
   local end_cursor
 
   while true; do
-    page_data=$(gh api graphql \
-      -f query="$graphql_query" \
-      -F owner="$OWNER" \
-      -F repo="$REPO" \
-      -F pr="$PR_NUMBER" \
-      -F cursor="$cursor")
+    if ! page_data=$(graphql_with_retries "$graphql_query" "$cursor"); then
+      return 1
+    fi
 
     if [ "$(echo "$page_data" | jq -r '.data.repository.pullRequest == null')" = "true" ]; then
       echo "❌ PR #$PR_NUMBER does not exist in ${OWNER}/${REPO}." >&2
@@ -222,12 +252,9 @@ fetch_all_threads_via_api() {
   local end_cursor
 
   while true; do
-    page_data=$(gh api graphql \
-      -f query="$graphql_query" \
-      -F owner="$OWNER" \
-      -F repo="$REPO" \
-      -F pr="$PR_NUMBER" \
-      -F cursor="$cursor")
+    if ! page_data=$(graphql_with_retries "$graphql_query" "$cursor"); then
+      return 1
+    fi
 
     if [ "$(echo "$page_data" | jq -r '.data.repository.pullRequest == null')" = "true" ]; then
       echo "❌ PR #$PR_NUMBER does not exist in ${OWNER}/${REPO}." >&2
