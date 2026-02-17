@@ -54,12 +54,33 @@ jobs:
           RELEASE_TAG: ${{ steps.compute.outputs.release_tag }}
         shell: bash
         run: |
-          # If the same nightly tag already exists (re-run with no new commits),
-          # treat it as already built and skip downstream desktop builds.
+          REQUIRED_ASSETS=(
+            nightly.yml
+            nightly-mac.yml
+            nightly-linux.yml
+          )
+
+          # Re-runs with no new commits may find an existing nightly release.
+          # Reuse only when sentinel updater assets are present; otherwise rebuild.
           if gh release view "$RELEASE_TAG" &>/dev/null; then
-            echo "Release $RELEASE_TAG already exists — reusing existing assets"
-            echo "should_build=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            mapfile -t RELEASE_ASSETS < <(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')
+            MISSING_ASSETS=()
+
+            for required_asset in "${REQUIRED_ASSETS[@]}"; do
+              if ! printf '%s\n' "${RELEASE_ASSETS[@]}" | grep -Fxq "$required_asset"; then
+                MISSING_ASSETS+=("$required_asset")
+              fi
+            done
+
+            if [ "${#MISSING_ASSETS[@]}" -eq 0 ]; then
+              echo "Release $RELEASE_TAG already has required assets — reusing existing assets"
+              echo "should_build=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            echo "Release $RELEASE_TAG is incomplete (missing: ${MISSING_ASSETS[*]})"
+            echo "Deleting $RELEASE_TAG so this run can rebuild desktop artifacts"
+            gh release delete "$RELEASE_TAG" --yes --cleanup-tag
           fi
 
           gh release create "$RELEASE_TAG" --prerelease --target "$GITHUB_SHA" --title "$RELEASE_TAG" --notes "Automated nightly build from main ($(date -u +%Y-%m-%d))"
