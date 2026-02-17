@@ -22,6 +22,10 @@ const DEVICE_FLOW_POLLING_SAFETY_MARGIN_MS = 3_000;
 
 const SESSION_LAST_USED_PERSIST_INTERVAL_MS = 60 * 1000;
 
+// Defensive cap: keep unauthenticated /auth/server-login/github/start traffic from
+// allocating unbounded pending flows and outbound GitHub requests.
+const MAX_CONCURRENT_GITHUB_DEVICE_FLOWS = 32;
+
 export const SERVER_AUTH_SESSION_COOKIE_NAME = "mux_session";
 export const SERVER_AUTH_SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 
@@ -272,6 +276,7 @@ export class ServerAuthService {
   private readonly sessionsFilePath: string;
   private readonly sessionsMutex = new AsyncMutex();
   private readonly githubDeviceFlows = new Map<string, GithubDeviceFlow>();
+  private githubDeviceFlowStartsInFlight = 0;
 
   constructor(private readonly config: Config) {
     this.sessionsFilePath = path.join(this.config.rootDir, "serverAuthSessions.json");
@@ -285,6 +290,17 @@ export class ServerAuthService {
     return this.getAllowedGithubOwner() != null;
   }
 
+  private getOpenGithubDeviceFlowCount(): number {
+    let count = 0;
+    for (const flow of this.githubDeviceFlows.values()) {
+      if (!flow.cancelled) {
+        count += 1;
+      }
+    }
+
+    return count;
+  }
+
   async startGithubDeviceFlow(): Promise<
     Result<{ flowId: string; verificationUri: string; userCode: string }, string>
   > {
@@ -292,6 +308,13 @@ export class ServerAuthService {
     if (!owner) {
       return Err("GitHub owner login is not configured");
     }
+
+    const openFlows = this.getOpenGithubDeviceFlowCount();
+    if (openFlows + this.githubDeviceFlowStartsInFlight >= MAX_CONCURRENT_GITHUB_DEVICE_FLOWS) {
+      return Err("Too many concurrent GitHub login attempts. Please wait and try again.");
+    }
+
+    this.githubDeviceFlowStartsInFlight += 1;
 
     const flowId = crypto.randomUUID();
 
@@ -324,7 +347,7 @@ export class ServerAuthService {
       const deferred =
         createDeferred<Result<{ sessionId: string; sessionToken: string }, string>>();
       const timeout = setTimeout(() => {
-        void this.finishGithubDeviceFlow(flowId, Err("Timed out waiting for GitHub authorization"));
+        this.finishGithubDeviceFlow(flowId, Err("Timed out waiting for GitHub authorization"));
       }, DEFAULT_DEVICE_FLOW_TIMEOUT_MS);
 
       this.githubDeviceFlows.set(flowId, {
@@ -347,6 +370,12 @@ export class ServerAuthService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Err(`Failed to start GitHub device flow: ${message}`);
+    } finally {
+      assert(
+        this.githubDeviceFlowStartsInFlight > 0,
+        "githubDeviceFlowStartsInFlight should be positive while startGithubDeviceFlow is running"
+      );
+      this.githubDeviceFlowStartsInFlight -= 1;
     }
   }
 
@@ -516,6 +545,10 @@ export class ServerAuthService {
     while (!flow.cancelled) {
       try {
         const tokenResult = await this.pollGithubAccessToken(flow);
+        if (flow.cancelled) {
+          return;
+        }
+
         if (!tokenResult.success) {
           this.finishGithubDeviceFlow(flow.flowId, Err(tokenResult.error));
           return;
@@ -527,6 +560,10 @@ export class ServerAuthService {
           flow.intervalSeconds = tokenResult.data.intervalSeconds;
         } else if (tokenResult.data.type === "authorized") {
           const loginResult = await this.fetchGithubLogin(tokenResult.data.accessToken);
+          if (flow.cancelled) {
+            return;
+          }
+
           if (!loginResult.success) {
             this.finishGithubDeviceFlow(flow.flowId, Err(loginResult.error));
             return;
@@ -549,10 +586,32 @@ export class ServerAuthService {
             return;
           }
 
+          if (flow.cancelled) {
+            return;
+          }
+
           const sessionResult = await this.createSessionLocked({
             userAgent: flow.userAgent,
             ipAddress: flow.ipAddress,
           });
+
+          if (flow.cancelled) {
+            // The flow may be canceled while a session write is in progress.
+            // Defensive cleanup avoids orphan sessions that have no delivered token.
+            if (sessionResult.success) {
+              const removed = await this.revokeSession(sessionResult.data.sessionId);
+              if (!removed) {
+                log.warn(
+                  "Canceled GitHub device flow created a session that could not be revoked",
+                  {
+                    flowId: flow.flowId,
+                    sessionId: sessionResult.data.sessionId,
+                  }
+                );
+              }
+            }
+            return;
+          }
 
           if (!sessionResult.success) {
             this.finishGithubDeviceFlow(flow.flowId, Err(sessionResult.error));

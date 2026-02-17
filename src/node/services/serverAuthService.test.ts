@@ -58,10 +58,12 @@ describe("ServerAuthService", () => {
 
   let tempDir: string;
   let config: Config;
+  let createdServices: ServerAuthService[];
 
   beforeEach(async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-server-auth-test-"));
     config = new Config(tempDir);
+    createdServices = [];
 
     await config.editConfig((cfg) => {
       cfg.serverAuthGithubOwner = "octocat";
@@ -70,6 +72,10 @@ describe("ServerAuthService", () => {
   });
 
   afterEach(() => {
+    for (const service of createdServices) {
+      service.dispose();
+    }
+
     globalThis.fetch = originalFetch;
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
@@ -99,8 +105,14 @@ describe("ServerAuthService", () => {
     return waitResult.data;
   }
 
+  function createService(configOverride?: Config): ServerAuthService {
+    const service = new ServerAuthService(configOverride ?? config);
+    createdServices.push(service);
+    return service;
+  }
+
   it("creates and validates a session after successful GitHub device-flow login", async () => {
-    const service = new ServerAuthService(config);
+    const service = createService(config);
 
     const session = await createSessionViaGithubDeviceFlow(service, {
       userAgent:
@@ -124,7 +136,7 @@ describe("ServerAuthService", () => {
   });
 
   it("revokes a session and rejects the token afterward", async () => {
-    const service = new ServerAuthService(config);
+    const service = createService(config);
 
     const session = await createSessionViaGithubDeviceFlow(service);
 
@@ -136,7 +148,7 @@ describe("ServerAuthService", () => {
   });
 
   it("revokeOtherSessions keeps only the current session", async () => {
-    const service = new ServerAuthService(config);
+    const service = createService(config);
 
     const sessionA = await createSessionViaGithubDeviceFlow(service);
     const sessionB = await createSessionViaGithubDeviceFlow(service);
@@ -157,7 +169,7 @@ describe("ServerAuthService", () => {
 
   it("returns an error when GitHub owner login is not configured", async () => {
     const unconfigured = new Config(path.join(tempDir, "unconfigured"));
-    const service = new ServerAuthService(unconfigured);
+    const service = createService(unconfigured);
 
     const result = await service.startGithubDeviceFlow();
     expect(result.success).toBe(false);
@@ -167,7 +179,7 @@ describe("ServerAuthService", () => {
   });
 
   it("rejects GitHub users that do not match the configured owner", async () => {
-    const service = new ServerAuthService(config);
+    const service = createService(config);
 
     setMockFetchForSuccessfulGithubLogin("somebody-else");
 
@@ -182,5 +194,92 @@ describe("ServerAuthService", () => {
     if (!waitResult.success) {
       expect(waitResult.error).toContain("not authorized");
     }
+  });
+
+  it("caps outstanding GitHub device-flow starts to limit unauthenticated load", async () => {
+    const service = createService(config);
+
+    let deviceCodeRequests = 0;
+    mockFetch((input) => {
+      const url = String(input);
+
+      if (url.endsWith("/login/device/code")) {
+        deviceCodeRequests += 1;
+        return jsonResponse({
+          verification_uri: "https://github.com/login/device",
+          user_code: `CODE-${deviceCodeRequests}`,
+          device_code: `device-code-${deviceCodeRequests}`,
+          interval: 5,
+        });
+      }
+
+      return new Response("Not found", { status: 404 });
+    });
+
+    const attempts = 40;
+    let successCount = 0;
+    let rejectedCount = 0;
+
+    for (let i = 0; i < attempts; i += 1) {
+      const result = await service.startGithubDeviceFlow();
+      if (result.success) {
+        successCount += 1;
+      } else {
+        rejectedCount += 1;
+        expect(result.error).toContain("Too many concurrent GitHub login attempts");
+      }
+    }
+
+    expect(successCount).toBeLessThan(attempts);
+    expect(rejectedCount).toBeGreaterThan(0);
+    expect(deviceCodeRequests).toBe(successCount);
+  });
+
+  it("does not persist orphan sessions when a device flow is canceled while polling", async () => {
+    const service = createService(config);
+
+    mockFetch(async (input) => {
+      const url = String(input);
+
+      if (url.endsWith("/login/device/code")) {
+        return jsonResponse({
+          verification_uri: "https://github.com/login/device",
+          user_code: "ABCD-1234",
+          device_code: "device-code-timeout",
+          interval: 0,
+        });
+      }
+
+      if (url.endsWith("/login/oauth/access_token")) {
+        return jsonResponse({
+          access_token: "gho_test_access_token",
+        });
+      }
+
+      if (url === "https://api.github.com/user") {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return jsonResponse({
+          login: "octocat",
+        });
+      }
+
+      return new Response("Not found", { status: 404 });
+    });
+
+    const startResult = await service.startGithubDeviceFlow();
+    expect(startResult.success).toBe(true);
+    if (!startResult.success) {
+      throw new Error(`startGithubDeviceFlow failed: ${startResult.error}`);
+    }
+
+    const waitResult = await service.waitForGithubDeviceFlow(startResult.data.flowId, {
+      timeoutMs: 1,
+    });
+    expect(waitResult.success).toBe(false);
+
+    await new Promise((resolve) => setTimeout(resolve, 75));
+
+    const sessions = await service.listSessions(null);
+    expect(sessions).toHaveLength(0);
   });
 });
