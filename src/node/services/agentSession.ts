@@ -366,10 +366,13 @@ export class AgentSession {
   }
 
   private getStreamLastTimestamp(streamInfo: {
+    startTime?: number;
     parts: Array<{ timestamp?: number }>;
     toolCompletionTimestamps: Map<string, number>;
   }): number {
-    let streamLastTimestamp = 0;
+    // Use a nonzero floor so live-mode replay never sends afterTimestamp=0 when a
+    // stream has started but no parts/completions are recorded yet.
+    let streamLastTimestamp = streamInfo.startTime ?? 1;
     for (let index = streamInfo.parts.length - 1; index >= 0; index -= 1) {
       const timestamp = streamInfo.parts[index]?.timestamp;
       if (timestamp === undefined) {

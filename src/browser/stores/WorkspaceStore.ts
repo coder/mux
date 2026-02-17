@@ -2101,11 +2101,24 @@ export class WorkspaceStore {
         (event) => "type" in event && event.type === "stream-start"
       );
 
+      const serverActiveStreamMessageId = data.cursor?.stream?.messageId;
+      const localActiveStreamMessageId = aggregator.getActiveStreamMessageId();
+      const streamContextMismatched =
+        serverActiveStreamMessageId !== undefined &&
+        localActiveStreamMessageId !== undefined &&
+        serverActiveStreamMessageId !== localActiveStreamMessageId;
+
       // Defensive cleanup:
       // - full replay means backend rebuilt state from scratch, so stale local stream contexts
       //   must be cleared even if a stream cursor is present in caught-up metadata.
       // - no stream cursor means no active stream exists server-side.
-      if (replay === "full" || !data.cursor?.stream) {
+      // - mismatched stream IDs means local context is stale (e.g., stream A ended while
+      //   disconnected and stream B is now active), so clear before replaying pending events.
+      if (
+        replay === "full" ||
+        serverActiveStreamMessageId === undefined ||
+        streamContextMismatched
+      ) {
         aggregator.clearActiveStreams();
       }
 

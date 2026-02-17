@@ -17,13 +17,24 @@ import {
 import { AgentSession } from "./agentSession";
 import { createTestHistoryService } from "./testHistoryService";
 
-async function createReplaySessionHarness(workspaceId: string) {
+interface ReplayHarnessStreamInfo {
+  messageId: string;
+  startTime: number;
+  parts: Array<{ timestamp?: number }>;
+  toolCompletionTimestamps: Map<string, number>;
+}
+
+async function createReplaySessionHarness(
+  workspaceId: string,
+  options?: { streamInfo?: ReplayHarnessStreamInfo }
+) {
   const config = {
     srcDir: "/tmp",
     getSessionDir: (_workspaceId: string) => "/tmp",
   } as unknown as Config;
 
   const { historyService, cleanup } = await createTestHistoryService();
+  const streamInfo = options?.streamInfo;
 
   const aiEmitter = new EventEmitter();
   const replayStream = mock((_workspaceId: string, _opts?: { afterTimestamp?: number }) =>
@@ -35,7 +46,7 @@ async function createReplaySessionHarness(workspaceId: string) {
     streamMessage: mock((_history: MuxMessage[]) =>
       Promise.resolve(Err({ type: "unknown", raw: "unused" }))
     ) as unknown as (...args: Parameters<AIService["streamMessage"]>) => Promise<unknown>,
-    getStreamInfo: mock((_workspaceId: string) => undefined),
+    getStreamInfo: mock((_workspaceId: string) => streamInfo),
     replayStream,
   }) as unknown as AIService;
 
@@ -328,6 +339,33 @@ describe("AgentSession pre-stream errors", () => {
       .map((part) => part.text)
       .join("");
     expect(replayedText).toContain("finalized");
+  });
+
+  it("uses stream start timestamp baseline for live replay when no parts exist", async () => {
+    const workspaceId = "ws-replay-live-start-baseline";
+    const streamStartTime = 4_321;
+    const { session, cleanup, replayStream } = await createReplaySessionHarness(workspaceId, {
+      streamInfo: {
+        messageId: "live-msg-1",
+        startTime: streamStartTime,
+        parts: [],
+        toolCompletionTimestamps: new Map(),
+      },
+    });
+    historyCleanup = cleanup;
+
+    const events: WorkspaceChatMessage[] = [];
+    await session.replayHistory(
+      ({ message }) => {
+        events.push(message);
+      },
+      {
+        type: "live",
+      }
+    );
+
+    expect(replayStream).toHaveBeenCalledWith(workspaceId, { afterTimestamp: streamStartTime });
+    expect(events.some((event) => "type" in event && event.type === "caught-up")).toBe(true);
   });
 
   it("replays init state for live-mode reconnects", async () => {
