@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { runAcpAdapter } from "../node/acp/adapter";
+import { isolateStdoutForAcp, runAcpAdapter } from "../node/acp/adapter";
 import { connectToServer } from "../node/acp/serverConnection";
 import { getParseOptions } from "./argv";
 
@@ -11,6 +11,10 @@ program
   .option("--server-url <url>", "URL of a running mux server")
   .option("--auth-token <token>", "Auth token for server connection")
   .action(async (options: Record<string, unknown>) => {
+    // Redirect console.log to stderr immediately — before any code that may
+    // log to stdout (connectToServer can start an in-process server).
+    isolateStdoutForAcp();
+
     const serverUrl = typeof options.serverUrl === "string" ? options.serverUrl : undefined;
     const authToken = typeof options.authToken === "string" ? options.authToken : undefined;
 

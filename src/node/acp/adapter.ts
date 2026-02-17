@@ -5,23 +5,21 @@ import { MuxAgent } from "./agent";
 import type { ServerConnection } from "./serverConnection";
 
 /**
- * ACP framing is sent over process.stdout. Any non-protocol output to stdout
+ * ACP framing is sent over process.stdout.  Any non-protocol output to stdout
  * (e.g., from mux's logger at info/debug level, or from an in-process server)
  * would corrupt the NDJSON stream seen by editors.
  *
- * Redirect `console.log` to stderr so that only ACP protocol messages appear
- * on stdout.  `console.error`/`console.warn` already target stderr.
+ * Call this **before** any code that may log to stdout (including
+ * `connectToServer`, which may start an in-process server).
+ *
+ * `console.error`/`console.warn` already target stderr and are unaffected.
  */
-function isolateStdoutForAcp(): void {
+export function isolateStdoutForAcp(): void {
   console.log = console.error;
 }
 
 export async function runAcpAdapter(server: ServerConnection): Promise<void> {
   assert(server != null, "runAcpAdapter: server connection is required");
-
-  // Redirect all console.log output to stderr before creating the ACP
-  // stream so that logger info/debug messages do not corrupt the protocol.
-  isolateStdoutForAcp();
 
   // ACP SDK expects Web streams; process stdio is Node stream instances.
   const input = Readable.toWeb(process.stdin) as unknown as ReadableStream<Uint8Array>;
