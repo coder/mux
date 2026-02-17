@@ -53,19 +53,64 @@ export async function connectToServer(options: {
 
   if (lockData?.baseUrl) {
     // The lockfile PID is alive but the WebSocket endpoint may be unreachable
-    // (startup race, stale-but-live process, etc.).  Fall back to spinning up
-    // an in-process server instead of failing hard.
+    // (startup race, stale-but-live process, etc.).  Only fall back to the
+    // in-process server for clearly unreachable endpoints; rethrow auth,
+    // protocol, or other errors to avoid split-brain with a live server.
     try {
       return await connectToExistingServer({
         baseUrl: lockData.baseUrl,
         authToken: explicitAuthToken ?? normalizeToken(lockData.token),
       });
-    } catch {
+    } catch (error) {
+      if (!isUnreachableError(error)) {
+        throw error;
+      }
       // Lockfile endpoint unreachable — fall through to in-process server.
     }
   }
 
   return connectToInProcessServer(explicitAuthToken);
+}
+
+/**
+ * Network-level error codes that indicate the lockfile endpoint is genuinely
+ * unreachable (not running, refused, timed out).  Auth errors, protocol
+ * mismatches, and other failures are *not* included — those indicate a real
+ * server is listening and we should surface the error rather than silently
+ * starting a second server.
+ */
+const UNREACHABLE_ERROR_CODES = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ECONNABORTED",
+  "ETIMEDOUT",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "EPIPE",
+]);
+
+function isUnreachableError(error: unknown): boolean {
+  if (error == null || typeof error !== "object") {
+    return false;
+  }
+
+  // Node.js network errors carry an errno `code` property.
+  if ("code" in error && typeof (error as { code: unknown }).code === "string") {
+    return UNREACHABLE_ERROR_CODES.has((error as { code: string }).code);
+  }
+
+  // ws WebSocket emits an error whose message starts with the error code or
+  // wraps a Node network error in `.cause`.
+  if ("cause" in error) {
+    return isUnreachableError((error as { cause: unknown }).cause);
+  }
+
+  // waitForWebSocketOpen rejects with our own Error on pre-open close.
+  if (error instanceof Error && error.message.includes("WebSocket closed before opening")) {
+    return true;
+  }
+
+  return false;
 }
 
 async function connectToExistingServer(options: {
