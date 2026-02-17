@@ -125,25 +125,30 @@ const mockWindow: BrowserWindow = {
   } else {
     console.log(`\n  Auth: enabled (token source: ${resolved.source})`);
 
-    // Print token when explicitly requested or when network-accessible
-    const showToken =
-      options.printAuthToken === true ||
-      serverInfo.networkBaseUrls.length > 0 ||
-      resolved.source === "generated";
-    if (showToken) {
-      // Use a LAN-reachable URL for remote connection instructions when available,
-      // since baseUrl is loopback (127.0.0.1) even when binding to 0.0.0.0.
-      const remoteUrl =
-        serverInfo.networkBaseUrls.length > 0 ? serverInfo.networkBaseUrls[0] : serverInfo.baseUrl;
+    // Use a LAN-reachable URL for remote connection instructions when available,
+    // since baseUrl is loopback (127.0.0.1) even when binding to 0.0.0.0.
+    const remoteUrl =
+      serverInfo.networkBaseUrls.length > 0 ? serverInfo.networkBaseUrls[0] : serverInfo.baseUrl;
+
+    if (serverInfo.networkBaseUrls.length > 0) {
+      console.log(`\n  # Connect from another machine:`);
+      console.log(`  export MUX_SERVER_URL=${remoteUrl}`);
+    }
+
+    // Avoid logging user-supplied long-lived credentials by default.
+    const shouldPrintSensitiveToken =
+      options.printAuthToken === true || resolved.source === "generated";
+    if (shouldPrintSensitiveToken) {
       // Shell-quote the token to handle metacharacters ($, &, spaces, etc.)
       const shellToken = `'${resolved.token.replace(/'/g, "'\\''")}'`;
       const urlToken = encodeURIComponent(resolved.token);
 
-      console.log(`\n  # Connect from another machine:`);
-      console.log(`  export MUX_SERVER_URL=${remoteUrl}`);
       console.log(`  export MUX_SERVER_AUTH_TOKEN=${shellToken}`);
       console.log(`\n  # Open in browser:`);
       console.log(`  ${remoteUrl}/?token=${urlToken}`);
+    } else {
+      console.log(`\n  # Token is not printed by default for CLI/env-provided credentials.`);
+      console.log(`  # Pass --print-auth-token to print it in this terminal.`);
     }
 
     const lockfilePath = serviceContainer.serverService.getLockfilePath();
