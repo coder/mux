@@ -454,6 +454,9 @@ export class MuxAgent implements Agent {
     }
 
     if (event.type === "stream-end") {
+      // stream-end is a normal completion.  Only honour it for the identified
+      // message — otherwise a prior in-flight message's completion could
+      // prematurely resolve a freshly queued prompt.
       if (!this.isActiveTurnMessage(sessionId, event.messageId)) {
         return;
       }
@@ -466,7 +469,10 @@ export class MuxAgent implements Agent {
     }
 
     if (event.type === "stream-abort") {
-      if (!this.isActiveTurnMessage(sessionId, event.messageId)) {
+      // stream-abort can arrive before stream-start when the user cancels
+      // immediately.  Always honour abort for any pending turn so prompt()
+      // doesn't hang forever.
+      if (!this.isActiveTurnMessageOrPending(sessionId, event.messageId)) {
         return;
       }
       const usage =
@@ -478,7 +484,9 @@ export class MuxAgent implements Agent {
     }
 
     if (event.type === "stream-error") {
-      if (!this.isActiveTurnMessage(sessionId, event.messageId)) {
+      // Like abort, errors must be propagated even before stream-start to
+      // prevent hanging turns.
+      if (!this.isActiveTurnMessageOrPending(sessionId, event.messageId)) {
         return;
       }
       this.rejectTurn(sessionId, new Error(`prompt stream failed: ${event.error}`));
@@ -515,6 +523,22 @@ export class MuxAgent implements Agent {
     // the new turn.
     if (completion.messageId == null) {
       return false;
+    }
+    return completion.messageId === eventMessageId;
+  }
+  /**
+   * Like `isActiveTurnMessage` but also returns `true` when the turn exists
+   * but hasn't been identified yet (messageId is null).  Used for error/abort
+   * events that must be processed even before `stream-start` arrives.
+   */
+  private isActiveTurnMessageOrPending(sessionId: string, eventMessageId: string): boolean {
+    const completion = this.turnCompletions.get(sessionId);
+    if (completion == null) {
+      return false;
+    }
+    // Turn exists but hasn't been identified — accept the event (abort/error).
+    if (completion.messageId == null) {
+      return true;
     }
     return completion.messageId === eventMessageId;
   }
