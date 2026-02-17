@@ -564,6 +564,11 @@ export class ServerAuthService {
     await using _lock = await this.sessionsMutex.acquire();
     const data = await this.loadPersistedSessionsLocked();
 
+    const currentSessionExists = data.sessions.some((session) => session.id === currentSessionId);
+    if (!currentSessionExists) {
+      return 0;
+    }
+
     const previousLength = data.sessions.length;
     data.sessions = data.sessions.filter((session) => session.id === currentSessionId);
     const removedCount = previousLength - data.sessions.length;

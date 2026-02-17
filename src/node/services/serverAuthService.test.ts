@@ -167,6 +167,25 @@ describe("ServerAuthService", () => {
     expect(sessionBValidation).toEqual({ sessionId: sessionB.sessionId });
   });
 
+  it("revokeOtherSessions preserves sessions when current session id is missing", async () => {
+    const service = createService(config);
+
+    const sessionA = await createSessionViaGithubDeviceFlow(service);
+    const sessionB = await createSessionViaGithubDeviceFlow(service);
+
+    const revokedCount = await service.revokeOtherSessions("missing-session-id");
+    expect(revokedCount).toBe(0);
+
+    const sessions = await service.listSessions(null);
+    expect(sessions).toHaveLength(2);
+
+    const sessionAValidation = await service.validateSessionToken(sessionA.sessionToken);
+    expect(sessionAValidation).toEqual({ sessionId: sessionA.sessionId });
+
+    const sessionBValidation = await service.validateSessionToken(sessionB.sessionToken);
+    expect(sessionBValidation).toEqual({ sessionId: sessionB.sessionId });
+  });
+
   it("rejects expired sessions during validation", async () => {
     const service = createService(config);
     const session = await createSessionViaGithubDeviceFlow(service);
