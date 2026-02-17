@@ -1178,23 +1178,12 @@ export class AgentSession {
       }
     }
 
-    const appendResult = await this.historyService.appendToHistory(this.workspaceId, userMessage);
-    if (!appendResult.success) {
-      // Note: If we get here with snapshots, one or more snapshots may already be persisted but user message
-      // failed. This is a rare edge case (disk full mid-operation). The next edit will clean up
-      // the orphan via the truncation logic that removes preceding snapshots.
-      return Err(createUnknownSendMessageError(appendResult.error));
-    }
-
-    // Workspace may be tearing down while we await filesystem IO.
-    // If so, skip event emission + streaming to avoid races with dispose().
-    if (this.disposed) {
-      return Ok(undefined);
-    }
-
+    // Check compaction threshold BEFORE persisting the user message.
+    // If on-send compaction is needed, we skip persisting the user's message now — it becomes
+    // the follow-up content sent after compaction completes. This avoids duplicating the user
+    // turn in model context (the compaction would otherwise summarize a transcript that already
+    // contains the new prompt, then replay it again post-compaction).
     let autoCompactionMessage: MuxMessage | null = null;
-
-    // Move threshold checks into the backend so all send paths (UI + IPC + recovery) behave consistently.
     if (!isCompactionRequest && !editMessageId) {
       const compactionResult = this.compactionMonitor.checkBeforeSend({
         model: modelForStream,
@@ -1237,6 +1226,7 @@ export class AgentSession {
           }
         );
 
+        // Persist compaction request (NOT the user message — it's the follow-up)
         const appendCompactionResult = await this.historyService.appendToHistory(
           this.workspaceId,
           autoCompactionMessage
@@ -1259,6 +1249,24 @@ export class AgentSession {
       }
     }
 
+    // When on-send compaction triggers, the user message is NOT persisted to history
+    // (it's sent as follow-up after compaction). Otherwise, persist normally.
+    if (!autoCompactionMessage) {
+      const appendResult = await this.historyService.appendToHistory(this.workspaceId, userMessage);
+      if (!appendResult.success) {
+        // Note: If we get here with snapshots, one or more snapshots may already be persisted but user message
+        // failed. This is a rare edge case (disk full mid-operation). The next edit will clean up
+        // the orphan via the truncation logic that removes preceding snapshots.
+        return Err(createUnknownSendMessageError(appendResult.error));
+      }
+    }
+
+    // Workspace may be tearing down while we await filesystem IO.
+    // If so, skip event emission + streaming to avoid races with dispose().
+    if (this.disposed) {
+      return Ok(undefined);
+    }
+
     // Emit snapshots first (if any), then user message - maintains prompt ordering in UI
     if (snapshotResult?.snapshotMessage) {
       this.emitChatEvent({ ...snapshotResult.snapshotMessage, type: "message" });
@@ -1268,7 +1276,7 @@ export class AgentSession {
       this.emitChatEvent({ ...skillSnapshotResult.snapshotMessage, type: "message" });
     }
 
-    // Add type: "message" for discriminated union (createMuxMessage doesn't add it)
+    // Always emit user message to the frontend for display (even when compaction replaces the stream)
     this.emitChatEvent({ ...userMessage, type: "message" });
 
     if (autoCompactionMessage) {

@@ -102,6 +102,9 @@ export class RetryManager {
   }
 
   handleStreamSuccess(): void {
+    // Cancel any stale retry timer (e.g., if a manual retry succeeded
+    // before the scheduled timer fired) and reset state.
+    this.cancelPendingTimer();
     this.state = createFreshRetryState<RetryFailureError>();
   }
 
