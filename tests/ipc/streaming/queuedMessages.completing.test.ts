@@ -723,4 +723,148 @@ describe("Queued messages during stream completion", () => {
       await env.orpc.workspace.remove({ workspaceId });
     }
   }, 25000);
+
+  test("defers actor-critic auto-continuation while an edit is pending", async () => {
+    if (!env || !repoPath) {
+      throw new Error("Test environment not initialized");
+    }
+
+    const branchName = generateBranchName("test-completing-critic-edit-priority");
+    const result = await createWorkspace(env, repoPath, branchName);
+    if (!result.success) {
+      throw new Error(`Failed to create workspace: ${result.error}`);
+    }
+
+    const workspaceId = result.metadata.id;
+    const collector = createStreamCollector(env.orpc, workspaceId);
+    collector.start();
+
+    const session = env.services.workspaceService.getOrCreateSession(workspaceId);
+
+    type SessionInternals = {
+      compactionHandler: {
+        handleCompletion: (event: unknown) => Promise<boolean>;
+      };
+      deferQueuedFlushUntilAfterEdit?: boolean;
+    };
+    const compactionHandler = (session as unknown as SessionInternals).compactionHandler;
+
+    const enteredCompletion = createDeferred<void>();
+    const releaseCompletion = createDeferred<void>();
+
+    const originalHandleCompletion = compactionHandler.handleCompletion.bind(compactionHandler);
+    const handleCompletionSpy = jest
+      .spyOn(compactionHandler, "handleCompletion")
+      .mockImplementation(async (event) => {
+        enteredCompletion.resolve();
+        await releaseCompletion.promise;
+        return originalHandleCompletion(event);
+      });
+
+    const criticRequests: Array<{ latestUserText: string }> = [];
+    const router = env.services.aiService.getMockRouter();
+    expect(router).not.toBeNull();
+    router?.prependHandlers([
+      {
+        match: (request) => request.isCriticTurn === true,
+        respond: (request) => {
+          criticRequests.push({ latestUserText: request.latestUserText });
+          return { assistantText: "/done" };
+        },
+      },
+      {
+        match: (request) => request.isCriticTurn !== true,
+        respond: () => ({ assistantText: "Actor baseline response." }),
+      },
+    ]);
+
+    try {
+      await collector.waitForSubscription(5000);
+
+      const initialMessage = "Initial actor-critic turn";
+      const firstSendResult = await sendMessageWithModel(
+        env,
+        workspaceId,
+        initialMessage,
+        HAIKU_MODEL,
+        {
+          criticEnabled: true,
+        }
+      );
+      expect(firstSendResult.success).toBe(true);
+
+      let firstUserMessageId: string | undefined;
+      const sawFirstUserMessage = await waitFor(() => {
+        const firstUserMessage = collector
+          .getEvents()
+          .filter(isMuxMessage)
+          .find(
+            (event) =>
+              event.role === "user" &&
+              event.parts.some((part) => "text" in part && part.text === initialMessage)
+          );
+        if (firstUserMessage) {
+          firstUserMessageId = firstUserMessage.id;
+          return true;
+        }
+        return false;
+      }, 5000);
+      if (!sawFirstUserMessage || !firstUserMessageId) {
+        throw new Error("Initial user message was not emitted before edit");
+      }
+
+      await collector.waitForEvent("stream-start", 5000);
+
+      // Hold completion open so the actor-critic continuation decision races with edit setup.
+      await enteredCompletion.promise;
+      expect(session.isBusy()).toBe(true);
+
+      const editedText = "Edited actor turn";
+      const editSendPromise = sendMessageWithModel(env, workspaceId, editedText, HAIKU_MODEL, {
+        editMessageId: firstUserMessageId,
+      });
+
+      const armedDeferLatch = await waitFor(() => {
+        return Boolean((session as unknown as SessionInternals).deferQueuedFlushUntilAfterEdit);
+      }, 5000);
+      if (!armedDeferLatch) {
+        throw new Error("Edit never armed deferQueuedFlushUntilAfterEdit latch");
+      }
+
+      releaseCompletion.resolve();
+
+      const sawEditedUserMessage = await waitFor(() => {
+        return collector
+          .getEvents()
+          .filter(isMuxMessage)
+          .some(
+            (event) =>
+              event.role === "user" &&
+              event.parts.some((part) => "text" in part && part.text === editedText)
+          );
+      }, 15000);
+      if (!sawEditedUserMessage) {
+        throw new Error("Edited user message was not emitted after releasing completion");
+      }
+
+      const editSendResult = await editSendPromise;
+      expect(editSendResult.success).toBe(true);
+
+      // Regression: pending edit should block actor->critic auto-continuation from the
+      // just-finished stream-end cleanup. The next turn should be the edit itself.
+      expect(criticRequests).toHaveLength(0);
+
+      // Wait for original + edit streams to finish.
+      const finalStreamEnd = await collector.waitForEventN("stream-end", 2, 15000);
+      if (!finalStreamEnd) {
+        throw new Error("Edit stream never finished after releasing completion");
+      }
+    } finally {
+      releaseCompletion.resolve();
+      handleCompletionSpy.mockRestore();
+
+      collector.stop();
+      await env.orpc.workspace.remove({ workspaceId });
+    }
+  }, 25000);
 });

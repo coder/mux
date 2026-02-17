@@ -1997,6 +1997,14 @@ export class AgentSession {
       return false;
     }
 
+    // Edits must truncate before any autonomous follow-up. When an edit is waiting,
+    // sendMessage() sets deferQueuedFlushUntilAfterEdit while waiting for IDLE;
+    // skip actor-critic continuation so stream-end can honor that precedence.
+    if (this.deferQueuedFlushUntilAfterEdit) {
+      this.clearCriticLoopState();
+      return false;
+    }
+
     // Prioritize explicit user input over autonomous actor-critic continuation.
     // If the user queued a follow-up while streaming, flush that queue first
     // instead of starting another auto-loop turn from the just-finished output.
