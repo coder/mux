@@ -41,8 +41,10 @@ function buildFillerText(charCount: number): string {
 }
 
 describeIntegration("compaction 1M context retry", () => {
-  // Compaction with 1M retry can take a while — summarizing 250k+ tokens of content
-  const TEST_TIMEOUT_MS = 120_000;
+  // Compaction with 1M retry can take a while — summarizing 250k+ tokens of content.
+  // CI can exceed 2 minutes under provider load, so allow extra headroom to avoid
+  // timing out before terminal stream events arrive.
+  const TEST_TIMEOUT_MS = 180_000;
 
   test(
     "should auto-retry compaction with 1M context when exceeding 200k default limit",
