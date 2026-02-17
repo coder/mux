@@ -186,6 +186,16 @@ export function isTerminalFocused(target: EventTarget | null): boolean {
 }
 
 /**
+ * Check if any Radix dialog is currently open.
+ * Used by capture-phase keyboard handlers to skip shortcuts while a modal is active,
+ * since bubble-phase stopPropagation from dialog onKeyDown can't block capture-phase listeners.
+ */
+export function isDialogOpen(): boolean {
+  if (typeof document === "undefined") return false;
+  return document.querySelector('[role="dialog"]') !== null;
+}
+
+/**
  * Format a keybind for display to users.
  * Returns Mac-style symbols on macOS, or Windows-style text elsewhere.
  */

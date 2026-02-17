@@ -6,6 +6,7 @@ import {
   KEYBINDS,
   isEditableElement,
   isTerminalFocused,
+  isDialogOpen,
 } from "@/browser/utils/ui/keybinds";
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { isCompactingStream, cancelCompaction } from "@/browser/utils/compaction/handler";
@@ -108,6 +109,9 @@ export function useAIViewKeybinds({
     };
 
     const handleKeyDownCapture = (e: KeyboardEvent) => {
+      // Don't process shortcuts when a dialog is open (dialogs block all background interaction).
+      if (isDialogOpen()) return;
+
       // Focus chat input works anywhere (even in input fields)
       if (matchesKeybind(e, KEYBINDS.FOCUS_CHAT)) {
         e.preventDefault();
