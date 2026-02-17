@@ -2115,6 +2115,10 @@ export class WorkspaceStore {
         // queuedMessage is safe to clear because backend now replays a fresh
         // queued-message-changed snapshot before caught-up.
         transient.queuedMessage = null;
+      }
+
+      if (replay === "full" || !data.cursor?.stream) {
+        // No active stream cursor means any previously live tool-call UI is stale.
         transient.liveBashOutput.clear();
         transient.liveTaskIds.clear();
       }

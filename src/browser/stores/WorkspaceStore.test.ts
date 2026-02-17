@@ -862,6 +862,89 @@ describe("WorkspaceStore", () => {
       expect(store.getTaskToolLiveTaskId(workspaceId, "call-task-2")).toBeNull();
     });
 
+    it("clears stale live tool state when since replay reports no active stream", async () => {
+      const workspaceId = "task-created-workspace-4";
+      let subscriptionCount = 0;
+      let releaseFirstSubscription: (() => void) | undefined;
+      const holdFirstSubscription = new Promise<void>((resolve) => {
+        releaseFirstSubscription = resolve;
+      });
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        subscriptionCount += 1;
+
+        if (subscriptionCount === 1) {
+          yield { type: "caught-up" };
+          await Promise.resolve();
+          yield {
+            type: "bash-output",
+            workspaceId,
+            toolCallId: "call-bash-4",
+            text: "stale-output\n",
+            isError: false,
+            timestamp: 1,
+          };
+          yield {
+            type: "task-created",
+            workspaceId,
+            toolCallId: "call-task-4",
+            taskId: "child-workspace-4",
+            timestamp: 2,
+          };
+
+          await holdFirstSubscription;
+          return;
+        }
+
+        yield {
+          type: "caught-up",
+          replay: "since",
+          cursor: {
+            history: {
+              messageId: "history-1",
+              historySequence: 1,
+            },
+          },
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const seededLiveState = await waitUntil(() => {
+        return (
+          store.getBashToolLiveOutput(workspaceId, "call-bash-4") !== null &&
+          store.getTaskToolLiveTaskId(workspaceId, "call-task-4") === "child-workspace-4"
+        );
+      });
+      expect(seededLiveState).toBe(true);
+
+      releaseFirstSubscription?.();
+
+      const clearedLiveState = await waitUntil(() => {
+        return (
+          subscriptionCount >= 2 &&
+          store.getBashToolLiveOutput(workspaceId, "call-bash-4") === null &&
+          store.getTaskToolLiveTaskId(workspaceId, "call-task-4") === null
+        );
+      });
+      expect(clearedLiveState).toBe(true);
+    });
+
     it("replays pre-caught-up task-created after full replay catches up", async () => {
       const workspaceId = "task-created-workspace-3";
 
