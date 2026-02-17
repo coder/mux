@@ -29,6 +29,7 @@ import { createSystem1KeepRangesTool } from "@/node/services/tools/system1_keep_
 import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
 import { createMemoryReadTool } from "@/node/services/tools/memory_read";
 import { createMemoryWriteTool } from "@/node/services/tools/memory_write";
+import { createNoNewMemoriesTool } from "@/node/services/tools/no_new_memories";
 import { withHooks, type HookConfig } from "@/node/services/tools/withHooks";
 import { log } from "@/node/services/log";
 import { attachModelOnlyToolNotifications } from "@/common/utils/tools/internalToolResultFields";
@@ -326,6 +327,7 @@ export async function getToolsForModel(
     switch_agent: createSwitchAgentTool(config),
     memory_read: createMemoryReadTool(config),
     memory_write: createMemoryWriteTool(config),
+    no_new_memories: createNoNewMemoriesTool(config),
     system1_keep_ranges: createSystem1KeepRangesTool(config),
     todo_write: createTodoWriteTool(config),
     todo_read: createTodoReadTool(config),

@@ -935,6 +935,11 @@ export const TOOL_DEFINITIONS = {
       })
       .strict(),
   },
+  no_new_memories: {
+    description:
+      "Internal no-op tool used by mux memory writing agents to explicitly signal that no memory update is needed.",
+    schema: z.object({}).strict(),
+  },
   system1_keep_ranges: {
     description:
       "Internal tool used by mux to record which line ranges to keep when filtering large bash output.",
@@ -1484,6 +1489,7 @@ export function getAvailableTools(
     "switch_agent",
     "memory_read",
     "memory_write",
+    "no_new_memories",
     "system1_keep_ranges",
     "todo_write",
     "todo_read",

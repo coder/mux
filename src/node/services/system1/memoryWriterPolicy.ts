@@ -17,7 +17,10 @@ import { createRuntime } from "@/node/runtime/runtimeFactory";
 
 import type { LanguageModel } from "ai";
 
-import { runSystem1WriteProjectMemories } from "./system1MemoryWriter";
+import {
+  runSystem1WriteProjectMemories,
+  type System1MemoryWriterRunResult,
+} from "./system1MemoryWriter";
 
 const SYSTEM1_MEMORY_WRITER_AGENT_ID = "system1_memory_writer";
 
@@ -437,28 +440,29 @@ export class MemoryWriterPolicy {
 
       let timedOut = false;
       try {
-        const result = await runSystem1WriteProjectMemories({
-          runtime,
-          agentDiscoveryPath: workspacePath,
-          runtimeTempDir: os.tmpdir(),
-          model,
-          modelString: effectiveSystem1ModelString,
-          providerOptions,
-          workspaceId: ctx.workspaceId,
-          triggerMessageId: ctx.messageId,
-          workspaceName: ctx.workspaceName,
-          projectPath: ctx.projectPath,
-          workspacePath,
-          history: historyResult.data,
-          timeoutMs: 10_000,
-          onTimeout: () => {
-            timedOut = true;
-          },
-        });
+        const result: System1MemoryWriterRunResult | undefined =
+          await runSystem1WriteProjectMemories({
+            runtime,
+            agentDiscoveryPath: workspacePath,
+            runtimeTempDir: os.tmpdir(),
+            model,
+            modelString: effectiveSystem1ModelString,
+            providerOptions,
+            workspaceId: ctx.workspaceId,
+            triggerMessageId: ctx.messageId,
+            workspaceName: ctx.workspaceName,
+            projectPath: ctx.projectPath,
+            workspacePath,
+            history: historyResult.data,
+            timeoutMs: 10_000,
+            onTimeout: () => {
+              timedOut = true;
+            },
+          });
 
         if (!result) {
           workspaceLog.debug(
-            "[system1][memory] Memory writer exited without updating memory (no memory_write call)",
+            "[system1][memory] Memory writer exited without satisfying required tool policy",
             {
               timedOut,
               system1Model: effectiveSystem1ModelString,
@@ -470,6 +474,7 @@ export class MemoryWriterPolicy {
         workspaceLog.debug("[system1][memory] Memory writer completed", {
           timedOut,
           finishReason: result.finishReason,
+          memoryAction: result.memoryAction,
           system1Model: effectiveSystem1ModelString,
         });
       } catch (error) {

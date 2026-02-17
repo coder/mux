@@ -12,6 +12,7 @@ import { resolveAgentBody } from "@/node/services/agentDefinitions/agentDefiniti
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
 import { createMemoryReadTool } from "@/node/services/tools/memory_read";
 import { createMemoryWriteTool } from "@/node/services/tools/memory_write";
+import { createNoNewMemoriesTool } from "@/node/services/tools/no_new_memories";
 import { getMuxHome } from "@/common/constants/paths";
 import { getMemoryFilePathForProject } from "@/node/services/tools/memoryCommon";
 import {
@@ -76,9 +77,19 @@ interface MemoryWriterAttemptDebug {
   toolExecutions: MemoryWriterToolExecutionEvent[];
   finishReason?: string;
   wrote: boolean;
+  noNewMemories: boolean;
   aborted: boolean;
   error?: string;
 }
+
+export interface System1MemoryWriterRunResult {
+  finishReason?: string;
+  timedOut: boolean;
+  memoryAction: "memory_write" | "no_new_memories";
+}
+
+const MEMORY_TOOL_POLICY_REMINDER =
+  "Reminder: You MUST call memory_write to persist updates, or call no_new_memories when no memory update is needed. Do not output prose.";
 
 function sanitizeDebugFilenameComponent(value: string): string {
   return value.replace(/[^a-zA-Z0-9_.-]+/g, "_");
@@ -249,7 +260,7 @@ function trimToCharBudget(events: MemoryWriterEvent[], maxChars: number): Memory
 
 export async function runSystem1WriteProjectMemories(
   params: RunSystem1MemoryWriterParams
-): Promise<{ finishReason?: string; timedOut: boolean } | undefined> {
+): Promise<System1MemoryWriterRunResult | undefined> {
   assert(params, "params is required");
   assert(params.runtime, "runtime is required");
   assert(
@@ -367,18 +378,21 @@ export async function runSystem1WriteProjectMemories(
   const debugAttempts: MemoryWriterAttemptDebug[] = [];
 
   let didWriteMemory = false;
+  let satisfiedMemoryToolPolicy = false;
 
   const generate = params.generateTextImpl ?? generateText;
 
   try {
+    // Keep provider settings compatible (no forced tool_choice with thinking), but
+    // still enforce explicit tool intent: the model must either write memory or
+    // acknowledge a deliberate no-op via no_new_memories.
     const attemptMessages: Array<NonNullable<Parameters<typeof generateText>[0]["messages"]>> = [
       [{ role: "user", content: userMessage }],
       [
         { role: "user", content: userMessage },
         {
           role: "user",
-          content:
-            "Reminder: You MUST call memory_write to persist the updated memory file. Do not output prose.",
+          content: MEMORY_TOOL_POLICY_REMINDER,
         },
       ],
     ];
@@ -386,6 +400,7 @@ export async function runSystem1WriteProjectMemories(
     for (let attemptIndex = 0; attemptIndex < attemptMessages.length; attemptIndex += 1) {
       const messages = attemptMessages[attemptIndex];
       let wrote = false;
+      let noNewMemories = false;
 
       const stepResults: unknown[] = [];
       const toolExecutions: MemoryWriterToolExecutionEvent[] = [];
@@ -396,6 +411,7 @@ export async function runSystem1WriteProjectMemories(
         stepResults,
         toolExecutions,
         wrote: false,
+        noNewMemories: false,
         aborted: false,
       };
 
@@ -443,6 +459,18 @@ export async function runSystem1WriteProjectMemories(
               }
             }
 
+            if (
+              toolName === "no_new_memories" &&
+              result &&
+              typeof result === "object" &&
+              "success" in result
+            ) {
+              const successValue = (result as { success?: unknown }).success;
+              if (successValue === true) {
+                noNewMemories = true;
+              }
+            }
+
             toolExecutions.push({
               attemptIndex: attemptDebug.attemptIndex,
               toolName,
@@ -472,13 +500,16 @@ export async function runSystem1WriteProjectMemories(
 
       const memoryReadTool = createMemoryReadTool(toolConfig);
       const memoryWriteTool = createMemoryWriteTool(toolConfig);
+      const noNewMemoriesTool = createNoNewMemoriesTool(toolConfig);
 
       wrapToolExecute("memory_read", memoryReadTool);
       wrapToolExecute("memory_write", memoryWriteTool);
+      wrapToolExecute("no_new_memories", noNewMemoriesTool);
 
       const tools: Record<string, Tool> = {
         memory_read: memoryReadTool,
         memory_write: memoryWriteTool,
+        no_new_memories: noNewMemoriesTool,
       };
 
       let response: Awaited<ReturnType<GenerateTextLike>>;
@@ -513,10 +544,22 @@ export async function runSystem1WriteProjectMemories(
 
       if (wrote) {
         didWriteMemory = true;
+        satisfiedMemoryToolPolicy = true;
         attemptDebug.wrote = true;
         return {
           finishReason: response.finishReason,
           timedOut,
+          memoryAction: "memory_write",
+        };
+      }
+
+      if (noNewMemories) {
+        satisfiedMemoryToolPolicy = true;
+        attemptDebug.noNewMemories = true;
+        return {
+          finishReason: response.finishReason,
+          timedOut,
+          memoryAction: "no_new_memories",
         };
       }
     }
@@ -526,7 +569,7 @@ export async function runSystem1WriteProjectMemories(
     clearTimeout(timeout);
     unlink();
 
-    if (log.isDebugMode() && (timedOut || !didWriteMemory)) {
+    if (log.isDebugMode() && (timedOut || !satisfiedMemoryToolPolicy)) {
       const safeTriggerMessageId = sanitizeDebugFilenameComponent(params.triggerMessageId);
       log.debug_obj(
         `${params.workspaceId}/system1_memory_writer/${runStartedAt}_${safeTriggerMessageId}.json`,
@@ -540,6 +583,7 @@ export async function runSystem1WriteProjectMemories(
           timeoutMs: params.timeoutMs,
           timedOut,
           didWriteMemory,
+          satisfiedMemoryToolPolicy,
           agentDiscoveryPath: params.agentDiscoveryPath,
           projectPath: params.projectPath,
           workspacePath: params.workspacePath,

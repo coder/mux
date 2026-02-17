@@ -80,6 +80,7 @@ describe("system1MemoryWriter", () => {
 
           const tools = (args as { tools?: unknown }).tools as Record<string, unknown> | undefined;
           expect(tools && "memory_write" in tools).toBe(true);
+          expect(tools && "no_new_memories" in tools).toBe(true);
 
           const writeTool = tools!.memory_write as {
             execute: (input: unknown, options: unknown) => Promise<unknown>;
@@ -90,7 +91,11 @@ describe("system1MemoryWriter", () => {
         },
       });
 
-      expect(result).toEqual({ finishReason: "stop", timedOut: false });
+      expect(result).toEqual({
+        finishReason: "stop",
+        timedOut: false,
+        memoryAction: "memory_write",
+      });
       expect(await fs.readFile(memoryPath, "utf8")).toBe("new");
     } finally {
       if (previousMuxRoot === undefined) {
@@ -159,6 +164,7 @@ describe("system1MemoryWriter", () => {
 
           const tools = (args as { tools?: unknown }).tools as Record<string, unknown> | undefined;
           expect(tools && "memory_write" in tools).toBe(true);
+          expect(tools && "no_new_memories" in tools).toBe(true);
 
           const writeTool = tools!.memory_write as {
             execute: (input: unknown, options: unknown) => Promise<unknown>;
@@ -170,7 +176,11 @@ describe("system1MemoryWriter", () => {
       });
 
       const { memoryPath } = getMemoryFilePathForProject(projectDir);
-      expect(result).toEqual({ finishReason: "stop", timedOut: false });
+      expect(result).toEqual({
+        finishReason: "stop",
+        timedOut: false,
+        memoryAction: "memory_write",
+      });
       expect(await fs.readFile(memoryPath, "utf8")).toBe("first memory");
     } finally {
       if (previousMuxRoot === undefined) {
@@ -250,6 +260,7 @@ describe("system1MemoryWriter", () => {
 
           const tools = (args as { tools?: unknown }).tools as Record<string, unknown> | undefined;
           expect(tools && "memory_write" in tools).toBe(true);
+          expect(tools && "no_new_memories" in tools).toBe(true);
 
           const writeTool = tools!.memory_write as {
             execute: (input: unknown, options: unknown) => Promise<unknown>;
@@ -260,7 +271,11 @@ describe("system1MemoryWriter", () => {
         },
       });
 
-      expect(result).toEqual({ finishReason: "stop", timedOut: false });
+      expect(result).toEqual({
+        finishReason: "stop",
+        timedOut: false,
+        memoryAction: "memory_write",
+      });
       expect(await fs.readFile(memoryPath, "utf8")).toBe("updated");
     } finally {
       if (previousMuxRoot === undefined) {
@@ -273,7 +288,68 @@ describe("system1MemoryWriter", () => {
     }
   });
 
-  it("retries once with a reminder if the model does not call memory_write", async () => {
+  it("treats no_new_memories as a valid explicit no-op", async () => {
+    const runtime = createRuntime({ type: "local", srcBaseDir: process.cwd() });
+
+    const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "system1-memory-project-"));
+    const muxRoot = await fs.mkdtemp(path.join(os.tmpdir(), "system1-memory-root-"));
+
+    const previousMuxRoot = process.env.MUX_ROOT;
+    process.env.MUX_ROOT = muxRoot;
+
+    try {
+      await fs.writeFile(path.join(muxRoot, "AGENTS.md"), "# Global\n", "utf8");
+      await fs.writeFile(path.join(projectDir, "AGENTS.md"), "# Agents\n", "utf8");
+
+      const { memoriesDir, memoryPath } = getMemoryFilePathForProject(projectDir);
+      await fs.mkdir(memoriesDir, { recursive: true });
+      await fs.writeFile(memoryPath, "existing memory", "utf8");
+
+      const result = await runSystem1WriteProjectMemories({
+        runtime,
+        agentDiscoveryPath: projectDir,
+        runtimeTempDir: os.tmpdir(),
+        model: {} as unknown as LanguageModel,
+        modelString: "openai:gpt-5.1-codex-mini",
+        providerOptions: {},
+        workspaceId: "ws_1",
+        workspaceName: "main",
+        triggerMessageId: "assistant-test",
+        projectPath: projectDir,
+        workspacePath: projectDir,
+        history: [],
+        timeoutMs: 5_000,
+        generateTextImpl: async (args) => {
+          const tools = (args as { tools?: unknown }).tools as Record<string, unknown> | undefined;
+          expect(tools && "no_new_memories" in tools).toBe(true);
+
+          const noNewMemoriesTool = tools!.no_new_memories as {
+            execute: (input: unknown, options: unknown) => Promise<unknown>;
+          };
+
+          await noNewMemoriesTool.execute({}, {});
+          return { finishReason: "stop" };
+        },
+      });
+
+      expect(result).toEqual({
+        finishReason: "stop",
+        timedOut: false,
+        memoryAction: "no_new_memories",
+      });
+      expect(await fs.readFile(memoryPath, "utf8")).toBe("existing memory");
+    } finally {
+      if (previousMuxRoot === undefined) {
+        delete process.env.MUX_ROOT;
+      } else {
+        process.env.MUX_ROOT = previousMuxRoot;
+      }
+      await fs.rm(projectDir, { recursive: true, force: true });
+      await fs.rm(muxRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("retries once with a reminder if the model does not call a required memory tool", async () => {
     const runtime = createRuntime({ type: "local", srcBaseDir: process.cwd() });
 
     const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "system1-memory-project-"));
@@ -326,7 +402,7 @@ describe("system1MemoryWriter", () => {
 
           expect(messages!.length).toBe(2);
           expect(messages![1]?.content).toBe(
-            "Reminder: You MUST call memory_write to persist the updated memory file. Do not output prose."
+            "Reminder: You MUST call memory_write to persist updates, or call no_new_memories when no memory update is needed. Do not output prose."
           );
 
           const tools = (args as { tools?: unknown }).tools as Record<string, unknown> | undefined;
@@ -340,7 +416,11 @@ describe("system1MemoryWriter", () => {
       });
 
       expect(calls).toBe(2);
-      expect(result).toEqual({ finishReason: "stop", timedOut: false });
+      expect(result).toEqual({
+        finishReason: "stop",
+        timedOut: false,
+        memoryAction: "memory_write",
+      });
       expect(await fs.readFile(memoryPath, "utf8")).toBe("new");
     } finally {
       if (previousMuxRoot === undefined) {
@@ -416,7 +496,11 @@ describe("system1MemoryWriter", () => {
         },
       });
 
-      expect(result).toEqual({ finishReason: "stop", timedOut: false });
+      expect(result).toEqual({
+        finishReason: "stop",
+        timedOut: false,
+        memoryAction: "memory_write",
+      });
       expect(await fs.readFile(memoryPath, "utf8")).toBe("C");
     } finally {
       if (previousMuxRoot === undefined) {
