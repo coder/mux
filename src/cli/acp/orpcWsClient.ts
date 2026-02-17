@@ -17,9 +17,11 @@ export interface OrpcWsClient {
 export function createOrpcWsClient(options: OrpcClientOptions): OrpcWsClient {
   assert(options.baseUrl.trim().length > 0, "createOrpcWsClient requires a non-empty baseUrl");
 
+  const normalizedBase = options.baseUrl.replace(/\/+$/, "");
+
   let wsUrl: URL;
   try {
-    wsUrl = new URL(`${options.baseUrl}/orpc/ws`);
+    wsUrl = new URL(`${normalizedBase}/orpc/ws`);
   } catch (error) {
     throw new Error(`Invalid oRPC base URL: ${options.baseUrl}`, { cause: error });
   }

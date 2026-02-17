@@ -26,6 +26,10 @@ export interface SessionState {
   promptResolver?: PromptResolver;
   /** Whether we've seen caught-up (initial replay is done) */
   caughtUp: boolean;
+  /** Resolves when onChat replay emits caught-up */
+  caughtUpPromise: Promise<void>;
+  /** Call to resolve caughtUpPromise (set once in createSession) */
+  resolveCaughtUp: () => void;
   /** Whether the first prompt has been sent (for name generation) */
   firstPromptSent: boolean;
   /** Whether this session was created via newSession (true) or loadSession (false) */
@@ -62,10 +66,18 @@ export class SessionManager {
 
     this.removeSession(sessionId);
 
+    let resolveCaughtUp: (() => void) | undefined;
+    const caughtUpPromise = new Promise<void>((resolve) => {
+      resolveCaughtUp = resolve;
+    });
+    assert(resolveCaughtUp != null, "caughtUpPromise resolver must be initialized");
+
     const nextState: SessionState = {
       ...state,
       abortController: new AbortController(),
       caughtUp: false,
+      caughtUpPromise,
+      resolveCaughtUp,
       firstPromptSent: false,
       isNewSession: state.isNewSession,
       lastSeenHistorySequence: -1,
@@ -130,6 +142,18 @@ export class SessionManager {
     }
 
     session.subscriptionDead = true;
+  }
+
+  markCaughtUp(sessionId: string): void {
+    assert(sessionId.length > 0, "sessionId must be non-empty");
+
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return;
+    }
+
+    session.caughtUp = true;
+    session.resolveCaughtUp();
   }
 
   /**

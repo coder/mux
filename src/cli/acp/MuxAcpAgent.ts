@@ -225,8 +225,30 @@ export class MuxAcpAgent implements AcpAgent {
     }
 
     if (!session.caughtUp) {
-      throw new Error(
-        "Session is still replaying history — wait for replay to finish before prompting."
+      // Wait for initial replay to finish before accepting prompts so that
+      // lastSeenHistorySequence reflects all replayed stream-starts and the
+      // prompt resolver's minHistorySequence guard is accurate.
+      const CAUGHT_UP_TIMEOUT_MS = 30_000;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error("Timed out waiting for session replay to finish"));
+        }, CAUGHT_UP_TIMEOUT_MS);
+      });
+      await Promise.race([session.caughtUpPromise, timeoutPromise]);
+    }
+
+    // Re-read session after await.
+    const sessionAfterWait = this.sessionManager.getSession(params.sessionId);
+    if (!sessionAfterWait) {
+      throw this.deps.sdk.RequestError.resourceNotFound(params.sessionId);
+    }
+    if (sessionAfterWait.subscriptionDead) {
+      throw new Error("Session subscription lost — cannot accept prompts. Create a new session.");
+    }
+    if (sessionAfterWait.promptResolver) {
+      throw this.deps.sdk.RequestError.invalidParams(
+        undefined,
+        `Session ${params.sessionId} already has an active prompt`
       );
     }
 
@@ -266,7 +288,7 @@ export class MuxAcpAgent implements AcpAgent {
     // seen at the time of creation. updatePromptMessageId only binds to
     // stream-starts with a strictly higher sequence, filtering out
     // pre-existing in-flight streams from other producers.
-    const minHistorySequence = session.lastSeenHistorySequence;
+    const minHistorySequence = sessionAfterWait.lastSeenHistorySequence;
 
     const promptPromise = new Promise<acpSchema.PromptResponse>((resolve, reject) => {
       this.sessionManager.setPromptResolver(params.sessionId, {
@@ -280,12 +302,12 @@ export class MuxAcpAgent implements AcpAgent {
     let sendResult: Awaited<ReturnType<OrpcClient["workspace"]["sendMessage"]>>;
     try {
       sendResult = await this.deps.orpcClient.workspace.sendMessage({
-        workspaceId: session.workspaceId,
+        workspaceId: sessionAfterWait.workspaceId,
         message: messageText,
         options: {
-          model: session.model,
-          agentId: session.agentId,
-          thinkingLevel: session.thinkingLevel,
+          model: sessionAfterWait.model,
+          agentId: sessionAfterWait.agentId,
+          thinkingLevel: sessionAfterWait.thinkingLevel,
         },
       });
     } catch (error) {
@@ -307,9 +329,9 @@ export class MuxAcpAgent implements AcpAgent {
     // Only auto-generate a title for sessions created via newSession, not
     // loadSession — reconnecting to an existing workspace should not overwrite
     // its existing title.
-    if (!session.firstPromptSent && session.isNewSession) {
-      session.firstPromptSent = true;
-      this.maybeGenerateName(session, messageText).catch((error) => {
+    if (!sessionAfterWait.firstPromptSent && sessionAfterWait.isNewSession) {
+      sessionAfterWait.firstPromptSent = true;
+      this.maybeGenerateName(sessionAfterWait, messageText).catch((error) => {
         this.deps.log("name generation failed", error);
       });
     }
@@ -793,7 +815,7 @@ export class MuxAcpAgent implements AcpAgent {
     }
 
     if (event.type === "caught-up") {
-      session.caughtUp = true;
+      this.sessionManager.markCaughtUp(workspaceId);
     }
 
     // Track history sequence for all stream-starts (replay or not) so the
