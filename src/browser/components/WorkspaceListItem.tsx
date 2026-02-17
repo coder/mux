@@ -16,9 +16,8 @@ import { WorkspaceHoverPreview } from "./WorkspaceHoverPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
-import { Pencil, Trash2, Ellipsis, Loader2, Link2 } from "lucide-react";
+import { Pencil, Trash2, Loader2, Link2 } from "lucide-react";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
-import { Shimmer } from "./ai-elements/shimmer";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
 import { WORKSPACE_DRAG_TYPE, type WorkspaceDragItem } from "./WorkspaceSectionDropZone";
 import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
@@ -95,10 +94,11 @@ export interface DraftWorkspaceListItemProps extends WorkspaceListItemBaseProps 
 const LIST_ITEM_BASE_CLASSES =
   "py-1.5 pr-2 transition-all duration-150 text-[13px] relative flex gap-2";
 
-/** Calculate left padding based on nesting depth */
-function getItemPaddingLeft(depth?: number): number {
-  const safeDepth = typeof depth === "number" && Number.isFinite(depth) ? Math.max(0, depth) : 0;
-  return 12 + Math.min(32, safeDepth) * 12;
+/** Calculate left padding - always the same for dot alignment */
+function getItemPaddingLeft(_depth?: number): number {
+  // Dots are always aligned at the same position.
+  // Sub-agent text indentation is handled via gap/margin on the text column.
+  return 12;
 }
 
 /** Selection/unread indicator bar (absolute positioned on left edge) */
@@ -604,26 +604,32 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
             aria-hidden
           />
         )}
-        {/* Status dot */}
-        <div className={cn(
-          "mt-1.5 flex shrink-0 flex-col items-center gap-0.5",
-          isSubAgent && "ml-0.5"
-        )}>
-          {/* Vertical connector line for sub-agents */}
-          {isSubAgent && (
-            <span className="bg-muted-dark absolute -top-1.5 left-[22px] h-3 w-px" style={{ left: `${(depth ?? 1) * 12 + 6}px` }} aria-hidden />
-          )}
+        {/* Vertical connector line for sub-agents */}
+        {isSubAgent && (
+          <span
+            className="absolute bg-muted-dark"
+            style={{
+              left: `${paddingLeft + 4}px`,
+              top: 0,
+              bottom: '50%',
+              width: '1px',
+            }}
+            aria-hidden
+          />
+        )}
+        {/* Status dot - all dots aligned at same position */}
+        <div className="mt-1.5 flex shrink-0 items-start">
           <span className={cn(
-            "inline-block h-2 w-2 rounded-full shrink-0",
+            "inline-block h-2.5 w-2.5 rounded-full shrink-0 border",
             isWorking || isInitializing
-              ? "bg-green-500 animate-pulse"
+              ? "bg-green-500 border-green-700 animate-pulse"
               : hasError
-                ? "bg-red-500"
+                ? "bg-red-500 border-red-700"
                 : isCompleted && !isUnread
-                  ? "bg-muted-dark"
+                  ? "bg-muted-dark border-neutral-600"
                   : isUnread
-                    ? "bg-gray-300"
-                    : "bg-muted-dark"
+                    ? "bg-gray-300 border-gray-500"
+                    : "bg-muted-dark border-neutral-600"
           )} />
         </div>
 
@@ -697,22 +703,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   </PopoverAnchor>
                 )}
                 <PopoverTrigger asChild>
-                  <button
-                    className={cn(
-                      "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 transition-colors duration-200",
-                      // Hidden until row hover, but remain visible while open.
-                      isTitleMenuOpen ? "opacity-100" : "opacity-0",
-                      // On touch devices, fully hide the button so it can't intercept taps
-                      // and doesn't flash visible on transient hover states.
-                      // Long-press opens the context menu instead.
-                      "[@media(hover:none)_and_(pointer:coarse)]:invisible [@media(hover:none)_and_(pointer:coarse)]:pointer-events-none"
-                    )}
-                    onClick={(e) => e.stopPropagation()}
-                    aria-label={`Workspace actions for ${displayTitle}`}
-                    data-workspace-id={workspaceId}
-                  >
-                    <Ellipsis className="h-3 w-3" />
-                  </button>
+                  <span className="hidden" />
                 </PopoverTrigger>
 
                 <PopoverContent
@@ -826,16 +817,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                       startEditing();
                     }}
                   >
-                    {/* Always render text in same structure; Shimmer just adds animation class */}
-                    <Shimmer
-                      className={cn(
-                        "w-full truncate",
-                        !(isWorking || isInitializing) && "no-shimmer"
-                      )}
-                      colorClass="var(--color-foreground)"
-                    >
-                      {displayTitle}
-                    </Shimmer>
+                    {displayTitle}
                   </span>
                 </HoverCardTrigger>
                 <HoverCardContent
