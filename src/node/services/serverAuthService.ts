@@ -28,6 +28,7 @@ const MAX_CONCURRENT_GITHUB_DEVICE_FLOWS = 32;
 
 export const SERVER_AUTH_SESSION_COOKIE_NAME = "mux_session";
 export const SERVER_AUTH_SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
+const SERVER_AUTH_SESSION_MAX_AGE_MS = SERVER_AUTH_SESSION_MAX_AGE_SECONDS * 1000;
 
 interface PersistedServerAuthSession {
   id: string;
@@ -442,6 +443,28 @@ export class ServerAuthService {
       return null;
     }
 
+    const sessionAgeMs = now - session.createdAtMs;
+    const sessionExpired =
+      !Number.isFinite(session.createdAtMs) ||
+      !Number.isFinite(sessionAgeMs) ||
+      sessionAgeMs >= SERVER_AUTH_SESSION_MAX_AGE_MS;
+    if (sessionExpired) {
+      data.sessions = data.sessions.filter((candidate) => candidate.id !== session.id);
+
+      try {
+        await this.savePersistedSessionsLocked(data);
+      } catch (error) {
+        // Validation should still fail closed for expired sessions even if pruning
+        // persistence fails.
+        log.warn("Failed to prune expired server auth session", {
+          sessionId: session.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      return null;
+    }
+
     const shouldPersistLastUsed =
       !Number.isFinite(session.lastUsedAtMs) ||
       now - session.lastUsedAtMs >= SESSION_LAST_USED_PERSIST_INTERVAL_MS;
@@ -477,7 +500,32 @@ export class ServerAuthService {
     await using _lock = await this.sessionsMutex.acquire();
     const data = await this.loadPersistedSessionsLocked();
 
-    return data.sessions
+    const now = Date.now();
+    const unexpiredSessions = data.sessions.filter((session) => {
+      const ageMs = now - session.createdAtMs;
+      return (
+        Number.isFinite(session.createdAtMs) &&
+        Number.isFinite(ageMs) &&
+        ageMs < SERVER_AUTH_SESSION_MAX_AGE_MS
+      );
+    });
+
+    if (unexpiredSessions.length !== data.sessions.length) {
+      const removedCount = data.sessions.length - unexpiredSessions.length;
+      data.sessions = unexpiredSessions;
+
+      try {
+        await this.savePersistedSessionsLocked(data);
+      } catch (error) {
+        // Listing sessions should remain available even if cleanup persistence fails.
+        log.warn("Failed to persist expired server auth session cleanup", {
+          removedCount,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    return unexpiredSessions
       .map((session) => ({
         id: session.id,
         label: session.label ?? buildSessionLabel(session.userAgent),

@@ -118,6 +118,9 @@ export function ServerAccessSection() {
 
   const currentSession = sessions.find((session) => session.isCurrent) ?? null;
   const hasOtherSessions = sessions.some((session) => !session.isCurrent);
+  // Revoke-other requires a current cookie-backed session id; bearer-token auth
+  // has no current session and should not expose a no-op destructive action.
+  const canRevokeOtherSessions = currentSession != null && hasOtherSessions;
 
   return (
     <div className="space-y-4">
@@ -143,7 +146,7 @@ export function ServerAccessSection() {
           onClick={() => {
             void handleRevokeOthers();
           }}
-          disabled={loading || revokingOthers || !hasOtherSessions}
+          disabled={loading || revokingOthers || !canRevokeOtherSessions}
         >
           {revokingOthers ? "Revoking..." : "Revoke other sessions"}
         </Button>

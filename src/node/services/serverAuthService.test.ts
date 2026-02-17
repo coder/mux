@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Config } from "@/node/config";
-import { ServerAuthService } from "./serverAuthService";
+import { ServerAuthService, SERVER_AUTH_SESSION_MAX_AGE_SECONDS } from "./serverAuthService";
 
 function jsonResponse(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -165,6 +165,33 @@ describe("ServerAuthService", () => {
 
     const sessionBValidation = await service.validateSessionToken(sessionB.sessionToken);
     expect(sessionBValidation).toEqual({ sessionId: sessionB.sessionId });
+  });
+
+  it("rejects expired sessions during validation", async () => {
+    const service = createService(config);
+    const session = await createSessionViaGithubDeviceFlow(service);
+
+    const sessionsPath = path.join(tempDir, "serverAuthSessions.json");
+    const persisted = JSON.parse(await fs.promises.readFile(sessionsPath, "utf-8")) as {
+      sessions?: Array<{ id?: string; createdAtMs?: number }>;
+    };
+    const persistedSession = persisted.sessions?.find(
+      (candidate) => candidate.id === session.sessionId
+    );
+    expect(persistedSession).toBeTruthy();
+    if (!persistedSession) {
+      throw new Error("Expected persisted session after creation");
+    }
+
+    persistedSession.createdAtMs =
+      Date.now() - (SERVER_AUTH_SESSION_MAX_AGE_SECONDS * 1000 + 1_000);
+    await fs.promises.writeFile(sessionsPath, JSON.stringify(persisted, null, 2), "utf-8");
+
+    const validation = await service.validateSessionToken(session.sessionToken);
+    expect(validation).toBeNull();
+
+    const sessions = await service.listSessions(null);
+    expect(sessions.some((candidate) => candidate.id === session.sessionId)).toBe(false);
   });
 
   it("treats session metadata persistence failures as non-fatal", async () => {
