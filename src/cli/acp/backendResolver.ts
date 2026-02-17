@@ -25,7 +25,13 @@ function pickFirstNonEmpty(...values: Array<string | undefined>): string | undef
   return undefined;
 }
 
-function normalizeBaseUrl(rawBaseUrl: string): string {
+interface NormalizedUrl {
+  baseUrl: string;
+  /** Token extracted from `?token=…` query parameter, if present. */
+  queryToken: string | undefined;
+}
+
+function normalizeBaseUrl(rawBaseUrl: string): NormalizedUrl {
   const parsedUrl = new URL(rawBaseUrl);
   if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
     throw new Error(
@@ -33,12 +39,19 @@ function normalizeBaseUrl(rawBaseUrl: string): string {
     );
   }
 
+  // Preserve the ?token= query parameter before stripping search/hash.
+  // The WS auth layer supports ?token= as a connection path
+  // (see src/node/orpc/authMiddleware.ts), so we must not silently discard it.
+  const queryToken = parsedUrl.searchParams.get("token") ?? undefined;
+
   parsedUrl.hash = "";
   parsedUrl.search = "";
 
   const normalizedPath = parsedUrl.pathname.replace(/\/+$/, "");
   const origin = `${parsedUrl.protocol}//${parsedUrl.host}`;
-  return normalizedPath.length > 0 ? `${origin}${normalizedPath}` : origin;
+  const baseUrl = normalizedPath.length > 0 ? `${origin}${normalizedPath}` : origin;
+
+  return { baseUrl, queryToken };
 }
 
 function toWsUrl(baseUrl: string): string {
@@ -63,24 +76,29 @@ function makeResolvedToken(...values: Array<string | undefined>): string {
 export async function resolveBackend(opts: ResolveBackendOpts): Promise<ResolvedBackend> {
   const explicitServerUrl = pickFirstNonEmpty(opts.serverUrl, process.env.MUX_SERVER_URL);
   if (explicitServerUrl) {
-    const baseUrl = normalizeBaseUrl(explicitServerUrl);
+    const { baseUrl, queryToken } = normalizeBaseUrl(explicitServerUrl);
     return {
       kind: "remote",
       baseUrl,
       wsUrl: toWsUrl(baseUrl),
-      token: makeResolvedToken(opts.authToken, process.env.MUX_SERVER_AUTH_TOKEN),
+      token: makeResolvedToken(opts.authToken, process.env.MUX_SERVER_AUTH_TOKEN, queryToken),
     };
   }
 
   const lockfile = new ServerLockfile(getMuxHome());
   const lockData = await lockfile.read();
   if (lockData) {
-    const baseUrl = normalizeBaseUrl(lockData.baseUrl);
+    const { baseUrl, queryToken } = normalizeBaseUrl(lockData.baseUrl);
     return {
       kind: "existing",
       baseUrl,
       wsUrl: toWsUrl(baseUrl),
-      token: makeResolvedToken(opts.authToken, process.env.MUX_SERVER_AUTH_TOKEN, lockData.token),
+      token: makeResolvedToken(
+        opts.authToken,
+        process.env.MUX_SERVER_AUTH_TOKEN,
+        queryToken,
+        lockData.token
+      ),
     };
   }
 

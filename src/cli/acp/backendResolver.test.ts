@@ -111,6 +111,33 @@ describe("resolveBackend", () => {
     expect(startEmbeddedServerMock).not.toHaveBeenCalled();
   });
 
+  it("extracts ?token= from the server URL when no explicit auth token is set", async () => {
+    const resolved = await resolveBackend({
+      serverUrl: "https://remote.example.com?token=url-secret&other=ignored",
+    });
+
+    expect(resolved).toEqual({
+      kind: "remote",
+      baseUrl: "https://remote.example.com",
+      wsUrl: "wss://remote.example.com/orpc/ws",
+      token: "url-secret",
+    });
+  });
+
+  it("prefers explicit --auth-token over URL ?token= parameter", async () => {
+    const resolved = await resolveBackend({
+      serverUrl: "https://remote.example.com?token=url-secret",
+      authToken: "cli-token",
+    });
+
+    expect(resolved).toEqual({
+      kind: "remote",
+      baseUrl: "https://remote.example.com",
+      wsUrl: "wss://remote.example.com/orpc/ws",
+      token: "cli-token",
+    });
+  });
+
   it("uses lockfile backend when no explicit URL is provided", async () => {
     lockfileReadMock.mockResolvedValue({
       baseUrl: "https://lockfile.example.com/api/",
