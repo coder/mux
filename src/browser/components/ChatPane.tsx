@@ -393,7 +393,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   );
 
   const handleQuoteHoveredText = useCallback(() => {
-    const quotedText = formatTranscriptTextAsQuote(transcriptMenuTextRef.current);
+    const quotedText = formatTranscriptTextAsQuote(transcriptMenuTextRef.current.trim());
     transcriptMenu.close();
     if (!quotedText) return;
     chatInputAPI.current?.appendText(quotedText);
