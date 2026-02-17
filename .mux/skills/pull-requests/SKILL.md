@@ -32,10 +32,11 @@ Always check `$MUX_MODEL_STRING`, `$MUX_THINKING_LEVEL`, and `$MUX_COSTS_USD` vi
 
 ## CI & Validation
 
-- Use `wait_pr_checks` only as a **last-step** helper when there's no more useful local work left.
 - Prefer local validation first (e.g., `make static-check` or a targeted test subset) because CI waiting can take 10+ minutes.
-- After local validation is done and no useful work remains, run `./scripts/wait_pr_checks.sh <pr_number>`.
-- If asked to fix an issue in CI, first replicate it locally, get it to pass locally, then use `wait_pr_checks`.
+- Use `./scripts/wait_pr_ready.sh <pr_number>` as the default last-step helper when there's no more useful local work left.
+- `wait_pr_ready.sh` polls the Codex and checks gates together and fails fast when either gate reaches a terminal failure.
+- Use `./scripts/wait_pr_checks.sh <pr_number>` and `./scripts/wait_pr_codex.sh <pr_number>` directly only when you need to debug a specific gate.
+- If asked to fix an issue in CI, first replicate it locally, get it to pass locally, then use `wait_pr_ready.sh`.
 
 ## Status Decoding
 
@@ -68,14 +69,20 @@ Use these scripts to check, resolve, and wait on Codex review comments:
 
 - `./scripts/check_codex_comments.sh <pr_number>` — Lists unresolved Codex comments (both regular comments and review threads). Outputs thread IDs needed for resolution.
 - `./scripts/resolve_pr_comment.sh <thread_id>` — Resolves a review thread by its ID (e.g., `PRRT_abc123`).
-- `./scripts/wait_pr_codex.sh <pr_number>` — Waits for Codex to respond to the latest `@codex review` request. When the PR looks good, Codex leaves an explicit approval comment (e.g., it will say `Didn't find any major issues`).
+- `./scripts/wait_pr_codex.sh <pr_number>` — Waits for Codex-only status (or one-shot status with `--once`).
+- `./scripts/wait_pr_ready.sh <pr_number>` — Unified Codex + CI gate poller (preferred for normal PR readiness loops).
 
-When Codex leaves review comments, you **must** address them before the PR can merge:
+> PR readiness is mandatory. You MUST keep iterating until the PR is fully ready.
+> A PR is fully ready only when: (1) Codex explicitly approves, (2) all Codex review threads are resolved, and (3) all required CI checks pass.
+> You MUST NOT report success or stop the loop before these conditions are met.
 
-1. Push your fixes
-2. Resolve each review thread: `./scripts/resolve_pr_comment.sh <thread_id>`
-3. Comment `@codex review` to re-request review
-4. Run `./scripts/wait_pr_codex.sh <pr_number>` to wait for the next Codex response (either new comments to address, or an explicit approval comment)
+When a PR exists, stay in this loop until it is fully ready:
+
+1. Push your fixes.
+2. Resolve each review thread: `./scripts/resolve_pr_comment.sh <thread_id>`.
+3. Comment `@codex review` to re-request review.
+4. Run `./scripts/wait_pr_ready.sh <pr_number>`.
+5. If Codex or checks fail, fix locally, push, and repeat.
 
 ## PR Title Conventions
 

@@ -46,10 +46,31 @@ description: Agent instructions for AI assistants working on the Mux codebase
 - Package manager: bun only. Use `bun install`, `bun add`, `bun run` (which proxies to Make when relevant). Run `bun install` if modules/types go missing.
 - Makefile is source of truth (new commands land there, not `package.json`).
 - Primary targets: `make dev|start|build|lint|lint-fix|fmt|fmt-check|typecheck|test|test-integration|clean|help`.
-- **Codex reviews:** if a PR has Codex review comments, address + resolve them, then re-request review by commenting `@codex review` on the PR. Repeat until `./scripts/check_codex_comments.sh <pr_number>` reports none.
 - Full `static-check` includes docs link checking via `mintlify broken-links`.
+- `.mux/tool_env` is sourced before every `bash` tool call. Use `run_and_report <step_name> <command...>` when running multiple validation steps in one call.
+- Do not pipe/redirect/wrap `run_and_report` output; keep helper markers intact so Mux can show clean step status.
+- `./scripts/wait_pr_ready.sh <pr_number>` is the preferred tail-end helper after local validation and after you've exhausted useful local work.
+- `./scripts/wait_pr_checks.sh <pr_number>` and `./scripts/wait_pr_codex.sh <pr_number>` are lower-level gates used by `wait_pr_ready.sh`.
 
-- `./scripts/wait_pr_checks.sh` is a tail-end CI polling helper. Use it only after local validation and after you've exhausted useful local work.
+## PR Workflow (Codex)
+
+- If a PR has Codex review comments, address + resolve them, then re-request review by commenting `@codex review` on the PR.
+- Prefer `gh` CLI for GitHub interactions over manual web/curl flows.
+
+> PR readiness is mandatory. You MUST keep iterating until the PR is fully ready.
+> A PR is fully ready only when: (1) Codex explicitly approves, (2) all Codex review threads are resolved, and (3) all required CI checks pass.
+> You MUST NOT report success or stop the loop before these conditions are met.
+
+When a PR exists, you MUST remain in this loop until the PR is fully ready:
+
+1. Push your latest fixes.
+2. Run local validation (`make static-check` and targeted tests as needed).
+3. Request review with `@codex review`.
+4. Run `./scripts/wait_pr_ready.sh <pr_number>`.
+5. If Codex leaves comments, address them, resolve threads with `./scripts/resolve_pr_comment.sh <thread_id>`, push, and repeat.
+6. If checks/mergeability fail, fix issues locally, push, and repeat.
+
+The only early-stop exception is when the reviewer is clearly misunderstanding the intended change and further churn would be counterproductive. In that case, leave a clarifying PR comment and pause for human direction.
 
 ## Testing: HistoryService
 
