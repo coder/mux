@@ -22,7 +22,7 @@ type InProcessOrpcServer = Awaited<ReturnType<typeof createOrpcServer>>;
 export type ORPCClient = RouterClient<AppRouter>;
 
 function createTypedClient(link: WebSocketRPCLink<ClientContext>): ORPCClient {
-  return createORPCClient(link) as ORPCClient;
+  return createORPCClient(link);
 }
 
 export interface ServerConnection {
@@ -109,12 +109,15 @@ async function connectToInProcessServer(requestedAuthToken?: string): Promise<Se
       inProcessServer: activeServer,
       baseUrl: connection.baseUrl,
       close: async () => {
-        let firstError: unknown;
+        let firstError: Error | undefined;
 
         const captureError = (error: unknown) => {
-          if (firstError === undefined) {
-            firstError = error;
-          }
+          firstError ??=
+            error instanceof Error
+              ? error
+              : new Error("connectToInProcessServer: failed to close resources", {
+                  cause: error,
+                });
         };
 
         await closeWebSocket(connection.websocket).catch(captureError);
@@ -190,7 +193,11 @@ function normalizeServerUrl(serverUrl: string | undefined): string | undefined {
 
 function normalizeToken(token: string | undefined): string | undefined {
   const trimmed = token?.trim();
-  return trimmed ? trimmed : undefined;
+  if (trimmed == null || trimmed.length === 0) {
+    return undefined;
+  }
+
+  return trimmed;
 }
 
 function buildWsUrl(baseUrl: string): string {

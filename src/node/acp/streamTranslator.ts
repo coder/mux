@@ -21,7 +21,7 @@ export class StreamTranslator {
   private readonly activeToolCalls = new Map<string, string[]>();
   private readonly toolCallsById = new Map<string, ActiveToolCall>();
 
-  constructor(private connection: AgentSideConnection) {
+  constructor(private readonly connection: AgentSideConnection) {
     assert(connection != null, "StreamTranslator: connection is required");
   }
 
@@ -435,6 +435,6 @@ function stringifyToolOutput(output: unknown): string | null {
     const serialized = JSON.stringify(output, null, 2);
     return serialized == null || serialized.length === 0 ? null : serialized;
   } catch {
-    return String(output);
+    return output instanceof Error ? output.message : "[Unserializable tool output]";
   }
 }

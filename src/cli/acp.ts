@@ -1,4 +1,6 @@
 import { Command } from "commander";
+import { runAcpAdapter } from "../node/acp/adapter";
+import { connectToServer } from "../node/acp/serverConnection";
 import { getParseOptions } from "./argv";
 
 const program = new Command();
@@ -9,9 +11,6 @@ program
   .option("--server-url <url>", "URL of a running mux server")
   .option("--auth-token <token>", "Auth token for server connection")
   .action(async (options: Record<string, unknown>) => {
-    const { connectToServer } = await import("../node/acp/serverConnection");
-    const { runAcpAdapter } = await import("../node/acp/adapter");
-
     const serverUrl = typeof options.serverUrl === "string" ? options.serverUrl : undefined;
     const authToken = typeof options.authToken === "string" ? options.authToken : undefined;
 

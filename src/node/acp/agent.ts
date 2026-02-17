@@ -101,7 +101,7 @@ export class MuxAgent implements Agent {
     );
   }
 
-  async initialize(params: InitializeRequest): Promise<InitializeResponse> {
+  initialize(params: InitializeRequest): Promise<InitializeResponse> {
     assert(params != null, "initialize: params are required");
 
     const negotiated = negotiateCapabilities(params.clientCapabilities);
@@ -109,7 +109,7 @@ export class MuxAgent implements Agent {
     this.toolRouter.setEditorCapabilities(negotiated);
     this.initialized = true;
 
-    return {
+    return Promise.resolve({
       protocolVersion: params.protocolVersion,
       agentInfo: {
         name: "mux",
@@ -121,7 +121,7 @@ export class MuxAgent implements Agent {
           fork: {},
         },
       },
-    };
+    });
   }
 
   async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
@@ -306,11 +306,11 @@ export class MuxAgent implements Agent {
     return { configOptions };
   }
 
-  async authenticate(_params: AuthenticateRequest): Promise<AuthenticateResponse> {
+  authenticate(_params: AuthenticateRequest): Promise<AuthenticateResponse> {
     this.assertInitialized("authenticate");
 
     // Local mux server connections do not currently require ACP-level auth.
-    return {};
+    return Promise.resolve({});
   }
 
   private ensureChatSubscription(sessionId: string, workspaceId: string): void {

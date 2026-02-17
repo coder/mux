@@ -19,18 +19,12 @@ type WorkspaceInfo = NonNullable<Awaited<ReturnType<ORPCClient["workspace"]["get
 type UpdateAgentAiSettingsResult = Awaited<
   ReturnType<ORPCClient["workspace"]["updateAgentAISettings"]>
 >;
-type UpdateModeAiSettingsResult = Awaited<
-  ReturnType<ORPCClient["workspace"]["updateModeAISettings"]>
->;
 
 function isModeAgentId(agentId: string): agentId is "plan" | "exec" {
   return agentId === "plan" || agentId === "exec";
 }
 
-function ensureUpdateSucceeded(
-  result: UpdateAgentAiSettingsResult | UpdateModeAiSettingsResult,
-  operation: string
-): void {
+function ensureUpdateSucceeded(result: UpdateAgentAiSettingsResult, operation: string): void {
   if (!result.success) {
     throw new Error(`${operation} failed: ${result.error}`);
   }

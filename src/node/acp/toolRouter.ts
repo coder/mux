@@ -45,7 +45,7 @@ export class ToolRouter {
   private editorCapabilities: NegotiatedCapabilities | null = null;
   private sessionRouting = new Map<string, SessionRouting>();
 
-  constructor(private connection: AgentSideConnection) {
+  constructor(private readonly connection: AgentSideConnection) {
     assert(connection != null, "ToolRouter: connection is required");
   }
 
@@ -377,12 +377,24 @@ function getOptionalStringArray(
   if (value == null) {
     return undefined;
   }
-  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+  if (!Array.isArray(value)) {
     throw new Error(
       `ToolRouter: ${toolName} parameter '${key}' must be an array of strings when provided`
     );
   }
-  return value;
+
+  const stringValues: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "string") {
+      throw new Error(
+        `ToolRouter: ${toolName} parameter '${key}' must be an array of strings when provided`
+      );
+    }
+
+    stringValues.push(entry);
+  }
+
+  return stringValues;
 }
 
 function getOptionalEnvVariables(
