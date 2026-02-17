@@ -111,6 +111,8 @@ interface SidebarContainerProps {
   isResizing?: boolean;
   /** Whether running in Electron desktop mode (hides border when collapsed) */
   isDesktop?: boolean;
+  /** Hide + inactivate sidebar while immersive review overlay is active. */
+  immersiveHidden?: boolean;
   children: React.ReactNode;
   role: string;
   "aria-label": string;
@@ -129,14 +131,35 @@ const SidebarContainer: React.FC<SidebarContainerProps> = ({
   customWidth,
   isResizing,
   isDesktop,
+  immersiveHidden = false,
   children,
   role,
   "aria-label": ariaLabel,
 }) => {
+  const containerRef = React.useRef<HTMLDivElement>(null);
   const width = collapsed ? "20px" : customWidth ? `${customWidth}px` : "400px";
+
+  React.useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+
+    if (immersiveHidden) {
+      container.setAttribute("inert", "");
+    } else {
+      container.removeAttribute("inert");
+    }
+
+    return () => {
+      container.removeAttribute("inert");
+    };
+  }, [immersiveHidden]);
 
   return (
     <div
+      ref={containerRef}
+      aria-hidden={immersiveHidden || undefined}
       className={cn(
         "bg-sidebar border-l border-border-light flex flex-col overflow-hidden flex-shrink-0",
         // Hide on mobile touch devices - too narrow for useful interaction
@@ -173,6 +196,8 @@ interface RightSidebarProps {
   onReviewNote?: (data: ReviewNoteData) => void;
   /** Workspace is still being created (git operations in progress) */
   isCreating?: boolean;
+  /** Hide + inactivate sidebar while immersive review overlay is active. */
+  immersiveHidden?: boolean;
   /** Ref callback to expose addTerminal function to parent */
   addTerminalRef?: React.MutableRefObject<
     ((options?: TerminalSessionCreateOptions) => void) | null
@@ -610,6 +635,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   isResizing = false,
   onReviewNote,
   isCreating = false,
+  immersiveHidden = false,
   addTerminalRef,
 }) => {
   // Trigger for focusing Review panel (preserves hunk selection)
@@ -1279,6 +1305,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         collapsed={collapsed}
         isResizing={isResizing}
         isDesktop={isDesktopMode()}
+        immersiveHidden={immersiveHidden}
         customWidth={width} // Unified width from AIView (applies to all tabs)
         role="complementary"
         aria-label="Workspace insights"

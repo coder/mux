@@ -128,6 +128,8 @@ interface ChatPaneProps {
   onToggleLeftSidebarCollapsed: () => void;
   runtimeConfig?: RuntimeConfig;
   onOpenTerminal: (options?: TerminalSessionCreateOptions) => void;
+  /** Hide + inactivate chat pane while immersive review overlay is active. */
+  immersiveHidden?: boolean;
 }
 
 type ReviewsState = ReturnType<typeof useReviews>;
@@ -144,10 +146,28 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     runtimeConfig,
     onOpenTerminal,
     workspaceState,
+    immersiveHidden = false,
   } = props;
   const { api } = useAPI();
   const { workspaceMetadata } = useWorkspaceContext();
   const chatAreaRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const chatPaneElement = chatAreaRef.current;
+    if (!chatPaneElement) {
+      return;
+    }
+
+    if (immersiveHidden) {
+      chatPaneElement.setAttribute("inert", "");
+    } else {
+      chatPaneElement.removeAttribute("inert");
+    }
+
+    return () => {
+      chatPaneElement.removeAttribute("inert");
+    };
+  }, [immersiveHidden, workspaceId]);
 
   const storeRaw = useWorkspaceStoreRaw();
   const aggregator = useWorkspaceAggregator(workspaceId);
@@ -671,6 +691,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     <PerfRenderMarker id="chat-pane">
       <div
         ref={chatAreaRef}
+        aria-hidden={immersiveHidden || undefined}
         className="flex min-w-96 flex-1 flex-col [@media(max-width:768px)]:max-h-full [@media(max-width:768px)]:w-full [@media(max-width:768px)]:min-w-0"
       >
         <PerfRenderMarker id="chat-pane.header">
