@@ -13,6 +13,51 @@ import type { StreamErrorMessage, WorkspaceChatMessage } from "@/common/orpc/typ
 import { AgentSession } from "./agentSession";
 import { createTestHistoryService } from "./testHistoryService";
 
+async function createReplaySessionHarness(workspaceId: string) {
+  const config = {
+    srcDir: "/tmp",
+    getSessionDir: (_workspaceId: string) => "/tmp",
+  } as unknown as Config;
+
+  const { historyService, cleanup } = await createTestHistoryService();
+
+  const aiEmitter = new EventEmitter();
+  const replayStream = mock((_workspaceId: string, _opts?: { afterTimestamp?: number }) =>
+    Promise.resolve()
+  );
+  const aiService = Object.assign(aiEmitter, {
+    isStreaming: mock((_workspaceId: string) => false),
+    stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
+    streamMessage: mock((_history: MuxMessage[]) =>
+      Promise.resolve(Err({ type: "unknown", raw: "unused" }))
+    ) as unknown as (...args: Parameters<AIService["streamMessage"]>) => Promise<unknown>,
+    getStreamInfo: mock((_workspaceId: string) => undefined),
+    replayStream,
+  }) as unknown as AIService;
+
+  const replayInit = mock((_workspaceId: string) => Promise.resolve());
+  const initStateManager = Object.assign(new EventEmitter(), {
+    replayInit,
+  }) as unknown as InitStateManager;
+
+  const backgroundProcessManager = {
+    cleanup: mock((_workspaceId: string) => Promise.resolve()),
+    setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
+      void _queued;
+    }),
+  } as unknown as BackgroundProcessManager;
+
+  const session = new AgentSession({
+    workspaceId,
+    config,
+    historyService,
+    aiService,
+    initStateManager,
+    backgroundProcessManager,
+  });
+
+  return { session, cleanup, replayInit, replayStream };
+}
 describe("AgentSession pre-stream errors", () => {
   let historyCleanup: (() => Promise<void>) | undefined;
   afterEach(async () => {
@@ -86,5 +131,50 @@ describe("AgentSession pre-stream errors", () => {
     expect(streamError?.errorType).toBe("authentication");
     expect(streamError?.error).toContain(PROVIDER_DISPLAY_NAMES.anthropic);
     expect(streamError?.messageId).toMatch(/^assistant-/);
+  });
+
+  it("replays init state for since-mode reconnects", async () => {
+    const workspaceId = "ws-replay-init-since";
+    const { session, cleanup, replayInit } = await createReplaySessionHarness(workspaceId);
+    historyCleanup = cleanup;
+
+    const events: WorkspaceChatMessage[] = [];
+    await session.replayHistory(
+      ({ message }) => {
+        events.push(message);
+      },
+      {
+        type: "since",
+        cursor: {
+          history: {
+            messageId: "missing-message",
+            historySequence: 123,
+            oldestHistorySequence: 123,
+          },
+        },
+      }
+    );
+
+    expect(replayInit).toHaveBeenCalledWith(workspaceId);
+    expect(events.some((event) => "type" in event && event.type === "caught-up")).toBe(true);
+  });
+
+  it("replays init state for live-mode reconnects", async () => {
+    const workspaceId = "ws-replay-init-live";
+    const { session, cleanup, replayInit } = await createReplaySessionHarness(workspaceId);
+    historyCleanup = cleanup;
+
+    const events: WorkspaceChatMessage[] = [];
+    await session.replayHistory(
+      ({ message }) => {
+        events.push(message);
+      },
+      {
+        type: "live",
+      }
+    );
+
+    expect(replayInit).toHaveBeenCalledWith(workspaceId);
+    expect(events.some((event) => "type" in event && event.type === "caught-up")).toBe(true);
   });
 });

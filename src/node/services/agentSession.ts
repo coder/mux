@@ -424,6 +424,10 @@ export class AgentSession {
           }
         }
 
+        // Re-emit current init state in live mode too. If init finished while the
+        // client was disconnected, replaying init-end clears stale "running" UI.
+        await this.initStateManager.replayInit(this.workspaceId);
+
         return;
       }
 
@@ -573,10 +577,9 @@ export class AgentSession {
         listener({ workspaceId: this.workspaceId, message: { ...partial, type: "message" } });
       }
 
-      // Replay init state only for full replay. Incremental reconnects already have init state.
-      if (replayMode === "full") {
-        await this.initStateManager.replayInit(this.workspaceId);
-      }
+      // Re-emit current init state for all replay modes. Incremental reconnects can
+      // otherwise miss init-end while disconnected and remain stuck in running state.
+      await this.initStateManager.replayInit(this.workspaceId);
     } catch (error) {
       log.error("Failed to replay history for workspace", {
         workspaceId: this.workspaceId,
