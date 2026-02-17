@@ -144,6 +144,10 @@ GRAPHQL_QUERY='query($owner: String!, $repo: String!, $pr: Int!) {
         }
       }
       reviewThreads(last: 100) {
+        pageInfo {
+          hasPreviousPage
+          hasNextPage
+        }
         nodes {
           id
           isResolved

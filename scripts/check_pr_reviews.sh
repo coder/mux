@@ -45,6 +45,20 @@ resolve_repo_context() {
   fi
 }
 
+append_unresolved_records() {
+  local records="$1"
+
+  if [[ -z "$records" ]]; then
+    return 0
+  fi
+
+  if [[ -n "$UNRESOLVED" ]]; then
+    UNRESOLVED+=$'\n'
+  fi
+
+  UNRESOLVED+="$records"
+}
+
 load_unresolved_from_cache() {
   if [[ -z "$PR_DATA_FILE" || ! -s "$PR_DATA_FILE" ]]; then
     return 1
@@ -55,17 +69,47 @@ load_unresolved_from_cache() {
     return 1
   fi
 
-  UNRESOLVED=$(jq -r '.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false) | {thread_id: .id, user: (.comments.nodes[0].author.login // "unknown"), body: (.comments.nodes[0].body // ""), diff_hunk: (.comments.nodes[0].diffHunk // ""), commit_id: (.comments.nodes[0].commit.oid // "")}' "$PR_DATA_FILE")
+  # Cached data from wait_pr_codex uses reviewThreads(last: 100). If GitHub reports there
+  # are older pages (hasPreviousPage=true), this cache is incomplete and cannot be trusted
+  # for a clean "all resolved" result.
+  local has_previous
+  has_previous=$(jq -r '(.data.repository.pullRequest.reviewThreads.pageInfo.hasPreviousPage | if . == null then "unknown" else tostring end)' "$PR_DATA_FILE")
+
+  case "$has_previous" in
+    false) ;;
+    true)
+      echo "⚠️ Cached reviewThreads window is incomplete (hasPreviousPage=true); fetching full review-thread set." >&2
+      return 1
+      ;;
+    unknown)
+      echo "⚠️ Cached review-thread pageInfo is missing; fetching full review-thread set." >&2
+      return 1
+      ;;
+    *)
+      echo "❌ assertion failed: unexpected cached hasPreviousPage value '$has_previous'" >&2
+      return 1
+      ;;
+  esac
+
+  local cached_unresolved
+  cached_unresolved=$(jq -r '.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false) | {thread_id: .id, user: (.comments.nodes[0].author.login // "unknown"), body: (.comments.nodes[0].body // ""), diff_hunk: (.comments.nodes[0].diffHunk // ""), commit_id: (.comments.nodes[0].commit.oid // "")}' "$PR_DATA_FILE")
+
+  append_unresolved_records "$cached_unresolved"
   return 0
 }
 
 fetch_unresolved_via_api() {
-  # Query for unresolved review threads
-  # shellcheck disable=SC2016 # Single quotes are intentional - this is a GraphQL query, not shell expansion.
-  local graphql_query='query($owner: String!, $repo: String!, $pr: Int!) {
+  # Query all review thread pages so we don't miss unresolved threads on PRs with >100
+  # threads. This is the authoritative path when cached data may be incomplete.
+  # shellcheck disable=SC2016 # Single quotes are intentional - this is a GraphQL query.
+  local graphql_query='query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
     repository(owner: $owner, name: $repo) {
       pullRequest(number: $pr) {
-        reviewThreads(first: 100) {
+        reviewThreads(first: 100, after: $cursor) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
           nodes {
             id
             isResolved
@@ -85,12 +129,50 @@ fetch_unresolved_via_api() {
 
   resolve_repo_context
 
-  UNRESOLVED=$(gh api graphql \
-    -f query="$graphql_query" \
-    -F owner="$OWNER" \
-    -F repo="$REPO" \
-    -F pr="$PR_NUMBER" \
-    --jq '.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false) | {thread_id: .id, user: (.comments.nodes[0].author.login // "unknown"), body: (.comments.nodes[0].body // ""), diff_hunk: (.comments.nodes[0].diffHunk // ""), commit_id: (.comments.nodes[0].commit.oid // "")}')
+  UNRESOLVED=""
+
+  local cursor="null"
+  local page_data
+  local unresolved_page
+  local has_next
+  local end_cursor
+
+  while true; do
+    page_data=$(gh api graphql \
+      -f query="$graphql_query" \
+      -F owner="$OWNER" \
+      -F repo="$REPO" \
+      -F pr="$PR_NUMBER" \
+      -F cursor="$cursor")
+
+    if [ "$(echo "$page_data" | jq -r '.data.repository.pullRequest == null')" = "true" ]; then
+      echo "❌ PR #$PR_NUMBER does not exist in ${OWNER}/${REPO}." >&2
+      return 1
+    fi
+
+    unresolved_page=$(echo "$page_data" | jq -r '.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false) | {thread_id: .id, user: (.comments.nodes[0].author.login // "unknown"), body: (.comments.nodes[0].body // ""), diff_hunk: (.comments.nodes[0].diffHunk // ""), commit_id: (.comments.nodes[0].commit.oid // "")}')
+    append_unresolved_records "$unresolved_page"
+
+    has_next=$(echo "$page_data" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')
+    end_cursor=$(echo "$page_data" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // empty')
+
+    case "$has_next" in
+      false)
+        break
+        ;;
+      true)
+        if [[ -z "$end_cursor" ]]; then
+          echo "❌ assertion failed: GraphQL reported hasNextPage=true with empty endCursor" >&2
+          return 1
+        fi
+        cursor="$end_cursor"
+        ;;
+      *)
+        echo "❌ assertion failed: unexpected hasNextPage value '$has_next'" >&2
+        return 1
+        ;;
+    esac
+  done
 }
 
 if ! load_unresolved_from_cache; then
@@ -106,8 +188,8 @@ if [ -n "$UNRESOLVED" ]; then
   echo ""
 
   # Best-effort PR link. If repo context wasn't resolved on this path, fall back to default.
-  VIEW_OWNER="${MUX_GH_OWNER:-coder}"
-  VIEW_REPO="${MUX_GH_REPO:-mux}"
+  VIEW_OWNER="${OWNER:-${MUX_GH_OWNER:-coder}}"
+  VIEW_REPO="${REPO:-${MUX_GH_REPO:-mux}}"
   echo "View PR: https://github.com/${VIEW_OWNER}/${VIEW_REPO}/pull/$PR_NUMBER"
   exit 1
 fi

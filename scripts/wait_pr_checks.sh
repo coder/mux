@@ -232,17 +232,19 @@ CHECK_PR_CHECKS_ONCE() {
     return 1
   fi
 
-  # Check if all checks passed and merge state is clean
+  # Once checks pass, review-thread resolution must be enforced even when merge_state is
+  # still BLOCKED. Otherwise wait_pr_ready can spin in pending without surfacing actionable
+  # thread IDs to resolve.
   if [ "$has_pass" -eq 1 ] && [ "$has_pending" -eq 0 ] && [ "$has_fail" -eq 0 ]; then
-    if [ "$merge_state" = "CLEAN" ]; then
-      if ! reviews_output=$("$CHECK_REVIEWS_SCRIPT" "$PR_NUMBER" 2>&1); then
-        echo ""
-        echo "❌ Unresolved review comments found!"
-        echo "   👉 Tip: run ./scripts/check_pr_reviews.sh $PR_NUMBER to list them."
-        echo "$reviews_output"
-        return 1
-      fi
+    if ! reviews_output=$("$CHECK_REVIEWS_SCRIPT" "$PR_NUMBER" 2>&1); then
+      echo ""
+      echo "❌ Unresolved review comments found!"
+      echo "   👉 Tip: run ./scripts/check_pr_reviews.sh $PR_NUMBER to list them."
+      echo "$reviews_output"
+      return 1
+    fi
 
+    if [ "$merge_state" = "CLEAN" ]; then
       echo "✅ All checks passed!"
       echo ""
       echo "$checks"
