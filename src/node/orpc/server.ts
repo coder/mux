@@ -197,27 +197,65 @@ function normalizeOrigin(raw: string | null | undefined): string | null {
   }
 }
 
-function isLoopbackHostname(hostname: string): boolean {
+interface OriginIdentity {
+  protocol: "http:" | "https:";
+  port: string;
+  hostname: string;
+  isLoopback: boolean;
+}
+
+function normalizeHostnameForOriginCheck(hostname: string): string {
   const normalized = hostname.trim().toLowerCase();
+
+  // URL.hostname may include brackets for IPv6 literals in some runtimes.
+  if (normalized.startsWith("[") && normalized.endsWith("]")) {
+    return normalized.slice(1, -1);
+  }
+
+  return normalized;
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = normalizeHostnameForOriginCheck(hostname);
   return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
 }
 
-// In local development, the browser and proxy may use localhost/127.0.0.1 interchangeably.
+function parseOriginIdentity(rawOrigin: string): OriginIdentity | null {
+  try {
+    const parsed = new URL(rawOrigin);
+
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+
+    const hostname = normalizeHostnameForOriginCheck(parsed.hostname);
+    return {
+      protocol: parsed.protocol,
+      port: parsed.port,
+      hostname,
+      isLoopback: isLoopbackHostname(hostname),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// In local development, the browser and proxy may use loopback aliases interchangeably.
 // Treat loopback host aliases as equivalent origins when protocol+port match.
 function areEquivalentLoopbackOrigins(originA: string, originB: string): boolean {
-  try {
-    const a = new URL(originA);
-    const b = new URL(originB);
+  const identityA = parseOriginIdentity(originA);
+  const identityB = parseOriginIdentity(originB);
 
-    return (
-      a.protocol === b.protocol &&
-      a.port === b.port &&
-      isLoopbackHostname(a.hostname) &&
-      isLoopbackHostname(b.hostname)
-    );
-  } catch {
+  if (!identityA || !identityB) {
     return false;
   }
+
+  return (
+    identityA.protocol === identityB.protocol &&
+    identityA.port === identityB.port &&
+    identityA.isLoopback &&
+    identityB.isLoopback
+  );
 }
 
 function isOriginAllowed(req: OriginValidationRequest): boolean {
