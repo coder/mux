@@ -31,6 +31,10 @@ export const OnChatHistoryCursorSchema = z.object({
   // Server uses this to detect truncation/compaction that removed older rows
   // while the client was disconnected, forcing a safe full replay fallback.
   oldestHistorySequence: z.number().optional(),
+  // Fingerprint for all rows strictly older than historySequence.
+  // This lets the server detect middle-row deletions/rewrites below the cursor
+  // and force a full replay instead of leaving stale rows client-side.
+  priorHistoryFingerprint: z.string().optional(),
 });
 
 /** Cursor for where the client left off in an active stream. */

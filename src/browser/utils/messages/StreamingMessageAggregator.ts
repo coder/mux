@@ -26,6 +26,7 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { TodoItem, StatusSetToolResult, NotifyToolResult } from "@/common/types/tools";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 
+import { computePriorHistoryFingerprint } from "@/common/orpc/onChatCursorFingerprint";
 import type {
   WorkspaceChatMessage,
   StreamErrorMessage,
@@ -956,11 +957,17 @@ export class StreamingMessageAggregator {
       return undefined;
     }
 
+    const priorHistoryFingerprint = computePriorHistoryFingerprint(
+      this.getAllMessages(),
+      maxHistorySequence
+    );
+
     const cursor: OnChatCursor = {
       history: {
         messageId: maxHistoryMessageId,
         historySequence: maxHistorySequence,
         oldestHistorySequence: minHistorySequence,
+        ...(priorHistoryFingerprint !== undefined ? { priorHistoryFingerprint } : {}),
       },
     };
 

@@ -15,6 +15,7 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
+import { computePriorHistoryFingerprint } from "@/common/orpc/onChatCursorFingerprint";
 import type {
   WorkspaceChatMessage,
   SendMessageOptions,
@@ -486,7 +487,24 @@ export class AgentSession {
             oldestHistorySequence !== undefined &&
             historyCursor.oldestHistorySequence === oldestHistorySequence;
 
-          if (matchedHistoryCursor && oldestHistoryMatches) {
+          const hasRowsBeforeCursor =
+            oldestHistorySequence !== undefined &&
+            historyCursor.historySequence > oldestHistorySequence;
+
+          // Defensively verify rows below the cursor are unchanged. Without this,
+          // deleting or rewriting an older row while disconnected could leave stale
+          // client state when since-mode append replay skips those older sequences.
+          const priorHistoryFingerprint = computePriorHistoryFingerprint(
+            history,
+            historyCursor.historySequence
+          );
+          const priorHistoryMatches =
+            !hasRowsBeforeCursor ||
+            (historyCursor.priorHistoryFingerprint !== undefined &&
+              priorHistoryFingerprint !== undefined &&
+              historyCursor.priorHistoryFingerprint === priorHistoryFingerprint);
+
+          if (matchedHistoryCursor && oldestHistoryMatches && priorHistoryMatches) {
             sinceHistorySequence = historyCursor.historySequence;
           }
         }
@@ -545,12 +563,15 @@ export class AgentSession {
             continue;
           }
 
+          const priorHistoryFingerprint = computePriorHistoryFingerprint(history, historySequence);
+
           serverCursor = {
             ...serverCursor,
             history: {
               messageId: message.id,
               historySequence,
               ...(oldestHistorySequence !== undefined ? { oldestHistorySequence } : {}),
+              ...(priorHistoryFingerprint !== undefined ? { priorHistoryFingerprint } : {}),
             },
           };
           break;
@@ -589,6 +610,11 @@ export class AgentSession {
         workspaceId: this.workspaceId,
         error,
       });
+
+      // If replay failed mid-flight, force frontend into safe replace semantics.
+      // Reporting incremental mode here can preserve stale local rows/tool state.
+      replayMode = "full";
+      serverCursor = undefined;
     } finally {
       // Replay queued-message snapshot before caught-up so reconnect clients can
       // rebuild queue UI state even when history replay errored mid-flight.
