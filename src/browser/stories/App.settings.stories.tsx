@@ -27,6 +27,7 @@ import {
 } from "@/common/constants/experiments";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { TaskSettings } from "@/common/types/tasks";
+import type { ServerAuthSession } from "@/common/orpc/types";
 import type { LayoutPresetsConfig } from "@/common/types/uiLayouts";
 
 export default {
@@ -54,6 +55,8 @@ function setupSettingsStory(options: {
   providersList?: string[];
   agentAiDefaults?: AgentAiDefaults;
   taskSettings?: Partial<TaskSettings>;
+  /** Sessions shown in Settings → Server Access. */
+  serverAuthSessions?: ServerAuthSession[];
   /** Pre-set experiment states in localStorage before render */
   experiments?: Partial<Record<string, boolean>>;
 }): APIClient {
@@ -76,6 +79,7 @@ function setupSettingsStory(options: {
     agentAiDefaults: options.agentAiDefaults,
     providersList: options.providersList ?? ["anthropic", "openai", "xai"],
     taskSettings: options.taskSettings,
+    serverAuthSessions: options.serverAuthSessions,
     layoutPresets: options.layoutPresets,
   });
 }
@@ -108,6 +112,30 @@ async function openSettingsToSection(canvasElement: HTMLElement, section?: strin
     await userEvent.click(sectionButton);
   }
 }
+
+const MOCK_SERVER_AUTH_SESSIONS: ServerAuthSession[] = [
+  {
+    id: "session-current",
+    label: "Safari on iPhone",
+    createdAtMs: 1_735_689_600_000,
+    lastUsedAtMs: 4_102_444_800_000,
+    isCurrent: true,
+  },
+  {
+    id: "session-macbook",
+    label: "Chrome on Mac",
+    createdAtMs: 1_735_776_000_000,
+    lastUsedAtMs: 4_102_444_800_000,
+    isCurrent: false,
+  },
+  {
+    id: "session-tablet",
+    label: "Firefox on Android",
+    createdAtMs: 1_735_862_400_000,
+    lastUsedAtMs: 4_102_444_800_000,
+    isCurrent: false,
+  },
+];
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // STORIES
@@ -492,6 +520,31 @@ export const System1: AppStory = {
         throw new Error(`Expected timeoutSeconds=9, got ${JSON.stringify(timeoutSeconds)}`);
       }
     });
+  },
+};
+
+/** Server Access section - active device sessions */
+export const ServerAccess: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSettingsStory({
+          serverAuthSessions: MOCK_SERVER_AUTH_SESSIONS,
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSection(canvasElement, "server access");
+
+    const settingsCanvas = within(canvasElement);
+
+    await settingsCanvas.findByText(/Server access sessions/i);
+    await settingsCanvas.findByText(/Safari on iPhone \(Current\)/i);
+    await settingsCanvas.findByText(/Chrome on Mac/i);
+    await settingsCanvas.findByText(/Firefox on Android/i);
+    await settingsCanvas.findByRole("button", { name: /^Refresh$/i });
+    await settingsCanvas.findByRole("button", { name: /Revoke other sessions/i });
   },
 };
 

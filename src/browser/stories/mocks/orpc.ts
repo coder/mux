@@ -20,6 +20,7 @@ import type {
   WorkspaceChatMessage,
   ProvidersConfigMap,
   WorkspaceStatsSnapshot,
+  ServerAuthSession,
 } from "@/common/orpc/types";
 import type { MuxMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
@@ -112,6 +113,8 @@ export interface MockORPCClientOptions {
   providersConfig?: ProvidersConfigMap;
   /** List of available provider names */
   providersList?: string[];
+  /** Server auth sessions for Settings → Server Access stories */
+  serverAuthSessions?: ServerAuthSession[];
   /** Mock for projects.remove - return error string to simulate failure */
   onProjectRemove?: (projectPath: string) => { success: true } | { success: false; error: string };
   /** Override for nameGeneration.generate result (default: success) */
@@ -274,6 +277,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     executeBash,
     providersConfig = { anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true } },
     providersList = [],
+    serverAuthSessions: initialServerAuthSessions = [],
     onProjectRemove,
     nameGenerationResult,
     backgroundProcesses = new Map<string, MockBackgroundProcess[]>(),
@@ -422,6 +426,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   let globalSecretsState: Secret[] = [...globalSecrets];
   const globalMcpServersState: MockMcpServers = { ...globalMcpServers };
 
+  let serverAuthSessionsState: ServerAuthSession[] = initialServerAuthSessions.map((session) => ({
+    ...session,
+  }));
+
   const deriveSubagentAiDefaults = () => {
     const raw: Record<string, unknown> = {};
     for (const [agentId, entry] of Object.entries(agentAiDefaults)) {
@@ -521,6 +529,36 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       getLaunchProject: () => Promise.resolve(null),
       getSshHost: () => Promise.resolve(null),
       setSshHost: () => Promise.resolve(undefined),
+    },
+    serverAuth: {
+      listSessions: () =>
+        Promise.resolve(
+          [...serverAuthSessionsState]
+            .map((session) => ({ ...session }))
+            .sort((a, b) => b.lastUsedAtMs - a.lastUsedAtMs)
+        ),
+      revokeSession: (input: { sessionId: string }) => {
+        const beforeCount = serverAuthSessionsState.length;
+        serverAuthSessionsState = serverAuthSessionsState.filter(
+          (session) => session.id !== input.sessionId
+        );
+
+        return Promise.resolve({ removed: serverAuthSessionsState.length < beforeCount });
+      },
+      revokeOtherSessions: () => {
+        const currentSession = serverAuthSessionsState.find((session) => session.isCurrent);
+        const beforeCount = serverAuthSessionsState.length;
+
+        if (!currentSession) {
+          return Promise.resolve({ revokedCount: 0 });
+        }
+
+        serverAuthSessionsState = serverAuthSessionsState.filter(
+          (session) => session.id === currentSession.id
+        );
+
+        return Promise.resolve({ revokedCount: beforeCount - serverAuthSessionsState.length });
+      },
     },
     // Settings → Layouts (layout presets)
     // Stored in-memory for Storybook only.
