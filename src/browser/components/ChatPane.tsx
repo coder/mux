@@ -49,7 +49,7 @@ import {
   useWorkspaceStoreRaw,
   type WorkspaceState,
 } from "@/browser/stores/WorkspaceStore";
-import { WorkspaceHeader } from "./WorkspaceHeader";
+import { WorkspaceMenuBar } from "./WorkspaceMenuBar";
 import type { DisplayedMessage, QueuedMessage as QueuedMessageData } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
@@ -674,7 +674,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
         className="flex min-w-96 flex-1 flex-col [@media(max-width:768px)]:max-h-full [@media(max-width:768px)]:w-full [@media(max-width:768px)]:min-w-0"
       >
         <PerfRenderMarker id="chat-pane.header">
-          <WorkspaceHeader
+          <WorkspaceMenuBar
             workspaceId={workspaceId}
             projectName={projectName}
             projectPath={projectPath}

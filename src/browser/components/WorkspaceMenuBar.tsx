@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Bell, BellOff, Ellipsis, Link2, Menu, Pencil, Server } from "lucide-react";
+import { Bell, BellOff, Ellipsis, Menu, Pencil } from "lucide-react";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { cn } from "@/common/lib/utils";
@@ -21,6 +21,7 @@ import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { Button } from "@/browser/components/ui/button";
 import type { RuntimeConfig } from "@/common/types/runtime";
+import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
 
 import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
@@ -36,9 +37,9 @@ import {
 import { DebugLlmRequestModal } from "./DebugLlmRequestModal";
 import { WorkspaceLinks } from "./WorkspaceLinks";
 import { ShareTranscriptDialog } from "./ShareTranscriptDialog";
-import { ArchiveIcon } from "./icons/ArchiveIcon";
 import { ConfirmationModal } from "./ConfirmationModal";
 import { PopoverError } from "./PopoverError";
+import { WorkspaceActionsMenuContent } from "./WorkspaceActionsMenuContent";
 
 import { SkillIndicator } from "./SkillIndicator";
 import { useAPI } from "@/browser/contexts/API";
@@ -47,7 +48,7 @@ import { useAgent } from "@/browser/contexts/AgentContext";
 import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
 import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
 
-interface WorkspaceHeaderProps {
+interface WorkspaceMenuBarProps {
   workspaceId: string;
   projectName: string;
   projectPath: string;
@@ -61,7 +62,7 @@ interface WorkspaceHeaderProps {
   onOpenTerminal?: (options?: TerminalSessionCreateOptions) => void;
 }
 
-export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
+export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   workspaceId,
   projectName,
   projectPath,
@@ -77,6 +78,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const { disableWorkspaceAgents } = useAgent();
   const { archiveWorkspace } = useWorkspaceActions();
   const isMuxHelpChat = workspaceId === MUX_HELP_CHAT_WORKSPACE_ID;
+  const linkSharingEnabled = useLinkSharingEnabled();
   const openTerminalPopout = useOpenTerminal();
   const openInEditor = useOpenInEditor();
   const gitStatus = useGitStatus(workspaceId);
@@ -136,7 +138,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     }
   }, [workspaceId, namedWorkspacePath, openInEditor, runtimeConfig]);
 
-  // Mirror sidebar archive behavior so the titlebar matches existing workspace actions.
+  // Mirror sidebar archive behavior so the workspace menu bar matches existing actions.
   // Guards with isArchiving to prevent duplicate calls on slow API paths.
   const handleArchiveChat = useCallback(
     async (anchorEl?: HTMLElement) => {
@@ -202,7 +204,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   // Keybind for sharing transcript — lives here (not WorkspaceListItem) so it
   // works even when the left sidebar is collapsed and list items are unmounted.
   useEffect(() => {
-    if (isMuxHelpChat) return;
+    if (isMuxHelpChat || linkSharingEnabled !== true) return;
 
     const handler = (e: KeyboardEvent) => {
       if (matchesKeybind(e, KEYBINDS.SHARE_TRANSCRIPT)) {
@@ -212,7 +214,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [isMuxHelpChat]);
+  }, [isMuxHelpChat, linkSharingEnabled]);
 
   // Fetch available skills + diagnostics for this workspace
   useEffect(() => {
@@ -260,7 +262,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   return (
     <div
       style={headerRightPadding > 0 ? { paddingRight: headerRightPadding } : undefined}
-      data-testid="workspace-header"
+      data-testid="workspace-menu-bar"
       className={cn(
         "bg-sidebar border-border-light flex items-center justify-between border-b px-2",
         isDesktop ? DESKTOP_TITLEBAR_HEIGHT_CLASS : "h-8",
@@ -458,7 +460,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             New terminal ({formatKeybind(KEYBINDS.OPEN_TERMINAL)})
           </TooltipContent>
         </Tooltip>
-        {/* Mirror sidebar share/archive actions in the titlebar for quick access. */}
+        {/* Mirror sidebar share/archive actions in the workspace menu bar for quick access. */}
         <Popover open={moreMenuOpen} onOpenChange={setMoreMenuOpen}>
           <Tooltip {...(moreMenuOpen ? { open: false } : {})}>
             <TooltipTrigger asChild>
@@ -486,68 +488,24 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             className="w-[240px] !min-w-0 p-1"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Keep MCP configuration in the more actions menu to keep the titlebar lean. */}
-            <button
-              type="button"
-              className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
-              onClick={(e) => {
-                e.stopPropagation();
-                setMoreMenuOpen(false);
-                setMcpModalOpen(true);
+            {/* Keep MCP configuration in the more actions menu to keep the workspace menu bar lean. */}
+            <WorkspaceActionsMenuContent
+              onConfigureMcp={() => setMcpModalOpen(true)}
+              onShareTranscript={() => setShareTranscriptOpen(true)}
+              onArchiveChat={(anchorEl) => {
+                if (isWorking) {
+                  setArchiveConfirmOpen(true);
+                } else {
+                  // isArchiving guard inside handleArchiveChat prevents duplicate calls.
+                  void handleArchiveChat(anchorEl);
+                }
               }}
-              data-testid="workspace-mcp-button"
-            >
-              <span className="flex items-center gap-2">
-                <Server className="h-3 w-3 shrink-0" />
-                Configure MCP servers{" "}
-                <span className="text-muted mobile-hide-shortcut-hints text-[10px]">
-                  ({formatKeybind(KEYBINDS.CONFIGURE_MCP)})
-                </span>
-              </span>
-            </button>
-            {!isMuxHelpChat && (
-              <button
-                type="button"
-                className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setMoreMenuOpen(false);
-                  setShareTranscriptOpen(true);
-                }}
-              >
-                <span className="flex items-center gap-2">
-                  <Link2 className="h-3 w-3 shrink-0" />
-                  Share a transcript{" "}
-                  <span className="text-muted mobile-hide-shortcut-hints text-[10px]">
-                    ({formatKeybind(KEYBINDS.SHARE_TRANSCRIPT)})
-                  </span>
-                </span>
-              </button>
-            )}
-            {!isMuxHelpChat && (
-              <button
-                type="button"
-                className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setMoreMenuOpen(false);
-                  if (isWorking) {
-                    setArchiveConfirmOpen(true);
-                  } else {
-                    // isArchiving guard inside handleArchiveChat prevents duplicate calls.
-                    void handleArchiveChat(e.currentTarget);
-                  }
-                }}
-              >
-                <span className="flex items-center gap-2">
-                  <ArchiveIcon className="h-3 w-3 shrink-0" />
-                  Archive chat{" "}
-                  <span className="text-muted mobile-hide-shortcut-hints text-[10px]">
-                    ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
-                  </span>
-                </span>
-              </button>
-            )}
+              onCloseMenu={() => setMoreMenuOpen(false)}
+              linkSharingEnabled={linkSharingEnabled === true}
+              isMuxHelpChat={isMuxHelpChat}
+              shortcutClassName="mobile-hide-shortcut-hints"
+              configureMcpTestId="workspace-mcp-button"
+            />
           </PopoverContent>
         </Popover>
       </div>
@@ -562,7 +520,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
         open={debugLlmRequestOpen}
         onOpenChange={setDebugLlmRequestOpen}
       />
-      {!isMuxHelpChat && (
+      {linkSharingEnabled === true && !isMuxHelpChat && (
         <ShareTranscriptDialog
           workspaceId={workspaceId}
           workspaceName={workspaceName}

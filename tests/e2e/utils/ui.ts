@@ -138,7 +138,7 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       // a transcript immediately. Waiting on the transcript alone is no longer sufficient to
       // confirm that the click actually navigated to the demo workspace.
       const expectedProjectName = path.basename(context.projectPath);
-      await expect(page.getByTestId("workspace-header")).toContainText(expectedProjectName, {
+      await expect(page.getByTestId("workspace-menu-bar")).toContainText(expectedProjectName, {
         timeout: 20_000,
       });
 

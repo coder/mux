@@ -243,8 +243,8 @@ async function openWorkspaceMCPModal(canvasElement: HTMLElement): Promise<void> 
   const body = within(canvasElement.ownerDocument.body);
   const stepTimeoutMs = 5000;
 
-  // Wait for header controls before interacting with titlebar actions.
-  await canvas.findByTestId("workspace-header", {}, { timeout: stepTimeoutMs });
+  // Wait for header controls before interacting with workspace menu bar actions.
+  await canvas.findByTestId("workspace-menu-bar", {}, { timeout: stepTimeoutMs });
 
   const openMoreActionsMenu = async (): Promise<void> => {
     const moreActionsButton = await canvas.findByTestId(

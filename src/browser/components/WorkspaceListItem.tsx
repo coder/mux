@@ -18,7 +18,7 @@ import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
 import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
 import { PositionedMenu, PositionedMenuItem } from "./ui/positioned-menu";
-import { Pencil, Trash2, Ellipsis, Loader2, Link2, Sparkles, GitBranch } from "lucide-react";
+import { Trash2, Ellipsis, Loader2, Sparkles, GitBranch } from "lucide-react";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
@@ -26,6 +26,7 @@ import { WORKSPACE_DRAG_TYPE, type WorkspaceDragItem } from "./WorkspaceSectionD
 import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ShareTranscriptDialog } from "./ShareTranscriptDialog";
+import { WorkspaceActionsMenuContent } from "./WorkspaceActionsMenuContent";
 import { useAPI } from "@/browser/contexts/API";
 
 const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
@@ -343,7 +344,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     wasEditingRef.current = isEditing;
   }, [isEditing, displayTitle]);
 
-  // SHARE_TRANSCRIPT keybind is handled in WorkspaceHeader (always mounted),
+  // SHARE_TRANSCRIPT keybind is handled in WorkspaceMenuBar (always mounted),
   // so it works even when the sidebar is collapsed and list items are unmounted.
 
   const startEditing = () => {
@@ -573,14 +574,15 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   }}
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <PositionedMenuItem
-                    icon={<Pencil />}
-                    label="Edit chat title"
-                    shortcut={formatKeybind(KEYBINDS.EDIT_WORKSPACE_TITLE)}
-                    onClick={() => {
-                      ctxMenu.close();
-                      startEditing();
+                  <WorkspaceActionsMenuContent
+                    onEditTitle={startEditing}
+                    onShareTranscript={() => setShareTranscriptOpen(true)}
+                    onArchiveChat={(anchorEl) => {
+                      void onArchiveWorkspace(workspaceId, anchorEl);
                     }}
+                    onCloseMenu={() => ctxMenu.close()}
+                    linkSharingEnabled={linkSharingEnabled === true}
+                    isMuxHelpChat={isMuxHelpChat}
                   />
                   <PositionedMenuItem
                     icon={<Sparkles />}
@@ -606,28 +608,6 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                       onClick={(e) => {
                         ctxMenu.close();
                         void onForkWorkspace(workspaceId, e.currentTarget);
-                      }}
-                    />
-                  )}
-                  {linkSharingEnabled === true && !isMuxHelpChat && (
-                    <PositionedMenuItem
-                      icon={<Link2 />}
-                      label="Share transcript"
-                      shortcut={formatKeybind(KEYBINDS.SHARE_TRANSCRIPT)}
-                      onClick={() => {
-                        ctxMenu.close();
-                        setShareTranscriptOpen(true);
-                      }}
-                    />
-                  )}
-                  {!isMuxHelpChat && (
-                    <PositionedMenuItem
-                      icon={<ArchiveIcon />}
-                      label="Archive chat"
-                      shortcut={formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)}
-                      onClick={(e) => {
-                        ctxMenu.close();
-                        void onArchiveWorkspace(workspaceId, e.currentTarget);
                       }}
                     />
                   )}
