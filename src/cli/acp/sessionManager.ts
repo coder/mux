@@ -111,6 +111,12 @@ export class SessionManager {
 
     existing.abortController.abort();
 
+    // Reject replay waiters so prompts awaiting caughtUpPromise don't hang
+    // until their timeout when a session is disposed during replay.
+    if (!existing.caughtUp) {
+      existing.rejectCaughtUp(new Error(`Session ${sessionId} was disposed during replay`));
+    }
+
     if (existing.promptResolver) {
       existing.promptResolver.reject(new Error(`Session ${sessionId} was disposed`));
       existing.promptResolver = undefined;

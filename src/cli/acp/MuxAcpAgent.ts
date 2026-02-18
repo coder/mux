@@ -222,12 +222,11 @@ export class MuxAcpAgent implements AcpAgent {
 
     const modeResult = await this.getModeOptions(info.projectPath, workspaceId);
 
-    return this.buildSessionState(modeResult, {
-      sessionId: workspaceId,
-      agentId,
-      model,
-      thinkingLevel,
-    });
+    return this.buildSessionState(
+      modeResult,
+      { sessionId: workspaceId, agentId, model, thinkingLevel },
+      info.aiSettingsByAgent ?? undefined
+    );
   }
 
   async prompt(params: acpSchema.PromptRequest): Promise<acpSchema.PromptResponse> {
@@ -731,12 +730,11 @@ export class MuxAcpAgent implements AcpAgent {
 
     return {
       sessionId: workspaceId,
-      ...this.buildSessionState(modeResult, {
-        sessionId: workspaceId,
-        agentId,
-        model,
-        thinkingLevel,
-      }),
+      ...this.buildSessionState(
+        modeResult,
+        { sessionId: workspaceId, agentId, model, thinkingLevel },
+        forkResult.metadata.aiSettingsByAgent ?? sourceInfo.aiSettingsByAgent ?? undefined
+      ),
     };
   }
 
@@ -1164,7 +1162,9 @@ export class MuxAcpAgent implements AcpAgent {
       agentId: string;
       model: string;
       thinkingLevel: ThinkingLevel;
-    }
+    },
+    /** Per-agent AI settings map for reloading defaults when normalizing agent. */
+    aiSettingsByAgent?: Record<string, { model?: string | null; thinkingLevel?: string | null }>
   ): {
     configOptions: acpSchema.SessionConfigOption[];
     modes: acpSchema.SessionModeState;
@@ -1178,6 +1178,8 @@ export class MuxAcpAgent implements AcpAgent {
     // session agent in the list without persisting a potentially incorrect
     // normalization.
     let normalizedAgentId = current.agentId;
+    let normalizedModel = current.model;
+    let normalizedThinkingLevel = current.thinkingLevel;
     if (!modeValueIds.has(normalizedAgentId)) {
       if (modeResult.isFallback) {
         // Agent discovery failed: include the current session agent so clients
@@ -1188,11 +1190,24 @@ export class MuxAcpAgent implements AcpAgent {
         // Discovery succeeded and current agent is unavailable/hidden: normalize
         // to a valid mode and persist so UI + prompt() stay aligned.
         normalizedAgentId = modeOptions[0]?.id ?? DEFAULT_AGENT_ID;
-        this.sessionManager.updateConfig(current.sessionId, { agentId: normalizedAgentId });
+
+        // Reload per-agent AI settings for the normalized agent so model/thinking
+        // are not stale from the old agent.
+        const newAgentSettings = aiSettingsByAgent?.[normalizedAgentId];
+        normalizedModel = normalizeNonEmptyString(newAgentSettings?.model) ?? this.defaultModel();
+        normalizedThinkingLevel = this.resolveThinkingLevel(
+          newAgentSettings?.thinkingLevel ?? undefined
+        );
+
+        this.sessionManager.updateConfig(current.sessionId, {
+          agentId: normalizedAgentId,
+          model: normalizedModel,
+          thinkingLevel: normalizedThinkingLevel,
+        });
       }
     }
 
-    const modelOptions = this.getModelOptions(current.model);
+    const modelOptions = this.getModelOptions(normalizedModel);
 
     const configOptions: acpSchema.SessionConfigOption[] = [
       {
@@ -1220,7 +1235,7 @@ export class MuxAcpAgent implements AcpAgent {
         id: CONFIG_ID_THINKING_LEVEL,
         name: "Thinking level",
         category: "thought_level",
-        currentValue: current.thinkingLevel,
+        currentValue: normalizedThinkingLevel,
         options: THINKING_LEVELS.map((thinkingLevel) => ({
           name: thinkingLevel,
           value: thinkingLevel,
