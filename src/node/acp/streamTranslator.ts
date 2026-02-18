@@ -10,12 +10,20 @@ import type { WorkspaceChatMessage } from "../../common/orpc/types";
 interface ActiveToolCall {
   messageId: string;
   toolName: string;
+  rawInput: unknown;
 }
 
 type AgentMessageChunkUpdate = Extract<SessionUpdate, { sessionUpdate: "agent_message_chunk" }>;
 type AgentThoughtChunkUpdate = Extract<SessionUpdate, { sessionUpdate: "agent_thought_chunk" }>;
 type UserMessageChunkUpdate = Extract<SessionUpdate, { sessionUpdate: "user_message_chunk" }>;
 type ToolCallUpdateSessionUpdate = Extract<SessionUpdate, { sessionUpdate: "tool_call_update" }>;
+type PlanSessionUpdate = Extract<SessionUpdate, { sessionUpdate: "plan" }>;
+type PlanEntry = PlanSessionUpdate["entries"][number];
+type PlanEntryStatus = PlanEntry["status"];
+type PlanEntryPriority = PlanEntry["priority"];
+
+const TODO_WRITE_TOOL_NAME = "todo_write";
+const DEFAULT_PLAN_ENTRY_PRIORITY: PlanEntryPriority = "medium";
 
 export class StreamTranslator {
   private readonly activeToolCalls = new Map<string, string[]>();
@@ -56,7 +64,7 @@ export class StreamTranslator {
         return this.toSingleChunkUpdate("agent_thought_chunk", event.delta);
 
       case "tool-call-start": {
-        this.registerToolCall(event.messageId, event.toolCallId, event.toolName);
+        this.registerToolCall(event.messageId, event.toolCallId, event.toolName, event.args);
         return [
           {
             sessionUpdate: "tool_call",
@@ -71,7 +79,7 @@ export class StreamTranslator {
 
       case "tool-call-delta": {
         if (!this.toolCallsById.has(event.toolCallId)) {
-          this.registerToolCall(event.messageId, event.toolCallId, event.toolName);
+          this.registerToolCall(event.messageId, event.toolCallId, event.toolName, event.delta);
         }
         return [
           {
@@ -86,8 +94,16 @@ export class StreamTranslator {
       }
 
       case "tool-call-end": {
+        const toolState = this.toolCallsById.get(event.toolCallId);
+        const todoPlanUpdate = this.translateTodoWritePlanUpdate(
+          event.toolName,
+          toolState?.rawInput,
+          event.result
+        );
+
         this.unregisterToolCall(event.toolCallId);
-        return [
+
+        const updates: SessionUpdate[] = [
           {
             sessionUpdate: "tool_call_update",
             toolCallId: event.toolCallId,
@@ -98,6 +114,12 @@ export class StreamTranslator {
             status: "completed",
           },
         ];
+
+        if (todoPlanUpdate != null) {
+          updates.push(todoPlanUpdate);
+        }
+
+        return updates;
       }
 
       case "bash-output": {
@@ -183,7 +205,7 @@ export class StreamTranslator {
           continue;
         }
 
-        this.registerToolCall(event.id, part.toolCallId, part.toolName);
+        this.registerToolCall(event.id, part.toolCallId, part.toolName, part.input);
         updates.push({
           sessionUpdate: "tool_call",
           toolCallId: part.toolCallId,
@@ -194,6 +216,12 @@ export class StreamTranslator {
         });
 
         if (part.state === "output-available") {
+          const todoPlanUpdate = this.translateTodoWritePlanUpdate(
+            part.toolName,
+            part.input,
+            part.output
+          );
+
           this.unregisterToolCall(part.toolCallId);
           updates.push({
             sessionUpdate: "tool_call_update",
@@ -204,6 +232,10 @@ export class StreamTranslator {
             content: this.asToolOutputContent(part.output),
             status: "completed",
           });
+
+          if (todoPlanUpdate != null) {
+            updates.push(todoPlanUpdate);
+          }
         }
 
         if (part.state === "output-redacted") {
@@ -311,12 +343,43 @@ export class StreamTranslator {
     return [textToolContent(text)];
   }
 
-  private registerToolCall(messageId: string, toolCallId: string, toolName: string): void {
+  private translateTodoWritePlanUpdate(
+    toolName: string,
+    rawInput: unknown,
+    rawOutput: unknown
+  ): PlanSessionUpdate | null {
+    if (toolName !== TODO_WRITE_TOOL_NAME) {
+      return null;
+    }
+
+    if (!didTodoWriteSucceed(rawOutput)) {
+      return null;
+    }
+
+    // `todo_write` is Mux's canonical execution-plan surface. Mirror it into
+    // ACP `sessionUpdate: "plan"` so editors can render native plan UIs.
+    const entries = parseTodoWritePlanEntries(rawInput);
+    if (entries == null) {
+      return null;
+    }
+
+    return {
+      sessionUpdate: "plan",
+      entries,
+    };
+  }
+
+  private registerToolCall(
+    messageId: string,
+    toolCallId: string,
+    toolName: string,
+    rawInput: unknown
+  ): void {
     assert(messageId.trim().length > 0, "registerToolCall: messageId must be non-empty");
     assert(toolCallId.trim().length > 0, "registerToolCall: toolCallId must be non-empty");
     assert(toolName.trim().length > 0, "registerToolCall: toolName must be non-empty");
 
-    this.toolCallsById.set(toolCallId, { messageId, toolName });
+    this.toolCallsById.set(toolCallId, { messageId, toolName, rawInput });
 
     const existing = this.activeToolCalls.get(messageId);
     if (existing == null) {
@@ -483,4 +546,86 @@ function stringifyToolOutput(output: unknown): string | null {
   } catch {
     return output instanceof Error ? output.message : "[Unserializable tool output]";
   }
+}
+
+function didTodoWriteSucceed(rawOutput: unknown): boolean {
+  if (!isJsonObject(rawOutput)) {
+    return true;
+  }
+
+  if (!("success" in rawOutput)) {
+    return true;
+  }
+
+  return rawOutput.success === true;
+}
+
+function parseTodoWritePlanEntries(rawInput: unknown): PlanEntry[] | null {
+  const normalizedInput = parsePotentialJson(rawInput);
+  if (!isJsonObject(normalizedInput)) {
+    return null;
+  }
+
+  const todos = normalizedInput.todos;
+  if (!Array.isArray(todos)) {
+    return null;
+  }
+
+  const entries: PlanEntry[] = [];
+  for (const todo of todos) {
+    if (!isJsonObject(todo)) {
+      return null;
+    }
+
+    const content = typeof todo.content === "string" ? todo.content : null;
+    const status = toPlanEntryStatus(todo.status);
+    if (content == null || status == null) {
+      return null;
+    }
+
+    entries.push({
+      content,
+      status,
+      priority: toPlanEntryPriority(todo.priority),
+    });
+  }
+
+  return entries;
+}
+
+function toPlanEntryStatus(value: unknown): PlanEntryStatus | null {
+  if (value === "pending" || value === "in_progress" || value === "completed") {
+    return value;
+  }
+
+  return null;
+}
+
+function toPlanEntryPriority(value: unknown): PlanEntryPriority {
+  if (value === "high" || value === "medium" || value === "low") {
+    return value;
+  }
+
+  return DEFAULT_PLAN_ENTRY_PRIORITY;
+}
+
+function parsePotentialJson(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return value;
+  }
+
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return value;
+  }
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === "object";
 }
