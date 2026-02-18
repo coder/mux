@@ -183,6 +183,91 @@ describe("WorkspaceService rename lock", () => {
   });
 });
 
+describe("WorkspaceService idle compaction dispatch", () => {
+  let workspaceService: WorkspaceService;
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+
+  beforeEach(async () => {
+    const aiService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() =>
+        Promise.resolve({ success: false as const, error: "not found" })
+      ),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/test",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: mock(() => null),
+    };
+
+    workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
+  test("marks idle compaction send as synthetic", async () => {
+    const workspaceId = "idle-ws";
+    const sendMessage = mock(() => Promise.resolve(Ok(undefined)));
+    const buildIdleCompactionSendOptions = mock(() =>
+      Promise.resolve({ model: "openai:gpt-4o", agentId: "compact" })
+    );
+    const emitIdleCompactionStarted = mock((_id: string) => undefined);
+
+    (
+      workspaceService as unknown as {
+        sendMessage: typeof sendMessage;
+        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+        emitIdleCompactionStarted: typeof emitIdleCompactionStarted;
+      }
+    ).sendMessage = sendMessage;
+    (
+      workspaceService as unknown as {
+        sendMessage: typeof sendMessage;
+        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+        emitIdleCompactionStarted: typeof emitIdleCompactionStarted;
+      }
+    ).buildIdleCompactionSendOptions = buildIdleCompactionSendOptions;
+    (
+      workspaceService as unknown as {
+        sendMessage: typeof sendMessage;
+        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+        emitIdleCompactionStarted: typeof emitIdleCompactionStarted;
+      }
+    ).emitIdleCompactionStarted = emitIdleCompactionStarted;
+
+    await workspaceService.executeIdleCompaction(workspaceId);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      workspaceId,
+      expect.any(String),
+      expect.any(Object),
+      expect.objectContaining({
+        skipAutoResumeReset: true,
+        synthetic: true,
+      })
+    );
+  });
+});
+
 describe("WorkspaceService executeBash archive guards", () => {
   let workspaceService: WorkspaceService;
   let waitForInitMock: ReturnType<typeof mock>;

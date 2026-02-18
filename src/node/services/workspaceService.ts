@@ -4326,6 +4326,8 @@ export class WorkspaceService extends EventEmitter {
       {
         // Idle compaction runs in background; avoid mutating auto-resume counters.
         skipAutoResumeReset: true,
+        // Backend-initiated maintenance turn: do not treat as explicit user re-engagement.
+        synthetic: true,
       }
     );
 
