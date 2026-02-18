@@ -46,6 +46,7 @@ import { useAPI } from "@/browser/contexts/API";
 import { useAgent } from "@/browser/contexts/AgentContext";
 
 import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
+import { forkWorkspace } from "@/browser/utils/chatCommands";
 import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
 
 interface WorkspaceMenuBarProps {
@@ -96,6 +97,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
   const [isArchiving, setIsArchiving] = useState(false);
   const archiveError = usePopoverError();
+  const forkError = usePopoverError();
 
   const [rightSidebarCollapsed] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false, {
     // This state is toggled from RightSidebar, so we need cross-component updates.
@@ -159,6 +161,36 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
       }
     },
     [workspaceId, archiveWorkspace, archiveError, isArchiving]
+  );
+
+  const handleForkChat = useCallback(
+    async (anchorEl: HTMLElement) => {
+      if (!api) {
+        const rect = anchorEl.getBoundingClientRect();
+        forkError.showError(workspaceId, "Not connected to server", {
+          top: rect.top + window.scrollY,
+          left: rect.right + 10,
+        });
+        return;
+      }
+
+      const rect = anchorEl.getBoundingClientRect();
+      const anchor = { top: rect.top + window.scrollY, left: rect.right + 10 };
+
+      try {
+        const result = await forkWorkspace({
+          client: api,
+          sourceWorkspaceId: workspaceId,
+        });
+        if (!result.success) {
+          forkError.showError(workspaceId, result.error ?? "Failed to fork chat", anchor);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        forkError.showError(workspaceId, message, anchor);
+      }
+    },
+    [api, forkError, workspaceId]
   );
 
   // Start workspace tutorial on first entry
@@ -491,6 +523,9 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
             {/* Keep MCP configuration in the more actions menu to keep the workspace menu bar lean. */}
             <WorkspaceActionsMenuContent
               onConfigureMcp={() => setMcpModalOpen(true)}
+              onForkChat={(anchorEl) => {
+                void handleForkChat(anchorEl);
+              }}
               onShareTranscript={() => setShareTranscriptOpen(true)}
               onArchiveChat={(anchorEl) => {
                 if (isWorking) {
@@ -542,6 +577,11 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
           void handleArchiveChat();
         }}
         onCancel={() => setArchiveConfirmOpen(false)}
+      />
+      <PopoverError
+        error={forkError.error}
+        prefix="Failed to fork chat"
+        onDismiss={forkError.clearError}
       />
       <PopoverError
         error={archiveError.error}

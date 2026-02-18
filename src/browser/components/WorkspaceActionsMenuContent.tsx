@@ -1,6 +1,6 @@
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
-import { Link2, Pencil, Server } from "lucide-react";
+import { GitBranch, Link2, Pencil, Server } from "lucide-react";
 import React from "react";
 
 interface WorkspaceActionButtonProps {
@@ -21,10 +21,10 @@ function WorkspaceActionButton(props: WorkspaceActionButtonProps) {
       data-testid={props.testId}
     >
       <span className="flex items-center gap-2">
-        {props.icon}
+        <span className="h-3 w-3 shrink-0 [&_svg]:h-3 [&_svg]:w-3">{props.icon}</span>
         {props.label}
         {props.shortcut && (
-          <span className={`text-muted text-[10px] ${props.shortcutClassName ?? ""}`}>
+          <span className={`text-muted ml-auto text-[10px] ${props.shortcutClassName ?? ""}`}>
             ({props.shortcut})
           </span>
         )}
@@ -38,6 +38,7 @@ interface WorkspaceActionsMenuContentProps {
   onEditTitle?: (() => void) | null;
   /** Workspace-level settings action currently surfaced from the workspace menu bar. */
   onConfigureMcp?: (() => void) | null;
+  onForkChat?: ((anchorEl: HTMLElement) => void) | null;
   onShareTranscript?: (() => void) | null;
   onArchiveChat?: ((anchorEl: HTMLElement) => void) | null;
   onCloseMenu: () => void;
@@ -77,6 +78,17 @@ export const WorkspaceActionsMenuContent: React.FC<WorkspaceActionsMenuContentPr
             props.onConfigureMcp?.();
           }}
           testId={props.configureMcpTestId}
+        />
+      )}
+      {props.onForkChat && !props.isMuxHelpChat && (
+        <WorkspaceActionButton
+          label="Fork chat"
+          icon={<GitBranch className="h-3 w-3 shrink-0" />}
+          onClick={(e) => {
+            e.stopPropagation();
+            props.onCloseMenu();
+            props.onForkChat?.(e.currentTarget);
+          }}
         />
       )}
       {props.onShareTranscript && props.linkSharingEnabled === true && !props.isMuxHelpChat && (

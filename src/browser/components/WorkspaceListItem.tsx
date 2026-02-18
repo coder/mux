@@ -18,7 +18,7 @@ import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
 import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
 import { PositionedMenu, PositionedMenuItem } from "./ui/positioned-menu";
-import { Trash2, Ellipsis, Loader2, Sparkles, GitBranch } from "lucide-react";
+import { Trash2, Ellipsis, Loader2, Sparkles } from "lucide-react";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
@@ -576,6 +576,9 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 >
                   <WorkspaceActionsMenuContent
                     onEditTitle={startEditing}
+                    onForkChat={(anchorEl) => {
+                      void onForkWorkspace(workspaceId, anchorEl);
+                    }}
                     onShareTranscript={() => setShareTranscriptOpen(true)}
                     onArchiveChat={(anchorEl) => {
                       void onArchiveWorkspace(workspaceId, anchorEl);
@@ -601,16 +604,6 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                       });
                     }}
                   />
-                  {!isMuxHelpChat && (
-                    <PositionedMenuItem
-                      icon={<GitBranch />}
-                      label="Fork chat"
-                      onClick={(e) => {
-                        ctxMenu.close();
-                        void onForkWorkspace(workspaceId, e.currentTarget);
-                      }}
-                    />
-                  )}
                 </PopoverContent>
               </Popover>
               {/* Share transcript dialog – rendered as a sibling to the overflow menu.
