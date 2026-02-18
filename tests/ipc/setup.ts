@@ -15,7 +15,6 @@ import {
 } from "./helpers";
 import type { OrpcSource } from "./helpers";
 import type { ORPCContext } from "../../src/node/orpc/context";
-import type { HostKeyVerificationService } from "../../src/node/services/hostKeyVerificationService";
 import type { RuntimeConfig } from "../../src/common/types/runtime";
 import { createOrpcTestClient, type OrpcTestClient } from "./orpcTestClient";
 import { shouldRunIntegrationTests, validateApiKeys, getApiKey } from "../testUtils";
@@ -119,7 +118,7 @@ export async function createTestEnvironment(): Promise<TestEnvironment> {
     coderService: services.coderService,
     serverAuthService: services.serverAuthService,
     policyService: services.policyService,
-    hostKeyVerificationService: {} as HostKeyVerificationService,
+    hostKeyVerificationService: services.hostKeyVerificationService,
   };
   const orpc = createOrpcTestClient(orpcContext);
 

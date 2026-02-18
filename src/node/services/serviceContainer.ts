@@ -52,10 +52,7 @@ import {
   createStopCoderOnArchiveHook,
 } from "@/node/runtime/coderLifecycleHooks";
 import { setGlobalCoderService } from "@/node/runtime/runtimeFactory";
-import {
-  setHostKeyVerificationService,
-  setOpenSSHHostKeyPolicyMode,
-} from "@/node/runtime/sshConnectionPool";
+import { setHostKeyVerificationService } from "@/node/runtime/sshConnectionPool";
 import { setHostKeyVerificationService as setSSH2HostKeyVerificationService } from "@/node/runtime/SSH2ConnectionPool";
 import { PolicyService } from "@/node/services/policyService";
 import { ServerAuthService } from "@/node/services/serverAuthService";
@@ -235,8 +232,6 @@ export class ServiceContainer {
     // Register globally so all createRuntime calls can create CoderSSHRuntime
     setGlobalCoderService(this.coderService);
     setHostKeyVerificationService(this.hostKeyVerificationService);
-    // Desktop/server: strict host-key checking; headless contexts keep the default fallback.
-    setOpenSSHHostKeyPolicyMode("strict");
     setSSH2HostKeyVerificationService(this.hostKeyVerificationService);
 
     // Backend timing stats (behind feature flag).

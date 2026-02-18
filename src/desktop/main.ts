@@ -53,6 +53,7 @@ import type { UpdateStatus } from "../common/orpc/types";
 import { parseMuxDeepLink } from "../common/utils/deepLink";
 
 import assert from "../common/utils/assert";
+import { setOpenSSHHostKeyPolicyMode } from "@/node/runtime/sshConnectionPool";
 import { loadTokenizerModules } from "../node/utils/main/tokenizer";
 import { isBashAvailable } from "../node/utils/main/bashPath";
 import windowStateKeeper from "electron-window-state";
@@ -550,6 +551,8 @@ async function loadServices(): Promise<void> {
   config = new ConfigClass();
 
   services = new ServiceContainerClass(config);
+  // Desktop bootstrap owns interactive host-key trust policy
+  setOpenSSHHostKeyPolicyMode("strict");
   await services.initialize();
   // Keep the latest update status in main so close-to-tray can prompt for installs.
   services.updateService.onStatus((status) => {

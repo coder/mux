@@ -4,6 +4,7 @@
  */
 import { Config } from "@/node/config";
 import { ServiceContainer } from "@/node/services/serviceContainer";
+import { setOpenSSHHostKeyPolicyMode } from "@/node/runtime/sshConnectionPool";
 import { getMuxHome, migrateLegacyMuxHome } from "@/common/constants/paths";
 import { ServerLockfile } from "@/node/services/serverLockfile";
 import type { BrowserWindow } from "electron";
@@ -79,6 +80,8 @@ const mockWindow: BrowserWindow = {
 
   const config = new Config();
   const serviceContainer = new ServiceContainer(config);
+  // Headless server has no interactive host-key dialog
+  setOpenSSHHostKeyPolicyMode("headless-fallback");
   await serviceContainer.initialize();
   serviceContainer.windowService.setMainWindow(mockWindow);
 
