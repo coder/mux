@@ -574,6 +574,87 @@ describe("WorkspaceStore", () => {
       expect(state.currentThinkingLevel).toBe(activitySnapshot.lastThinkingLevel);
       expect(state.recencyTimestamp).toBe(activitySnapshot.recency);
     });
+
+    it("fires response-complete callback when a background workspace stops streaming", async () => {
+      const activeWorkspaceId = "active-workspace";
+      const backgroundWorkspaceId = "background-workspace";
+      const initialRecency = new Date("2024-01-05T00:00:00.000Z").getTime();
+
+      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
+        recency: initialRecency,
+        streaming: true,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+      };
+
+      let releaseBackgroundCompletion!: () => void;
+      const backgroundCompletionReady = new Promise<void>((resolve) => {
+        releaseBackgroundCompletion = resolve;
+      });
+
+      mockActivityList.mockResolvedValue({
+        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
+      });
+
+      mockActivitySubscribe.mockImplementation(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<
+        { workspaceId: string; activity: WorkspaceActivitySnapshot | null },
+        void,
+        unknown
+      > {
+        await backgroundCompletionReady;
+        if (options?.signal?.aborted) {
+          return;
+        }
+
+        yield {
+          workspaceId: backgroundWorkspaceId,
+          activity: {
+            ...backgroundStreamingSnapshot,
+            recency: initialRecency + 1,
+            streaming: false,
+          },
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      const onResponseComplete = mock(
+        (
+          _workspaceId: string,
+          _messageId: string,
+          _isFinal: boolean,
+          _finalText: string,
+          _compaction?: { hasContinueMessage: boolean },
+          _completedAt?: number | null
+        ) => undefined
+      );
+
+      // Recreate the store so the first activity.list call uses this test snapshot.
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      store.setOnResponseComplete(onResponseComplete);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+
+      createAndAddWorkspace(store, activeWorkspaceId);
+      createAndAddWorkspace(store, backgroundWorkspaceId, {}, false);
+
+      releaseBackgroundCompletion();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(onResponseComplete).toHaveBeenCalledTimes(1);
+      expect(onResponseComplete).toHaveBeenCalledWith(
+        backgroundWorkspaceId,
+        "",
+        true,
+        "",
+        undefined,
+        expect.any(Number)
+      );
+    });
   });
 
   describe("getWorkspaceRecency", () => {

@@ -1862,6 +1862,21 @@ export class WorkspaceStore {
       this.states.bump(workspaceId);
     }
 
+    // Trigger response completion notifications for background workspaces when
+    // streaming transitions from active -> idle via workspace.activity snapshots.
+    // Single-stream onChat is scoped to the active workspace, so inactive
+    // workspaces rely on activity updates for completion signals.
+    if (
+      previous?.streaming === true &&
+      snapshot?.streaming === false &&
+      workspaceId !== this.activeWorkspaceId &&
+      this.responseCompleteCallback
+    ) {
+      // Activity snapshots don't include message/content metadata.
+      // Pass stable fallbacks so App.tsx can still notify using workspace metadata.
+      this.responseCompleteCallback(workspaceId, "", true, "", undefined, Date.now());
+    }
+
     if (previous?.recency !== snapshot?.recency && this.aggregators.has(workspaceId)) {
       this.derived.bump("recency");
     }
