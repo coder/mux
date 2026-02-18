@@ -526,6 +526,30 @@ describe("createOrpcServer", () => {
     }
   });
 
+  test("rejects downgraded HTTP origins when X-Forwarded-Proto pins https", async () => {
+    const stubContext: Partial<ORPCContext> = {};
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+      });
+
+      const response = await fetch(`${server.baseUrl}/health`, {
+        headers: {
+          Origin: server.baseUrl,
+          "X-Forwarded-Proto": "https",
+        },
+      });
+
+      expect(response.status).toBe(403);
+    } finally {
+      await server?.close();
+    }
+  });
+
   test("allows HTTP requests without Origin headers", async () => {
     const stubContext: Partial<ORPCContext> = {};
 
@@ -619,6 +643,33 @@ describe("createOrpcServer", () => {
       await waitForWebSocketOpen(ws);
       await closeWebSocket(ws);
       ws = null;
+    } finally {
+      ws?.terminate();
+      await server?.close();
+    }
+  });
+
+  test("rejects downgraded WebSocket origins when X-Forwarded-Proto pins https", async () => {
+    const stubContext: Partial<ORPCContext> = {};
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+    let ws: WebSocket | null = null;
+
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+      });
+
+      ws = new WebSocket(server.wsUrl, {
+        headers: {
+          origin: server.baseUrl,
+          "x-forwarded-proto": "https",
+        },
+      });
+
+      await waitForWebSocketRejection(ws);
     } finally {
       ws?.terminate();
       await server?.close();

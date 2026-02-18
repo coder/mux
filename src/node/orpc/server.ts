@@ -210,9 +210,8 @@ function getExpectedOrigins(req: OriginValidationRequest): string[] {
   const protocols = getHeaderValues(req, "x-forwarded-proto")
     .map((value) => normalizeProtocol(value))
     .filter((value): value is "http" | "https" => value !== null);
-  const inferredProtocol = inferProtocol(req);
-  if (!protocols.includes(inferredProtocol)) {
-    protocols.push(inferredProtocol);
+  if (protocols.length === 0) {
+    protocols.push(inferProtocol(req));
   }
 
   const expectedOrigins: string[] = [];
