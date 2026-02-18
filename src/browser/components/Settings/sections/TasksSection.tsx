@@ -590,10 +590,13 @@ export function TasksSection() {
   const listedAgents = agents.length > 0 ? agents : FALLBACK_AGENTS;
   const enabledAgentIdSet = new Set(enabledAgentIds);
 
+  const showInSettingsUiAgents = (agent: AgentDefinitionDescriptor) =>
+    agent.uiSelectable || agent.id === "orchestrator";
+
   const uiAgents = useMemo(
     () =>
       [...listedAgents]
-        .filter((agent) => agent.uiSelectable)
+        .filter((agent) => showInSettingsUiAgents(agent))
         .sort((a, b) => a.name.localeCompare(b.name)),
     [listedAgents]
   );
@@ -603,7 +606,7 @@ export function TasksSection() {
       [...listedAgents]
         // Keep the sections mutually exclusive: UI agents belong under "UI agents" even if they
         // can also run as sub-agents.
-        .filter((agent) => agent.subagentRunnable && !agent.uiSelectable)
+        .filter((agent) => agent.subagentRunnable && !showInSettingsUiAgents(agent))
         .sort((a, b) => a.name.localeCompare(b.name)),
     [listedAgents]
   );
@@ -611,7 +614,7 @@ export function TasksSection() {
   const internalAgents = useMemo(
     () =>
       [...listedAgents]
-        .filter((agent) => !agent.uiSelectable && !agent.subagentRunnable)
+        .filter((agent) => !agent.subagentRunnable && !showInSettingsUiAgents(agent))
         .sort((a, b) => a.name.localeCompare(b.name)),
     [listedAgents]
   );
@@ -714,6 +717,11 @@ export function TasksSection() {
 
             {agent.description ? (
               <div className="text-muted mt-1 text-xs">{agent.description}</div>
+            ) : null}
+            {agent.id === "orchestrator" && !agent.uiSelectable ? (
+              <div className="text-muted mt-1 text-xs italic">
+                Agent is available when workspace contains a plan created in Plan mode.
+              </div>
             ) : null}
           </div>
 
