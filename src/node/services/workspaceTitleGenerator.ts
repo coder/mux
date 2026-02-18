@@ -279,18 +279,29 @@ export function buildWorkspaceIdentityPrompt(
   const trimmedConversationContext = conversationContext?.trim();
   if (trimmedConversationContext && trimmedConversationContext.length > 0) {
     promptSections.push(
-      `Conversation turns (first user message + latest turns, oldest to newest):\n${trimmedConversationContext.slice(0, 6_000)}`
+      `Conversation turns (chronological sample):\n${trimmedConversationContext.slice(0, 6_000)}`
     );
 
     const normalizedLatestUserMessage = latestUserMessage?.replace(/\s+/g, " ").trim();
     if (normalizedLatestUserMessage) {
       promptSections.push(
-        `Most recent user message (highest priority when it conflicts with older context): "${normalizedLatestUserMessage.slice(0, 1_000)}"`
+        `Most recent user message (extra context; do not prefer it over earlier turns): "${normalizedLatestUserMessage.slice(0, 1_000)}"`
       );
     }
   }
 
-  return `Generate a workspace name and title for this development task:\n\n${promptSections.join("\n\n")}\n\nRequirements:\n- name: The area of the codebase being worked on (1-2 words, max 15 chars, git-safe: lowercase, hyphens only). Random bytes will be appended for uniqueness, so focus on the area not the specific task. Examples: "sidebar", "auth", "config", "api"\n- title: A 2-5 word description in verb-noun format. Examples: "Fix plan mode", "Add user authentication", "Refactor sidebar layout"\n- title guidance: Fit the long-term, overall purpose of the chat, not just the latest turn.\n- precedence: If older context conflicts, prioritize the most recent user message.`;
+  // Prompt wording is tuned for short UI titles that stay accurate over the whole chat,
+  // rather than over-indexing on whichever message happened most recently.
+  return [
+    "Generate a workspace name and title for this development task:\n\n",
+    `${promptSections.join("\n\n")}\n\n`,
+    "Requirements:\n",
+    '- name: The area of the codebase being worked on (1-2 words, max 15 chars, git-safe: lowercase, hyphens only). Random bytes will be appended for uniqueness, so focus on the area not the specific task. Examples: "sidebar", "auth", "config", "api"\n',
+    '- title: 2-5 words, verb-noun format, describing the primary deliverable (what will be different when the work is done). Examples: "Fix plan mode", "Add user authentication", "Refactor sidebar layout"\n',
+    '- title quality: Be specific about the feature/system being changed. Prefer concrete nouns; avoid vague words ("stuff", "things") and meta words ("chat", "conversation", "workspace", "regenerate"). Avoid temporal words ("latest", "recent", "today", "now").\n',
+    "- title scope: Choose the title that best represents the overall scope and goal across the entire conversation. Weigh all turns equally — do not favor the most recent message over earlier ones.\n",
+    "- title style: Sentence case, no punctuation, no quotes.\n",
+  ].join("");
 }
 
 export async function generateWorkspaceIdentity(
@@ -299,7 +310,7 @@ export async function generateWorkspaceIdentity(
   aiService: AIService,
   /** Optional conversation turns context used for regenerate-title prompts. */
   conversationContext?: string,
-  /** Optional most recent user message; if present, prompt gives it precedence over older context. */
+  /** Optional most recent user message; included as additional context only — not given precedence over older turns. */
   latestUserMessage?: string
 ): Promise<Result<GenerateWorkspaceIdentityResult, NameGenerationError>> {
   if (candidates.length === 0) {
