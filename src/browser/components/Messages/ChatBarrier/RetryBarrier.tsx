@@ -22,6 +22,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
   const workspaceState = useWorkspaceState(props.workspaceId);
   const [countdown, setCountdown] = useState(0);
   const [manualRetryError, setManualRetryError] = useState<string | null>(null);
+  const [isManualRetrying, setIsManualRetrying] = useState(false);
 
   const [vimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, { listener: true });
   const stopKeybind = formatKeybind(
@@ -62,20 +63,38 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
       return;
     }
 
-    setManualRetryError(null);
-
-    let options = getSendOptionsFromStorage(props.workspaceId);
-    const lastUserMessage = [...workspaceState.messages]
-      .reverse()
-      .find(
-        (message): message is Extract<typeof message, { type: "user" }> => message.type === "user"
-      );
-
-    if (lastUserMessage?.compactionRequest) {
-      options = applyCompactionOverrides(options, lastUserMessage.compactionRequest.parsed);
+    if (isManualRetrying) {
+      return;
     }
 
+    setIsManualRetrying(true);
+    setManualRetryError(null);
+
+    let enabledAutoRetryForAttempt = false;
+    const rollbackAutoRetryIfNeeded = async (): Promise<void> => {
+      if (!enabledAutoRetryForAttempt) {
+        return;
+      }
+
+      enabledAutoRetryForAttempt = false;
+      await api.workspace.setAutoRetryEnabled?.({
+        workspaceId: props.workspaceId,
+        enabled: false,
+      });
+    };
+
     try {
+      let options = getSendOptionsFromStorage(props.workspaceId);
+      const lastUserMessage = [...workspaceState.messages]
+        .reverse()
+        .find(
+          (message): message is Extract<typeof message, { type: "user" }> => message.type === "user"
+        );
+
+      if (lastUserMessage?.compactionRequest) {
+        options = applyCompactionOverrides(options, lastUserMessage.compactionRequest.parsed);
+      }
+
       const enableResult = await api.workspace.setAutoRetryEnabled?.({
         workspaceId: props.workspaceId,
         enabled: true,
@@ -84,6 +103,8 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
         setManualRetryError(enableResult.error);
         return;
       }
+
+      enabledAutoRetryForAttempt = true;
 
       const resumeResult = await api.workspace.resumeStream({
         workspaceId: props.workspaceId,
@@ -98,15 +119,15 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
         setManualRetryError(details);
 
         // Keep auto-retry preference consistent when manual resume fails before
-        // stream events can update retry status.
-        void api.workspace.setAutoRetryEnabled?.({
-          workspaceId: props.workspaceId,
-          enabled: false,
-        });
+        // stream events can update retry status. Await to avoid stale rollbacks
+        // racing with subsequent retry attempts.
+        await rollbackAutoRetryIfNeeded();
       }
     } catch (error) {
       setManualRetryError(getErrorMessage(error));
-      void api.workspace.setAutoRetryEnabled?.({ workspaceId: props.workspaceId, enabled: false });
+      await rollbackAutoRetryIfNeeded();
+    } finally {
+      setIsManualRetrying(false);
     }
   };
 
@@ -132,6 +153,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
   let actionButton: React.ReactNode = (
     <button
       className="bg-warning font-primary text-background cursor-pointer rounded border-none px-4 py-2 text-xs font-semibold whitespace-nowrap transition-all duration-200 hover:-translate-y-px hover:brightness-120 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50"
+      disabled={isManualRetrying}
       onClick={() => {
         void handleManualRetry();
       }}
