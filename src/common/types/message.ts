@@ -607,6 +607,8 @@ export type DisplayedMessage =
         tool: number;
         reasoning: number;
       };
+      /** Whether to show the "Load all" button and full summary. Only true for the first (summary) marker. */
+      showLoadAll?: boolean;
     }
   | {
       type: "workspace-init";

@@ -2684,41 +2684,89 @@ export class StreamingMessageAggregator {
         const recentMessages = displayedMessages.slice(-MAX_DISPLAYED_MESSAGES);
         const oldMessages = displayedMessages.slice(0, -MAX_DISPLAYED_MESSAGES);
 
-        const omittedMessageCounts = { tool: 0, reasoning: 0 };
-        let hiddenCount = 0;
-        let insertionIndex: number | null = null;
         const filteredOldMessages: DisplayedMessage[] = [];
+
+        // Per-gap tracking
+        let currentGapCount = 0;
+        let currentGapToolCount = 0;
+        let currentGapReasoningCount = 0;
+
+        // Total tracking
+        let totalHiddenCount = 0;
+        let totalToolCount = 0;
+        let totalReasoningCount = 0;
+
+        // Collect gap info (position in filteredOldMessages, counts)
+        const gaps: Array<{ position: number; count: number; tool: number; reasoning: number }> =
+          [];
 
         for (const msg of oldMessages) {
           if (ALWAYS_KEEP_MESSAGE_TYPES.has(msg.type)) {
+            // Flush any pending gap before this kept message
+            if (currentGapCount > 0) {
+              gaps.push({
+                position: filteredOldMessages.length,
+                count: currentGapCount,
+                tool: currentGapToolCount,
+                reasoning: currentGapReasoningCount,
+              });
+              totalHiddenCount += currentGapCount;
+              totalToolCount += currentGapToolCount;
+              totalReasoningCount += currentGapReasoningCount;
+              currentGapCount = 0;
+              currentGapToolCount = 0;
+              currentGapReasoningCount = 0;
+            }
+
             filteredOldMessages.push(msg);
             continue;
           }
 
           if (msg.type === "tool") {
-            omittedMessageCounts.tool += 1;
+            currentGapToolCount += 1;
           } else if (msg.type === "reasoning") {
-            omittedMessageCounts.reasoning += 1;
+            currentGapReasoningCount += 1;
           }
-
-          hiddenCount += 1;
-          insertionIndex ??= filteredOldMessages.length;
+          currentGapCount += 1;
         }
 
-        const hasOmissions = hiddenCount > 0;
+        // Trailing gap (between last kept old message and recent messages)
+        if (currentGapCount > 0) {
+          gaps.push({
+            position: filteredOldMessages.length,
+            count: currentGapCount,
+            tool: currentGapToolCount,
+            reasoning: currentGapReasoningCount,
+          });
+          totalHiddenCount += currentGapCount;
+          totalToolCount += currentGapToolCount;
+          totalReasoningCount += currentGapReasoningCount;
+        }
+
+        const hasOmissions = totalHiddenCount > 0;
 
         if (hasOmissions) {
-          const insertAt = insertionIndex ?? filteredOldMessages.length;
-          const messagesWithMarker = [...filteredOldMessages];
-          messagesWithMarker.splice(insertAt, 0, {
-            type: "history-hidden" as const,
-            id: "history-hidden",
-            hiddenCount,
-            historySequence: -1, // Non-persisted marker for truncated history
-            omittedMessageCounts,
-          });
+          const messagesWithMarkers = [...filteredOldMessages];
 
-          resultMessages = this.normalizeLastPartFlags([...messagesWithMarker, ...recentMessages]);
+          // Insert markers in reverse order to preserve position indices
+          for (let i = gaps.length - 1; i >= 0; i--) {
+            const gap = gaps[i];
+            const isFirst = i === 0;
+
+            messagesWithMarkers.splice(gap.position, 0, {
+              type: "history-hidden" as const,
+              id: isFirst ? "history-hidden" : `history-hidden-gap-${i}`,
+              // First marker shows total count (summary); subsequent show local gap count
+              hiddenCount: isFirst ? totalHiddenCount : gap.count,
+              historySequence: -1,
+              omittedMessageCounts: isFirst
+                ? { tool: totalToolCount, reasoning: totalReasoningCount }
+                : { tool: gap.tool, reasoning: gap.reasoning },
+              showLoadAll: isFirst,
+            });
+          }
+
+          resultMessages = this.normalizeLastPartFlags([...messagesWithMarkers, ...recentMessages]);
         } else {
           resultMessages = [...filteredOldMessages, ...recentMessages];
         }

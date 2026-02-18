@@ -14,6 +14,20 @@ export const HistoryHiddenMessage: React.FC<HistoryHiddenMessageProps> = ({
   workspaceId,
   className,
 }) => {
+  const isSummaryMarker = message.showLoadAll !== false;
+
+  if (!isSummaryMarker) {
+    return (
+      <div className={cn("my-2 flex items-center gap-2 text-xs text-muted", className)}>
+        <div className="border-border flex-1 border-b border-dashed" />
+        <span>
+          {message.hiddenCount} message{message.hiddenCount !== 1 ? "s" : ""} hidden
+        </span>
+        <div className="border-border flex-1 border-b border-dashed" />
+      </div>
+    );
+  }
+
   const omittedParts: string[] = [];
 
   if (message.omittedMessageCounts?.tool) {
