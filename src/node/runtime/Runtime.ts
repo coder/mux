@@ -578,10 +578,10 @@ export interface Runtime {
   ensureReady(options?: EnsureReadyOptions): Promise<EnsureReadyResult>;
 
   /**
-   * Fork an existing workspace to create a new one
-   * Creates a new workspace branching from the source workspace's current branch
-   * - LocalRuntime: Detects source branch via git, creates new worktree from that branch
-   * - SSHRuntime: Currently unimplemented (returns static error)
+   * Fork an existing workspace to create a new one.
+   * Creates a new workspace branching from the source workspace's current branch.
+   * Capability and error behavior are runtime-defined; shared orchestration
+   * (see forkOrchestrator.ts) handles policy differences between user and task forks.
    *
    * @param params Fork parameters (source workspace name, new workspace name, etc.)
    * @returns Result with new workspace path and source branch, or error
