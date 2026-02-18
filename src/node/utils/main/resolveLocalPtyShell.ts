@@ -9,6 +9,8 @@ export interface ResolvedPtyShell {
 }
 
 export interface ResolveLocalPtyShellParams {
+  /** User-configured shell from config.json (highest priority). */
+  configuredShell: string | undefined;
   platform: NodeJS.Platform;
   env: NodeJS.ProcessEnv;
   isCommandAvailable: (command: string) => boolean;
@@ -61,6 +63,12 @@ export function resolveLocalPtyShell(
   const env = params.env ?? process.env;
   const isCommandAvailable = params.isCommandAvailable ?? defaultIsCommandAvailable(platform);
   const getBashPathFn = params.getBashPath ?? getBashPath;
+
+  // User-configured shell from config.json takes highest priority.
+  const configuredShell = params.configuredShell?.trim();
+  if (configuredShell) {
+    return { command: configuredShell, args: [] };
+  }
 
   // `process.env.SHELL` can be present-but-empty (""), especially in packaged apps.
   // Treat empty/whitespace as "unset".

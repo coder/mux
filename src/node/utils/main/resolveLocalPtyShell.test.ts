@@ -118,4 +118,63 @@ describe("resolveLocalPtyShell", () => {
 
     expect(result).toEqual({ command: "/bin/zsh", args: [] });
   });
+
+  it("uses configuredShell when provided (absolute path)", () => {
+    const result = resolveLocalPtyShell({
+      configuredShell: "/usr/bin/fish",
+      platform: "linux",
+      env: { SHELL: "/bin/bash" },
+      isCommandAvailable: () => {
+        throw new Error("isCommandAvailable should not be called");
+      },
+      getBashPath: () => {
+        throw new Error("getBashPath should not be called");
+      },
+    });
+
+    expect(result).toEqual({ command: "/usr/bin/fish", args: [] });
+  });
+
+  it("uses configuredShell when provided (command name)", () => {
+    const result = resolveLocalPtyShell({
+      configuredShell: "fish",
+      platform: "linux",
+      env: { SHELL: "/bin/bash" },
+      isCommandAvailable: () => {
+        throw new Error("isCommandAvailable should not be called");
+      },
+      getBashPath: () => {
+        throw new Error("getBashPath should not be called");
+      },
+    });
+
+    expect(result).toEqual({ command: "fish", args: [] });
+  });
+
+  it("ignores whitespace-only configuredShell", () => {
+    const result = resolveLocalPtyShell({
+      configuredShell: "   ",
+      platform: "linux",
+      env: { SHELL: "/usr/bin/fish" },
+      isCommandAvailable: () => false,
+      getBashPath: () => "bash",
+    });
+
+    expect(result).toEqual({ command: "/usr/bin/fish", args: [] });
+  });
+
+  it("configuredShell overrides on Windows too", () => {
+    const result = resolveLocalPtyShell({
+      configuredShell: "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+      platform: "win32",
+      env: { SHELL: "" },
+      isCommandAvailable: () => false,
+      getBashPath: () => "C:\\Program Files\\Git\\bin\\bash.exe",
+    });
+
+    expect(result).toEqual({
+      command: "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+      args: [],
+    });
+  });
 });

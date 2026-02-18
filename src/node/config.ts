@@ -185,6 +185,7 @@ export class Config {
           muxGovernorUrl?: unknown;
           muxGovernorToken?: unknown;
           stopCoderWorkspaceOnArchive?: unknown;
+          terminalDefaultShell?: unknown;
         };
 
         // Config is stored as array of [path, config] pairs
@@ -260,6 +261,7 @@ export class Config {
             muxGovernorUrl: parseOptionalNonEmptyString(parsed.muxGovernorUrl),
             muxGovernorToken: parseOptionalNonEmptyString(parsed.muxGovernorToken),
             stopCoderWorkspaceOnArchive,
+            terminalDefaultShell: parseOptionalNonEmptyString(parsed.terminalDefaultShell),
           };
         }
       }
@@ -307,6 +309,7 @@ export class Config {
         muxGovernorUrl?: string;
         muxGovernorToken?: string;
         stopCoderWorkspaceOnArchive?: boolean;
+        terminalDefaultShell?: string;
       } = {
         projects: Array.from(config.projects.entries()),
         taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
@@ -421,6 +424,11 @@ export class Config {
       // Default ON: persist `false` only.
       if (config.stopCoderWorkspaceOnArchive === false) {
         data.stopCoderWorkspaceOnArchive = false;
+      }
+
+      const terminalDefaultShell = parseOptionalNonEmptyString(config.terminalDefaultShell);
+      if (terminalDefaultShell) {
+        data.terminalDefaultShell = terminalDefaultShell;
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");

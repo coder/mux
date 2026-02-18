@@ -151,6 +151,7 @@ export class TerminalService {
       };
 
       // 5. Create session
+      const projectsConfig = this.config.loadConfigOrDefault();
       const session = await this.ptyService.createSession(
         params,
         runtime,
@@ -158,7 +159,7 @@ export class TerminalService {
         onData,
         onExit,
         workspaceMetadata.runtimeConfig,
-        { env: terminalEnv }
+        { env: terminalEnv, defaultShell: projectsConfig.terminalDefaultShell }
       );
 
       tempSessionId = session.sessionId;
