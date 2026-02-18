@@ -2,19 +2,6 @@ import type { Config } from "@/node/config";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import type { WorkspaceForkResult } from "@/node/runtime/Runtime";
 
-export function resolveForkRuntimeConfigs(
-  sourceRuntimeConfig: RuntimeConfig,
-  forkResult: WorkspaceForkResult
-): {
-  forkedRuntimeConfig: RuntimeConfig;
-  sourceRuntimeConfigUpdate?: RuntimeConfig;
-} {
-  return {
-    forkedRuntimeConfig: forkResult.forkedRuntimeConfig ?? sourceRuntimeConfig,
-    sourceRuntimeConfigUpdate: forkResult.sourceRuntimeConfig,
-  };
-}
-
 /**
  * Apply runtime config updates returned by runtime.forkWorkspace().
  *
@@ -35,7 +22,11 @@ export async function applyForkRuntimeUpdates(
   forkResult: WorkspaceForkResult,
   options: ApplyForkRuntimeUpdatesOptions = {}
 ): Promise<{ forkedRuntimeConfig: RuntimeConfig; sourceRuntimeConfigUpdate?: RuntimeConfig }> {
-  const resolved = resolveForkRuntimeConfigs(sourceRuntimeConfig, forkResult);
+  // Inline: resolve fork runtime configs from the fork result
+  const resolved = {
+    forkedRuntimeConfig: forkResult.forkedRuntimeConfig ?? sourceRuntimeConfig,
+    sourceRuntimeConfigUpdate: forkResult.sourceRuntimeConfig,
+  };
   const persistSourceRuntimeConfigUpdate = options.persistSourceRuntimeConfigUpdate ?? true;
 
   if (persistSourceRuntimeConfigUpdate && resolved.sourceRuntimeConfigUpdate) {
