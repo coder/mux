@@ -291,14 +291,20 @@ export class MuxAcpAgent implements AcpAgent {
       })
       .join("\n");
 
-    // ACP prompt blocks may be non-text (for example, images/resources). We
-    // currently can only pass a string to workspace.sendMessage, so preserve
-    // text when present but allow non-text-only prompts through with an empty
-    // message payload.
     if (params.prompt.length === 0) {
       throw this.deps.sdk.RequestError.invalidParams(
         undefined,
         "session/prompt requires at least one content block"
+      );
+    }
+
+    // Mux currently only supports text-based messages. If the client sent
+    // only non-text blocks (images, resources, etc.), reject rather than
+    // silently sending an empty message to the backend.
+    if (rawMessageText.length === 0) {
+      throw this.deps.sdk.RequestError.invalidParams(
+        undefined,
+        "session/prompt contains only non-text blocks which are not yet supported"
       );
     }
 
@@ -418,6 +424,17 @@ export class MuxAcpAgent implements AcpAgent {
     if (promptResolver?.messageId.length === 0) {
       this.sessionManager.clearPromptResolver(params.sessionId);
       promptResolver.resolve({ stopReason: "cancelled" });
+
+      // Best-effort: tell the backend to drop queued messages so the cancelled
+      // prompt does not execute later. clearQueue is workspace-wide, but the
+      // ACP bridge only ever queues one message per session at a time.
+      try {
+        await this.deps.orpcClient.workspace.clearQueue({
+          workspaceId: session.workspaceId,
+        });
+      } catch (error) {
+        this.deps.log("workspace.clearQueue failed (best-effort)", error);
+      }
       return;
     }
 
