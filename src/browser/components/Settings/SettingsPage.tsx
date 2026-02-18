@@ -135,18 +135,14 @@ export function SettingsPage(_props: SettingsPageProps) {
   const SectionComponent = currentSection.component;
 
   return (
-    <div className="fixed inset-0 z-50 flex min-h-0 flex-1 flex-col overflow-hidden bg-dark">
-      {/*
-        Keep explicit mobile escape controls in the page chrome:
-        - The desktop close button is hidden below md.
-        - On touch layouts, the left sidebar is often off-canvas by default.
-        Without back + menu actions here, /settings/:section can trap users in-pane.
-      */}
-
-
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <aside className="border-border-medium flex w-48 shrink-0 flex-col border-r">
-          <div className="border-border-medium flex h-12 items-center border-b px-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 MARKER_XYZ_123" onClick={close}>
+      <div
+        className="relative flex h-[80vh] w-[min(900px,90vw)] overflow-hidden rounded-xl border border-border-medium bg-background shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Left nav */}
+        <aside className="flex w-52 shrink-0 flex-col border-r border-border-medium">
+          <div className="flex h-12 items-center px-4">
             <span className="text-foreground text-sm font-semibold">Settings</span>
           </div>
           <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
@@ -168,10 +164,9 @@ export function SettingsPage(_props: SettingsPageProps) {
           </nav>
         </aside>
 
+        {/* Content area */}
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-
-
-          <div className="border-border-medium flex h-12 items-center justify-between border-b px-6">
+          <div className="flex h-12 items-center justify-between border-b border-border-medium px-6">
             <span className="text-foreground text-sm font-medium">{currentSection.label}</span>
             <Button
               variant="ghost"
@@ -183,7 +178,7 @@ export function SettingsPage(_props: SettingsPageProps) {
               <X className="h-4 w-4" />
             </Button>
           </div>
-          <div className="flex-1 overflow-y-auto p-4 md:p-6">
+          <div className="flex-1 overflow-y-auto p-6">
             <SectionComponent />
           </div>
         </div>
@@ -191,3 +186,4 @@ export function SettingsPage(_props: SettingsPageProps) {
     </div>
   );
 }
+// UNIQUE_BUILD_TOKEN_1771372627

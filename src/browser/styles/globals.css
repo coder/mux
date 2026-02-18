@@ -2112,3 +2112,10 @@ input[type="checkbox"] {
 :root[data-left-sidebar-collapsed="true"] [data-testid="workspace-header"] {
   padding-left: 60px;
 }
+
+/* Force grabbing cursor on ALL elements during drag-and-drop.
+ * Toggled by CustomDragLayer in ProjectSidebar.tsx. */
+html.is-dragging,
+html.is-dragging * {
+  cursor: grabbing !important;
+}

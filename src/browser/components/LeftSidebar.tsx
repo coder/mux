@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
+console.log("LEFT_SIDEBAR_MARKER_TEST");
 import { cn } from "@/common/lib/utils";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import ProjectSidebar from "./ProjectSidebar";

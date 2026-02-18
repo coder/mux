@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
+console.log("SIDEBAR_BUILD_MARKER_2026");
 import { VERSION } from "@/version";
+import { useAboutDialog } from "@/browser/contexts/AboutDialogContext";
 import { cn } from "@/common/lib/utils";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import MuxLogoDark from "@/browser/assets/logos/mux-logo-dark.svg?react";
@@ -49,7 +51,7 @@ import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem"
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
-import { ChevronRight, MessageCircle, KeyRound, PanelLeftClose, PanelLeftOpen, Plus, Trash2, MoreVertical } from "lucide-react";
+import { ChevronRight, MessageCircleQuestion, KeyRound, PanelLeftClose, PanelLeftOpen, Plus, Trash2, MoreVertical } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
@@ -94,7 +96,7 @@ const MuxChatHelpButton: React.FC<{
           className="border-border-light text-muted-foreground hover:border-border-medium/80 hover:bg-toggle-bg/70 relative h-5 w-5 border"
           aria-label="Open Chat with Mux"
         >
-          <MessageCircle className="h-3.5 w-3.5" />
+          <MessageCircleQuestion className="h-3.5 w-3.5" />
           {isUnread && (
             <span
               className="bg-accent absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full"
@@ -158,6 +160,15 @@ const DraggableProjectItemBase: React.FC<DraggableProjectItemProps> = ({
     }),
     [projectPath]
   );
+
+  // Force grabbing cursor globally while dragging.
+  useEffect(() => {
+    if (!isDragging) return;
+    const style = document.createElement("style");
+    style.textContent = "* { cursor: grabbing !important; }";
+    document.head.appendChild(style);
+    return () => { style.remove(); };
+  }, [isDragging]);
 
   // Hide native drag preview; we render a custom preview via DragLayer
   useEffect(() => {
@@ -295,13 +306,9 @@ const ProjectDragLayer: React.FC = () => {
 
   React.useEffect(() => {
     if (!isDragging) return;
-    const originalBody = document.body.style.cursor;
-    const originalHtml = document.documentElement.style.cursor;
-    document.body.style.cursor = "grabbing";
-    document.documentElement.style.cursor = "grabbing";
+    document.documentElement.classList.add("is-dragging");
     return () => {
-      document.body.style.cursor = originalBody;
-      document.documentElement.style.cursor = originalHtml;
+      document.documentElement.classList.remove("is-dragging");
     };
   }, [isDragging]);
 
@@ -394,6 +401,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   // Theme for logo variant
   const { theme } = useTheme();
   const MuxLogo = theme === "dark" || theme.endsWith("-dark") ? MuxLogoDark : MuxLogoLight;
+
+  // About dialog
+  const { open: openAboutDialog } = useAboutDialog();
 
   // Mobile breakpoint for auto-closing sidebar
   const MOBILE_BREAKPOINT = 768;
@@ -782,15 +792,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             <>
               <div className="border-border-light flex flex-col border-b py-3 pr-3 pl-4">
                 <div className="flex items-center justify-between">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <button
+                  <button
                       onClick={handleOpenMuxChat}
-                      className="shrink-0 cursor-pointer border-none bg-transparent p-0"
+                      className="flex items-center gap-1.5 cursor-pointer border-none bg-transparent p-0 text-foreground hover:text-foreground/80"
                       aria-label="Open Chat with Mux"
                     >
-                      <MuxLogo className="h-4 w-auto" aria-hidden="true" />
+                      <MessageCircleQuestion className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm font-semibold">Chat with Mux</span>
                     </button>
-                  </div>
                   <div className="flex items-center gap-1.5">
                     {muxChatProjectPath && (
                       <>
@@ -820,9 +829,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                     </Tooltip>
                   </div>
                 </div>
-                <span className="text-[10px] text-muted-foreground mt-1 tracking-wide">
+                <button
+                  type="button"
+                  onClick={openAboutDialog}
+                  className="text-[10px] text-muted-foreground mt-1 tracking-wide cursor-pointer bg-transparent border-0 p-0 hover:opacity-70 transition-opacity"
+                >
                   {VERSION.git_describe ?? "(dev)"}
-                </span>
+                </button>
               </div>
               <div className="flex-1 overflow-y-auto">
                 {visibleProjectPaths.length === 0 ? (
