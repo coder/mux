@@ -109,6 +109,11 @@ export class RetryManager {
       }
 
       this.onRetry().catch((retryError: unknown) => {
+        // Ignore stale retry callbacks from superseded/disabled generations.
+        if (!this.enabled || scheduledGeneration !== this.retryGeneration) {
+          return;
+        }
+
         const reason =
           retryError instanceof Error && retryError.message.length > 0
             ? retryError.message

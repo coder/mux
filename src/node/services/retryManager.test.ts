@@ -220,6 +220,42 @@ describe("RetryManager", () => {
     });
   });
 
+  it("ignores stale onRetry rejection after disable", async () => {
+    let rejectRetry: ((reason?: unknown) => void) | undefined;
+    const onRetry = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectRetry = reject;
+        })
+    );
+
+    const events: RetryStatusEvent[] = [];
+    const onStatusChange = vi.fn((event: RetryStatusEvent) => {
+      events.push(event);
+    });
+
+    const manager = new RetryManager("workspace-1", onRetry, onStatusChange);
+
+    manager.handleStreamFailure({ type: "unknown" });
+    runNextTimer();
+    expect(onRetry).toHaveBeenCalledTimes(1);
+
+    manager.setEnabled(false);
+    rejectRetry?.(new Error("late_retry_failure"));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const abandonedReasons = events
+      .filter(
+        (event): event is Extract<RetryStatusEvent, { type: "auto-retry-abandoned" }> =>
+          event.type === "auto-retry-abandoned"
+      )
+      .map((event) => event.reason);
+
+    expect(abandonedReasons).toContain("disabled_by_user");
+    expect(abandonedReasons).not.toContain("late_retry_failure");
+  });
+
   it("reschedules when a second failure arrives while retry is pending", () => {
     const { manager, events } = createRetryManager();
 
