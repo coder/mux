@@ -10,12 +10,16 @@ import type {
   ForkSessionResponse,
   InitializeRequest,
   InitializeResponse,
+  ListSessionsRequest,
+  ListSessionsResponse,
   LoadSessionRequest,
   LoadSessionResponse,
   NewSessionRequest,
   NewSessionResponse,
   PromptRequest,
   PromptResponse,
+  ResumeSessionRequest,
+  ResumeSessionResponse,
   SetSessionConfigOptionRequest,
   SetSessionConfigOptionResponse,
   Usage,
@@ -26,7 +30,7 @@ import {
   buildCompactionPrompt,
 } from "@/common/constants/ui";
 import { RuntimeConfigSchema } from "@/common/orpc/schemas";
-import type { SendMessageOptions, WorkspaceChatMessage } from "@/common/orpc/types";
+import type { OnChatMode, SendMessageOptions, WorkspaceChatMessage } from "@/common/orpc/types";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { CompactionRequestData } from "@/common/types/message";
 import { buildAgentSkillMetadata } from "@/common/types/message";
@@ -52,6 +56,9 @@ const DEFAULT_AGENT_ID = "exec";
 const DEFAULT_BRANCH_PREFIX = "acp";
 const DEFAULT_TRUNK_BRANCH = "main";
 const DEFAULT_COMMAND_STOP_REASON: PromptResponse["stopReason"] = "end_turn";
+const ON_CHAT_MODE_FULL: OnChatMode = { type: "full" };
+const ON_CHAT_MODE_LIVE: OnChatMode = { type: "live" };
+const SESSION_LIST_PAGE_SIZE = 100;
 
 interface SessionState {
   workspaceId: string;
@@ -83,6 +90,13 @@ interface ParsedMuxMeta {
 }
 
 type MetaRecord = Record<string, unknown>;
+
+type WorkspaceInfo = NonNullable<
+  Awaited<ReturnType<ServerConnection["client"]["workspace"]["getInfo"]>>
+>;
+type WorkspaceActivityById = Awaited<
+  ReturnType<ServerConnection["client"]["workspace"]["activity"]["list"]>
+>;
 
 export class MuxAgent implements Agent {
   private readonly sessionManager = new SessionManager();
@@ -149,6 +163,8 @@ export class MuxAgent implements Agent {
         loadSession: true,
         sessionCapabilities: {
           fork: {},
+          list: {},
+          resume: {},
         },
       },
     });
@@ -206,7 +222,7 @@ export class MuxAgent implements Agent {
       aiSettings,
     });
 
-    await this.ensureChatSubscription(sessionId, workspaceId);
+    await this.ensureChatSubscription(sessionId, workspaceId, ON_CHAT_MODE_FULL);
 
     const response = {
       sessionId,
@@ -243,7 +259,89 @@ export class MuxAgent implements Agent {
       aiSettings: resumed.aiSettings,
     });
 
-    await this.ensureChatSubscription(resumed.sessionId, resumed.workspaceId);
+    await this.ensureChatSubscription(resumed.sessionId, resumed.workspaceId, ON_CHAT_MODE_FULL);
+
+    this.scheduleSessionCommandsRefresh(resumed.sessionId, resumed.workspaceId);
+
+    return resumed.response;
+  }
+
+  async unstable_listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
+    this.assertInitialized("unstable_listSessions");
+    assert(params != null, "unstable_listSessions: params are required");
+
+    const normalizedCwd = normalizeOptionalPath(params.cwd);
+    const offset = parseSessionListCursor(params.cursor);
+
+    const [activeWorkspaces, archivedWorkspaces, workspaceActivity] = await Promise.all([
+      this.server.client.workspace.list({ archived: false }),
+      this.server.client.workspace.list({ archived: true }),
+      this.server.client.workspace.activity.list(),
+    ]);
+
+    const allWorkspaces = dedupeWorkspacesById([...activeWorkspaces, ...archivedWorkspaces]);
+    const filteredWorkspaces =
+      normalizedCwd != null
+        ? allWorkspaces.filter((workspace) => workspaceMatchesCwd(workspace, normalizedCwd))
+        : allWorkspaces;
+
+    const sortedWorkspaces = [...filteredWorkspaces].sort((left, right) =>
+      compareSessionRecency(left, right, workspaceActivity)
+    );
+
+    const page = sortedWorkspaces.slice(offset, offset + SESSION_LIST_PAGE_SIZE);
+    const nextOffset = offset + page.length;
+
+    return {
+      sessions: page.map((workspace) => ({
+        sessionId: workspace.id,
+        // Surface projectPath as cwd so session/list filtering matches editor cwd.
+        cwd: workspace.projectPath,
+        title: workspace.title ?? workspace.name,
+        updatedAt: toSessionUpdatedAt(workspace, workspaceActivity),
+      })),
+      nextCursor: nextOffset < sortedWorkspaces.length ? String(nextOffset) : undefined,
+    };
+  }
+
+  async unstable_resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
+    this.assertInitialized("unstable_resumeSession");
+
+    const sessionId = params.sessionId.trim();
+    assert(sessionId.length > 0, "unstable_resumeSession: sessionId must be non-empty");
+
+    const cwd = params.cwd.trim();
+    assert(cwd.length > 0, "unstable_resumeSession: cwd must be non-empty");
+
+    const existingState = this.sessionStateById.get(sessionId);
+    const resumed = await loadSessionFromWorkspace(
+      {
+        sessionId,
+        cwd,
+        mcpServers: params.mcpServers ?? [],
+        _meta: params._meta,
+      },
+      {
+        server: this.server,
+        sessionManager: this.sessionManager,
+        toolRouter: this.toolRouter,
+        negotiatedCapabilities: this.negotiatedCapabilities,
+        defaultAgentId: DEFAULT_AGENT_ID,
+        existingSessionAgentId: existingState?.agentId,
+      }
+    );
+
+    this.sessionStateById.set(resumed.sessionId, {
+      workspaceId: resumed.workspaceId,
+      runtimeMode: resumed.runtimeMode,
+      agentId: resumed.agentId,
+      aiSettings: resumed.aiSettings,
+    });
+
+    // ACP resume semantics require "continue from now" without replaying prior
+    // transcript. Use onChat live mode (new backend capability) to follow only
+    // active/future stream events.
+    await this.ensureChatSubscription(resumed.sessionId, resumed.workspaceId, ON_CHAT_MODE_LIVE);
 
     this.scheduleSessionCommandsRefresh(resumed.sessionId, resumed.workspaceId);
 
@@ -278,7 +376,7 @@ export class MuxAgent implements Agent {
       aiSettings: forked.aiSettings,
     });
 
-    await this.ensureChatSubscription(forked.sessionId, forked.workspaceId);
+    await this.ensureChatSubscription(forked.sessionId, forked.workspaceId, ON_CHAT_MODE_FULL);
 
     this.scheduleSessionCommandsRefresh(forked.sessionId, forked.workspaceId);
 
@@ -392,7 +490,7 @@ export class MuxAgent implements Agent {
     // Re-establish chat subscription if a prior one dropped (e.g., transient
     // websocket interruption). Without a live subscription, stream-end events
     // never arrive and the turn promise hangs indefinitely.
-    await this.ensureChatSubscription(args.sessionId, args.workspaceId);
+    await this.ensureChatSubscription(args.sessionId, args.workspaceId, ON_CHAT_MODE_FULL);
 
     const turnPromise = this.beginTurn(args.sessionId);
 
@@ -786,7 +884,11 @@ export class MuxAgent implements Agent {
    * that resolves once the underlying `onChat` stream is connected (so callers
    * like `prompt()` can safely send messages without racing the subscription).
    */
-  private async ensureChatSubscription(sessionId: string, workspaceId: string): Promise<void> {
+  private async ensureChatSubscription(
+    sessionId: string,
+    workspaceId: string,
+    onChatMode: OnChatMode
+  ): Promise<void> {
     // If a subscription is already being established, wait for it to become
     // connected rather than returning immediately.  This prevents callers
     // (e.g., prompt after session load) from racing ahead of the onChat attach.
@@ -811,7 +913,7 @@ export class MuxAgent implements Agent {
     // concurrent callers will find and await it.
     this.chatSubscriptionReady.set(sessionId, connectedPromise);
 
-    const subscription = this.runChatSubscription(sessionId, workspaceId, onConnected)
+    const subscription = this.runChatSubscription(sessionId, workspaceId, onConnected, onChatMode)
       .catch((error) => {
         // Reject the connected promise in case it hasn't been settled yet
         // (e.g., `onChat` itself threw before calling `onConnected`).
@@ -835,9 +937,13 @@ export class MuxAgent implements Agent {
   private async runChatSubscription(
     sessionId: string,
     workspaceId: string,
-    onConnected: () => void
+    onConnected: () => void,
+    onChatMode: OnChatMode
   ): Promise<void> {
-    const chatStream = await this.server.client.workspace.onChat({ workspaceId });
+    const chatStream = await this.server.client.workspace.onChat({
+      workspaceId,
+      mode: onChatMode,
+    });
     onConnected();
     const observedStream = this.observeChatStream(sessionId, chatStream);
     await this.streamTranslator.consumeAndForward(sessionId, observedStream);
@@ -1103,6 +1209,93 @@ export class MuxAgent implements Agent {
   private assertInitialized(methodName: string): void {
     assert(this.initialized, `${methodName}: initialize must be called first`);
   }
+}
+
+function normalizeOptionalPath(value: string | null | undefined): string | undefined {
+  if (value == null) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function parseSessionListCursor(cursor: string | null | undefined): number {
+  if (cursor == null) {
+    return 0;
+  }
+
+  const trimmed = cursor.trim();
+  if (trimmed.length === 0) {
+    return 0;
+  }
+
+  const parsed = Number.parseInt(trimmed, 10);
+  assert(
+    Number.isSafeInteger(parsed) && parsed >= 0,
+    `unstable_listSessions: invalid cursor '${cursor}'`
+  );
+  return parsed;
+}
+
+function dedupeWorkspacesById(workspaces: WorkspaceInfo[]): WorkspaceInfo[] {
+  const deduped = new Map<string, WorkspaceInfo>();
+  for (const workspace of workspaces) {
+    if (!deduped.has(workspace.id)) {
+      deduped.set(workspace.id, workspace);
+    }
+  }
+  return Array.from(deduped.values());
+}
+
+function workspaceMatchesCwd(workspace: WorkspaceInfo, cwd: string): boolean {
+  // Match both projectPath and concrete workspace path so clients can filter by
+  // either the original project root or the runtime-specific working directory.
+  return workspace.projectPath === cwd || workspace.namedWorkspacePath === cwd;
+}
+
+function compareSessionRecency(
+  left: WorkspaceInfo,
+  right: WorkspaceInfo,
+  activityByWorkspaceId: WorkspaceActivityById
+): number {
+  const leftRecency = toSessionRecencyTimestamp(left, activityByWorkspaceId);
+  const rightRecency = toSessionRecencyTimestamp(right, activityByWorkspaceId);
+
+  if (leftRecency !== rightRecency) {
+    return rightRecency - leftRecency;
+  }
+
+  return left.id.localeCompare(right.id);
+}
+
+function toSessionUpdatedAt(
+  workspace: WorkspaceInfo,
+  activityByWorkspaceId: WorkspaceActivityById
+): string | null {
+  const recency = toSessionRecencyTimestamp(workspace, activityByWorkspaceId);
+  if (recency > 0) {
+    return new Date(recency).toISOString();
+  }
+
+  return workspace.createdAt ?? null;
+}
+
+function toSessionRecencyTimestamp(
+  workspace: WorkspaceInfo,
+  activityByWorkspaceId: WorkspaceActivityById
+): number {
+  const workspaceActivity = activityByWorkspaceId[workspace.id];
+  if (workspaceActivity?.recency != null) {
+    return workspaceActivity.recency;
+  }
+
+  if (workspace.createdAt == null) {
+    return 0;
+  }
+
+  const createdAtMs = Date.parse(workspace.createdAt);
+  return Number.isFinite(createdAtMs) ? createdAtMs : 0;
 }
 
 function parseMuxMeta(rawMeta: MetaRecord | null | undefined): ParsedMuxMeta {
