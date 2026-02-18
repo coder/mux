@@ -1709,7 +1709,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [setInput]
   );
 
-  const handleSend = async () => {
+  const handleSend = async (overrides?: { queueDispatchMode?: "tool-end" | "turn-end" }) => {
     if (!canSend) {
       return;
     }
@@ -2063,6 +2063,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           ...(modelOverride ? { model: modelOverride } : {}),
           ...(thinkingOverride ? { thinkingLevel: thinkingOverride } : {}),
           ...(modelOneShot ? { skipAiSettingsPersistence: true } : {}),
+          ...(overrides?.queueDispatchMode
+            ? { queueDispatchMode: overrides.queueDispatchMode }
+            : {}),
           additionalSystemInstructions,
           editMessageId: editingMessage?.id,
           fileParts: sendFileParts,
@@ -2233,6 +2236,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     }
 
     // Handle send message (Shift+Enter for newline is default behavior)
+    if (matchesKeybind(e, KEYBINDS.SEND_MESSAGE_AFTER_TURN)) {
+      e.preventDefault();
+      void handleSend({ queueDispatchMode: "turn-end" });
+      return;
+    }
+
     if (matchesKeybind(e, KEYBINDS.SEND_MESSAGE)) {
       e.preventDefault();
       void handleSend();
@@ -2571,10 +2580,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent align="center">
-                    Send message{" "}
-                    <span className="mobile-hide-shortcut-hints">
-                      ({formatKeybind(KEYBINDS.SEND_MESSAGE)})
-                    </span>
+                    <div className="flex flex-col gap-0.5">
+                      <span>Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})</span>
+                      <span className="text-muted">
+                        Send after turn ({formatKeybind(KEYBINDS.SEND_MESSAGE_AFTER_TURN)})
+                      </span>
+                    </div>
                   </TooltipContent>
                 </Tooltip>
               </div>

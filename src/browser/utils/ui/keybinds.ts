@@ -259,6 +259,9 @@ export const KEYBINDS = {
   /** Send message / Submit form */
   SEND_MESSAGE: { key: "Enter" },
 
+  /** Send message after current turn ends */
+  SEND_MESSAGE_AFTER_TURN: { key: "Enter", ctrl: true },
+
   /** Insert newline in text input */
   NEW_LINE: { key: "Enter", shift: true },
 

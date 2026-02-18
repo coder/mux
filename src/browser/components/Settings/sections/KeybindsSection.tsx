@@ -8,6 +8,7 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   TOGGLE_AGENT: "Open agent picker",
   CYCLE_AGENT: "Cycle agent",
   SEND_MESSAGE: "Send message",
+  SEND_MESSAGE_AFTER_TURN: "Send after turn",
   NEW_LINE: "Insert newline",
   CANCEL: "Cancel / Close modal",
   CANCEL_EDIT: "Cancel editing message",
@@ -85,6 +86,7 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
     label: "Chat",
     keys: [
       "SEND_MESSAGE",
+      "SEND_MESSAGE_AFTER_TURN",
       "NEW_LINE",
       "FOCUS_CHAT",
       "FOCUS_INPUT_I",
