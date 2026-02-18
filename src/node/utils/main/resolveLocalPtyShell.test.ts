@@ -247,4 +247,46 @@ describe("resolveLocalPtyShell", () => {
 
     expect(result).toEqual({ command: "/bin/bash", args: [] });
   });
+
+  it("skips configured path that is a directory and falls back to SHELL", () => {
+    // Simulates configuredShell="/usr/bin" (a directory, not an executable).
+    const result = resolveLocalPtyShell({
+      configuredShell: "/usr/bin",
+      platform: "linux",
+      env: { SHELL: "/bin/bash" },
+      isCommandAvailable: () => false,
+      // /usr/bin exists but should not be accepted; /bin/bash is the valid shell.
+      isPathAccessible: (shellPath) => shellPath === "/bin/bash",
+      getBashPath: () => "bash",
+    });
+
+    expect(result).toEqual({ command: "/bin/bash", args: [] });
+  });
+
+  it("skips configured path that is a non-executable file and falls back", () => {
+    // Simulates configuredShell="/etc/hosts" (exists but not executable).
+    const result = resolveLocalPtyShell({
+      configuredShell: "/etc/hosts",
+      platform: "linux",
+      env: { SHELL: "/bin/bash" },
+      isCommandAvailable: () => false,
+      // /etc/hosts exists but should not be accepted.
+      isPathAccessible: (shellPath) => shellPath === "/bin/bash",
+      getBashPath: () => "bash",
+    });
+
+    expect(result).toEqual({ command: "/bin/bash", args: [] });
+  });
+
+  it("skips SHELL env when it points to a non-executable path", () => {
+    const result = resolveLocalPtyShell({
+      platform: "linux",
+      env: { SHELL: "/etc/hosts" },
+      isCommandAvailable: () => false,
+      isPathAccessible: (shellPath) => shellPath === "/bin/bash",
+      getBashPath: () => "bash",
+    });
+
+    expect(result).toEqual({ command: "/bin/bash", args: [] });
+  });
 });

@@ -1,5 +1,5 @@
 import { spawnSync } from "child_process";
-import { existsSync } from "fs";
+import { accessSync, constants, statSync } from "fs";
 import path from "path";
 
 import { getBashPath } from "@/node/utils/main/bashPath";
@@ -34,9 +34,40 @@ function defaultIsCommandAvailable(platform: NodeJS.Platform): (command: string)
   };
 }
 
+/**
+ * Check whether a path-like shell candidate is a real executable file.
+ * - Must be a regular file (rejects directories, symlink-to-dir, etc.)
+ * - On POSIX: must have execute permission for the current user.
+ * - On Windows: must have a recognized executable extension (PATHEXT-aware).
+ */
 function defaultIsPathAccessible(shellPath: string): boolean {
   try {
-    return existsSync(shellPath);
+    const stat = statSync(shellPath);
+    if (!stat.isFile()) {
+      return false;
+    }
+
+    if (process.platform !== "win32") {
+      // X_OK checks execute permission for the current user.
+      accessSync(shellPath, constants.X_OK);
+      return true;
+    }
+
+    // On Windows, executable status is determined by file extension.
+    const ext = path.win32.extname(shellPath).toLowerCase();
+    if (!ext) {
+      return false;
+    }
+
+    const pathExtEnv = process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD";
+    const allowedExts = new Set(
+      pathExtEnv
+        .split(";")
+        .map((candidateExt) => candidateExt.toLowerCase().trim())
+        .filter(Boolean)
+    );
+
+    return allowedExts.has(ext);
   } catch {
     return false;
   }
