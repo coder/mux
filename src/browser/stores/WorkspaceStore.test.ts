@@ -464,7 +464,7 @@ describe("WorkspaceStore", () => {
       ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
         yield createHistoryMessageEvent("msg-newer", 5);
         await Promise.resolve();
-        yield { type: "caught-up" };
+        yield { type: "caught-up", hasOlderHistory: true };
         await waitForAbortSignal(options?.signal);
       });
 
@@ -473,6 +473,27 @@ describe("WorkspaceStore", () => {
 
       const state = store.getWorkspaceState(workspaceId);
       expect(state.hasOlderHistory).toBe(true);
+      expect(state.loadingOlderHistory).toBe(false);
+    });
+
+    it("does not infer older history from non-boundary sequences without server metadata", async () => {
+      const workspaceId = "history-pagination-no-boundary";
+
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        yield createHistoryMessageEvent("msg-non-boundary", 5);
+        await Promise.resolve();
+        yield { type: "caught-up" };
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.hasOlderHistory).toBe(false);
       expect(state.loadingOlderHistory).toBe(false);
     });
 
@@ -485,7 +506,7 @@ describe("WorkspaceStore", () => {
       ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
         yield createHistoryMessageEvent("msg-newer", 5);
         await Promise.resolve();
-        yield { type: "caught-up" };
+        yield { type: "caught-up", hasOlderHistory: true };
         await waitForAbortSignal(options?.signal);
       });
 
@@ -525,7 +546,7 @@ describe("WorkspaceStore", () => {
       ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
         yield createHistoryMessageEvent("msg-newer", 5);
         await Promise.resolve();
-        yield { type: "caught-up" };
+        yield { type: "caught-up", hasOlderHistory: true };
         await waitForAbortSignal(options?.signal);
       });
 

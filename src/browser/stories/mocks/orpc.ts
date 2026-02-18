@@ -1139,7 +1139,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         if (!onChat) {
           // Default mock behavior: subscriptions should remain open.
           // If this ends, WorkspaceStore will retry and reset state, which flakes stories.
-          const caughtUp: WorkspaceChatMessage = { type: "caught-up" };
+          const caughtUp: WorkspaceChatMessage = { type: "caught-up", hasOlderHistory: false };
           yield caughtUp;
 
           await new Promise<void>((resolve) => {

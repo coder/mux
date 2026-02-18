@@ -1180,8 +1180,12 @@ export class WorkspaceStore {
       }
 
       // The server's caught-up payload is authoritative for full replays because
-      // display-only messages can skip early historySequence rows.
-      const hasOlder = hasOlderOverride ?? historySequence > 0;
+      // display-only messages can skip early historySequence rows. When legacy
+      // payloads omit hasOlderHistory, only infer older pages when the oldest
+      // loaded message is a durable compaction boundary marker (a concrete signal
+      // that this replay started mid-history), not merely historySequence > 0.
+      const hasOlder =
+        hasOlderOverride ?? (historySequence > 0 && isDurableCompactionBoundaryMarker(message));
       return {
         nextCursor: hasOlder
           ? {
