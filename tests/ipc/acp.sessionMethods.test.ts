@@ -232,6 +232,29 @@ describe("ACP unstable session support", () => {
     ).rejects.toThrow("invalid cursor");
   });
 
+  it("rejects resume when session does not belong to requested cwd", async () => {
+    const workspace = createWorkspaceInfo({
+      id: "ws-cwd-check",
+      projectPath: "/repo/correct",
+      namedWorkspacePath: "/repo/correct/.mux/ws-cwd-check",
+    });
+
+    const harness = createHarness({
+      activeWorkspaces: [workspace],
+      onChatEvents: [{ type: "caught-up" } as WorkspaceChatMessage],
+    });
+
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    await expect(
+      harness.agent.unstable_resumeSession({
+        sessionId: "ws-cwd-check",
+        cwd: "/repo/wrong",
+        mcpServers: [],
+      })
+    ).rejects.toThrow("is not in cwd");
+  });
+
   it("resumes sessions with onChat live mode (no history replay)", async () => {
     const workspace = createWorkspaceInfo({
       id: "ws-resume",

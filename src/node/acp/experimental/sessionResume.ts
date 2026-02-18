@@ -6,7 +6,6 @@ import { buildConfigOptions } from "../configOptions";
 import { resolveAgentAiSettings, type ResolvedAiSettings } from "../resolveAgentAiSettings";
 import type { ServerConnection } from "../serverConnection";
 import type { SessionManager } from "../sessionManager";
-import type { ToolRouter } from "../toolRouter";
 
 type WorkspaceInfo = NonNullable<
   Awaited<ReturnType<ServerConnection["client"]["workspace"]["getInfo"]>>
@@ -24,7 +23,6 @@ export interface ResumedSessionContext {
 export interface SessionResumeDependencies {
   server: ServerConnection;
   sessionManager: SessionManager;
-  toolRouter: ToolRouter;
   negotiatedCapabilities: NegotiatedCapabilities | null;
   defaultAgentId: string;
   /**
@@ -50,10 +48,20 @@ export async function loadSessionFromWorkspace(
   const requestedSessionId = params.sessionId.trim();
   assert(requestedSessionId.length > 0, "loadSessionFromWorkspace: sessionId must be non-empty");
 
+  const requestedCwd = params.cwd.trim();
+  assert(requestedCwd.length > 0, "loadSessionFromWorkspace: cwd must be non-empty");
+
   const workspace = await deps.server.client.workspace.getInfo({ workspaceId: requestedSessionId });
   if (!workspace) {
     throw new Error(`loadSessionFromWorkspace: workspace '${requestedSessionId}' was not found`);
   }
+
+  const cwdMatchesWorkspace =
+    workspace.projectPath === requestedCwd || workspace.namedWorkspacePath === requestedCwd;
+  assert(
+    cwdMatchesWorkspace,
+    `loadSessionFromWorkspace: workspace '${requestedSessionId}' is not in cwd '${requestedCwd}'`
+  );
 
   const workspaceId = workspace.id;
   const runtimeMode = resolveRuntimeMode(workspace);
@@ -64,7 +72,6 @@ export async function loadSessionFromWorkspace(
     runtimeMode,
     deps.negotiatedCapabilities ?? undefined
   );
-  deps.toolRouter.registerSession(requestedSessionId, runtimeMode);
 
   // Prefer the ACP session's prior agent selection (from set_config_option)
   // over workspace.agentId so that mode switches survive reconnect/reload.

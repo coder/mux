@@ -6,7 +6,6 @@ import { buildConfigOptions } from "../configOptions";
 import { resolveAgentAiSettings, type ResolvedAiSettings } from "../resolveAgentAiSettings";
 import type { ServerConnection } from "../serverConnection";
 import type { SessionManager } from "../sessionManager";
-import type { ToolRouter } from "../toolRouter";
 
 type WorkspaceInfo = NonNullable<
   Awaited<ReturnType<ServerConnection["client"]["workspace"]["getInfo"]>>
@@ -24,7 +23,6 @@ export interface ForkedSessionContext {
 export interface SessionForkDependencies {
   server: ServerConnection;
   sessionManager: SessionManager;
-  toolRouter: ToolRouter;
   negotiatedCapabilities: NegotiatedCapabilities | null;
   defaultAgentId: string;
   /** The source ACP session's current agent selection, if available. */
@@ -75,7 +73,6 @@ export async function forkSessionFromWorkspace(
     runtimeMode,
     deps.negotiatedCapabilities ?? undefined
   );
-  deps.toolRouter.registerSession(sessionId, runtimeMode);
 
   // Prefer the source ACP session's active agent selection over workspace
   // metadata, so forks inherit the mode the user switched to in-session.

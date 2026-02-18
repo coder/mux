@@ -50,7 +50,6 @@ import {
   type ParsedAcpSlashCommand,
 } from "./slashCommands";
 import { StreamTranslator } from "./streamTranslator";
-import { ToolRouter } from "./toolRouter";
 
 const DEFAULT_AGENT_ID = "exec";
 const DEFAULT_BRANCH_PREFIX = "acp";
@@ -100,7 +99,6 @@ type WorkspaceActivityById = Awaited<
 
 export class MuxAgent implements Agent {
   private readonly sessionManager = new SessionManager();
-  private readonly toolRouter: ToolRouter;
   private readonly streamTranslator: StreamTranslator;
 
   private negotiatedCapabilities: NegotiatedCapabilities | null = null;
@@ -132,7 +130,6 @@ export class MuxAgent implements Agent {
     assert(connection != null, "MuxAgent: connection is required");
     assert(server != null, "MuxAgent: server connection is required");
 
-    this.toolRouter = new ToolRouter(connection);
     this.streamTranslator = new StreamTranslator(connection);
   }
 
@@ -155,7 +152,6 @@ export class MuxAgent implements Agent {
 
     const negotiated = negotiateCapabilities(params.clientCapabilities);
     this.negotiatedCapabilities = negotiated;
-    this.toolRouter.setEditorCapabilities(negotiated);
     this.initialized = true;
 
     return Promise.resolve({
@@ -214,7 +210,6 @@ export class MuxAgent implements Agent {
       runtimeMode,
       this.negotiatedCapabilities ?? undefined
     );
-    this.toolRouter.registerSession(sessionId, runtimeMode);
 
     const agentId = meta.agentId ?? workspace.agentId ?? DEFAULT_AGENT_ID;
     const aiSettings = await resolveAgentAiSettings(this.server.client, agentId, workspaceId);
@@ -251,7 +246,6 @@ export class MuxAgent implements Agent {
     const resumed = await loadSessionFromWorkspace(params, {
       server: this.server,
       sessionManager: this.sessionManager,
-      toolRouter: this.toolRouter,
       negotiatedCapabilities: this.negotiatedCapabilities,
       defaultAgentId: DEFAULT_AGENT_ID,
       existingSessionAgentId: existingState?.agentId,
@@ -329,7 +323,6 @@ export class MuxAgent implements Agent {
       {
         server: this.server,
         sessionManager: this.sessionManager,
-        toolRouter: this.toolRouter,
         negotiatedCapabilities: this.negotiatedCapabilities,
         defaultAgentId: DEFAULT_AGENT_ID,
         existingSessionAgentId: existingState?.agentId,
@@ -364,7 +357,6 @@ export class MuxAgent implements Agent {
       {
         server: this.server,
         sessionManager: this.sessionManager,
-        toolRouter: this.toolRouter,
         negotiatedCapabilities: this.negotiatedCapabilities,
         defaultAgentId: DEFAULT_AGENT_ID,
         sourceSessionAgentId: sourceSessionState?.agentId,
