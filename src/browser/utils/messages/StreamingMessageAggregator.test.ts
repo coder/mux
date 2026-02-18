@@ -952,6 +952,43 @@ describe("StreamingMessageAggregator", () => {
       expect(remaining.map((m) => m.id)).toEqual(["boundary-2"]);
     });
 
+    test("updates reconnect cursor floor when a live compaction boundary arrives", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      // Simulate initial replay window starting at historySequence 40.
+      aggregator.loadHistoricalMessages(
+        [
+          createMuxMessage("history-40", "user", "Historical user", {
+            historySequence: 40,
+            timestamp: 40,
+          }),
+          createMuxMessage("history-41", "assistant", "Historical assistant", {
+            historySequence: 41,
+            timestamp: 41,
+          }),
+        ],
+        false,
+        { mode: "replace" }
+      );
+
+      const beforeCompactionCursor = aggregator.getOnChatCursor();
+      expect(beforeCompactionCursor?.history?.oldestHistorySequence).toBe(40);
+
+      const boundary = asChatMessage(
+        createMuxMessage("boundary-60", "assistant", "Summary epoch 60", {
+          historySequence: 60,
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 60,
+          muxMetadata: { type: "compaction-summary" },
+        })
+      );
+      aggregator.handleMessage(boundary);
+
+      const afterCompactionCursor = aggregator.getOnChatCursor();
+      expect(afterCompactionCursor?.history?.oldestHistorySequence).toBe(60);
+    });
+
     test("does not prune messages when a non-boundary message arrives", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 

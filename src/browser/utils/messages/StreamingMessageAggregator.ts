@@ -2254,6 +2254,16 @@ export class StreamingMessageAggregator {
     // Self-healing guard: malformed boundary metadata should not crash live sessions.
     if (incomingBoundarySequence === undefined) return;
 
+    // Live compaction advances the replay window floor to the incoming boundary.
+    // Keep reconnect cursors aligned with the server's latest-boundary replay window
+    // so incremental reconnects remain eligible after compaction.
+    if (
+      this.establishedOldestHistorySequence === null ||
+      incomingBoundarySequence > this.establishedOldestHistorySequence
+    ) {
+      this.establishedOldestHistorySequence = incomingBoundarySequence;
+    }
+
     const toRemove: string[] = [];
     for (const [id, msg] of this.messages.entries()) {
       const seq = msg.metadata?.historySequence;
