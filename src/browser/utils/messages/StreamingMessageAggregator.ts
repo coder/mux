@@ -510,6 +510,11 @@ export class StreamingMessageAggregator {
    * This helper flips `isReplay` to false on the first non-replay event so that
    * `streamPresentation.source` correctly transitions to "live" and smoothing
    * resumes instead of staying bypassed.
+   *
+   * IMPORTANT: Only call from content handlers (handleStreamDelta, handleReasoningDelta).
+   * Tool events are not buffered by the reconnect relay and can arrive before replay
+   * text finishes flushing — calling this from tool handlers would prematurely end
+   * replay phase and reclassify catch-up content as live.
    */
   private syncReplayPhase(messageId: string, replay?: boolean): void {
     const context = this.activeStreams.get(messageId);
@@ -1701,8 +1706,6 @@ export class StreamingMessageAggregator {
     const message = this.messages.get(data.messageId);
     if (!message) return;
 
-    this.syncReplayPhase(data.messageId, data.replay);
-
     // If this is a nested call (from PTC code_execution), add to parent's nestedCalls
     if (data.parentToolCallId) {
       const parentPart = message.parts.find(
@@ -1760,8 +1763,6 @@ export class StreamingMessageAggregator {
   }
 
   handleToolCallDelta(data: ToolCallDeltaEvent): void {
-    this.syncReplayPhase(data.messageId, data.replay);
-
     // Track delta for token counting and TPS calculation
     this.trackDelta(data.messageId, data.tokens, data.timestamp, "tool-args");
     // Tool deltas are for display - args are in dynamic-tool part
@@ -1945,8 +1946,6 @@ export class StreamingMessageAggregator {
   }
 
   handleToolCallEnd(data: ToolCallEndEvent): void {
-    this.syncReplayPhase(data.messageId, data.replay);
-
     // Track tool execution duration
     const context = this.activeStreams.get(data.messageId);
     if (context) {

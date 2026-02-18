@@ -1188,6 +1188,66 @@ describe("StreamingMessageAggregator", () => {
       );
       expect(liveRow?.streamPresentation).toEqual({ source: "live" });
     });
+
+    test("does not exit replay phase on non-replay tool events arriving before replay text drains", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      // Reconnect: stream-start with replay flag
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-tool-during-replay",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+        startTime: 1_000,
+        replay: true,
+      });
+
+      // Replay catch-up delta
+      aggregator.handleStreamDelta({
+        type: "stream-delta",
+        workspaceId: "test-workspace",
+        messageId: "msg-tool-during-replay",
+        delta: "cached ",
+        tokens: 1,
+        timestamp: 1_100,
+        replay: true,
+      });
+
+      // Non-replay tool event arrives before replay text finishes draining.
+      // Tool events are not buffered by the reconnect relay, so they can
+      // arrive without the replay flag even while replay text is still in-flight.
+      aggregator.handleToolCallStart({
+        type: "tool-call-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-tool-during-replay",
+        toolCallId: "tool-1",
+        toolName: "bash",
+        args: { command: "echo hi" },
+        tokens: 1,
+        timestamp: 1_150,
+      });
+
+      // Another replay delta arrives (still part of catch-up)
+      aggregator.handleStreamDelta({
+        type: "stream-delta",
+        workspaceId: "test-workspace",
+        messageId: "msg-tool-during-replay",
+        delta: "tail",
+        tokens: 1,
+        timestamp: 1_200,
+        replay: true,
+      });
+
+      // Source must still be "replay" — tool event must not have flipped it
+      const displayed = aggregator.getDisplayedMessages();
+      const assistantRows = displayed.filter(
+        (message): message is Extract<(typeof displayed)[number], { type: "assistant" }> =>
+          message.type === "assistant" && message.historyId === "msg-tool-during-replay"
+      );
+      const assistant = assistantRows.at(-1);
+      expect(assistant?.streamPresentation).toEqual({ source: "replay" });
+    });
   });
 
   describe("append replay cache invalidation", () => {
