@@ -98,7 +98,7 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = (props) => {
             {props.cancelLabel ?? "Cancel"}
             <span
               aria-hidden="true"
-              className="border-border-medium text-muted ml-2 inline-flex items-center rounded border px-1 py-[1px] font-mono text-[10px] leading-none"
+              className="ml-2 inline-flex items-center rounded border border-current/25 px-1.5 py-0.5 font-mono text-[10px] leading-none opacity-60"
             >
               N
             </span>
@@ -111,7 +111,7 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = (props) => {
             {isConfirming ? "Processing..." : (props.confirmLabel ?? "Confirm")}
             <span
               aria-hidden="true"
-              className="border-border-medium text-muted ml-2 inline-flex items-center rounded border px-1 py-[1px] font-mono text-[10px] leading-none"
+              className="ml-2 inline-flex items-center rounded border border-current/25 px-1.5 py-0.5 font-mono text-[10px] leading-none opacity-60"
             >
               Y
             </span>
