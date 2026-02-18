@@ -622,12 +622,25 @@ export class AgentSession {
     );
   }
 
+  private isSyntheticSnapshotUserMessage(message: MuxMessage): boolean {
+    return (
+      message.role === "user" &&
+      message.metadata?.synthetic === true &&
+      (message.metadata.fileAtMentionSnapshot !== undefined ||
+        message.metadata.agentSkillSnapshot !== undefined)
+    );
+  }
+
   private getLastNonSystemHistoryMessage(historyTail: MuxMessage[]): MuxMessage | undefined {
     for (let index = historyTail.length - 1; index >= 0; index -= 1) {
       const candidate = historyTail[index];
-      if (candidate.role !== "system") {
-        return candidate;
+      if (candidate.role === "system") {
+        continue;
       }
+      if (this.isSyntheticSnapshotUserMessage(candidate)) {
+        continue;
+      }
+      return candidate;
     }
     return undefined;
   }
@@ -651,18 +664,17 @@ export class AgentSession {
       return false;
     }
 
-    // Ignore synthetic snapshot rows used only for prompt cache stability.
-    if (
-      message.metadata?.synthetic === true &&
-      (message.metadata.fileAtMentionSnapshot || message.metadata.agentSkillSnapshot)
-    ) {
+    if (this.isSyntheticSnapshotUserMessage(message)) {
       return false;
     }
 
-    // Other synthetic user rows are usually internal sentinels; only keep them when
-    // they carry compaction metadata needed for restart-safe retries.
+    // Include UI-visible synthetic rows (e.g., crash-recovered compaction follow-ups)
+    // so retries continue the most recent pending user intent.
     if (message.metadata?.synthetic === true) {
-      return isCompactionRequestMetadata(message.metadata?.muxMetadata);
+      return (
+        message.metadata?.uiVisible === true ||
+        isCompactionRequestMetadata(message.metadata?.muxMetadata)
+      );
     }
 
     return true;
