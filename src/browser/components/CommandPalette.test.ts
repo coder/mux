@@ -138,7 +138,7 @@ describe("CommandPalette ranking", () => {
     const result = rankByPaletteQuery({
       items: workspaces,
       query: "my-app",
-      toSearchText: (workspace) => workspace.title,
+      toSearchDoc: (workspace) => ({ primaryText: workspace.title }),
       tieBreak: (a, b) => a.title.localeCompare(b.title),
     });
 
@@ -160,11 +160,43 @@ describe("CommandPalette ranking", () => {
     const result = rankByPaletteQuery({
       items: commands,
       query: "output",
-      toSearchText: (command) => [command.title, ...command.keywords].join(" "),
+      toSearchDoc: (command) => ({
+        primaryText: command.title,
+        secondaryText: command.keywords,
+      }),
       tieBreak: (a, b) => a.title.localeCompare(b.title),
     });
 
     expect(result[0]?.title).toBe("Show Output");
     expect(result.some((command) => command.title === "Toggle Layout")).toBe(false);
+  });
+
+  test("workspace with long metadata still ranks exact title first", () => {
+    const workspaces = [
+      {
+        id: "ws:switch:my-app",
+        title: "my-app",
+        section: "Workspaces",
+        keywords: ["my-app", "my-project", "/home/user/very/long/path/to/project/my-app"],
+      },
+      {
+        id: "ws:switch:my-app-legacy",
+        title: "my-app-legacy",
+        section: "Workspaces",
+        keywords: ["my-app-legacy", "other-project"],
+      },
+    ];
+
+    const result = rankByPaletteQuery({
+      items: workspaces,
+      query: "my-app",
+      toSearchDoc: (workspace) => ({
+        primaryText: workspace.title,
+        secondaryText: workspace.keywords,
+      }),
+      tieBreak: (a, b) => a.title.localeCompare(b.title),
+    });
+
+    expect(result[0]?.title).toBe("my-app");
   });
 });

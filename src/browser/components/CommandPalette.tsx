@@ -277,21 +277,16 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
     // Filter actions based on prefix (extracted to utility for testing)
     const actionsToShow = filterCommandsByPrefix(q, rawActions);
 
-    // Build searchable text matching what cmdk would see (title + keywords + subtitle).
-    const buildSearchableText = (action: CommandAction): string => {
-      const parts = [action.title];
-      if (action.keywords) parts.push(...action.keywords);
-      if (action.subtitle) parts.push(action.subtitle);
-      return parts.join(" ");
-    };
-
     // Derive search text: strip ">" prefix for command mode, use raw query for workspace mode.
     const searchText = q.startsWith(">") ? q.slice(1).trim() : q;
 
     const filtered = rankByPaletteQuery({
       items: actionsToShow,
       query: searchText,
-      toSearchText: buildSearchableText,
+      toSearchDoc: (action) => ({
+        primaryText: action.title,
+        secondaryText: [...(action.keywords ?? []), ...(action.subtitle ? [action.subtitle] : [])],
+      }),
       tieBreak: (a, b) => {
         const ai = recentIndex.get(a.id) ?? 9999;
         const bi = recentIndex.get(b.id) ?? 9999;
@@ -399,11 +394,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
       const rankedOptions = rankByPaletteQuery({
         items: selectOptions.map((opt, idx) => ({ ...opt, _originalIdx: idx })),
         query: searchQuery,
-        toSearchText: (opt) => {
-          const parts = [opt.label];
-          if (opt.keywords) parts.push(...opt.keywords);
-          return parts.join(" ");
-        },
+        toSearchDoc: (opt) => ({
+          primaryText: opt.label,
+          secondaryText: opt.keywords,
+        }),
         tieBreak: (a, b) => a._originalIdx - b._originalIdx,
       });
       groups = [
