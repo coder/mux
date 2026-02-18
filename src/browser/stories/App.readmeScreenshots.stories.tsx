@@ -1316,3 +1316,179 @@ export const OpportunisticCompactionTooltip: AppStory = {
     await expect(within(document.body).getByText(/Replace all chat history/i)).toBeVisible();
   },
 };
+
+// README: docs/img/orchestrate-agents.webp
+// Parent workspace is selected in plan mode while six running child workspaces
+// show nested status indicators in the expanded left sidebar.
+export const OrchestrateAgents: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaceId = "ws-orchestrator";
+
+        const parentWorkspace = createWorkspace({
+          id: workspaceId,
+          name: "feature/parallel-auth",
+          projectName: README_PROJECT_NAME,
+          projectPath: README_PROJECT_PATH,
+        });
+
+        const subtaskFixtures = [
+          {
+            id: "ws-sub-1",
+            name: "auth-middleware",
+            agentType: "exec" as const,
+            title: "Implement auth middleware",
+            statusEmoji: "🔧",
+            statusMessage: "Implementing auth middleware",
+            assistantMessage: "Wiring auth middleware into each service entrypoint.",
+          },
+          {
+            id: "ws-sub-2",
+            name: "token-service",
+            agentType: "exec" as const,
+            title: "Build token refresh service",
+            statusEmoji: "🔍",
+            statusMessage: "Reading token validation logic",
+            assistantMessage: "Auditing refresh token validation before implementing rotation.",
+          },
+          {
+            id: "ws-sub-3",
+            name: "rbac-policies",
+            agentType: "exec" as const,
+            title: "Add RBAC policy engine",
+            statusEmoji: "📝",
+            statusMessage: "Writing policy evaluation tests",
+            assistantMessage: "Building RBAC fixtures and policy matching assertions.",
+          },
+          {
+            id: "ws-sub-4",
+            name: "session-store",
+            agentType: "exec" as const,
+            title: "Migrate session storage to Redis",
+            statusEmoji: "🚀",
+            statusMessage: "Running integration tests",
+            assistantMessage: "Running Redis-backed session integration coverage now.",
+          },
+          {
+            id: "ws-sub-5",
+            name: "api-gateway",
+            agentType: "exec" as const,
+            title: "Configure API gateway routes",
+            statusEmoji: "🔧",
+            statusMessage: "Wiring up rate limiting",
+            assistantMessage: "Updating gateway route config with auth + throttling guards.",
+          },
+          {
+            id: "ws-sub-6",
+            name: "audit-logging",
+            agentType: "explore" as const,
+            title: "Investigate audit log schema",
+            statusEmoji: "🔍",
+            statusMessage: "Reviewing existing log entries",
+            assistantMessage: "Inspecting current audit log rows to document schema constraints.",
+          },
+        ];
+
+        const childWorkspaces = subtaskFixtures.map((fixture, index) => ({
+          ...createWorkspace({
+            id: fixture.id,
+            name: fixture.name,
+            projectName: README_PROJECT_NAME,
+            projectPath: README_PROJECT_PATH,
+            createdAt: new Date(NOW - (index + 1) * 2_000).toISOString(),
+          }),
+          parentWorkspaceId: workspaceId,
+          agentType: fixture.agentType,
+          taskStatus: "running" as const,
+          title: fixture.title,
+        }));
+
+        const workspaces = [parentWorkspace, ...childWorkspaces];
+
+        window.localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(false));
+        expandProjects([README_PROJECT_PATH]);
+        selectWorkspace(parentWorkspace);
+        collapseRightSidebar();
+
+        const parentPlanMarkdown = `# Feature: Parallel Auth Orchestration
+
+## Overview
+Implement shared authentication across middleware, token refresh, RBAC policy checks, and audit logging.
+
+## Tasks
+
+### Task 1: Middleware integration
+Implement shared auth middleware in every HTTP and RPC service boundary.
+
+### Task 2: Token refresh service
+Build refresh-token rotation with revocation checks and expiry validation.
+
+### Task 3: RBAC policy engine
+Add role-based policy evaluation with test coverage for allow/deny rules.
+
+### Task 4: Session storage migration
+Move session persistence from local files to Redis-backed storage.
+
+### Task 5: API gateway route updates
+Configure gateway auth guards, rate limits, and protected route wiring.
+
+### Task 6: Audit logging baseline
+Document and validate audit log schema requirements before rollout.
+`;
+
+        const chatHandlers = new Map<string, ReturnType<typeof createStaticChatHandler>>([
+          [
+            workspaceId,
+            createStaticChatHandler([
+              createUserMessage(
+                "msg-orchestrator-1",
+                "Implement auth across all services and split the work so multiple agents can run in parallel.",
+                {
+                  historySequence: 1,
+                  timestamp: STABLE_TIMESTAMP - 60_000,
+                }
+              ),
+              createAssistantMessage(
+                "msg-orchestrator-2",
+                "Here is a six-task execution plan. Start the orchestrator to launch subtasks.",
+                {
+                  historySequence: 2,
+                  timestamp: STABLE_TIMESTAMP - 50_000,
+                  toolCalls: [
+                    createProposePlanTool("call-plan-orchestrator-1", parentPlanMarkdown),
+                  ],
+                }
+              ),
+            ]),
+          ],
+          ...subtaskFixtures.map(
+            (fixture, index) =>
+              [
+                fixture.id,
+                createStaticChatHandler([
+                  createAssistantMessage(`msg-sub-${index + 1}`, fixture.assistantMessage, {
+                    historySequence: 1,
+                    timestamp: STABLE_TIMESTAMP - 45_000 + index * 1_000,
+                    toolCalls: [
+                      createStatusTool(
+                        `call-status-sub-${index + 1}`,
+                        fixture.statusEmoji,
+                        fixture.statusMessage
+                      ),
+                    ],
+                  }),
+                ]),
+              ] as const
+          ),
+        ]);
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+          onChat: createOnChatAdapter(chatHandlers),
+        });
+      }}
+    />
+  ),
+};

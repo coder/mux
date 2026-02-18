@@ -157,6 +157,12 @@ const STORIES: StoryDef[] = [
         .waitFor({ timeout: 10_000 });
     },
   },
+  {
+    exportName: "OrchestrateAgents",
+    storyId: `${STORY_ID_PREFIX}orchestrate-agents`,
+    outputFile: "orchestrate-agents.webp",
+    clip: { x: 0, y: 0, width: 1100, height: 1000 },
+  },
 ];
 
 // ---------------------------------------------------------------------------
