@@ -1,4 +1,4 @@
-import React from "react";
+import { useEffect } from "react";
 import {
   ArrowLeft,
   Menu,
@@ -18,12 +18,7 @@ import {
 } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
-import {
-  isDialogOpen,
-  isEditableElement,
-  KEYBINDS,
-  matchesKeybind,
-} from "@/browser/utils/ui/keybinds";
+import { isEditableElement, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { GeneralSection } from "./sections/GeneralSection";
 import { TasksSection } from "./sections/TasksSection";
@@ -114,7 +109,7 @@ export function SettingsPage(props: SettingsPageProps) {
   const governorEnabled = useExperimentValue(EXPERIMENT_IDS.MUX_GOVERNOR);
 
   // Keep routing on a valid section when an experiment-gated section is disabled.
-  React.useEffect(() => {
+  useEffect(() => {
     if (!system1Enabled && activeSection === "system1") {
       setActiveSection(BASE_SECTIONS[0]?.id ?? "general");
     }
@@ -123,24 +118,22 @@ export function SettingsPage(props: SettingsPageProps) {
     }
   }, [activeSection, setActiveSection, system1Enabled, governorEnabled]);
 
-  React.useEffect(() => {
+  // Close settings on Escape. Uses bubble phase so inner surfaces (Select dropdowns,
+  // Popover, Dialog) that call stopPropagation/preventDefault on Escape get first
+  // right of refusal—only an unclaimed Escape navigates away from settings.
+  useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (!matchesKeybind(e, KEYBINDS.CANCEL)) {
-        return;
-      }
-      if (isDialogOpen() || isEditableElement(e.target)) {
-        return;
-      }
+      if (!matchesKeybind(e, KEYBINDS.CANCEL)) return;
+      if (e.defaultPrevented) return;
+      if (isEditableElement(e.target)) return;
 
-      // Capture-phase Escape handling prevents global bubble handlers
-      // (like stream interruption) from seeing this keypress.
       e.preventDefault();
       e.stopPropagation();
       close();
     };
 
-    window.addEventListener("keydown", onKeyDown, { capture: true });
-    return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, [close]);
   let sections: SettingsSection[] = BASE_SECTIONS;
   if (system1Enabled) {
