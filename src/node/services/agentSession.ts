@@ -1156,29 +1156,11 @@ export class AgentSession {
       return Err(createUnknownSendMessageError(getErrorMessage(error)));
     }
 
-    // Persist snapshots (if any) BEFORE the user message so they precede it in the prompt.
-    // Order matters: @file snapshot first, then agent-skill snapshot.
-    if (snapshotResult?.snapshotMessage) {
-      const snapshotAppendResult = await this.historyService.appendToHistory(
-        this.workspaceId,
-        snapshotResult.snapshotMessage
-      );
-      if (!snapshotAppendResult.success) {
-        return Err(createUnknownSendMessageError(snapshotAppendResult.error));
-      }
-    }
-
-    if (skillSnapshotResult?.snapshotMessage) {
-      const skillSnapshotAppendResult = await this.historyService.appendToHistory(
-        this.workspaceId,
-        skillSnapshotResult.snapshotMessage
-      );
-      if (!skillSnapshotAppendResult.success) {
-        return Err(createUnknownSendMessageError(skillSnapshotAppendResult.error));
-      }
-    }
-
     // Check compaction threshold BEFORE persisting the user message.
+    // Note: snapshots are materialized above, but persistence is deferred until after
+    // this decision so on-send compaction can run against the pre-turn context.
+    // Persisting snapshots too early can bloat the compaction request context and
+    // make compaction itself fail near the context limit.
     // If on-send compaction is needed, we skip persisting the user's message now — it becomes
     // the follow-up content sent after compaction completes. This avoids duplicating the user
     // turn in model context (the compaction would otherwise summarize a transcript that already
@@ -1254,6 +1236,30 @@ export class AgentSession {
       }
     }
 
+    // Persist snapshots only when this turn will be sent immediately.
+    // On on-send compaction paths, snapshots are deferred with the follow-up turn.
+    const shouldPersistTurnSnapshots = autoCompactionMessage === null;
+
+    if (shouldPersistTurnSnapshots && snapshotResult?.snapshotMessage) {
+      const snapshotAppendResult = await this.historyService.appendToHistory(
+        this.workspaceId,
+        snapshotResult.snapshotMessage
+      );
+      if (!snapshotAppendResult.success) {
+        return Err(createUnknownSendMessageError(snapshotAppendResult.error));
+      }
+    }
+
+    if (shouldPersistTurnSnapshots && skillSnapshotResult?.snapshotMessage) {
+      const skillSnapshotAppendResult = await this.historyService.appendToHistory(
+        this.workspaceId,
+        skillSnapshotResult.snapshotMessage
+      );
+      if (!skillSnapshotAppendResult.success) {
+        return Err(createUnknownSendMessageError(skillSnapshotAppendResult.error));
+      }
+    }
+
     // When on-send compaction triggers, the user message is NOT persisted to history
     // (it's sent as follow-up after compaction). Otherwise, persist normally.
     if (!autoCompactionMessage) {
@@ -1272,12 +1278,14 @@ export class AgentSession {
       return Ok(undefined);
     }
 
-    // Emit snapshots first (if any), then user message - maintains prompt ordering in UI
-    if (snapshotResult?.snapshotMessage) {
+    // Emit snapshots only for immediately-sent turns. On on-send compaction paths,
+    // snapshots are deferred with the follow-up message to avoid duplicate ephemeral
+    // snapshot rows that were never persisted.
+    if (shouldPersistTurnSnapshots && snapshotResult?.snapshotMessage) {
       this.emitChatEvent({ ...snapshotResult.snapshotMessage, type: "message" });
     }
 
-    if (skillSnapshotResult?.snapshotMessage) {
+    if (shouldPersistTurnSnapshots && skillSnapshotResult?.snapshotMessage) {
       this.emitChatEvent({ ...skillSnapshotResult.snapshotMessage, type: "message" });
     }
 
