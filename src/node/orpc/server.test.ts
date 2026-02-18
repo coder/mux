@@ -473,6 +473,32 @@ describe("createOrpcServer", () => {
     }
   });
 
+  test("allows same-origin HTTP requests when X-Forwarded-Host does not match", async () => {
+    const stubContext: Partial<ORPCContext> = {};
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+      });
+
+      const response = await fetch(`${server.baseUrl}/health`, {
+        headers: {
+          Origin: server.baseUrl,
+          "X-Forwarded-Host": "internal.proxy.local",
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("access-control-allow-origin")).toBe(server.baseUrl);
+      expect(response.headers.get("access-control-allow-credentials")).toBe("true");
+    } finally {
+      await server?.close();
+    }
+  });
+
   test("allows same-origin requests when X-Forwarded-Proto overrides inferred protocol", async () => {
     const stubContext: Partial<ORPCContext> = {};
 
@@ -559,6 +585,35 @@ describe("createOrpcServer", () => {
 
       ws = new WebSocket(server.wsUrl, {
         headers: { origin: server.baseUrl },
+      });
+
+      await waitForWebSocketOpen(ws);
+      await closeWebSocket(ws);
+      ws = null;
+    } finally {
+      ws?.terminate();
+      await server?.close();
+    }
+  });
+
+  test("accepts same-origin WebSocket connections when X-Forwarded-Host does not match", async () => {
+    const stubContext: Partial<ORPCContext> = {};
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+    let ws: WebSocket | null = null;
+
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+      });
+
+      ws = new WebSocket(server.wsUrl, {
+        headers: {
+          origin: server.baseUrl,
+          "x-forwarded-host": "internal.proxy.local",
+        },
       });
 
       await waitForWebSocketOpen(ws);

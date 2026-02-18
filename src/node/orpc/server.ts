@@ -138,6 +138,30 @@ function getFirstHeaderValue(req: OriginValidationRequest, headerName: string): 
   return firstValue?.length ? firstValue : null;
 }
 
+function getHeaderValues(req: OriginValidationRequest, headerName: string): string[] {
+  const rawValue = req.headers[headerName.toLowerCase()];
+  const values = Array.isArray(rawValue) ? rawValue : [rawValue];
+
+  const parsed: string[] = [];
+
+  for (const value of values) {
+    if (typeof value !== "string") {
+      continue;
+    }
+
+    for (const part of value.split(",")) {
+      const trimmed = part.trim();
+      if (trimmed.length === 0 || parsed.includes(trimmed)) {
+        continue;
+      }
+
+      parsed.push(trimmed);
+    }
+  }
+
+  return parsed;
+}
+
 function normalizeProtocol(rawProtocol: string): "http" | "https" | null {
   const normalized = rawProtocol.trim().toLowerCase().replace(/:$/, "");
   if (normalized === "http" || normalized === "https") {
@@ -173,14 +197,37 @@ function inferProtocol(req: OriginValidationRequest): "http" | "https" {
   return (req.socket as { encrypted?: boolean }).encrypted ? "https" : "http";
 }
 
-function getExpectedOrigin(req: OriginValidationRequest): string | null {
-  const host = getFirstHeaderValue(req, "x-forwarded-host") ?? getFirstHeaderValue(req, "host");
-  if (!host) {
-    return null;
+function getExpectedOrigins(req: OriginValidationRequest): string[] {
+  const hosts = [
+    ...getHeaderValues(req, "x-forwarded-host"),
+    ...getHeaderValues(req, "host"),
+  ].filter((value, index, values) => values.indexOf(value) === index);
+
+  if (hosts.length === 0) {
+    return [];
   }
 
-  const proto = getFirstHeaderValue(req, "x-forwarded-proto") ?? inferProtocol(req);
-  return buildOrigin(proto, host);
+  const protocols = getHeaderValues(req, "x-forwarded-proto")
+    .map((value) => normalizeProtocol(value))
+    .filter((value): value is "http" | "https" => value !== null);
+  const inferredProtocol = inferProtocol(req);
+  if (!protocols.includes(inferredProtocol)) {
+    protocols.push(inferredProtocol);
+  }
+
+  const expectedOrigins: string[] = [];
+  for (const protocol of protocols) {
+    for (const host of hosts) {
+      const origin = buildOrigin(protocol, host);
+      if (!origin || expectedOrigins.includes(origin)) {
+        continue;
+      }
+
+      expectedOrigins.push(origin);
+    }
+  }
+
+  return expectedOrigins;
 }
 
 function normalizeOrigin(raw: string | null | undefined): string | null {
@@ -263,25 +310,24 @@ function areEquivalentLoopbackOrigins(originA: string, originB: string): boolean
   );
 }
 
-function isOriginAllowed(req: OriginValidationRequest): boolean {
+function isOriginAllowed(
+  req: OriginValidationRequest,
+  expectedOrigins: readonly string[] = getExpectedOrigins(req)
+): boolean {
   const origin = getFirstHeaderValue(req, "origin");
   if (!origin) {
     return true;
   }
 
   const normalizedOrigin = normalizeOrigin(origin);
-  if (!normalizedOrigin) {
+  if (!normalizedOrigin || expectedOrigins.length === 0) {
     return false;
   }
 
-  const expectedOrigin = getExpectedOrigin(req);
-  if (!expectedOrigin) {
-    return false;
-  }
-
-  return (
-    normalizedOrigin === expectedOrigin ||
-    areEquivalentLoopbackOrigins(normalizedOrigin, expectedOrigin)
+  return expectedOrigins.some(
+    (expectedOrigin) =>
+      normalizedOrigin === expectedOrigin ||
+      areEquivalentLoopbackOrigins(normalizedOrigin, expectedOrigin)
   );
 }
 
@@ -358,8 +404,8 @@ export async function createOrpcServer({
     }
 
     const normalizedOrigin = normalizeOrigin(originHeader);
-    const expectedOrigin = getExpectedOrigin(req);
-    const allowedOrigin = isOriginAllowed(req) ? normalizedOrigin : null;
+    const expectedOrigins = getExpectedOrigins(req);
+    const allowedOrigin = isOriginAllowed(req, expectedOrigins) ? normalizedOrigin : null;
     const oauthCallbackNavigationRequest = isOAuthCallbackNavigationRequest(req);
 
     if (req.method === "OPTIONS") {
@@ -368,7 +414,7 @@ export async function createOrpcServer({
           method: req.method,
           path: req.path,
           origin: originHeader,
-          expectedOrigin,
+          expectedOrigins,
         });
         res.sendStatus(403);
         return;
@@ -397,7 +443,7 @@ export async function createOrpcServer({
         method: req.method,
         path: req.path,
         origin: originHeader,
-        expectedOrigin,
+        expectedOrigins,
       });
       res.sendStatus(403);
       return;
@@ -1260,10 +1306,11 @@ export async function createOrpcServer({
       return;
     }
 
-    if (!isOriginAllowed(req)) {
+    const expectedOrigins = getExpectedOrigins(req);
+    if (!isOriginAllowed(req, expectedOrigins)) {
       log.warn("Blocked cross-origin WebSocket upgrade request", {
         origin: getFirstHeaderValue(req, "origin"),
-        expectedOrigin: getExpectedOrigin(req),
+        expectedOrigins,
         url: req.url,
       });
 
