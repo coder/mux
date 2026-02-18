@@ -721,16 +721,27 @@ export class MuxAgent implements Agent {
   }
 
   private async refreshSessionCommands(sessionId: string, workspaceId: string): Promise<void> {
+    let advertisedSkills: AgentSkillDescriptor[];
+
     try {
       const skills = await this.server.client.agentSkills.list({ workspaceId });
       const skillsByName = mapSkillsByName(skills);
       this.sessionSkillsById.set(sessionId, skillsByName);
+      advertisedSkills = skills;
+    } catch (error) {
+      // Command advertisement should not block session creation/loading.
+      console.error("[acp] Failed to load skills while publishing slash commands", error);
+      // Always publish built-in commands even if skills are temporarily unavailable.
+      const cachedSkillsByName = this.sessionSkillsById.get(sessionId);
+      advertisedSkills = cachedSkillsByName ? Array.from(cachedSkillsByName.values()) : [];
+    }
 
+    try {
       await this.connection.sessionUpdate({
         sessionId,
         update: {
           sessionUpdate: "available_commands_update",
-          availableCommands: buildAcpAvailableCommands(skills),
+          availableCommands: buildAcpAvailableCommands(advertisedSkills),
         },
       });
     } catch (error) {

@@ -93,6 +93,12 @@ const UNREACHABLE_ERROR_CODES = new Set([
   "EPIPE",
 ]);
 
+/**
+ * WebSocket close codes that indicate the endpoint is effectively unreachable
+ * during connection setup (as opposed to policy/auth/protocol rejections).
+ */
+const UNREACHABLE_PREOPEN_CLOSE_CODES = new Set([1005, 1006]);
+
 function isUnreachableError(error: unknown): boolean {
   if (error == null || typeof error !== "object") {
     return false;
@@ -109,13 +115,20 @@ function isUnreachableError(error: unknown): boolean {
     return isUnreachableError((error as { cause: unknown }).cause);
   }
 
-  // waitForWebSocketOpen rejects with our own Error on pre-open close/timeouts.
-  if (
-    error instanceof Error &&
-    (error.message.includes("WebSocket closed before opening") ||
-      error.message.includes("WebSocket open timed out"))
-  ) {
-    return true;
+  if (error instanceof Error) {
+    // waitForWebSocketOpen emits this for handshake timeouts; treat as unreachable
+    // so lockfile fallback can self-heal into in-process mode.
+    if (error.message.includes("WebSocket open timed out")) {
+      return true;
+    }
+
+    // waitForWebSocketOpen also emits this for pre-open closes. Distinguish
+    // network-style abnormal closes from policy/auth/protocol rejections.
+    const preOpenCloseMatch = /WebSocket closed before opening \((\d+)\)/.exec(error.message);
+    if (preOpenCloseMatch != null) {
+      const closeCode = Number(preOpenCloseMatch[1]);
+      return Number.isInteger(closeCode) && UNREACHABLE_PREOPEN_CLOSE_CODES.has(closeCode);
+    }
   }
 
   return false;
