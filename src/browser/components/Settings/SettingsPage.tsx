@@ -18,6 +18,12 @@ import {
 } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
+import {
+  isDialogOpen,
+  isEditableElement,
+  KEYBINDS,
+  matchesKeybind,
+} from "@/browser/utils/ui/keybinds";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { GeneralSection } from "./sections/GeneralSection";
 import { TasksSection } from "./sections/TasksSection";
@@ -117,6 +123,25 @@ export function SettingsPage(props: SettingsPageProps) {
     }
   }, [activeSection, setActiveSection, system1Enabled, governorEnabled]);
 
+  React.useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!matchesKeybind(e, KEYBINDS.CANCEL)) {
+        return;
+      }
+      if (isDialogOpen() || isEditableElement(e.target)) {
+        return;
+      }
+
+      // Capture-phase Escape handling prevents global bubble handlers
+      // (like stream interruption) from seeing this keypress.
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    };
+
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
+  }, [close]);
   let sections: SettingsSection[] = BASE_SECTIONS;
   if (system1Enabled) {
     sections = [
