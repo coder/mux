@@ -777,8 +777,20 @@ export class WorkspaceStore {
       return;
     }
 
+    const previousActiveId = this.activeWorkspaceId;
     this.activeWorkspaceId = workspaceId;
     this.ensureActiveOnChatSubscription();
+
+    // Invalidate cached workspace state for both the old and new active
+    // workspaces. getWorkspaceState() uses activeOnChatWorkspaceId to decide
+    // whether to trust aggregator data or activity snapshots, so a switch
+    // requires recomputation even if no new events arrived.
+    if (previousActiveId) {
+      this.states.bump(previousActiveId);
+    }
+    if (workspaceId) {
+      this.states.bump(workspaceId);
+    }
   }
 
   private ensureActivitySubscription(): void {
