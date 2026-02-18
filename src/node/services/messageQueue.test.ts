@@ -321,6 +321,14 @@ describe("MessageQueue", () => {
       expect(internal).toEqual({ synthetic: true });
     });
 
+    it("should not mark mixed synthetic + user batches as synthetic", () => {
+      queue.add("Idle compaction", { model: "gpt-4", agentId: "compact" }, { synthetic: true });
+      queue.add("User follow-up", { model: "gpt-4", agentId: "exec" });
+
+      const { internal } = queue.produceMessage();
+      expect(internal).toBeUndefined();
+    });
+
     it("should clear synthetic flag when queue is cleared", () => {
       queue.add("Synthetic one", { model: "gpt-4", agentId: "exec" }, { synthetic: true });
       queue.clear();

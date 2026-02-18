@@ -375,6 +375,7 @@ export function AskUserQuestionToolCall(props: {
       .catch((error) => {
         const errorMessage = getErrorMessage(error);
         setSubmitError(errorMessage);
+        void api.workspace.setAutoRetryEnabled?.({ workspaceId, enabled: false });
       })
       .finally(() => {
         setIsSubmitting(false);

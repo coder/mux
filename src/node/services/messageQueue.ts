@@ -71,7 +71,8 @@ export class MessageQueue {
   private latestOptions?: SendMessageOptions;
   private accumulatedFileParts: FilePart[] = [];
   private dedupeKeys: Set<string> = new Set<string>();
-  private queuedInternalSynthetic = false;
+  private queuedEntryCount = 0;
+  private queuedSyntheticCount = 0;
 
   /**
    * Check if the queue currently contains a compaction request.
@@ -179,9 +180,11 @@ export class MessageQueue {
       }
     }
 
+    this.queuedEntryCount += 1;
     if (internal?.synthetic === true) {
-      this.queuedInternalSynthetic = true;
+      this.queuedSyntheticCount += 1;
     }
+
     return true;
   }
 
@@ -252,7 +255,9 @@ export class MessageQueue {
         }
       : undefined;
 
-    const internal = this.queuedInternalSynthetic ? { synthetic: true } : undefined;
+    const allQueuedEntriesAreSynthetic =
+      this.queuedEntryCount > 0 && this.queuedSyntheticCount === this.queuedEntryCount;
+    const internal = allQueuedEntriesAreSynthetic ? { synthetic: true } : undefined;
 
     return { message: joinedMessages, options, internal };
   }
@@ -266,7 +271,8 @@ export class MessageQueue {
     this.latestOptions = undefined;
     this.accumulatedFileParts = [];
     this.dedupeKeys.clear();
-    this.queuedInternalSynthetic = false;
+    this.queuedEntryCount = 0;
+    this.queuedSyntheticCount = 0;
   }
 
   /**
