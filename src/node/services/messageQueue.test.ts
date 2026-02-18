@@ -309,6 +309,28 @@ describe("MessageQueue", () => {
     });
   });
 
+  describe("internal flags", () => {
+    it("should preserve synthetic flag for queued backend messages", () => {
+      queue.add(
+        "Background maintenance message",
+        { model: "gpt-4", agentId: "exec" },
+        { synthetic: true }
+      );
+
+      const { internal } = queue.produceMessage();
+      expect(internal).toEqual({ synthetic: true });
+    });
+
+    it("should clear synthetic flag when queue is cleared", () => {
+      queue.add("Synthetic one", { model: "gpt-4", agentId: "exec" }, { synthetic: true });
+      queue.clear();
+
+      queue.add("User message", { model: "gpt-4", agentId: "exec" });
+      const { internal } = queue.produceMessage();
+      expect(internal).toBeUndefined();
+    });
+  });
+
   describe("getFileParts", () => {
     it("should return accumulated images from multiple messages", () => {
       const image1 = {

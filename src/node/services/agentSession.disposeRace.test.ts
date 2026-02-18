@@ -195,4 +195,74 @@ describe("AgentSession disposal race conditions", () => {
     expect(setEnabled).toHaveBeenCalledTimes(1);
     expect(setEnabled).toHaveBeenCalledWith(true);
   });
+
+  test("preserves synthetic flag when flushing queued messages", () => {
+    const aiService: AIService = {
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      stopStream: mock(() => Promise.resolve(Ok(undefined))),
+      isStreaming: mock(() => false),
+      streamMessage: mock(() => Promise.resolve(Ok(undefined))),
+    } as unknown as AIService;
+
+    const historyService: HistoryService = {
+      appendToHistory: mock(() => Promise.resolve(Ok(undefined))),
+    } as unknown as HistoryService;
+
+    const initStateManager: InitStateManager = {
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      cleanup: mock(() => Promise.resolve()),
+      setMessageQueued: mock(() => undefined),
+    } as unknown as BackgroundProcessManager;
+
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => "/tmp"),
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId: "ws",
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const sendMessage = mock(
+      (
+        _message: string,
+        _options?: { model: string; agentId: string },
+        _internal?: { synthetic?: boolean }
+      ) => Promise.resolve(Ok(undefined))
+    );
+
+    (session as unknown as { sendMessage: typeof sendMessage }).sendMessage = sendMessage;
+
+    session.queueMessage(
+      "Background compaction request",
+      { model: "anthropic:claude-sonnet-4-5", agentId: "compact" },
+      { synthetic: true }
+    );
+    session.sendQueuedMessages();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      "Background compaction request",
+      expect.objectContaining({ model: "anthropic:claude-sonnet-4-5", agentId: "compact" }),
+      { synthetic: true }
+    );
+  });
 });

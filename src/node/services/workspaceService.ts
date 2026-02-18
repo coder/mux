@@ -3213,7 +3213,9 @@ export class WorkspaceService extends EventEmitter {
           }
         }
 
-        session.queueMessage(message, normalizedOptions);
+        session.queueMessage(message, normalizedOptions, {
+          synthetic: internal?.synthetic,
+        });
         return Ok(undefined);
       }
 

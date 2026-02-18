@@ -32,6 +32,7 @@ import type {
 } from "@/common/types/tools";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 import { getErrorMessage } from "@/common/utils/errors";
+import { formatSendMessageError } from "@/common/utils/errors/formatSendError";
 
 const OTHER_VALUE = "__other__";
 
@@ -339,7 +340,7 @@ export function AskUserQuestionToolCall(props: {
         toolCallId: props.toolCallId,
         answers,
       })
-      .then((result) => {
+      .then(async (result) => {
         if (!result.success) {
           setSubmitError(result.error);
           return;
@@ -347,11 +348,29 @@ export function AskUserQuestionToolCall(props: {
 
         // If the stream was interrupted (e.g. app restart), explicitly resume using
         // the latest persisted send options for this workspace.
-        void api.workspace.setAutoRetryEnabled?.({ workspaceId, enabled: true });
-        void api.workspace.resumeStream({
+        const enableResult = await api.workspace.setAutoRetryEnabled?.({
+          workspaceId,
+          enabled: true,
+        });
+        if (enableResult && !enableResult.success) {
+          setSubmitError(enableResult.error);
+          return;
+        }
+
+        const resumeResult = await api.workspace.resumeStream({
           workspaceId,
           options: getSendOptionsFromStorage(workspaceId),
         });
+        if (!resumeResult.success) {
+          const formatted = formatSendMessageError(resumeResult.error);
+          const detail = formatted.resolutionHint
+            ? `${formatted.message} ${formatted.resolutionHint}`
+            : formatted.message;
+          setSubmitError(detail);
+
+          // Keep retry preference consistent when resume fails before stream events.
+          void api.workspace.setAutoRetryEnabled?.({ workspaceId, enabled: false });
+        }
       })
       .catch((error) => {
         const errorMessage = getErrorMessage(error);

@@ -61,12 +61,17 @@ function hasReviews(meta: unknown): meta is MetadataWithReviews {
  * - Single agent-skill invocation → shows rawCommand (/{skill})
  * - Multiple messages → shows all actual message texts
  */
+interface QueuedMessageInternalOptions {
+  synthetic?: boolean;
+}
+
 export class MessageQueue {
   private messages: string[] = [];
   private firstMuxMetadata?: unknown;
   private latestOptions?: SendMessageOptions;
   private accumulatedFileParts: FilePart[] = [];
   private dedupeKeys: Set<string> = new Set<string>();
+  private queuedInternalSynthetic = false;
 
   /**
    * Check if the queue currently contains a compaction request.
@@ -82,8 +87,12 @@ export class MessageQueue {
    *
    * @throws Error if trying to add a compaction request when queue already has messages
    */
-  add(message: string, options?: SendMessageOptions & { fileParts?: FilePart[] }): void {
-    this.addInternal(message, options);
+  add(
+    message: string,
+    options?: SendMessageOptions & { fileParts?: FilePart[] },
+    internal?: QueuedMessageInternalOptions
+  ): void {
+    this.addInternal(message, options, internal);
   }
 
   /**
@@ -93,13 +102,14 @@ export class MessageQueue {
   addOnce(
     message: string,
     options?: SendMessageOptions & { fileParts?: FilePart[] },
-    dedupeKey?: string
+    dedupeKey?: string,
+    internal?: QueuedMessageInternalOptions
   ): boolean {
     if (dedupeKey !== undefined && this.dedupeKeys.has(dedupeKey)) {
       return false;
     }
 
-    const didAdd = this.addInternal(message, options);
+    const didAdd = this.addInternal(message, options, internal);
     if (didAdd && dedupeKey !== undefined) {
       this.dedupeKeys.add(dedupeKey);
     }
@@ -108,7 +118,8 @@ export class MessageQueue {
 
   private addInternal(
     message: string,
-    options?: SendMessageOptions & { fileParts?: FilePart[] }
+    options?: SendMessageOptions & { fileParts?: FilePart[] },
+    internal?: QueuedMessageInternalOptions
   ): boolean {
     const trimmedMessage = message.trim();
     const hasFiles = options?.fileParts && options.fileParts.length > 0;
@@ -168,6 +179,9 @@ export class MessageQueue {
       }
     }
 
+    if (internal?.synthetic === true) {
+      this.queuedInternalSynthetic = true;
+    }
     return true;
   }
 
@@ -222,6 +236,7 @@ export class MessageQueue {
   produceMessage(): {
     message: string;
     options?: SendMessageOptions & { fileParts?: FilePart[] };
+    internal?: QueuedMessageInternalOptions;
   } {
     const joinedMessages = this.messages.join("\n");
     // First metadata takes precedence (preserves compaction + agent-skill invocations)
@@ -237,7 +252,9 @@ export class MessageQueue {
         }
       : undefined;
 
-    return { message: joinedMessages, options };
+    const internal = this.queuedInternalSynthetic ? { synthetic: true } : undefined;
+
+    return { message: joinedMessages, options, internal };
   }
 
   /**
@@ -249,6 +266,7 @@ export class MessageQueue {
     this.latestOptions = undefined;
     this.accumulatedFileParts = [];
     this.dedupeKeys.clear();
+    this.queuedInternalSynthetic = false;
   }
 
   /**

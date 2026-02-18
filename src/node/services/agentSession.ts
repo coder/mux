@@ -2909,9 +2909,13 @@ export class AgentSession {
     await new Promise<void>((resolve) => this.idleWaiters.push(resolve));
   }
 
-  queueMessage(message: string, options?: SendMessageOptions & { fileParts?: FilePart[] }): void {
+  queueMessage(
+    message: string,
+    options?: SendMessageOptions & { fileParts?: FilePart[] },
+    internal?: { synthetic?: boolean }
+  ): void {
     this.assertNotDisposed("queueMessage");
-    this.messageQueue.add(message, options);
+    this.messageQueue.add(message, options, internal);
     this.emitQueuedMessageChanged();
     // Signal to bash_output that it should return early to process the queued message
     this.backgroundProcessManager.setMessageQueued(this.workspaceId, true);
@@ -2974,7 +2978,7 @@ export class AgentSession {
     this.backgroundProcessManager.setMessageQueued(this.workspaceId, false);
 
     if (!this.messageQueue.isEmpty()) {
-      const { message, options } = this.messageQueue.produceMessage();
+      const { message, options, internal } = this.messageQueue.produceMessage();
       this.messageQueue.clear();
       this.emitQueuedMessageChanged();
 
@@ -2982,7 +2986,7 @@ export class AgentSession {
       // incoming messages from bypassing the queue during the await gap.
       this.setTurnPhase(TurnPhase.PREPARING);
 
-      void this.sendMessage(message, options)
+      void this.sendMessage(message, options, internal)
         .then((result) => {
           // If sendMessage fails before it can start streaming, ensure we don't
           // leave the session stuck in PREPARING.
