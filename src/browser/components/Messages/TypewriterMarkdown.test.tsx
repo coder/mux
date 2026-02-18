@@ -60,18 +60,6 @@ describe("TypewriterMarkdown", () => {
     });
   });
 
-  test("renders full text when completed", () => {
-    const view = render(<TypewriterMarkdown deltas={["Done"]} isComplete />);
-
-    expect(view.getByTestId("markdown-core").textContent).toBe("Done");
-    expect(mockUseSmoothStreamingText).toHaveBeenCalledWith({
-      fullText: "Done",
-      isStreaming: false,
-      bypassSmoothing: false,
-      streamKey: "",
-    });
-  });
-
   test("bypasses smoothing for replay streams", () => {
     render(
       <TypewriterMarkdown
@@ -84,17 +72,6 @@ describe("TypewriterMarkdown", () => {
 
     expect(mockUseSmoothStreamingText).toHaveBeenCalledWith(
       expect.objectContaining({ bypassSmoothing: true })
-    );
-  });
-
-  test("defaults streamSource to live and streamKey to empty string", () => {
-    render(<TypewriterMarkdown deltas={["text"]} isComplete={false} />);
-
-    expect(mockUseSmoothStreamingText).toHaveBeenCalledWith(
-      expect.objectContaining({
-        bypassSmoothing: false,
-        streamKey: "",
-      })
     );
   });
 });

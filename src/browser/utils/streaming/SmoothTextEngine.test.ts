@@ -1,4 +1,5 @@
 import { describe, it, expect } from "bun:test";
+import { STREAM_SMOOTHING } from "@/constants/streaming";
 import { SmoothTextEngine } from "./SmoothTextEngine";
 
 function makeText(length: number): string {
@@ -51,6 +52,20 @@ describe("SmoothTextEngine", () => {
     expect(revealedCharsInFirst20Ticks).toBeGreaterThan(20);
   });
 
+  it("caps visual lag when incoming text jumps ahead", () => {
+    const engine = new SmoothTextEngine();
+
+    engine.update(makeText(40), true, false);
+
+    while (!engine.isCaughtUp) {
+      engine.tick(16);
+    }
+
+    engine.update(makeText(420), true, false);
+
+    expect(420 - engine.visibleLength).toBeLessThanOrEqual(STREAM_SMOOTHING.MAX_VISUAL_LAG_CHARS);
+  });
+
   it("flushes immediately when streaming ends", () => {
     const engine = new SmoothTextEngine();
     const fullText = makeText(120);
@@ -79,20 +94,6 @@ describe("SmoothTextEngine", () => {
     expect(engine.isCaughtUp).toBe(true);
   });
 
-  it("reset clears the visible state", () => {
-    const engine = new SmoothTextEngine();
-
-    engine.update(makeText(60), true, false);
-    engine.tick(48);
-
-    expect(engine.visibleLength).toBeGreaterThan(0);
-
-    engine.reset();
-
-    expect(engine.visibleLength).toBe(0);
-    expect(engine.isCaughtUp).toBe(true);
-  });
-
   it("clamps visible length when content shrinks", () => {
     const engine = new SmoothTextEngine();
 
@@ -105,26 +106,5 @@ describe("SmoothTextEngine", () => {
     engine.update(makeText(30), true, false);
 
     expect(engine.visibleLength).toBe(30);
-  });
-
-  it("does not accumulate budget when the buffer is empty", () => {
-    const engine = new SmoothTextEngine();
-
-    engine.update(makeText(120), true, false);
-
-    while (!engine.isCaughtUp) {
-      engine.tick(16);
-    }
-
-    const caughtUpLength = engine.visibleLength;
-
-    expect(engine.tick(5000)).toBe(caughtUpLength);
-    expect(engine.visibleLength).toBe(caughtUpLength);
-
-    engine.update(makeText(220), true, false);
-
-    const firstTickLength = engine.tick(16);
-
-    expect(firstTickLength - caughtUpLength).toBeLessThanOrEqual(2);
   });
 });

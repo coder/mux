@@ -1,9 +1,17 @@
 import { STREAM_SMOOTHING } from "@/constants/streaming";
 
-const ADAPTIVE_BACKLOG_RATE = 0.25;
-
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function getAdaptiveRate(backlog: number): number {
+  const backlogPressure = clamp(backlog / STREAM_SMOOTHING.CATCHUP_BACKLOG_CHARS, 0, 1);
+
+  const targetRate =
+    STREAM_SMOOTHING.BASE_CHARS_PER_SEC +
+    backlogPressure * (STREAM_SMOOTHING.MAX_CHARS_PER_SEC - STREAM_SMOOTHING.BASE_CHARS_PER_SEC);
+
+  return clamp(targetRate, STREAM_SMOOTHING.MIN_CHARS_PER_SEC, STREAM_SMOOTHING.MAX_CHARS_PER_SEC);
 }
 
 /**
@@ -19,7 +27,19 @@ export class SmoothTextEngine {
   private isStreaming = false;
   private bypassSmoothing = false;
 
-  constructor() {}
+  private enforceMaxVisualLag(): void {
+    if (!this.isStreaming || this.bypassSmoothing) {
+      return;
+    }
+
+    // Keep visible output near the ingested stream so interruption doesn't reveal
+    // a large hidden tail all at once.
+    const minVisibleLength = Math.max(0, this.fullLength - STREAM_SMOOTHING.MAX_VISUAL_LAG_CHARS);
+    if (this.visibleLengthValue < minVisibleLength) {
+      this.visibleLengthValue = minVisibleLength;
+      this.charBudget = 0;
+    }
+  }
 
   /**
    * Update the ingested text and stream state.
@@ -37,7 +57,10 @@ export class SmoothTextEngine {
     if (!isStreaming || bypassSmoothing) {
       this.visibleLengthValue = this.fullLength;
       this.charBudget = 0;
+      return;
     }
+
+    this.enforceMaxVisualLag();
   }
 
   /**
@@ -62,11 +85,7 @@ export class SmoothTextEngine {
     }
 
     const backlog = this.fullLength - this.visibleLengthValue;
-    const adaptiveRate = clamp(
-      STREAM_SMOOTHING.BASE_CHARS_PER_SEC + backlog * ADAPTIVE_BACKLOG_RATE,
-      STREAM_SMOOTHING.MIN_CHARS_PER_SEC,
-      STREAM_SMOOTHING.MAX_CHARS_PER_SEC
-    );
+    const adaptiveRate = getAdaptiveRate(backlog);
 
     this.charBudget += adaptiveRate * (dtMs / 1000);
 

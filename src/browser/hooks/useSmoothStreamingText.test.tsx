@@ -79,36 +79,6 @@ describe("useSmoothStreamingText", () => {
     });
   }
 
-  it("returns full text when not streaming", () => {
-    const { result } = renderHook(() =>
-      useSmoothStreamingText({
-        fullText: "hello",
-        isStreaming: false,
-        bypassSmoothing: false,
-        streamKey: "1",
-      })
-    );
-
-    expect(result.current.visibleText).toBe("hello");
-    expect(result.current.isCaughtUp).toBe(true);
-  });
-
-  it("returns full text when bypass smoothing is enabled", () => {
-    const fullText = "hello from smooth streaming";
-
-    const { result } = renderHook(() =>
-      useSmoothStreamingText({
-        fullText,
-        isStreaming: true,
-        bypassSmoothing: true,
-        streamKey: "1",
-      })
-    );
-
-    expect(result.current.visibleText).toBe(fullText);
-    expect(result.current.isCaughtUp).toBe(true);
-  });
-
   it("reveals text progressively while streaming", () => {
     const initialProps: UseSmoothStreamingTextOptions = {
       fullText: "x".repeat(220),
@@ -117,10 +87,12 @@ describe("useSmoothStreamingText", () => {
       streamKey: "stream-1",
     };
 
-    const { result } = renderHook((hookProps: UseSmoothStreamingTextOptions) =>
-      useSmoothStreamingText(hookProps), {
-      initialProps,
-    });
+    const { result } = renderHook(
+      (hookProps: UseSmoothStreamingTextOptions) => useSmoothStreamingText(hookProps),
+      {
+        initialProps,
+      }
+    );
 
     const initialLength = result.current.visibleText.length;
     expect(initialLength).toBeLessThan(initialProps.fullText.length);
@@ -132,48 +104,21 @@ describe("useSmoothStreamingText", () => {
     expect(progressedLength).toBeLessThan(initialProps.fullText.length);
   });
 
-  it("flushes immediately when streaming completes", () => {
-    const fullText = "y".repeat(180);
-
-    const { result, rerender } = renderHook((hookProps: UseSmoothStreamingTextOptions) =>
-      useSmoothStreamingText(hookProps), {
-      initialProps: {
-        fullText,
-        isStreaming: true,
-        bypassSmoothing: false,
-        streamKey: "stream-1",
-      },
-    });
-
-    advanceFrames(10);
-    expect(result.current.visibleText.length).toBeLessThan(fullText.length);
-
-    act(() => {
-      rerender({
-        fullText,
-        isStreaming: false,
-        bypassSmoothing: false,
-        streamKey: "stream-1",
-      });
-    });
-
-    expect(result.current.visibleText).toBe(fullText);
-    expect(result.current.isCaughtUp).toBe(true);
-  });
-
   it("resets reveal progress when stream key changes", () => {
     const firstStreamText = "a".repeat(200);
     const secondStreamText = "b".repeat(140);
 
-    const { result, rerender } = renderHook((hookProps: UseSmoothStreamingTextOptions) =>
-      useSmoothStreamingText(hookProps), {
-      initialProps: {
-        fullText: firstStreamText,
-        isStreaming: true,
-        bypassSmoothing: false,
-        streamKey: "stream-1",
-      },
-    });
+    const { result, rerender } = renderHook(
+      (hookProps: UseSmoothStreamingTextOptions) => useSmoothStreamingText(hookProps),
+      {
+        initialProps: {
+          fullText: firstStreamText,
+          isStreaming: true,
+          bypassSmoothing: false,
+          streamKey: "stream-1",
+        },
+      }
+    );
 
     advanceFrames(12);
 

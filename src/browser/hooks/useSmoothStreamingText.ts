@@ -86,7 +86,11 @@ export function useSmoothStreamingText(
     };
   }
 
-  const visiblePrefixLength = Math.min(visibleLength, engine.visibleLength, options.fullText.length);
+  const visiblePrefixLength = Math.min(
+    visibleLength,
+    engine.visibleLength,
+    options.fullText.length
+  );
 
   return {
     visibleText: options.fullText.slice(0, visiblePrefixLength),
