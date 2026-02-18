@@ -398,6 +398,7 @@ export class AgentSession {
     mode?: OnChatMode
   ): Promise<void> {
     let replayMode: "full" | "since" | "live" = "full";
+    let hasOlderHistory: boolean | undefined;
     let serverCursor: OnChatCursor | undefined;
     let emittedReplayMessages = false;
 
@@ -556,6 +557,18 @@ export class AgentSession {
           afterTimestamp = undefined;
         }
 
+        if (replayMode === "full") {
+          if (oldestHistorySequence === undefined) {
+            // Empty full replay means there is no older page to request.
+            hasOlderHistory = false;
+          } else {
+            hasOlderHistory = await this.historyService.hasHistoryBeforeSequence(
+              this.workspaceId,
+              oldestHistorySequence
+            );
+          }
+        }
+
         for (const message of history) {
           // Skip the placeholder message if we have a partial with the same historySequence.
           // The placeholder has empty parts; the partial has the actual content.
@@ -674,6 +687,7 @@ export class AgentSession {
         message: {
           type: "caught-up",
           replay: replayMode,
+          ...(hasOlderHistory !== undefined ? { hasOlderHistory } : {}),
           cursor: serverCursor,
         },
       });

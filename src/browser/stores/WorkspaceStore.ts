@@ -1153,7 +1153,8 @@ export class WorkspaceStore {
   }
 
   private deriveHistoryPaginationState(
-    aggregator: StreamingMessageAggregator
+    aggregator: StreamingMessageAggregator,
+    hasOlderOverride?: boolean
   ): WorkspaceHistoryPaginationState {
     for (const message of aggregator.getAllMessages()) {
       const historySequence = message.metadata?.historySequence;
@@ -1165,9 +1166,9 @@ export class WorkspaceStore {
         continue;
       }
 
-      // historySequence is zero-based: sequence 0 is the first row, so any
-      // sequence > 0 means there may be older rows to load.
-      const hasOlder = historySequence > 0;
+      // The server's caught-up payload is authoritative for full replays because
+      // display-only messages can skip early historySequence rows.
+      const hasOlder = hasOlderOverride ?? historySequence > 0;
       return {
         nextCursor: hasOlder
           ? {
@@ -1176,6 +1177,14 @@ export class WorkspaceStore {
             }
           : null,
         hasOlder,
+        loading: false,
+      };
+    }
+
+    if (hasOlderOverride !== undefined) {
+      return {
+        nextCursor: null,
+        hasOlder: hasOlderOverride,
         loading: false,
       };
     }
@@ -2654,7 +2663,18 @@ export class WorkspaceStore {
       // Done replaying buffered events
       transient.replayingHistory = false;
 
-      this.historyPagination.set(workspaceId, this.deriveHistoryPaginationState(aggregator));
+      if (replay === "since" && data.hasOlderHistory === undefined) {
+        // Since reconnects keep the pre-disconnect pagination state. The server
+        // omits hasOlderHistory for this mode because the client already knows it.
+        if (!this.historyPagination.has(workspaceId)) {
+          this.historyPagination.set(workspaceId, createInitialHistoryPaginationState());
+        }
+      } else {
+        this.historyPagination.set(
+          workspaceId,
+          this.deriveHistoryPaginationState(aggregator, data.hasOlderHistory)
+        );
+      }
       // Mark as caught up
       transient.caughtUp = true;
       this.states.bump(workspaceId);

@@ -666,10 +666,14 @@ export class HistoryService {
     return oldest;
   }
 
-  private async hasHistoryBeforeSequence(
+  async hasHistoryBeforeSequence(
     workspaceId: string,
     beforeHistorySequence: number
   ): Promise<boolean> {
+    assert(
+      typeof workspaceId === "string" && workspaceId.trim().length > 0,
+      "workspaceId is required"
+    );
     assert(
       isNonNegativeInteger(beforeHistorySequence),
       "hasHistoryBeforeSequence requires a non-negative integer"
