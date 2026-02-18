@@ -68,8 +68,9 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   REVIEW_CURSOR_UP: "Line cursor up (immersive)",
   REVIEW_CURSOR_JUMP_DOWN: "Jump 10 lines down (immersive)",
   REVIEW_CURSOR_JUMP_UP: "Jump 10 lines up (immersive)",
-  REVIEW_QUICK_LIKE: "Add comment (immersive)",
+  REVIEW_QUICK_LIKE: "Quick like (immersive)",
   REVIEW_QUICK_DISLIKE: "Quick dislike (immersive)",
+  REVIEW_COMMENT: "Add comment (immersive)",
   // Easter egg keybind; intentionally omitted from KEYBIND_GROUPS.
   TOGGLE_POWER_MODE: "",
 };
@@ -162,6 +163,7 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
       "REVIEW_PREV_HUNK",
       "REVIEW_QUICK_LIKE",
       "REVIEW_QUICK_DISLIKE",
+      "REVIEW_COMMENT",
     ],
   },
   {

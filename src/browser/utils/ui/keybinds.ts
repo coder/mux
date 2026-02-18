@@ -427,16 +427,16 @@ export const KEYBINDS = {
   TOGGLE_REVIEW_IMMERSIVE: { key: "i", shift: true },
 
   /** Navigate to next file in immersive review */
-  REVIEW_NEXT_FILE: { key: "n" },
+  REVIEW_NEXT_FILE: { key: "l" },
 
   /** Navigate to previous file in immersive review */
-  REVIEW_PREV_FILE: { key: "p" },
+  REVIEW_PREV_FILE: { key: "h" },
 
   /** Navigate to next hunk in immersive review */
-  REVIEW_NEXT_HUNK: { key: "k" },
+  REVIEW_NEXT_HUNK: { key: "j" },
 
   /** Navigate to previous hunk in immersive review */
-  REVIEW_PREV_HUNK: { key: "j" },
+  REVIEW_PREV_HUNK: { key: "k" },
 
   /** Move line cursor down in immersive review */
   REVIEW_CURSOR_DOWN: { key: "ArrowDown", allowShift: true },
@@ -450,11 +450,14 @@ export const KEYBINDS = {
   /** Jump line cursor 10 lines up in immersive review */
   REVIEW_CURSOR_JUMP_UP: { key: "ArrowUp", ctrl: true, allowShift: true },
 
-  /** Add comment in immersive review (keeps legacy keybind ID to minimize churn) */
+  /** Quick "I like this" feedback in immersive review */
   REVIEW_QUICK_LIKE: { key: "l", shift: true },
 
   /** Quick "I don't like this" feedback in immersive review */
   REVIEW_QUICK_DISLIKE: { key: "d", shift: true },
+
+  /** Add comment in immersive review */
+  REVIEW_COMMENT: { key: "c", shift: true },
 
   TOGGLE_POWER_MODE: { key: "F12", shift: true },
 } as const;

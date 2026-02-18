@@ -499,6 +499,13 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   // Keyboard line cursor state within the whole rendered file.
   const [activeLineIndex, setActiveLineIndex] = useState<number | null>(null);
   const [selectedLineRange, setSelectedLineRange] = useState<SelectedLineRange | null>(null);
+  const [boundaryToast, setBoundaryToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!boundaryToast) return;
+    const timer = setTimeout(() => setBoundaryToast(null), 2500);
+    return () => clearTimeout(timer);
+  }, [boundaryToast]);
 
   useEffect(() => {
     if (!inlineComposerRequest) {
@@ -611,7 +618,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         nextIdx = direction === 1 ? 0 : currentFileHunks.length - 1;
       } else {
         nextIdx = currentIdx + direction;
-        if (nextIdx < 0 || nextIdx >= currentFileHunks.length) return;
+        if (nextIdx < 0 || nextIdx >= currentFileHunks.length) {
+          setBoundaryToast("No more hunks in this file — use H / L to move between files");
+          return;
+        }
       }
 
       hunkJumpRef.current = true;
@@ -744,7 +754,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         return;
       }
 
-      // n/p: next/prev file
+      // L/H: next/prev file
       if (matchesKeybind(e, KEYBINDS.REVIEW_NEXT_FILE)) {
         e.preventDefault();
         navigateFile(1);
@@ -756,7 +766,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         return;
       }
 
-      // k/j: next/prev hunk
+      // J/K: next/prev hunk
       if (matchesKeybind(e, KEYBINDS.REVIEW_NEXT_HUNK)) {
         e.preventDefault();
         navigateHunk(1);
@@ -790,10 +800,17 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         return;
       }
 
-      // Shift+L: add comment
-      if (matchesKeybind(e, KEYBINDS.REVIEW_QUICK_LIKE)) {
+      // Shift+C: add comment
+      if (matchesKeybind(e, KEYBINDS.REVIEW_COMMENT)) {
         e.preventDefault();
         openComposer("");
+        return;
+      }
+
+      // Shift+L: quick like
+      if (matchesKeybind(e, KEYBINDS.REVIEW_QUICK_LIKE)) {
+        e.preventDefault();
+        openComposer("I like this change");
         return;
       }
 
@@ -823,9 +840,14 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     onToggleRead,
   ]);
 
+  const previousContentRef = useRef(overlayData.content);
+
   // Keep the active line visible while moving with keyboard shortcuts, without
   // forcing the full diff tree to re-render on every cursor move.
   useEffect(() => {
+    const contentChanged = previousContentRef.current !== overlayData.content;
+    previousContentRef.current = overlayData.content;
+
     const previousLineElement = highlightedLineElementRef.current;
     if (previousLineElement) {
       previousLineElement.style.outline = "";
@@ -848,7 +870,9 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     lineElement.style.outlineOffset = "-1px";
     highlightedLineElementRef.current = lineElement;
 
-    const block = hunkJumpRef.current ? "center" : "nearest";
+    // Re-center when content changes (e.g. full file content loaded after initial
+    // fallback-hunk render) to prevent the target hunk from jumping to the viewport edge.
+    const block = hunkJumpRef.current || contentChanged ? "center" : "nearest";
     hunkJumpRef.current = false;
 
     lineElement.scrollIntoView({ behavior: "auto", block });
@@ -1125,17 +1149,25 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         </aside>
       </div>
 
+      {/* Boundary toast */}
+      {boundaryToast && (
+        <div className="pointer-events-none absolute right-0 bottom-12 left-0 z-10 flex justify-center">
+          <div className="bg-background-secondary text-muted border-border-light pointer-events-auto rounded-md border px-3 py-1.5 text-xs shadow-md">
+            {boundaryToast}
+          </div>
+        </div>
+      )}
+
       {/* Shortcut bar */}
       <div className="border-border-light bg-dark flex flex-wrap items-center justify-center gap-3 border-t px-3 py-1.5">
         <KeycapGroup keys={["Esc"]} label="back" />
-        <KeycapGroup keys={["n", "p"]} label="file" />
-        <KeycapGroup keys={["k", "j"]} label="hunk" />
+        <KeycapGroup keys={["H", "L"]} label="file" />
+        <KeycapGroup keys={["J", "K"]} label="hunk" />
         <KeycapGroup keys={["↑", "↓"]} label="line" />
-        <KeycapGroup keys={["Shift", "↑", "↓"]} label="select" />
-        <KeycapGroup keys={["Ctrl", "↑", "↓"]} label="jump 10" />
+        <KeycapGroup keys={["Shift", "↑↓"]} label="select" />
         <KeycapGroup keys={["m"]} label="read" />
-        <KeycapGroup keys={["Shift", "l"]} label="comment" />
-        <KeycapGroup keys={["Shift", "d"]} label="dislike" />
+        <KeycapGroup keys={["⇧C"]} label="comment" />
+        <KeycapGroup keys={["⇧L", "⇧D"]} label="like / dislike" />
         <KeycapGroup keys={["Enter"]} label="submit" />
       </div>
     </div>
