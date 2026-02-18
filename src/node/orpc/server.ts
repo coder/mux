@@ -138,30 +138,6 @@ function getFirstHeaderValue(req: OriginValidationRequest, headerName: string): 
   return firstValue?.length ? firstValue : null;
 }
 
-function getHeaderValues(req: OriginValidationRequest, headerName: string): string[] {
-  const rawValue = req.headers[headerName.toLowerCase()];
-  const values = Array.isArray(rawValue) ? rawValue : [rawValue];
-
-  const parsed: string[] = [];
-
-  for (const value of values) {
-    if (typeof value !== "string") {
-      continue;
-    }
-
-    for (const part of value.split(",")) {
-      const trimmed = part.trim();
-      if (trimmed.length === 0 || parsed.includes(trimmed)) {
-        continue;
-      }
-
-      parsed.push(trimmed);
-    }
-  }
-
-  return parsed;
-}
-
 function normalizeProtocol(rawProtocol: string): "http" | "https" | null {
   const normalized = rawProtocol.trim().toLowerCase().replace(/:$/, "");
   if (normalized === "http" || normalized === "https") {
@@ -199,20 +175,20 @@ function inferProtocol(req: OriginValidationRequest): "http" | "https" {
 
 function getExpectedOrigins(req: OriginValidationRequest): string[] {
   const hosts = [
-    ...getHeaderValues(req, "x-forwarded-host"),
-    ...getHeaderValues(req, "host"),
-  ].filter((value, index, values) => values.indexOf(value) === index);
+    getFirstHeaderValue(req, "x-forwarded-host"),
+    getFirstHeaderValue(req, "host"),
+  ].filter(
+    (value, index, values): value is string => value !== null && values.indexOf(value) === index
+  );
 
   if (hosts.length === 0) {
     return [];
   }
 
-  const protocols = getHeaderValues(req, "x-forwarded-proto")
-    .map((value) => normalizeProtocol(value))
-    .filter((value): value is "http" | "https" => value !== null);
-  if (protocols.length === 0) {
-    protocols.push(inferProtocol(req));
-  }
+  // Trust only the first X-Forwarded-Proto hop. Falling back to inferred protocol is
+  // only safe when the header is absent or invalid.
+  const forwardedProtocol = normalizeProtocol(getFirstHeaderValue(req, "x-forwarded-proto") ?? "");
+  const protocols = forwardedProtocol === null ? [inferProtocol(req)] : [forwardedProtocol];
 
   const expectedOrigins: string[] = [];
   for (const protocol of protocols) {
