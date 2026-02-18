@@ -840,11 +840,12 @@ export class StreamingMessageAggregator {
    * @param messages - Historical messages to load
    * @param hasActiveStream - Whether there's an active stream in buffered events (for reconnection scenario)
    * @param opts.mode - "replace" clears existing state first, "append" merges into existing state
+   * @param opts.skipDerivedState - Skip replaying messages into derived state when appending older history
    */
   loadHistoricalMessages(
     messages: MuxMessage[],
     hasActiveStream = false,
-    opts?: { mode?: "replace" | "append" }
+    opts?: { mode?: "replace" | "append"; skipDerivedState?: boolean }
   ): void {
     const mode = opts?.mode ?? "replace";
 
@@ -904,22 +905,24 @@ export class StreamingMessageAggregator {
       (a, b) => (a.metadata?.historySequence ?? 0) - (b.metadata?.historySequence ?? 0)
     );
 
-    // Replay historical messages in order to reconstruct derived state
-    for (const message of chronologicalMessages) {
-      this.maybeTrackLoadedSkillFromAgentSkillSnapshot(message.metadata?.agentSkillSnapshot);
+    if (!opts?.skipDerivedState) {
+      // Replay historical messages in order to reconstruct derived state
+      for (const message of chronologicalMessages) {
+        this.maybeTrackLoadedSkillFromAgentSkillSnapshot(message.metadata?.agentSkillSnapshot);
 
-      if (message.role === "user") {
-        // Mirror live behavior: clear stream-scoped state on new user turn
-        // but keep persisted status for fallback on reload.
-        this.currentTodos = [];
-        this.agentStatus = undefined;
-        continue;
-      }
+        if (message.role === "user") {
+          // Mirror live behavior: clear stream-scoped state on new user turn
+          // but keep persisted status for fallback on reload.
+          this.currentTodos = [];
+          this.agentStatus = undefined;
+          continue;
+        }
 
-      if (message.role === "assistant") {
-        for (const part of message.parts) {
-          if (isDynamicToolPart(part) && part.state === "output-available") {
-            this.processToolResult(part.toolName, part.input, part.output, context);
+        if (message.role === "assistant") {
+          for (const part of message.parts) {
+            if (isDynamicToolPart(part) && part.state === "output-available") {
+              this.processToolResult(part.toolName, part.input, part.output, context);
+            }
           }
         }
       }

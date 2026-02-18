@@ -1148,7 +1148,7 @@ export class WorkspaceStore {
       if (
         typeof historySequence !== "number" ||
         !Number.isInteger(historySequence) ||
-        historySequence <= 0
+        historySequence < 0
       ) {
         continue;
       }
@@ -1455,7 +1455,10 @@ export class WorkspaceStore {
       }
 
       if (historicalMessages.length > 0) {
-        aggregator.loadHistoricalMessages(historicalMessages, false, { mode: "append" });
+        aggregator.loadHistoricalMessages(historicalMessages, false, {
+          mode: "append",
+          skipDerivedState: true,
+        });
         this.consumerManager.scheduleCalculation(workspaceId, aggregator);
       }
 
