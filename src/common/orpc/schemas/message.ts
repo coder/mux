@@ -130,6 +130,7 @@ export const MuxMessageSchema = z.object({
       // Durable boundary marker for compaction summaries.
       compactionBoundary: z.boolean().optional(),
       toolPolicy: z.any().optional(),
+      disableWorkspaceAgents: z.boolean().optional(),
       agentId: AgentIdSchema.optional().catch(undefined),
       partial: z.boolean().optional(),
       synthetic: z.boolean().optional(),

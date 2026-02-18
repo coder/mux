@@ -15,13 +15,17 @@ import { Ok } from "@/common/types/result";
 
 interface SessionBundle {
   session: AgentSession;
+  config: Config;
   historyService: HistoryService;
+  aiService: AIService;
+  initStateManager: InitStateManager;
+  backgroundProcessManager: BackgroundProcessManager;
   events: WorkspaceChatMessage[];
   cleanup: () => Promise<void>;
 }
 
 async function createSessionBundle(workspaceId: string): Promise<SessionBundle> {
-  const { historyService, cleanup } = await createTestHistoryService();
+  const { historyService, config, cleanup } = await createTestHistoryService();
 
   const workspaceMetadata: WorkspaceMetadata = {
     id: workspaceId,
@@ -61,11 +65,6 @@ async function createSessionBundle(workspaceId: string): Promise<SessionBundle> 
     setMessageQueued: mock(() => undefined),
   } as unknown as BackgroundProcessManager;
 
-  const config: Config = {
-    srcDir: "/tmp",
-    getSessionDir: mock(() => "/tmp"),
-  } as unknown as Config;
-
   const session = new AgentSession({
     workspaceId,
     config,
@@ -80,7 +79,16 @@ async function createSessionBundle(workspaceId: string): Promise<SessionBundle> 
     events.push(message);
   });
 
-  return { session, historyService, events, cleanup };
+  return {
+    session,
+    config,
+    historyService,
+    aiService,
+    initStateManager,
+    backgroundProcessManager,
+    events,
+    cleanup,
+  };
 }
 
 describe("AgentSession startup auto-retry recovery", () => {
@@ -105,6 +113,7 @@ describe("AgentSession startup auto-retry recovery", () => {
       createMuxMessage("user-1", "user", "Hello from interrupted turn", {
         timestamp: Date.now(),
         toolPolicy: [{ regex_match: ".*", action: "disable" }],
+        disableWorkspaceAgents: true,
       })
     );
     expect(appendResult.success).toBe(true);
@@ -128,8 +137,59 @@ describe("AgentSession startup auto-retry recovery", () => {
     expect(retryOptions.model).toBe("anthropic:claude-sonnet-4-5");
     expect(retryOptions.agentId).toBe("exec");
     expect(retryOptions.toolPolicy).toEqual([{ regex_match: ".*", action: "disable" }]);
+    expect(retryOptions.disableWorkspaceAgents).toBe(true);
 
     session.dispose();
+  });
+
+  test("respects persisted auto-retry opt-out across restart", async () => {
+    const workspaceId = "startup-retry-opt-out";
+    const {
+      session: firstSession,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+      cleanup,
+    } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const appendResult = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-1", "user", "Interrupted before restart", {
+        timestamp: Date.now(),
+      })
+    );
+    expect(appendResult.success).toBe(true);
+
+    await firstSession.setAutoRetryEnabled(false);
+    firstSession.dispose();
+
+    const secondSession = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const events: WorkspaceChatMessage[] = [];
+    secondSession.onChatEvent(({ message }) => {
+      events.push(message);
+    });
+
+    secondSession.ensureStartupAutoRetryCheck();
+
+    const startupCheckPromise = (
+      secondSession as unknown as { startupAutoRetryCheckPromise: Promise<void> | null }
+    ).startupAutoRetryCheckPromise;
+    await startupCheckPromise;
+
+    expect(events.some((event) => event.type === "auto-retry-scheduled")).toBe(false);
+
+    secondSession.dispose();
   });
 
   test("does not schedule startup auto-retry while ask_user_question is waiting", async () => {

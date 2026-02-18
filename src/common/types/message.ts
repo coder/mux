@@ -401,6 +401,7 @@ export interface MuxMetadata {
    */
   compactionBoundary?: boolean;
   toolPolicy?: ToolPolicy; // Tool policy active when this message was sent (user messages only)
+  disableWorkspaceAgents?: boolean; // Whether workspace-local agent files were disabled for this user turn
   agentId?: string; // Agent id active when this message was sent (assistant messages only)
   cmuxMetadata?: MuxMessageMetadata; // Command metadata persisted for legacy message formats
   muxMetadata?: MuxMessageMetadata; // Command metadata used by both frontend and backend message flows

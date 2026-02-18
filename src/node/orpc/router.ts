@@ -2587,8 +2587,8 @@ export const router = (authToken?: string) => {
       setAutoRetryEnabled: t
         .input(schemas.workspace.setAutoRetryEnabled.input)
         .output(schemas.workspace.setAutoRetryEnabled.output)
-        .handler(({ context, input }) => {
-          const result = context.workspaceService.setAutoRetryEnabled(
+        .handler(async ({ context, input }) => {
+          const result = await context.workspaceService.setAutoRetryEnabled(
             input.workspaceId,
             input.enabled
           );

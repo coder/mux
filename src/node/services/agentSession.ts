@@ -2,7 +2,7 @@ import assert from "@/common/utils/assert";
 import { EventEmitter } from "events";
 import * as path from "path";
 import { createHash } from "crypto";
-import { readFile } from "fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "fs/promises";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import YAML from "yaml";
 import { PlatformPaths } from "@/common/utils/paths";
@@ -165,6 +165,7 @@ function isCompactionRequestMetadata(meta: unknown): meta is CompactionRequestMe
 }
 
 const MAX_AGENT_SKILL_SNAPSHOT_CHARS = 50_000;
+const AUTO_RETRY_PREFERENCE_FILE = "auto-retry-preference.json";
 
 export interface AgentSessionChatEvent {
   workspaceId: string;
@@ -237,6 +238,7 @@ export class AgentSession {
   /** Startup recovery should run once per session to avoid duplicate retry timers on reconnect. */
   private startupAutoRetryCheckScheduled = false;
   private startupAutoRetryCheckPromise: Promise<void> | null = null;
+  private autoRetryEnabledPreference: boolean | null = null;
 
   /** Latest context-usage snapshot used for on-send compaction checks. */
   private lastUsageState?: AutoCompactionUsageState;
@@ -508,6 +510,76 @@ export class AgentSession {
     }
   }
 
+  private getAutoRetryPreferencePath(): string {
+    return path.join(this.config.getSessionDir(this.workspaceId), AUTO_RETRY_PREFERENCE_FILE);
+  }
+
+  private async loadAutoRetryEnabledPreference(): Promise<boolean> {
+    if (this.autoRetryEnabledPreference !== null) {
+      return this.autoRetryEnabledPreference;
+    }
+
+    const preferencePath = this.getAutoRetryPreferencePath();
+    try {
+      const raw = await readFile(preferencePath, "utf-8");
+      const parsed = JSON.parse(raw) as { enabled?: unknown };
+      const enabled = parsed.enabled !== false;
+      this.autoRetryEnabledPreference = enabled;
+      this.retryManager.setEnabled(enabled);
+      return enabled;
+    } catch (error) {
+      this.autoRetryEnabledPreference = true;
+
+      // Missing preference file is the default path. Only log malformed JSON or IO surprises.
+      const errno =
+        typeof error === "object" && error !== null && "code" in error
+          ? (error as { code?: unknown }).code
+          : undefined;
+      if (errno !== "ENOENT") {
+        log.warn("Failed to load auto-retry preference; defaulting to enabled", {
+          workspaceId: this.workspaceId,
+          error: getErrorMessage(error),
+        });
+      }
+
+      this.retryManager.setEnabled(true);
+      return true;
+    }
+  }
+
+  private async persistAutoRetryEnabledPreference(enabled: boolean): Promise<void> {
+    this.autoRetryEnabledPreference = enabled;
+    const preferencePath = this.getAutoRetryPreferencePath();
+
+    if (enabled) {
+      try {
+        await unlink(preferencePath);
+      } catch (error) {
+        const errno =
+          typeof error === "object" && error !== null && "code" in error
+            ? (error as { code?: unknown }).code
+            : undefined;
+        if (errno !== "ENOENT") {
+          log.debug("Failed to clear auto-retry preference file", {
+            workspaceId: this.workspaceId,
+            error: getErrorMessage(error),
+          });
+        }
+      }
+      return;
+    }
+
+    try {
+      await mkdir(path.dirname(preferencePath), { recursive: true });
+      await writeFile(preferencePath, JSON.stringify({ enabled: false }) + "\n", "utf-8");
+    } catch (error) {
+      log.warn("Failed to persist auto-retry preference", {
+        workspaceId: this.workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
   private isAiStreaming(): boolean {
     const aiService = this.aiService as Partial<Pick<AIService, "isStreaming">>;
     if (typeof aiService.isStreaming !== "function") {
@@ -627,6 +699,7 @@ export class AgentSession {
       coerceThinkingLevel(agentSettings?.thinkingLevel);
 
     const persistedToolPolicy = lastUserMessage?.metadata?.toolPolicy;
+    const persistedDisableWorkspaceAgents = lastUserMessage?.metadata?.disableWorkspaceAgents;
     const lastUserMuxMetadata = lastUserMessage?.metadata?.muxMetadata;
     if (isCompactionRequestMetadata(lastUserMuxMetadata)) {
       const compactionModel =
@@ -644,6 +717,7 @@ export class AgentSession {
             : undefined,
         toolPolicy: [{ regex_match: ".*", action: "disable" }],
         skipAiSettingsPersistence: true,
+        disableWorkspaceAgents: persistedDisableWorkspaceAgents,
       };
     }
 
@@ -657,12 +731,20 @@ export class AgentSession {
     if (persistedToolPolicy) {
       retryOptions.toolPolicy = persistedToolPolicy;
     }
+    if (typeof persistedDisableWorkspaceAgents === "boolean") {
+      retryOptions.disableWorkspaceAgents = persistedDisableWorkspaceAgents;
+    }
 
     return retryOptions;
   }
 
   private async scheduleStartupAutoRetryIfNeeded(): Promise<void> {
     if (this.disposed || this.isBusy() || this.isAiStreaming()) {
+      return;
+    }
+
+    const autoRetryEnabled = await this.loadAutoRetryEnabledPreference();
+    if (!autoRetryEnabled) {
       return;
     }
 
@@ -1132,6 +1214,7 @@ export class AgentSession {
     if (internal?.synthetic !== true) {
       this.retryManager.cancel();
       this.retryManager.setEnabled(true);
+      await this.persistAutoRetryEnabledPreference(true);
     }
 
     assert(typeof message === "string", "sendMessage requires a string message");
@@ -1381,6 +1464,7 @@ export class AgentSession {
       {
         timestamp: Date.now(),
         toolPolicy: typedToolPolicy,
+        disableWorkspaceAgents: options?.disableWorkspaceAgents,
         muxMetadata: typedMuxMetadata, // Pass through frontend metadata as black-box
         // Auto-resume and other system-generated messages are synthetic + UI-visible
         ...(internal?.synthetic && { synthetic: true, uiVisible: true }),
@@ -1620,7 +1704,7 @@ export class AgentSession {
     }
   }
 
-  setAutoRetryEnabled(enabled: boolean): void {
+  async setAutoRetryEnabled(enabled: boolean): Promise<void> {
     this.assertNotDisposed("setAutoRetryEnabled");
     assert(typeof enabled === "boolean", "setAutoRetryEnabled requires a boolean");
 
@@ -1628,6 +1712,8 @@ export class AgentSession {
     if (!enabled) {
       this.retryManager.cancel();
     }
+
+    await this.persistAutoRetryEnabledPreference(enabled);
   }
 
   setAutoCompactionThreshold(threshold: number): void {

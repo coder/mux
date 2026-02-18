@@ -3347,10 +3347,10 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  setAutoRetryEnabled(workspaceId: string, enabled: boolean): Result<void> {
+  async setAutoRetryEnabled(workspaceId: string, enabled: boolean): Promise<Result<void>> {
     try {
       const session = this.getOrCreateSession(workspaceId);
-      session.setAutoRetryEnabled(enabled);
+      await session.setAutoRetryEnabled(enabled);
       return Ok(undefined);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
