@@ -72,53 +72,62 @@ export function useSmoothStreamingText(
   const visibleLengthRef = useRef(visibleLength);
   visibleLengthRef.current = visibleLength;
 
-  // Keep React state in sync when update()/reset() changes visible length
-  // outside the RAF loop (flush, shrink clamp, stream key reset).
+  const rafIdRef = useRef<number | null>(null);
+  const previousTimestampRef = useRef<number | null>(null);
+
+  // Frame callback stored as a ref so effects don't depend on it, preventing
+  // teardown/restart of the RAF loop on every text delta. Reads from refs and
+  // the stable engine instance, so the captured closure is always correct.
+  const frameRef = useRef<FrameRequestCallback>(null!);
+  frameRef.current = (timestampMs: number) => {
+    if (previousTimestampRef.current !== null) {
+      const nextLength = engine.tick(timestampMs - previousTimestampRef.current);
+      if (nextLength !== visibleLengthRef.current) {
+        visibleLengthRef.current = nextLength;
+        setVisibleLength(nextLength);
+      }
+    }
+    previousTimestampRef.current = timestampMs;
+    if (!engine.isCaughtUp) {
+      rafIdRef.current = requestAnimationFrame(frameRef.current);
+    } else {
+      rafIdRef.current = null;
+      previousTimestampRef.current = null;
+    }
+  };
+
+  // Sync engine state → React and re-arm RAF when new deltas arrive after
+  // catch-up. No cleanup: this effect only observes + one-shot starts; the
+  // lifecycle effect below owns resource teardown.
   useEffect(() => {
-    if (visibleLengthRef.current === engine.visibleLength) {
-      return;
+    if (visibleLengthRef.current !== engine.visibleLength) {
+      visibleLengthRef.current = engine.visibleLength;
+      setVisibleLength(engine.visibleLength);
     }
 
-    visibleLengthRef.current = engine.visibleLength;
-    setVisibleLength(engine.visibleLength);
+    if (
+      rafIdRef.current === null &&
+      options.isStreaming &&
+      !options.bypassSmoothing &&
+      !engine.isCaughtUp
+    ) {
+      rafIdRef.current = requestAnimationFrame(frameRef.current);
+    }
   }, [engine, options.fullText, options.isStreaming, options.bypassSmoothing, options.streamKey]);
 
+  // Lifecycle: stop RAF when streaming ends or stream key changes, and on unmount.
   useEffect(() => {
-    if (!options.isStreaming || options.bypassSmoothing || engine.isCaughtUp) {
-      return;
+    if (!options.isStreaming || options.bypassSmoothing) {
+      if (rafIdRef.current !== null) cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+      previousTimestampRef.current = null;
     }
-
-    let rafId: number | null = null;
-    let previousTimestampMs: number | null = null;
-
-    const frame = (timestampMs: number) => {
-      if (previousTimestampMs !== null) {
-        const nextLength = engine.tick(timestampMs - previousTimestampMs);
-
-        if (nextLength !== visibleLengthRef.current) {
-          visibleLengthRef.current = nextLength;
-          setVisibleLength(nextLength);
-        }
-      }
-
-      previousTimestampMs = timestampMs;
-
-      if (!engine.isCaughtUp && options.isStreaming && !options.bypassSmoothing) {
-        rafId = requestAnimationFrame(frame);
-      } else {
-        rafId = null;
-      }
-    };
-
-    rafId = requestAnimationFrame(frame);
-
     return () => {
-      if (rafId !== null) {
-        cancelAnimationFrame(rafId);
-      }
+      if (rafIdRef.current !== null) cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+      previousTimestampRef.current = null;
     };
-    // Keep the RAF loop stable across fullText updates; engine.update() handles new deltas.
-  }, [engine, options.isStreaming, options.bypassSmoothing, options.streamKey]);
+  }, [options.isStreaming, options.bypassSmoothing, options.streamKey]);
 
   if (!options.isStreaming || options.bypassSmoothing) {
     return {

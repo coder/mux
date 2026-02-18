@@ -214,4 +214,42 @@ describe("useSmoothStreamingText", () => {
 
     expect(result.current.visibleText.length).toBeGreaterThan(resetLength);
   });
+
+  it("re-arms smoothing after catch-up when new deltas arrive", () => {
+    const shortText = "x".repeat(40);
+    const longerText = "x".repeat(200);
+
+    const { result, rerender } = renderHook(
+      (hookProps: UseSmoothStreamingTextOptions) => useSmoothStreamingText(hookProps),
+      {
+        initialProps: {
+          fullText: shortText,
+          isStreaming: true,
+          bypassSmoothing: false,
+          streamKey: "stream-rearm",
+        },
+      }
+    );
+
+    // Advance until fully caught up with the short text.
+    advanceFrames(60);
+    expect(result.current.isCaughtUp).toBe(true);
+    const caughtUpLength = result.current.visibleText.length;
+    expect(caughtUpLength).toBe(shortText.length);
+
+    // Simulate new deltas arriving (same stream, longer text).
+    act(() => {
+      rerender({
+        fullText: longerText,
+        isStreaming: true,
+        bypassSmoothing: false,
+        streamKey: "stream-rearm",
+      });
+    });
+
+    // The hook should re-arm and start revealing the new text.
+    advanceFrames(4);
+    expect(result.current.visibleText.length).toBeGreaterThan(caughtUpLength);
+    expect(result.current.visibleText.length).toBeLessThan(longerText.length);
+  });
 });
