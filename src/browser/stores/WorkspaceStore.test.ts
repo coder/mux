@@ -5,11 +5,11 @@ import type { WorkspaceActivitySnapshot, WorkspaceChatMessage } from "@/common/o
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { WorkspaceStore } from "./WorkspaceStore";
 
-type LoadMoreResponse = {
+interface LoadMoreResponse {
   messages: WorkspaceChatMessage[];
   nextCursor: { beforeHistorySequence: number; beforeMessageId?: string | null } | null;
   hasOlder: boolean;
-};
+}
 
 // Mock client
 // eslint-disable-next-line require-yield
@@ -323,6 +323,7 @@ describe("WorkspaceStore", () => {
     });
 
     it("switches onChat subscriptions when active workspace changes", async () => {
+      // eslint-disable-next-line require-yield
       mockOnChat.mockImplementation(async function* (
         _input?: { workspaceId: string; mode?: unknown },
         options?: { signal?: AbortSignal }
