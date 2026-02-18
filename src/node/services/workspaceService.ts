@@ -2898,6 +2898,7 @@ export class WorkspaceService extends EventEmitter {
         trunkBranch,
         forkedRuntimeConfig,
         targetRuntime,
+        sourceRuntimeConfigUpdate,
         sourceRuntimeConfigUpdated,
       } = forkResult.data;
 
@@ -2963,6 +2964,12 @@ export class WorkspaceService extends EventEmitter {
         resolvedName,
         projectName
       );
+
+      if (sourceRuntimeConfigUpdate) {
+        await this.config.updateWorkspaceMetadata(sourceWorkspaceId, {
+          runtimeConfig: sourceRuntimeConfigUpdate,
+        });
+      }
 
       if (sourceRuntimeConfigUpdated) {
         const allMetadataUpdated = await this.config.getAllWorkspaceMetadata();

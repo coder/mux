@@ -145,7 +145,8 @@ describe("orchestrateFork", () => {
       config,
       SOURCE_WORKSPACE_ID,
       SOURCE_RUNTIME_CONFIG,
-      forkResult
+      forkResult,
+      { persistSourceRuntimeConfigUpdate: false }
     );
     expect(createRuntimeMock).toHaveBeenCalledWith(DEFAULT_FORKED_RUNTIME_CONFIG, {
       projectPath: PROJECT_PATH,
@@ -286,21 +287,28 @@ describe("orchestrateFork", () => {
     expect(detectDefaultTrunkBranchMock).not.toHaveBeenCalled();
   });
 
-  it("marks sourceRuntimeConfigUpdated true when fork result includes source runtime config", async () => {
+  it("surfaces sourceRuntimeConfigUpdate without persisting it in orchestrator", async () => {
     const { sourceRuntime, forkWorkspace } = createSourceRuntimeMocks();
+    const sourceRuntimeConfigUpdate: RuntimeConfig = {
+      type: "worktree",
+      srcBaseDir: "/tmp/shared-src",
+    };
     forkWorkspace.mockResolvedValue({
       success: true,
       workspacePath: "/workspaces/forked-with-source-update",
       sourceBranch: "main",
-      sourceRuntimeConfig: {
-        type: "worktree",
-        srcBaseDir: "/tmp/shared-src",
-      },
+      sourceRuntimeConfig: sourceRuntimeConfigUpdate,
     } satisfies WorkspaceForkResult);
+    applyForkRuntimeUpdatesMock.mockResolvedValue({
+      forkedRuntimeConfig: DEFAULT_FORKED_RUNTIME_CONFIG,
+      sourceRuntimeConfigUpdate,
+    });
+    const config = createConfig();
 
     const result = await runOrchestrateFork({
       sourceRuntime,
       allowCreateFallback: false,
+      config,
     });
 
     expect(result.success).toBe(true);
@@ -309,6 +317,8 @@ describe("orchestrateFork", () => {
     }
 
     expect(result.data.sourceRuntimeConfigUpdated).toBe(true);
+    expect(result.data.sourceRuntimeConfigUpdate).toEqual(sourceRuntimeConfigUpdate);
+    expect(config.updateWorkspaceMetadata).not.toHaveBeenCalled();
   });
 
   it("uses the runtime config from applyForkRuntimeUpdates when creating target runtime", async () => {

@@ -40,6 +40,8 @@ interface OrchestrateForkSuccess {
   targetRuntime: Runtime;
   /** Whether the fork succeeded (false = fell back to createWorkspace) */
   forkedFromSource: boolean;
+  /** Resolved runtime config update for the source workspace (persisted by caller). */
+  sourceRuntimeConfigUpdate?: RuntimeConfig;
   /** Whether source runtime config was updated (caller should emit metadata) */
   sourceRuntimeConfigUpdated: boolean;
 }
@@ -68,13 +70,14 @@ export async function orchestrateFork(
     abortSignal,
   });
 
-  const { forkedRuntimeConfig } = await applyForkRuntimeUpdates(
+  const { forkedRuntimeConfig, sourceRuntimeConfigUpdate } = await applyForkRuntimeUpdates(
     config,
     sourceWorkspaceId,
     sourceRuntimeConfig,
-    forkResult
+    forkResult,
+    { persistSourceRuntimeConfigUpdate: false }
   );
-  const sourceRuntimeConfigUpdated = forkResult.sourceRuntimeConfig != null;
+  const sourceRuntimeConfigUpdated = sourceRuntimeConfigUpdate != null;
 
   // Forked workspace metadata must use destination identity, not inherited source state.
   // Docker containerName is derived from (projectPath, workspaceName); if the fork
@@ -150,6 +153,7 @@ export async function orchestrateFork(
     forkedRuntimeConfig: normalizedForkedRuntimeConfig,
     targetRuntime,
     forkedFromSource,
+    ...(sourceRuntimeConfigUpdate ? { sourceRuntimeConfigUpdate } : {}),
     sourceRuntimeConfigUpdated,
   });
 }

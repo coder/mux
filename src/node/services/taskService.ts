@@ -761,7 +761,10 @@ export class TaskService {
       allowCreateFallback: true,
     });
 
-    if (forkResult.success && forkResult.data.sourceRuntimeConfigUpdated) {
+    if (forkResult.success && forkResult.data.sourceRuntimeConfigUpdate) {
+      await this.config.updateWorkspaceMetadata(parentWorkspaceId, {
+        runtimeConfig: forkResult.data.sourceRuntimeConfigUpdate,
+      });
       // Ensure UI gets the updated runtimeConfig for the parent workspace.
       await this.emitWorkspaceMetadata(parentWorkspaceId);
     }
@@ -1770,8 +1773,11 @@ export class TaskService {
 
         if (
           forkOrchestratorResult.success &&
-          forkOrchestratorResult.data.sourceRuntimeConfigUpdated
+          forkOrchestratorResult.data.sourceRuntimeConfigUpdate
         ) {
+          await this.config.updateWorkspaceMetadata(parentId, {
+            runtimeConfig: forkOrchestratorResult.data.sourceRuntimeConfigUpdate,
+          });
           // Ensure UI gets the updated runtimeConfig for the parent workspace.
           await this.emitWorkspaceMetadata(parentId);
         }
