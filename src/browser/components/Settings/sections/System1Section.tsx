@@ -14,7 +14,6 @@ import {
   type TaskSettings,
 } from "@/common/types/tasks";
 
-import { SearchableModelSelect } from "../components/SearchableModelSelect";
 import { getErrorMessage } from "@/common/utils/errors";
 
 function mergeSystem1Settings(base: TaskSettings, override: TaskSettings): TaskSettings {
