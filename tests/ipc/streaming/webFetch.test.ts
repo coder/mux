@@ -43,8 +43,14 @@ describeIntegration("web_fetch integration tests", () => {
           "Use web_fetch to read https://lite.cnn.com/ and tell me the top story headline.",
           SONNET_4_6,
           {
-            // Require web_fetch so the test fails fast if the tool isn't offered
-            toolPolicy: [{ regex_match: "web_fetch", action: "require" }],
+            // Enable only web_fetch (disable everything else) so the model uses it naturally
+            // without forcing toolChoice on every turn. Using "require" would set
+            // toolChoice: { type: "tool" } on ALL turns including the post-result text turn,
+            // preventing the model from generating a text response.
+            toolPolicy: [
+              { regex_match: ".*", action: "disable" },
+              { regex_match: "web_fetch", action: "enable" },
+            ],
           }
         );
 
