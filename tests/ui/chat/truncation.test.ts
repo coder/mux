@@ -144,6 +144,11 @@ describe("Chat truncation UI", () => {
       const messageBlock = assistantText.closest("[data-message-block]");
       expect(messageBlock).toBeTruthy();
       expect(messageBlock?.querySelector("[data-message-meta]")).not.toBeNull();
+      const gapReminders = view.container.querySelectorAll('[data-testid="hidden-gap-reminder"]');
+      expect(gapReminders.length).toBeGreaterThan(0);
+      for (const reminder of gapReminders) {
+        expect(reminder.textContent).toMatch(/\d+ messages? hidden/);
+      }
     } finally {
       if (view) {
         await cleanupView(view, cleanupDom);

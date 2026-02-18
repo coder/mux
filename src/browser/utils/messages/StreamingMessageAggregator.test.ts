@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { createMuxMessage } from "@/common/types/message";
+import { createMuxMessage, type DisplayedMessage } from "@/common/types/message";
 import { StreamingMessageAggregator } from "./StreamingMessageAggregator";
 
 // Test helper: create aggregator with default createdAt for tests
@@ -384,8 +384,51 @@ describe("StreamingMessageAggregator", () => {
       expect(displayed[hiddenIndex - 1]?.type).toBe("user");
       expect(displayed[hiddenIndex + 1]?.type).toBe("user");
 
+      const userMessages = displayed.filter(
+        (msg): msg is Extract<DisplayedMessage, { type: "user" }> => {
+          return msg.type === "user";
+        }
+      );
+      expect(userMessages).toHaveLength(200);
+      expect(userMessages[0]?.hiddenCountBeforeUser).toBeUndefined();
+      expect(userMessages[1]?.hiddenCountBeforeUser).toBeUndefined();
+      expect(userMessages[2]?.hiddenCountBeforeUser).toBe(1);
+      expect(userMessages[167]?.hiddenCountBeforeUser).toBe(1);
+      expect(userMessages[168]?.hiddenCountBeforeUser).toBe(1);
+      expect(userMessages[169]?.hiddenCountBeforeUser).toBeUndefined();
+
+      const gapReminderCounts = userMessages
+        .map((message) => message.hiddenCountBeforeUser)
+        .filter((count): count is number => count != null);
+      expect(gapReminderCounts).toHaveLength(167);
+      expect(gapReminderCounts.every((count) => count === 1)).toBe(true);
+
       // With a single marker, rendered rows stay significantly below full history length.
       expect(displayed.length).toBeLessThan(300);
+    });
+
+    test("should not set hiddenCountBeforeUser for consecutive user messages without truncation", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      aggregator.loadHistoricalMessages(
+        [
+          createMuxMessage("u1", "user", "first", { historySequence: 1, timestamp: 1 }),
+          createMuxMessage("u2", "user", "second", { historySequence: 2, timestamp: 2 }),
+          createMuxMessage("u3", "user", "third", { historySequence: 3, timestamp: 3 }),
+        ],
+        false
+      );
+
+      const displayed = aggregator.getDisplayedMessages();
+      const userMessages = displayed.filter(
+        (msg): msg is Extract<DisplayedMessage, { type: "user" }> => {
+          return msg.type === "user";
+        }
+      );
+
+      expect(userMessages).toHaveLength(3);
+      for (const message of userMessages) {
+        expect(message.hiddenCountBeforeUser).toBeUndefined();
+      }
     });
 
     test("should not show history-hidden when only user messages exceed cap", () => {
