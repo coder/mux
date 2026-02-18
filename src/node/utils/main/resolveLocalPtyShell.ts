@@ -1,4 +1,5 @@
 import { spawnSync } from "child_process";
+import { existsSync } from "fs";
 import path from "path";
 
 import { getBashPath } from "@/node/utils/main/bashPath";
@@ -9,11 +10,12 @@ export interface ResolvedPtyShell {
 }
 
 export interface ResolveLocalPtyShellParams {
-  /** User-configured shell from config.json (highest priority). */
+  /** User-configured shell from config.json (highest priority when valid). */
   configuredShell: string | undefined;
   platform: NodeJS.Platform;
   env: NodeJS.ProcessEnv;
   isCommandAvailable: (command: string) => boolean;
+  isPathAccessible?: (path: string) => boolean;
   getBashPath: () => string;
 }
 
@@ -30,6 +32,36 @@ function defaultIsCommandAvailable(platform: NodeJS.Platform): (command: string)
       return false;
     }
   };
+}
+
+function defaultIsPathAccessible(shellPath: string): boolean {
+  try {
+    return existsSync(shellPath);
+  } catch {
+    return false;
+  }
+}
+
+function isPathLikeShell(command: string): boolean {
+  return command.includes("/") || command.includes("\\");
+}
+
+function isCandidateAvailable(
+  command: string,
+  deps: {
+    isCommandAvailable: (candidateCommand: string) => boolean;
+    isPathAccessible: (candidatePath: string) => boolean;
+  }
+): boolean {
+  if (!command) {
+    return false;
+  }
+
+  if (isPathLikeShell(command)) {
+    return deps.isPathAccessible(command);
+  }
+
+  return deps.isCommandAvailable(command);
 }
 
 function looksLikeWslShell(envShell: string): boolean {
@@ -62,12 +94,15 @@ export function resolveLocalPtyShell(
   const platform = params.platform ?? process.platform;
   const env = params.env ?? process.env;
   const isCommandAvailable = params.isCommandAvailable ?? defaultIsCommandAvailable(platform);
+  const isPathAccessible = params.isPathAccessible ?? defaultIsPathAccessible;
   const getBashPathFn = params.getBashPath ?? getBashPath;
 
-  // User-configured shell from config.json takes highest priority.
+  const candidates: ResolvedPtyShell[] = [];
+
+  // User-configured shell from config.json stays highest priority, but only when valid.
   const configuredShell = params.configuredShell?.trim();
   if (configuredShell) {
-    return { command: configuredShell, args: [] };
+    candidates.push({ command: configuredShell, args: [] });
   }
 
   // `process.env.SHELL` can be present-but-empty (""), especially in packaged apps.
@@ -77,7 +112,7 @@ export function resolveLocalPtyShell(
     // On Windows, `SHELL=bash` often routes to WSL (via System32\\bash.exe).
     // Ignore WSL shells and fall back to Git Bash/pwsh/cmd selection below.
     if (platform !== "win32" || !looksLikeWslShell(envShell)) {
-      return { command: envShell, args: [] };
+      candidates.push({ command: envShell, args: [] });
     }
   }
 
@@ -86,24 +121,30 @@ export function resolveLocalPtyShell(
     try {
       const bashPath = getBashPathFn().trim();
       if (bashPath) {
-        return { command: bashPath, args: ["--login", "-i"] };
+        candidates.push({ command: bashPath, args: ["--login", "-i"] });
       }
     } catch {
       // Git Bash not available; fall back to PowerShell / cmd.
     }
 
-    if (isCommandAvailable("pwsh")) {
-      return { command: "pwsh", args: [] };
-    }
-
-    if (isCommandAvailable("powershell")) {
-      return { command: "powershell", args: [] };
-    }
+    candidates.push({ command: "pwsh", args: [] });
+    candidates.push({ command: "powershell", args: [] });
 
     const comspec = env.COMSPEC?.trim();
-    return { command: comspec && comspec.length > 0 ? comspec : "cmd.exe", args: [] };
+    candidates.push({ command: comspec && comspec.length > 0 ? comspec : "cmd.exe", args: [] });
+  } else if (platform === "darwin") {
+    candidates.push({ command: "/bin/zsh", args: [] });
+  } else {
+    candidates.push({ command: "/bin/bash", args: [] });
   }
 
+  for (const candidate of candidates) {
+    if (isCandidateAvailable(candidate.command, { isCommandAvailable, isPathAccessible })) {
+      return candidate;
+    }
+  }
+
+  // Last-resort fallback if all candidates above are unavailable.
   if (platform === "darwin") {
     return { command: "/bin/zsh", args: [] };
   }
