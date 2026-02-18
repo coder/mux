@@ -778,6 +778,10 @@ export class WorkspaceStore {
    * slow machines naturally throttle without dropping data.
    *
    * Data is always updated immediately in the aggregator - only UI notification is deferred.
+   *
+   * NOTE: This is the "ingestion clock" half of the two-clock streaming model.
+   * The "presentation clock" (useSmoothStreamingText) handles visual cadence
+   * independently — do not collapse them into a single mechanism.
    */
   private scheduleIdleStateBump(workspaceId: string): void {
     // Skip if already scheduled

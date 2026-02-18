@@ -111,6 +111,8 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
           deltas={[normalizeReasoningMarkdown(content)]}
           isComplete={false}
           preserveLineBreaks
+          streamKey={message.historyId}
+          streamSource={message.streamPresentation?.source}
         />
       );
     }
