@@ -1345,7 +1345,10 @@ export type BridgeableToolName =
   | "agent_skill_read_file"
   | "file_edit_insert"
   | "file_edit_replace_string"
-  | "web_fetch"
+  // web_fetch is intentionally excluded: for Anthropic models it becomes a provider-native
+  // tool (webFetch_20250910) with no execute(), so it can't be bridged into the PTC sandbox.
+  // Dropping it here makes the removal explicit across all providers rather than silently
+  // varying by provider at runtime.
   | "task"
   | "task_await"
   | "task_apply_git_patch"
@@ -1368,7 +1371,6 @@ export const RESULT_SCHEMAS: Record<BridgeableToolName, z.ZodType> = {
   agent_skill_read_file: AgentSkillReadFileToolResultSchema,
   file_edit_insert: FileEditInsertToolResultSchema,
   file_edit_replace_string: FileEditReplaceStringToolResultSchema,
-  web_fetch: WebFetchToolResultSchema,
   task: TaskToolResultSchema,
   task_await: TaskAwaitToolResultSchema,
   task_apply_git_patch: TaskApplyGitPatchToolResultSchema,
