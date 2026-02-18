@@ -355,6 +355,28 @@ describe("WorkspaceStore", () => {
     });
   });
 
+  it("tracks which workspace currently has the active onChat subscription", async () => {
+    createAndAddWorkspace(store, "workspace-1", {}, false);
+    createAndAddWorkspace(store, "workspace-2", {}, false);
+
+    expect(store.isOnChatSubscriptionActive("workspace-1")).toBe(false);
+    expect(store.isOnChatSubscriptionActive("workspace-2")).toBe(false);
+
+    store.setActiveWorkspaceId("workspace-1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(store.isOnChatSubscriptionActive("workspace-1")).toBe(true);
+    expect(store.isOnChatSubscriptionActive("workspace-2")).toBe(false);
+
+    store.setActiveWorkspaceId("workspace-2");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(store.isOnChatSubscriptionActive("workspace-1")).toBe(false);
+    expect(store.isOnChatSubscriptionActive("workspace-2")).toBe(true);
+
+    store.setActiveWorkspaceId(null);
+    expect(store.isOnChatSubscriptionActive("workspace-1")).toBe(false);
+    expect(store.isOnChatSubscriptionActive("workspace-2")).toBe(false);
+  });
+
   describe("syncWorkspaces", () => {
     it("should add new workspaces", () => {
       const metadata1: FrontendWorkspaceMetadata = {

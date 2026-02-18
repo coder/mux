@@ -793,6 +793,15 @@ export class WorkspaceStore {
     }
   }
 
+  isOnChatSubscriptionActive(workspaceId: string): boolean {
+    assert(
+      typeof workspaceId === "string" && workspaceId.length > 0,
+      "isOnChatSubscriptionActive requires a non-empty workspaceId"
+    );
+
+    return this.activeOnChatWorkspaceId === workspaceId;
+  }
+
   private ensureActivitySubscription(): void {
     if (this.activityAbortController) {
       return;
