@@ -239,11 +239,13 @@ export class SSH2Transport implements SSHTransport {
   async acquireConnection(options?: {
     abortSignal?: AbortSignal;
     timeoutMs?: number;
+    maxWaitMs?: number;
     onWait?: (waitMs: number) => void;
   }): Promise<void> {
     await ssh2ConnectionPool.acquireConnection(this.config, {
       abortSignal: options?.abortSignal,
       timeoutMs: options?.timeoutMs,
+      maxWaitMs: options?.maxWaitMs,
       onWait: options?.onWait,
     });
   }

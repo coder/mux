@@ -1,6 +1,14 @@
 import * as os from "os";
 import * as path from "path";
-import { getControlPath, SSHConnectionPool, type SSHRuntimeConfig } from "./sshConnectionPool";
+import { afterEach, describe, expect, test, spyOn } from "bun:test";
+import { HostKeyVerificationService } from "@/node/services/hostKeyVerificationService";
+import {
+  appendOpenSSHHostKeyPolicyArgs,
+  getControlPath,
+  setHostKeyVerificationService,
+  SSHConnectionPool,
+  type SSHRuntimeConfig,
+} from "./sshConnectionPool";
 
 describe("sshConnectionPool", () => {
   describe("getControlPath", () => {
@@ -119,6 +127,46 @@ describe("sshConnectionPool", () => {
   });
 });
 
+describe("appendOpenSSHHostKeyPolicyArgs", () => {
+  afterEach(() => {
+    setHostKeyVerificationService(new HostKeyVerificationService());
+  });
+
+  test("appends fallback args when no verification service is configured (headless)", () => {
+    const args: string[] = ["-T"];
+    setHostKeyVerificationService(undefined);
+
+    appendOpenSSHHostKeyPolicyArgs(args);
+
+    expect(args).toEqual([
+      "-T",
+      "-o",
+      "StrictHostKeyChecking=no",
+      "-o",
+      "UserKnownHostsFile=/dev/null",
+    ]);
+  });
+
+  test("does not append fallback args when verification service is configured", () => {
+    const args: string[] = ["-T"];
+    setHostKeyVerificationService(new HostKeyVerificationService());
+
+    appendOpenSSHHostKeyPolicyArgs(args);
+
+    expect(args).toEqual(["-T"]);
+  });
+
+  test("does not append fallback args when service is configured but no responder is connected", () => {
+    const args: string[] = ["-T"];
+    const service = new HostKeyVerificationService();
+    setHostKeyVerificationService(service);
+
+    appendOpenSSHHostKeyPolicyArgs(args);
+
+    expect(args).toEqual(["-T"]);
+  });
+});
+
 describe("username isolation", () => {
   test("controlPath includes local username to prevent cross-user collisions", () => {
     // This test verifies that os.userInfo().username is included in the hash
@@ -216,6 +264,7 @@ describe("SSHConnectionPool", () => {
       };
 
       // Trigger a failure via acquireConnection (will fail to connect)
+      // eslint-disable-next-line @typescript-eslint/await-thenable
       await expect(
         pool.acquireConnection(config, { timeoutMs: 1000, maxWaitMs: 0 })
       ).rejects.toThrow();
@@ -296,11 +345,13 @@ describe("SSHConnectionPool", () => {
       };
 
       // Trigger a failure to put connection in backoff
+      // eslint-disable-next-line @typescript-eslint/await-thenable
       await expect(
         pool.acquireConnection(config, { timeoutMs: 1000, maxWaitMs: 0 })
       ).rejects.toThrow();
 
       // Second call should throw immediately with backoff message
+      // eslint-disable-next-line @typescript-eslint/await-thenable
       await expect(pool.acquireConnection(config, { maxWaitMs: 0 })).rejects.toThrow(/in backoff/);
     });
 
@@ -316,6 +367,68 @@ describe("SSHConnectionPool", () => {
 
       expect(path1).toBe(path2);
       expect(path1).toBe(getControlPath(config));
+    });
+
+    test("records backoff when probe rejects without recording it (safety net)", async () => {
+      const pool = new SSHConnectionPool();
+      const config: SSHRuntimeConfig = {
+        host: "askpass-fail.example.com",
+        srcBaseDir: "/work",
+      };
+
+      // Simulate a probe that fails before reaching markFailedByKey
+      // (e.g., createAskpassSession throwing on fs.watch ENOSPC).
+      const spy = spyOn(
+        pool as unknown as { probeConnection: () => Promise<void> },
+        "probeConnection"
+      ).mockRejectedValueOnce(new Error("ENOSPC: no space left on device"));
+
+      // eslint-disable-next-line @typescript-eslint/await-thenable
+      await expect(
+        pool.acquireConnection(config, { timeoutMs: 1000, maxWaitMs: 0 })
+      ).rejects.toThrow(/ENOSPC/);
+
+      // Safety net should have recorded backoff despite probeConnection not doing so.
+      const health = pool.getConnectionHealth(config);
+      expect(health?.status).toBe("unhealthy");
+      expect(health?.backoffUntil).toBeDefined();
+      expect(health?.lastError).toContain("ENOSPC");
+
+      spy.mockRestore();
+    });
+  });
+
+  describe("askpass prompt classification", () => {
+    // classifyAskpassPrompt() routes prompts containing "continue connecting"
+    // through host-key verification and treats other prompts as credentials.
+    const HOST_KEY_PATTERN = /continue connecting/i;
+
+    test("detects standard host-key confirmation prompt", () => {
+      expect(
+        HOST_KEY_PATTERN.test(
+          "Are you sure you want to continue connecting (yes/no/[fingerprint])? "
+        )
+      ).toBe(true);
+    });
+
+    test("detects host-key prompt case-insensitively", () => {
+      expect(HOST_KEY_PATTERN.test("Are you sure you want to Continue Connecting (yes/no)?")).toBe(
+        true
+      );
+    });
+
+    test("rejects passphrase prompt", () => {
+      expect(HOST_KEY_PATTERN.test("Enter passphrase for key '/home/user/.ssh/id_ed25519':")).toBe(
+        false
+      );
+    });
+
+    test("rejects password prompt", () => {
+      expect(HOST_KEY_PATTERN.test("user@host's password:")).toBe(false);
+    });
+
+    test("rejects empty prompt", () => {
+      expect(HOST_KEY_PATTERN.test("")).toBe(false);
     });
   });
 

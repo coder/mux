@@ -88,6 +88,7 @@ async function createTestServer(authToken?: string): Promise<TestServerHandle> {
     signingService: services.signingService,
     coderService: services.coderService,
     serverAuthService: services.serverAuthService,
+    hostKeyVerificationService: services.hostKeyVerificationService,
   };
 
   // Use the actual createOrpcServer function

@@ -101,6 +101,47 @@ describe("SSHRuntime.ensureReady repository checks", () => {
     }
   });
 });
+
+describe("SSHRuntime.resolvePath", () => {
+  let runtime: SSHRuntime;
+  let transport: ReturnType<typeof createSSHTransport>;
+  let acquireConnectionSpy: ReturnType<typeof spyOn<typeof transport, "acquireConnection">> | null =
+    null;
+  let execBufferedSpy: ReturnType<typeof spyOn<typeof runtimeHelpers, "execBuffered">> | null =
+    null;
+
+  beforeEach(() => {
+    const config = { host: "example.com", srcBaseDir: "/home/user/src" };
+    transport = createSSHTransport(config, false);
+    runtime = new SSHRuntime(config, transport, {
+      projectPath: "/project",
+      workspaceName: "ws",
+    });
+  });
+
+  afterEach(() => {
+    acquireConnectionSpy?.mockRestore();
+    acquireConnectionSpy = null;
+    execBufferedSpy?.mockRestore();
+    execBufferedSpy = null;
+  });
+
+  it("passes a 10s timeout and max wait to preflight acquireConnection", async () => {
+    acquireConnectionSpy = spyOn(transport, "acquireConnection").mockResolvedValue(undefined);
+    execBufferedSpy = spyOn(runtimeHelpers, "execBuffered").mockResolvedValue({
+      stdout: "/home/user/foo\n",
+      stderr: "",
+      exitCode: 0,
+      duration: 0,
+    });
+
+    expect(await runtime.resolvePath("~/foo")).toBe("/home/user/foo");
+    expect(acquireConnectionSpy).toHaveBeenCalledWith({
+      timeoutMs: 10_000,
+      maxWaitMs: 10_000,
+    });
+  });
+});
 describe("computeBaseRepoPath", () => {
   it("computes the correct bare repo path", () => {
     // computeBaseRepoPath uses getProjectName (basename) to compute:

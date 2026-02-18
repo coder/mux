@@ -6,6 +6,7 @@ import { NameGenerationErrorSchema, SendMessageErrorSchema } from "./errors";
 import { BranchListResultSchema, FilePartSchema, MuxMessageSchema } from "./message";
 import { ProjectConfigSchema, SectionConfigSchema } from "./project";
 import { ResultSchema } from "./result";
+import { HostKeyVerificationEventSchema } from "./ssh";
 import { RuntimeConfigSchema, RuntimeAvailabilitySchema } from "./runtime";
 import { SecretSchema } from "./secrets";
 import {
@@ -1736,5 +1737,23 @@ export const debug = {
       errorMessage: z.string().optional(),
     }),
     output: z.boolean(), // true if error was triggered on an active stream
+  },
+};
+
+export const ssh = {
+  hostKeyVerification: {
+    subscribe: {
+      input: z.void(),
+      output: eventIterator(HostKeyVerificationEventSchema),
+    },
+    respond: {
+      input: z
+        .object({
+          requestId: z.string(),
+          accept: z.boolean(),
+        })
+        .strict(),
+      output: ResultSchema(z.void(), z.string()),
+    },
   },
 };

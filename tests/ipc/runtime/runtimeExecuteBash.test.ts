@@ -22,6 +22,8 @@ import {
   sendMessageAndWait,
   extractTextFromEvents,
   HAIKU_MODEL,
+  STREAM_TIMEOUT_LOCAL_MS,
+  STREAM_TIMEOUT_SSH_MS,
   TEST_TIMEOUT_LOCAL_MS,
   TEST_TIMEOUT_SSH_MS,
   getTestRunner,
@@ -148,6 +150,8 @@ describeIntegration("Runtime Bash Execution", () => {
         return undefined; // undefined = defaults to local
       };
 
+      const streamTimeoutMs = type === "ssh" ? STREAM_TIMEOUT_SSH_MS : STREAM_TIMEOUT_LOCAL_MS;
+
       // SSH tests run serially to avoid Docker container overload
       const runTest = getTestRunner(type);
 
@@ -184,7 +188,8 @@ describeIntegration("Runtime Bash Execution", () => {
                 workspaceId,
                 'Use the bash tool with args: { script: "echo Hello World", timeout_secs: 30, run_in_background: false, display_name: "echo-hello" }. Do not spawn a sub-agent.',
                 HAIKU_MODEL,
-                BASH_ONLY
+                BASH_ONLY,
+                streamTimeoutMs
               );
 
               // Extract response text
@@ -253,7 +258,8 @@ describeIntegration("Runtime Bash Execution", () => {
                 workspaceId,
                 'Use the bash tool with args: { script: "export TEST_VAR=test123 && echo Value:$TEST_VAR", timeout_secs: 30, run_in_background: false, display_name: "env-var" }. Do not spawn a sub-agent.',
                 HAIKU_MODEL,
-                BASH_ONLY
+                BASH_ONLY,
+                streamTimeoutMs
               );
 
               // Extract response text
@@ -331,7 +337,7 @@ describeIntegration("Runtime Bash Execution", () => {
                 'Use the bash tool with args: { script: "echo testdata > /tmp/test.txt && cat /tmp/test.txt | grep test", timeout_secs: 30, run_in_background: false, display_name: "stdin-grep" }. Do not spawn a sub-agent.',
                 HAIKU_MODEL,
                 BASH_ONLY,
-                30000 // Relaxed timeout for CI stability (was 10s)
+                streamTimeoutMs
               );
 
               // Calculate actual tool execution duration
@@ -410,7 +416,7 @@ describeIntegration("Runtime Bash Execution", () => {
                 'Use the bash tool with args: { script: "for i in {1..1000}; do echo \"terminal bench line $i\" >> testfile.txt; done && grep -n \"terminal bench\" testfile.txt | head -n 200", timeout_secs: 60, run_in_background: false, display_name: "grep-head" }. Do not spawn a sub-agent.',
                 HAIKU_MODEL,
                 BASH_ONLY,
-                30000 // Relaxed timeout for CI stability (was 15s)
+                streamTimeoutMs
               );
 
               // Calculate actual tool execution duration

@@ -210,6 +210,7 @@ export {
   signing,
   type SigningCapabilities,
   type SignatureEnvelope,
+  ssh,
   terminal,
   tokenizer,
   update,
