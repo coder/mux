@@ -27,31 +27,6 @@ export function splitQueryIntoTerms(query: string): string[] {
   return normalized.split(" ").filter((t) => t.length > 0);
 }
 
-function fuzzySubsequenceMatchNormalized(haystack: string, needle: string): boolean {
-  // By convention, an empty needle matches everything.
-  if (!needle) return true;
-  if (!haystack) return false;
-
-  let needleIdx = 0;
-  for (const ch of haystack) {
-    if (ch === needle[needleIdx]) {
-      needleIdx++;
-      if (needleIdx >= needle.length) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
-export function fuzzySubsequenceMatch(haystack: string, needle: string): boolean {
-  assert(typeof haystack === "string", "fuzzySubsequenceMatch: haystack must be a string");
-  assert(typeof needle === "string", "fuzzySubsequenceMatch: needle must be a string");
-
-  return fuzzySubsequenceMatchNormalized(normalizeFuzzyText(haystack), normalizeFuzzyText(needle));
-}
-
 /**
  * Score a single normalized term against a normalized haystack.
  * Returns 0 for no match, higher values (up to 1) for better matches.
@@ -97,39 +72,4 @@ export function scoreSingleTermNormalized(haystack: string, needle: string): num
   const span = lastMatch - firstMatch + 1;
   const tightness = needle.length / span; // 1.0 = perfectly contiguous
   return 0.1 + 0.4 * tightness; // Range: 0.1 to 0.5 for subsequence matches
-}
-
-export function scoreAllTerms(haystack: string, query: string): number {
-  assert(typeof haystack === "string", "scoreAllTerms: haystack must be a string");
-  assert(typeof query === "string", "scoreAllTerms: query must be a string");
-
-  const terms = splitQueryIntoTerms(query);
-  if (terms.length === 0) return 1;
-
-  const normalizedHaystack = normalizeFuzzyText(haystack);
-  let totalScore = 0;
-  for (const term of terms) {
-    const score = scoreSingleTermNormalized(normalizedHaystack, term);
-    if (score === 0) return 0; // AND semantics: all terms must match
-    totalScore += score;
-  }
-
-  return totalScore / terms.length;
-}
-
-export function matchesAllTerms(haystack: string, query: string): boolean {
-  assert(typeof haystack === "string", "matchesAllTerms: haystack must be a string");
-  assert(typeof query === "string", "matchesAllTerms: query must be a string");
-
-  const terms = splitQueryIntoTerms(query);
-  if (terms.length === 0) return true;
-
-  const normalizedHaystack = normalizeFuzzyText(haystack);
-  for (const term of terms) {
-    if (!fuzzySubsequenceMatchNormalized(normalizedHaystack, term)) {
-      return false;
-    }
-  }
-
-  return true;
 }
