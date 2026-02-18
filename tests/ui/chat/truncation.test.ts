@@ -1,6 +1,6 @@
 /**
  * UI integration test for chat truncation behavior.
- * Verifies tool/reasoning omissions are surfaced and assistant meta rows remain intact.
+ * Verifies a generic hidden-history indicator is surfaced and assistant meta rows remain intact.
  */
 
 import "../dom";
@@ -74,7 +74,7 @@ describe("Chat truncation UI", () => {
     await preloadTestModules();
   });
 
-  test("shows truncation details and preserves assistant meta rows", async () => {
+  test("shows a generic hidden indicator and preserves assistant meta rows", async () => {
     const env = await createTestEnvironment();
     const repoPath = await createTempGitRepo();
     const cleanupDom = installDom();
@@ -110,29 +110,27 @@ describe("Chat truncation UI", () => {
       const totalDisplayedMessages = pairCount * 4;
       const oldDisplayedMessages = totalDisplayedMessages - maxDisplayedMessages;
       const oldPairs = oldDisplayedMessages / 4;
-      // Each old pair contributes 3 hidden rows: reasoning + tool + assistant
-      // (user messages are always kept)
-      const expectedHiddenCount = oldPairs * 3;
-      const expectedToolCount = oldPairs;
-      const expectedThinkingCount = oldPairs;
 
       const indicator = await waitFor(() => {
-        const node = view?.getByText(/omitted .*performance/i);
+        const node = view?.getByText(/some messages are hidden for performance/i);
         if (!node) {
           throw new Error("Truncation indicator not found");
         }
         return node;
       });
 
-      expect(indicator.textContent).toContain(`${expectedHiddenCount} message`);
-      expect(indicator.textContent).toContain(`${expectedToolCount} tool call`);
-      expect(indicator.textContent).toContain(`${expectedThinkingCount} thinking block`);
+      expect(indicator.textContent).toContain("Some messages are hidden for performance");
+      expect(view.getByRole("button", { name: /load all/i })).toBeTruthy();
 
       const messageBlocks = Array.from(
         view.container.querySelectorAll('[data-testid="chat-message"]')
       );
+      const hiddenIndicatorCount = messageBlocks.filter((node) =>
+        node.textContent?.match(/some messages are hidden for performance/i)
+      ).length;
+      expect(hiddenIndicatorCount).toBe(1);
       const indicatorIndex = messageBlocks.findIndex((node) =>
-        node.textContent?.match(/omitted .*performance/i)
+        node.textContent?.match(/some messages are hidden for performance/i)
       );
       expect(indicatorIndex).toBeGreaterThan(0);
       expect(messageBlocks[indicatorIndex - 1]?.textContent).toContain("user-0");

@@ -315,7 +315,9 @@ describe("StreamingMessageAggregator", () => {
       // In those 336: user messages are kept, while assistant/tool/reasoning may be omitted.
       const capped = aggregator.getDisplayedMessages();
 
-      // Verify history-hidden marker is present (some tool calls were filtered)
+      // Verify a single history-hidden marker is present (some tool calls were filtered)
+      const hiddenMessages = capped.filter((msg) => msg.type === "history-hidden");
+      expect(hiddenMessages).toHaveLength(1);
       const hiddenIndex = capped.findIndex((msg) => msg.type === "history-hidden");
       expect(hiddenIndex).toBeGreaterThan(0);
       expect(hiddenIndex).toBeLessThan(capped.length - 1);
@@ -342,6 +344,48 @@ describe("StreamingMessageAggregator", () => {
       // Now all 400 messages should be visible (100 user + 100 assistant + 100 tool + 100 reasoning)
       expect(displayed).toHaveLength(400);
       expect(displayed.some((m) => m.type === "history-hidden")).toBe(false);
+    });
+
+    test("should collapse alternating user/assistant history behind a single history-hidden marker", () => {
+      // Regression test: alternating user/assistant history previously produced one marker per
+      // omitted assistant gap, which could recreate near-full DOM row counts.
+      const manyMessages: Parameters<
+        typeof StreamingMessageAggregator.prototype.loadHistoricalMessages
+      >[0] = [];
+
+      for (let i = 0; i < 200; i++) {
+        const baseSequence = i * 2;
+        manyMessages.push(
+          createMuxMessage(`u${i}`, "user", `msg-${i}`, {
+            timestamp: baseSequence,
+            historySequence: baseSequence,
+          })
+        );
+        manyMessages.push(
+          createMuxMessage(`a${i}`, "assistant", `response-${i}`, {
+            historySequence: baseSequence + 1,
+            timestamp: baseSequence + 1,
+            model: "claude-3-5-sonnet-20241022",
+          })
+        );
+      }
+
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      aggregator.loadHistoricalMessages(manyMessages, false);
+
+      const displayed = aggregator.getDisplayedMessages();
+      const hiddenMarkers = displayed.filter((msg) => msg.type === "history-hidden");
+      expect(hiddenMarkers).toHaveLength(1);
+      expect(displayed.some((msg) => msg.id.startsWith("history-hidden-gap-"))).toBe(false);
+
+      const hiddenIndex = displayed.findIndex((msg) => msg.type === "history-hidden");
+      expect(hiddenIndex).toBeGreaterThan(0);
+      expect(hiddenIndex).toBeLessThan(displayed.length - 1);
+      expect(displayed[hiddenIndex - 1]?.type).toBe("user");
+      expect(displayed[hiddenIndex + 1]?.type).toBe("user");
+
+      // With a single marker, rendered rows stay significantly below full history length.
+      expect(displayed.length).toBeLessThan(300);
     });
 
     test("should not show history-hidden when only user messages exceed cap", () => {

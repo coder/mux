@@ -10,44 +10,9 @@ interface HistoryHiddenMessageProps {
 }
 
 export const HistoryHiddenMessage: React.FC<HistoryHiddenMessageProps> = ({
-  message,
   workspaceId,
   className,
 }) => {
-  const isSummaryMarker = message.showLoadAll !== false;
-
-  if (!isSummaryMarker) {
-    return (
-      <div className={cn("my-2 flex items-center gap-2 text-xs text-muted", className)}>
-        <div className="border-border flex-1 border-b border-dashed" />
-        <span>
-          {message.hiddenCount} message{message.hiddenCount !== 1 ? "s" : ""} hidden
-        </span>
-        <div className="border-border flex-1 border-b border-dashed" />
-      </div>
-    );
-  }
-
-  const omittedParts: string[] = [];
-
-  if (message.omittedMessageCounts?.tool) {
-    omittedParts.push(
-      `${message.omittedMessageCounts.tool} tool call${
-        message.omittedMessageCounts.tool === 1 ? "" : "s"
-      }`
-    );
-  }
-
-  if (message.omittedMessageCounts?.reasoning) {
-    omittedParts.push(
-      `${message.omittedMessageCounts.reasoning} thinking block${
-        message.omittedMessageCounts.reasoning === 1 ? "" : "s"
-      }`
-    );
-  }
-
-  const omittedSuffix = omittedParts.length > 0 ? ` (${omittedParts.join(", ")})` : "";
-
   return (
     <div
       className={cn(
@@ -72,10 +37,7 @@ export const HistoryHiddenMessage: React.FC<HistoryHiddenMessageProps> = ({
           fill="none"
         />
       </svg>
-      <span className="text-muted">
-        Omitted {message.hiddenCount} message{message.hiddenCount !== 1 ? "s" : ""} for performance
-        {omittedSuffix}
-      </span>
+      <span className="text-muted">Some messages are hidden for performance</span>
       {workspaceId && (
         <button
           type="button"
