@@ -374,11 +374,11 @@ export const DEFAULT_TERMINAL_FONT_CONFIG: TerminalFontConfig = {
 
 /**
  * Tutorial state storage key (global)
- * Stores: { disabled: boolean, completed: { creation?: true, workspace?: true } }
+ * Stores: { disabled: boolean, completed: { creation?: true, workspace?: true, review?: true } }
  */
 export const TUTORIAL_STATE_KEY = "tutorialState";
 
-export type TutorialSequence = "creation" | "workspace";
+export type TutorialSequence = "creation" | "workspace" | "review";
 
 export interface TutorialState {
   disabled: boolean;

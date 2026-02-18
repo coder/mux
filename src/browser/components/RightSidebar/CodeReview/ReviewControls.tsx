@@ -5,6 +5,7 @@
 import React from "react";
 import { ArrowLeft, Maximize2 } from "lucide-react";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
@@ -53,6 +54,14 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
     WORKSPACE_DEFAULTS.reviewBase,
     { listener: true }
   );
+  const { startSequence } = useTutorial();
+
+  // Show the immersive review tutorial the first time the review panel is visible
+  React.useEffect(() => {
+    // Small delay to ensure the button is rendered and measurable
+    const timer = setTimeout(() => startSequence("review"), 500);
+    return () => clearTimeout(timer);
+  }, [startSequence]);
 
   // Use callback form to avoid stale closure issues with filters prop
   const handleBaseChange = (value: string) => {
@@ -164,6 +173,7 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
                 onClick={onToggleImmersive}
                 className="text-muted hover:text-foreground flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 text-[11px] transition-colors duration-150"
                 aria-label={isImmersive ? "Exit immersive review" : "Enter immersive review"}
+                data-tutorial="immersive-review"
               >
                 {isImmersive ? (
                   <ArrowLeft aria-hidden="true" className="h-3 w-3" />
