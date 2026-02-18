@@ -39,10 +39,17 @@ function classifyAskpassPrompt(promptText: string): "host-key" | "credential" {
   return "credential";
 }
 
+export type OpenSSHHostKeyPolicyMode = "strict" | "headless-fallback";
+
 let hostKeyService: HostKeyVerificationService | undefined;
+let hostKeyPolicyMode: OpenSSHHostKeyPolicyMode = "headless-fallback";
 
 export function setHostKeyVerificationService(svc: HostKeyVerificationService | undefined): void {
   hostKeyService = svc;
+}
+
+export function setOpenSSHHostKeyPolicyMode(mode: OpenSSHHostKeyPolicyMode): void {
+  hostKeyPolicyMode = mode;
 }
 
 export function isInteractiveHostKeyApprovalAvailable(): boolean {
@@ -50,7 +57,7 @@ export function isInteractiveHostKeyApprovalAvailable(): boolean {
 }
 
 export function appendOpenSSHHostKeyPolicyArgs(args: string[]): void {
-  if (hostKeyService != null) {
+  if (hostKeyPolicyMode === "strict") {
     return;
   }
 

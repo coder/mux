@@ -1,11 +1,10 @@
 import * as os from "os";
 import * as path from "path";
 import { afterEach, describe, expect, test, spyOn } from "bun:test";
-import { HostKeyVerificationService } from "@/node/services/hostKeyVerificationService";
 import {
   appendOpenSSHHostKeyPolicyArgs,
   getControlPath,
-  setHostKeyVerificationService,
+  setOpenSSHHostKeyPolicyMode,
   SSHConnectionPool,
   type SSHRuntimeConfig,
 } from "./sshConnectionPool";
@@ -129,12 +128,12 @@ describe("sshConnectionPool", () => {
 
 describe("appendOpenSSHHostKeyPolicyArgs", () => {
   afterEach(() => {
-    setHostKeyVerificationService(new HostKeyVerificationService());
+    setOpenSSHHostKeyPolicyMode("headless-fallback");
   });
 
-  test("appends fallback args when no verification service is configured (headless)", () => {
+  test("appends fallback args in headless-fallback mode", () => {
     const args: string[] = ["-T"];
-    setHostKeyVerificationService(undefined);
+    setOpenSSHHostKeyPolicyMode("headless-fallback");
 
     appendOpenSSHHostKeyPolicyArgs(args);
 
@@ -147,23 +146,27 @@ describe("appendOpenSSHHostKeyPolicyArgs", () => {
     ]);
   });
 
-  test("does not append fallback args when verification service is configured", () => {
+  test("does not append fallback args in strict mode", () => {
     const args: string[] = ["-T"];
-    setHostKeyVerificationService(new HostKeyVerificationService());
+    setOpenSSHHostKeyPolicyMode("strict");
 
     appendOpenSSHHostKeyPolicyArgs(args);
 
     expect(args).toEqual(["-T"]);
   });
 
-  test("does not append fallback args when service is configured but no responder is connected", () => {
+  test("defaults to headless-fallback", () => {
     const args: string[] = ["-T"];
-    const service = new HostKeyVerificationService();
-    setHostKeyVerificationService(service);
 
     appendOpenSSHHostKeyPolicyArgs(args);
 
-    expect(args).toEqual(["-T"]);
+    expect(args).toEqual([
+      "-T",
+      "-o",
+      "StrictHostKeyChecking=no",
+      "-o",
+      "UserKnownHostsFile=/dev/null",
+    ]);
   });
 });
 

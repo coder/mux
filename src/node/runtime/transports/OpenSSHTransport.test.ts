@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:
 import * as childProcess from "child_process";
 
 import { HostKeyVerificationService } from "@/node/services/hostKeyVerificationService";
-import { setHostKeyVerificationService, sshConnectionPool } from "../sshConnectionPool";
+import {
+  setHostKeyVerificationService,
+  setOpenSSHHostKeyPolicyMode,
+  sshConnectionPool,
+} from "../sshConnectionPool";
 import { OpenSSHTransport } from "./OpenSSHTransport";
 
 function createMockChildProcess(): ReturnType<typeof childProcess.spawn> {
@@ -30,6 +34,7 @@ describe("OpenSSHTransport.spawnRemoteProcess", () => {
     releaseInteractiveResponder = undefined;
     // Reset to a configured service without responders so state does not leak across tests.
     setHostKeyVerificationService(new HostKeyVerificationService());
+    setOpenSSHHostKeyPolicyMode("headless-fallback");
 
     spawnSpy.mockRestore();
     acquireConnectionSpy.mockRestore();
@@ -63,6 +68,7 @@ describe("OpenSSHTransport.spawnRemoteProcess", () => {
 
   test("explicit headless (no service) includes host-key fallback options and BatchMode=yes", async () => {
     setHostKeyVerificationCapability(false);
+    setOpenSSHHostKeyPolicyMode("headless-fallback");
 
     const args = await runSpawnRemoteProcess();
 
@@ -78,6 +84,7 @@ describe("OpenSSHTransport.spawnRemoteProcess", () => {
   test("service configured keeps BatchMode=yes but excludes host-key fallback options", async () => {
     const service = setHostKeyVerificationCapability(true);
     releaseInteractiveResponder = service?.registerInteractiveResponder();
+    setOpenSSHHostKeyPolicyMode("strict");
 
     const args = await runSpawnRemoteProcess();
 
@@ -88,6 +95,7 @@ describe("OpenSSHTransport.spawnRemoteProcess", () => {
 
   test("service configured without active responder still excludes host-key fallback options", async () => {
     setHostKeyVerificationCapability(true);
+    setOpenSSHHostKeyPolicyMode("strict");
 
     const args = await runSpawnRemoteProcess();
 
