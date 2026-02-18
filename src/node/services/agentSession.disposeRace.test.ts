@@ -119,4 +119,80 @@ describe("AgentSession disposal race conditions", () => {
       })
     ).not.toThrow();
   });
+
+  test("does not reset auto-retry intent for synthetic sends", async () => {
+    const aiService: AIService = {
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      stopStream: mock(() => Promise.resolve(Ok(undefined))),
+      isStreaming: mock(() => false),
+      streamMessage: mock(() => Promise.resolve(Ok(undefined))),
+    } as unknown as AIService;
+
+    const historyService: HistoryService = {
+      appendToHistory: mock(() => Promise.resolve(Ok(undefined))),
+    } as unknown as HistoryService;
+
+    const initStateManager: InitStateManager = {
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      cleanup: mock(() => Promise.resolve()),
+      setMessageQueued: mock(() => undefined),
+    } as unknown as BackgroundProcessManager;
+
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => "/tmp"),
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId: "ws",
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const cancel = mock(() => undefined);
+    const setEnabled = mock((_enabled: boolean) => undefined);
+    (
+      session as unknown as {
+        retryManager: {
+          cancel: typeof cancel;
+          setEnabled: typeof setEnabled;
+        };
+      }
+    ).retryManager = {
+      cancel,
+      setEnabled,
+    };
+
+    const options = {
+      model: "anthropic:claude-sonnet-4-5",
+      agentId: "exec",
+    };
+
+    const syntheticResult = await session.sendMessage("", options, { synthetic: true });
+    expect(syntheticResult.success).toBe(false);
+    expect(cancel).toHaveBeenCalledTimes(0);
+    expect(setEnabled).toHaveBeenCalledTimes(0);
+
+    const userResult = await session.sendMessage("", options);
+    expect(userResult.success).toBe(false);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(setEnabled).toHaveBeenCalledTimes(1);
+    expect(setEnabled).toHaveBeenCalledWith(true);
+  });
 });

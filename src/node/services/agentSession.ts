@@ -884,10 +884,13 @@ export class AgentSession {
   ): Promise<Result<void, SendMessageError>> {
     this.assertNotDisposed("sendMessage");
 
-    // Any new user send represents explicit re-engagement. Cancel pending retries from prior
-    // failures and re-enable automatic retries for this turn.
-    this.retryManager.cancel();
-    this.retryManager.setEnabled(true);
+    // Only explicit user sends should reset auto-retry intent.
+    // Synthetic/system sends (mid-stream compaction, task recovery prompts, etc.)
+    // must not silently opt users back into auto-retry after they've disabled it.
+    if (internal?.synthetic !== true) {
+      this.retryManager.cancel();
+      this.retryManager.setEnabled(true);
+    }
 
     assert(typeof message === "string", "sendMessage requires a string message");
     // Real user sends break any synthetic switch chain.

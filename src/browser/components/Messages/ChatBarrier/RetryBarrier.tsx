@@ -9,6 +9,8 @@ import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { cn } from "@/common/lib/utils";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
+import { formatSendMessageError } from "@/common/utils/errors/formatSendError";
+import { getErrorMessage } from "@/common/utils/errors";
 
 interface RetryBarrierProps {
   workspaceId: string;
@@ -19,6 +21,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
   const { api } = useAPI();
   const workspaceState = useWorkspaceState(props.workspaceId);
   const [countdown, setCountdown] = useState(0);
+  const [manualRetryError, setManualRetryError] = useState<string | null>(null);
 
   const [vimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, { listener: true });
   const stopKeybind = formatKeybind(
@@ -48,10 +51,18 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
     return () => clearInterval(interval);
   }, [autoRetryStatus, isAutoRetryScheduled]);
 
-  const handleManualRetry = () => {
+  useEffect(() => {
+    if (isAutoRetryActive) {
+      setManualRetryError(null);
+    }
+  }, [isAutoRetryActive]);
+  const handleManualRetry = async () => {
     if (!api) {
+      setManualRetryError("Not connected to server");
       return;
     }
+
+    setManualRetryError(null);
 
     let options = getSendOptionsFromStorage(props.workspaceId);
     const lastUserMessage = [...workspaceState.messages]
@@ -64,12 +75,44 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
       options = applyCompactionOverrides(options, lastUserMessage.compactionRequest.parsed);
     }
 
-    void api.workspace.setAutoRetryEnabled?.({ workspaceId: props.workspaceId, enabled: true });
-    void api.workspace.resumeStream({ workspaceId: props.workspaceId, options });
+    try {
+      const enableResult = await api.workspace.setAutoRetryEnabled?.({
+        workspaceId: props.workspaceId,
+        enabled: true,
+      });
+      if (enableResult && !enableResult.success) {
+        setManualRetryError(enableResult.error);
+        return;
+      }
+
+      const resumeResult = await api.workspace.resumeStream({
+        workspaceId: props.workspaceId,
+        options,
+      });
+
+      if (!resumeResult.success) {
+        const formatted = formatSendMessageError(resumeResult.error);
+        const details = formatted.resolutionHint
+          ? `${formatted.message} ${formatted.resolutionHint}`
+          : formatted.message;
+        setManualRetryError(details);
+
+        // Keep auto-retry preference consistent when manual resume fails before
+        // stream events can update retry status.
+        void api.workspace.setAutoRetryEnabled?.({
+          workspaceId: props.workspaceId,
+          enabled: false,
+        });
+      }
+    } catch (error) {
+      setManualRetryError(getErrorMessage(error));
+      void api.workspace.setAutoRetryEnabled?.({ workspaceId: props.workspaceId, enabled: false });
+    }
   };
 
   const handleStopAutoRetry = () => {
     setCountdown(0);
+    setManualRetryError(null);
     void api?.workspace.setAutoRetryEnabled?.({ workspaceId: props.workspaceId, enabled: false });
   };
 
@@ -89,7 +132,9 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
   let actionButton: React.ReactNode = (
     <button
       className="bg-warning font-primary text-background cursor-pointer rounded border-none px-4 py-2 text-xs font-semibold whitespace-nowrap transition-all duration-200 hover:-translate-y-px hover:brightness-120 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50"
-      onClick={handleManualRetry}
+      onClick={() => {
+        void handleManualRetry();
+      }}
     >
       Retry
     </button>
@@ -132,13 +177,16 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
     );
   }
 
-  const details =
-    autoRetryStatus?.type === "auto-retry-abandoned" ? (
-      <div className="font-primary text-foreground/80 pl-8 text-[12px]">
-        <span className="text-warning font-semibold">Auto-retry stopped:</span>{" "}
-        {autoRetryStatus.reason}
-      </div>
-    ) : null;
+  const details = manualRetryError ? (
+    <div className="font-primary text-foreground/80 pl-8 text-[12px]">
+      <span className="text-warning font-semibold">Retry failed:</span> {manualRetryError}
+    </div>
+  ) : autoRetryStatus?.type === "auto-retry-abandoned" ? (
+    <div className="font-primary text-foreground/80 pl-8 text-[12px]">
+      <span className="text-warning font-semibold">Auto-retry stopped:</span>{" "}
+      {autoRetryStatus.reason}
+    </div>
+  ) : null;
 
   return (
     <div className={barrierClassName}>
