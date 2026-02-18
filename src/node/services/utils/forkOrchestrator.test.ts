@@ -1,47 +1,25 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from "bun:test";
+import { beforeEach, describe, expect, it, spyOn, vi } from "bun:test";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import type { Config } from "@/node/config";
+import * as gitModule from "@/node/git";
 import type {
   InitLogger,
   Runtime,
   WorkspaceCreationResult,
   WorkspaceForkResult,
 } from "@/node/runtime/Runtime";
+import * as runtimeFactoryModule from "@/node/runtime/runtimeFactory";
+import * as runtimeUpdatesModule from "@/node/services/utils/forkRuntimeUpdates";
+import { orchestrateFork } from "./forkOrchestrator";
 
-vi.mock("@/node/services/utils/forkRuntimeUpdates", () => ({
-  applyForkRuntimeUpdates: vi.fn(),
-}));
-
-vi.mock("@/node/runtime/runtimeFactory", () => ({
-  createRuntime: vi.fn(),
-}));
-
-vi.mock("@/node/git", () => ({
-  listLocalBranches: vi.fn(),
-  detectDefaultTrunkBranch: vi.fn(),
-}));
-
-let orchestrateFork!: typeof import("./forkOrchestrator").orchestrateFork;
-let applyForkRuntimeUpdatesMock!: ReturnType<typeof vi.fn>;
-let createRuntimeMock!: ReturnType<typeof vi.fn>;
-let detectDefaultTrunkBranchMock!: ReturnType<typeof vi.fn>;
-let listLocalBranchesMock!: ReturnType<typeof vi.fn>;
-
-beforeAll(async () => {
-  ({ orchestrateFork } = await import("./forkOrchestrator"));
-
-  const runtimeUpdatesModule = await import("@/node/services/utils/forkRuntimeUpdates");
-  const runtimeFactoryModule = await import("@/node/runtime/runtimeFactory");
-  const gitModule = await import("@/node/git");
-
-  applyForkRuntimeUpdatesMock =
-    runtimeUpdatesModule.applyForkRuntimeUpdates as unknown as ReturnType<typeof vi.fn>;
-  createRuntimeMock = runtimeFactoryModule.createRuntime as unknown as ReturnType<typeof vi.fn>;
-  detectDefaultTrunkBranchMock = gitModule.detectDefaultTrunkBranch as unknown as ReturnType<
-    typeof vi.fn
-  >;
-  listLocalBranchesMock = gitModule.listLocalBranches as unknown as ReturnType<typeof vi.fn>;
-});
+let applyForkRuntimeUpdatesMock!: ReturnType<
+  typeof spyOn<typeof runtimeUpdatesModule, "applyForkRuntimeUpdates">
+>;
+let createRuntimeMock!: ReturnType<typeof spyOn<typeof runtimeFactoryModule, "createRuntime">>;
+let detectDefaultTrunkBranchMock!: ReturnType<
+  typeof spyOn<typeof gitModule, "detectDefaultTrunkBranch">
+>;
+let listLocalBranchesMock!: ReturnType<typeof spyOn<typeof gitModule, "listLocalBranches">>;
 
 const PROJECT_PATH = "/projects/demo";
 const SOURCE_WORKSPACE_NAME = "feature/source";
@@ -105,14 +83,23 @@ async function runOrchestrateFork(options: RunOrchestrateForkOptions) {
 
 describe("orchestrateFork", () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     vi.clearAllMocks();
 
-    applyForkRuntimeUpdatesMock.mockResolvedValue({
+    applyForkRuntimeUpdatesMock = spyOn(
+      runtimeUpdatesModule,
+      "applyForkRuntimeUpdates"
+    ).mockResolvedValue({
       forkedRuntimeConfig: DEFAULT_FORKED_RUNTIME_CONFIG,
     });
-    createRuntimeMock.mockReturnValue({ marker: "target-runtime" } as unknown as Runtime);
-    listLocalBranchesMock.mockResolvedValue(["main"]);
-    detectDefaultTrunkBranchMock.mockResolvedValue("main");
+
+    createRuntimeMock = spyOn(runtimeFactoryModule, "createRuntime").mockReturnValue({
+      marker: "target-runtime",
+    } as unknown as Runtime);
+    listLocalBranchesMock = spyOn(gitModule, "listLocalBranches").mockResolvedValue(["main"]);
+    detectDefaultTrunkBranchMock = spyOn(gitModule, "detectDefaultTrunkBranch").mockResolvedValue(
+      "main"
+    );
   });
 
   it("returns Ok with fork metadata when forkWorkspace succeeds", async () => {
@@ -261,15 +248,13 @@ describe("orchestrateFork", () => {
       allowCreateFallback: true,
     });
 
-    expect(result).toEqual(
-      expect.objectContaining({
-        success: true,
-        data: expect.objectContaining({
-          trunkBranch: SOURCE_WORKSPACE_NAME,
-          forkedFromSource: false,
-        }),
-      })
-    );
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error(`Expected success result, got error: ${result.error}`);
+    }
+
+    expect(result.data.trunkBranch).toBe(SOURCE_WORKSPACE_NAME);
+    expect(result.data.forkedFromSource).toBe(false);
     expect(detectDefaultTrunkBranchMock).not.toHaveBeenCalled();
   });
 
@@ -287,14 +272,12 @@ describe("orchestrateFork", () => {
       allowCreateFallback: true,
     });
 
-    expect(result).toEqual(
-      expect.objectContaining({
-        success: true,
-        data: expect.objectContaining({
-          trunkBranch: "main",
-        }),
-      })
-    );
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error(`Expected success result, got error: ${result.error}`);
+    }
+
+    expect(result.data.trunkBranch).toBe("main");
     expect(detectDefaultTrunkBranchMock).not.toHaveBeenCalled();
   });
 
@@ -315,14 +298,12 @@ describe("orchestrateFork", () => {
       allowCreateFallback: false,
     });
 
-    expect(result).toEqual(
-      expect.objectContaining({
-        success: true,
-        data: expect.objectContaining({
-          sourceRuntimeConfigUpdated: true,
-        }),
-      })
-    );
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error(`Expected success result, got error: ${result.error}`);
+    }
+
+    expect(result.data.sourceRuntimeConfigUpdated).toBe(true);
   });
 
   it("uses the runtime config from applyForkRuntimeUpdates when creating target runtime", async () => {
@@ -350,20 +331,17 @@ describe("orchestrateFork", () => {
       allowCreateFallback: true,
     });
 
-    expect(result).toEqual(
-      expect.objectContaining({
-        success: true,
-        data: expect.objectContaining({
-          forkedRuntimeConfig: customForkedRuntimeConfig,
-        }),
-      })
-    );
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error(`Expected success result, got error: ${result.error}`);
+    }
+
+    expect(result.data.forkedRuntimeConfig).toEqual(customForkedRuntimeConfig);
     expect(createRuntimeMock).toHaveBeenCalledWith(customForkedRuntimeConfig, {
       projectPath: PROJECT_PATH,
       workspaceName: NEW_WORKSPACE_NAME,
     });
   });
-
   it("returns Err when create fallback also fails", async () => {
     const { sourceRuntime, forkWorkspace, createWorkspace } = createSourceRuntimeMocks();
     forkWorkspace.mockResolvedValue({
