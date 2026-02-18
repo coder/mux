@@ -2386,6 +2386,14 @@ export class WorkspaceStore {
         this.removeWorkspace(workspaceId);
       }
     }
+
+    // Re-evaluate the active subscription after additions/removals.
+    // removeWorkspace can null activeWorkspaceId when the removed workspace
+    // was active (e.g., stale singleton state between integration tests),
+    // leaving addWorkspace's ensureActiveOnChatSubscription targeting the
+    // old workspace. This final call reconciles the subscription with the
+    // current activeWorkspaceId + registration state.
+    this.ensureActiveOnChatSubscription();
   }
 
   /**
