@@ -91,6 +91,20 @@ describe("shouldBypassDeferredMessages", () => {
     expect(shouldBypassDeferredMessages([completedBash], [])).toBe(true);
   });
 
+  it("returns true when snapshots have same length but different row identity/order", () => {
+    const userRow: DisplayedMessage = {
+      type: "user",
+      id: "u-1",
+      historyId: "h-user",
+      content: "hello",
+      historySequence: 0,
+    };
+
+    expect(shouldBypassDeferredMessages([completedBash, userRow], [userRow, completedBash])).toBe(
+      true
+    );
+  });
+
   it("returns false when both snapshots are settled and in sync", () => {
     expect(shouldBypassDeferredMessages([completedBash], [completedBash])).toBe(false);
   });

@@ -44,6 +44,7 @@ import { INIT_HOOK_MAX_LINES } from "@/common/constants/toolLimits";
 import { isDynamicToolPart } from "@/common/types/toolParts";
 import { z } from "zod";
 import { createDeltaStorage, type DeltaRecordStorage } from "./StreamingTPSCalculator";
+import { buildTranscriptTruncationPlan } from "./transcriptTruncationPlan";
 import { computeRecencyTimestamp } from "./recency";
 import { assert } from "@/common/utils/assert";
 import { getStatusStateKey } from "@/common/constants/storage";
@@ -82,7 +83,7 @@ type AgentStatus = z.infer<typeof AgentStatusSchema>;
 /**
  * Maximum number of DisplayedMessages to render before truncation kicks in.
  * We keep all user prompts and structural markers, while allowing older assistant
- * content to collapse behind the history-hidden marker for faster initial paint.
+ * content to collapse behind history-hidden markers for faster initial paint.
  */
 const MAX_DISPLAYED_MESSAGES = 64;
 
@@ -2676,92 +2677,20 @@ export class StreamingMessageAggregator {
       let resultMessages = displayedMessages;
 
       // Limit messages for DOM performance (unless explicitly disabled).
-      // Strategy: keep user prompts + structural markers while allowing older assistant/tool/
-      // reasoning rows to collapse behind a history-hidden marker.
+      // Strategy: keep recent rows intact, preserve structural rows in older history,
+      // and materialize omission runs as explicit history-hidden marker rows.
       // Full history is still maintained internally for token counting.
       if (!this.showAllMessages && displayedMessages.length > MAX_DISPLAYED_MESSAGES) {
-        // Split into "old" (candidates for filtering) and "recent" (always keep intact)
-        const recentMessages = displayedMessages.slice(-MAX_DISPLAYED_MESSAGES);
-        const oldMessages = displayedMessages.slice(0, -MAX_DISPLAYED_MESSAGES);
+        const truncationPlan = buildTranscriptTruncationPlan({
+          displayedMessages,
+          maxDisplayedMessages: MAX_DISPLAYED_MESSAGES,
+          alwaysKeepMessageTypes: ALWAYS_KEEP_MESSAGE_TYPES,
+        });
 
-        const omittedMessageCounts = { tool: 0, reasoning: 0 };
-        let hiddenCount = 0;
-        let insertionIndex: number | null = null;
-        let pendingOmittedCount = 0;
-        let consumedFirstOmittedRun = false;
-        const filteredOldMessages: DisplayedMessage[] = [];
-
-        const addHiddenGapReminderToNextUser = (
-          messages: DisplayedMessage[],
-          hiddenCountBeforeUser: number
-        ): DisplayedMessage[] => {
-          const nextUserIndex = messages.findIndex((message) => message.type === "user");
-          if (nextUserIndex === -1) {
-            return messages;
-          }
-
-          const nextUser = messages[nextUserIndex];
-          if (nextUser?.type !== "user") {
-            return messages;
-          }
-
-          const messagesWithReminder = [...messages];
-          messagesWithReminder[nextUserIndex] = { ...nextUser, hiddenCountBeforeUser };
-          return messagesWithReminder;
-        };
-
-        for (const msg of oldMessages) {
-          if (!ALWAYS_KEEP_MESSAGE_TYPES.has(msg.type)) {
-            if (msg.type === "tool") {
-              omittedMessageCounts.tool += 1;
-            } else if (msg.type === "reasoning") {
-              omittedMessageCounts.reasoning += 1;
-            }
-
-            hiddenCount += 1;
-            pendingOmittedCount += 1;
-            insertionIndex ??= filteredOldMessages.length;
-            continue;
-          }
-
-          // Stamp per-gap count on user rows after the first omitted run.
-          if (msg.type === "user" && pendingOmittedCount > 0 && consumedFirstOmittedRun) {
-            filteredOldMessages.push({ ...msg, hiddenCountBeforeUser: pendingOmittedCount });
-          } else {
-            filteredOldMessages.push(msg);
-          }
-
-          if (pendingOmittedCount > 0) {
-            consumedFirstOmittedRun = true;
-            pendingOmittedCount = 0;
-          }
-        }
-
-        const recentMessagesWithGapReminders =
-          pendingOmittedCount > 0 && consumedFirstOmittedRun
-            ? addHiddenGapReminderToNextUser(recentMessages, pendingOmittedCount)
-            : recentMessages;
-
-        const hasOmissions = hiddenCount > 0;
-
-        if (hasOmissions) {
-          const insertAt = insertionIndex ?? filteredOldMessages.length;
-          const messagesWithMarker = [...filteredOldMessages];
-          messagesWithMarker.splice(insertAt, 0, {
-            type: "history-hidden" as const,
-            id: "history-hidden",
-            hiddenCount,
-            historySequence: -1,
-            omittedMessageCounts,
-          });
-
-          resultMessages = this.normalizeLastPartFlags([
-            ...messagesWithMarker,
-            ...recentMessagesWithGapReminders,
-          ]);
-        } else {
-          resultMessages = [...filteredOldMessages, ...recentMessagesWithGapReminders];
-        }
+        resultMessages =
+          truncationPlan.hiddenCount > 0
+            ? this.normalizeLastPartFlags(truncationPlan.rows)
+            : truncationPlan.rows;
       }
 
       // Add init state if present (ephemeral, appears at top)

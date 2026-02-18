@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { createMuxMessage, type DisplayedMessage } from "@/common/types/message";
+import { MAX_HISTORY_HIDDEN_SEGMENTS } from "./transcriptTruncationPlan";
 import { StreamingMessageAggregator } from "./StreamingMessageAggregator";
 
 // Test helper: create aggregator with default createdAt for tests
@@ -315,20 +316,23 @@ describe("StreamingMessageAggregator", () => {
       // In those 336: user messages are kept, while assistant/tool/reasoning may be omitted.
       const capped = aggregator.getDisplayedMessages();
 
-      // Verify a single history-hidden marker is present (some tool calls were filtered)
-      const hiddenMessages = capped.filter((msg) => msg.type === "history-hidden");
-      expect(hiddenMessages).toHaveLength(1);
-      const hiddenIndex = capped.findIndex((msg) => msg.type === "history-hidden");
-      expect(hiddenIndex).toBeGreaterThan(0);
-      expect(hiddenIndex).toBeLessThan(capped.length - 1);
-      if (hiddenIndex !== -1) {
-        expect(capped[hiddenIndex - 1]?.type).toBe("user");
-        expect(capped[hiddenIndex + 1]?.type).toBe("user");
-        expect(capped[hiddenIndex]?.type).toBe("history-hidden");
-        if (capped[hiddenIndex]?.type === "history-hidden") {
-          expect(capped[hiddenIndex].hiddenCount).toBeGreaterThan(0);
+      const expectedHiddenCount = 252;
+      const hiddenMessages = capped.filter(
+        (msg): msg is Extract<DisplayedMessage, { type: "history-hidden" }> => {
+          return msg.type === "history-hidden";
         }
-      }
+      );
+      expect(hiddenMessages).toHaveLength(MAX_HISTORY_HIDDEN_SEGMENTS);
+      expect(hiddenMessages.every((msg) => msg.hiddenCount > 0)).toBe(true);
+      expect(hiddenMessages.reduce((sum, msg) => sum + msg.hiddenCount, 0)).toBe(
+        expectedHiddenCount
+      );
+
+      const firstHiddenIndex = capped.findIndex((msg) => msg.type === "history-hidden");
+      expect(firstHiddenIndex).toBeGreaterThan(0);
+      expect(firstHiddenIndex).toBeLessThan(capped.length - 1);
+      expect(capped[firstHiddenIndex - 1]?.type).toBe("user");
+      expect(capped[firstHiddenIndex + 1]?.type).toBe("user");
 
       // User prompts remain fully visible; older assistant rows can be omitted.
       const userMessages = capped.filter((m) => m.type === "user");
@@ -346,9 +350,9 @@ describe("StreamingMessageAggregator", () => {
       expect(displayed.some((m) => m.type === "history-hidden")).toBe(false);
     });
 
-    test("should collapse alternating user/assistant history behind a single history-hidden marker", () => {
-      // Regression test: alternating user/assistant history previously produced one marker per
-      // omitted assistant gap, which could recreate near-full DOM row counts.
+    test("should cap history-hidden markers for alternating user/assistant history", () => {
+      // Alternating user/assistant history creates many tiny omission runs.
+      // We preserve locality for recent runs while capping marker rows to keep DOM size bounded.
       const manyMessages: Parameters<
         typeof StreamingMessageAggregator.prototype.loadHistoricalMessages
       >[0] = [];
@@ -374,15 +378,24 @@ describe("StreamingMessageAggregator", () => {
       aggregator.loadHistoricalMessages(manyMessages, false);
 
       const displayed = aggregator.getDisplayedMessages();
-      const hiddenMarkers = displayed.filter((msg) => msg.type === "history-hidden");
-      expect(hiddenMarkers).toHaveLength(1);
-      expect(displayed.some((msg) => msg.id.startsWith("history-hidden-gap-"))).toBe(false);
+      const hiddenMarkers = displayed.filter(
+        (msg): msg is Extract<DisplayedMessage, { type: "history-hidden" }> => {
+          return msg.type === "history-hidden";
+        }
+      );
 
-      const hiddenIndex = displayed.findIndex((msg) => msg.type === "history-hidden");
-      expect(hiddenIndex).toBeGreaterThan(0);
-      expect(hiddenIndex).toBeLessThan(displayed.length - 1);
-      expect(displayed[hiddenIndex - 1]?.type).toBe("user");
-      expect(displayed[hiddenIndex + 1]?.type).toBe("user");
+      expect(hiddenMarkers).toHaveLength(MAX_HISTORY_HIDDEN_SEGMENTS);
+      expect(hiddenMarkers.reduce((sum, marker) => sum + marker.hiddenCount, 0)).toBe(168);
+
+      const hiddenIndices = displayed
+        .map((msg, index) => (msg.type === "history-hidden" ? index : -1))
+        .filter((index) => index !== -1);
+      for (const hiddenIndex of hiddenIndices) {
+        expect(hiddenIndex).toBeGreaterThan(0);
+        expect(hiddenIndex).toBeLessThan(displayed.length - 1);
+        expect(displayed[hiddenIndex - 1]?.type).toBe("user");
+        expect(displayed[hiddenIndex + 1]?.type).toBe("user");
+      }
 
       const userMessages = displayed.filter(
         (msg): msg is Extract<DisplayedMessage, { type: "user" }> => {
@@ -390,24 +403,12 @@ describe("StreamingMessageAggregator", () => {
         }
       );
       expect(userMessages).toHaveLength(200);
-      expect(userMessages[0]?.hiddenCountBeforeUser).toBeUndefined();
-      expect(userMessages[1]?.hiddenCountBeforeUser).toBeUndefined();
-      expect(userMessages[2]?.hiddenCountBeforeUser).toBe(1);
-      expect(userMessages[167]?.hiddenCountBeforeUser).toBe(1);
-      expect(userMessages[168]?.hiddenCountBeforeUser).toBe(1);
-      expect(userMessages[169]?.hiddenCountBeforeUser).toBeUndefined();
 
-      const gapReminderCounts = userMessages
-        .map((message) => message.hiddenCountBeforeUser)
-        .filter((count): count is number => count != null);
-      expect(gapReminderCounts).toHaveLength(167);
-      expect(gapReminderCounts.every((count) => count === 1)).toBe(true);
-
-      // With a single marker, rendered rows stay significantly below full history length.
-      expect(displayed.length).toBeLessThan(300);
+      // Rendered rows stay well below full history size because hidden markers are capped.
+      expect(displayed.length).toBeLessThan(260);
     });
 
-    test("should not set hiddenCountBeforeUser for consecutive user messages without truncation", () => {
+    test("should not show history-hidden when messages are below truncation threshold", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       aggregator.loadHistoricalMessages(
         [
@@ -419,20 +420,12 @@ describe("StreamingMessageAggregator", () => {
       );
 
       const displayed = aggregator.getDisplayedMessages();
-      const userMessages = displayed.filter(
-        (msg): msg is Extract<DisplayedMessage, { type: "user" }> => {
-          return msg.type === "user";
-        }
-      );
-
-      expect(userMessages).toHaveLength(3);
-      for (const message of userMessages) {
-        expect(message.hiddenCountBeforeUser).toBeUndefined();
-      }
+      expect(displayed).toHaveLength(3);
+      expect(displayed.some((msg) => msg.type === "history-hidden")).toBe(false);
     });
 
     test("should not show history-hidden when only user messages exceed cap", () => {
-      // When all messages are user/assistant (always-keep types), no filtering occurs
+      // When all messages are user rows (always-keep type), no filtering occurs
       const manyMessages = Array.from({ length: 200 }, (_, i) =>
         createMuxMessage(`u${i}`, "user", `msg-${i}`, {
           timestamp: i,

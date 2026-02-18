@@ -141,40 +141,9 @@ export const UserMessage: React.FC<UserMessageProps> = ({
     </span>
   ) : null;
   const syntheticClassName = cn(className, isSynthetic && "opacity-70");
-  const truncationReminder = message.hiddenCountBeforeUser != null && (
-    <div
-      data-testid="hidden-gap-reminder"
-      className="text-muted my-2 flex items-center gap-2 text-xs"
-    >
-      <div className="border-border flex-1 border-b border-dashed" />
-      <span>
-        {message.hiddenCountBeforeUser} message{message.hiddenCountBeforeUser !== 1 ? "s" : ""}{" "}
-        hidden
-      </span>
-      <div className="border-border flex-1 border-b border-dashed" />
-    </div>
-  );
 
   if (isLocalCommandOutput) {
     return (
-      <>
-        {truncationReminder}
-        <MessageWindow
-          label={label}
-          message={message}
-          buttons={buttons}
-          className={syntheticClassName}
-          variant="user"
-        >
-          <TerminalOutput output={extractedOutput} isError={false} />
-        </MessageWindow>
-      </>
-    );
-  }
-
-  return (
-    <>
-      {truncationReminder}
       <MessageWindow
         label={label}
         message={message}
@@ -182,15 +151,27 @@ export const UserMessage: React.FC<UserMessageProps> = ({
         className={syntheticClassName}
         variant="user"
       >
-        <UserMessageContent
-          content={content}
-          commandPrefix={message.commandPrefix}
-          agentSkillSnapshot={message.agentSkill?.snapshot}
-          reviews={message.reviews}
-          fileParts={message.fileParts}
-          variant="sent"
-        />
+        <TerminalOutput output={extractedOutput} isError={false} />
       </MessageWindow>
-    </>
+    );
+  }
+
+  return (
+    <MessageWindow
+      label={label}
+      message={message}
+      buttons={buttons}
+      className={syntheticClassName}
+      variant="user"
+    >
+      <UserMessageContent
+        content={content}
+        commandPrefix={message.commandPrefix}
+        agentSkillSnapshot={message.agentSkill?.snapshot}
+        reviews={message.reviews}
+        fileParts={message.fileParts}
+        variant="sent"
+      />
+    </MessageWindow>
   );
 };

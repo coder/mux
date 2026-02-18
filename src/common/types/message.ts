@@ -489,8 +489,6 @@ export type DisplayedMessage =
        */
       commandPrefix?: string;
       fileParts?: FilePart[]; // Optional attachments
-      /** Number of messages omitted by truncation immediately before this user message. */
-      hiddenCountBeforeUser?: number;
       historySequence: number; // Global ordering across all messages
       isSynthetic?: boolean;
       timestamp?: number;
