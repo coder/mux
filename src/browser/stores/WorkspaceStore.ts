@@ -389,6 +389,10 @@ export class WorkspaceStore {
 
   // Lightweight activity snapshots from workspace.activity.list/subscribe.
   private workspaceActivity = new Map<string, WorkspaceActivitySnapshot>();
+  // Recency timestamp observed when a workspace transitions into streaming=true.
+  // Used to distinguish true stream completion (recency bumps on stream-end) from
+  // abort/error transitions (streaming=false without recency advance).
+  private activityStreamingStartRecency = new Map<string, number>();
   private activityAbortController: AbortController | null = null;
 
   // Per-workspace ephemeral chat state (buffering, queued message, live bash output, etc.)
@@ -1892,19 +1896,44 @@ export class WorkspaceStore {
       this.states.bump(workspaceId);
     }
 
-    // Trigger response completion notifications for background workspaces when
-    // streaming transitions from active -> idle via workspace.activity snapshots.
-    // Single-stream onChat is scoped to the active workspace, so inactive
-    // workspaces rely on activity updates for completion signals.
+    const startedStreamingSnapshot =
+      previous?.streaming !== true && snapshot?.streaming === true ? snapshot : null;
+    if (startedStreamingSnapshot) {
+      this.activityStreamingStartRecency.set(workspaceId, startedStreamingSnapshot.recency);
+    }
+
+    const stoppedStreamingSnapshot =
+      previous?.streaming === true && snapshot?.streaming === false ? snapshot : null;
+    const streamStartRecency = this.activityStreamingStartRecency.get(workspaceId);
+    const recencyAdvancedSinceStreamStart =
+      stoppedStreamingSnapshot !== null &&
+      streamStartRecency !== undefined &&
+      stoppedStreamingSnapshot.recency > streamStartRecency;
+
+    // Trigger response completion notifications for background workspaces only when
+    // activity indicates a true completion (streaming true -> false WITH recency advance).
+    // stream-abort/error transitions also flip streaming to false, but recency stays
+    // unchanged there, so suppress completion notifications in those cases.
     if (
-      previous?.streaming === true &&
-      snapshot?.streaming === false &&
+      stoppedStreamingSnapshot &&
+      recencyAdvancedSinceStreamStart &&
       workspaceId !== this.activeWorkspaceId &&
       this.responseCompleteCallback
     ) {
       // Activity snapshots don't include message/content metadata.
       // Pass stable fallbacks so App.tsx can still notify using workspace metadata.
-      this.responseCompleteCallback(workspaceId, "", true, "", undefined, Date.now());
+      this.responseCompleteCallback(
+        workspaceId,
+        "",
+        true,
+        "",
+        undefined,
+        stoppedStreamingSnapshot.recency
+      );
+    }
+
+    if (snapshot?.streaming !== true) {
+      this.activityStreamingStartRecency.delete(workspaceId);
     }
 
     if (previous?.recency !== snapshot?.recency && this.aggregators.has(workspaceId)) {
@@ -2384,6 +2413,7 @@ export class WorkspaceStore {
     this.chatTransientState.delete(workspaceId);
     this.workspaceMetadata.delete(workspaceId);
     this.workspaceActivity.delete(workspaceId);
+    this.activityStreamingStartRecency.delete(workspaceId);
     this.recencyCache.delete(workspaceId);
     this.previousSidebarValues.delete(workspaceId);
     this.sidebarStateCache.delete(workspaceId);

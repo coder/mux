@@ -674,8 +674,82 @@ describe("WorkspaceStore", () => {
         true,
         "",
         undefined,
-        expect.any(Number)
+        initialRecency + 1
       );
+    });
+
+    it("does not fire response-complete callback when background streaming stops without recency advance", async () => {
+      const activeWorkspaceId = "active-workspace-no-replay";
+      const backgroundWorkspaceId = "background-workspace-no-replay";
+      const initialRecency = new Date("2024-01-06T00:00:00.000Z").getTime();
+
+      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
+        recency: initialRecency,
+        streaming: true,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+      };
+
+      let releaseBackgroundTransition!: () => void;
+      const backgroundTransitionReady = new Promise<void>((resolve) => {
+        releaseBackgroundTransition = resolve;
+      });
+
+      mockActivityList.mockResolvedValue({
+        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
+      });
+
+      mockActivitySubscribe.mockImplementation(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<
+        { workspaceId: string; activity: WorkspaceActivitySnapshot | null },
+        void,
+        unknown
+      > {
+        await backgroundTransitionReady;
+        if (options?.signal?.aborted) {
+          return;
+        }
+
+        yield {
+          workspaceId: backgroundWorkspaceId,
+          activity: {
+            ...backgroundStreamingSnapshot,
+            // Abort/error transitions can stop streaming without advancing recency.
+            recency: initialRecency,
+            streaming: false,
+          },
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      const onResponseComplete = mock(
+        (
+          _workspaceId: string,
+          _messageId: string,
+          _isFinal: boolean,
+          _finalText: string,
+          _compaction?: { hasContinueMessage: boolean },
+          _completedAt?: number | null
+        ) => undefined
+      );
+
+      // Recreate the store so the first activity.list call uses this test snapshot.
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      store.setOnResponseComplete(onResponseComplete);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+
+      createAndAddWorkspace(store, activeWorkspaceId);
+      createAndAddWorkspace(store, backgroundWorkspaceId, {}, false);
+
+      releaseBackgroundTransition();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(onResponseComplete).not.toHaveBeenCalled();
     });
   });
 
