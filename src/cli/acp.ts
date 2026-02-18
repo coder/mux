@@ -18,11 +18,14 @@ program
     const serverUrl = typeof options.serverUrl === "string" ? options.serverUrl : undefined;
     const authToken = typeof options.authToken === "string" ? options.authToken : undefined;
 
+    console.error("[acp] Connecting to mux server…");
     const connection = await connectToServer({
       serverUrl: serverUrl ?? process.env.MUX_SERVER_URL,
       authToken: authToken ?? process.env.MUX_SERVER_AUTH_TOKEN,
     });
+    console.error("[acp] Connected to server at", connection.baseUrl);
 
+    console.error("[acp] Starting ACP adapter — reading stdin");
     await runAcpAdapter(connection);
   });
 

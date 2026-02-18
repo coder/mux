@@ -42,6 +42,7 @@ export async function connectToServer(options: {
   const explicitAuthToken = normalizeToken(options.authToken);
 
   if (explicitServerUrl) {
+    console.error("[acp] Connecting to explicit server:", explicitServerUrl);
     return connectToExistingServer({
       baseUrl: explicitServerUrl,
       authToken: explicitAuthToken,
@@ -56,6 +57,7 @@ export async function connectToServer(options: {
     // (startup race, stale-but-live process, etc.).  Only fall back to the
     // in-process server for clearly unreachable endpoints; rethrow auth,
     // protocol, or other errors to avoid split-brain with a live server.
+    console.error("[acp] Found lockfile, connecting to server at", lockData.baseUrl);
     try {
       return await connectToExistingServer({
         baseUrl: lockData.baseUrl,
@@ -65,10 +67,12 @@ export async function connectToServer(options: {
       if (!isUnreachableError(error)) {
         throw error;
       }
+      console.error("[acp] Lockfile endpoint unreachable, falling back to in-process server");
       // Lockfile endpoint unreachable — fall through to in-process server.
     }
   }
 
+  console.error("[acp] Starting in-process server…");
   return connectToInProcessServer(explicitAuthToken);
 }
 
@@ -275,13 +279,27 @@ function buildAuthHeaders(authToken: string | undefined): Record<string, string>
   };
 }
 
+/** Maximum time to wait for a WebSocket connection to open (ms). */
+const WS_OPEN_TIMEOUT_MS = 10_000;
+
 async function waitForWebSocketOpen(websocket: WebSocket, wsUrl: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const cleanup = () => {
+      clearTimeout(timer);
       websocket.off("open", onOpen);
       websocket.off("error", onError);
       websocket.off("close", onClose);
     };
+
+    const timer = setTimeout(() => {
+      cleanup();
+      websocket.terminate();
+      reject(
+        new Error(
+          `[serverConnection] WebSocket open timed out after ${WS_OPEN_TIMEOUT_MS}ms: ${wsUrl}`
+        )
+      );
+    }, WS_OPEN_TIMEOUT_MS);
 
     const onOpen = () => {
       cleanup();
