@@ -2395,10 +2395,41 @@ export class TaskService {
       }
 
       const latestCfg = this.config.loadConfigOrDefault();
-      const workspaceOverride = args.entry.workspace.aiSettingsByAgent?.[targetAgentId];
-      const globalDefaults = latestCfg.agentAiDefaults?.[targetAgentId];
+      const normalizedTargetAgentId = targetAgentId.trim().toLowerCase();
+
+      // Use agent-specific overrides for handoff target selection. Do NOT fall back to
+      // workspace.aiSettings here, otherwise plan-mode legacy settings can incorrectly
+      // bleed into exec handoff model selection.
+      const childWorkspaceOverride =
+        args.entry.workspace.aiSettingsByAgent?.[normalizedTargetAgentId];
+
+      const parentWorkspaceId = coerceNonEmptyString(args.entry.workspace.parentWorkspaceId);
+      const parentEntry = parentWorkspaceId
+        ? findWorkspaceEntry(latestCfg, parentWorkspaceId)
+        : undefined;
+      const parentAgentSpecificOverride =
+        parentEntry?.workspace.aiSettingsByAgent?.[normalizedTargetAgentId];
+      const parentCurrentAgentId = coerceNonEmptyString(
+        parentEntry?.workspace.agentId ?? parentEntry?.workspace.agentType
+      )
+        ?.trim()
+        .toLowerCase();
+      const parentLegacyCurrentModeOverride =
+        parentCurrentAgentId === normalizedTargetAgentId
+          ? parentEntry?.workspace.aiSettings
+          : undefined;
+
+      const globalDefaults =
+        latestCfg.agentAiDefaults?.[targetAgentId] ?? latestCfg.subagentAiDefaults?.[targetAgentId];
+
+      // Keep handoff model selection aligned with sub-agent creation precedence so switching
+      // from plan → exec/orchestrator uses the same configured defaults users expect:
+      // child target-agent override → parent target-agent override → parent current-mode legacy
+      // override (for older configs) → global defaults → current task model fallback.
       const preferredModel = (
-        workspaceOverride?.model ??
+        childWorkspaceOverride?.model ??
+        parentAgentSpecificOverride?.model ??
+        parentLegacyCurrentModeOverride?.model ??
         globalDefaults?.modelString ??
         args.entry.workspace.taskModelString ??
         defaultModel
@@ -2407,7 +2438,9 @@ export class TaskService {
         preferredModel.length > 0 ? preferredModel : defaultModel
       );
       const requestedThinking =
-        workspaceOverride?.thinkingLevel ??
+        childWorkspaceOverride?.thinkingLevel ??
+        parentAgentSpecificOverride?.thinkingLevel ??
+        parentLegacyCurrentModeOverride?.thinkingLevel ??
         globalDefaults?.thinkingLevel ??
         args.entry.workspace.taskThinkingLevel ??
         "off";

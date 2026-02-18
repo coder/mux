@@ -16,6 +16,7 @@ import type { WorkspaceForkParams } from "@/node/runtime/Runtime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { Ok, Err, type Result } from "@/common/types/result";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import type { StreamEndEvent } from "@/common/types/stream";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
@@ -3136,6 +3137,7 @@ describe("TaskService", () => {
     planSubagentDefaultsToOrchestrator?: boolean;
     childAgentId?: string;
     disableOrchestrator?: boolean;
+    parentAiSettingsByAgent?: Record<string, { model: string; thinkingLevel: ThinkingLevel }>;
     sendMessageOverride?: ReturnType<typeof mock>;
   }) {
     const config = await createTestConfig(rootDir);
@@ -3176,6 +3178,7 @@ describe("TaskService", () => {
                 id: parentId,
                 name: "parent",
                 runtimeConfig,
+                aiSettingsByAgent: options?.parentAiSettingsByAgent,
               },
               {
                 path: childWorkspacePath,
@@ -3185,6 +3188,7 @@ describe("TaskService", () => {
                 agentId: childAgentId,
                 agentType: childAgentId,
                 taskStatus: "running",
+                aiSettings: { model: "anthropic:claude-opus-4-6", thinkingLevel: "max" },
                 taskModelString: "openai:gpt-4o-mini",
                 runtimeConfig,
               },
@@ -3288,6 +3292,40 @@ describe("TaskService", () => {
 
     expect(updatedTask?.agentId).toBe("exec");
     expect(updatedTask?.taskStatus).toBe("running");
+  });
+
+  test("stream-end with propose_plan success uses parent workspace exec defaults for handoff", async () => {
+    const { config, childId, sendMessage, internal } = await setupPlanModeStreamEndHarness({
+      parentAiSettingsByAgent: {
+        exec: {
+          model: "openai:gpt-5.3-codex",
+          thinkingLevel: "xhigh",
+        },
+      },
+    });
+
+    await internal.handleStreamEnd(makeSuccessfulProposePlanStreamEndEvent(childId));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      childId,
+      expect.stringContaining("Implement the plan"),
+      expect.objectContaining({
+        agentId: "exec",
+        model: "openai:gpt-5.3-codex",
+        thinkingLevel: "xhigh",
+      }),
+      expect.objectContaining({ synthetic: true })
+    );
+
+    const postCfg = config.loadConfigOrDefault();
+    const updatedTask = Array.from(postCfg.projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === childId);
+
+    expect(updatedTask?.agentId).toBe("exec");
+    expect(updatedTask?.taskModelString).toBe("openai:gpt-5.3-codex");
+    expect(updatedTask?.taskThinkingLevel).toBe("xhigh");
   });
 
   test("stream-end with propose_plan success triggers handoff for custom plan-like agents", async () => {
