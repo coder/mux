@@ -101,10 +101,15 @@ describeIntegration("web_fetch integration tests", () => {
         const webFetchEnd = await waitForToolCallEnd(collector, "web_fetch", 5000);
         expect(webFetchEnd).toBeDefined();
 
+        // SDK may wrap provider-native results: { type: "json", value: <actual result> }.
+        // Unwrap before checking the Anthropic-specific type field.
+        const raw = webFetchEnd?.result as Record<string, unknown> | null | undefined;
+        expect(raw).toBeTruthy();
+        const toolResult =
+          raw?.type === "json" && raw.value != null ? (raw.value as Record<string, unknown>) : raw;
+
         // Native success: { type: 'web_fetch_result', url, content: { ... } }
         // Native error:   { type: 'web_fetch_tool_result_error', errorCode }
-        const toolResult = webFetchEnd?.result as Record<string, unknown> | null | undefined;
-        expect(toolResult).toBeTruthy();
         expect(toolResult?.type).toBe("web_fetch_result");
 
         // Assert the model produced a substantive text response about CNN content
