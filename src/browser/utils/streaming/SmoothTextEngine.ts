@@ -89,12 +89,16 @@ export class SmoothTextEngine {
 
     this.charBudget += adaptiveRate * (dtMs / 1000);
 
-    const reveal = clamp(
-      Math.floor(this.charBudget),
-      STREAM_SMOOTHING.MIN_FRAME_CHARS,
-      STREAM_SMOOTHING.MAX_FRAME_CHARS
-    );
+    // Budget-gated reveal: only reveal when at least one whole character has
+    // accrued. This makes cadence frame-rate invariant — a 240Hz display
+    // accumulates budget across several frames before revealing, rather than
+    // forcing 1 char/frame at any refresh rate.
+    const wholeCharsReady = Math.floor(this.charBudget);
+    if (wholeCharsReady < STREAM_SMOOTHING.MIN_FRAME_CHARS) {
+      return this.visibleLengthValue;
+    }
 
+    const reveal = Math.min(wholeCharsReady, STREAM_SMOOTHING.MAX_FRAME_CHARS);
     this.visibleLengthValue = Math.min(this.fullLength, this.visibleLengthValue + reveal);
     this.charBudget -= reveal;
 

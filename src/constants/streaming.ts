@@ -14,6 +14,6 @@ export const STREAM_SMOOTHING = {
   MAX_VISUAL_LAG_CHARS: 120,
   /** Max characters revealed in a single animation frame. */
   MAX_FRAME_CHARS: 48,
-  /** Min characters revealed per frame (avoids sub-character stalls). */
+  /** Min characters revealed per tick once budget permits (avoids sub-character stalls). */
   MIN_FRAME_CHARS: 1,
 } as const;

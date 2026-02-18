@@ -107,4 +107,45 @@ describe("SmoothTextEngine", () => {
 
     expect(engine.visibleLength).toBe(30);
   });
+
+  it("does not force reveal when budget is below one char", () => {
+    const engine = new SmoothTextEngine();
+    // With a 1-char backlog, adaptive rate is at floor (~24 cps).
+    // At 4ms per tick: 24 * 0.004 = 0.096 budget per tick.
+    // Budget reaches 1.0 after ceil(1 / 0.096) ≈ 11 ticks.
+    engine.update("x", true, false);
+
+    // First tick at 4ms should not reveal (budget ~0.10).
+    const afterFirstTick = engine.tick(4);
+    expect(afterFirstTick).toBe(0);
+
+    // Several more small ticks should still not reveal.
+    engine.tick(4);
+    engine.tick(4);
+    expect(engine.visibleLength).toBe(0);
+
+    // After enough ticks to accumulate >= 1 char, it should reveal.
+    for (let i = 0; i < 20; i++) {
+      engine.tick(4);
+    }
+    expect(engine.visibleLength).toBeGreaterThan(0);
+  });
+
+  it("keeps reveal near frame-rate invariant over equal wall time", () => {
+    const run = (frameMs: number) => {
+      const engine = new SmoothTextEngine();
+      engine.update(makeText(400), true, false);
+      for (let t = 0; t < 1000; t += frameMs) {
+        engine.tick(frameMs);
+      }
+      return engine.visibleLength;
+    };
+
+    const at60Hz = run(16);
+    const at240Hz = run(4);
+
+    // Over 1 second of wall time, both refresh rates should reveal
+    // approximately the same number of characters.
+    expect(Math.abs(at60Hz - at240Hz)).toBeLessThanOrEqual(2);
+  });
 });
