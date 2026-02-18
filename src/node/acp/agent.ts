@@ -443,7 +443,9 @@ export class MuxAgent implements Agent {
       skillsByName = await this.getSessionSkills(sessionId, workspaceId);
     } catch (error) {
       console.error("[acp] Failed to load skills for slash command parsing", error);
-      return null;
+      // Built-in ACP slash commands (/clear, /truncate, /compact, etc.) should
+      // still work when skill discovery has a transient failure.
+      skillsByName = new Map<string, AgentSkillDescriptor>();
     }
 
     const parsedCommand = parseAcpSlashCommand(parsedPrompt.text, skillsByName);

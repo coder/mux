@@ -109,8 +109,12 @@ function isUnreachableError(error: unknown): boolean {
     return isUnreachableError((error as { cause: unknown }).cause);
   }
 
-  // waitForWebSocketOpen rejects with our own Error on pre-open close.
-  if (error instanceof Error && error.message.includes("WebSocket closed before opening")) {
+  // waitForWebSocketOpen rejects with our own Error on pre-open close/timeouts.
+  if (
+    error instanceof Error &&
+    (error.message.includes("WebSocket closed before opening") ||
+      error.message.includes("WebSocket open timed out"))
+  ) {
     return true;
   }
 

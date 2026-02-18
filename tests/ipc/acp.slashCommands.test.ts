@@ -47,6 +47,11 @@ describe("ACP slash command support", () => {
     expect(invalid?.kind).toBe("invalid");
   });
 
+  it("rejects malformed /compact -t values", () => {
+    const parsed = parseAcpSlashCommand("/compact -t 1200oops", mapSkillsByName(skills));
+    expect(parsed?.kind).toBe("invalid");
+  });
+
   it("parses /compact flags and multiline follow-up", () => {
     const parsed = parseAcpSlashCommand(
       "/compact -t 1200 -m haiku\nContinue with focused tests",

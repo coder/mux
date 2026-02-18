@@ -266,8 +266,15 @@ function parseCompactCommand(rawInput: string, rawCommand: string): ParsedAcpSla
       };
     }
 
-    const parsedTokens = Number.parseInt(parsed.t, 10);
-    if (Number.isNaN(parsedTokens) || parsedTokens <= 0) {
+    if (!/^\d+$/.test(parsed.t)) {
+      return {
+        kind: "invalid",
+        message: `-t expects a positive integer. Usage: ${COMPACT_USAGE}`,
+      };
+    }
+
+    const parsedTokens = Number(parsed.t);
+    if (!Number.isSafeInteger(parsedTokens) || parsedTokens <= 0) {
       return {
         kind: "invalid",
         message: `-t expects a positive integer. Usage: ${COMPACT_USAGE}`,
