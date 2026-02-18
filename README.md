@@ -82,7 +82,10 @@ macOS and Linux.
 <img src="./docs/img/opportunistic-compaction.webp" alt="Screenshot of opportunistic compaction" width="100%" /><br>
 <sub>Opportunistic compaction helps keep context small</sub>
 </td>
-<td></td>
+<td align="center" width="50%">
+<img src="./docs/img/orchestrate-agents.webp" alt="Screenshot of orchestrate agents" width="100%" /><br>
+<sub>Orchestrate parallel agent tasks with plan mode</sub>
+</td>
 </tr>
 </table>
 
