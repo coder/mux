@@ -10,7 +10,7 @@ import {
 } from "./workspaceTitleGenerator";
 
 describe("buildWorkspaceIdentityPrompt", () => {
-  test("includes long-term guidance, recent-turn context, and latest-user precedence", () => {
+  test("includes overall-scope guidance, conversation turns, and latest-user context without precedence", () => {
     const prompt = buildWorkspaceIdentityPrompt(
       "Refactor workspace title generation",
       "Turn 1 (User):\nOutline the plan\n\nTurn 2 (Assistant):\nImplement incrementally",
@@ -21,8 +21,14 @@ describe("buildWorkspaceIdentityPrompt", () => {
     expect(prompt).toContain("Conversation turns");
     expect(prompt).toContain("Outline the plan");
     expect(prompt).toContain("Please prioritize reliability work");
-    expect(prompt).toContain("most recent user message");
-    expect(prompt).toContain("long-term, overall purpose of the chat");
+    // Recent message is included as context but not given priority
+    expect(prompt).toContain("Most recent user message");
+    expect(prompt).toContain("do not prefer it over earlier turns");
+    // Scope guidance: weigh all turns equally
+    expect(prompt).toContain("Weigh all turns equally");
+    // No temporal recency bias in requirements
+    expect(prompt).not.toContain("highest priority");
+    expect(prompt).not.toContain("precedence");
   });
 
   test("omits conversation-specific sections when no conversation block is provided", () => {
