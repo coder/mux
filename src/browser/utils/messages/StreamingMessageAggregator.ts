@@ -1001,11 +1001,26 @@ export class StreamingMessageAggregator {
       return undefined;
     }
 
+    const allMessages = this.getAllMessages();
+    const establishedOldestHistorySequence = this.establishedOldestHistorySequence;
+    const fingerprintMessages =
+      establishedOldestHistorySequence != null
+        ? allMessages.filter(
+            (message) =>
+              (message.metadata?.historySequence ?? Number.POSITIVE_INFINITY) >=
+              establishedOldestHistorySequence
+          )
+        : allMessages;
+
+    // Scope fingerprint input to the established replay window. The server computes
+    // priorHistoryFingerprint from getHistoryFromLatestBoundary(skip=0), so client-
+    // paginated rows from older compaction epochs must be excluded to avoid false
+    // mismatches that force unnecessary full replay on reconnect.
     const priorHistoryFingerprint = computePriorHistoryFingerprint(
-      this.getAllMessages(),
+      fingerprintMessages,
       maxHistorySequence
     );
-    const oldestHistorySequence = this.establishedOldestHistorySequence ?? minHistorySequence;
+    const oldestHistorySequence = establishedOldestHistorySequence ?? minHistorySequence;
 
     const cursor: OnChatCursor = {
       history: {
