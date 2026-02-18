@@ -2059,6 +2059,13 @@ export class WorkspaceStore {
       let lastChatEventAt = Date.now();
 
       try {
+        // Always reset caughtUp at subscription start so historical events are
+        // buffered until the caught-up marker arrives, regardless of replay mode.
+        const transient = this.chatTransientState.get(workspaceId);
+        if (transient) {
+          transient.caughtUp = false;
+        }
+
         // Reconnect incrementally whenever we can build a valid cursor.
         // Do not gate on transient.caughtUp here: retry paths may optimistically
         // set caughtUp=false to re-enable buffering, but the cursor can still
@@ -2541,6 +2548,13 @@ export class WorkspaceStore {
       const streamContextMismatched =
         serverActiveStreamMessageId !== undefined &&
         serverActiveStreamMessageId !== localActiveStreamMessageId;
+
+      // Track the server's replay window start for accurate reconnect cursors.
+      // This prevents loadOlderHistory-prepended pages from polluting the cursor.
+      const serverOldestSeq = data.cursor?.history?.oldestHistorySequence;
+      if (typeof serverOldestSeq === "number") {
+        aggregator.setEstablishedOldestHistorySequence(serverOldestSeq);
+      }
 
       // Defensive cleanup:
       // - full replay means backend rebuilt state from scratch, so stale local stream contexts

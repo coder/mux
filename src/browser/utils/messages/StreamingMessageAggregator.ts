@@ -267,6 +267,11 @@ export class StreamingMessageAggregator {
   private recencyTimestamp: number | null = null;
   private lastResponseCompletedAt: number | null = null;
 
+  /** Oldest historySequence from the server's last replay window.
+   *  Used for reconnect cursors instead of the absolute minimum (which
+   *  includes user-loaded older pages via loadOlderHistory). */
+  private establishedOldestHistorySequence: number | null = null;
+
   // Delta history for token counting and TPS calculation
   private deltaHistory = new Map<string, DeltaRecordStorage>();
 
@@ -861,6 +866,16 @@ export class StreamingMessageAggregator {
       this.skillLoadErrors.clear();
       this.skillLoadErrorsCache = [];
       this.lastResponseCompletedAt = null;
+
+      // Track the replay window's oldest sequence for reconnect cursors.
+      let minSeq: number | null = null;
+      for (const msg of messages) {
+        const seq = msg.metadata?.historySequence;
+        if (typeof seq === "number" && (minSeq === null || seq < minSeq)) {
+          minSeq = seq;
+        }
+      }
+      this.establishedOldestHistorySequence = minSeq;
     }
 
     const overwrittenMessageIds: string[] = [];
@@ -940,6 +955,10 @@ export class StreamingMessageAggregator {
     this.invalidateCache();
   }
 
+  setEstablishedOldestHistorySequence(sequence: number | null): void {
+    this.establishedOldestHistorySequence = sequence;
+  }
+
   getAllMessages(): MuxMessage[] {
     this.cache.allMessages ??= Array.from(this.messages.values()).sort(
       (a, b) => (a.metadata?.historySequence ?? 0) - (b.metadata?.historySequence ?? 0)
@@ -986,12 +1005,13 @@ export class StreamingMessageAggregator {
       this.getAllMessages(),
       maxHistorySequence
     );
+    const oldestHistorySequence = this.establishedOldestHistorySequence ?? minHistorySequence;
 
     const cursor: OnChatCursor = {
       history: {
         messageId: maxHistoryMessageId,
         historySequence: maxHistorySequence,
-        oldestHistorySequence: minHistorySequence,
+        oldestHistorySequence,
         ...(priorHistoryFingerprint !== undefined ? { priorHistoryFingerprint } : {}),
       },
     };
@@ -1369,6 +1389,7 @@ export class StreamingMessageAggregator {
     this.interruptingMessageId = null;
     this.lastAbortReason = null;
     this.lastResponseCompletedAt = null;
+    this.establishedOldestHistorySequence = null;
     this.invalidateCache();
   }
 
