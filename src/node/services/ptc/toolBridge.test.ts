@@ -93,14 +93,16 @@ describe("ToolBridge", () => {
       const tools: Record<string, Tool> = {
         file_read: createMockTool("file_read", z.object({}), () => ({})),
         bash: createMockTool("bash", z.object({}), () => ({})),
+        web_fetch: createMockTool("web_fetch", z.object({}), () => ({})),
       };
 
       const bridge = new ToolBridge(tools);
       const names = bridge.getBridgeableToolNames();
 
-      expect(names).toHaveLength(2);
+      expect(names).toHaveLength(3);
       expect(names).toContain("file_read");
       expect(names).toContain("bash");
+      expect(names).toContain("web_fetch");
     });
   });
 

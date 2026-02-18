@@ -68,10 +68,27 @@ describeIntegration("web_fetch integration tests", () => {
         const webFetchEnd = events.filter(isToolCallEnd).find((e) => e.toolName === "web_fetch");
         expect(webFetchEnd).toBeDefined();
 
+        // Tool results may be JSON-wrapped by streamManager: { type: "json", value: ... }.
+        // Unwrap before inspecting provider-specific fields.
+        const unwrap = (v: unknown): unknown => {
+          if (
+            v != null &&
+            typeof v === "object" &&
+            (v as Record<string, unknown>).type === "json" &&
+            "value" in (v as object)
+          ) {
+            return (v as Record<string, unknown>).value;
+          }
+          return v;
+        };
+
         // Anthropic native: { type: 'web_fetch_result', ... }
         // Built-in fallback: { success: true, ... }
         // Either way the result must be present and not an error
-        const toolResult = webFetchEnd?.result as Record<string, unknown> | null | undefined;
+        const toolResult = unwrap(webFetchEnd?.result) as
+          | Record<string, unknown>
+          | null
+          | undefined;
         expect(toolResult).toBeTruthy();
         if (toolResult && "type" in toolResult) {
           // Provider-native path: must not be an error

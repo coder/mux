@@ -200,6 +200,7 @@ describe("generateMuxTypes", () => {
       file_read: createMockTool(z.object({ filePath: z.string() })),
       file_edit_insert: createMockTool(z.object({ path: z.string() })),
       file_edit_replace_string: createMockTool(z.object({ path: z.string() })),
+      web_fetch: createMockTool(z.object({ url: z.string() })),
     };
 
     const types = await generateMuxTypes(tools);
@@ -212,8 +213,7 @@ describe("generateMuxTypes", () => {
     expect(types).toContain("FileReadResult");
     expect(types).toContain("FileEditInsertResult");
     expect(types).toContain("FileEditReplaceStringResult");
-    // web_fetch is intentionally not bridgeable into PTC
-    expect(types).not.toContain("WebFetchResult");
+    expect(types).toContain("WebFetchResult");
 
     // None should be unknown (no Promise since Asyncify makes calls sync)
     expect(types).not.toContain("function bash(args: BashArgs): unknown");
