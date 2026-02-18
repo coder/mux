@@ -2422,10 +2422,15 @@ export class TaskService {
       let globalDefaults =
         latestCfg.agentAiDefaults?.[targetAgentId] ?? latestCfg.subagentAiDefaults?.[targetAgentId];
 
+      const hasExplicitTargetWorkspaceOverride = Boolean(
+        childWorkspaceOverride ?? parentAgentSpecificOverride
+      );
+
       // Match Task.create behavior: if target agent has no direct defaults, inherit
       // from the base-agent chain (e.g. orchestrator -> exec) before falling back
-      // to the current task model.
-      if (!globalDefaults) {
+      // to the current task model. Skip this when either workspace already has an
+      // explicit target-agent override.
+      if (!globalDefaults && !hasExplicitTargetWorkspaceOverride) {
         const workspaceName =
           coerceNonEmptyString(args.entry.workspace.name) ?? args.entry.workspace.id;
         const workspacePath = coerceNonEmptyString(args.entry.workspace.path);
