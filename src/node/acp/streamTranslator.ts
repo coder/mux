@@ -22,6 +22,16 @@ type PlanEntry = PlanSessionUpdate["entries"][number];
 type PlanEntryStatus = PlanEntry["status"];
 type PlanEntryPriority = PlanEntry["priority"];
 
+type UserMessageForwarding =
+  | { kind: "parts" }
+  | { kind: "raw-command"; rawCommand: string }
+  | { kind: "suppress" };
+
+interface MessageMetadataWithFrontendFields {
+  muxMetadata?: unknown;
+  cmuxMetadata?: unknown;
+}
+
 const TODO_WRITE_TOOL_NAME = "todo_write";
 const DEFAULT_PLAN_ENTRY_PRIORITY: PlanEntryPriority = "medium";
 
@@ -258,6 +268,16 @@ export class StreamTranslator {
     }
 
     if (event.role === "user") {
+      const forwarding = this.resolveUserMessageForwarding(event);
+      if (forwarding.kind === "suppress") {
+        return updates;
+      }
+
+      if (forwarding.kind === "raw-command") {
+        updates.push(...this.toSingleChunkUpdate("user_message_chunk", forwarding.rawCommand));
+        return updates;
+      }
+
       for (const part of event.parts) {
         if (part.type !== "text") {
           continue;
@@ -267,6 +287,37 @@ export class StreamTranslator {
     }
 
     return updates;
+  }
+
+  private resolveUserMessageForwarding(
+    event: Extract<WorkspaceChatMessage, { type: "message" }>
+  ): UserMessageForwarding {
+    // Agent skill snapshots are synthetic context injections (<agent-skill ...>)
+    // and should never be surfaced to ACP clients as user-visible text.
+    if (event.metadata?.agentSkillSnapshot != null) {
+      return { kind: "suppress" };
+    }
+
+    const agentSkillCommand = extractAgentSkillRawCommand(event.metadata);
+    if (agentSkillCommand == null) {
+      return { kind: "parts" };
+    }
+
+    const isReplayEvent = (event as { replay?: boolean }).replay === true;
+
+    if (!isReplayEvent) {
+      // Live slash-command sends already include the user's original /skill prompt
+      // on the client side. Suppress transformed backend text like
+      // "Using skill ..." to avoid awkward implementation-detail echoes.
+      return { kind: "suppress" };
+    }
+
+    // For history replay, emit the original slash command instead of the
+    // transformed backend prompt so resumed transcripts remain user-readable.
+    return {
+      kind: "raw-command",
+      rawCommand: agentSkillCommand,
+    };
   }
 
   private translateToolFailure(
@@ -477,6 +528,39 @@ export class StreamTranslator {
   }
 }
 
+function extractAgentSkillRawCommand(
+  metadata: MessageMetadataWithFrontendFields | undefined
+): string | null {
+  if (metadata == null) {
+    return null;
+  }
+
+  const fromMuxMetadata = extractRawCommandFromFrontendMetadata(metadata.muxMetadata);
+  if (fromMuxMetadata != null) {
+    return fromMuxMetadata;
+  }
+
+  return extractRawCommandFromFrontendMetadata(metadata.cmuxMetadata);
+}
+
+function extractRawCommandFromFrontendMetadata(frontendMetadata: unknown): string | null {
+  if (!isRecord(frontendMetadata)) {
+    return null;
+  }
+
+  if (frontendMetadata.type !== "agent-skill") {
+    return null;
+  }
+
+  const rawCommand = frontendMetadata.rawCommand;
+  if (typeof rawCommand !== "string") {
+    return null;
+  }
+
+  const trimmed = rawCommand.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 function inferToolKind(toolName: string): ToolKind {
   const normalized = toolName.toLowerCase();
 
@@ -624,6 +708,10 @@ function parsePotentialJson(value: unknown): unknown {
   } catch {
     return value;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value);
 }
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {

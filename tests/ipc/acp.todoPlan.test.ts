@@ -75,6 +75,42 @@ function makeToolCallEnd(
   } as WorkspaceChatMessage;
 }
 
+function makeUserMessage(
+  text: string,
+  options?: {
+    replay?: boolean;
+    metadata?: Record<string, unknown>;
+  }
+): WorkspaceChatMessage {
+  return {
+    type: "message",
+    id: "user-1",
+    role: "user",
+    parts: [
+      {
+        type: "text",
+        text,
+      },
+    ],
+    metadata: options?.metadata,
+    replay: options?.replay,
+  } as WorkspaceChatMessage;
+}
+
+function getUserTextChunks(sessionUpdates: SessionNotification[]): string[] {
+  return sessionUpdates.flatMap((notification) => {
+    if (notification.update.sessionUpdate !== "user_message_chunk") {
+      return [];
+    }
+
+    if (notification.update.content.type !== "text") {
+      return [];
+    }
+
+    return [notification.update.content.text];
+  });
+}
+
 describe("ACP todo_write plan translation", () => {
   it("emits ACP plan updates from todo_write tool input", async () => {
     const { translator, sessionUpdates } = createHarness();
@@ -193,5 +229,75 @@ describe("ACP todo_write plan translation", () => {
       { content: "Completed previous task", status: "completed", priority: "medium" },
       { content: "Current task", status: "in_progress", priority: "medium" },
     ]);
+  });
+});
+
+describe("ACP user message translation for agent skills", () => {
+  it("suppresses synthetic agent skill snapshot messages", async () => {
+    const { translator, sessionUpdates } = createHarness();
+
+    await forwardEvents(translator, [
+      makeUserMessage('<agent-skill name="mux-docs" scope="built-in">...</agent-skill>', {
+        metadata: {
+          synthetic: true,
+          agentSkillSnapshot: {
+            skillName: "mux-docs",
+            scope: "built-in",
+            sha256: "abc123",
+          },
+        },
+      }),
+    ]);
+
+    expect(getUpdateKinds(sessionUpdates)).toEqual([]);
+  });
+
+  it("suppresses live transformed skill invocation text", async () => {
+    const { translator, sessionUpdates } = createHarness();
+
+    await forwardEvents(translator, [
+      makeUserMessage("Using skill mux-docs: what is mux?", {
+        metadata: {
+          muxMetadata: {
+            type: "agent-skill",
+            rawCommand: "/mux-docs what is mux?",
+            skillName: "mux-docs",
+            scope: "built-in",
+          },
+        },
+      }),
+    ]);
+
+    expect(getUpdateKinds(sessionUpdates)).toEqual([]);
+  });
+
+  it("replays the original slash command for agent-skill history", async () => {
+    const { translator, sessionUpdates } = createHarness();
+
+    await forwardEvents(translator, [
+      makeUserMessage("Using skill mux-docs: what is mux?", {
+        replay: true,
+        metadata: {
+          muxMetadata: {
+            type: "agent-skill",
+            rawCommand: "/mux-docs what is mux?",
+            skillName: "mux-docs",
+            scope: "built-in",
+          },
+        },
+      }),
+    ]);
+
+    expect(getUpdateKinds(sessionUpdates)).toEqual(["user_message_chunk"]);
+    expect(getUserTextChunks(sessionUpdates)).toEqual(["/mux-docs what is mux?"]);
+  });
+
+  it("keeps forwarding normal user text messages", async () => {
+    const { translator, sessionUpdates } = createHarness();
+
+    await forwardEvents(translator, [makeUserMessage("plain user message")]);
+
+    expect(getUpdateKinds(sessionUpdates)).toEqual(["user_message_chunk"]);
+    expect(getUserTextChunks(sessionUpdates)).toEqual(["plain user message"]);
   });
 });
