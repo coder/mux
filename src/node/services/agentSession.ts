@@ -414,20 +414,7 @@ export class AgentSession {
     const unsubscribe = this.onChatEvent(listener);
     await this.emitHistoricalEvents(listener);
 
-    // Crash recovery: check if the last message is a compaction summary with
-    // a pending follow-up that was never dispatched. If so, dispatch it now.
-    // This handles the case where the app crashed after compaction completed
-    // but before the follow-up was sent.
-    void this.dispatchPendingFollowUp()
-      .catch((error) => {
-        log.warn("Failed to dispatch pending follow-up during subscribe", {
-          workspaceId: this.workspaceId,
-          error: getErrorMessage(error),
-        });
-      })
-      .finally(() => {
-        this.ensureStartupAutoRetryCheck();
-      });
+    this.scheduleStartupRecovery();
 
     return unsubscribe;
   }
@@ -840,6 +827,23 @@ export class AgentSession {
       .finally(() => {
         this.startupAutoRetryCheckScheduled = true;
         this.startupAutoRetryCheckPromise = null;
+      });
+  }
+
+  scheduleStartupRecovery(): void {
+    // Crash recovery: check if the last message is a compaction summary with
+    // a pending follow-up that was never dispatched. If so, dispatch it now.
+    // This handles the case where the app crashed after compaction completed
+    // but before the follow-up was sent.
+    void this.dispatchPendingFollowUp()
+      .catch((error) => {
+        log.warn("Failed to dispatch pending follow-up during startup recovery", {
+          workspaceId: this.workspaceId,
+          error: getErrorMessage(error),
+        });
+      })
+      .finally(() => {
+        this.ensureStartupAutoRetryCheck();
       });
   }
 

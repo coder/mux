@@ -93,6 +93,11 @@ export class CompactionMonitor {
       return false;
     }
 
+    // Threshold 1.0 means auto-compaction is disabled.
+    if (this.threshold >= 1) {
+      return false;
+    }
+
     const contextLimit = getEffectiveContextLimit(
       params.model,
       params.use1MContext,

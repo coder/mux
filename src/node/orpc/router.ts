@@ -2924,9 +2924,9 @@ export const router = (authToken?: string) => {
 
           replayRelay.finishReplay();
 
-          // Startup recovery: if this workspace was interrupted before reconnect,
-          // schedule backend auto-retry now that replay has restored transcript state.
-          session.ensureStartupAutoRetryCheck();
+          // Startup recovery: after replay catches the client up, recover any
+          // crash-stranded compaction follow-ups and then evaluate auto-retry.
+          session.scheduleStartupRecovery();
 
           // 3. Heartbeat to keep the connection alive during long operations (tool calls, subagents).
           // Client uses this to detect stalled connections vs. intentionally idle streams.

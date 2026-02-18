@@ -112,6 +112,21 @@ describe("CompactionMonitor", () => {
     expect(statusEvents).toHaveLength(1);
   });
 
+  test("checkMidStream stays disabled when threshold is set to 1.0", () => {
+    const { monitor, statusEvents } = createMonitor();
+    monitor.setThreshold(1);
+
+    expect(
+      monitor.checkMidStream({
+        model: KNOWN_MODELS.SONNET.id,
+        usage: createMidStreamUsage(210_000),
+        use1MContext: false,
+        providersConfig: null,
+      })
+    ).toBe(false);
+    expect(statusEvents).toHaveLength(0);
+  });
+
   test("checkMidStream does not double-count cachedInputTokens", () => {
     const { monitor, statusEvents } = createMonitor();
 
