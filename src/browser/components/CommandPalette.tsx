@@ -16,7 +16,7 @@ import { getSlashCommandSuggestions } from "@/browser/utils/slashCommands/sugges
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { getDisableWorkspaceAgentsKey, GLOBAL_SCOPE_ID } from "@/common/constants/storage";
 import { filterCommandsByPrefix } from "@/browser/utils/commandPaletteFiltering";
-import { matchesAllTerms, scoreAllTerms } from "@/browser/utils/fuzzySearch";
+import { rankByPaletteQuery } from "@/browser/utils/commandPaletteRanking";
 
 interface CommandPaletteProps {
   getSlashContext?: () => { workspaceId?: string };
@@ -285,30 +285,19 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
       return parts.join(" ");
     };
 
-    const commandQuery = q.startsWith(">") ? q.slice(1).trim() : "";
+    // Derive search text: strip ">" prefix for command mode, use raw query for workspace mode.
+    const searchText = q.startsWith(">") ? q.slice(1).trim() : q;
 
-    const filtered =
-      commandQuery.length > 0
-        ? actionsToShow
-            .map((action) => ({
-              action,
-              score: scoreAllTerms(buildSearchableText(action), commandQuery),
-            }))
-            .filter((entry) => entry.score > 0)
-            .sort((a, b) => {
-              if (b.score !== a.score) return b.score - a.score;
-              const ai = recentIndex.get(a.action.id) ?? 9999;
-              const bi = recentIndex.get(b.action.id) ?? 9999;
-              if (ai !== bi) return ai - bi;
-              return a.action.title.localeCompare(b.action.title);
-            })
-            .map((entry) => entry.action)
-        : [...actionsToShow].sort((a, b) => {
-            const ai = recentIndex.has(a.id) ? recentIndex.get(a.id)! : 9999;
-            const bi = recentIndex.has(b.id) ? recentIndex.get(b.id)! : 9999;
-            if (ai !== bi) return ai - bi;
-            return a.title.localeCompare(b.title);
-          });
+    const filtered = rankByPaletteQuery({
+      items: actionsToShow,
+      query: searchText,
+      toSearchText: buildSearchableText,
+      tieBreak: (a, b) => {
+        const ai = recentIndex.get(a.id) ?? 9999;
+        const bi = recentIndex.get(b.id) ?? 9999;
+        return ai - bi || a.title.localeCompare(b.title);
+      },
+    });
 
     const bySection = new Map<string, CommandAction[]>();
     for (const action of filtered) {
@@ -400,25 +389,27 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
     };
   }, [currentField, activePrompt]);
 
-  const isSlashQuery = !currentField && query.trim().startsWith("/");
-  const isCommandQuery = !currentField && query.trim().startsWith(">");
-  const hasCommandSearchText = isCommandQuery && query.trim().slice(1).trim().length > 0;
-  // Enable cmdk filtering for all cases except slash queries and ranked command-query mode.
-  const shouldUseCmdkFilter = currentField
-    ? currentField.type === "select"
-    : !isSlashQuery && !hasCommandSearchText;
-
   let groups: PaletteGroup[] = generalResults.groups;
   let emptyText: string | undefined = generalResults.emptyText;
 
   if (currentField) {
     const promptTitle = activePrompt?.title ?? currentField.label ?? "Provide details";
     if (currentField.type === "select") {
-      const options = selectOptions;
+      const searchQuery = query.trim();
+      const rankedOptions = rankByPaletteQuery({
+        items: selectOptions.map((opt, idx) => ({ ...opt, _originalIdx: idx })),
+        query: searchQuery,
+        toSearchText: (opt) => {
+          const parts = [opt.label];
+          if (opt.keywords) parts.push(...opt.keywords);
+          return parts.join(" ");
+        },
+        tieBreak: (a, b) => a._originalIdx - b._originalIdx,
+      });
       groups = [
         {
           name: promptTitle,
-          items: options.map((opt) => ({
+          items: rankedOptions.map((opt) => ({
             id: `prompt-select:${currentField.name}:${opt.id}`,
             title: opt.label,
             section: promptTitle,
@@ -429,9 +420,11 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
       ];
       emptyText = isLoadingOptions
         ? "Loading options..."
-        : options.length
+        : rankedOptions.length
           ? undefined
-          : "No options";
+          : selectOptions.length
+            ? "No results"
+            : "No options";
     } else {
       const typed = query.trim();
       const fallbackHint = currentField.placeholder ?? "Type value and press Enter";
@@ -470,24 +463,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
       <Command
         className="font-primary w-[min(720px,92vw)] overflow-hidden rounded-lg border border-[var(--color-command-border)] bg-[var(--color-command-surface)] text-[var(--color-command-foreground)] shadow-[0_10px_40px_rgba(0,0,0,0.4)]"
         onMouseDown={(e: React.MouseEvent) => e.stopPropagation()}
-        shouldFilter={shouldUseCmdkFilter}
-        filter={(value, search, keywords) => {
-          // We intentionally use cmdk as a boolean matcher only; ordering/ranking
-          // is handled in our own pre-processing so section/group ordering stays
-          // predictable.
-          //
-          // This is expected to feel more like fzf:
-          // - space-separated terms are ANDed
-          // - formatting punctuation doesn't block matches (e.g. `Ask: check` vs `ask check`)
-          const searchableText = keywords ? `${value} ${keywords.join(" ")}` : value;
-
-          // When using ">" prefix, filter using the text after ">".
-          if (isCommandQuery && search.startsWith(">")) {
-            return matchesAllTerms(searchableText, search.slice(1).trim()) ? 1 : 0;
-          }
-
-          return matchesAllTerms(searchableText, search) ? 1 : 0;
-        }}
+        shouldFilter={false}
       >
         <Command.Input
           className="w-full border-b border-[var(--color-command-input-border)] bg-[var(--color-command-input)] px-3.5 py-3 text-sm text-[var(--color-command-foreground)] outline-none placeholder:text-[var(--color-command-subdued)]"
