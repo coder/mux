@@ -814,6 +814,152 @@ describe("WorkspaceStore", () => {
       );
     });
 
+    it("preserves compaction continue metadata for background completion callbacks", async () => {
+      const activeWorkspaceId = "active-workspace-continue";
+      const backgroundWorkspaceId = "background-workspace-continue";
+      const initialRecency = new Date("2024-01-08T00:00:00.000Z").getTime();
+
+      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
+        recency: initialRecency,
+        streaming: true,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+      };
+
+      let releaseBackgroundCompletion!: () => void;
+      const backgroundCompletionReady = new Promise<void>((resolve) => {
+        releaseBackgroundCompletion = resolve;
+      });
+
+      mockActivityList.mockResolvedValue({
+        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
+      });
+
+      mockActivitySubscribe.mockImplementation(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<
+        { workspaceId: string; activity: WorkspaceActivitySnapshot | null },
+        void,
+        unknown
+      > {
+        await backgroundCompletionReady;
+        if (options?.signal?.aborted) {
+          return;
+        }
+
+        yield {
+          workspaceId: backgroundWorkspaceId,
+          activity: {
+            ...backgroundStreamingSnapshot,
+            recency: initialRecency + 1,
+            streaming: false,
+          },
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      mockOnChat.mockImplementation(async function* (
+        input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        if (input?.workspaceId !== backgroundWorkspaceId) {
+          await waitForAbortSignal(options?.signal);
+          return;
+        }
+
+        yield {
+          type: "message",
+          id: "compaction-request-msg",
+          role: "user",
+          parts: [{ type: "text", text: "/compact" }],
+          metadata: {
+            historySequence: 1,
+            timestamp: Date.now(),
+            muxMetadata: {
+              type: "compaction-request",
+              rawCommand: "/compact",
+              parsed: {
+                model: "claude-sonnet-4",
+                followUpContent: {
+                  text: "continue after compaction",
+                  model: "claude-sonnet-4",
+                  agentId: "exec",
+                },
+              },
+            },
+          },
+        };
+
+        yield {
+          type: "stream-start",
+          workspaceId: backgroundWorkspaceId,
+          messageId: "compaction-stream",
+          historySequence: 2,
+          model: "claude-sonnet-4",
+          startTime: Date.now(),
+          mode: "exec",
+        };
+
+        yield { type: "caught-up", hasOlderHistory: false };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      const onResponseComplete = mock(
+        (
+          _workspaceId: string,
+          _messageId: string,
+          _isFinal: boolean,
+          _finalText: string,
+          _compaction?: { hasContinueMessage: boolean },
+          _completedAt?: number | null
+        ) => undefined
+      );
+
+      // Recreate the store so the first activity.list call uses this test snapshot.
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      store.setOnResponseComplete(onResponseComplete);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+
+      createAndAddWorkspace(store, backgroundWorkspaceId);
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      const sawCompactingStream = await waitUntil(
+        () => store.getWorkspaceState(backgroundWorkspaceId).isCompacting
+      );
+      expect(sawCompactingStream).toBe(true);
+
+      // Move focus to a different workspace so the compaction workspace is backgrounded.
+      createAndAddWorkspace(store, activeWorkspaceId);
+
+      releaseBackgroundCompletion();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(onResponseComplete).toHaveBeenCalledTimes(1);
+      expect(onResponseComplete).toHaveBeenCalledWith(
+        backgroundWorkspaceId,
+        "",
+        true,
+        "",
+        { hasContinueMessage: true },
+        initialRecency + 1
+      );
+    });
+
     it("does not fire response-complete callback when background streaming stops without recency advance", async () => {
       const activeWorkspaceId = "active-workspace-no-replay";
       const backgroundWorkspaceId = "background-workspace-no-replay";

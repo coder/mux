@@ -1926,6 +1926,27 @@ export class WorkspaceStore {
     return this.workspaceMetadata.has(workspaceId);
   }
 
+  private getBackgroundCompletionCompaction(
+    workspaceId: string
+  ): { hasContinueMessage: boolean } | undefined {
+    const aggregator = this.aggregators.get(workspaceId);
+    if (!aggregator) {
+      return undefined;
+    }
+
+    const compactingStreams = aggregator
+      .getActiveStreams()
+      .filter((stream) => stream.isCompacting === true);
+
+    if (compactingStreams.length === 0) {
+      return undefined;
+    }
+
+    return {
+      hasContinueMessage: compactingStreams.some((stream) => stream.hasCompactionContinue === true),
+    };
+  }
+
   private applyWorkspaceActivitySnapshot(
     workspaceId: string,
     snapshot: WorkspaceActivitySnapshot | null
@@ -1960,32 +1981,42 @@ export class WorkspaceStore {
 
     const stoppedStreamingSnapshot =
       previous?.streaming === true && snapshot?.streaming === false ? snapshot : null;
+    const isBackgroundStreamingStop =
+      stoppedStreamingSnapshot !== null && workspaceId !== this.activeWorkspaceId;
     const streamStartRecency = this.activityStreamingStartRecency.get(workspaceId);
     const recencyAdvancedSinceStreamStart =
       stoppedStreamingSnapshot !== null &&
       streamStartRecency !== undefined &&
       stoppedStreamingSnapshot.recency > streamStartRecency;
+    const backgroundCompaction = isBackgroundStreamingStop
+      ? this.getBackgroundCompletionCompaction(workspaceId)
+      : undefined;
 
     // Trigger response completion notifications for background workspaces only when
     // activity indicates a true completion (streaming true -> false WITH recency advance).
     // stream-abort/error transitions also flip streaming to false, but recency stays
     // unchanged there, so suppress completion notifications in those cases.
-    if (
-      stoppedStreamingSnapshot &&
-      recencyAdvancedSinceStreamStart &&
-      workspaceId !== this.activeWorkspaceId &&
-      this.responseCompleteCallback
-    ) {
-      // Activity snapshots don't include message/content metadata.
-      // Pass stable fallbacks so App.tsx can still notify using workspace metadata.
-      this.responseCompleteCallback(
-        workspaceId,
-        "",
-        true,
-        "",
-        undefined,
-        stoppedStreamingSnapshot.recency
-      );
+    if (stoppedStreamingSnapshot && recencyAdvancedSinceStreamStart && isBackgroundStreamingStop) {
+      if (this.responseCompleteCallback) {
+        // Activity snapshots don't include message/content metadata. Reuse any
+        // still-active stream context captured before this workspace was backgrounded
+        // so compaction continue turns remain suppressible in App notifications.
+        this.responseCompleteCallback(
+          workspaceId,
+          "",
+          true,
+          "",
+          backgroundCompaction,
+          stoppedStreamingSnapshot.recency
+        );
+      }
+    }
+
+    if (isBackgroundStreamingStop) {
+      // Inactive workspaces do not receive stream-end events via onChat. Once
+      // activity confirms streaming stopped, clear stale stream contexts so they
+      // cannot leak compaction metadata into future completion callbacks.
+      this.aggregators.get(workspaceId)?.clearActiveStreams();
     }
 
     if (snapshot?.streaming !== true) {
