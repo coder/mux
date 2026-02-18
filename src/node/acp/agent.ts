@@ -20,8 +20,16 @@ import type {
   SetSessionConfigOptionResponse,
   Usage,
 } from "@agentclientprotocol/sdk";
+import {
+  DEFAULT_COMPACTION_WORD_TARGET,
+  WORDS_TO_TOKENS_RATIO,
+  buildCompactionPrompt,
+} from "@/common/constants/ui";
 import { RuntimeConfigSchema } from "@/common/orpc/schemas";
-import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import type { SendMessageOptions, WorkspaceChatMessage } from "@/common/orpc/types";
+import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
+import type { CompactionRequestData } from "@/common/types/message";
+import { buildAgentSkillMetadata } from "@/common/types/message";
 import { isWorktreeRuntime, type RuntimeConfig, type RuntimeMode } from "@/common/types/runtime";
 import { negotiateCapabilities, type NegotiatedCapabilities } from "./capabilities";
 import { AGENT_MODE_CONFIG_ID, buildConfigOptions, handleSetConfigOption } from "./configOptions";
@@ -31,11 +39,19 @@ import { convertToAcpUsage } from "./experimental/sessionUsage";
 import { resolveAgentAiSettings, type ResolvedAiSettings } from "./resolveAgentAiSettings";
 import type { ServerConnection } from "./serverConnection";
 import { SessionManager } from "./sessionManager";
+import {
+  buildAcpAvailableCommands,
+  mapSkillsByName,
+  parseAcpSlashCommand,
+  type ParsedAcpSlashCommand,
+} from "./slashCommands";
 import { StreamTranslator } from "./streamTranslator";
 import { ToolRouter } from "./toolRouter";
 
 const DEFAULT_AGENT_ID = "exec";
 const DEFAULT_BRANCH_PREFIX = "acp";
+const DEFAULT_TRUNK_BRANCH = "main";
+const DEFAULT_COMMAND_STOP_REASON: PromptResponse["stopReason"] = "end_turn";
 
 interface SessionState {
   workspaceId: string;
@@ -77,6 +93,7 @@ export class MuxAgent implements Agent {
   private initialized = false;
 
   private readonly sessionStateById = new Map<string, SessionState>();
+  private readonly sessionSkillsById = new Map<string, Map<string, AgentSkillDescriptor>>();
   private readonly chatSubscriptions = new Map<string, Promise<void>>();
   /** Resolves once `onChat` is connected for a session (shared across callers). */
   private readonly chatSubscriptionReady = new Map<string, Promise<void>>();
@@ -150,7 +167,7 @@ export class MuxAgent implements Agent {
     let trunkBranch = meta.trunkBranch;
     if (trunkBranch == null || trunkBranch.trim().length === 0) {
       const branchInfo = await this.server.client.projects.listBranches({ projectPath });
-      trunkBranch = branchInfo.recommendedTrunk ?? "main";
+      trunkBranch = branchInfo.recommendedTrunk ?? DEFAULT_TRUNK_BRANCH;
     }
 
     const createResult = await this.server.client.workspace.create({
@@ -191,6 +208,8 @@ export class MuxAgent implements Agent {
 
     await this.ensureChatSubscription(sessionId, workspaceId);
 
+    await this.refreshSessionCommands(sessionId, workspaceId);
+
     return {
       sessionId,
       configOptions: await buildConfigOptions(this.server.client, workspaceId, {
@@ -223,6 +242,8 @@ export class MuxAgent implements Agent {
     });
 
     await this.ensureChatSubscription(resumed.sessionId, resumed.workspaceId);
+
+    await this.refreshSessionCommands(resumed.sessionId, resumed.workspaceId);
 
     return resumed.response;
   }
@@ -257,6 +278,8 @@ export class MuxAgent implements Agent {
 
     await this.ensureChatSubscription(forked.sessionId, forked.workspaceId);
 
+    await this.refreshSessionCommands(forked.sessionId, forked.workspaceId);
+
     return forked.response;
   }
 
@@ -270,45 +293,27 @@ export class MuxAgent implements Agent {
     const sessionState = await this.refreshSessionState(sessionId);
     const parsedPrompt = parsePromptBlocks(params.prompt);
 
-    // Re-establish chat subscription if a prior one dropped (e.g., transient
-    // websocket interruption). Without a live subscription, stream-end events
-    // never arrive and the turn promise hangs indefinitely.
-    await this.ensureChatSubscription(sessionId, workspaceId);
-
-    const turnPromise = this.beginTurn(sessionId);
-
-    try {
-      const sendResult = await this.server.client.workspace.sendMessage({
-        workspaceId,
-        message: parsedPrompt.text,
-        options: {
-          model: sessionState.aiSettings.model,
-          thinkingLevel: sessionState.aiSettings.thinkingLevel,
-          agentId: sessionState.agentId,
-          fileParts: parsedPrompt.fileParts.length > 0 ? parsedPrompt.fileParts : undefined,
-        },
-      });
-
-      if (!sendResult.success) {
-        throw new Error(
-          `prompt: workspace.sendMessage failed: ${stringifyUnknown(sendResult.error)}`
-        );
-      }
-
-      const turn = await turnPromise;
-      const usage = turn.usage ?? this.latestUsageBySessionId.get(sessionId);
-      this.latestUsageBySessionId.delete(sessionId);
-
-      return {
-        stopReason: turn.stopReason,
-        usage,
-      };
-    } catch (error) {
-      // workspace.sendMessage failures happen before stream events can settle the turn promise.
-      // Clear turn state without rejecting to avoid detached/unhandled promise rejections.
-      this.turnCompletions.delete(sessionId);
-      throw error;
+    const slashCommandResponse = await this.tryHandleSlashCommand(
+      sessionId,
+      workspaceId,
+      sessionState,
+      parsedPrompt
+    );
+    if (slashCommandResponse != null) {
+      return slashCommandResponse;
     }
+
+    return this.sendWorkspaceMessageAndAwaitTurn({
+      sessionId,
+      workspaceId,
+      message: parsedPrompt.text,
+      options: {
+        model: sessionState.aiSettings.model,
+        thinkingLevel: sessionState.aiSettings.thinkingLevel,
+        agentId: sessionState.agentId,
+      },
+      fileParts: parsedPrompt.fileParts,
+    });
   }
 
   async cancel(params: CancelNotification): Promise<void> {
@@ -363,6 +368,388 @@ export class MuxAgent implements Agent {
 
     // Local mux server connections do not currently require ACP-level auth.
     return Promise.resolve({});
+  }
+
+  private async sendWorkspaceMessageAndAwaitTurn(args: {
+    sessionId: string;
+    workspaceId: string;
+    message: string;
+    options: SendMessageOptions;
+    fileParts?: Array<{ url: string; mediaType: string }>;
+  }): Promise<PromptResponse> {
+    assert(
+      args.sessionId.trim().length > 0,
+      "sendWorkspaceMessageAndAwaitTurn: sessionId required"
+    );
+    assert(
+      args.workspaceId.trim().length > 0,
+      "sendWorkspaceMessageAndAwaitTurn: workspaceId required"
+    );
+    assert(args.message.trim().length > 0, "sendWorkspaceMessageAndAwaitTurn: message required");
+
+    // Re-establish chat subscription if a prior one dropped (e.g., transient
+    // websocket interruption). Without a live subscription, stream-end events
+    // never arrive and the turn promise hangs indefinitely.
+    await this.ensureChatSubscription(args.sessionId, args.workspaceId);
+
+    const turnPromise = this.beginTurn(args.sessionId);
+
+    try {
+      const sendResult = await this.server.client.workspace.sendMessage({
+        workspaceId: args.workspaceId,
+        message: args.message,
+        options: {
+          ...args.options,
+          fileParts:
+            args.fileParts != null && args.fileParts.length > 0 ? args.fileParts : undefined,
+        },
+      });
+
+      if (!sendResult.success) {
+        throw new Error(
+          `prompt: workspace.sendMessage failed: ${stringifyUnknown(sendResult.error)}`
+        );
+      }
+
+      const turn = await turnPromise;
+      const usage = turn.usage ?? this.latestUsageBySessionId.get(args.sessionId);
+      this.latestUsageBySessionId.delete(args.sessionId);
+
+      return {
+        stopReason: turn.stopReason,
+        usage,
+      };
+    } catch (error) {
+      // workspace.sendMessage failures happen before stream events can settle the turn promise.
+      // Clear turn state without rejecting to avoid detached/unhandled promise rejections.
+      this.turnCompletions.delete(args.sessionId);
+      throw error;
+    }
+  }
+
+  private async tryHandleSlashCommand(
+    sessionId: string,
+    workspaceId: string,
+    sessionState: SessionState,
+    parsedPrompt: ParsedPrompt
+  ): Promise<PromptResponse | null> {
+    const trimmedPrompt = parsedPrompt.text.trim();
+    if (!trimmedPrompt.startsWith("/")) {
+      return null;
+    }
+
+    const skillsByName = await this.getSessionSkills(sessionId, workspaceId);
+    const parsedCommand = parseAcpSlashCommand(parsedPrompt.text, skillsByName);
+    if (parsedCommand == null) {
+      return null;
+    }
+
+    return this.handleSlashCommand(
+      sessionId,
+      workspaceId,
+      sessionState,
+      parsedPrompt,
+      parsedCommand
+    );
+  }
+
+  private async handleSlashCommand(
+    sessionId: string,
+    workspaceId: string,
+    sessionState: SessionState,
+    parsedPrompt: ParsedPrompt,
+    parsedCommand: ParsedAcpSlashCommand
+  ): Promise<PromptResponse> {
+    switch (parsedCommand.kind) {
+      case "invalid":
+        return this.respondToCommand(sessionId, parsedCommand.message);
+
+      case "clear": {
+        const clearResult = await this.server.client.workspace.truncateHistory({
+          workspaceId,
+          percentage: 1.0,
+        });
+        if (!clearResult.success) {
+          return this.respondToCommand(
+            sessionId,
+            `Failed to clear chat history: ${clearResult.error ?? "unknown error"}`
+          );
+        }
+
+        return this.respondToCommand(sessionId, "Cleared chat history.");
+      }
+
+      case "truncate": {
+        const truncateResult = await this.server.client.workspace.truncateHistory({
+          workspaceId,
+          percentage: parsedCommand.percentage,
+        });
+        if (!truncateResult.success) {
+          return this.respondToCommand(
+            sessionId,
+            `Failed to truncate chat history: ${truncateResult.error ?? "unknown error"}`
+          );
+        }
+
+        return this.respondToCommand(
+          sessionId,
+          `Truncated chat history by ${Math.round(parsedCommand.percentage * 100)}%.`
+        );
+      }
+
+      case "compact": {
+        const compactionPayload = this.buildCompactionPayload(
+          parsedCommand,
+          parsedPrompt,
+          sessionState
+        );
+
+        return this.sendWorkspaceMessageAndAwaitTurn({
+          sessionId,
+          workspaceId,
+          message: compactionPayload.message,
+          options: compactionPayload.options,
+        });
+      }
+
+      case "skill": {
+        const options: SendMessageOptions = {
+          model: sessionState.aiSettings.model,
+          thinkingLevel: sessionState.aiSettings.thinkingLevel,
+          agentId: sessionState.agentId,
+          muxMetadata: buildAgentSkillMetadata({
+            rawCommand: parsedCommand.rawCommand,
+            commandPrefix: parsedCommand.commandPrefix,
+            skillName: parsedCommand.descriptor.name,
+            scope: parsedCommand.descriptor.scope,
+          }),
+        };
+
+        return this.sendWorkspaceMessageAndAwaitTurn({
+          sessionId,
+          workspaceId,
+          message: parsedCommand.formattedMessage,
+          options,
+          fileParts: parsedPrompt.fileParts,
+        });
+      }
+
+      case "fork": {
+        const forkResult = await this.server.client.workspace.fork({
+          sourceWorkspaceId: workspaceId,
+        });
+        if (!forkResult.success) {
+          return this.respondToCommand(
+            sessionId,
+            `Failed to fork workspace: ${forkResult.error ?? "unknown error"}`
+          );
+        }
+
+        const newWorkspaceId = forkResult.metadata.id;
+        let response = `Created forked workspace \`${newWorkspaceId}\`.`;
+
+        if (parsedCommand.startMessage != null && parsedCommand.startMessage.trim().length > 0) {
+          const startMessageResult = await this.server.client.workspace.sendMessage({
+            workspaceId: newWorkspaceId,
+            message: parsedCommand.startMessage,
+            options: {
+              model: sessionState.aiSettings.model,
+              thinkingLevel: sessionState.aiSettings.thinkingLevel,
+              agentId: sessionState.agentId,
+            },
+          });
+
+          response += startMessageResult.success
+            ? " Queued the optional start message in the forked workspace."
+            : ` Could not queue the optional start message: ${stringifyUnknown(startMessageResult.error)}`;
+        }
+
+        return this.respondToCommand(sessionId, response);
+      }
+
+      case "new": {
+        const workspaceInfo = await this.server.client.workspace.getInfo({ workspaceId });
+        if (workspaceInfo == null) {
+          return this.respondToCommand(
+            sessionId,
+            "Failed to create workspace: current workspace metadata is unavailable."
+          );
+        }
+
+        let trunkBranch = parsedCommand.trunkBranch;
+        if (trunkBranch == null || trunkBranch.trim().length === 0) {
+          const branchInfo = await this.server.client.projects.listBranches({
+            projectPath: workspaceInfo.projectPath,
+          });
+          trunkBranch = branchInfo.recommendedTrunk ?? DEFAULT_TRUNK_BRANCH;
+        }
+
+        const createResult = await this.server.client.workspace.create({
+          projectPath: workspaceInfo.projectPath,
+          branchName: parsedCommand.workspaceName,
+          trunkBranch,
+          runtimeConfig: parsedCommand.runtimeConfig,
+        });
+
+        if (!createResult.success) {
+          return this.respondToCommand(
+            sessionId,
+            `Failed to create workspace: ${createResult.error ?? "unknown error"}`
+          );
+        }
+
+        const newWorkspaceId = createResult.metadata.id;
+        let response = `Created workspace \`${parsedCommand.workspaceName}\` (id: \`${newWorkspaceId}\`).`;
+
+        if (parsedCommand.startMessage != null && parsedCommand.startMessage.trim().length > 0) {
+          const startMessageResult = await this.server.client.workspace.sendMessage({
+            workspaceId: newWorkspaceId,
+            message: parsedCommand.startMessage,
+            options: {
+              model: sessionState.aiSettings.model,
+              thinkingLevel: sessionState.aiSettings.thinkingLevel,
+              agentId: sessionState.agentId,
+            },
+          });
+
+          response += startMessageResult.success
+            ? " Queued the optional start message in the new workspace."
+            : ` Could not queue the optional start message: ${stringifyUnknown(startMessageResult.error)}`;
+        }
+
+        return this.respondToCommand(sessionId, response);
+      }
+
+      default:
+        return this.respondToCommand(sessionId, "This slash command is not supported in ACP yet.");
+    }
+  }
+
+  private buildCompactionPayload(
+    command: Extract<ParsedAcpSlashCommand, { kind: "compact" }>,
+    parsedPrompt: ParsedPrompt,
+    sessionState: SessionState
+  ): { message: string; options: SendMessageOptions } {
+    const targetWords =
+      command.maxOutputTokens != null
+        ? Math.round(command.maxOutputTokens / WORDS_TO_TOKENS_RATIO)
+        : DEFAULT_COMPACTION_WORD_TARGET;
+
+    let message = buildCompactionPrompt(targetWords);
+
+    const continueMessage = command.continueMessage?.trim() ?? "";
+    if (continueMessage.length > 0) {
+      message += `\n\nThe user wants to continue with: ${continueMessage}`;
+    }
+
+    const hasFollowUp = continueMessage.length > 0 || parsedPrompt.fileParts.length > 0;
+
+    const followUpContent = hasFollowUp
+      ? {
+          text: continueMessage,
+          fileParts: parsedPrompt.fileParts.length > 0 ? parsedPrompt.fileParts : undefined,
+          model: sessionState.aiSettings.model,
+          agentId: sessionState.agentId,
+          thinkingLevel: sessionState.aiSettings.thinkingLevel,
+        }
+      : undefined;
+
+    const compactionModel = command.model ?? sessionState.aiSettings.model;
+
+    const compactData: CompactionRequestData = {
+      model: compactionModel,
+      maxOutputTokens: command.maxOutputTokens,
+      followUpContent,
+    };
+
+    const toolPolicy: NonNullable<SendMessageOptions["toolPolicy"]> = [
+      {
+        regex_match: ".*",
+        action: "disable",
+      },
+    ];
+
+    const options: SendMessageOptions = {
+      model: compactionModel,
+      thinkingLevel: sessionState.aiSettings.thinkingLevel,
+      agentId: "compact",
+      maxOutputTokens: command.maxOutputTokens,
+      skipAiSettingsPersistence: true,
+      toolPolicy,
+      muxMetadata: {
+        type: "compaction-request",
+        rawCommand: command.rawCommand,
+        commandPrefix: "/compact",
+        parsed: compactData,
+        requestedModel: compactionModel,
+      },
+    };
+
+    return {
+      message,
+      options,
+    };
+  }
+
+  private async respondToCommand(sessionId: string, text: string): Promise<PromptResponse> {
+    assert(sessionId.trim().length > 0, "respondToCommand: sessionId must be non-empty");
+    assert(text.trim().length > 0, "respondToCommand: text must be non-empty");
+
+    await this.connection.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: {
+          type: "text",
+          text,
+        },
+      },
+    });
+
+    return {
+      stopReason: DEFAULT_COMMAND_STOP_REASON,
+    };
+  }
+
+  private async refreshSessionCommands(sessionId: string, workspaceId: string): Promise<void> {
+    try {
+      const skills = await this.server.client.agentSkills.list({ workspaceId });
+      const skillsByName = mapSkillsByName(skills);
+      this.sessionSkillsById.set(sessionId, skillsByName);
+
+      await this.connection.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "available_commands_update",
+          availableCommands: buildAcpAvailableCommands(skills),
+        },
+      });
+    } catch (error) {
+      // Command advertisement should not block session creation/loading.
+      console.error("[acp] Failed to publish available slash commands", error);
+    }
+  }
+
+  private async getSessionSkills(
+    sessionId: string,
+    workspaceId: string
+  ): Promise<ReadonlyMap<string, AgentSkillDescriptor>> {
+    const cached = this.sessionSkillsById.get(sessionId);
+    if (cached != null) {
+      return cached;
+    }
+
+    try {
+      const skills = await this.server.client.agentSkills.list({ workspaceId });
+      const skillsByName = mapSkillsByName(skills);
+      this.sessionSkillsById.set(sessionId, skillsByName);
+      return skillsByName;
+    } catch (error) {
+      console.error("[acp] Failed to load skills for slash command parsing", error);
+      const emptySkills = new Map<string, AgentSkillDescriptor>();
+      this.sessionSkillsById.set(sessionId, emptySkills);
+      return emptySkills;
+    }
   }
 
   /**
