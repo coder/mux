@@ -77,6 +77,25 @@ function isPathLikeShell(command: string): boolean {
   return command.includes("/") || command.includes("\\");
 }
 
+/** Resolve the Windows fallback shell command: prefer COMSPEC when valid, otherwise cmd.exe. */
+function getWindowsFallbackCommand(
+  env: NodeJS.ProcessEnv,
+  isPathAccessible: (candidatePath: string) => boolean
+): string {
+  const comspec = env.COMSPEC?.trim();
+  if (!comspec) {
+    return "cmd.exe";
+  }
+
+  // If COMSPEC is a path-like value that doesn't validate, fall back to bare cmd.exe
+  // so the OS can resolve it via PATH.
+  if (isPathLikeShell(comspec) && !isPathAccessible(comspec)) {
+    return "cmd.exe";
+  }
+
+  return comspec;
+}
+
 function isCandidateAvailable(
   command: string,
   deps: {
@@ -161,8 +180,7 @@ export function resolveLocalPtyShell(
     candidates.push({ command: "pwsh", args: [] });
     candidates.push({ command: "powershell", args: [] });
 
-    const comspec = env.COMSPEC?.trim();
-    candidates.push({ command: comspec && comspec.length > 0 ? comspec : "cmd.exe", args: [] });
+    candidates.push({ command: getWindowsFallbackCommand(env, isPathAccessible), args: [] });
   } else if (platform === "darwin") {
     candidates.push({ command: "/bin/zsh", args: [] });
   } else {
@@ -176,9 +194,12 @@ export function resolveLocalPtyShell(
   }
 
   // Last-resort fallback if all candidates above are unavailable.
+  // Keep platform-native: cmd.exe on Windows, /bin/zsh on macOS, /bin/bash elsewhere.
+  if (platform === "win32") {
+    return { command: getWindowsFallbackCommand(env, isPathAccessible), args: [] };
+  }
   if (platform === "darwin") {
     return { command: "/bin/zsh", args: [] };
   }
-
   return { command: "/bin/bash", args: [] };
 }

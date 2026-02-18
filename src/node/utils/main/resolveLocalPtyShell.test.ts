@@ -289,4 +289,32 @@ describe("resolveLocalPtyShell", () => {
 
     expect(result).toEqual({ command: "/bin/bash", args: [] });
   });
+
+  it("on Windows, final fallback returns cmd.exe when all candidates fail and COMSPEC is empty", () => {
+    const result = resolveLocalPtyShell({
+      platform: "win32",
+      env: { SHELL: "", COMSPEC: "" },
+      isCommandAvailable: () => false,
+      isPathAccessible: () => false,
+      getBashPath: () => {
+        throw new Error("Git Bash not installed");
+      },
+    });
+
+    expect(result).toEqual({ command: "cmd.exe", args: [] });
+  });
+
+  it("on Windows, final fallback returns cmd.exe when all candidates fail and COMSPEC path is invalid", () => {
+    const result = resolveLocalPtyShell({
+      platform: "win32",
+      env: { SHELL: "", COMSPEC: "C:\\Broken\\cmd.exe" },
+      isCommandAvailable: () => false,
+      isPathAccessible: () => false,
+      getBashPath: () => {
+        throw new Error("Git Bash not installed");
+      },
+    });
+
+    expect(result).toEqual({ command: "cmd.exe", args: [] });
+  });
 });
