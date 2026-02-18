@@ -99,10 +99,12 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
             }
           }
 
-          // Track new-file creation for doom-loop detection and verification guard
+          // Track new-file creation for doom-loop detection and verification guard.
+          // Reset verification state so pre-edit validation doesn't count.
           let doomLoopNudge: string | undefined;
           if (!config.planFileOnly && config.editTracker) {
             const editCount = config.editTracker.recordEdit(resolvedPath);
+            config.verificationTracker?.resetValidation();
             if (config.editTracker.shouldNudge(resolvedPath, DOOM_LOOP_EDIT_THRESHOLD)) {
               config.editTracker.markNudged(resolvedPath);
               doomLoopNudge =

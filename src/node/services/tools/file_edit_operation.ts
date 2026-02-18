@@ -149,8 +149,10 @@ export async function executeFileEditOperation<TMetadata>({
     }
 
     // Track repeated edits to detect potential doom loops in exec mode.
+    // Reset verification state so pre-edit validation doesn't count.
     if (!config.planFileOnly && config.editTracker) {
       const editCount = config.editTracker.recordEdit(resolvedPath);
+      config.verificationTracker?.resetValidation();
       if (config.editTracker.shouldNudge(resolvedPath, DOOM_LOOP_EDIT_THRESHOLD)) {
         config.editTracker.markNudged(resolvedPath);
         doomLoopNudge = `<notification>Potential doom loop: you have edited ${resolvedPath} ${editCount} times this stream. Step back and reconsider:\n- Re-read the latest error/output carefully.\n- Verify your assumptions about the problem.\n- Consider a fundamentally different approach (not a small variation of what you've been trying).</notification>`;
