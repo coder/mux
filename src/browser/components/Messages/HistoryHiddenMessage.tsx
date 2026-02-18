@@ -10,9 +10,28 @@ interface HistoryHiddenMessageProps {
 }
 
 export const HistoryHiddenMessage: React.FC<HistoryHiddenMessageProps> = ({
+  message,
   workspaceId,
   className,
 }) => {
+  const omittedMessageDetails: string[] = [];
+  if (message.omittedMessageCounts?.tool) {
+    omittedMessageDetails.push(
+      `${message.omittedMessageCounts.tool} tool call${message.omittedMessageCounts.tool === 1 ? "" : "s"}`
+    );
+  }
+  if (message.omittedMessageCounts?.reasoning) {
+    omittedMessageDetails.push(
+      `${message.omittedMessageCounts.reasoning} thinking block${message.omittedMessageCounts.reasoning === 1 ? "" : "s"}`
+    );
+  }
+
+  const hiddenCountSummary = `${message.hiddenCount} message${message.hiddenCount === 1 ? "" : "s"} hidden`;
+  const detailSummary =
+    omittedMessageDetails.length > 0
+      ? `${hiddenCountSummary} (${omittedMessageDetails.join(", ")})`
+      : hiddenCountSummary;
+
   return (
     <div
       className={cn(
@@ -37,7 +56,7 @@ export const HistoryHiddenMessage: React.FC<HistoryHiddenMessageProps> = ({
           fill="none"
         />
       </svg>
-      <span className="text-muted">Some messages are hidden for performance</span>
+      <span className="text-muted">Some messages are hidden for performance • {detailSummary}</span>
       {workspaceId && (
         <button
           type="button"

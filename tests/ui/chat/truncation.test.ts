@@ -110,6 +110,7 @@ describe("Chat truncation UI", () => {
       const totalDisplayedMessages = pairCount * 4;
       const oldDisplayedMessages = totalDisplayedMessages - maxDisplayedMessages;
       const oldPairs = oldDisplayedMessages / 4;
+      const expectedHiddenCount = oldPairs * 3;
 
       const indicator = await waitFor(() => {
         const node = view?.getByText(/some messages are hidden for performance/i);
@@ -120,6 +121,9 @@ describe("Chat truncation UI", () => {
       });
 
       expect(indicator.textContent).toContain("Some messages are hidden for performance");
+      expect(indicator.textContent).toContain(`${expectedHiddenCount} messages hidden`);
+      expect(indicator.textContent).toContain(`${oldPairs} tool calls`);
+      expect(indicator.textContent).toContain(`${oldPairs} thinking blocks`);
       expect(view.getByRole("button", { name: /load all/i })).toBeTruthy();
 
       const messageBlocks = Array.from(
