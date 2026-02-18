@@ -553,10 +553,13 @@ export class TaskService {
           error: sendResult.error,
         });
 
-        await this.fallbackReportMissingAgentReport({
-          projectPath: task.projectPath,
-          workspace: task,
-        });
+        await this.fallbackReportMissingCompletionTool(
+          {
+            projectPath: task.projectPath,
+            workspace: task,
+          },
+          completionToolName
+        );
       }
     }
 
@@ -2269,7 +2272,7 @@ export class TaskService {
 
     // If a task stream ends without its required completion tool, request it once.
     if (status === "awaiting_report" && this.remindedAwaitingReport.has(workspaceId)) {
-      await this.fallbackReportMissingAgentReport(entry);
+      await this.fallbackReportMissingCompletionTool(entry, missingCompletionToolName);
       await this.finalizeTerminationPhaseForReportedTask(workspaceId);
       return;
     }
@@ -2606,10 +2609,13 @@ export class TaskService {
     });
   }
 
-  private async fallbackReportMissingAgentReport(entry: {
-    projectPath: string;
-    workspace: WorkspaceConfigEntry;
-  }): Promise<void> {
+  private async fallbackReportMissingCompletionTool(
+    entry: {
+      projectPath: string;
+      workspace: WorkspaceConfigEntry;
+    },
+    completionToolName: "agent_report" | "propose_plan"
+  ): Promise<void> {
     const childWorkspaceId = entry.workspace.id;
     if (!childWorkspaceId) {
       return;
@@ -2617,10 +2623,11 @@ export class TaskService {
 
     const agentType = entry.workspace.agentType ?? "agent";
     const lastText = await this.readLatestAssistantText(childWorkspaceId);
+    const completionToolLabel =
+      completionToolName === "propose_plan" ? "`propose_plan`" : "`agent_report`";
 
     const reportMarkdown =
-      "*(Note: this agent task did not call `agent_report`; " +
-      "posting its last assistant output as a fallback.)*\n\n" +
+      `*(Note: this agent task did not call ${completionToolLabel}; posting its last assistant output as a fallback.)*\n\n` +
       (lastText?.trim().length ? lastText : "(No assistant output found.)");
 
     await this.finalizeAgentTaskReport(childWorkspaceId, entry, {
