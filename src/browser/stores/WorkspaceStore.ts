@@ -246,6 +246,24 @@ interface WorkspaceHistoryPaginationState {
   loading: boolean;
 }
 
+function areHistoryPaginationCursorsEqual(
+  a: HistoryPaginationCursor | null,
+  b: HistoryPaginationCursor | null
+): boolean {
+  if (a === b) {
+    return true;
+  }
+
+  if (!a || !b) {
+    return false;
+  }
+
+  return (
+    a.beforeHistorySequence === b.beforeHistorySequence &&
+    (a.beforeMessageId ?? null) === (b.beforeMessageId ?? null)
+  );
+}
+
 function createInitialHistoryPaginationState(): WorkspaceHistoryPaginationState {
   return {
     nextCursor: null,
@@ -836,6 +854,21 @@ export class WorkspaceStore {
     );
   }
 
+  private clearReplayBuffers(workspaceId: string): void {
+    const transient = this.chatTransientState.get(workspaceId);
+    if (!transient) {
+      return;
+    }
+
+    // Replay buffers are only valid for the in-flight subscription attempt that
+    // populated them. Clear eagerly when deactivating/retrying so stale buffered
+    // events cannot leak into a later caught-up cycle.
+    transient.caughtUp = false;
+    transient.replayingHistory = false;
+    transient.historicalMessages.length = 0;
+    transient.pendingStreamEvents.length = 0;
+  }
+
   private ensureActiveOnChatSubscription(): void {
     const targetWorkspaceId =
       this.activeWorkspaceId && this.isWorkspaceRegistered(this.activeWorkspaceId)
@@ -848,11 +881,16 @@ export class WorkspaceStore {
     }
 
     if (this.activeOnChatWorkspaceId) {
-      const unsubscribe = this.ipcUnsubscribers.get(this.activeOnChatWorkspaceId);
+      const previousActiveWorkspaceId = this.activeOnChatWorkspaceId;
+      // Clear replay buffers before aborting so a fast workspace switch/reopen
+      // cannot replay stale buffered rows from the previous subscription attempt.
+      this.clearReplayBuffers(previousActiveWorkspaceId);
+
+      const unsubscribe = this.ipcUnsubscribers.get(previousActiveWorkspaceId);
       if (unsubscribe) {
         unsubscribe();
       }
-      this.ipcUnsubscribers.delete(this.activeOnChatWorkspaceId);
+      this.ipcUnsubscribers.delete(previousActiveWorkspaceId);
       this.activeOnChatWorkspaceId = null;
     }
 
@@ -1464,8 +1502,16 @@ export class WorkspaceStore {
       return;
     }
 
+    const requestedCursor = paginationState.nextCursor
+      ? {
+          beforeHistorySequence: paginationState.nextCursor.beforeHistorySequence,
+          beforeMessageId: paginationState.nextCursor.beforeMessageId,
+        }
+      : null;
+
     this.historyPagination.set(workspaceId, {
-      ...paginationState,
+      nextCursor: requestedCursor,
+      hasOlder: paginationState.hasOlder,
       loading: true,
     });
     this.states.bump(workspaceId);
@@ -1473,11 +1519,17 @@ export class WorkspaceStore {
     try {
       const result = await client.workspace.history.loadMore({
         workspaceId,
-        cursor: paginationState.nextCursor,
+        cursor: requestedCursor,
       });
 
       const aggregator = this.aggregators.get(workspaceId);
-      if (!aggregator || !this.historyPagination.has(workspaceId)) {
+      const latestPagination = this.historyPagination.get(workspaceId);
+      if (
+        !aggregator ||
+        !latestPagination ||
+        !latestPagination.loading ||
+        !areHistoryPaginationCursorsEqual(latestPagination.nextCursor, requestedCursor)
+      ) {
         return;
       }
 
@@ -2277,26 +2329,20 @@ export class WorkspaceStore {
       }
 
       if (this.isWorkspaceRegistered(workspaceId)) {
-        const transient = this.chatTransientState.get(workspaceId);
-        if (transient) {
-          // Failed reconnect attempts may have buffered partial replay data.
-          // Clear replay buffers before the next attempt so we don't append a
-          // second replay copy and duplicate deltas/tool events on caught-up.
-          transient.caughtUp = false;
-          transient.replayingHistory = false;
-          transient.historicalMessages.length = 0;
-          transient.pendingStreamEvents.length = 0;
+        // Failed reconnect attempts may have buffered partial replay data.
+        // Clear replay buffers before the next attempt so we don't append a
+        // second replay copy and duplicate deltas/tool events on caught-up.
+        this.clearReplayBuffers(workspaceId);
 
-          // Preserve pagination across transient reconnect retries. Incremental
-          // caught-up payloads intentionally omit hasOlderHistory, so resetting
-          // here would permanently hide "Load older messages" until a full replay.
-          const existingPagination =
-            this.historyPagination.get(workspaceId) ?? createInitialHistoryPaginationState();
-          this.historyPagination.set(workspaceId, {
-            ...existingPagination,
-            loading: false,
-          });
-        }
+        // Preserve pagination across transient reconnect retries. Incremental
+        // caught-up payloads intentionally omit hasOlderHistory, so resetting
+        // here would permanently hide "Load older messages" until a full replay.
+        const existingPagination =
+          this.historyPagination.get(workspaceId) ?? createInitialHistoryPaginationState();
+        this.historyPagination.set(workspaceId, {
+          ...existingPagination,
+          loading: false,
+        });
       }
 
       const delayMs = calculateOnChatBackoffMs(attempt);

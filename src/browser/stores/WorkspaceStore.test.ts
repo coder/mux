@@ -353,6 +353,60 @@ describe("WorkspaceStore", () => {
 
       expect(subscribedWorkspaceIds).toEqual(["workspace-1", "workspace-2"]);
     });
+
+    it("clears replay buffers before aborting the previous active workspace subscription", async () => {
+      // eslint-disable-next-line require-yield
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, "workspace-1", {}, false);
+      createAndAddWorkspace(store, "workspace-2", {}, false);
+
+      store.setActiveWorkspaceId("workspace-1");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const transientState = (
+        store as unknown as {
+          chatTransientState: Map<
+            string,
+            {
+              caughtUp: boolean;
+              replayingHistory: boolean;
+              historicalMessages: WorkspaceChatMessage[];
+              pendingStreamEvents: WorkspaceChatMessage[];
+            }
+          >;
+        }
+      ).chatTransientState.get("workspace-1");
+      expect(transientState).toBeDefined();
+
+      transientState!.caughtUp = false;
+      transientState!.replayingHistory = true;
+      transientState!.historicalMessages.push(
+        createHistoryMessageEvent("stale-buffered-message", 9)
+      );
+      transientState!.pendingStreamEvents.push({
+        type: "stream-start",
+        workspaceId: "workspace-1",
+        messageId: "stale-buffered-stream",
+        model: "claude-sonnet-4",
+        historySequence: 10,
+        startTime: Date.now(),
+      });
+
+      // Switching active workspaces should clear replay buffers synchronously
+      // before aborting the previous subscription.
+      store.setActiveWorkspaceId("workspace-2");
+
+      expect(transientState!.caughtUp).toBe(false);
+      expect(transientState!.replayingHistory).toBe(false);
+      expect(transientState!.historicalMessages).toHaveLength(0);
+      expect(transientState!.pendingStreamEvents).toHaveLength(0);
+    });
   });
 
   it("tracks which workspace currently has the active onChat subscription", async () => {
@@ -578,6 +632,67 @@ describe("WorkspaceStore", () => {
       const state = store.getWorkspaceState(workspaceId);
       expect(state.loadingOlderHistory).toBe(false);
       expect(state.hasOlderHistory).toBe(false);
+    });
+
+    it("ignores stale load-more responses after pagination state changes", async () => {
+      const workspaceId = "history-pagination-stale-response";
+
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        yield createHistoryMessageEvent("msg-newer", 5);
+        await Promise.resolve();
+        yield { type: "caught-up", hasOlderHistory: true };
+        await waitForAbortSignal(options?.signal);
+      });
+
+      let resolveLoadMore: ((value: LoadMoreResponse) => void) | undefined;
+      const loadMorePromise = new Promise<LoadMoreResponse>((resolve) => {
+        resolveLoadMore = resolve;
+      });
+      mockHistoryLoadMore.mockReturnValueOnce(loadMorePromise);
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const loadOlderPromise = store.loadOlderHistory(workspaceId);
+      expect(store.getWorkspaceState(workspaceId).loadingOlderHistory).toBe(true);
+
+      const internalHistoryPagination = (
+        store as unknown as {
+          historyPagination: Map<
+            string,
+            {
+              nextCursor: { beforeHistorySequence: number; beforeMessageId?: string | null } | null;
+              hasOlder: boolean;
+              loading: boolean;
+            }
+          >;
+        }
+      ).historyPagination;
+      // Simulate a concurrent pagination reset (e.g., live compaction boundary arriving).
+      internalHistoryPagination.set(workspaceId, {
+        nextCursor: null,
+        hasOlder: false,
+        loading: false,
+      });
+
+      resolveLoadMore?.({
+        messages: [createHistoryMessageEvent("msg-stale-older", 3)],
+        nextCursor: {
+          beforeHistorySequence: 3,
+          beforeMessageId: "msg-stale-older",
+        },
+        hasOlder: true,
+      });
+
+      await loadOlderPromise;
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.muxMessages.map((message) => message.id)).toEqual(["msg-newer"]);
+      expect(state.hasOlderHistory).toBe(false);
+      expect(state.loadingOlderHistory).toBe(false);
     });
   });
 
