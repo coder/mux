@@ -200,9 +200,17 @@ function parseTruncateCommand(remainingTokens: string[]): ParsedAcpSlashCommand 
   }
 
   const percentageText = remainingTokens[0];
-  const percentageValue = Number.parseFloat(percentageText);
+  // Require the entire token to be numeric so typos like "25oops" are rejected
+  // instead of silently executing a destructive truncate command.
+  if (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(percentageText)) {
+    return {
+      kind: "invalid",
+      message: `Invalid percentage "${percentageText}". Usage: ${TRUNCATE_USAGE}`,
+    };
+  }
 
-  if (Number.isNaN(percentageValue) || percentageValue < 0 || percentageValue > 100) {
+  const percentageValue = Number.parseFloat(percentageText);
+  if (!Number.isFinite(percentageValue) || percentageValue < 0 || percentageValue > 100) {
     return {
       kind: "invalid",
       message: `Invalid percentage "${percentageText}". Usage: ${TRUNCATE_USAGE}`,

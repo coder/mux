@@ -746,9 +746,9 @@ export class MuxAgent implements Agent {
       return skillsByName;
     } catch (error) {
       console.error("[acp] Failed to load skills for slash command parsing", error);
-      const emptySkills = new Map<string, AgentSkillDescriptor>();
-      this.sessionSkillsById.set(sessionId, emptySkills);
-      return emptySkills;
+      // Do not cache failures. A transient backend error should not permanently
+      // disable skill slash commands for the lifetime of this ACP session.
+      return new Map<string, AgentSkillDescriptor>();
     }
   }
 

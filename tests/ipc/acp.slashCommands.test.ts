@@ -41,6 +41,8 @@ describe("ACP slash command support", () => {
     const parsed = parseAcpSlashCommand("/truncate 25", mapSkillsByName(skills));
     expect(parsed).toEqual({ kind: "truncate", percentage: 0.25 });
 
+    const trailingChars = parseAcpSlashCommand("/truncate 25oops", mapSkillsByName(skills));
+    expect(trailingChars?.kind).toBe("invalid");
     const invalid = parseAcpSlashCommand("/truncate nope", mapSkillsByName(skills));
     expect(invalid?.kind).toBe("invalid");
   });
