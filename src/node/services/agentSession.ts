@@ -626,6 +626,7 @@ export class AgentSession {
       coerceThinkingLevel(lastAssistantMessage?.metadata?.thinkingLevel) ??
       coerceThinkingLevel(agentSettings?.thinkingLevel);
 
+    const persistedToolPolicy = lastUserMessage?.metadata?.toolPolicy;
     const lastUserMuxMetadata = lastUserMessage?.metadata?.muxMetadata;
     if (isCompactionRequestMetadata(lastUserMuxMetadata)) {
       const compactionModel =
@@ -652,6 +653,9 @@ export class AgentSession {
     };
     if (baseThinkingLevel) {
       retryOptions.thinkingLevel = baseThinkingLevel;
+    }
+    if (persistedToolPolicy) {
+      retryOptions.toolPolicy = persistedToolPolicy;
     }
 
     return retryOptions;

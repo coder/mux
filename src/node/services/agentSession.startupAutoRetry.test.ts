@@ -104,6 +104,7 @@ describe("AgentSession startup auto-retry recovery", () => {
       workspaceId,
       createMuxMessage("user-1", "user", "Hello from interrupted turn", {
         timestamp: Date.now(),
+        toolPolicy: [{ regex_match: ".*", action: "disable" }],
       })
     );
     expect(appendResult.success).toBe(true);
@@ -126,6 +127,7 @@ describe("AgentSession startup auto-retry recovery", () => {
     }
     expect(retryOptions.model).toBe("anthropic:claude-sonnet-4-5");
     expect(retryOptions.agentId).toBe("exec");
+    expect(retryOptions.toolPolicy).toEqual([{ regex_match: ".*", action: "disable" }]);
 
     session.dispose();
   });
