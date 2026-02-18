@@ -813,6 +813,9 @@ describe("WorkspaceStore", () => {
       // Add workspace first
       createAndAddWorkspace(store, "test-workspace");
 
+      // Ignore setup emissions so this test only validates getAggregator() side effects.
+      emitCount = 0;
+
       // Simulate what happens during render - component calls getAggregator
       const aggregator1 = store.getAggregator("test-workspace");
       expect(aggregator1).toBeDefined();
