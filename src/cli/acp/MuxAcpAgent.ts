@@ -196,9 +196,15 @@ export class MuxAcpAgent implements AcpAgent {
       throw this.deps.sdk.RequestError.resourceNotFound(workspaceId);
     }
 
-    // Prefer agentId but fall back to legacy agentType for workspaces that
-    // predate the agentId field (upgrade/downgrade compatibility).
-    const agentId = this.resolveAgentId(info.agentId ?? info.agentType);
+    // Prefer agentId, then legacy agentType, then infer from aiSettingsByAgent
+    // (e.g., forked workspaces where agentId was persisted via updateAgentAISettings
+    // but the workspace metadata itself has no explicit agent field).
+    const explicitAgent = info.agentId ?? info.agentType;
+    const inferredAgent =
+      !explicitAgent && info.aiSettingsByAgent
+        ? Object.keys(info.aiSettingsByAgent).find((k) => k !== DEFAULT_AGENT_ID)
+        : undefined;
+    const agentId = this.resolveAgentId(explicitAgent ?? inferredAgent);
     const aiSettings = info.aiSettingsByAgent?.[agentId] ?? info.aiSettings;
     const model = normalizeNonEmptyString(aiSettings?.model) ?? this.defaultModel();
     const thinkingLevel = this.resolveThinkingLevel(aiSettings?.thinkingLevel);
