@@ -335,6 +335,10 @@ export const KEYBINDS = {
   // macOS: Cmd+Shift+P, Win/Linux: Ctrl+Shift+P
   OPEN_COMMAND_PALETTE: { key: "P", ctrl: true, shift: true },
 
+  /** Open Command Palette directly in command mode (prefills ">") */
+  // F4 avoids browser-level collisions with Ctrl/Cmd+Shift+P in Firefox.
+  OPEN_COMMAND_PALETTE_ACTIONS: { key: "F4" },
+
   /** Open Chat with Mux */
   // User requested F1 for quick access to the built-in help chat.
   OPEN_MUX_CHAT: { key: "F1" },

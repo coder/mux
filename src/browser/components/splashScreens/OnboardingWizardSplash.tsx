@@ -482,6 +482,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   }, [configuredProviders.length, hasConfiguredProvidersAtStart, providersLoading]);
 
   const commandPaletteShortcut = formatKeybind(KEYBINDS.OPEN_COMMAND_PALETTE);
+  const commandPaletteActionsShortcut = formatKeybind(KEYBINDS.OPEN_COMMAND_PALETTE_ACTIONS);
   const agentPickerShortcut = formatKeybind(KEYBINDS.TOGGLE_AGENT);
   const cycleAgentShortcut = formatKeybind(KEYBINDS.CYCLE_AGENT);
 
@@ -878,8 +879,9 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
           </div>
 
           <p className="mt-3">
-            Tip: type <code className="text-accent">&gt;</code> for commands and{" "}
-            <code className="text-accent">/</code> for slash commands.
+            Tip: type <code className="text-accent">&gt;</code> for commands, press{" "}
+            <kbd className={KBD_CLASSNAME}>{commandPaletteActionsShortcut}</kbd> to open command
+            mode directly, and use <code className="text-accent">/</code> for slash commands.
           </p>
         </>
       ),
@@ -890,6 +892,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     addProject,
     agentPickerShortcut,
     cancelMuxGatewayLogin,
+    commandPaletteActionsShortcut,
     commandPaletteShortcut,
     configuredProviders.length,
     configuredProvidersSummary,
