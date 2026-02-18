@@ -299,7 +299,8 @@ function createMenu() {
         { role: "toggleDevTools" },
         { type: "separator" },
         { role: "resetZoom" },
-        { role: "zoomIn" },
+        // Bind zoom-in to Ctrl/Cmd+= so the standard shortcut works without requiring Shift.
+        { role: "zoomIn", accelerator: "CommandOrControl+=" },
         { role: "zoomOut" },
         { type: "separator" },
         {
