@@ -318,7 +318,15 @@ describe("orchestrateFork", () => {
 
     expect(result.data.sourceRuntimeConfigUpdated).toBe(true);
     expect(result.data.sourceRuntimeConfigUpdate).toEqual(sourceRuntimeConfigUpdate);
-    expect(config.updateWorkspaceMetadata).not.toHaveBeenCalled();
+    expect(applyForkRuntimeUpdatesMock).toHaveBeenCalledWith(
+      config,
+      SOURCE_WORKSPACE_ID,
+      SOURCE_RUNTIME_CONFIG,
+      expect.objectContaining({
+        sourceRuntimeConfig: sourceRuntimeConfigUpdate,
+      }),
+      { persistSourceRuntimeConfigUpdate: false }
+    );
   });
 
   it("uses the runtime config from applyForkRuntimeUpdates when creating target runtime", async () => {
