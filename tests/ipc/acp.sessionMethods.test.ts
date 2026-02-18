@@ -61,7 +61,7 @@ function createHarness(options?: HarnessOptions): Harness {
   const onChatCalls: Array<{ workspaceId: string; mode?: OnChatMode }> = [];
   const listCalls: Array<{ archived?: boolean } | undefined> = [];
 
-  const client = {
+  const client: Partial<ORPCClient> = {
     workspace: {
       list: async (input?: { archived?: boolean }) => {
         listCalls.push(input);
@@ -76,17 +76,23 @@ function createHarness(options?: HarnessOptions): Harness {
         onChatCalls.push(input);
         return createChatStream(onChatEvents);
       },
-    },
+    } as ORPCClient["workspace"],
     agentSkills: {
       list: async () => [],
-    },
-  } as unknown as ORPCClient;
+      listDiagnostics: async () => {
+        throw new Error("createHarness: listDiagnostics not implemented for this test");
+      },
+      get: async () => {
+        throw new Error("createHarness: get not implemented for this test");
+      },
+    } as ORPCClient["agentSkills"],
+  };
 
-  const server = {
-    client,
+  const server: ServerConnection = {
+    client: client as ORPCClient,
     baseUrl: "ws://127.0.0.1:1234",
     close: async () => undefined,
-  } as unknown as ServerConnection;
+  };
 
   let agentInstance: MuxAgent | null = null;
   // Use a real ACP connection instead of casting a hand-rolled stub to
@@ -216,6 +222,12 @@ describe("ACP unstable session support", () => {
     await expect(
       harness.agent.unstable_listSessions({
         cursor: "not-a-number",
+      })
+    ).rejects.toThrow("invalid cursor");
+
+    await expect(
+      harness.agent.unstable_listSessions({
+        cursor: "1abc",
       })
     ).rejects.toThrow("invalid cursor");
   });

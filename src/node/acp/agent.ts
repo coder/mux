@@ -108,6 +108,11 @@ export class MuxAgent implements Agent {
 
   private readonly sessionStateById = new Map<string, SessionState>();
   private readonly sessionSkillsById = new Map<string, Map<string, AgentSkillDescriptor>>();
+  /**
+   * Persist each session's desired onChat mode so prompt() can recover dropped
+   * subscriptions without changing replay semantics (full vs live).
+   */
+  private readonly onChatModeBySessionId = new Map<string, OnChatMode>();
   private readonly chatSubscriptions = new Map<string, Promise<void>>();
   /** Resolves once `onChat` is connected for a session (shared across callers). */
   private readonly chatSubscriptionReady = new Map<string, Promise<void>>();
@@ -490,7 +495,11 @@ export class MuxAgent implements Agent {
     // Re-establish chat subscription if a prior one dropped (e.g., transient
     // websocket interruption). Without a live subscription, stream-end events
     // never arrive and the turn promise hangs indefinitely.
-    await this.ensureChatSubscription(args.sessionId, args.workspaceId, ON_CHAT_MODE_FULL);
+    await this.ensureChatSubscription(
+      args.sessionId,
+      args.workspaceId,
+      this.getSessionOnChatMode(args.sessionId)
+    );
 
     const turnPromise = this.beginTurn(args.sessionId);
 
@@ -879,6 +888,10 @@ export class MuxAgent implements Agent {
     return skillsByName;
   }
 
+  private getSessionOnChatMode(sessionId: string): OnChatMode {
+    return this.onChatModeBySessionId.get(sessionId) ?? ON_CHAT_MODE_FULL;
+  }
+
   /**
    * Ensure a chat subscription exists for the given session.  Returns a promise
    * that resolves once the underlying `onChat` stream is connected (so callers
@@ -897,6 +910,8 @@ export class MuxAgent implements Agent {
       await existingReady;
       return;
     }
+
+    this.onChatModeBySessionId.set(sessionId, onChatMode);
 
     // `connectedPromise` resolves once `onChat` returns the async iterable,
     // signalling the subscription is live.  If `onChat` fails before the
@@ -1230,11 +1245,10 @@ function parseSessionListCursor(cursor: string | null | undefined): number {
     return 0;
   }
 
-  const parsed = Number.parseInt(trimmed, 10);
-  assert(
-    Number.isSafeInteger(parsed) && parsed >= 0,
-    `unstable_listSessions: invalid cursor '${cursor}'`
-  );
+  assert(/^\d+$/.test(trimmed), `unstable_listSessions: invalid cursor '${cursor}'`);
+
+  const parsed = Number(trimmed);
+  assert(Number.isSafeInteger(parsed), `unstable_listSessions: invalid cursor '${cursor}'`);
   return parsed;
 }
 
