@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -533,7 +534,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
   const workspaceStore = useWorkspaceStoreRaw();
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     workspaceStore.setActiveWorkspaceId(currentWorkspaceId ?? null);
   }, [workspaceStore, currentWorkspaceId]);
   const [workspaceMetadata, setWorkspaceMetadataState] = useState<

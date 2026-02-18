@@ -76,8 +76,9 @@ describe("Compaction UI (mock AI router)", () => {
       // Compaction transcript now renders a single top boundary row.
       await app.chat.expectTranscriptContains("Compaction boundary");
 
-      // Compaction is append-only: pre-compaction transcript remains visible.
-      await app.chat.expectTranscriptContains(seedMessage);
+      // Live compaction now prunes to the latest boundary, so pre-compaction
+      // transcript is no longer visible in the current view.
+      await app.chat.expectTranscriptNotContains(seedMessage);
     } finally {
       await app.dispose();
     }
