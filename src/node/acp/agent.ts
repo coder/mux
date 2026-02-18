@@ -208,14 +208,16 @@ export class MuxAgent implements Agent {
 
     await this.ensureChatSubscription(sessionId, workspaceId);
 
-    await this.refreshSessionCommands(sessionId, workspaceId);
-
-    return {
+    const response = {
       sessionId,
       configOptions: await buildConfigOptions(this.server.client, workspaceId, {
         activeAgentId: agentId,
       }),
     };
+
+    this.scheduleSessionCommandsRefresh(sessionId, workspaceId);
+
+    return response;
   }
 
   async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
@@ -243,7 +245,7 @@ export class MuxAgent implements Agent {
 
     await this.ensureChatSubscription(resumed.sessionId, resumed.workspaceId);
 
-    await this.refreshSessionCommands(resumed.sessionId, resumed.workspaceId);
+    this.scheduleSessionCommandsRefresh(resumed.sessionId, resumed.workspaceId);
 
     return resumed.response;
   }
@@ -278,7 +280,7 @@ export class MuxAgent implements Agent {
 
     await this.ensureChatSubscription(forked.sessionId, forked.workspaceId);
 
-    await this.refreshSessionCommands(forked.sessionId, forked.workspaceId);
+    this.scheduleSessionCommandsRefresh(forked.sessionId, forked.workspaceId);
 
     return forked.response;
   }
@@ -718,6 +720,20 @@ export class MuxAgent implements Agent {
     return {
       stopReason: DEFAULT_COMMAND_STOP_REASON,
     };
+  }
+
+  private scheduleSessionCommandsRefresh(sessionId: string, workspaceId: string): void {
+    // Some ACP clients (including Zed) can drop session/update notifications that
+    // arrive before the corresponding session/new response is processed client-side.
+    // Defer command advertisement to the next macrotask so the session is
+    // established first, then publish available slash commands.
+    setTimeout(() => {
+      if (this.connection.signal.aborted) {
+        return;
+      }
+
+      void this.refreshSessionCommands(sessionId, workspaceId);
+    }, 0);
   }
 
   private async refreshSessionCommands(sessionId: string, workspaceId: string): Promise<void> {
