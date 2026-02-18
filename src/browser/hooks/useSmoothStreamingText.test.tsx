@@ -79,6 +79,78 @@ describe("useSmoothStreamingText", () => {
     });
   }
 
+  function hasLoneSurrogate(value: string): boolean {
+    for (let i = 0; i < value.length; i++) {
+      const code = value.charCodeAt(i);
+      const isHigh = code >= 0xd800 && code <= 0xdbff;
+      const isLow = code >= 0xdc00 && code <= 0xdfff;
+
+      if (isHigh) {
+        const next = value.charCodeAt(i + 1);
+        const nextIsLow = next >= 0xdc00 && next <= 0xdfff;
+        if (!nextIsLow) {
+          return true;
+        }
+        i += 1;
+        continue;
+      }
+
+      if (isLow) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  it("keeps RAF progress stable while fullText updates rapidly", () => {
+    const { result, rerender } = renderHook(
+      (hookProps: UseSmoothStreamingTextOptions) => useSmoothStreamingText(hookProps),
+      {
+        initialProps: {
+          fullText: "x".repeat(20),
+          isStreaming: true,
+          bypassSmoothing: false,
+          streamKey: "stream-rapid",
+        },
+      }
+    );
+
+    for (let i = 0; i < 12; i++) {
+      act(() => {
+        rerender({
+          fullText: "x".repeat(20 + i),
+          isStreaming: true,
+          bypassSmoothing: false,
+          streamKey: "stream-rapid",
+        });
+      });
+
+      advanceFrames(1);
+    }
+
+    expect(result.current.visibleText.length).toBeGreaterThan(0);
+  });
+
+  it("does not emit partial surrogate pairs while smoothing", () => {
+    const { result } = renderHook(
+      (hookProps: UseSmoothStreamingTextOptions) => useSmoothStreamingText(hookProps),
+      {
+        initialProps: {
+          fullText: "🙂🙂🙂",
+          isStreaming: true,
+          bypassSmoothing: false,
+          streamKey: "stream-grapheme",
+        },
+      }
+    );
+
+    for (let i = 0; i < 10; i++) {
+      advanceFrames(1);
+      expect(hasLoneSurrogate(result.current.visibleText)).toBe(false);
+    }
+  });
+
   it("reveals text progressively while streaming", () => {
     const initialProps: UseSmoothStreamingTextOptions = {
       fullText: "x".repeat(220),
