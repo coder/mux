@@ -1281,11 +1281,14 @@ export class AgentSession {
       this.emitChatEvent({ ...skillSnapshotResult.snapshotMessage, type: "message" });
     }
 
-    // Always emit user message to the frontend for display (even when compaction replaces the stream)
-    this.emitChatEvent({ ...userMessage, type: "message" });
-
+    // When on-send compaction triggers, the original user message is NOT emitted now —
+    // it was not persisted and will be dispatched (persisted + emitted) as a follow-up
+    // after compaction completes. Emitting it here would cause a duplicate in the
+    // live transcript once the follow-up path re-sends the same text.
     if (autoCompactionMessage) {
       this.emitChatEvent({ ...autoCompactionMessage, type: "message" });
+    } else {
+      this.emitChatEvent({ ...userMessage, type: "message" });
     }
 
     this.setTurnPhase(TurnPhase.PREPARING);

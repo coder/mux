@@ -124,11 +124,14 @@ export class RetryManager {
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
     if (!enabled) {
-      // Cancel any pending retry and notify the frontend so the UI clears
-      // the retry status (e.g., "Retrying…" or countdown).
-      const hadPendingRetry = this.isRetryPending;
+      // Cancel any pending/in-flight retry and notify the frontend so the UI
+      // clears the retry status (e.g., "Retrying…" or countdown).
+      // Check state.attempt rather than isRetryPending because the timer may
+      // have already fired (retryTimer is null) while the onRetry callback is
+      // still executing — the UI would otherwise remain stuck in retry state.
+      const hadActiveRetry = this.isRetryPending || this.state.attempt > 0;
       this.cancel();
-      if (hadPendingRetry) {
+      if (hadActiveRetry) {
         this.onStatusChange({ type: "auto-retry-abandoned", reason: "disabled_by_user" });
       }
     }

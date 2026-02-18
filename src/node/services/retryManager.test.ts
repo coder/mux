@@ -176,6 +176,25 @@ describe("RetryManager", () => {
     });
   });
 
+  it("setEnabled(false) emits abandoned even after timer has fired (in-flight retry)", () => {
+    const { manager, events } = createRetryManager();
+
+    // Schedule a retry, then fire the timer so retryTimer is null
+    // but state.attempt > 0 (retry callback is in-flight).
+    manager.handleStreamFailure({ type: "unknown" });
+    expect(manager.isRetryPending).toBe(true);
+    runNextTimer();
+    expect(manager.isRetryPending).toBe(false);
+
+    // Disable while the retry callback is executing. Even though the timer
+    // is gone, the UI should still be cleared via abandoned event.
+    manager.setEnabled(false);
+    expect(events).toContainEqual({
+      type: "auto-retry-abandoned",
+      reason: "disabled_by_user",
+    });
+  });
+
   it("reschedules when a second failure arrives while retry is pending", () => {
     const { manager, events } = createRetryManager();
 
