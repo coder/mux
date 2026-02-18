@@ -1125,6 +1125,7 @@ describe("StreamingMessageAggregator", () => {
         delta: "replayed partial",
         tokens: 1,
         timestamp: 1_100,
+        replay: true,
       });
 
       const displayed = aggregator.getDisplayedMessages();
@@ -1135,6 +1136,57 @@ describe("StreamingMessageAggregator", () => {
 
       expect(assistant).toBeDefined();
       expect(assistant?.streamPresentation).toEqual({ source: "replay" });
+    });
+    test("switches streaming presentation from replay to live when non-replay delta arrives", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      // Reconnect: stream-start with replay flag
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-replay-to-live",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+        startTime: 1_000,
+        replay: true,
+      });
+
+      // Replay catch-up delta (tagged with replay)
+      aggregator.handleStreamDelta({
+        type: "stream-delta",
+        workspaceId: "test-workspace",
+        messageId: "msg-replay-to-live",
+        delta: "cached ",
+        tokens: 1,
+        timestamp: 1_100,
+        replay: true,
+      });
+
+      // During replay: source should be "replay"
+      const duringReplay = aggregator.getDisplayedMessages();
+      const replayRow = duringReplay.find(
+        (message): message is Extract<(typeof duringReplay)[number], { type: "assistant" }> =>
+          message.type === "assistant" && message.historyId === "msg-replay-to-live"
+      );
+      expect(replayRow?.streamPresentation).toEqual({ source: "replay" });
+
+      // Fresh live delta (no replay flag) — catch-up is over
+      aggregator.handleStreamDelta({
+        type: "stream-delta",
+        workspaceId: "test-workspace",
+        messageId: "msg-replay-to-live",
+        delta: "fresh tokens",
+        tokens: 2,
+        timestamp: 1_200,
+      });
+
+      // After live resume: source should flip to "live"
+      const afterLive = aggregator.getDisplayedMessages();
+      const liveRow = afterLive.find(
+        (message): message is Extract<(typeof afterLive)[number], { type: "assistant" }> =>
+          message.type === "assistant" && message.historyId === "msg-replay-to-live"
+      );
+      expect(liveRow?.streamPresentation).toEqual({ source: "live" });
     });
   });
 
