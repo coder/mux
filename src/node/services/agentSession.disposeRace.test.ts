@@ -44,6 +44,9 @@ describe("AgentSession disposal race conditions", () => {
     const appendDeferred = createDeferred<Result<void>>();
     const historyService: HistoryService = {
       appendToHistory: mock(() => appendDeferred.promise),
+      // seedUsageStateFromHistory reads the last few messages on first send;
+      // return empty history so the test exercises the real code path.
+      getLastMessages: mock(() => Promise.resolve(Ok([]))),
     } as unknown as HistoryService;
 
     const initStateManager: InitStateManager = {

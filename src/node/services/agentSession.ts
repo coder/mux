@@ -1456,28 +1456,34 @@ export class AgentSession {
       return;
     }
 
-    // Read a small tail of history — the last assistant message with context
-    // usage is almost always within the most recent few turns.
-    const historyResult = await this.historyService.getLastMessages(this.workspaceId, 10);
-    if (!historyResult.success) {
-      return;
-    }
-
-    // Walk backwards to find the most recent message with contextUsage.
-    for (let i = historyResult.data.length - 1; i >= 0; i--) {
-      const msg = historyResult.data[i];
-      const meta = msg.metadata;
-      if (!meta?.contextUsage || !meta.model) {
-        continue;
+    try {
+      // Read a small tail of history — the last assistant message with context
+      // usage is almost always within the most recent few turns.
+      const historyResult = await this.historyService.getLastMessages(this.workspaceId, 10);
+      if (!historyResult.success) {
+        return;
       }
 
-      this.updateUsageStateFromModelUsage({
-        model: meta.model,
-        usage: meta.contextUsage,
-        providerMetadata: meta.contextProviderMetadata ?? meta.providerMetadata,
-        live: false,
-      });
-      return;
+      // Walk backwards to find the most recent message with contextUsage.
+      for (let i = historyResult.data.length - 1; i >= 0; i--) {
+        const msg = historyResult.data[i];
+        const meta = msg.metadata;
+        if (!meta?.contextUsage || !meta.model) {
+          continue;
+        }
+
+        this.updateUsageStateFromModelUsage({
+          model: meta.model,
+          usage: meta.contextUsage,
+          providerMetadata: meta.contextProviderMetadata ?? meta.providerMetadata,
+          live: false,
+        });
+        return;
+      }
+    } catch {
+      // Best-effort: seeding is an optimization so the compaction monitor
+      // works after restart. If it fails, the first live stream-end will
+      // populate lastUsageState and compaction kicks in from then on.
     }
   }
 
