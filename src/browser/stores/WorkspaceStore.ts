@@ -1191,20 +1191,24 @@ export class WorkspaceStore {
       const messages = aggregator.getAllMessages();
       const metadata = this.workspaceMetadata.get(workspaceId);
       const pendingStreamStartTime = aggregator.getPendingStreamStartTime();
-      // For the actively subscribed workspace, trust the live onChat aggregator state.
-      // Activity snapshots can lag and should only backfill non-active workspaces.
+      // Trust the live aggregator only when it is both active AND has finished
+      // replaying historical events (caughtUp). During the replay window after a
+      // workspace switch, the aggregator is cleared and re-hydrating; fall back to
+      // the activity snapshot so the UI continues to reflect the last known state
+      // (e.g., canInterrupt stays true for a workspace that is still streaming).
       //
       // For non-active workspaces, the aggregator's activeStreams may be stale since
       // they don't receive stream-end events when unsubscribed from onChat. Prefer the
       // activity snapshot's streaming state, which is updated via the lightweight activity
       // subscription for all workspaces.
-      const canInterrupt = isActiveWorkspace
+      const useAggregatorState = isActiveWorkspace && transient.caughtUp;
+      const canInterrupt = useAggregatorState
         ? activeStreams.length > 0
         : (activity?.streaming ?? activeStreams.length > 0);
-      const currentModel = isActiveWorkspace
+      const currentModel = useAggregatorState
         ? (aggregator.getCurrentModel() ?? null)
         : (activity?.lastModel ?? aggregator.getCurrentModel() ?? null);
-      const currentThinkingLevel = isActiveWorkspace
+      const currentThinkingLevel = useAggregatorState
         ? (aggregator.getCurrentThinkingLevel() ?? null)
         : (activity?.lastThinkingLevel ?? aggregator.getCurrentThinkingLevel() ?? null);
       const aggregatorRecency = aggregator.getRecencyTimestamp();
