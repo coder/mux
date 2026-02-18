@@ -154,6 +154,11 @@ export async function setupWorkspaceView(
     { timeout: 10_000 }
   );
   fireEvent.click(workspaceElement);
+
+  // Explicitly activate the workspace so that runOnChatSubscription starts.
+  // In the real app, WorkspaceContext's useLayoutEffect handles this via routing,
+  // but in happy-dom tests the effect may not fire synchronously after click.
+  workspaceStore.setActiveWorkspaceId(workspaceId);
 }
 
 /**

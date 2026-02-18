@@ -2824,6 +2824,12 @@ export const workspaceStore = {
    */
   getWorkspaceSidebarState: (workspaceId: string) =>
     getStoreInstance().getWorkspaceSidebarState(workspaceId),
+  /**
+   * Set the active workspace for onChat subscription management.
+   * Exposed for test helpers that bypass React routing effects.
+   */
+  setActiveWorkspaceId: (workspaceId: string | null) =>
+    getStoreInstance().setActiveWorkspaceId(workspaceId),
 };
 
 /**
