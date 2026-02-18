@@ -12,7 +12,7 @@ import type { AIService } from "@/node/services/aiService";
 import type { HistoryService } from "@/node/services/historyService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 
-import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { FrontendWorkspaceMetadata, WorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
@@ -48,6 +48,7 @@ import {
 } from "@/node/services/utils/fileChangeTracker";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
+import { coerceThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import {
   createMuxMessage,
@@ -233,6 +234,9 @@ export class AgentSession {
 
   private readonly retryManager: RetryManager;
   private lastAutoRetryOptions?: SendMessageOptions;
+  /** Startup recovery should run once per session to avoid duplicate retry timers on reconnect. */
+  private startupAutoRetryCheckScheduled = false;
+  private startupAutoRetryCheckPromise: Promise<void> | null = null;
 
   /** Latest context-usage snapshot used for on-send compaction checks. */
   private lastUsageState?: AutoCompactionUsageState;
@@ -412,7 +416,16 @@ export class AgentSession {
     // a pending follow-up that was never dispatched. If so, dispatch it now.
     // This handles the case where the app crashed after compaction completed
     // but before the follow-up was sent.
-    void this.dispatchPendingFollowUp();
+    void this.dispatchPendingFollowUp()
+      .catch((error) => {
+        log.warn("Failed to dispatch pending follow-up during subscribe", {
+          workspaceId: this.workspaceId,
+          error: getErrorMessage(error),
+        });
+      })
+      .finally(() => {
+        this.ensureStartupAutoRetryCheck();
+      });
 
     return unsubscribe;
   }
@@ -493,6 +506,231 @@ export class AgentSession {
         message: this.extractRetryFailureMessage(result.error),
       });
     }
+  }
+
+  private isAiStreaming(): boolean {
+    const aiService = this.aiService as Partial<Pick<AIService, "isStreaming">>;
+    if (typeof aiService.isStreaming !== "function") {
+      return false;
+    }
+    return aiService.isStreaming(this.workspaceId);
+  }
+
+  private normalizeStartupModel(model: unknown): string | undefined {
+    if (typeof model !== "string") {
+      return undefined;
+    }
+
+    const trimmed = model.trim();
+    if (trimmed.length === 0) {
+      return undefined;
+    }
+
+    const normalized = normalizeGatewayModel(trimmed);
+    if (!isValidModelFormat(normalized)) {
+      return undefined;
+    }
+
+    return normalized;
+  }
+
+  private normalizeAgentIdForRetry(agentId: unknown): string | undefined {
+    if (typeof agentId !== "string") {
+      return undefined;
+    }
+
+    const normalized = agentId.trim().toLowerCase();
+    if (normalized.length === 0) {
+      return undefined;
+    }
+
+    const parsed = AgentIdSchema.safeParse(normalized);
+    return parsed.success ? parsed.data : undefined;
+  }
+
+  private isPendingAskUserQuestion(message: MuxMessage | null | undefined): boolean {
+    if (!message || message.role !== "assistant") {
+      return false;
+    }
+
+    return message.parts.some(
+      (part) =>
+        part.type === "dynamic-tool" &&
+        part.toolName === "ask_user_question" &&
+        part.state === "input-available"
+    );
+  }
+
+  private getLastNonSystemHistoryMessage(historyTail: MuxMessage[]): MuxMessage | undefined {
+    for (let index = historyTail.length - 1; index >= 0; index -= 1) {
+      const candidate = historyTail[index];
+      if (candidate.role !== "system") {
+        return candidate;
+      }
+    }
+    return undefined;
+  }
+
+  private async getWorkspaceMetadataForRetry(): Promise<WorkspaceMetadata | undefined> {
+    const aiService = this.aiService as Partial<Pick<AIService, "getWorkspaceMetadata">>;
+    if (typeof aiService.getWorkspaceMetadata !== "function") {
+      return undefined;
+    }
+
+    const metadataResult = await aiService.getWorkspaceMetadata(this.workspaceId);
+    if (!metadataResult.success) {
+      return undefined;
+    }
+
+    return metadataResult.data;
+  }
+
+  private async deriveStartupAutoRetryOptions(params: {
+    partial: MuxMessage | null;
+    historyTail: MuxMessage[];
+  }): Promise<SendMessageOptions | undefined> {
+    const lastUserMessage = [...params.historyTail]
+      .reverse()
+      .find((message): message is MuxMessage & { role: "user" } => message.role === "user");
+
+    const lastAssistantMessage =
+      params.partial?.role === "assistant"
+        ? params.partial
+        : [...params.historyTail]
+            .reverse()
+            .find(
+              (message): message is MuxMessage & { role: "assistant" } =>
+                message.role === "assistant"
+            );
+
+    const workspaceMetadata = await this.getWorkspaceMetadataForRetry();
+
+    const workspaceAgentId =
+      this.normalizeAgentIdForRetry(workspaceMetadata?.agentId ?? workspaceMetadata?.agentType) ??
+      WORKSPACE_DEFAULTS.agentId;
+    const assistantAgentId = this.normalizeAgentIdForRetry(lastAssistantMessage?.metadata?.agentId);
+    const baseAgentId = assistantAgentId ?? workspaceAgentId;
+
+    const agentSettings =
+      workspaceMetadata?.aiSettingsByAgent?.[baseAgentId] ??
+      workspaceMetadata?.aiSettingsByAgent?.[workspaceAgentId] ??
+      workspaceMetadata?.aiSettings;
+    const compactSettings = workspaceMetadata?.aiSettingsByAgent?.compact;
+
+    const baseModel =
+      this.normalizeStartupModel(lastAssistantMessage?.metadata?.model) ??
+      this.normalizeStartupModel(agentSettings?.model) ??
+      DEFAULT_MODEL;
+
+    const baseThinkingLevel =
+      coerceThinkingLevel(lastAssistantMessage?.metadata?.thinkingLevel) ??
+      coerceThinkingLevel(agentSettings?.thinkingLevel);
+
+    const lastUserMuxMetadata = lastUserMessage?.metadata?.muxMetadata;
+    if (isCompactionRequestMetadata(lastUserMuxMetadata)) {
+      const compactionModel =
+        this.normalizeStartupModel(lastUserMuxMetadata.parsed.model) ?? baseModel;
+      const requestedThinkingLevel =
+        baseThinkingLevel ?? coerceThinkingLevel(compactSettings?.thinkingLevel) ?? "off";
+
+      return {
+        model: compactionModel,
+        agentId: "compact",
+        thinkingLevel: enforceThinkingPolicy(compactionModel, requestedThinkingLevel),
+        maxOutputTokens:
+          typeof lastUserMuxMetadata.parsed.maxOutputTokens === "number"
+            ? lastUserMuxMetadata.parsed.maxOutputTokens
+            : undefined,
+        toolPolicy: [{ regex_match: ".*", action: "disable" }],
+        skipAiSettingsPersistence: true,
+      };
+    }
+
+    const retryOptions: SendMessageOptions = {
+      model: baseModel,
+      agentId: baseAgentId,
+    };
+    if (baseThinkingLevel) {
+      retryOptions.thinkingLevel = baseThinkingLevel;
+    }
+
+    return retryOptions;
+  }
+
+  private async scheduleStartupAutoRetryIfNeeded(): Promise<void> {
+    if (this.disposed || this.isBusy() || this.isAiStreaming()) {
+      return;
+    }
+
+    const [partial, historyResult] = await Promise.all([
+      this.historyService.readPartial(this.workspaceId),
+      this.historyService.getLastMessages(this.workspaceId, 20),
+    ]);
+
+    if (!historyResult.success) {
+      log.warn("Failed to inspect history for startup auto-retry", {
+        workspaceId: this.workspaceId,
+        error: historyResult.error,
+      });
+      return;
+    }
+
+    if (partial && this.isPendingAskUserQuestion(partial)) {
+      return;
+    }
+
+    const lastHistoryMessage = this.getLastNonSystemHistoryMessage(historyResult.data);
+    const interruptedByPartial = partial?.role === "assistant";
+    const interruptedByHistory =
+      lastHistoryMessage?.role === "user" ||
+      (lastHistoryMessage?.role === "assistant" &&
+        lastHistoryMessage.metadata?.partial === true &&
+        !this.isPendingAskUserQuestion(lastHistoryMessage));
+
+    if (!interruptedByPartial && !interruptedByHistory) {
+      return;
+    }
+
+    const retryOptions =
+      this.lastAutoRetryOptions ??
+      (await this.deriveStartupAutoRetryOptions({
+        partial,
+        historyTail: historyResult.data,
+      }));
+
+    if (!retryOptions) {
+      this.emitRetryEvent({ type: "auto-retry-abandoned", reason: "missing_retry_options" });
+      return;
+    }
+
+    // Disk reads above may race with user actions; avoid queueing a retry if work already resumed.
+    if (this.disposed || this.isBusy() || this.isAiStreaming()) {
+      return;
+    }
+
+    this.lastAutoRetryOptions = retryOptions;
+    this.retryManager.handleStreamFailure({
+      type: "unknown",
+      message: "startup_interrupted_stream",
+    });
+  }
+
+  ensureStartupAutoRetryCheck(): void {
+    if (this.disposed || this.startupAutoRetryCheckScheduled || this.startupAutoRetryCheckPromise) {
+      return;
+    }
+
+    this.startupAutoRetryCheckPromise = this.scheduleStartupAutoRetryIfNeeded()
+      .catch((error: unknown) => {
+        log.warn("Startup auto-retry check failed", {
+          workspaceId: this.workspaceId,
+          error: getErrorMessage(error),
+        });
+      })
+      .finally(() => {
+        this.startupAutoRetryCheckScheduled = true;
+        this.startupAutoRetryCheckPromise = null;
+      });
   }
 
   private async emitHistoricalEvents(
