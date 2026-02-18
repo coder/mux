@@ -111,8 +111,9 @@ import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 
 import { CreationCenterContent } from "./CreationCenterContent";
 import { cn } from "@/common/lib/utils";
-import type { ChatInputProps, ChatInputAPI } from "./types";
+import type { ChatInputProps, ChatInputAPI, QueueDispatchMode } from "./types";
 import { CreationControls } from "./CreationControls";
+import { SendModeDropdown } from "./SendModeDropdown";
 import { CodexOauthWarningBanner } from "./CodexOauthWarningBanner";
 import { useCreationWorkspace } from "./useCreationWorkspace";
 import { useCoderWorkspace } from "@/browser/hooks/useCoderWorkspace";
@@ -183,6 +184,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const isCompacting = variant === "workspace" ? (props.isCompacting ?? false) : false;
   const hasQueuedCompaction =
     variant === "workspace" ? (props.hasQueuedCompaction ?? false) : false;
+  const canInterrupt = variant === "workspace" ? (props.canInterrupt ?? false) : false;
   const [isMobileTouch, setIsMobileTouch] = useState(
     () =>
       typeof window !== "undefined" &&
@@ -1594,7 +1596,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         if (reviewIdsForCheck.length > 0) {
           props.onCheckReviews?.(reviewIdsForCheck);
         }
-        props.onMessageSent?.();
+        props.onMessageSent?.("tool-end");
       }
     }
 
@@ -1709,7 +1711,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [setInput]
   );
 
-  const handleSend = async (overrides?: { queueDispatchMode?: "tool-end" | "turn-end" }) => {
+  const handleSend = async (overrides?: { queueDispatchMode?: QueueDispatchMode }) => {
     if (!canSend) {
       return;
     }
@@ -1931,7 +1933,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               type: "success",
               message: "Context threshold reached - auto-compacting...",
             });
-            props.onMessageSent?.();
+            props.onMessageSent?.("tool-end");
           }
         } catch (error) {
           // Restore on unexpected error
@@ -2116,7 +2118,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           if (editingMessage && props.onCancelEdit) {
             props.onCancelEdit();
           }
-          props.onMessageSent?.();
+          props.onMessageSent?.(overrides?.queueDispatchMode ?? "tool-end");
         }
       } catch (error) {
         // Handle unexpected errors
@@ -2558,6 +2560,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   />
                 </div>
 
+                {canInterrupt && (
+                  <SendModeDropdown
+                    onSelect={(mode) => {
+                      void handleSend(
+                        mode === "tool-end" ? undefined : { queueDispatchMode: mode }
+                      );
+                    }}
+                  />
+                )}
+
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -2580,12 +2592,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent align="center">
-                    <div className="flex flex-col gap-0.5">
-                      <span>Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})</span>
-                      <span className="text-muted">
-                        Send after turn ({formatKeybind(KEYBINDS.SEND_MESSAGE_AFTER_TURN)})
-                      </span>
-                    </div>
+                    <span>Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})</span>
                   </TooltipContent>
                 </Tooltip>
               </div>

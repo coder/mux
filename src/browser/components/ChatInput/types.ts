@@ -3,6 +3,9 @@ import type { TelemetryRuntimeType } from "@/common/telemetry/payload";
 import type { AutoCompactionCheckResult } from "@/browser/utils/compaction/autoCompactionCheck";
 import type { Review } from "@/common/types/review";
 import type { EditingMessageState, PendingUserMessage } from "@/browser/utils/chatEditing";
+import type { SendMessageOptions } from "@/common/orpc/types";
+
+export type QueueDispatchMode = NonNullable<SendMessageOptions["queueDispatchMode"]>;
 
 export interface ChatInputAPI {
   focus: () => void;
@@ -24,7 +27,7 @@ export interface ChatInputWorkspaceVariant {
   workspaceId: string;
   /** Runtime type for the workspace (for telemetry) - no sensitive details like SSH host */
   runtimeType?: TelemetryRuntimeType;
-  onMessageSent?: () => void;
+  onMessageSent?: (dispatchMode: QueueDispatchMode) => void;
   onTruncateHistory: (percentage?: number) => Promise<void>;
   onModelChange?: (model: string) => void;
   isCompacting?: boolean;

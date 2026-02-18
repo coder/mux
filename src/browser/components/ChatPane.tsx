@@ -26,6 +26,7 @@ import { RetryBarrier } from "./Messages/ChatBarrier/RetryBarrier";
 import { PinnedTodoList } from "./PinnedTodoList";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { ChatInput, type ChatInputAPI } from "./ChatInput/index";
+import type { QueueDispatchMode } from "./ChatInput/types";
 import {
   shouldShowInterruptedBarrier,
   mergeConsecutiveStreamErrors,
@@ -524,18 +525,24 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     setEditingMessage(undefined);
   }, [setEditingMessage]);
 
-  const handleMessageSent = useCallback(() => {
-    // Auto-background any running foreground bash when user sends a new message
-    // This prevents the user from waiting for the bash to complete before their message is processed
-    autoBackgroundOnSend();
+  const handleMessageSent = useCallback(
+    (dispatchMode: QueueDispatchMode = "tool-end") => {
+      // Only background foreground bashes for "tool-end" sends (Enter).
+      // "turn-end" sends (Ctrl/Cmd+Enter) let the stream finish naturally —
+      // backgrounding would disrupt a foreground bash the user wants to complete.
+      if (dispatchMode === "tool-end") {
+        autoBackgroundOnSend();
+      }
 
-    // Enable auto-scroll when user sends a message
-    setAutoScroll(true);
+      // Enable auto-scroll when user sends a message
+      setAutoScroll(true);
 
-    // Reset autoRetry when user sends a message
-    // User action = clear intent: "I'm actively using this workspace"
-    enableAutoRetryPreference(workspaceId);
-  }, [setAutoScroll, autoBackgroundOnSend, workspaceId]);
+      // Reset autoRetry when user sends a message
+      // User action = clear intent: "I'm actively using this workspace"
+      enableAutoRetryPreference(workspaceId);
+    },
+    [setAutoScroll, autoBackgroundOnSend, workspaceId]
+  );
 
   const handleClearHistory = useCallback(
     async (percentage = 1.0) => {
@@ -927,7 +934,7 @@ interface ChatInputPaneProps {
   onContextSwitchDismiss: () => void;
   onModelChange?: (model: string) => void;
   onCompactClick: () => void;
-  onMessageSent: () => void;
+  onMessageSent: (dispatchMode: QueueDispatchMode) => void;
   onTruncateHistory: (percentage?: number) => Promise<void>;
   editingMessage: EditingMessageState | undefined;
   onCancelEdit: () => void;

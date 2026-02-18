@@ -36,6 +36,7 @@ import {
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
 import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
 import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
+import type { QueueDispatchMode } from "@/browser/components/ChatInput/types";
 import type { ChatAttachment } from "../components/ChatAttachments";
 import { dispatchWorkspaceSwitch } from "./workspaceEvents";
 import { getRuntimeKey, copyWorkspaceStorage } from "@/common/constants/storage";
@@ -142,7 +143,7 @@ export interface SlashCommandContext extends Omit<CommandHandlerContext, "worksp
   onTruncateHistory?: (percentage?: number) => Promise<void>;
   resetInputHeight: () => void;
   /** Callback to trigger message-sent side effects (auto-scroll, auto-background) */
-  onMessageSent?: () => void;
+  onMessageSent?: (dispatchMode: QueueDispatchMode) => void;
   /** Callback to mark review IDs as checked after successful send */
   onCheckReviews?: (reviewIds: string[]) => void;
   /** Review IDs that are attached (for marking as checked on success) */
