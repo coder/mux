@@ -533,8 +533,10 @@ const VALIDATION_COMMAND_RE =
 // like `cd packages/app && make test`.
 const CMD_PREFIX = String.raw`(?:^|\n|&&|\|\||[;|])\s*`;
 const VALIDATION_PATTERNS: RegExp[] = [
-  // run_and_report <step_name> <validation_command...> (may include cd/shell before the command)
-  new RegExp(`${CMD_PREFIX}run_and_report\\s+\\S+\\s+.*?${VALIDATION_COMMAND_RE.source}`),
+  // run_and_report <step_name> <validation_command> — only when the actual command
+  // (third word) is a validation command. Chained commands like
+  // `run_and_report unit cd app && bun test` are caught by the standalone pattern below.
+  new RegExp(`${CMD_PREFIX}run_and_report\\s+\\S+\\s+${VALIDATION_COMMAND_RE.source}`),
   // Validation commands at line start or after shell operators
   new RegExp(`${CMD_PREFIX}${VALIDATION_COMMAND_RE.source}`),
 ];

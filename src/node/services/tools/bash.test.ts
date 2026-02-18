@@ -68,6 +68,8 @@ describe("looksLikeValidationCommand", () => {
     expect(looksLikeValidationCommand("cargo build")).toBe(false);
     // run_and_report wrapping a non-validation command should NOT trigger
     expect(looksLikeValidationCommand("run_and_report install bun install")).toBe(false);
+    // run_and_report with validation text appearing as arguments, not the actual command
+    expect(looksLikeValidationCommand("run_and_report note echo make test")).toBe(false);
   });
 });
 
