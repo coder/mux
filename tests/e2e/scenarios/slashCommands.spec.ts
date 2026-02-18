@@ -96,10 +96,11 @@ test.describe("slash command flows", () => {
     await ui.chat.expectTranscriptContains(MOCK_COMPACTION_SUMMARY_PREFIX);
     await expect(transcript).toContainText(MOCK_COMPACTION_SUMMARY_PREFIX);
     await expect(transcript).toContainText("Compaction boundary");
-    // Regression check: transcript now keeps only the top compaction boundary row.
+    // With skip=0 (latest boundary only) replay, compaction prunes pre-boundary
+    // messages from the live view. They are accessible via "Load older messages".
     await expect(transcript).not.toContainText("Resume after compaction");
-    await expect(transcript).toContainText("Mock README content");
-    await expect(transcript).toContainText("Directory listing:");
+    await expect(transcript).not.toContainText("Mock README content");
+    await expect(transcript).not.toContainText("Directory listing:");
   });
 
   test("slash command /model sonnet switches models for subsequent turns", async ({ ui, page }) => {
