@@ -2829,6 +2829,12 @@ export const workspaceStore = {
   getWorkspaceSidebarState: (workspaceId: string) =>
     getStoreInstance().getWorkspaceSidebarState(workspaceId),
   /**
+   * Register a workspace in the store (idempotent).
+   * Exposed for test helpers that need to ensure workspace registration
+   * before setting it as active.
+   */
+  addWorkspace: (metadata: FrontendWorkspaceMetadata) => getStoreInstance().addWorkspace(metadata),
+  /**
    * Set the active workspace for onChat subscription management.
    * Exposed for test helpers that bypass React routing effects.
    */

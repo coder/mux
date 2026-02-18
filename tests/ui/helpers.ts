@@ -155,9 +155,12 @@ export async function setupWorkspaceView(
   );
   fireEvent.click(workspaceElement);
 
-  // Explicitly activate the workspace so that runOnChatSubscription starts.
-  // In the real app, WorkspaceContext's useLayoutEffect handles this via routing,
-  // but in happy-dom tests the effect may not fire synchronously after click.
+  // Ensure the workspace is registered and activated in the store so that
+  // runOnChatSubscription starts. In the real app, WorkspaceContext handles
+  // registration via syncWorkspaces and activation via useLayoutEffect, but
+  // in happy-dom tests these may not have completed by the time the test
+  // asserts on transcript content. Both calls are idempotent.
+  workspaceStore.addWorkspace(metadata);
   workspaceStore.setActiveWorkspaceId(workspaceId);
 }
 
