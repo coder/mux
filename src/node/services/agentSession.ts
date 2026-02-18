@@ -467,13 +467,11 @@ export class AgentSession {
       const partial = await this.historyService.readPartial(this.workspaceId);
       const partialHistorySequence = partial?.metadata?.historySequence;
 
-      // Load chat history from the penultimate compaction boundary onward
-      // (skip=1) so the user sees the previous epoch plus the current epoch.
-      // This provides context for what was summarized in the latest compaction.
-      // TODO: support paginated history loading so users can view older epochs on demand.
+      // Load chat history from the latest compaction boundary onward (skip=0).
+      // Older compaction epochs are fetched on demand through workspace.history.loadMore.
       const historyResult = await this.historyService.getHistoryFromLatestBoundary(
         this.workspaceId,
-        1
+        0
       );
 
       let sinceHistorySequence: number | undefined;

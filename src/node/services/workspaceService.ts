@@ -333,6 +333,42 @@ function isPositiveInteger(value: unknown): value is number {
   );
 }
 
+function isNonNegativeInteger(value: unknown): value is number {
+  return (
+    typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0
+  );
+}
+
+function getOldestSequencedMessage(
+  messages: readonly MuxMessage[]
+): { message: MuxMessage; historySequence: number } | null {
+  let oldest: { message: MuxMessage; historySequence: number } | null = null;
+
+  for (const message of messages) {
+    const historySequence = message.metadata?.historySequence;
+    if (!isNonNegativeInteger(historySequence)) {
+      continue;
+    }
+
+    if (oldest === null || historySequence < oldest.historySequence) {
+      oldest = { message, historySequence };
+    }
+  }
+
+  return oldest;
+}
+
+interface WorkspaceHistoryLoadMoreCursor {
+  beforeHistorySequence: number;
+  beforeMessageId?: string | null;
+}
+
+interface WorkspaceHistoryLoadMoreResult {
+  messages: WorkspaceChatMessage[];
+  nextCursor: WorkspaceHistoryLoadMoreCursor | null;
+  hasOlder: boolean;
+}
+
 function hasDurableCompactedMarker(value: unknown): value is true | "user" | "idle" {
   return value === true || value === "user" || value === "idle";
 }
@@ -3804,6 +3840,127 @@ export class WorkspaceService extends EventEmitter {
     } catch (error) {
       log.error("Failed to get chat history:", error);
       return [];
+    }
+  }
+
+  async getHistoryLoadMore(
+    workspaceId: string,
+    cursor: WorkspaceHistoryLoadMoreCursor | null | undefined
+  ): Promise<WorkspaceHistoryLoadMoreResult> {
+    assert(
+      typeof workspaceId === "string" && workspaceId.trim().length > 0,
+      "workspaceId is required"
+    );
+
+    if (cursor !== null && cursor !== undefined) {
+      assert(
+        isNonNegativeInteger(cursor.beforeHistorySequence),
+        "cursor.beforeHistorySequence must be a non-negative integer"
+      );
+      assert(
+        cursor.beforeMessageId === null ||
+          cursor.beforeMessageId === undefined ||
+          typeof cursor.beforeMessageId === "string",
+        "cursor.beforeMessageId must be a string, null, or undefined"
+      );
+      if (typeof cursor.beforeMessageId === "string") {
+        assert(
+          cursor.beforeMessageId.trim().length > 0,
+          "cursor.beforeMessageId must be non-empty when provided"
+        );
+      }
+    }
+
+    const emptyResult: WorkspaceHistoryLoadMoreResult = {
+      messages: [],
+      nextCursor: null,
+      hasOlder: false,
+    };
+
+    try {
+      let beforeHistorySequence: number | undefined = cursor?.beforeHistorySequence;
+
+      if (beforeHistorySequence === undefined) {
+        // Initial load-more request (no cursor) should page one epoch older than startup replay.
+        const latestBoundaryResult = await this.historyService.getHistoryFromLatestBoundary(
+          workspaceId,
+          0
+        );
+        if (!latestBoundaryResult.success) {
+          log.warn("workspace.history.loadMore: failed to read latest boundary", {
+            workspaceId,
+            error: latestBoundaryResult.error,
+          });
+          return emptyResult;
+        }
+
+        const oldestFromLatestBoundary = getOldestSequencedMessage(latestBoundaryResult.data);
+        if (!oldestFromLatestBoundary) {
+          return emptyResult;
+        }
+
+        beforeHistorySequence = oldestFromLatestBoundary.historySequence;
+      }
+
+      assert(
+        isNonNegativeInteger(beforeHistorySequence),
+        "resolved beforeHistorySequence must be a non-negative integer"
+      );
+
+      const historyWindowResult = await this.historyService.getHistoryBoundaryWindow(
+        workspaceId,
+        beforeHistorySequence
+      );
+      if (!historyWindowResult.success) {
+        log.warn("workspace.history.loadMore: failed to read boundary window", {
+          workspaceId,
+          beforeHistorySequence,
+          error: historyWindowResult.error,
+        });
+        return emptyResult;
+      }
+
+      const messages: WorkspaceChatMessage[] = historyWindowResult.data.messages.map((message) => ({
+        ...message,
+        type: "message",
+      }));
+
+      if (!historyWindowResult.data.hasOlder) {
+        return {
+          messages,
+          nextCursor: null,
+          hasOlder: false,
+        };
+      }
+
+      const oldestInWindow = getOldestSequencedMessage(historyWindowResult.data.messages);
+      if (!oldestInWindow) {
+        // Defensive fallback: if we cannot build a stable cursor, stop paging instead of looping.
+        log.warn("workspace.history.loadMore: cannot compute next cursor despite hasOlder=true", {
+          workspaceId,
+          beforeHistorySequence,
+        });
+        return {
+          messages,
+          nextCursor: null,
+          hasOlder: false,
+        };
+      }
+
+      return {
+        messages,
+        nextCursor: {
+          beforeHistorySequence: oldestInWindow.historySequence,
+          beforeMessageId: oldestInWindow.message.id,
+        },
+        hasOlder: true,
+      };
+    } catch (error) {
+      log.error("Failed to load more workspace history:", {
+        workspaceId,
+        error: getErrorMessage(error),
+      });
+      return emptyResult;
     }
   }
 
