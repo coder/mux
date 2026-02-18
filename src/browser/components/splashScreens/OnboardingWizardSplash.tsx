@@ -922,9 +922,14 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     visibleProviders,
   ]);
 
+  // Clamp stepIndex to valid range when the step list changes. Skip while still
+  // loading provider config — the temporary single-item "loading" array would
+  // reset a restored stepIndex (e.g. after resuming from paused onboarding).
+  const isLoading = hasConfiguredProvidersAtStart === null;
   useEffect(() => {
+    if (isLoading) return;
     setStepIndex((index) => Math.min(index, steps.length - 1));
-  }, [steps.length]);
+  }, [isLoading, steps.length]);
 
   const totalSteps = steps.length;
   const currentStep = steps[stepIndex] ?? steps[0];
@@ -939,7 +944,6 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     return null;
   }
 
-  const isLoading = hasConfiguredProvidersAtStart === null;
   const canGoBack = !isLoading && stepIndex > 0;
   const canGoForward = !isLoading && stepIndex < totalSteps - 1;
 
