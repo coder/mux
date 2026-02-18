@@ -318,7 +318,14 @@ function formatTaskEnd(_toolName: string, _args: unknown, result: unknown): stri
 
 function formatWebFetchEnd(_toolName: string, _args: unknown, result: unknown): string | null {
   if (result == null || typeof result !== "object") return null;
-  const r = result as Record<string, unknown>;
+
+  // Unwrap SDK JSON-wrapper shape: { type: "json", value: ... }
+  const maybeWrapped = result as Record<string, unknown>;
+  const unwrapped =
+    maybeWrapped.type === "json" && "value" in maybeWrapped ? maybeWrapped.value : result;
+
+  if (unwrapped == null || typeof unwrapped !== "object") return null;
+  const r = unwrapped as Record<string, unknown>;
 
   // Anthropic-native success: { type: "web_fetch_result", url, content: { title, source } }
   if (r.type === "web_fetch_result") {
