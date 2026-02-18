@@ -334,6 +334,16 @@ export function AskUserQuestionToolCall(props: {
       return;
     }
 
+    let enabledAutoRetryForResume = false;
+    const rollbackAutoRetryIfEnabled = async (): Promise<void> => {
+      if (!enabledAutoRetryForResume) {
+        return;
+      }
+
+      enabledAutoRetryForResume = false;
+      await api.workspace.setAutoRetryEnabled?.({ workspaceId, enabled: false });
+    };
+
     api.workspace
       .answerAskUserQuestion({
         workspaceId,
@@ -357,6 +367,8 @@ export function AskUserQuestionToolCall(props: {
           return;
         }
 
+        enabledAutoRetryForResume = true;
+
         const resumeResult = await api.workspace.resumeStream({
           workspaceId,
           options: getSendOptionsFromStorage(workspaceId),
@@ -369,13 +381,13 @@ export function AskUserQuestionToolCall(props: {
           setSubmitError(detail);
 
           // Keep retry preference consistent when resume fails before stream events.
-          void api.workspace.setAutoRetryEnabled?.({ workspaceId, enabled: false });
+          await rollbackAutoRetryIfEnabled();
         }
       })
-      .catch((error) => {
+      .catch(async (error) => {
         const errorMessage = getErrorMessage(error);
         setSubmitError(errorMessage);
-        void api.workspace.setAutoRetryEnabled?.({ workspaceId, enabled: false });
+        await rollbackAutoRetryIfEnabled();
       })
       .finally(() => {
         setIsSubmitting(false);
