@@ -63,6 +63,8 @@ interface StoryDef {
   outputFile: string;
   /** Optional crop region in CSS pixels for focused README screenshots. */
   clip?: { x: number; y: number; width: number; height: number };
+  /** Optional per-story viewport override (CSS pixels). Defaults to global VIEWPORT. */
+  viewport?: { width: number; height: number };
   /** Replicate the Storybook play function via Playwright interactions. */
   playInteraction?: (page: Page) => Promise<void>;
   /** Custom Sharp post-processing instead of the default full-page → WebP conversion. */
@@ -86,7 +88,7 @@ const STORIES: StoryDef[] = [
     exportName: "GitStatusPopover",
     storyId: `${STORY_ID_PREFIX}git-status-popover`,
     outputFile: "git-status.webp",
-    clip: { x: 0, y: 0, width: 1000, height: 1050 },
+    clip: { x: 0, y: 0, width: 750, height: 850 },
     playInteraction: async (page: Page) => {
       // Wait for git status to render in the ws-diverged row.
       const row = page.locator('[data-workspace-id="ws-diverged"]');
@@ -141,7 +143,7 @@ const STORIES: StoryDef[] = [
     exportName: "OpportunisticCompactionTooltip",
     storyId: `${STORY_ID_PREFIX}opportunistic-compaction-tooltip`,
     outputFile: "opportunistic-compaction.webp",
-    clip: { x: 550, y: 350, width: 1000, height: 750 },
+    clip: { x: 150, y: 350, width: 1000, height: 750 },
     playInteraction: async (page: Page) => {
       // Wait for costs to render.
       await page.getByText(/cache create/i).waitFor({ timeout: 15_000 });
@@ -161,7 +163,9 @@ const STORIES: StoryDef[] = [
     exportName: "OrchestrateAgents",
     storyId: `${STORY_ID_PREFIX}orchestrate-agents`,
     outputFile: "orchestrate-agents.webp",
-    clip: { x: 0, y: 0, width: 1100, height: 1000 },
+    // Narrower viewport makes the plan card + "Start Orchestrator" button more prominent
+    viewport: { width: 1200, height: 1188 },
+    clip: { x: 0, y: 0, width: 1200, height: 1000 },
   },
 ];
 
@@ -233,6 +237,10 @@ async function main() {
 
       const page = await context.newPage();
       try {
+        if (story.viewport) {
+          await page.setViewportSize(story.viewport);
+        }
+
         // Navigate and wait for network idle + DOM stability.
         await page.goto(iframeUrl(story.storyId), {
           waitUntil: "networkidle",
