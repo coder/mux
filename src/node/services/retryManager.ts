@@ -39,6 +39,7 @@ export class RetryManager {
   private state: RetryState<RetryFailureError>;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private enabled = true;
+  private retryGeneration = 0;
 
   constructor(
     private readonly workspaceId: string,
@@ -70,6 +71,7 @@ export class RetryManager {
     // a timer, but a later non-retryable error supersedes it.
     if (isNonRetryableSendError(error) || isNonRetryableStreamError(error)) {
       this.cancelPendingTimer();
+      this.retryGeneration += 1;
       this.onStatusChange({ type: "auto-retry-abandoned", reason: error.type });
       return;
     }
@@ -80,6 +82,8 @@ export class RetryManager {
 
     this.state = createFailedRetryState(this.state.attempt, error);
     const delay = calculateBackoffDelay(this.state.attempt);
+    this.retryGeneration += 1;
+    const scheduledGeneration = this.retryGeneration;
 
     this.onStatusChange({
       type: "auto-retry-scheduled",
@@ -90,7 +94,20 @@ export class RetryManager {
 
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
+
+      // Guard against stale timers or stop requests that race with callback execution.
+      if (!this.enabled || scheduledGeneration !== this.retryGeneration) {
+        return;
+      }
+
       this.onStatusChange({ type: "auto-retry-starting", attempt: this.state.attempt });
+
+      // Re-check after status emission so a synchronous stop handler can cancel
+      // before we attempt to resume the stream.
+      if (!this.enabled || scheduledGeneration !== this.retryGeneration) {
+        return;
+      }
+
       this.onRetry().catch((retryError: unknown) => {
         const reason =
           retryError instanceof Error && retryError.message.length > 0
@@ -104,8 +121,7 @@ export class RetryManager {
   handleStreamSuccess(): void {
     // Cancel any stale retry timer (e.g., if a manual retry succeeded
     // before the scheduled timer fired) and reset state.
-    this.cancelPendingTimer();
-    this.state = createFreshRetryState<RetryFailureError>();
+    this.cancel();
   }
 
   /** Cancel any pending retry timer without resetting state. */
@@ -118,6 +134,7 @@ export class RetryManager {
 
   cancel(): void {
     this.cancelPendingTimer();
+    this.retryGeneration += 1;
     this.state = createFreshRetryState<RetryFailureError>();
   }
 

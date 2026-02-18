@@ -195,6 +195,31 @@ describe("RetryManager", () => {
     });
   });
 
+  it("setEnabled(false) during auto-retry-starting prevents queued resume", () => {
+    const onRetry = vi.fn(() => Promise.resolve());
+    const events: RetryStatusEvent[] = [];
+
+    const managerRef: { current?: RetryManager } = {};
+    const onStatusChange = vi.fn((event: RetryStatusEvent) => {
+      events.push(event);
+      if (event.type === "auto-retry-starting") {
+        managerRef.current?.setEnabled(false);
+      }
+    });
+
+    const manager = new RetryManager("workspace-1", onRetry, onStatusChange);
+    managerRef.current = manager;
+
+    manager.handleStreamFailure({ type: "unknown" });
+    runNextTimer();
+
+    expect(onRetry).not.toHaveBeenCalled();
+    expect(events).toContainEqual({
+      type: "auto-retry-abandoned",
+      reason: "disabled_by_user",
+    });
+  });
+
   it("reschedules when a second failure arrives while retry is pending", () => {
     const { manager, events } = createRetryManager();
 
