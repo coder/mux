@@ -1153,7 +1153,9 @@ export class WorkspaceStore {
         continue;
       }
 
-      const hasOlder = historySequence > 1;
+      // historySequence is zero-based: sequence 0 is the first row, so any
+      // sequence > 0 means there may be older rows to load.
+      const hasOlder = historySequence > 0;
       return {
         nextCursor: hasOlder
           ? {
@@ -1191,15 +1193,20 @@ export class WorkspaceStore {
       const pendingStreamStartTime = aggregator.getPendingStreamStartTime();
       // For the actively subscribed workspace, trust the live onChat aggregator state.
       // Activity snapshots can lag and should only backfill non-active workspaces.
+      //
+      // For non-active workspaces, the aggregator's activeStreams may be stale since
+      // they don't receive stream-end events when unsubscribed from onChat. Prefer the
+      // activity snapshot's streaming state, which is updated via the lightweight activity
+      // subscription for all workspaces.
       const canInterrupt = isActiveWorkspace
         ? activeStreams.length > 0
-        : activeStreams.length > 0 || activity?.streaming === true;
+        : (activity?.streaming ?? activeStreams.length > 0);
       const currentModel = isActiveWorkspace
         ? (aggregator.getCurrentModel() ?? null)
-        : (aggregator.getCurrentModel() ?? activity?.lastModel ?? null);
+        : (activity?.lastModel ?? aggregator.getCurrentModel() ?? null);
       const currentThinkingLevel = isActiveWorkspace
         ? (aggregator.getCurrentThinkingLevel() ?? null)
-        : (aggregator.getCurrentThinkingLevel() ?? activity?.lastThinkingLevel ?? null);
+        : (activity?.lastThinkingLevel ?? aggregator.getCurrentThinkingLevel() ?? null);
       const aggregatorRecency = aggregator.getRecencyTimestamp();
       const recencyTimestamp =
         aggregatorRecency === null
