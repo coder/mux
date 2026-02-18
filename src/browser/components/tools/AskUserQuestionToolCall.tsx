@@ -387,7 +387,11 @@ export function AskUserQuestionToolCall(props: {
 
           // Keep retry preference consistent when resume fails before stream events.
           await rollbackAutoRetryIfEnabled();
+          return;
         }
+
+        // Answering ask_user_question should not mutate auto-retry preference.
+        await rollbackAutoRetryIfEnabled();
       })
       .catch(async (error) => {
         const errorMessage = getErrorMessage(error);

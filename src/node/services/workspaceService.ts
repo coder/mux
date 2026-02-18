@@ -3078,6 +3078,8 @@ export class WorkspaceService extends EventEmitter {
       allowQueuedAgentTask?: boolean;
       skipAutoResumeReset?: boolean;
       synthetic?: boolean;
+      /** When true, reject instead of queueing if the workspace is busy. */
+      requireIdle?: boolean;
     }
   ): Promise<Result<void, SendMessageError>> {
     log.debug("sendMessage handler: Received", {
@@ -3196,6 +3198,13 @@ export class WorkspaceService extends EventEmitter {
       const shouldQueue = !normalizedOptions?.editMessageId && session.isBusy();
 
       if (shouldQueue) {
+        if (internal?.requireIdle) {
+          return Err({
+            type: "unknown",
+            raw: "Workspace is busy; idle-only send was skipped.",
+          });
+        }
+
         const pendingAskUserQuestion = askUserQuestionManager.getLatestPending(workspaceId);
         if (pendingAskUserQuestion) {
           try {
@@ -4333,6 +4342,9 @@ export class WorkspaceService extends EventEmitter {
         skipAutoResumeReset: true,
         // Backend-initiated maintenance turn: do not treat as explicit user re-engagement.
         synthetic: true,
+        // If the workspace became active after eligibility checks, skip instead of queueing
+        // stale maintenance work for later.
+        requireIdle: true,
       }
     );
 

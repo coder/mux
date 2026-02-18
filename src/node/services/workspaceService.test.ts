@@ -263,8 +263,62 @@ describe("WorkspaceService idle compaction dispatch", () => {
       expect.objectContaining({
         skipAutoResumeReset: true,
         synthetic: true,
+        requireIdle: true,
       })
     );
+  });
+
+  test("does not emit idle-compaction-started when workspace became busy", async () => {
+    const workspaceId = "idle-busy-ws";
+    const sendMessage = mock(() =>
+      Promise.resolve(
+        Err({
+          type: "unknown" as const,
+          raw: "Workspace is busy; idle-only send was skipped.",
+        })
+      )
+    );
+    const buildIdleCompactionSendOptions = mock(() =>
+      Promise.resolve({ model: "openai:gpt-4o", agentId: "compact" })
+    );
+    const emitIdleCompactionStarted = mock((_id: string) => undefined);
+
+    (
+      workspaceService as unknown as {
+        sendMessage: typeof sendMessage;
+        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+        emitIdleCompactionStarted: typeof emitIdleCompactionStarted;
+      }
+    ).sendMessage = sendMessage;
+    (
+      workspaceService as unknown as {
+        sendMessage: typeof sendMessage;
+        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+        emitIdleCompactionStarted: typeof emitIdleCompactionStarted;
+      }
+    ).buildIdleCompactionSendOptions = buildIdleCompactionSendOptions;
+    (
+      workspaceService as unknown as {
+        sendMessage: typeof sendMessage;
+        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+        emitIdleCompactionStarted: typeof emitIdleCompactionStarted;
+      }
+    ).emitIdleCompactionStarted = emitIdleCompactionStarted;
+
+    let executionError: unknown;
+    try {
+      await workspaceService.executeIdleCompaction(workspaceId);
+    } catch (error) {
+      executionError = error;
+    }
+
+    expect(executionError).toBeInstanceOf(Error);
+    if (!(executionError instanceof Error)) {
+      throw new Error("Expected idle compaction to throw when workspace is busy");
+    }
+    expect(executionError.message).toContain("idle-only send was skipped");
+
+    expect(emitIdleCompactionStarted).not.toHaveBeenCalled();
   });
 });
 
