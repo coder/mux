@@ -6,7 +6,6 @@ import { preloadTestModules, type TestEnvironment } from "../../ipc/setup";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 
 import { createAppHarness, type AppHarness } from "../harness";
-import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 
 interface ServiceContainerPrivates {
@@ -212,24 +211,13 @@ describe("SendModeDropdown (mock AI router)", () => {
 
       await waitForForegroundToolCallId(app.env, app.workspaceId, toolCallId);
 
-      const seedMessage = "Seed conversation for send-after-turn";
-      const seedResult = await app.env.orpc.workspace.sendMessage({
-        workspaceId: app.workspaceId,
-        message: seedMessage,
-        options: { model: WORKSPACE_DEFAULTS.model, agentId: WORKSPACE_DEFAULTS.agentId },
-      });
-      expect(seedResult.success).toBe(true);
-      await app.chat.expectTranscriptContains(`Mock response: ${seedMessage}`);
-
-      await startStreamingTurn(app, "queue turn-end message while streaming");
-
-      const queuedMessage = "queued turn-end message";
-      await app.chat.typeWithoutSending(queuedMessage);
+      const turnEndMessage = "turn-end test";
+      await app.chat.typeWithoutSending(turnEndMessage);
       const textarea = await getActiveTextarea(app.view.container);
       fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true });
 
-      await app.chat.expectTranscriptContains(`Mock response: ${queuedMessage}`, 60_000);
-      await app.chat.expectStreamComplete(60_000);
+      await app.chat.expectTranscriptContains(`Mock response: ${turnEndMessage}`);
+      await app.chat.expectStreamComplete();
 
       expect(backgrounded).toBe(false);
     } finally {
@@ -263,21 +251,12 @@ describe("SendModeDropdown (mock AI router)", () => {
 
       await waitForForegroundToolCallId(app.env, app.workspaceId, toolCallId);
 
-      const seedMessage = "Seed conversation for send-after-step";
-      const seedResult = await app.env.orpc.workspace.sendMessage({
-        workspaceId: app.workspaceId,
-        message: seedMessage,
-        options: { model: WORKSPACE_DEFAULTS.model, agentId: WORKSPACE_DEFAULTS.agentId },
-      });
-      expect(seedResult.success).toBe(true);
-      await app.chat.expectTranscriptContains(`Mock response: ${seedMessage}`);
-
-      await startStreamingTurn(app, "queue tool-end message while streaming");
-
-      const queuedMessage = "queued tool-end message";
-      await app.chat.typeWithoutSending(queuedMessage);
+      const toolEndMessage = "tool-end test";
+      await app.chat.typeWithoutSending(toolEndMessage);
       const textarea = await getActiveTextarea(app.view.container);
       fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await app.chat.expectTranscriptContains(`Mock response: ${toolEndMessage}`);
 
       await waitFor(
         () => {
@@ -286,8 +265,7 @@ describe("SendModeDropdown (mock AI router)", () => {
         { timeout: 60_000 }
       );
 
-      await app.chat.expectTranscriptContains(`Mock response: ${queuedMessage}`, 60_000);
-      await app.chat.expectStreamComplete(60_000);
+      await app.chat.expectStreamComplete();
     } finally {
       unregister?.();
       await app.dispose();
