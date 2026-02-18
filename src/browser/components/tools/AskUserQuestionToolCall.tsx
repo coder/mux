@@ -334,14 +334,15 @@ export function AskUserQuestionToolCall(props: {
       return;
     }
 
-    let enabledAutoRetryForResume = false;
+    let rollbackAutoRetryTo: boolean | null = null;
     const rollbackAutoRetryIfEnabled = async (): Promise<void> => {
-      if (!enabledAutoRetryForResume) {
+      if (rollbackAutoRetryTo === null) {
         return;
       }
 
-      enabledAutoRetryForResume = false;
-      await api.workspace.setAutoRetryEnabled?.({ workspaceId, enabled: false });
+      const rollbackTarget = rollbackAutoRetryTo;
+      rollbackAutoRetryTo = null;
+      await api.workspace.setAutoRetryEnabled?.({ workspaceId, enabled: rollbackTarget });
     };
 
     api.workspace
@@ -367,7 +368,11 @@ export function AskUserQuestionToolCall(props: {
           return;
         }
 
-        enabledAutoRetryForResume = true;
+        if (enableResult?.success && enableResult.data.previousEnabled === false) {
+          // Ask-user resume temporarily enables auto-retry for this attempt.
+          // Roll back only when the preference was previously disabled.
+          rollbackAutoRetryTo = false;
+        }
 
         const resumeResult = await api.workspace.resumeStream({
           workspaceId,

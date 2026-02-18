@@ -54,6 +54,7 @@ import {
   createMuxMessage,
   isCompactionSummaryMetadata,
   pickPreservedSendOptions,
+  pickStartupRetrySendOptions,
   prepareUserMessageForSend,
   type CompactionFollowUpRequest,
   type MuxMessageMetadata,
@@ -702,11 +703,14 @@ export class AgentSession {
 
     const workspaceMetadata = await this.getWorkspaceMetadataForRetry();
 
+    const persistedRetrySendOptions = lastUserMessage?.metadata?.retrySendOptions;
+
     const workspaceAgentId =
       this.normalizeAgentIdForRetry(workspaceMetadata?.agentId ?? workspaceMetadata?.agentType) ??
       WORKSPACE_DEFAULTS.agentId;
+    const persistedAgentId = this.normalizeAgentIdForRetry(persistedRetrySendOptions?.agentId);
     const assistantAgentId = this.normalizeAgentIdForRetry(lastAssistantMessage?.metadata?.agentId);
-    const baseAgentId = assistantAgentId ?? workspaceAgentId;
+    const baseAgentId = persistedAgentId ?? assistantAgentId ?? workspaceAgentId;
 
     const agentSettings =
       workspaceMetadata?.aiSettingsByAgent?.[baseAgentId] ??
@@ -714,17 +718,40 @@ export class AgentSession {
       workspaceMetadata?.aiSettings;
     const compactSettings = workspaceMetadata?.aiSettingsByAgent?.compact;
 
+    const persistedModel = this.normalizeStartupModel(persistedRetrySendOptions?.model);
     const baseModel =
+      persistedModel ??
       this.normalizeStartupModel(lastAssistantMessage?.metadata?.model) ??
       this.normalizeStartupModel(agentSettings?.model) ??
       DEFAULT_MODEL;
 
+    const persistedThinkingLevel = coerceThinkingLevel(persistedRetrySendOptions?.thinkingLevel);
     const baseThinkingLevel =
+      persistedThinkingLevel ??
       coerceThinkingLevel(lastAssistantMessage?.metadata?.thinkingLevel) ??
       coerceThinkingLevel(agentSettings?.thinkingLevel);
 
-    const persistedToolPolicy = lastUserMessage?.metadata?.toolPolicy;
-    const persistedDisableWorkspaceAgents = lastUserMessage?.metadata?.disableWorkspaceAgents;
+    const persistedSystem1ThinkingLevel = coerceThinkingLevel(
+      persistedRetrySendOptions?.system1ThinkingLevel
+    );
+    const persistedSystem1Model = this.normalizeStartupModel(
+      persistedRetrySendOptions?.system1Model
+    );
+
+    const persistedToolPolicy =
+      lastUserMessage?.metadata?.toolPolicy ?? persistedRetrySendOptions?.toolPolicy;
+    const persistedDisableWorkspaceAgents =
+      lastUserMessage?.metadata?.disableWorkspaceAgents ??
+      persistedRetrySendOptions?.disableWorkspaceAgents;
+    const persistedAdditionalSystemInstructions =
+      persistedRetrySendOptions?.additionalSystemInstructions;
+    const persistedMaxOutputTokens =
+      typeof persistedRetrySendOptions?.maxOutputTokens === "number"
+        ? persistedRetrySendOptions.maxOutputTokens
+        : undefined;
+    const persistedProviderOptions = persistedRetrySendOptions?.providerOptions;
+    const persistedExperiments = persistedRetrySendOptions?.experiments;
+
     const lastUserMuxMetadata = lastUserMessage?.metadata?.muxMetadata;
     if (isCompactionRequestMetadata(lastUserMuxMetadata)) {
       const compactionModel =
@@ -732,18 +759,36 @@ export class AgentSession {
       const requestedThinkingLevel =
         baseThinkingLevel ?? coerceThinkingLevel(compactSettings?.thinkingLevel) ?? "off";
 
-      return {
+      const compactionOptions: SendMessageOptions = {
         model: compactionModel,
         agentId: "compact",
         thinkingLevel: enforceThinkingPolicy(compactionModel, requestedThinkingLevel),
         maxOutputTokens:
           typeof lastUserMuxMetadata.parsed.maxOutputTokens === "number"
             ? lastUserMuxMetadata.parsed.maxOutputTokens
-            : undefined,
+            : persistedMaxOutputTokens,
         toolPolicy: [{ regex_match: ".*", action: "disable" }],
         skipAiSettingsPersistence: true,
         disableWorkspaceAgents: persistedDisableWorkspaceAgents,
       };
+
+      if (persistedAdditionalSystemInstructions !== undefined) {
+        compactionOptions.additionalSystemInstructions = persistedAdditionalSystemInstructions;
+      }
+      if (persistedProviderOptions) {
+        compactionOptions.providerOptions = persistedProviderOptions;
+      }
+      if (persistedExperiments) {
+        compactionOptions.experiments = persistedExperiments;
+      }
+      if (persistedSystem1ThinkingLevel) {
+        compactionOptions.system1ThinkingLevel = persistedSystem1ThinkingLevel;
+      }
+      if (persistedSystem1Model) {
+        compactionOptions.system1Model = persistedSystem1Model;
+      }
+
+      return compactionOptions;
     }
 
     const retryOptions: SendMessageOptions = {
@@ -753,8 +798,26 @@ export class AgentSession {
     if (baseThinkingLevel) {
       retryOptions.thinkingLevel = baseThinkingLevel;
     }
+    if (persistedSystem1ThinkingLevel) {
+      retryOptions.system1ThinkingLevel = persistedSystem1ThinkingLevel;
+    }
+    if (persistedSystem1Model) {
+      retryOptions.system1Model = persistedSystem1Model;
+    }
     if (persistedToolPolicy) {
       retryOptions.toolPolicy = persistedToolPolicy;
+    }
+    if (persistedAdditionalSystemInstructions !== undefined) {
+      retryOptions.additionalSystemInstructions = persistedAdditionalSystemInstructions;
+    }
+    if (persistedMaxOutputTokens !== undefined) {
+      retryOptions.maxOutputTokens = persistedMaxOutputTokens;
+    }
+    if (persistedProviderOptions) {
+      retryOptions.providerOptions = persistedProviderOptions;
+    }
+    if (persistedExperiments) {
+      retryOptions.experiments = persistedExperiments;
     }
     if (typeof persistedDisableWorkspaceAgents === "boolean") {
       retryOptions.disableWorkspaceAgents = persistedDisableWorkspaceAgents;
@@ -1523,6 +1586,7 @@ export class AgentSession {
         timestamp: Date.now(),
         toolPolicy: typedToolPolicy,
         disableWorkspaceAgents: options?.disableWorkspaceAgents,
+        retrySendOptions: pickStartupRetrySendOptions(optionsForStream),
         muxMetadata: typedMuxMetadata, // Pass through frontend metadata as black-box
         // Auto-resume and other system-generated messages are synthetic + UI-visible
         ...(internal?.synthetic && { synthetic: true, uiVisible: true }),
@@ -1598,6 +1662,7 @@ export class AgentSession {
             timestamp: Date.now(),
             toolPolicy: autoCompactionRequest.sendOptions.toolPolicy,
             disableWorkspaceAgents: optionsForStream.disableWorkspaceAgents,
+            retrySendOptions: pickStartupRetrySendOptions(autoCompactionRequest.sendOptions),
             muxMetadata: autoCompactionRequest.metadata,
             synthetic: true,
             uiVisible: true,
@@ -1763,9 +1828,13 @@ export class AgentSession {
     }
   }
 
-  async setAutoRetryEnabled(enabled: boolean): Promise<void> {
+  async setAutoRetryEnabled(
+    enabled: boolean
+  ): Promise<{ previousEnabled: boolean; enabled: boolean }> {
     this.assertNotDisposed("setAutoRetryEnabled");
     assert(typeof enabled === "boolean", "setAutoRetryEnabled requires a boolean");
+
+    const previousEnabled = await this.loadAutoRetryEnabledPreference();
 
     this.retryManager.setEnabled(enabled);
     if (!enabled) {
@@ -1773,6 +1842,7 @@ export class AgentSession {
     }
 
     await this.persistAutoRetryEnabledPreference(enabled);
+    return { previousEnabled, enabled };
   }
 
   setAutoCompactionThreshold(threshold: number): void {

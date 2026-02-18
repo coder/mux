@@ -152,6 +152,66 @@ describe("AgentSession startup auto-retry recovery", () => {
     session.dispose();
   });
 
+  test("restores persisted retry send options for startup auto-retry", async () => {
+    const workspaceId = "startup-retry-preserve-options";
+    const { session, historyService, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const appendResult = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-1", "user", "Interrupted with custom send options", {
+        timestamp: Date.now(),
+        retrySendOptions: {
+          model: "anthropic:claude-sonnet-4-5",
+          agentId: "exec",
+          thinkingLevel: "high",
+          system1ThinkingLevel: "low",
+          system1Model: "openai:gpt-4o-mini",
+          toolPolicy: [{ regex_match: "bash", action: "disable" }],
+          additionalSystemInstructions: "Use one sentence.",
+          maxOutputTokens: 2048,
+          providerOptions: {
+            anthropic: {
+              use1MContext: true,
+              use1MContextModels: ["anthropic:claude-sonnet-4-5"],
+            },
+          },
+          experiments: { system1: true },
+          disableWorkspaceAgents: true,
+        },
+      })
+    );
+    expect(appendResult.success).toBe(true);
+
+    session.ensureStartupAutoRetryCheck();
+
+    const startupCheckPromise = (
+      session as unknown as { startupAutoRetryCheckPromise: Promise<void> | null }
+    ).startupAutoRetryCheckPromise;
+    await startupCheckPromise;
+
+    const retryOptions = (session as unknown as { lastAutoRetryOptions?: SendMessageOptions })
+      .lastAutoRetryOptions;
+    expect(retryOptions).toBeDefined();
+    if (!retryOptions) {
+      throw new Error("Expected startup retry options");
+    }
+
+    expect(retryOptions.model).toBe("anthropic:claude-sonnet-4-5");
+    expect(retryOptions.agentId).toBe("exec");
+    expect(retryOptions.thinkingLevel).toBe("high");
+    expect(retryOptions.system1ThinkingLevel).toBe("low");
+    expect(retryOptions.system1Model).toBe("openai:gpt-4o-mini");
+    expect(retryOptions.additionalSystemInstructions).toBe("Use one sentence.");
+    expect(retryOptions.maxOutputTokens).toBe(2048);
+    expect(retryOptions.toolPolicy).toEqual([{ regex_match: "bash", action: "disable" }]);
+    expect(retryOptions.disableWorkspaceAgents).toBe(true);
+    expect(retryOptions.experiments?.system1).toBe(true);
+    expect(retryOptions.providerOptions?.anthropic?.use1MContext).toBe(true);
+
+    session.dispose();
+  });
+
   test("replays pending auto-retry schedule during reconnect catch-up", async () => {
     const workspaceId = "startup-retry-replay-snapshot";
     const { session, historyService, cleanup } = await createSessionBundle(workspaceId);

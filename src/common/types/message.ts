@@ -65,6 +65,41 @@ export function pickPreservedSendOptions(options: SendMessageOptions): Preserved
   };
 }
 
+export type StartupRetrySendOptions = Pick<
+  SendMessageOptions,
+  | "model"
+  | "agentId"
+  | "thinkingLevel"
+  | "system1ThinkingLevel"
+  | "system1Model"
+  | "toolPolicy"
+  | "additionalSystemInstructions"
+  | "maxOutputTokens"
+  | "providerOptions"
+  | "experiments"
+  | "disableWorkspaceAgents"
+>;
+
+/**
+ * Snapshot retry-relevant send options so startup recovery can resume interrupted
+ * turns with the same request configuration (model/provider options/system hints).
+ */
+export function pickStartupRetrySendOptions(options: SendMessageOptions): StartupRetrySendOptions {
+  return {
+    model: options.model,
+    agentId: options.agentId,
+    thinkingLevel: options.thinkingLevel,
+    system1ThinkingLevel: options.system1ThinkingLevel,
+    system1Model: options.system1Model,
+    toolPolicy: options.toolPolicy,
+    additionalSystemInstructions: options.additionalSystemInstructions,
+    maxOutputTokens: options.maxOutputTokens,
+    providerOptions: options.providerOptions,
+    experiments: options.experiments,
+    disableWorkspaceAgents: options.disableWorkspaceAgents,
+  };
+}
+
 /**
  * Content to send after compaction completes.
  * Extends CompactionFollowUpInput with model/agentId for the follow-up message,
@@ -402,6 +437,8 @@ export interface MuxMetadata {
   compactionBoundary?: boolean;
   toolPolicy?: ToolPolicy; // Tool policy active when this message was sent (user messages only)
   disableWorkspaceAgents?: boolean; // Whether workspace-local agent files were disabled for this user turn
+  /** Snapshot of send options used for this user turn (for startup retry recovery). */
+  retrySendOptions?: StartupRetrySendOptions;
   agentId?: string; // Agent id active when this message was sent (assistant messages only)
   cmuxMetadata?: MuxMessageMetadata; // Command metadata persisted for legacy message formats
   muxMetadata?: MuxMessageMetadata; // Command metadata used by both frontend and backend message flows

@@ -50,10 +50,29 @@ type ResumeStreamResult =
     };
 
 let resumeStreamResult: ResumeStreamResult = { success: true, data: undefined };
+let previousAutoRetryEnabled = false;
 const resumeStream = mock((_input: unknown) => Promise.resolve(resumeStreamResult));
-const setAutoRetryEnabled = mock((_input: unknown) =>
-  Promise.resolve({ success: true as const, data: undefined })
-);
+const setAutoRetryEnabled = mock((input: unknown) => {
+  if (
+    typeof input === "object" &&
+    input !== null &&
+    "enabled" in input &&
+    (input as { enabled?: unknown }).enabled === false
+  ) {
+    previousAutoRetryEnabled = false;
+  }
+
+  return Promise.resolve({
+    success: true as const,
+    data: {
+      previousEnabled: previousAutoRetryEnabled,
+      enabled:
+        typeof input === "object" && input !== null && "enabled" in input
+          ? ((input as { enabled?: boolean }).enabled ?? true)
+          : true,
+    },
+  });
+});
 
 const getSendOptionsFromStorage = mock((_workspaceId: string) => ({
   model: "openai:gpt-4o",
@@ -102,6 +121,7 @@ describe("RetryBarrier", () => {
 
     currentWorkspaceState = createWorkspaceState();
     resumeStreamResult = { success: true, data: undefined };
+    previousAutoRetryEnabled = false;
     resumeStream.mockClear();
     setAutoRetryEnabled.mockClear();
     getSendOptionsFromStorage.mockClear();
@@ -137,6 +157,29 @@ describe("RetryBarrier", () => {
       workspaceId: "ws-1",
       enabled: false,
     });
+    expect(resumeStream).toHaveBeenCalledTimes(1);
+  });
+
+  test("keeps auto-retry enabled when manual retry fails and preference was already on", async () => {
+    previousAutoRetryEnabled = true;
+    resumeStreamResult = {
+      success: false,
+      error: {
+        type: "runtime_start_failed",
+        message: "Runtime failed to start",
+      },
+    };
+
+    const view = render(<RetryBarrier workspaceId="ws-1" />);
+
+    fireEvent.click(view.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => {
+      expect(view.getByText("Retry failed:")).toBeTruthy();
+    });
+
+    expect(setAutoRetryEnabled).toHaveBeenCalledTimes(1);
+    expect(setAutoRetryEnabled).toHaveBeenCalledWith({ workspaceId: "ws-1", enabled: true });
     expect(resumeStream).toHaveBeenCalledTimes(1);
   });
 });

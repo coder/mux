@@ -2595,7 +2595,7 @@ export const router = (authToken?: string) => {
           if (!result.success) {
             return { success: false, error: result.error };
           }
-          return { success: true, data: undefined };
+          return { success: true, data: result.data };
         }),
       setAutoCompactionThreshold: t
         .input(schemas.workspace.setAutoCompactionThreshold.input)

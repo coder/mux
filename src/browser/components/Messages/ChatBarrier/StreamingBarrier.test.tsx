@@ -36,7 +36,10 @@ const interruptStream = mock((_input: unknown) =>
   Promise.resolve({ success: true as const, data: undefined })
 );
 const setAutoRetryEnabled = mock((_input: unknown) =>
-  Promise.resolve({ success: true as const, data: undefined })
+  Promise.resolve({
+    success: true as const,
+    data: { previousEnabled: true, enabled: true },
+  })
 );
 const openSettings = mock((_section?: string) => undefined);
 

@@ -921,7 +921,13 @@ export const workspace = {
       workspaceId: z.string(),
       enabled: z.boolean(),
     }),
-    output: ResultSchema(z.void(), z.string()),
+    output: ResultSchema(
+      z.object({
+        previousEnabled: z.boolean(),
+        enabled: z.boolean(),
+      }),
+      z.string()
+    ),
   },
   setAutoCompactionThreshold: {
     input: z.object({

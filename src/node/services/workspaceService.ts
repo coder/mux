@@ -3347,11 +3347,14 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  async setAutoRetryEnabled(workspaceId: string, enabled: boolean): Promise<Result<void>> {
+  async setAutoRetryEnabled(
+    workspaceId: string,
+    enabled: boolean
+  ): Promise<Result<{ previousEnabled: boolean; enabled: boolean }>> {
     try {
       const session = this.getOrCreateSession(workspaceId);
-      await session.setAutoRetryEnabled(enabled);
-      return Ok(undefined);
+      const state = await session.setAutoRetryEnabled(enabled);
+      return Ok(state);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       log.error("Unexpected error in setAutoRetryEnabled handler:", error);

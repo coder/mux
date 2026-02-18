@@ -70,16 +70,17 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
     setIsManualRetrying(true);
     setManualRetryError(null);
 
-    let enabledAutoRetryForAttempt = false;
+    let rollbackAutoRetryTo: boolean | null = null;
     const rollbackAutoRetryIfNeeded = async (): Promise<void> => {
-      if (!enabledAutoRetryForAttempt) {
+      if (rollbackAutoRetryTo === null) {
         return;
       }
 
-      enabledAutoRetryForAttempt = false;
+      const rollbackTarget = rollbackAutoRetryTo;
+      rollbackAutoRetryTo = null;
       await api.workspace.setAutoRetryEnabled?.({
         workspaceId: props.workspaceId,
-        enabled: false,
+        enabled: rollbackTarget,
       });
     };
 
@@ -104,7 +105,11 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
         return;
       }
 
-      enabledAutoRetryForAttempt = true;
+      if (enableResult?.success && enableResult.data.previousEnabled === false) {
+        // Manual retry temporarily enables auto-retry so transient resume failures
+        // can still back off automatically; only roll back when we changed preference.
+        rollbackAutoRetryTo = false;
+      }
 
       const resumeResult = await api.workspace.resumeStream({
         workspaceId: props.workspaceId,
