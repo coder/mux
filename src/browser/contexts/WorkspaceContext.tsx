@@ -532,6 +532,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   } = useRouter();
 
   const workspaceStore = useWorkspaceStoreRaw();
+
+  useEffect(() => {
+    workspaceStore.setActiveWorkspaceId(currentWorkspaceId ?? null);
+  }, [workspaceStore, currentWorkspaceId]);
   const [workspaceMetadata, setWorkspaceMetadataState] = useState<
     Map<string, FrontendWorkspaceMetadata>
   >(new Map());

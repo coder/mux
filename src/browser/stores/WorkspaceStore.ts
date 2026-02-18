@@ -1,7 +1,12 @@
 import assert from "@/common/utils/assert";
 import type { MuxMessage, DisplayedMessage, QueuedMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { WorkspaceChatMessage, WorkspaceStatsSnapshot, OnChatMode } from "@/common/orpc/types";
+import type {
+  WorkspaceActivitySnapshot,
+  WorkspaceChatMessage,
+  WorkspaceStatsSnapshot,
+  OnChatMode,
+} from "@/common/orpc/types";
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { TodoItem } from "@/common/types/tools";
@@ -352,7 +357,18 @@ export class WorkspaceStore {
 
   // Supporting data structures
   private aggregators = new Map<string, StreamingMessageAggregator>();
+  // Active onChat subscription cleanup handlers (must stay size <= 1).
   private ipcUnsubscribers = new Map<string, () => void>();
+
+  // Workspace selected in the UI (set from WorkspaceContext routing state).
+  private activeWorkspaceId: string | null = null;
+
+  // Workspace currently owning the live onChat subscription.
+  private activeOnChatWorkspaceId: string | null = null;
+
+  // Lightweight activity snapshots from workspace.activity.list/subscribe.
+  private workspaceActivity = new Map<string, WorkspaceActivitySnapshot>();
+  private activityAbortController: AbortController | null = null;
 
   // Per-workspace ephemeral chat state (buffering, queued message, live bash output, etc.)
   private chatTransientState = new Map<string, WorkspaceChatTransientState>();
@@ -705,8 +721,12 @@ export class WorkspaceStore {
     this.clientChangeController.abort();
     this.clientChangeController = new AbortController();
 
-    for (const workspaceId of this.ipcUnsubscribers.keys()) {
+    for (const workspaceId of this.workspaceMetadata.keys()) {
       this.pendingReplayReset.add(workspaceId);
+    }
+
+    if (client) {
+      this.ensureActivitySubscription();
     }
 
     if (!client) {
@@ -719,6 +739,82 @@ export class WorkspaceStore {
         this.subscribeToStats(workspaceId);
       }
     }
+
+    this.ensureActiveOnChatSubscription();
+  }
+
+  setActiveWorkspaceId(workspaceId: string | null): void {
+    assert(
+      workspaceId === null || (typeof workspaceId === "string" && workspaceId.length > 0),
+      "setActiveWorkspaceId requires a non-empty workspaceId or null"
+    );
+
+    if (this.activeWorkspaceId === workspaceId) {
+      return;
+    }
+
+    this.activeWorkspaceId = workspaceId;
+    this.ensureActiveOnChatSubscription();
+  }
+
+  private ensureActivitySubscription(): void {
+    if (this.activityAbortController) {
+      return;
+    }
+
+    const controller = new AbortController();
+    this.activityAbortController = controller;
+    void this.runActivitySubscription(controller.signal);
+  }
+
+  private assertSingleActiveOnChatSubscription(): void {
+    assert(
+      this.ipcUnsubscribers.size <= 1,
+      `[WorkspaceStore] Expected at most one active onChat subscription, found ${this.ipcUnsubscribers.size}`
+    );
+
+    if (this.activeOnChatWorkspaceId === null) {
+      assert(
+        this.ipcUnsubscribers.size === 0,
+        "[WorkspaceStore] onChat unsubscribe map must be empty when no active workspace is subscribed"
+      );
+      return;
+    }
+
+    assert(
+      this.ipcUnsubscribers.has(this.activeOnChatWorkspaceId),
+      `[WorkspaceStore] Missing onChat unsubscribe handler for ${this.activeOnChatWorkspaceId}`
+    );
+  }
+
+  private ensureActiveOnChatSubscription(): void {
+    const targetWorkspaceId =
+      this.activeWorkspaceId && this.isWorkspaceRegistered(this.activeWorkspaceId)
+        ? this.activeWorkspaceId
+        : null;
+
+    if (this.activeOnChatWorkspaceId === targetWorkspaceId) {
+      this.assertSingleActiveOnChatSubscription();
+      return;
+    }
+
+    if (this.activeOnChatWorkspaceId) {
+      const unsubscribe = this.ipcUnsubscribers.get(this.activeOnChatWorkspaceId);
+      if (unsubscribe) {
+        unsubscribe();
+      }
+      this.ipcUnsubscribers.delete(this.activeOnChatWorkspaceId);
+      this.activeOnChatWorkspaceId = null;
+    }
+
+    if (targetWorkspaceId) {
+      const controller = new AbortController();
+      this.ipcUnsubscribers.set(targetWorkspaceId, () => controller.abort());
+      this.activeOnChatWorkspaceId = targetWorkspaceId;
+      void this.runOnChatSubscription(targetWorkspaceId, controller.signal);
+    }
+
+    this.assertSingleActiveOnChatSubscription();
   }
 
   /**
@@ -842,8 +938,8 @@ export class WorkspaceStore {
       return;
     }
 
-    // Only subscribe when we have at least one UI consumer.
-    if (!this.ipcUnsubscribers.has(workspaceId)) {
+    // Only subscribe for registered workspaces when we have at least one UI consumer.
+    if (!this.isWorkspaceRegistered(workspaceId)) {
       return;
     }
     if ((this.statsListenerCounts.get(workspaceId) ?? 0) <= 0) {
@@ -1033,10 +1129,19 @@ export class WorkspaceStore {
       const hasMessages = aggregator.hasMessages();
       const transient = this.assertChatTransientState(workspaceId);
       const activeStreams = aggregator.getActiveStreams();
+      const activity = this.workspaceActivity.get(workspaceId);
       const messages = aggregator.getAllMessages();
       const metadata = this.workspaceMetadata.get(workspaceId);
       const pendingStreamStartTime = aggregator.getPendingStreamStartTime();
-      const canInterrupt = activeStreams.length > 0;
+      const canInterrupt = activeStreams.length > 0 || activity?.streaming === true;
+      const currentModel = aggregator.getCurrentModel() ?? activity?.lastModel ?? null;
+      const currentThinkingLevel =
+        aggregator.getCurrentThinkingLevel() ?? activity?.lastThinkingLevel ?? null;
+      const aggregatorRecency = aggregator.getRecencyTimestamp();
+      const recencyTimestamp =
+        aggregatorRecency === null
+          ? activity?.recency ?? null
+          : Math.max(aggregatorRecency, activity?.recency ?? aggregatorRecency);
       const isStreamStarting = pendingStreamStartTime !== null && !canInterrupt;
 
       // Live streaming stats
@@ -1058,9 +1163,9 @@ export class WorkspaceStore {
         awaitingUserQuestion: aggregator.hasAwaitingUserQuestion(),
         loading: !hasMessages && !transient.caughtUp,
         muxMessages: messages,
-        currentModel: aggregator.getCurrentModel() ?? null,
-        currentThinkingLevel: aggregator.getCurrentThinkingLevel() ?? null,
-        recencyTimestamp: aggregator.getRecencyTimestamp(),
+        currentModel,
+        currentThinkingLevel,
+        recencyTimestamp,
         todos: aggregator.getCurrentTodos(),
         loadedSkills: aggregator.getLoadedSkills(),
         skillLoadErrors: aggregator.getSkillLoadErrors(),
@@ -1558,8 +1663,140 @@ export class WorkspaceStore {
     });
   }
 
-  private isWorkspaceSubscribed(workspaceId: string): boolean {
-    return this.ipcUnsubscribers.has(workspaceId);
+  private isWorkspaceRegistered(workspaceId: string): boolean {
+    return this.workspaceMetadata.has(workspaceId);
+  }
+
+  private applyWorkspaceActivitySnapshot(
+    workspaceId: string,
+    snapshot: WorkspaceActivitySnapshot | null
+  ): void {
+    const previous = this.workspaceActivity.get(workspaceId) ?? null;
+
+    if (snapshot) {
+      this.workspaceActivity.set(workspaceId, snapshot);
+    } else {
+      this.workspaceActivity.delete(workspaceId);
+    }
+
+    const changed =
+      previous?.streaming !== snapshot?.streaming ||
+      previous?.lastModel !== snapshot?.lastModel ||
+      previous?.lastThinkingLevel !== snapshot?.lastThinkingLevel ||
+      previous?.recency !== snapshot?.recency;
+
+    if (!changed) {
+      return;
+    }
+
+    if (this.aggregators.has(workspaceId)) {
+      this.states.bump(workspaceId);
+    }
+
+    if (previous?.recency !== snapshot?.recency && this.aggregators.has(workspaceId)) {
+      this.derived.bump("recency");
+    }
+  }
+
+  private applyWorkspaceActivityList(snapshots: Record<string, WorkspaceActivitySnapshot>): void {
+    const seenWorkspaceIds = new Set<string>();
+
+    for (const [workspaceId, snapshot] of Object.entries(snapshots)) {
+      seenWorkspaceIds.add(workspaceId);
+      this.applyWorkspaceActivitySnapshot(workspaceId, snapshot);
+    }
+
+    for (const workspaceId of Array.from(this.workspaceActivity.keys())) {
+      if (seenWorkspaceIds.has(workspaceId)) {
+        continue;
+      }
+      this.applyWorkspaceActivitySnapshot(workspaceId, null);
+    }
+  }
+
+  private async runActivitySubscription(signal: AbortSignal): Promise<void> {
+    let attempt = 0;
+
+    while (!signal.aborted) {
+      const client = this.client ?? (await this.waitForClient(signal));
+      if (!client || signal.aborted) {
+        return;
+      }
+
+      const attemptController = new AbortController();
+      const onAbort = () => attemptController.abort();
+      signal.addEventListener("abort", onAbort);
+
+      const clientChangeSignal = this.clientChangeController.signal;
+      const onClientChange = () => attemptController.abort();
+      clientChangeSignal.addEventListener("abort", onClientChange, { once: true });
+
+      try {
+        const snapshots = await client.workspace.activity.list();
+        if (signal.aborted || attemptController.signal.aborted) {
+          return;
+        }
+
+        queueMicrotask(() => {
+          if (signal.aborted || attemptController.signal.aborted) {
+            return;
+          }
+          this.applyWorkspaceActivityList(snapshots);
+        });
+
+        const iterator = await client.workspace.activity.subscribe(undefined, {
+          signal: attemptController.signal,
+        });
+
+        for await (const event of iterator) {
+          if (signal.aborted) {
+            return;
+          }
+
+          // Connection is alive again - don't carry old backoff into the next failure.
+          attempt = 0;
+
+          queueMicrotask(() => {
+            if (signal.aborted || attemptController.signal.aborted) {
+              return;
+            }
+            this.applyWorkspaceActivitySnapshot(event.workspaceId, event.activity);
+          });
+        }
+
+        if (signal.aborted) {
+          return;
+        }
+
+        if (!attemptController.signal.aborted) {
+          console.warn("[WorkspaceStore] activity subscription ended unexpectedly; retrying...");
+        }
+      } catch (error) {
+        if (signal.aborted) {
+          return;
+        }
+
+        const abortError = isAbortError(error);
+        if (attemptController.signal.aborted) {
+          if (!abortError) {
+            console.warn("[WorkspaceStore] activity subscription aborted; retrying...");
+          }
+        } else if (!abortError) {
+          console.warn("[WorkspaceStore] Error in activity subscription:", error);
+        }
+      } finally {
+        signal.removeEventListener("abort", onAbort);
+        clientChangeSignal.removeEventListener("abort", onClientChange);
+      }
+
+      const delayMs = calculateOnChatBackoffMs(attempt);
+      attempt++;
+
+      await this.sleepWithAbort(delayMs, signal);
+      if (signal.aborted) {
+        return;
+      }
+    }
   }
 
   private async waitForClient(signal: AbortSignal): Promise<RouterClient<AppRouter> | null> {
@@ -1748,7 +1985,7 @@ export class WorkspaceStore {
           // 3. Connection dropped (WebSocket/MessagePort error)
 
           // Only suppress if workspace no longer exists (was removed during the race)
-          if (!this.isWorkspaceSubscribed(workspaceId)) {
+          if (!this.isWorkspaceRegistered(workspaceId)) {
             return;
           }
           // Log with detailed validation info for debugging schema mismatches
@@ -1766,7 +2003,7 @@ export class WorkspaceStore {
         }
       }
 
-      if (this.isWorkspaceSubscribed(workspaceId)) {
+      if (this.isWorkspaceRegistered(workspaceId)) {
         const transient = this.chatTransientState.get(workspaceId);
         if (transient) {
           // Failed reconnect attempts may have buffered partial replay data.
@@ -1790,7 +2027,7 @@ export class WorkspaceStore {
   }
 
   /**
-   * Add a workspace and subscribe to its IPC events.
+   * Register a workspace and initialize local state.
    */
 
   /**
@@ -1804,8 +2041,8 @@ export class WorkspaceStore {
   addWorkspace(metadata: FrontendWorkspaceMetadata): void {
     const workspaceId = metadata.id;
 
-    // Skip if already subscribed
-    if (this.ipcUnsubscribers.has(workspaceId)) {
+    // Skip if already registered
+    if (this.workspaceMetadata.has(workspaceId)) {
       return;
     }
 
@@ -1840,16 +2077,6 @@ export class WorkspaceStore {
     // Clear stale streaming state
     aggregator.clearActiveStreams();
 
-    // Subscribe to IPC events
-    // Wrap in queueMicrotask to ensure IPC events don't update during React render
-    const controller = new AbortController();
-    const { signal } = controller;
-
-    this.ipcUnsubscribers.set(workspaceId, () => controller.abort());
-
-    // Fire and forget the subscription loop (retries on errors)
-    void this.runOnChatSubscription(workspaceId, signal);
-
     // Fetch persisted session usage (fire-and-forget)
     this.client?.workspace
       .getSessionUsage({ workspaceId })
@@ -1868,6 +2095,8 @@ export class WorkspaceStore {
       this.subscribeToStats(workspaceId);
     }
 
+    this.ensureActiveOnChatSubscription();
+
     if (!this.client) {
       console.warn(`[WorkspaceStore] No ORPC client available for workspace ${workspaceId}`);
     }
@@ -1883,16 +2112,23 @@ export class WorkspaceStore {
     // Clean up idle callback to prevent stale callbacks
     this.cancelPendingIdleBump(workspaceId);
 
+    if (this.activeWorkspaceId === workspaceId) {
+      this.activeWorkspaceId = null;
+    }
+
     const statsUnsubscribe = this.statsUnsubscribers.get(workspaceId);
     if (statsUnsubscribe) {
       statsUnsubscribe();
       this.statsUnsubscribers.delete(workspaceId);
     }
-    // Unsubscribe from IPC
+
     const unsubscribe = this.ipcUnsubscribers.get(workspaceId);
     if (unsubscribe) {
       unsubscribe();
       this.ipcUnsubscribers.delete(workspaceId);
+    }
+    if (this.activeOnChatWorkspaceId === workspaceId) {
+      this.activeOnChatWorkspaceId = null;
     }
 
     this.pendingReplayReset.delete(workspaceId);
@@ -1903,6 +2139,8 @@ export class WorkspaceStore {
     this.consumersStore.delete(workspaceId);
     this.aggregators.delete(workspaceId);
     this.chatTransientState.delete(workspaceId);
+    this.workspaceMetadata.delete(workspaceId);
+    this.workspaceActivity.delete(workspaceId);
     this.recencyCache.delete(workspaceId);
     this.previousSidebarValues.delete(workspaceId);
     this.sidebarStateCache.delete(workspaceId);
@@ -1910,7 +2148,11 @@ export class WorkspaceStore {
     this.workspaceCreatedAt.delete(workspaceId);
     this.workspaceStats.delete(workspaceId);
     this.statsStore.delete(workspaceId);
+    this.statsListenerCounts.delete(workspaceId);
     this.sessionUsage.delete(workspaceId);
+
+    this.ensureActiveOnChatSubscription();
+    this.derived.bump("recency");
   }
 
   /**
@@ -1918,7 +2160,7 @@ export class WorkspaceStore {
    */
   syncWorkspaces(workspaceMetadata: Map<string, FrontendWorkspaceMetadata>): void {
     const metadataIds = new Set(Array.from(workspaceMetadata.values()).map((m) => m.id));
-    const currentIds = new Set(this.ipcUnsubscribers.keys());
+    const currentIds = new Set(this.workspaceMetadata.keys());
 
     // Add new workspaces
     for (const metadata of workspaceMetadata.values()) {
@@ -1946,10 +2188,19 @@ export class WorkspaceStore {
       unsubscribe();
     }
     this.statsUnsubscribers.clear();
+
     for (const unsubscribe of this.ipcUnsubscribers.values()) {
       unsubscribe();
     }
     this.ipcUnsubscribers.clear();
+
+    if (this.activityAbortController) {
+      this.activityAbortController.abort();
+      this.activityAbortController = null;
+    }
+
+    this.activeWorkspaceId = null;
+    this.activeOnChatWorkspaceId = null;
     this.pendingReplayReset.clear();
     this.states.clear();
     this.derived.clear();
@@ -1957,6 +2208,8 @@ export class WorkspaceStore {
     this.consumersStore.clear();
     this.aggregators.clear();
     this.chatTransientState.clear();
+    this.workspaceMetadata.clear();
+    this.workspaceActivity.clear();
     this.workspaceStats.clear();
     this.statsStore.clear();
     this.statsListenerCounts.clear();
@@ -2091,7 +2344,7 @@ export class WorkspaceStore {
   }
 
   private handleChatMessage(workspaceId: string, data: WorkspaceChatMessage): void {
-    // Aggregator must exist - IPC subscription happens in addWorkspace()
+    // Aggregator must exist - workspaces are initialized in addWorkspace() before subscriptions run.
     const aggregator = this.assertGet(workspaceId);
 
     const transient = this.assertChatTransientState(workspaceId);

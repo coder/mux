@@ -1,23 +1,54 @@
 import { describe, expect, it, beforeEach, afterEach, mock, type Mock } from "bun:test";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { StreamStartEvent, ToolCallStartEvent } from "@/common/types/stream";
-import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import type { WorkspaceActivitySnapshot, WorkspaceChatMessage } from "@/common/orpc/types";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { WorkspaceStore } from "./WorkspaceStore";
 
 // Mock client
 // eslint-disable-next-line require-yield
-const mockOnChat = mock(async function* (): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
-  // yield nothing by default
-  await Promise.resolve();
+const mockOnChat = mock(async function* (
+  _input?: { workspaceId: string; mode?: unknown },
+  options?: { signal?: AbortSignal }
+): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+  // Keep the iterator open until the store aborts it (prevents retry-loop noise in tests).
+  await new Promise<void>((resolve) => {
+    if (!options?.signal) {
+      resolve();
+      return;
+    }
+    options.signal.addEventListener("abort", () => resolve(), { once: true });
+  });
 });
 
 const mockGetSessionUsage = mock(() => Promise.resolve(undefined));
+const mockActivityList = mock(() => Promise.resolve<Record<string, WorkspaceActivitySnapshot>>({}));
+// eslint-disable-next-line require-yield
+const mockActivitySubscribe = mock(async function* (
+  _input?: void,
+  options?: { signal?: AbortSignal }
+): AsyncGenerator<
+  { workspaceId: string; activity: WorkspaceActivitySnapshot | null },
+  void,
+  unknown
+> {
+  await new Promise<void>((resolve) => {
+    if (!options?.signal) {
+      resolve();
+      return;
+    }
+    options.signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+});
 
 const mockClient = {
   workspace: {
     onChat: mockOnChat,
     getSessionUsage: mockGetSessionUsage,
+    activity: {
+      list: mockActivityList,
+      subscribe: mockActivitySubscribe,
+    },
   },
 };
 
@@ -43,7 +74,8 @@ global.queueMicrotask = (fn) => fn();
 function createAndAddWorkspace(
   store: WorkspaceStore,
   workspaceId: string,
-  options: Partial<FrontendWorkspaceMetadata> = {}
+  options: Partial<FrontendWorkspaceMetadata> = {},
+  activate = true
 ): FrontendWorkspaceMetadata {
   const metadata: FrontendWorkspaceMetadata = {
     id: workspaceId,
@@ -54,6 +86,9 @@ function createAndAddWorkspace(
     createdAt: options.createdAt ?? new Date().toISOString(),
     runtimeConfig: options.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
   };
+  if (activate) {
+    store.setActiveWorkspaceId(workspaceId);
+  }
   store.addWorkspace(metadata);
   return metadata;
 }
@@ -64,6 +99,10 @@ describe("WorkspaceStore", () => {
 
   beforeEach(() => {
     mockOnChat.mockClear();
+    mockGetSessionUsage.mockClear();
+    mockActivityList.mockClear();
+    mockActivitySubscribe.mockClear();
+    mockActivityList.mockResolvedValue({});
     mockOnModelUsed = mock(() => undefined);
     store = new WorkspaceStore(mockOnModelUsed);
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
@@ -129,6 +168,7 @@ describe("WorkspaceStore", () => {
       });
 
       // Add workspace
+      store.setActiveWorkspaceId(workspaceId);
       store.addWorkspace(metadata);
 
       // Check initial recency
@@ -175,6 +215,7 @@ describe("WorkspaceStore", () => {
       });
 
       // Add workspace (should trigger IPC subscription)
+      store.setActiveWorkspaceId(metadata.id);
       store.addWorkspace(metadata);
 
       // Wait for async processing
@@ -211,12 +252,62 @@ describe("WorkspaceStore", () => {
 
       // Unsubscribe before adding workspace (which triggers updates)
       unsubscribe();
+      store.setActiveWorkspaceId(metadata.id);
       store.addWorkspace(metadata);
 
       // Wait for async processing
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(listener).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("active workspace subscriptions", () => {
+    it("does not start onChat until workspace becomes active", async () => {
+      const workspaceId = "inactive-workspace";
+      createAndAddWorkspace(store, workspaceId, {}, false);
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(mockOnChat).not.toHaveBeenCalled();
+
+      store.setActiveWorkspaceId(workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(mockOnChat).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceId }),
+        expect.anything()
+      );
+    });
+
+    it("switches onChat subscriptions when active workspace changes", async () => {
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        await new Promise<void>((resolve) => {
+          if (!options?.signal) {
+            resolve();
+            return;
+          }
+          options.signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+      });
+
+      createAndAddWorkspace(store, "workspace-1", {}, false);
+      createAndAddWorkspace(store, "workspace-2", {}, false);
+
+      store.setActiveWorkspaceId("workspace-1");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      store.setActiveWorkspaceId("workspace-2");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const subscribedWorkspaceIds = mockOnChat.mock.calls.map((call) => {
+        const input = call[0] as { workspaceId?: string };
+        return input.workspaceId;
+      });
+
+      expect(subscribedWorkspaceIds).toEqual(["workspace-1", "workspace-2"]);
     });
   });
 
@@ -233,9 +324,13 @@ describe("WorkspaceStore", () => {
       };
 
       const workspaceMap = new Map([[metadata1.id, metadata1]]);
+      store.setActiveWorkspaceId(metadata1.id);
       store.syncWorkspaces(workspaceMap);
 
-      expect(mockOnChat).toHaveBeenCalledWith({ workspaceId: "workspace-1" }, expect.anything());
+      expect(mockOnChat).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceId: "workspace-1" }),
+        expect.anything()
+      );
     });
 
     it("should remove deleted workspaces", () => {
@@ -293,6 +388,44 @@ describe("WorkspaceStore", () => {
     });
   });
 
+  describe("activity fallbacks", () => {
+    it("uses activity snapshots for non-active workspace sidebar fields", async () => {
+      const workspaceId = "activity-fallback-workspace";
+      const activityRecency = new Date("2024-01-03T12:00:00.000Z").getTime();
+      const activitySnapshot: WorkspaceActivitySnapshot = {
+        recency: activityRecency,
+        streaming: true,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: "high",
+      };
+
+      // Recreate the store so the first activity.list call uses this test snapshot.
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      mockActivityList.mockResolvedValue({ [workspaceId]: activitySnapshot });
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+
+      // Let the initial activity.list call resolve and queue its state updates.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      createAndAddWorkspace(
+        store,
+        workspaceId,
+        {
+          createdAt: "2020-01-01T00:00:00.000Z",
+        },
+        false
+      );
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.canInterrupt).toBe(true);
+      expect(state.currentModel).toBe(activitySnapshot.lastModel);
+      expect(state.currentThinkingLevel).toBe(activitySnapshot.lastThinkingLevel);
+      expect(state.recencyTimestamp).toBe(activitySnapshot.recency);
+    });
+  });
+
   describe("getWorkspaceRecency", () => {
     it("should return stable reference when values unchanged", () => {
       const recency1 = store.getWorkspaceRecency();
@@ -336,6 +469,7 @@ describe("WorkspaceStore", () => {
         });
       });
 
+      store.setActiveWorkspaceId(metadata.id);
       store.addWorkspace(metadata);
 
       // Wait for async processing
@@ -483,7 +617,7 @@ describe("WorkspaceStore", () => {
         unknown
       > {
         yield { type: "caught-up" };
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 30));
         yield {
           type: "stream-start",
           historySequence: 1,
@@ -497,12 +631,13 @@ describe("WorkspaceStore", () => {
         });
       });
 
+      store.setActiveWorkspaceId(metadata.id);
       store.addWorkspace(metadata);
 
       const state1 = store.getWorkspaceState("test-workspace");
 
       // Wait for async processing
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await new Promise((resolve) => setTimeout(resolve, 70));
 
       const state2 = store.getWorkspaceState("test-workspace");
       expect(state1).not.toBe(state2); // Cache should be invalidated
@@ -541,6 +676,7 @@ describe("WorkspaceStore", () => {
         });
       });
 
+      store.setActiveWorkspaceId(metadata.id);
       store.addWorkspace(metadata);
 
       const states1 = store.getAllStates();
