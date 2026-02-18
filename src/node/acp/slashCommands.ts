@@ -209,7 +209,7 @@ function parseTruncateCommand(remainingTokens: string[]): ParsedAcpSlashCommand 
     };
   }
 
-  const percentageValue = Number.parseFloat(percentageText);
+  const percentageValue = Number(percentageText);
   if (!Number.isFinite(percentageValue) || percentageValue < 0 || percentageValue > 100) {
     return {
       kind: "invalid",

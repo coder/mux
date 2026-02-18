@@ -438,7 +438,14 @@ export class MuxAgent implements Agent {
       return null;
     }
 
-    const skillsByName = await this.getSessionSkills(sessionId, workspaceId);
+    let skillsByName: ReadonlyMap<string, AgentSkillDescriptor>;
+    try {
+      skillsByName = await this.getSessionSkills(sessionId, workspaceId);
+    } catch (error) {
+      console.error("[acp] Failed to load skills for slash command parsing", error);
+      return null;
+    }
+
     const parsedCommand = parseAcpSlashCommand(parsedPrompt.text, skillsByName);
     if (parsedCommand == null) {
       return null;
@@ -739,17 +746,10 @@ export class MuxAgent implements Agent {
       return cached;
     }
 
-    try {
-      const skills = await this.server.client.agentSkills.list({ workspaceId });
-      const skillsByName = mapSkillsByName(skills);
-      this.sessionSkillsById.set(sessionId, skillsByName);
-      return skillsByName;
-    } catch (error) {
-      console.error("[acp] Failed to load skills for slash command parsing", error);
-      // Do not cache failures. A transient backend error should not permanently
-      // disable skill slash commands for the lifetime of this ACP session.
-      return new Map<string, AgentSkillDescriptor>();
-    }
+    const skills = await this.server.client.agentSkills.list({ workspaceId });
+    const skillsByName = mapSkillsByName(skills);
+    this.sessionSkillsById.set(sessionId, skillsByName);
+    return skillsByName;
   }
 
   /**
