@@ -47,4 +47,20 @@ describe("getErrorMessage", () => {
     // Empty cause message is skipped
     expect(getErrorMessage(outer)).toBe("outer");
   });
+
+  it("handles cyclic cause chain without hanging", () => {
+    const a = new Error("error A");
+    const b = new Error("error B", { cause: a });
+    // Create a cycle: a -> b -> a -> ...
+    a.cause = b;
+    const result = getErrorMessage(b);
+    expect(result).toContain("error B");
+    expect(result).toContain("error A");
+  });
+
+  it("handles self-referencing cause", () => {
+    const err = new Error("self");
+    err.cause = err;
+    expect(getErrorMessage(err)).toBe("self");
+  });
 });
