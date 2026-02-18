@@ -344,7 +344,7 @@ function formatWebFetchEnd(_toolName: string, _args: unknown, result: unknown): 
   }
 
   // Built-in format: { success: boolean, title?, content?, length?, error? }
-  const fetchResult = result as WebFetchToolResult;
+  const fetchResult = unwrapped as WebFetchToolResult;
   if (fetchResult?.success === false) {
     return `${chalk.red("✗")} ${chalk.red(fetchResult.error ?? "Fetch failed")}`;
   }
