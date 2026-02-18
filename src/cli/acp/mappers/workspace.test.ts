@@ -193,7 +193,7 @@ describe("createWorkspaceBackedSession", () => {
 
     expect(createMock).toHaveBeenCalledWith({
       projectPath: "/repo",
-      branchName: "feature/acp",
+      branchName: "feature-acp",
       trunkBranch: "develop",
       title: "ACP Workspace",
       runtimeConfig: {
@@ -245,6 +245,17 @@ describe("createWorkspaceBackedSession", () => {
     };
 
     const session = await createWorkspaceBackedSession(client, request);
+
+    const createArg = createMock.mock.calls.at(0)?.[0] as
+      | {
+          runtimeConfig?: unknown;
+          trunkBranch?: string;
+          branchName: string;
+        }
+      | undefined;
+    expect(createArg?.runtimeConfig).toBeUndefined();
+    expect(createArg?.trunkBranch).toBeUndefined();
+    expect(createArg?.branchName).toMatch(/^acp-[a-z0-9]+-[a-z0-9]+$/);
 
     expect(session.modeId).toBe("plan");
     expect(session.modelId).toBe("openai:gpt-5.2");

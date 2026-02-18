@@ -7,6 +7,7 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import { parseThinkingDisplayLabel } from "@/common/types/thinking";
 import { defaultModel, resolveModelAlias } from "@/common/utils/ai/models";
 import assert from "@/common/utils/assert";
+import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import type { AppRouter } from "@/node/orpc/router";
 import { resolveModeId, resolveThinkingLevel } from "./configOptions";
 import type { SessionState } from "../sessionState";
@@ -125,6 +126,30 @@ function createFallbackBranchName(): string {
   return `acp-${timestamp}-${randomSuffix}`.slice(0, 64);
 }
 
+function normalizeWorkspaceBranchName(branchName: string | undefined): string {
+  const trimmed = branchName?.trim() ?? "";
+  if (trimmed.length === 0) {
+    return createFallbackBranchName();
+  }
+
+  // Workspace names must satisfy [a-z0-9_-]{1,64}. ACP clients commonly pass
+  // git-style branch names like "feature/acp", so normalize separators and case
+  // instead of failing session creation on backend validation.
+  const normalized = trimmed
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "")
+    .slice(0, 64);
+
+  const validation = validateWorkspaceName(normalized);
+  if (validation.valid) {
+    return normalized;
+  }
+
+  return createFallbackBranchName();
+}
+
 export function getWorkspaceAiSettings(
   metadata: FrontendWorkspaceMetadataSchemaType,
   modeId: SessionState["modeId"]
@@ -224,24 +249,25 @@ export async function createWorkspaceBackedSession(
   const projectPath = ensureAbsolutePath(params.cwd);
   const meta = parseMuxMeta(params._meta ?? undefined);
 
-  const runtimeConfig: RuntimeConfig = meta.runtimeConfig ?? { type: "local" };
+  const runtimeConfig = meta.runtimeConfig;
   // For non-local runtimes (worktree/ssh/etc.), the backend requires a trunk branch.
-  // Let the backend detect it for local runtimes when not specified, rather than
-  // assuming "main" — repositories may use "master" or other branch naming conventions.
+  // Let the backend pick its default runtime + trunk behavior when runtimeConfig is omitted.
   const trunkBranch = meta.trunkBranch;
-  if (runtimeConfig.type !== "local" && !trunkBranch) {
+  if (runtimeConfig && runtimeConfig.type !== "local" && !trunkBranch) {
     throw new Error(
       `Trunk branch (_meta.mux.trunkBranch) is required for non-local runtimes (type: "${runtimeConfig.type}"). ` +
         "Specify it in the session metadata or use a local runtime."
     );
   }
 
+  const branchName = normalizeWorkspaceBranchName(meta.branchName);
+
   const createResult = await client.workspace.create({
     projectPath,
-    branchName: meta.branchName ?? createFallbackBranchName(),
+    branchName,
     trunkBranch,
     title: meta.title,
-    runtimeConfig,
+    ...(runtimeConfig ? { runtimeConfig } : {}),
     sectionId: meta.sectionId,
   });
 
