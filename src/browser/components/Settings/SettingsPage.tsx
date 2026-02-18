@@ -17,6 +17,7 @@ import {
   Lock,
 } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
+import { useOnboardingPause } from "@/browser/components/splashScreens/SplashScreenProvider";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { isEditableElement, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
@@ -105,6 +106,7 @@ interface SettingsPageProps {
 
 export function SettingsPage(props: SettingsPageProps) {
   const { close, activeSection, setActiveSection } = useSettings();
+  const onboardingPause = useOnboardingPause();
   const system1Enabled = useExperimentValue(EXPERIMENT_IDS.SYSTEM_1);
   const governorEnabled = useExperimentValue(EXPERIMENT_IDS.MUX_GOVERNOR);
 
@@ -259,6 +261,14 @@ export function SettingsPage(props: SettingsPageProps) {
           <div className="flex-1 overflow-y-auto p-4 md:p-6">
             {/* Keep settings content width bounded so long forms remain readable on wide screens. */}
             <div className="w-full max-w-4xl">
+              {onboardingPause.paused && (
+                <div className="bg-accent/10 border-accent/30 text-foreground mb-3 flex items-center justify-between rounded-md border px-3 py-2 text-sm">
+                  <span>Setup is paused while you configure providers.</span>
+                  <Button variant="secondary" size="sm" onClick={close}>
+                    Return to setup
+                  </Button>
+                </div>
+              )}
               <SectionComponent />
             </div>
           </div>

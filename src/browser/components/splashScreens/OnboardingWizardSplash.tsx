@@ -9,6 +9,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { SplashScreen } from "./SplashScreen";
+import { useOnboardingPause } from "./SplashScreenProvider";
 import { DocsLink } from "@/browser/components/DocsLink";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import {
@@ -179,9 +180,19 @@ function CommandPalettePreview(props: { shortcut: string }) {
 }
 
 export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
-  const [stepIndex, setStepIndex] = useState(0);
+  const onboardingPause = useOnboardingPause();
+  const [stepIndex, setStepIndex] = useState(onboardingPause.paused?.stepIndex ?? 0);
 
   const { open: openSettings } = useSettings();
+  // Pause onboarding (not dismiss) so users can configure providers in full settings, then resume.
+  const openProvidersSettings = useCallback(
+    (provider?: string) => {
+      onboardingPause.pause({ stepIndex, reason: "providers-settings" });
+      openSettings("providers", provider ? { expandProvider: provider } : undefined);
+    },
+    [onboardingPause, openSettings, stepIndex]
+  );
+
   const policyState = usePolicy();
   const effectivePolicy =
     policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
@@ -630,7 +641,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
               <button
                 type="button"
                 className="text-accent hover:underline"
-                onClick={() => openSettings("providers")}
+                onClick={() => openProvidersSettings()}
               >
                 Settings → Providers
               </button>
@@ -672,7 +683,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
                     type="button"
                     className="bg-background-secondary border-border-medium text-foreground hover:bg-hover flex w-full cursor-pointer items-center justify-between rounded-md border px-2 py-1 text-left text-xs"
                     title={configured ? "Configured" : "Not configured"}
-                    onClick={() => openSettings("providers", { expandProvider: provider })}
+                    onClick={() => openProvidersSettings(provider)}
                   >
                     <ProviderWithIcon provider={provider} displayName iconClassName="text-accent" />
                     <span
@@ -698,7 +709,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
             <button
               type="button"
               className="text-accent hover:underline"
-              onClick={() => openSettings("providers")}
+              onClick={() => openProvidersSettings()}
             >
               Settings → Providers
             </button>
@@ -903,7 +914,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     muxGatewayLoginError,
     muxGatewayLoginInProgress,
     muxGatewayLoginStatus,
-    openSettings,
+    openProvidersSettings,
     projects.size,
     providersConfig,
     refreshMuxGatewayAccountStatus,
