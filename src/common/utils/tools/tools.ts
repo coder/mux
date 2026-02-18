@@ -327,6 +327,9 @@ export async function getToolsForModel(
           ...(mcpTools ?? {}),
           // Provider-specific tool types are compatible with Tool at runtime
           web_search: anthropic.tools.webSearch_20250305({ maxUses: 1000 }) as Tool,
+          // Prefer Anthropic's native web_fetch over our built-in curl-based one:
+          // it bypasses Cloudflare challenges and benefits from Anthropic's server-side fetching.
+          web_fetch: anthropic.tools.webFetch_20250910({ maxUses: 1000 }) as Tool,
         };
         break;
       }
