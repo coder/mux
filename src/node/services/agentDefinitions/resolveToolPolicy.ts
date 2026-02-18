@@ -1,4 +1,8 @@
-import { collectToolConfigsFromResolvedChain, type ToolsConfig } from "@/common/utils/agentTools";
+import {
+  collectToolConfigsFromResolvedChain,
+  isPlanLikeInResolvedChain,
+  type ToolsConfig,
+} from "@/common/utils/agentTools";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 
 /**
@@ -19,11 +23,9 @@ export interface ResolveToolPolicyOptions {
   disableTaskToolsForDepth: boolean;
 }
 
-// Runtime restrictions that cannot be overridden by agent definitions
-const SUBAGENT_HARD_DENY: ToolPolicy = [
-  { regex_match: "propose_plan", action: "disable" },
-  { regex_match: "ask_user_question", action: "disable" },
-];
+// Runtime restrictions that cannot be overridden by agent definitions.
+// Ask-for-input tools are never allowed in autonomous sub-agent flows.
+const SUBAGENT_HARD_DENY: ToolPolicy = [{ regex_match: "ask_user_question", action: "disable" }];
 
 const DEPTH_HARD_DENY: ToolPolicy = [
   { regex_match: "task", action: "disable" },
@@ -44,7 +46,9 @@ const DEPTH_HARD_DENY: ToolPolicy = [
  * - ask has remove: [file_edit_.*]
  * - Result: deny-all → enable .* → disable propose_plan → disable ask_user_question → disable file_edit_.*
  *
- * Subagents always get `agent_report` enabled regardless of their tool list.
+ * Subagent completion tool is mode-dependent:
+ * - plan-like subagents: enable `propose_plan`, disable `agent_report`
+ * - non-plan subagents: disable `propose_plan`, enable `agent_report`
  */
 export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): ToolPolicy {
   const { agents, isSubagent, disableTaskToolsForDepth } = options;
@@ -85,8 +89,17 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
 
   if (isSubagent) {
     runtimePolicy.push(...SUBAGENT_HARD_DENY);
-    // Subagents always need agent_report to return results
-    runtimePolicy.push({ regex_match: "agent_report", action: "enable" });
+
+    const isPlanLikeSubagent = isPlanLikeInResolvedChain(agents);
+    if (isPlanLikeSubagent) {
+      // Plan-mode subagents must finish by proposing a plan, not by reporting.
+      runtimePolicy.push({ regex_match: "propose_plan", action: "enable" });
+      runtimePolicy.push({ regex_match: "agent_report", action: "disable" });
+    } else {
+      // Non-plan subagents should complete through agent_report.
+      runtimePolicy.push({ regex_match: "propose_plan", action: "disable" });
+      runtimePolicy.push({ regex_match: "agent_report", action: "enable" });
+    }
   }
 
   return [...agentPolicy, ...runtimePolicy];

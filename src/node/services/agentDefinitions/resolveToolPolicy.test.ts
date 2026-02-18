@@ -46,7 +46,7 @@ describe("resolveToolPolicyForAgent", () => {
     ]);
   });
 
-  test("subagents hard-deny interactive planning tools and always allow agent_report", () => {
+  test("non-plan subagents disable propose_plan and allow agent_report", () => {
     const agents: AgentLikeForPolicy[] = [{ tools: { add: ["task", "file_read"] } }];
     const policy = resolveToolPolicyForAgent({
       agents,
@@ -58,9 +58,30 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: ".*", action: "disable" },
       { regex_match: "task", action: "enable" },
       { regex_match: "file_read", action: "enable" },
-      { regex_match: "propose_plan", action: "disable" },
       { regex_match: "ask_user_question", action: "disable" },
+      { regex_match: "propose_plan", action: "disable" },
       { regex_match: "agent_report", action: "enable" },
+    ]);
+  });
+
+  test("plan-like subagents enable propose_plan and disable agent_report", () => {
+    const agents: AgentLikeForPolicy[] = [
+      { tools: { add: ["propose_plan", "file_read", "agent_report"] } },
+    ];
+    const policy = resolveToolPolicyForAgent({
+      agents,
+      isSubagent: true,
+      disableTaskToolsForDepth: false,
+    });
+
+    expect(policy).toEqual([
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "propose_plan", action: "enable" },
+      { regex_match: "file_read", action: "enable" },
+      { regex_match: "agent_report", action: "enable" },
+      { regex_match: "ask_user_question", action: "disable" },
+      { regex_match: "propose_plan", action: "enable" },
+      { regex_match: "agent_report", action: "disable" },
     ]);
   });
 
@@ -95,8 +116,8 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: "file_read", action: "enable" },
       { regex_match: "task", action: "disable" },
       { regex_match: "task_.*", action: "disable" },
-      { regex_match: "propose_plan", action: "disable" },
       { regex_match: "ask_user_question", action: "disable" },
+      { regex_match: "propose_plan", action: "disable" },
       { regex_match: "agent_report", action: "enable" },
     ]);
   });
