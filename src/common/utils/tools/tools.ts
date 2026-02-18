@@ -248,12 +248,15 @@ function wrapToolsWithHooks(
 /**
  * Returns true when an Anthropic model supports webFetch_20250910 (Claude 4.6+).
  *
- * Generation-based IDs use single or double-digit minor versions (e.g. claude-sonnet-4-6).
- * Date-based IDs use an 8-digit date suffix (e.g. claude-sonnet-4-20250514); those must NOT
- * match — limiting the minor segment to at most 2 digits excludes them.
+ * Generation-based IDs: claude-{variant}-{major}-{minor} (e.g. claude-sonnet-4-6)
+ * Pinned generation IDs: claude-{variant}-{major}-{minor}-{date} (e.g. claude-opus-4-6-20260201)
+ * Date-based pre-4.6 IDs: claude-{variant}-{major}-{date} (e.g. claude-sonnet-4-20250514)
+ *
+ * The \d{1,2} constraint on the minor segment accepts 1-2 digit version numbers (1–99) while
+ * rejecting 8-digit date suffixes. The (?:-|$) lookahead allows an optional pinned date to follow.
  */
 function supportsAnthropicNativeWebFetch(modelId: string): boolean {
-  const match = /claude-\w+-(\d+)-(\d{1,2})$/.exec(modelId);
+  const match = /^claude-\w+-(\d+)-(\d{1,2})(?:-|$)/.exec(modelId);
   if (!match) return false;
   const major = parseInt(match[1], 10);
   const minor = parseInt(match[2], 10);
