@@ -1929,8 +1929,14 @@ export class WorkspaceStore {
 
       try {
         const snapshots = await client.workspace.activity.list();
-        if (signal.aborted || attemptController.signal.aborted) {
+        if (signal.aborted) {
           return;
+        }
+        // Client changed while list() was in flight — retry with the new client
+        // instead of exiting permanently. The outer while loop will pick up the
+        // replacement client on the next iteration.
+        if (attemptController.signal.aborted) {
+          continue;
         }
 
         queueMicrotask(() => {
