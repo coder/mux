@@ -203,7 +203,15 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   useEffect(() => {
     workspaceStateRef.current = workspaceState;
   }, [workspaceState]);
-  const { messages, canInterrupt, isCompacting, isStreamStarting, loading } = workspaceState;
+  const {
+    messages,
+    canInterrupt,
+    isCompacting,
+    isStreamStarting,
+    loading,
+    hasOlderHistory,
+    loadingOlderHistory,
+  } = workspaceState;
 
   const {
     warning: contextSwitchWarning,
@@ -730,6 +738,18 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                 ) : (
                   <MessageListProvider value={messageListContextValue}>
                     <>
+                      {hasOlderHistory && (
+                        <div className="flex justify-center py-3">
+                          <button
+                            type="button"
+                            onClick={() => void storeRaw.loadOlderHistory(workspaceId)}
+                            disabled={loadingOlderHistory}
+                            className="text-muted hover:text-foreground text-xs underline underline-offset-2 transition-colors disabled:opacity-50"
+                          >
+                            {loadingOlderHistory ? "Loading..." : "Load older messages"}
+                          </button>
+                        </div>
+                      )}
                       {deferredMessages.map((msg, index) => {
                         const bashOutputGroup = bashOutputGroupInfos[index];
 

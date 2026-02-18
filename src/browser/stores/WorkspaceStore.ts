@@ -66,6 +66,8 @@ export interface WorkspaceState {
   isStreamStarting: boolean;
   awaitingUserQuestion: boolean;
   loading: boolean;
+  hasOlderHistory: boolean;
+  loadingOlderHistory: boolean;
   muxMessages: MuxMessage[];
   currentModel: string | null;
   currentThinkingLevel: string | null;
@@ -233,6 +235,25 @@ interface WorkspaceChatTransientState {
   liveTaskIds: Map<string, string>;
 }
 
+interface HistoryPaginationCursor {
+  beforeHistorySequence: number;
+  beforeMessageId?: string | null;
+}
+
+interface WorkspaceHistoryPaginationState {
+  nextCursor: HistoryPaginationCursor | null;
+  hasOlder: boolean;
+  loading: boolean;
+}
+
+function createInitialHistoryPaginationState(): WorkspaceHistoryPaginationState {
+  return {
+    nextCursor: null,
+    hasOlder: false,
+    loading: false,
+  };
+}
+
 function createInitialChatTransientState(): WorkspaceChatTransientState {
   return {
     caughtUp: false,
@@ -372,6 +393,9 @@ export class WorkspaceStore {
 
   // Per-workspace ephemeral chat state (buffering, queued message, live bash output, etc.)
   private chatTransientState = new Map<string, WorkspaceChatTransientState>();
+
+  // Per-workspace transcript pagination state for loading prior compaction epochs.
+  private historyPagination = new Map<string, WorkspaceHistoryPaginationState>();
 
   private workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>(); // Store metadata for name lookup
 
@@ -1116,6 +1140,35 @@ export class WorkspaceStore {
     return state;
   }
 
+  private deriveHistoryPaginationState(
+    aggregator: StreamingMessageAggregator
+  ): WorkspaceHistoryPaginationState {
+    for (const message of aggregator.getAllMessages()) {
+      const historySequence = message.metadata?.historySequence;
+      if (
+        typeof historySequence !== "number" ||
+        !Number.isInteger(historySequence) ||
+        historySequence <= 0
+      ) {
+        continue;
+      }
+
+      const hasOlder = historySequence > 1;
+      return {
+        nextCursor: hasOlder
+          ? {
+              beforeHistorySequence: historySequence,
+              beforeMessageId: message.id,
+            }
+          : null,
+        hasOlder,
+        loading: false,
+      };
+    }
+
+    return createInitialHistoryPaginationState();
+  }
+
   /**
    * Get state for a specific workspace.
    * Lazy computation - only runs when version changes.
@@ -1128,6 +1181,8 @@ export class WorkspaceStore {
 
       const hasMessages = aggregator.hasMessages();
       const transient = this.assertChatTransientState(workspaceId);
+      const historyPagination =
+        this.historyPagination.get(workspaceId) ?? createInitialHistoryPaginationState();
       const activeStreams = aggregator.getActiveStreams();
       const activity = this.workspaceActivity.get(workspaceId);
       const messages = aggregator.getAllMessages();
@@ -1140,7 +1195,7 @@ export class WorkspaceStore {
       const aggregatorRecency = aggregator.getRecencyTimestamp();
       const recencyTimestamp =
         aggregatorRecency === null
-          ? activity?.recency ?? null
+          ? (activity?.recency ?? null)
           : Math.max(aggregatorRecency, activity?.recency ?? aggregatorRecency);
       const isStreamStarting = pendingStreamStartTime !== null && !canInterrupt;
 
@@ -1162,6 +1217,8 @@ export class WorkspaceStore {
         isStreamStarting,
         awaitingUserQuestion: aggregator.hasAwaitingUserQuestion(),
         loading: !hasMessages && !transient.caughtUp,
+        hasOlderHistory: historyPagination.hasOlder,
+        loadingOlderHistory: historyPagination.loading,
         muxMessages: messages,
         currentModel,
         currentThinkingLevel,
@@ -1317,6 +1374,96 @@ export class WorkspaceStore {
     }
     aggregator.clearLastAbortReason();
     this.states.bump(workspaceId);
+  }
+
+  async loadOlderHistory(workspaceId: string): Promise<void> {
+    assert(
+      typeof workspaceId === "string" && workspaceId.length > 0,
+      "loadOlderHistory requires a non-empty workspaceId"
+    );
+
+    const client = this.client;
+    if (!client) {
+      console.warn(`[WorkspaceStore] Cannot load older history for ${workspaceId}: no ORPC client`);
+      return;
+    }
+
+    const paginationState = this.historyPagination.get(workspaceId);
+    if (!paginationState) {
+      console.warn(
+        `[WorkspaceStore] Cannot load older history for ${workspaceId}: pagination state is not initialized`
+      );
+      return;
+    }
+
+    if (!paginationState.hasOlder || paginationState.loading) {
+      return;
+    }
+
+    if (!this.aggregators.has(workspaceId)) {
+      console.warn(
+        `[WorkspaceStore] Cannot load older history for ${workspaceId}: workspace is not registered`
+      );
+      return;
+    }
+
+    this.historyPagination.set(workspaceId, {
+      ...paginationState,
+      loading: true,
+    });
+    this.states.bump(workspaceId);
+
+    try {
+      const result = await client.workspace.history.loadMore({
+        workspaceId,
+        cursor: paginationState.nextCursor,
+      });
+
+      const aggregator = this.aggregators.get(workspaceId);
+      if (!aggregator || !this.historyPagination.has(workspaceId)) {
+        return;
+      }
+
+      if (result.hasOlder) {
+        assert(
+          result.nextCursor,
+          `[WorkspaceStore] loadMore for ${workspaceId} returned hasOlder=true without nextCursor`
+        );
+      }
+
+      const historicalMessages = result.messages.filter(isMuxMessage);
+      const ignoredCount = result.messages.length - historicalMessages.length;
+      if (ignoredCount > 0) {
+        console.warn(
+          `[WorkspaceStore] Ignoring ${ignoredCount} non-message history rows for ${workspaceId}`
+        );
+      }
+
+      if (historicalMessages.length > 0) {
+        aggregator.loadHistoricalMessages(historicalMessages, false, { mode: "append" });
+        this.consumerManager.scheduleCalculation(workspaceId, aggregator);
+      }
+
+      this.historyPagination.set(workspaceId, {
+        nextCursor: result.nextCursor,
+        hasOlder: result.hasOlder,
+        loading: false,
+      });
+    } catch (error) {
+      console.error(`[WorkspaceStore] Failed to load older history for ${workspaceId}:`, error);
+
+      const latestPagination = this.historyPagination.get(workspaceId);
+      if (latestPagination) {
+        this.historyPagination.set(workspaceId, {
+          ...latestPagination,
+          loading: false,
+        });
+      }
+    } finally {
+      if (this.isWorkspaceRegistered(workspaceId)) {
+        this.states.bump(workspaceId);
+      }
+    }
   }
 
   /**
@@ -1858,6 +2005,8 @@ export class WorkspaceStore {
     // Reset per-workspace transient state so the next replay rebuilds from the backend source of truth.
     this.chatTransientState.set(workspaceId, createInitialChatTransientState());
 
+    this.historyPagination.set(workspaceId, createInitialHistoryPaginationState());
+
     this.states.bump(workspaceId);
     this.checkAndBumpRecencyIfChanged();
   }
@@ -2013,6 +2162,7 @@ export class WorkspaceStore {
           transient.replayingHistory = false;
           transient.historicalMessages.length = 0;
           transient.pendingStreamEvents.length = 0;
+          this.historyPagination.set(workspaceId, createInitialHistoryPaginationState());
         }
       }
 
@@ -2072,6 +2222,10 @@ export class WorkspaceStore {
     // Initialize transient chat state
     if (!this.chatTransientState.has(workspaceId)) {
       this.chatTransientState.set(workspaceId, createInitialChatTransientState());
+    }
+
+    if (!this.historyPagination.has(workspaceId)) {
+      this.historyPagination.set(workspaceId, createInitialHistoryPaginationState());
     }
 
     // Clear stale streaming state
@@ -2149,6 +2303,7 @@ export class WorkspaceStore {
     this.workspaceStats.delete(workspaceId);
     this.statsStore.delete(workspaceId);
     this.statsListenerCounts.delete(workspaceId);
+    this.historyPagination.delete(workspaceId);
     this.sessionUsage.delete(workspaceId);
 
     this.ensureActiveOnChatSubscription();
@@ -2213,6 +2368,7 @@ export class WorkspaceStore {
     this.workspaceStats.clear();
     this.statsStore.clear();
     this.statsListenerCounts.clear();
+    this.historyPagination.clear();
     this.sessionUsage.clear();
     this.recencyCache.clear();
     this.previousSidebarValues.clear();
@@ -2421,6 +2577,7 @@ export class WorkspaceStore {
       // Done replaying buffered events
       transient.replayingHistory = false;
 
+      this.historyPagination.set(workspaceId, this.deriveHistoryPaginationState(aggregator));
       // Mark as caught up
       transient.caughtUp = true;
       this.states.bump(workspaceId);

@@ -5,6 +5,12 @@ import type { WorkspaceActivitySnapshot, WorkspaceChatMessage } from "@/common/o
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { WorkspaceStore } from "./WorkspaceStore";
 
+type LoadMoreResponse = {
+  messages: WorkspaceChatMessage[];
+  nextCursor: { beforeHistorySequence: number; beforeMessageId?: string | null } | null;
+  hasOlder: boolean;
+};
+
 // Mock client
 // eslint-disable-next-line require-yield
 const mockOnChat = mock(async function* (
@@ -22,6 +28,14 @@ const mockOnChat = mock(async function* (
 });
 
 const mockGetSessionUsage = mock(() => Promise.resolve(undefined));
+const mockHistoryLoadMore = mock(
+  (): Promise<LoadMoreResponse> =>
+    Promise.resolve({
+      messages: [],
+      nextCursor: null,
+      hasOlder: false,
+    })
+);
 const mockActivityList = mock(() => Promise.resolve<Record<string, WorkspaceActivitySnapshot>>({}));
 // eslint-disable-next-line require-yield
 const mockActivitySubscribe = mock(async function* (
@@ -45,6 +59,9 @@ const mockClient = {
   workspace: {
     onChat: mockOnChat,
     getSessionUsage: mockGetSessionUsage,
+    history: {
+      loadMore: mockHistoryLoadMore,
+    },
     activity: {
       list: mockActivityList,
       subscribe: mockActivitySubscribe,
@@ -93,6 +110,26 @@ function createAndAddWorkspace(
   return metadata;
 }
 
+function createHistoryMessageEvent(id: string, historySequence: number): WorkspaceChatMessage {
+  return {
+    type: "message",
+    id,
+    role: "user",
+    parts: [{ type: "text", text: `message-${historySequence}` }],
+    metadata: { historySequence, timestamp: historySequence },
+  };
+}
+
+async function waitForAbortSignal(signal?: AbortSignal): Promise<void> {
+  await new Promise<void>((resolve) => {
+    if (!signal) {
+      resolve();
+      return;
+    }
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+}
+
 describe("WorkspaceStore", () => {
   let store: WorkspaceStore;
   let mockOnModelUsed: Mock<(model: string) => void>;
@@ -100,8 +137,14 @@ describe("WorkspaceStore", () => {
   beforeEach(() => {
     mockOnChat.mockClear();
     mockGetSessionUsage.mockClear();
+    mockHistoryLoadMore.mockClear();
     mockActivityList.mockClear();
     mockActivitySubscribe.mockClear();
+    mockHistoryLoadMore.mockResolvedValue({
+      messages: [],
+      nextCursor: null,
+      hasOlder: false,
+    });
     mockActivityList.mockResolvedValue({});
     mockOnModelUsed = mock(() => undefined);
     store = new WorkspaceStore(mockOnModelUsed);
@@ -385,6 +428,112 @@ describe("WorkspaceStore", () => {
       expect(state1).toEqual(state2);
       expect(state1.canInterrupt).toBe(state2.canInterrupt);
       expect(state1.loading).toBe(state2.loading);
+    });
+  });
+
+  describe("history pagination", () => {
+    it("initializes pagination from the oldest loaded history sequence on caught-up", async () => {
+      const workspaceId = "history-pagination-workspace-1";
+
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        yield createHistoryMessageEvent("msg-newer", 5);
+        await Promise.resolve();
+        yield { type: "caught-up" };
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.hasOlderHistory).toBe(true);
+      expect(state.loadingOlderHistory).toBe(false);
+    });
+
+    it("loads older history and prepends it to the transcript", async () => {
+      const workspaceId = "history-pagination-workspace-2";
+
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        yield createHistoryMessageEvent("msg-newer", 5);
+        await Promise.resolve();
+        yield { type: "caught-up" };
+        await waitForAbortSignal(options?.signal);
+      });
+
+      mockHistoryLoadMore.mockResolvedValueOnce({
+        messages: [createHistoryMessageEvent("msg-older", 3)],
+        nextCursor: null,
+        hasOlder: false,
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(store.getWorkspaceState(workspaceId).hasOlderHistory).toBe(true);
+
+      await store.loadOlderHistory(workspaceId);
+
+      expect(mockHistoryLoadMore).toHaveBeenCalledWith({
+        workspaceId,
+        cursor: {
+          beforeHistorySequence: 5,
+          beforeMessageId: "msg-newer",
+        },
+      });
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.hasOlderHistory).toBe(false);
+      expect(state.loadingOlderHistory).toBe(false);
+      expect(state.muxMessages.map((message) => message.id)).toEqual(["msg-older", "msg-newer"]);
+    });
+
+    it("exposes loadingOlderHistory while requests are in flight and ignores concurrent loads", async () => {
+      const workspaceId = "history-pagination-workspace-3";
+
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        yield createHistoryMessageEvent("msg-newer", 5);
+        await Promise.resolve();
+        yield { type: "caught-up" };
+        await waitForAbortSignal(options?.signal);
+      });
+
+      let resolveLoadMore: ((value: LoadMoreResponse) => void) | undefined;
+
+      const loadMorePromise = new Promise<LoadMoreResponse>((resolve) => {
+        resolveLoadMore = resolve;
+      });
+      mockHistoryLoadMore.mockReturnValueOnce(loadMorePromise);
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const firstLoad = store.loadOlderHistory(workspaceId);
+      expect(store.getWorkspaceState(workspaceId).loadingOlderHistory).toBe(true);
+
+      const secondLoad = store.loadOlderHistory(workspaceId);
+      expect(mockHistoryLoadMore).toHaveBeenCalledTimes(1);
+
+      resolveLoadMore?.({
+        messages: [],
+        nextCursor: null,
+        hasOlder: false,
+      });
+
+      await firstLoad;
+      await secondLoad;
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.loadingOlderHistory).toBe(false);
+      expect(state.hasOlderHistory).toBe(false);
     });
   });
 
