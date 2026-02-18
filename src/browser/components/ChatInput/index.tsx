@@ -2560,41 +2560,45 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   />
                 </div>
 
-                {canInterrupt && (
-                  <SendModeDropdown
-                    onSelect={(mode) => {
-                      void handleSend(
-                        mode === "tool-end" ? undefined : { queueDispatchMode: mode }
-                      );
-                    }}
-                  />
-                )}
+                <div className="inline-flex items-center gap-0">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        onClick={() => void handleSend()}
+                        disabled={!canSend}
+                        aria-label="Send message"
+                        size="xs"
+                        variant="ghost"
+                        className={cn(
+                          "text-muted hover:text-foreground hover:bg-hover inline-flex items-center justify-center rounded-sm px-1.5 py-0.5 font-medium transition-colors duration-200 disabled:opacity-50",
+                          // Touch: wider tap target, keep icon centered.
+                          "[@media(hover:none)_and_(pointer:coarse)]:h-9 [@media(hover:none)_and_(pointer:coarse)]:w-11 [@media(hover:none)_and_(pointer:coarse)]:px-0 [@media(hover:none)_and_(pointer:coarse)]:py-0 [@media(hover:none)_and_(pointer:coarse)]:text-sm"
+                        )}
+                      >
+                        <SendHorizontal
+                          className="h-3.5 w-3.5 [@media(hover:none)_and_(pointer:coarse)]:h-4 [@media(hover:none)_and_(pointer:coarse)]:w-4"
+                          strokeWidth={2.5}
+                        />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent align="center">
+                      <span>Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})</span>
+                    </TooltipContent>
+                  </Tooltip>
 
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      onClick={() => void handleSend()}
-                      disabled={!canSend}
-                      aria-label="Send message"
-                      size="xs"
-                      variant="ghost"
-                      className={cn(
-                        "text-muted hover:text-foreground hover:bg-hover inline-flex items-center justify-center rounded-sm px-1.5 py-0.5 font-medium transition-colors duration-200 disabled:opacity-50",
-                        // Touch: wider tap target, keep icon centered.
-                        "[@media(hover:none)_and_(pointer:coarse)]:h-9 [@media(hover:none)_and_(pointer:coarse)]:w-11 [@media(hover:none)_and_(pointer:coarse)]:px-0 [@media(hover:none)_and_(pointer:coarse)]:py-0 [@media(hover:none)_and_(pointer:coarse)]:text-sm"
-                      )}
-                    >
-                      <SendHorizontal
-                        className="h-3.5 w-3.5 [@media(hover:none)_and_(pointer:coarse)]:h-4 [@media(hover:none)_and_(pointer:coarse)]:w-4"
-                        strokeWidth={2.5}
-                      />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent align="center">
-                    <span>Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})</span>
-                  </TooltipContent>
-                </Tooltip>
+                  {canInterrupt && (
+                    <SendModeDropdown
+                      disabled={!hasTypedText || !canSend}
+                      triggerClassName="-ml-1 px-0"
+                      onSelect={(mode) => {
+                        void handleSend(
+                          mode === "tool-end" ? undefined : { queueDispatchMode: mode }
+                        );
+                      }}
+                    />
+                  )}
+                </div>
               </div>
             </div>
           </div>

@@ -2,11 +2,14 @@ import React, { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { Button } from "../ui/button";
 import { formatKeybind } from "@/browser/utils/ui/keybinds";
+import { cn } from "@/common/lib/utils";
 import type { QueueDispatchMode } from "./types";
 import { SEND_DISPATCH_MODES } from "./sendDispatchModes";
 
 interface SendModeDropdownProps {
   onSelect: (mode: QueueDispatchMode) => void;
+  triggerClassName?: string;
+  disabled?: boolean;
 }
 
 export const SendModeDropdown: React.FC<SendModeDropdownProps> = (props) => {
@@ -47,6 +50,14 @@ export const SendModeDropdown: React.FC<SendModeDropdownProps> = (props) => {
     return () => document.removeEventListener("keydown", handleEscape);
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!props.disabled) {
+      return;
+    }
+
+    setIsOpen(false);
+  }, [props.disabled]);
+
   const handleSelect = (mode: QueueDispatchMode) => {
     props.onSelect(mode);
     setIsOpen(false);
@@ -60,23 +71,27 @@ export const SendModeDropdown: React.FC<SendModeDropdownProps> = (props) => {
         variant="ghost"
         aria-label="Send mode options"
         aria-expanded={isOpen}
+        disabled={props.disabled}
         onClick={() => setIsOpen((prev) => !prev)}
-        className="text-muted hover:text-foreground hover:bg-hover inline-flex items-center justify-center rounded-sm px-1.5 py-0.5 font-medium transition-colors duration-200"
+        className={cn(
+          "text-muted hover:text-foreground hover:bg-hover inline-flex items-center justify-center rounded-sm px-0.5 py-0.5 font-medium transition-colors duration-200",
+          props.triggerClassName
+        )}
       >
-        <ChevronDown className="h-3.5 w-3.5" strokeWidth={2.5} />
+        <ChevronDown className="h-1.5 w-1.5" strokeWidth={2.5} />
       </Button>
 
       {isOpen && (
-        <div className="bg-separator border-border-light absolute right-0 bottom-full mb-1 rounded-md border p-1 shadow-md">
+        <div className="bg-separator border-border-light absolute right-0 bottom-full mb-1 min-w-[12.5rem] rounded-md border p-1.5 shadow-md">
           {SEND_DISPATCH_MODES.map((entry) => (
             <button
               key={entry.mode}
               type="button"
-              className="hover:bg-hover focus-visible:bg-hover text-foreground flex w-full items-center justify-between gap-3 rounded-sm px-2 py-1 text-left text-xs"
+              className="hover:bg-hover focus-visible:bg-hover text-foreground flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-1 text-left text-xs"
               onClick={() => handleSelect(entry.mode)}
             >
-              <span>{entry.label}</span>
-              <kbd className="bg-background-secondary text-foreground border-border-medium rounded border px-2 py-0.5 font-mono text-xs">
+              <span className="whitespace-nowrap">{entry.label}</span>
+              <kbd className="bg-background-secondary text-foreground border-border-medium whitespace-nowrap rounded border px-1.5 py-px font-mono text-[10px]">
                 {formatKeybind(entry.keybind)}
               </kbd>
             </button>

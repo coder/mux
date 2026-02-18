@@ -45,12 +45,21 @@ async function waitForForegroundToolCallId(
   }
 }
 
-function getSendModeTrigger(container: HTMLElement): HTMLButtonElement | null {
+function getSendModeButton(container: HTMLElement): HTMLButtonElement | null {
   const buttons = Array.from(
     container.querySelectorAll('button[aria-label="Send mode options"]')
   ) as HTMLButtonElement[];
 
-  return buttons.find((button) => !button.disabled) ?? null;
+  return buttons[0] ?? null;
+}
+
+function getSendModeTrigger(container: HTMLElement): HTMLButtonElement | null {
+  const button = getSendModeButton(container);
+  if (!button || button.disabled) {
+    return null;
+  }
+
+  return button;
 }
 
 async function waitForSendModeTrigger(container: HTMLElement): Promise<HTMLButtonElement> {
@@ -114,7 +123,7 @@ describe("SendModeDropdown (mock AI router)", () => {
     const app = await createAppHarness({ branchPrefix: "send-mode-dropdown" });
 
     try {
-      expect(getSendModeTrigger(app.view.container)).toBeNull();
+      expect(getSendModeButton(app.view.container)).toBeNull();
     } finally {
       await app.dispose();
     }
@@ -126,13 +135,26 @@ describe("SendModeDropdown (mock AI router)", () => {
     try {
       await startStreamingTurn(app, "show send mode trigger while streaming");
 
+      const disabledTrigger = await waitFor(
+        () => {
+          const trigger = getSendModeButton(app.view.container);
+          if (!trigger) {
+            throw new Error("Send mode trigger is not visible");
+          }
+          return trigger;
+        },
+        { timeout: 30_000 }
+      );
+      expect(disabledTrigger.disabled).toBe(true);
+
+      await app.chat.typeWithoutSending("enable send mode dropdown");
       await waitForSendModeTrigger(app.view.container);
 
       await app.chat.expectStreamComplete(60_000);
 
       await waitFor(
         () => {
-          expect(getSendModeTrigger(app.view.container)).toBeNull();
+          expect(getSendModeButton(app.view.container)).toBeNull();
         },
         { timeout: 30_000 }
       );
@@ -146,6 +168,7 @@ describe("SendModeDropdown (mock AI router)", () => {
 
     try {
       await startStreamingTurn(app, "open send mode dropdown menu");
+      await app.chat.typeWithoutSending("open send mode menu");
 
       const trigger = await waitForSendModeTrigger(app.view.container);
       fireEvent.click(trigger);
