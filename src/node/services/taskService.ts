@@ -376,6 +376,98 @@ export class TaskService {
     }
   }
 
+  private async isAgentEnabledForTaskWorkspace(args: {
+    workspaceId: string;
+    projectPath: string;
+    workspace: Pick<WorkspaceConfigEntry, "id" | "name" | "path" | "runtimeConfig">;
+    agentId: "exec" | "orchestrator";
+  }): Promise<boolean> {
+    assert(
+      args.workspaceId.length > 0,
+      "isAgentEnabledForTaskWorkspace: workspaceId must be non-empty"
+    );
+    assert(
+      args.projectPath.length > 0,
+      "isAgentEnabledForTaskWorkspace: projectPath must be non-empty"
+    );
+
+    const workspaceName = coerceNonEmptyString(args.workspace.name) ?? args.workspace.id;
+    if (!workspaceName) {
+      return false;
+    }
+
+    const runtimeConfig = args.workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG;
+    const runtime = createRuntimeForWorkspace({
+      runtimeConfig,
+      projectPath: args.projectPath,
+      name: workspaceName,
+    });
+    const workspacePath =
+      coerceNonEmptyString(args.workspace.path) ??
+      runtime.getWorkspacePath(args.projectPath, workspaceName);
+
+    if (!workspacePath) {
+      return false;
+    }
+
+    try {
+      const resolvedFrontmatter = await resolveAgentFrontmatter(
+        runtime,
+        workspacePath,
+        args.agentId
+      );
+      const cfg = this.config.loadConfigOrDefault();
+      const effectivelyDisabled = isAgentEffectivelyDisabled({
+        cfg,
+        agentId: args.agentId,
+        resolvedFrontmatter,
+      });
+      return !effectivelyDisabled;
+    } catch (error: unknown) {
+      log.warn("Failed to resolve task handoff target agent availability", {
+        workspaceId: args.workspaceId,
+        agentId: args.agentId,
+        error: getErrorMessage(error),
+      });
+      return false;
+    }
+  }
+
+  private async resolvePlanAutoHandoffTargetAgentId(args: {
+    workspaceId: string;
+    entry: {
+      projectPath: string;
+      workspace: Pick<WorkspaceConfigEntry, "id" | "name" | "path" | "runtimeConfig">;
+    };
+    preferOrchestrator: boolean;
+  }): Promise<"exec" | "orchestrator"> {
+    assert(
+      args.workspaceId.length > 0,
+      "resolvePlanAutoHandoffTargetAgentId: workspaceId must be non-empty"
+    );
+
+    if (!args.preferOrchestrator) {
+      return "exec";
+    }
+
+    const orchestratorEnabled = await this.isAgentEnabledForTaskWorkspace({
+      workspaceId: args.workspaceId,
+      projectPath: args.entry.projectPath,
+      workspace: args.entry.workspace,
+      agentId: "orchestrator",
+    });
+    if (orchestratorEnabled) {
+      return "orchestrator";
+    }
+
+    // If orchestrator is disabled/unavailable, fall back to exec before mutating
+    // workspace agent state so the handoff stream can still proceed.
+    log.warn("Plan-task auto-handoff falling back to exec because orchestrator is unavailable", {
+      workspaceId: args.workspaceId,
+    });
+    return "exec";
+  }
+
   private async emitWorkspaceMetadata(workspaceId: string): Promise<void> {
     assert(workspaceId.length > 0, "emitWorkspaceMetadata: workspaceId must be non-empty");
 
@@ -2225,9 +2317,19 @@ export class TaskService {
     this.handoffInProgress.add(args.workspaceId);
 
     try {
-      const targetAgentId: "exec" | "orchestrator" = args.planSubagentDefaultsToOrchestrator
-        ? "orchestrator"
-        : "exec";
+      const targetAgentId = await this.resolvePlanAutoHandoffTargetAgentId({
+        workspaceId: args.workspaceId,
+        entry: {
+          projectPath: args.entry.projectPath,
+          workspace: {
+            id: args.entry.workspace.id,
+            name: args.entry.workspace.name,
+            path: args.entry.workspace.path,
+            runtimeConfig: args.entry.workspace.runtimeConfig,
+          },
+        },
+        preferOrchestrator: args.planSubagentDefaultsToOrchestrator,
+      });
 
       let planSummary: { content: string; path: string } | null = null;
 

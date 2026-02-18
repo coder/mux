@@ -3135,6 +3135,7 @@ describe("TaskService", () => {
   async function setupPlanModeStreamEndHarness(options?: {
     planSubagentDefaultsToOrchestrator?: boolean;
     childAgentId?: string;
+    disableOrchestrator?: boolean;
     sendMessageOverride?: ReturnType<typeof mock>;
   }) {
     const config = await createTestConfig(rootDir);
@@ -3196,6 +3197,15 @@ describe("TaskService", () => {
         maxTaskNestingDepth: 3,
         planSubagentDefaultsToOrchestrator: options?.planSubagentDefaultsToOrchestrator ?? false,
       },
+      agentAiDefaults: options?.disableOrchestrator
+        ? {
+            orchestrator: {
+              modelString: "openai:gpt-4o-mini",
+              thinkingLevel: "off",
+              enabled: false,
+            },
+          }
+        : undefined,
     });
 
     const getInfo = mock(() => ({
@@ -3364,6 +3374,31 @@ describe("TaskService", () => {
       .find((workspace) => workspace.id === childId);
 
     expect(updatedTask?.agentId).toBe("orchestrator");
+    expect(updatedTask?.taskStatus).toBe("running");
+  });
+
+  test("stream-end with propose_plan success falls back to exec when orchestrator is disabled", async () => {
+    const { config, childId, sendMessage, internal } = await setupPlanModeStreamEndHarness({
+      planSubagentDefaultsToOrchestrator: true,
+      disableOrchestrator: true,
+    });
+
+    await internal.handleStreamEnd(makeSuccessfulProposePlanStreamEndEvent(childId));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      childId,
+      expect.stringContaining("Implement the plan"),
+      expect.objectContaining({ agentId: "exec" }),
+      expect.objectContaining({ synthetic: true })
+    );
+
+    const postCfg = config.loadConfigOrDefault();
+    const updatedTask = Array.from(postCfg.projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === childId);
+
+    expect(updatedTask?.agentId).toBe("exec");
     expect(updatedTask?.taskStatus).toBe("running");
   });
 
