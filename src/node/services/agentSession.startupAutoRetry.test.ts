@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-
+import { EventEmitter } from "events";
 import { AgentSession } from "./agentSession";
 import { createTestHistoryService } from "./testHistoryService";
 import type { AIService } from "./aiService";
@@ -152,6 +152,123 @@ describe("AgentSession startup auto-retry recovery", () => {
     session.dispose();
   });
 
+  test("re-runs startup auto-retry check after busy startup state clears", async () => {
+    const workspaceId = "startup-retry-busy-rerun";
+    const { session, historyService, events, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const appendResult = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-1", "user", "Interrupted while startup was busy", {
+        timestamp: Date.now(),
+      })
+    );
+    expect(appendResult.success).toBe(true);
+
+    const privateSession = session as unknown as {
+      setTurnPhase: (phase: "idle" | "preparing" | "streaming" | "completing") => void;
+      startupAutoRetryCheckPromise: Promise<void> | null;
+      startupAutoRetryCheckScheduled: boolean;
+    };
+
+    privateSession.setTurnPhase("preparing");
+    session.ensureStartupAutoRetryCheck();
+
+    const firstCheckPromise = privateSession.startupAutoRetryCheckPromise;
+    await firstCheckPromise;
+
+    expect(privateSession.startupAutoRetryCheckScheduled).toBe(false);
+    expect(events.some((event) => event.type === "auto-retry-scheduled")).toBe(false);
+
+    privateSession.setTurnPhase("idle");
+
+    const deadline = Date.now() + 1500;
+    while (
+      !events.some((event) => event.type === "auto-retry-scheduled") &&
+      Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    expect(events.some((event) => event.type === "auto-retry-scheduled")).toBe(true);
+    expect(privateSession.startupAutoRetryCheckScheduled).toBe(true);
+
+    session.dispose();
+  });
+
+  test("waits for AI streaming to settle before rerunning deferred startup checks", async () => {
+    const workspaceId = "startup-retry-wait-stream-settle";
+    const { historyService, config, cleanup } = await createTestHistoryService();
+    cleanups.push(cleanup);
+
+    let aiStreaming = true;
+    const aiEmitter = new EventEmitter();
+    const aiService = Object.assign(aiEmitter, {
+      isStreaming: mock((_workspaceId: string) => aiStreaming),
+      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
+      streamMessage: mock(() => Promise.resolve(Ok(undefined))),
+    }) as unknown as AIService;
+
+    const initStateManager = new EventEmitter() as unknown as InitStateManager;
+    const backgroundProcessManager: BackgroundProcessManager = {
+      cleanup: mock((_workspaceId: string) => Promise.resolve()),
+      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
+        void _queued;
+      }),
+    } as unknown as BackgroundProcessManager;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const privateSession = session as unknown as {
+      scheduleStartupAutoRetryIfNeeded: () => Promise<"completed" | "deferred">;
+      startupAutoRetryCheckPromise: Promise<void> | null;
+      startupAutoRetryCheckScheduled: boolean;
+    };
+
+    let scheduleCalls = 0;
+    privateSession.scheduleStartupAutoRetryIfNeeded = mock(() => {
+      scheduleCalls += 1;
+      const outcome: "completed" | "deferred" = scheduleCalls === 1 ? "deferred" : "completed";
+      return Promise.resolve(outcome);
+    });
+
+    session.ensureStartupAutoRetryCheck();
+
+    const firstCheckPromise = privateSession.startupAutoRetryCheckPromise;
+    await firstCheckPromise;
+
+    expect(scheduleCalls).toBe(1);
+    expect(privateSession.startupAutoRetryCheckScheduled).toBe(false);
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(scheduleCalls).toBe(1);
+
+    aiStreaming = false;
+    aiEmitter.emit("stream-abort", {
+      type: "stream-abort",
+      workspaceId,
+      messageId: "assistant-1",
+      abortReason: "system",
+    });
+
+    const deadline = Date.now() + 1000;
+    while (scheduleCalls < 2 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    expect(scheduleCalls).toBe(2);
+    expect(privateSession.startupAutoRetryCheckScheduled).toBe(true);
+
+    session.dispose();
+  });
+
   test("restores persisted retry send options for startup auto-retry", async () => {
     const workspaceId = "startup-retry-preserve-options";
     const { session, historyService, cleanup } = await createSessionBundle(workspaceId);
@@ -295,6 +412,227 @@ describe("AgentSession startup auto-retry recovery", () => {
     expect(events.some((event) => event.type === "auto-retry-scheduled")).toBe(false);
 
     secondSession.dispose();
+  });
+
+  test("does not reschedule startup retries after persisted non-retryable failure", async () => {
+    const workspaceId = "startup-retry-non-retryable";
+    const {
+      session: firstSession,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+      cleanup,
+    } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const appendResult = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-1", "user", "Interrupted prompt", {
+        timestamp: Date.now(),
+      })
+    );
+    expect(appendResult.success).toBe(true);
+
+    await (
+      firstSession as unknown as {
+        persistStartupAutoRetryAbandon: (reason: string, userMessageId?: string) => Promise<void>;
+      }
+    ).persistStartupAutoRetryAbandon("runtime_not_ready", "user-1");
+
+    firstSession.dispose();
+
+    const secondSession = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const events: WorkspaceChatMessage[] = [];
+    secondSession.onChatEvent(({ message }) => {
+      events.push(message);
+    });
+
+    secondSession.ensureStartupAutoRetryCheck();
+
+    const startupCheckPromise = (
+      secondSession as unknown as { startupAutoRetryCheckPromise: Promise<void> | null }
+    ).startupAutoRetryCheckPromise;
+    await startupCheckPromise;
+
+    expect(events.some((event) => event.type === "auto-retry-scheduled")).toBe(false);
+
+    secondSession.dispose();
+  });
+
+  test("clears persisted startup abandon state once retry resumes successfully", async () => {
+    const workspaceId = "startup-retry-clear-abandon-on-resume";
+    const { session, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const privateSession = session as unknown as {
+      persistStartupAutoRetryAbandon: (reason: string, userMessageId?: string) => Promise<void>;
+      retryActiveStream: () => Promise<void>;
+      getAutoRetryPreferencePath: () => string;
+      lastAutoRetryOptions?: SendMessageOptions;
+      resumeStream: (options: SendMessageOptions) => Promise<{ success: true; data: undefined }>;
+      startupAutoRetryAbandon: { reason: string; userMessageId?: string } | null;
+    };
+
+    await privateSession.persistStartupAutoRetryAbandon("runtime_not_ready", "user-1");
+
+    const preferencePath = privateSession.getAutoRetryPreferencePath();
+    expect(await Bun.file(preferencePath).exists()).toBe(true);
+
+    privateSession.lastAutoRetryOptions = {
+      model: "anthropic:claude-sonnet-4-5",
+      agentId: "exec",
+    };
+
+    const resumeStreamMock = mock((_options: SendMessageOptions) =>
+      Promise.resolve({ success: true as const, data: undefined })
+    );
+    privateSession.resumeStream = resumeStreamMock;
+
+    await privateSession.retryActiveStream();
+
+    expect(resumeStreamMock).toHaveBeenCalledTimes(1);
+    expect(privateSession.startupAutoRetryAbandon).toBeNull();
+    expect(await Bun.file(preferencePath).exists()).toBe(false);
+
+    session.dispose();
+  });
+
+  test("does not re-process retry failures already handled by resumeStream", async () => {
+    const workspaceId = "startup-retry-no-double-process-failure";
+    const { session, events, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const privateSession = session as unknown as {
+      retryActiveStream: () => Promise<void>;
+      lastAutoRetryOptions?: SendMessageOptions;
+      activeStreamFailureHandled: boolean;
+      resumeStream: (
+        options: SendMessageOptions
+      ) => Promise<
+        | { success: true; data: undefined }
+        | { success: false; error: { type: "runtime_start_failed"; message: string } }
+      >;
+    };
+
+    privateSession.lastAutoRetryOptions = {
+      model: "anthropic:claude-sonnet-4-5",
+      agentId: "exec",
+    };
+
+    privateSession.activeStreamFailureHandled = true;
+    const resumeStreamMock = mock((_options: SendMessageOptions) =>
+      Promise.resolve({
+        success: false as const,
+        error: {
+          type: "runtime_start_failed" as const,
+          message: "runtime is still starting",
+        },
+      })
+    );
+    privateSession.resumeStream = resumeStreamMock;
+
+    const scheduledBefore = events.filter((event) => event.type === "auto-retry-scheduled").length;
+
+    await privateSession.retryActiveStream();
+
+    const scheduledAfter = events.filter((event) => event.type === "auto-retry-scheduled").length;
+    expect(resumeStreamMock).toHaveBeenCalledTimes(1);
+    expect(scheduledAfter).toBe(scheduledBefore);
+
+    session.dispose();
+  });
+
+  test("handles unprocessed resume failures by scheduling the next retry", async () => {
+    const workspaceId = "startup-retry-process-unhandled-failure";
+    const { session, events, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const privateSession = session as unknown as {
+      retryActiveStream: () => Promise<void>;
+      lastAutoRetryOptions?: SendMessageOptions;
+      activeStreamFailureHandled: boolean;
+      resumeStream: (
+        options: SendMessageOptions
+      ) => Promise<
+        | { success: true; data: undefined }
+        | { success: false; error: { type: "runtime_start_failed"; message: string } }
+      >;
+    };
+
+    privateSession.lastAutoRetryOptions = {
+      model: "anthropic:claude-sonnet-4-5",
+      agentId: "exec",
+    };
+
+    privateSession.activeStreamFailureHandled = false;
+    const resumeStreamMock = mock((_options: SendMessageOptions) =>
+      Promise.resolve({
+        success: false as const,
+        error: {
+          type: "runtime_start_failed" as const,
+          message: "runtime is still starting",
+        },
+      })
+    );
+    privateSession.resumeStream = resumeStreamMock;
+
+    const scheduledBefore = events.filter((event) => event.type === "auto-retry-scheduled").length;
+
+    await privateSession.retryActiveStream();
+
+    const scheduledAfter = events.filter((event) => event.type === "auto-retry-scheduled").length;
+    expect(resumeStreamMock).toHaveBeenCalledTimes(1);
+    expect(scheduledAfter).toBe(scheduledBefore + 1);
+
+    session.dispose();
+  });
+
+  test("skips persisting startup abandon marker for system aborts", async () => {
+    const workspaceId = "startup-retry-system-abort-skip";
+    const { session, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const privateSession = session as unknown as {
+      getAutoRetryPreferencePath: () => string;
+      startupAutoRetryAbandon: { reason: string; userMessageId?: string } | null;
+      updateStartupAutoRetryAbandonFromAbort: (
+        abortReason: "user" | "startup" | "system" | undefined,
+        userMessageId?: string
+      ) => Promise<void>;
+    };
+
+    const preferencePath = privateSession.getAutoRetryPreferencePath();
+
+    await privateSession.updateStartupAutoRetryAbandonFromAbort("system", "user-1");
+
+    expect(privateSession.startupAutoRetryAbandon).toBeNull();
+    expect(await Bun.file(preferencePath).exists()).toBe(false);
+
+    await privateSession.updateStartupAutoRetryAbandonFromAbort("user", "user-1");
+
+    expect(privateSession.startupAutoRetryAbandon).toEqual({
+      reason: "aborted",
+      userMessageId: "user-1",
+    });
+    const persisted = JSON.parse(await Bun.file(preferencePath).text()) as {
+      startupAutoRetryAbandon?: { reason?: string; userMessageId?: string };
+    };
+    expect(persisted.startupAutoRetryAbandon).toEqual({
+      reason: "aborted",
+      userMessageId: "user-1",
+    });
+
+    session.dispose();
   });
 
   test("does not schedule startup auto-retry while ask_user_question is waiting", async () => {

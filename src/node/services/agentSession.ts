@@ -28,6 +28,7 @@ import type {
 } from "@/common/orpc/types";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { SendMessageError } from "@/common/types/errors";
+import type { StreamAbortReason } from "@/common/types/stream";
 import { AgentIdSchema, SkillNameSchema } from "@/common/orpc/schemas";
 import {
   buildStreamErrorEventData,
@@ -93,6 +94,10 @@ import {
   isValidModelFormat,
   supports1MContext,
 } from "@/common/utils/ai/models";
+import {
+  isNonRetryableSendError,
+  isNonRetryableStreamError,
+} from "@/common/utils/messages/retryEligibility";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
 import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
@@ -201,6 +206,8 @@ enum TurnPhase {
   COMPLETING = "completing",
 }
 
+type StartupAutoRetryCheckOutcome = "completed" | "deferred";
+
 export class AgentSession {
   private readonly workspaceId: string;
   private readonly config: Config;
@@ -242,6 +249,7 @@ export class AgentSession {
   private startupAutoRetryCheckScheduled = false;
   private startupAutoRetryCheckPromise: Promise<void> | null = null;
   private autoRetryEnabledPreference: boolean | null = null;
+  private startupAutoRetryAbandon: { reason: string; userMessageId?: string } | null = null;
 
   /** Latest context-usage snapshot used for on-send compaction checks. */
   private lastUsageState?: AutoCompactionUsageState;
@@ -291,6 +299,18 @@ export class AgentSession {
 
   /** True once we see any model/tool output for the current stream (retry guard). */
   private activeStreamHadAnyDelta = false;
+
+  /**
+   * True when AIService has already emitted an `error` event for the current stream attempt.
+   * Used to avoid duplicate retry scheduling when streamMessage later returns the same failure.
+   */
+  private activeStreamErrorEventReceived = false;
+
+  /**
+   * True when the latest streamWithHistory() failure path already updated retry/abandon state.
+   * retryActiveStream() uses this to avoid double-processing handled failures.
+   */
+  private activeStreamFailureHandled = false;
 
   /** Tracks whether the current stream included post-compaction attachments. */
   private activeStreamHadPostCompactionInjection = false;
@@ -492,16 +512,58 @@ export class AgentSession {
     }
 
     const result = await this.resumeStream(options);
-    if (!result.success) {
-      this.retryManager.handleStreamFailure({
-        type: result.error.type,
-        message: this.extractRetryFailureMessage(result.error),
-      });
+    if (result.success) {
+      // Retry resumed the stream successfully. Clear stale startup-abandon markers now
+      // (not only on stream-end) so a crash/restart mid-stream doesn't suppress recovery.
+      await this.clearStartupAutoRetryAbandon();
+      return;
     }
+
+    if (this.activeStreamFailureHandled) {
+      // resumeStream() failure paths already flowed through streamWithHistory() /
+      // handleStreamError(), which scheduled retry and persisted abandon state.
+      // Re-processing here would double-increment backoff attempts.
+      return;
+    }
+
+    // Fallback: resumeStream() can fail before stream error handlers run
+    // (for example commitPartial/history read failures). Handle those here so
+    // auto-retry continues instead of stalling after auto-retry-starting.
+    this.retryManager.handleStreamFailure({
+      type: result.error.type,
+      message: this.extractRetryFailureMessage(result.error),
+    });
+    await this.updateStartupAutoRetryAbandonFromFailure(
+      result.error.type,
+      this.activeStreamUserMessageId
+    );
   }
 
   private getAutoRetryPreferencePath(): string {
     return path.join(this.config.getSessionDir(this.workspaceId), AUTO_RETRY_PREFERENCE_FILE);
+  }
+
+  private parseStartupAutoRetryAbandon(
+    value: unknown
+  ): { reason: string; userMessageId?: string } | null {
+    if (typeof value !== "object" || value === null) {
+      return null;
+    }
+
+    const parsed = value as { reason?: unknown; userMessageId?: unknown };
+    if (typeof parsed.reason !== "string" || parsed.reason.trim().length === 0) {
+      return null;
+    }
+
+    const userMessageId =
+      typeof parsed.userMessageId === "string" && parsed.userMessageId.trim().length > 0
+        ? parsed.userMessageId
+        : undefined;
+
+    return {
+      reason: parsed.reason,
+      ...(userMessageId ? { userMessageId } : {}),
+    };
   }
 
   private async loadAutoRetryEnabledPreference(): Promise<boolean> {
@@ -512,13 +574,20 @@ export class AgentSession {
     const preferencePath = this.getAutoRetryPreferencePath();
     try {
       const raw = await readFile(preferencePath, "utf-8");
-      const parsed = JSON.parse(raw) as { enabled?: unknown };
+      const parsed = JSON.parse(raw) as {
+        enabled?: unknown;
+        startupAutoRetryAbandon?: unknown;
+      };
       const enabled = parsed.enabled !== false;
       this.autoRetryEnabledPreference = enabled;
+      this.startupAutoRetryAbandon = this.parseStartupAutoRetryAbandon(
+        parsed.startupAutoRetryAbandon
+      );
       this.retryManager.setEnabled(enabled);
       return enabled;
     } catch (error) {
       this.autoRetryEnabledPreference = true;
+      this.startupAutoRetryAbandon = null;
 
       // Missing preference file is the default path. Only log malformed JSON or IO surprises.
       const errno =
@@ -537,11 +606,12 @@ export class AgentSession {
     }
   }
 
-  private async persistAutoRetryEnabledPreference(enabled: boolean): Promise<void> {
-    this.autoRetryEnabledPreference = enabled;
+  private async persistAutoRetryState(): Promise<void> {
     const preferencePath = this.getAutoRetryPreferencePath();
+    const enabled = this.autoRetryEnabledPreference !== false;
+    const hasStartupAbandonState = this.startupAutoRetryAbandon !== null;
 
-    if (enabled) {
+    if (enabled && !hasStartupAbandonState) {
       try {
         await unlink(preferencePath);
       } catch (error) {
@@ -559,15 +629,82 @@ export class AgentSession {
       return;
     }
 
+    const payload: {
+      enabled?: false;
+      startupAutoRetryAbandon?: { reason: string; userMessageId?: string };
+    } = {};
+
+    if (!enabled) {
+      payload.enabled = false;
+    }
+
+    if (this.startupAutoRetryAbandon) {
+      payload.startupAutoRetryAbandon = this.startupAutoRetryAbandon;
+    }
+
     try {
       await mkdir(path.dirname(preferencePath), { recursive: true });
-      await writeFile(preferencePath, JSON.stringify({ enabled: false }) + "\n", "utf-8");
+      await writeFile(preferencePath, JSON.stringify(payload) + "\n", "utf-8");
     } catch (error) {
       log.warn("Failed to persist auto-retry preference", {
         workspaceId: this.workspaceId,
         error: getErrorMessage(error),
       });
     }
+  }
+
+  private async persistAutoRetryEnabledPreference(enabled: boolean): Promise<void> {
+    this.autoRetryEnabledPreference = enabled;
+    await this.persistAutoRetryState();
+  }
+
+  private async persistStartupAutoRetryAbandon(
+    reason: string,
+    userMessageId?: string
+  ): Promise<void> {
+    this.startupAutoRetryAbandon = {
+      reason,
+      ...(userMessageId ? { userMessageId } : {}),
+    };
+    await this.persistAutoRetryState();
+  }
+
+  private async clearStartupAutoRetryAbandon(): Promise<void> {
+    if (this.startupAutoRetryAbandon === null) {
+      return;
+    }
+
+    this.startupAutoRetryAbandon = null;
+    await this.persistAutoRetryState();
+  }
+
+  private async updateStartupAutoRetryAbandonFromFailure(
+    errorType: string,
+    userMessageId?: string
+  ): Promise<void> {
+    if (
+      isNonRetryableSendError({ type: errorType }) ||
+      isNonRetryableStreamError({ type: errorType })
+    ) {
+      await this.persistStartupAutoRetryAbandon(errorType, userMessageId);
+      return;
+    }
+
+    await this.clearStartupAutoRetryAbandon();
+  }
+
+  private async updateStartupAutoRetryAbandonFromAbort(
+    abortReason: StreamAbortReason | undefined,
+    userMessageId?: string
+  ): Promise<void> {
+    // "system" aborts come from backend-orchestrated flows (for example,
+    // mid-stream auto-compaction). They are not user intent and must not poison
+    // startup recovery with a persisted non-retryable "aborted" marker.
+    if (abortReason === "system") {
+      return;
+    }
+
+    await this.updateStartupAutoRetryAbandonFromFailure("aborted", userMessageId);
   }
 
   private isAiStreaming(): boolean {
@@ -826,14 +963,14 @@ export class AgentSession {
     return retryOptions;
   }
 
-  private async scheduleStartupAutoRetryIfNeeded(): Promise<void> {
+  private async scheduleStartupAutoRetryIfNeeded(): Promise<StartupAutoRetryCheckOutcome> {
     if (this.disposed || this.isBusy() || this.isAiStreaming()) {
-      return;
+      return "deferred";
     }
 
     const autoRetryEnabled = await this.loadAutoRetryEnabledPreference();
     if (!autoRetryEnabled) {
-      return;
+      return "completed";
     }
 
     const [partial, historyResult] = await Promise.all([
@@ -846,11 +983,11 @@ export class AgentSession {
         workspaceId: this.workspaceId,
         error: historyResult.error,
       });
-      return;
+      return "completed";
     }
 
     if (partial && this.isPendingAskUserQuestion(partial)) {
-      return;
+      return "completed";
     }
 
     const lastHistoryMessage = this.getLastNonSystemHistoryMessage(historyResult.data);
@@ -862,7 +999,29 @@ export class AgentSession {
         !this.isPendingAskUserQuestion(lastHistoryMessage));
 
     if (!interruptedByPartial && !interruptedByHistory) {
-      return;
+      return "completed";
+    }
+
+    const startupRetryUserMessage = [...historyResult.data]
+      .reverse()
+      .find((message): message is MuxMessage & { role: "user" } =>
+        this.shouldUseUserMessageForRetry(message)
+      );
+
+    if (this.startupAutoRetryAbandon) {
+      const abandonReason = this.startupAutoRetryAbandon.reason;
+      const abandonMatchesCurrentTail =
+        this.startupAutoRetryAbandon.userMessageId === undefined ||
+        this.startupAutoRetryAbandon.userMessageId === startupRetryUserMessage?.id;
+
+      if (
+        abandonMatchesCurrentTail &&
+        (isNonRetryableSendError({ type: abandonReason }) ||
+          isNonRetryableStreamError({ type: abandonReason }))
+      ) {
+        this.emitRetryEvent({ type: "auto-retry-abandoned", reason: abandonReason });
+        return "completed";
+      }
     }
 
     const retryOptions =
@@ -874,12 +1033,13 @@ export class AgentSession {
 
     if (!retryOptions) {
       this.emitRetryEvent({ type: "auto-retry-abandoned", reason: "missing_retry_options" });
-      return;
+      return "completed";
     }
 
-    // Disk reads above may race with user actions; avoid queueing a retry if work already resumed.
+    // Disk reads above may race with user actions; retry once the current work settles
+    // instead of permanently suppressing startup auto-retry for this session.
     if (this.disposed || this.isBusy() || this.isAiStreaming()) {
-      return;
+      return "deferred";
     }
 
     this.lastAutoRetryOptions = retryOptions;
@@ -887,6 +1047,48 @@ export class AgentSession {
       type: "unknown",
       message: "startup_interrupted_stream",
     });
+    return "completed";
+  }
+
+  private async waitForStartupAutoRetryRerunWindow(): Promise<void> {
+    while (!this.disposed) {
+      await this.waitForIdle();
+      if (!this.isAiStreaming()) {
+        return;
+      }
+
+      await new Promise<void>((resolve) => {
+        const maybeResolve = (...args: unknown[]) => {
+          const [payload] = args;
+          if (
+            typeof payload === "object" &&
+            payload !== null &&
+            "workspaceId" in payload &&
+            (payload as { workspaceId: unknown }).workspaceId !== this.workspaceId
+          ) {
+            return;
+          }
+
+          if (this.disposed || !this.isAiStreaming()) {
+            cleanup();
+            resolve();
+          }
+        };
+
+        const cleanup = () => {
+          this.aiService.off("stream-end", maybeResolve as never);
+          this.aiService.off("stream-abort", maybeResolve as never);
+          this.aiService.off("error", maybeResolve as never);
+        };
+
+        this.aiService.on("stream-end", maybeResolve as never);
+        this.aiService.on("stream-abort", maybeResolve as never);
+        this.aiService.on("error", maybeResolve as never);
+
+        // Defensive: stream state may have changed between waitForIdle() and listener setup.
+        maybeResolve({ workspaceId: this.workspaceId });
+      });
+    }
   }
 
   ensureStartupAutoRetryCheck(): void {
@@ -894,16 +1096,37 @@ export class AgentSession {
       return;
     }
 
+    let rerunWhenIdle = false;
+
     this.startupAutoRetryCheckPromise = this.scheduleStartupAutoRetryIfNeeded()
+      .then((outcome) => {
+        if (outcome === "deferred") {
+          this.startupAutoRetryCheckScheduled = false;
+          rerunWhenIdle = true;
+          return;
+        }
+
+        this.startupAutoRetryCheckScheduled = true;
+      })
       .catch((error: unknown) => {
+        this.startupAutoRetryCheckScheduled = true;
         log.warn("Startup auto-retry check failed", {
           workspaceId: this.workspaceId,
           error: getErrorMessage(error),
         });
       })
       .finally(() => {
-        this.startupAutoRetryCheckScheduled = true;
         this.startupAutoRetryCheckPromise = null;
+
+        if (!rerunWhenIdle || this.disposed) {
+          return;
+        }
+
+        void this.waitForStartupAutoRetryRerunWindow().then(() => {
+          if (!this.disposed) {
+            this.ensureStartupAutoRetryCheck();
+          }
+        });
       });
   }
 
@@ -1333,6 +1556,9 @@ export class AgentSession {
     // Synthetic/system sends (mid-stream compaction, task recovery prompts, etc.)
     // must not silently opt users back into auto-retry after they've disabled it.
     if (internal?.synthetic !== true) {
+      // A fresh user send supersedes any persisted startup-abandon classification
+      // from previous turns.
+      await this.clearStartupAutoRetryAbandon();
       this.retryManager.cancel();
       this.retryManager.setEnabled(true);
       await this.persistAutoRetryEnabledPreference(true);
@@ -2096,7 +2322,9 @@ export class AgentSession {
       }
 
       const followUpContent = this.buildAutoCompactionFollowUp({
-        messageText: "[CONTINUE]",
+        // Keep mid-stream auto-compaction on the shared default sentinel so
+        // buildCompactionMessageText can hide the internal resume marker.
+        messageText: "Continue",
         options: streamContext.options,
         modelForStream: streamContext.modelString,
       });
@@ -2239,6 +2467,8 @@ export class AgentSession {
     this.clearLiveUsageState();
     this.ackPendingPostCompactionStateOnStreamEnd = false;
     this.activeStreamHadAnyDelta = false;
+    this.activeStreamErrorEventReceived = false;
+    this.activeStreamFailureHandled = false;
     this.activeStreamHadPostCompactionInjection = false;
     this.lastAutoRetryOptions = options;
     const providersConfigForCompaction = this.getProvidersConfigForCompaction();
@@ -2343,14 +2573,30 @@ export class AgentSession {
     });
 
     if (!streamResult.success) {
-      this.activeCompactionRequest = undefined;
+      // Deduplicate failures when AIService already emitted an `error` event for
+      // this stream attempt. attachAiListeners schedules retry via handleStreamError
+      // on that channel; re-handling here would bump attempt/backoff twice.
+      if (this.activeStreamErrorEventReceived) {
+        this.activeStreamFailureHandled = true;
+        return streamResult;
+      }
 
-      // If stream startup failed before any stream events were emitted (e.g., missing API key),
-      // emit a synthetic stream-error so the UI can surface the failure immediately.
-      if (
-        streamResult.error.type !== "runtime_not_ready" &&
-        streamResult.error.type !== "runtime_start_failed"
-      ) {
+      const failureType = streamResult.error.type;
+
+      // Runtime startup failures can happen before any stream events are emitted.
+      // Handle them directly when the `error` channel did not fire.
+      if (failureType === "runtime_not_ready" || failureType === "runtime_start_failed") {
+        this.activeStreamFailureHandled = true;
+        const failedUserMessageId = this.activeStreamUserMessageId;
+        this.activeCompactionRequest = undefined;
+        this.resetActiveStreamState();
+        this.retryManager.handleStreamFailure({
+          type: failureType,
+          message: this.extractRetryFailureMessage(streamResult.error),
+        });
+        await this.updateStartupAutoRetryAbandonFromFailure(failureType, failedUserMessageId);
+      } else {
+        this.activeStreamFailureHandled = true;
         const streamError = buildStreamErrorEventData(streamResult.error);
         await this.handleStreamError(streamError);
       }
@@ -2971,6 +3217,8 @@ export class AgentSession {
     }
 
     // Terminal error — no retry succeeded
+    const failedUserMessageId = this.activeStreamUserMessageId;
+    const failureType = data.errorType ?? "unknown";
     this.activeCompactionRequest = undefined;
     this.resetActiveStreamState();
 
@@ -2979,9 +3227,10 @@ export class AgentSession {
     }
 
     this.retryManager.handleStreamFailure({
-      type: data.errorType ?? "unknown",
+      type: failureType,
       message: data.error,
     });
+    await this.updateStartupAutoRetryAbandonFromFailure(failureType, failedUserMessageId);
 
     this.emitChatEvent(createStreamErrorMessage(data));
     this.setTurnPhase(TurnPhase.IDLE);
@@ -3095,7 +3344,7 @@ export class AgentSession {
         await this.interruptForCompaction();
       }
     });
-    forward("stream-abort", (payload) => {
+    forward("stream-abort", async (payload) => {
       if (payload.type !== "stream-abort") {
         this.emitChatEvent(payload);
         return;
@@ -3130,6 +3379,7 @@ export class AgentSession {
       }
       this.clearLiveUsageState();
 
+      const failedUserMessageId = this.activeStreamUserMessageId;
       const hadCompactionRequest = this.activeCompactionRequest !== undefined;
       this.activeCompactionRequest = undefined;
       this.resetActiveStreamState();
@@ -3142,6 +3392,7 @@ export class AgentSession {
         type: "aborted",
         message: abortReason,
       });
+      await this.updateStartupAutoRetryAbandonFromAbort(abortReason, failedUserMessageId);
       this.emitChatEvent(payload);
       this.setTurnPhase(TurnPhase.IDLE);
     });
@@ -3155,6 +3406,7 @@ export class AgentSession {
 
       this.setTurnPhase(TurnPhase.COMPLETING);
       this.retryManager.handleStreamSuccess();
+      await this.clearStartupAutoRetryAbandon();
 
       const streamEndPayload = payload as StreamEndEvent;
       const activeStreamOptions = this.activeStreamContext?.options;
@@ -3281,6 +3533,7 @@ export class AgentSession {
         return;
       }
       const data = raw as StreamErrorPayload & { workspaceId: string };
+      this.activeStreamErrorEventReceived = true;
       void this.handleStreamError({
         messageId: data.messageId,
         error: data.error,

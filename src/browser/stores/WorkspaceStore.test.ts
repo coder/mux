@@ -488,7 +488,7 @@ describe("WorkspaceStore", () => {
   });
 
   describe("syncWorkspaces", () => {
-    it("should add new workspaces", () => {
+    it("should add new workspaces", async () => {
       const metadata1: FrontendWorkspaceMetadata = {
         id: "workspace-1",
         name: "workspace-1",
@@ -503,10 +503,11 @@ describe("WorkspaceStore", () => {
       store.setActiveWorkspaceId(metadata1.id);
       store.syncWorkspaces(workspaceMap);
 
-      expect(mockOnChat).toHaveBeenCalledWith(
-        expect.objectContaining({ workspaceId: "workspace-1" }),
-        expect.anything()
-      );
+      // addWorkspace triggers async onChat subscription setup; flush a tick so
+      // assertions don't race new startup threshold sync work.
+      await Promise.resolve();
+
+      expect(mockOnChat).toHaveBeenCalledWith({ workspaceId: "workspace-1" }, expect.anything());
     });
 
     it("should remove deleted workspaces", () => {

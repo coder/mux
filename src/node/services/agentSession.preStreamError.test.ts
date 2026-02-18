@@ -149,6 +149,151 @@ describe("AgentSession pre-stream errors", () => {
     expect(streamError?.messageId).toMatch(/^assistant-/);
   });
 
+  it("schedules auto-retry when runtime startup fails before stream events", async () => {
+    const workspaceId = "ws-runtime-start-failed";
+
+    const config = {
+      srcDir: "/tmp",
+      getSessionDir: (_workspaceId: string) => "/tmp",
+    } as unknown as Config;
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const aiEmitter = new EventEmitter();
+    const streamMessage = mock((_history: MuxMessage[]) => {
+      return Promise.resolve(
+        Err({
+          type: "runtime_start_failed",
+          message: "Runtime is starting",
+        })
+      );
+    });
+    const aiService = Object.assign(aiEmitter, {
+      isStreaming: mock((_workspaceId: string) => false),
+      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
+      streamMessage: streamMessage as unknown as (
+        ...args: Parameters<AIService["streamMessage"]>
+      ) => Promise<Result<void, SendMessageError>>,
+    }) as unknown as AIService;
+
+    const initStateManager = new EventEmitter() as unknown as InitStateManager;
+
+    const backgroundProcessManager = {
+      cleanup: mock((_workspaceId: string) => Promise.resolve()),
+      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
+        void _queued;
+      }),
+    } as unknown as BackgroundProcessManager;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const events: WorkspaceChatMessage[] = [];
+    session.onChatEvent((event) => {
+      events.push(event.message);
+    });
+
+    const result = await session.sendMessage("hello", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(false);
+
+    const scheduledRetry = events.find(
+      (event): event is Extract<WorkspaceChatMessage, { type: "auto-retry-scheduled" }> =>
+        event.type === "auto-retry-scheduled"
+    );
+    expect(scheduledRetry).toBeDefined();
+    expect(events.some((event) => event.type === "stream-error")).toBe(false);
+  });
+
+  it("does not double-schedule auto-retry when runtime startup failure already emitted", async () => {
+    const workspaceId = "ws-runtime-start-failed-pre-emitted-error";
+
+    const config = {
+      srcDir: "/tmp",
+      getSessionDir: (_workspaceId: string) => "/tmp",
+    } as unknown as Config;
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const aiEmitter = new EventEmitter();
+    const streamMessage = mock((_history: MuxMessage[]) => {
+      aiEmitter.emit("error", {
+        workspaceId,
+        messageId: "assistant-stream-startup-failed",
+        error: "Runtime is still starting",
+        errorType: "runtime_start_failed",
+      });
+
+      return Promise.resolve(
+        Err({
+          type: "runtime_start_failed",
+          message: "Runtime is still starting",
+        })
+      );
+    });
+
+    const aiService = Object.assign(aiEmitter, {
+      isStreaming: mock((_workspaceId: string) => false),
+      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
+      streamMessage: streamMessage as unknown as (
+        ...args: Parameters<AIService["streamMessage"]>
+      ) => Promise<Result<void, SendMessageError>>,
+    }) as unknown as AIService;
+
+    const initStateManager = new EventEmitter() as unknown as InitStateManager;
+
+    const backgroundProcessManager = {
+      cleanup: mock((_workspaceId: string) => Promise.resolve()),
+      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
+        void _queued;
+      }),
+    } as unknown as BackgroundProcessManager;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const events: WorkspaceChatMessage[] = [];
+    session.onChatEvent((event) => {
+      events.push(event.message);
+    });
+
+    const result = await session.sendMessage("hello", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(false);
+
+    await session.waitForIdle();
+
+    const scheduledRetries = events.filter(
+      (event): event is Extract<WorkspaceChatMessage, { type: "auto-retry-scheduled" }> =>
+        event.type === "auto-retry-scheduled"
+    );
+
+    expect(scheduledRetries).toHaveLength(1);
+    expect(scheduledRetries[0]?.attempt).toBe(1);
+
+    session.dispose();
+  });
+
   it("replays init state for since-mode reconnects", async () => {
     const workspaceId = "ws-replay-init-since";
     const { session, cleanup, replayInit } = await createReplaySessionHarness(workspaceId);

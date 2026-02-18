@@ -52,6 +52,9 @@ import {
   type LiveBashOutputInternal,
   type LiveBashOutputView,
 } from "@/browser/utils/messages/liveBashOutputBuffer";
+import { readPersistedState } from "@/browser/hooks/usePersistedState";
+import { getAutoCompactionThresholdKey } from "@/common/constants/storage";
+import { DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT } from "@/common/constants/ui";
 import { trackStreamCompleted } from "@/common/telemetry";
 
 export type AutoRetryStatus = Extract<
@@ -2243,6 +2246,45 @@ export class WorkspaceStore {
     this.checkAndBumpRecencyIfChanged();
   }
 
+  private getStartupAutoCompactionThreshold(workspaceId: string): number {
+    const metadata = this.workspaceMetadata.get(workspaceId);
+    const modelFromActiveAgent = metadata?.agentId
+      ? metadata.aiSettingsByAgent?.[metadata.agentId]?.model
+      : undefined;
+    const pendingModel =
+      modelFromActiveAgent ??
+      metadata?.aiSettingsByAgent?.exec?.model ??
+      metadata?.aiSettings?.model;
+    const thresholdKey = getAutoCompactionThresholdKey(pendingModel ?? "default");
+    const thresholdPercent = readPersistedState<number>(
+      thresholdKey,
+      DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT
+    );
+
+    return Math.max(0.1, Math.min(1, thresholdPercent / 100));
+  }
+
+  /**
+   * Best-effort startup threshold sync so backend recovery uses the user's persisted
+   * per-model threshold before AgentSession startup recovery kicks in.
+   */
+  private async syncAutoCompactionThresholdAtStartup(
+    client: RouterClient<AppRouter>,
+    workspaceId: string
+  ): Promise<void> {
+    try {
+      await client.workspace.setAutoCompactionThreshold({
+        workspaceId,
+        threshold: this.getStartupAutoCompactionThreshold(workspaceId),
+      });
+    } catch (error) {
+      console.warn(
+        `[WorkspaceStore] Failed to sync startup auto-compaction threshold for ${workspaceId}:`,
+        error
+      );
+    }
+  }
+
   /**
    * Subscribe to workspace chat events (history replay + live streaming).
    * Retries on unexpected iterator termination to avoid requiring a full app restart.
@@ -2295,6 +2337,8 @@ export class WorkspaceStore {
             };
           }
         }
+
+        await this.syncAutoCompactionThresholdAtStartup(client, workspaceId);
 
         const iterator = await client.workspace.onChat(
           { workspaceId, mode },

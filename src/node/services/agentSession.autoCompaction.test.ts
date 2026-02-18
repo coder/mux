@@ -252,4 +252,139 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
 
     session.dispose();
   });
+
+  test("hides default follow-up sentinel in mid-stream auto-compaction prompts", async () => {
+    const workspaceId = "ws-auto-compaction-mid-stream-sentinel";
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const aiEmitter = new EventEmitter();
+    const streamHistories: MuxMessage[][] = [];
+    let streamCallCount = 0;
+    const streamMessage = mock((request: unknown) => {
+      const requestMessages =
+        typeof request === "object" && request !== null && "messages" in request
+          ? (request as { messages?: unknown }).messages
+          : undefined;
+      streamHistories.push(Array.isArray(requestMessages) ? (requestMessages as MuxMessage[]) : []);
+      streamCallCount += 1;
+
+      if (streamCallCount === 1) {
+        const usage = {
+          inputTokens: 42,
+          outputTokens: 1,
+          totalTokens: 43,
+        };
+
+        aiEmitter.emit("stream-start", {
+          type: "stream-start",
+          workspaceId,
+          messageId: "assistant-mid-stream",
+          model: "openai:gpt-4o",
+          historySequence: 1,
+          startTime: Date.now(),
+        });
+
+        aiEmitter.emit("usage-delta", {
+          type: "usage-delta",
+          workspaceId,
+          messageId: "assistant-mid-stream",
+          usage,
+          cumulativeUsage: usage,
+        });
+      }
+
+      return Promise.resolve(Ok(undefined));
+    });
+
+    const stopStream = mock((_workspaceId: string) => {
+      aiEmitter.emit("stream-abort", {
+        type: "stream-abort",
+        workspaceId,
+        messageId: "assistant-mid-stream",
+        abortReason: "system",
+      });
+
+      return Promise.resolve(Ok(undefined));
+    });
+
+    const aiService = Object.assign(aiEmitter, {
+      isStreaming: mock((_workspaceId: string) => false),
+      stopStream,
+      streamMessage: streamMessage as unknown as (
+        ...args: Parameters<AIService["streamMessage"]>
+      ) => Promise<unknown>,
+    }) as unknown as AIService;
+
+    const initStateManager = new EventEmitter() as unknown as InitStateManager;
+
+    const backgroundProcessManager = {
+      cleanup: mock((_workspaceId: string) => Promise.resolve()),
+      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
+        void _queued;
+      }),
+    } as unknown as BackgroundProcessManager;
+
+    const config = {
+      srcDir: "/tmp",
+      getSessionDir: (_workspaceId: string) => "/tmp",
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    let midStreamChecks = 0;
+    const checkMidStream = mock((_params: unknown) => {
+      midStreamChecks += 1;
+      return midStreamChecks === 1;
+    });
+
+    (session as unknown as { compactionMonitor: CompactionMonitor }).compactionMonitor = {
+      checkBeforeSend: mock(() => ({
+        shouldShowWarning: false,
+        shouldForceCompact: false,
+        usagePercentage: 0,
+        thresholdPercentage: 85,
+      })),
+      checkMidStream,
+      resetForNewStream: mock(() => undefined),
+      setThreshold: mock(() => undefined),
+      getThreshold: mock(() => 0.85),
+    } as unknown as CompactionMonitor;
+
+    const result = await session.sendMessage("hello", {
+      model: "openai:gpt-4o",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(true);
+
+    const deadline = Date.now() + 1500;
+    while (streamHistories.length < 2 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    expect(streamHistories.length).toBeGreaterThanOrEqual(2);
+    const compactionHistory = streamHistories[1];
+    const compactionRequestMessage = [...compactionHistory]
+      .reverse()
+      .find((message) => message.metadata?.muxMetadata?.type === "compaction-request");
+
+    expect(compactionRequestMessage).toBeDefined();
+
+    const compactionRequestText =
+      compactionRequestMessage?.parts.find((part) => part.type === "text")?.text ?? "";
+    expect(compactionRequestText).not.toContain("The user wants to continue with:");
+    expect(compactionRequestText).not.toContain("[CONTINUE]");
+    expect(stopStream).toHaveBeenCalledTimes(1);
+
+    session.dispose();
+  });
 });
