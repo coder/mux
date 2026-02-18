@@ -1254,6 +1254,79 @@ describe("WorkspaceStore", () => {
       expect(store.getTaskToolLiveTaskId(workspaceId, "call-task-2")).toBeNull();
     });
 
+    it("preserves pagination state across since reconnect retries", async () => {
+      const workspaceId = "pagination-since-retry";
+      let subscriptionCount = 0;
+      let releaseFirstSubscription: (() => void) | undefined;
+      const holdFirstSubscription = new Promise<void>((resolve) => {
+        releaseFirstSubscription = resolve;
+      });
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        subscriptionCount += 1;
+
+        if (subscriptionCount === 1) {
+          yield createHistoryMessageEvent("history-5", 5);
+          yield {
+            type: "caught-up",
+            replay: "full",
+            hasOlderHistory: true,
+            cursor: {
+              history: {
+                messageId: "history-5",
+                historySequence: 5,
+              },
+            },
+          };
+
+          await holdFirstSubscription;
+          return;
+        }
+
+        yield {
+          type: "caught-up",
+          replay: "since",
+          cursor: {
+            history: {
+              messageId: "history-5",
+              historySequence: 5,
+            },
+          },
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const seededPagination = await waitUntil(
+        () => store.getWorkspaceState(workspaceId).hasOlderHistory === true
+      );
+      expect(seededPagination).toBe(true);
+
+      releaseFirstSubscription?.();
+
+      const preservedPagination = await waitUntil(() => {
+        return (
+          subscriptionCount >= 2 && store.getWorkspaceState(workspaceId).hasOlderHistory === true
+        );
+      });
+      expect(preservedPagination).toBe(true);
+    });
+
     it("clears stale live tool state when since replay reports no active stream", async () => {
       const workspaceId = "task-created-workspace-4";
       let subscriptionCount = 0;

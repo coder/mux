@@ -2242,7 +2242,16 @@ export class WorkspaceStore {
           transient.replayingHistory = false;
           transient.historicalMessages.length = 0;
           transient.pendingStreamEvents.length = 0;
-          this.historyPagination.set(workspaceId, createInitialHistoryPaginationState());
+
+          // Preserve pagination across transient reconnect retries. Incremental
+          // caught-up payloads intentionally omit hasOlderHistory, so resetting
+          // here would permanently hide "Load older messages" until a full replay.
+          const existingPagination =
+            this.historyPagination.get(workspaceId) ?? createInitialHistoryPaginationState();
+          this.historyPagination.set(workspaceId, {
+            ...existingPagination,
+            loading: false,
+          });
         }
       }
 
