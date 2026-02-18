@@ -1942,9 +1942,18 @@ export class WorkspaceStore {
   }
 
   private applyWorkspaceActivityList(snapshots: Record<string, WorkspaceActivitySnapshot>): void {
+    const snapshotEntries = Object.entries(snapshots);
+
+    // Defensive fallback: workspace.activity.list returns {} on backend read failures.
+    // Preserve last-known snapshots instead of wiping sidebar activity state for all
+    // workspaces during a transient metadata read error.
+    if (snapshotEntries.length === 0) {
+      return;
+    }
+
     const seenWorkspaceIds = new Set<string>();
 
-    for (const [workspaceId, snapshot] of Object.entries(snapshots)) {
+    for (const [workspaceId, snapshot] of snapshotEntries) {
       seenWorkspaceIds.add(workspaceId);
       this.applyWorkspaceActivitySnapshot(workspaceId, snapshot);
     }
@@ -1975,6 +1984,12 @@ export class WorkspaceStore {
       clientChangeSignal.addEventListener("abort", onClientChange, { once: true });
 
       try {
+        // Open the live delta stream first so no state transition can be lost
+        // between the list snapshot fetch and subscribe registration.
+        const iterator = await client.workspace.activity.subscribe(undefined, {
+          signal: attemptController.signal,
+        });
+
         const snapshots = await client.workspace.activity.list();
         if (signal.aborted) {
           return;
@@ -1991,10 +2006,6 @@ export class WorkspaceStore {
             return;
           }
           this.applyWorkspaceActivityList(snapshots);
-        });
-
-        const iterator = await client.workspace.activity.subscribe(undefined, {
-          signal: attemptController.signal,
         });
 
         for await (const event of iterator) {

@@ -751,6 +751,135 @@ describe("WorkspaceStore", () => {
 
       expect(onResponseComplete).not.toHaveBeenCalled();
     });
+    it("opens activity subscription before listing snapshots", async () => {
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+
+      const callOrder: string[] = [];
+
+      mockActivitySubscribe.mockImplementation(
+        (
+          _input?: void,
+          options?: { signal?: AbortSignal }
+        ): AsyncGenerator<
+          { workspaceId: string; activity: WorkspaceActivitySnapshot | null },
+          void,
+          unknown
+        > => {
+          callOrder.push("subscribe");
+
+          // eslint-disable-next-line require-yield
+          return (async function* (): AsyncGenerator<
+            { workspaceId: string; activity: WorkspaceActivitySnapshot | null },
+            void,
+            unknown
+          > {
+            await waitForAbortSignal(options?.signal);
+          })();
+        }
+      );
+
+      mockActivityList.mockImplementation(() => {
+        callOrder.push("list");
+        return Promise.resolve({});
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient({ workspace: mockClient.workspace } as any);
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      const sawBothCalls = await waitUntil(() => callOrder.length >= 2);
+      expect(sawBothCalls).toBe(true);
+      expect(callOrder.slice(0, 2)).toEqual(["subscribe", "list"]);
+    });
+
+    it("preserves cached activity snapshots when list returns an empty payload", async () => {
+      const workspaceId = "activity-list-empty-payload";
+      const initialRecency = new Date("2024-01-07T00:00:00.000Z").getTime();
+      const snapshot: WorkspaceActivitySnapshot = {
+        recency: initialRecency,
+        streaming: true,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: "high",
+      };
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+
+      let listCallCount = 0;
+      mockActivityList.mockImplementation(
+        (): Promise<Record<string, WorkspaceActivitySnapshot>> => {
+          listCallCount += 1;
+          if (listCallCount === 1) {
+            return Promise.resolve({ [workspaceId]: snapshot });
+          }
+          return Promise.resolve({});
+        }
+      );
+
+      // eslint-disable-next-line require-yield
+      mockActivitySubscribe.mockImplementation(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<
+        { workspaceId: string; activity: WorkspaceActivitySnapshot | null },
+        void,
+        unknown
+      > {
+        await waitForAbortSignal(options?.signal);
+      });
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient({ workspace: mockClient.workspace } as any);
+      createAndAddWorkspace(
+        store,
+        workspaceId,
+        {
+          createdAt: "2020-01-01T00:00:00.000Z",
+        },
+        false
+      );
+
+      const seededSnapshot = await waitUntil(() => {
+        const state = store.getWorkspaceState(workspaceId);
+        return state.recencyTimestamp === initialRecency && state.canInterrupt === true;
+      });
+      expect(seededSnapshot).toBe(true);
+
+      // Swap to a new client object to force activity subscription restart and a fresh list() call.
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient({ workspace: mockClient.workspace } as any);
+
+      const sawRetryListCall = await waitUntil(() => listCallCount >= 2);
+      expect(sawRetryListCall).toBe(true);
+
+      const stateAfterEmptyList = store.getWorkspaceState(workspaceId);
+      expect(stateAfterEmptyList.recencyTimestamp).toBe(initialRecency);
+      expect(stateAfterEmptyList.canInterrupt).toBe(true);
+      expect(stateAfterEmptyList.currentModel).toBe(snapshot.lastModel);
+      expect(stateAfterEmptyList.currentThinkingLevel).toBe(snapshot.lastThinkingLevel);
+    });
   });
 
   describe("getWorkspaceRecency", () => {
