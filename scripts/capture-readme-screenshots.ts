@@ -61,6 +61,8 @@ interface StoryDef {
   exportName: string;
   storyId: string;
   outputFile: string;
+  /** Optional crop region in CSS pixels for focused README screenshots. */
+  clip?: { x: number; y: number; width: number; height: number };
   /** Replicate the Storybook play function via Playwright interactions. */
   playInteraction?: (page: Page) => Promise<void>;
   /** Custom Sharp post-processing instead of the default full-page → WebP conversion. */
@@ -78,11 +80,13 @@ const STORIES: StoryDef[] = [
     exportName: "AgentStatusSidebar",
     storyId: `${STORY_ID_PREFIX}agent-status-sidebar`,
     outputFile: "agent-status.webp",
+    clip: { x: 0, y: 0, width: 700, height: 900 },
   },
   {
     exportName: "GitStatusPopover",
     storyId: `${STORY_ID_PREFIX}git-status-popover`,
     outputFile: "git-status.webp",
+    clip: { x: 0, y: 0, width: 1000, height: 1050 },
     playInteraction: async (page: Page) => {
       // Wait for git status to render in the ws-diverged row.
       const row = page.locator('[data-workspace-id="ws-diverged"]');
@@ -113,6 +117,7 @@ const STORIES: StoryDef[] = [
     exportName: "ProjectSecretsModal",
     storyId: `${STORY_ID_PREFIX}project-secrets-modal`,
     outputFile: "project-secrets.webp",
+    clip: { x: 350, y: 50, width: 1200, height: 900 },
     playInteraction: async (page: Page) => {
       // The "Manage secrets" button is hidden until hover. Target the button directly
       // by its aria-label (which is unique) and force-click to bypass visibility.
@@ -130,11 +135,13 @@ const STORIES: StoryDef[] = [
     exportName: "CostsTabRich",
     storyId: `${STORY_ID_PREFIX}costs-tab-rich`,
     outputFile: "costs-tab.webp",
+    clip: { x: 1050, y: 0, width: 850, height: 1100 },
   },
   {
     exportName: "OpportunisticCompactionTooltip",
     storyId: `${STORY_ID_PREFIX}opportunistic-compaction-tooltip`,
     outputFile: "opportunistic-compaction.webp",
+    clip: { x: 550, y: 350, width: 1000, height: 750 },
     playInteraction: async (page: Page) => {
       // Wait for costs to render.
       await page.getByText(/cache create/i).waitFor({ timeout: 15_000 });
@@ -239,19 +246,27 @@ async function main() {
 
         // Capture the visible viewport only — fullPage would include off-screen
         // scrollable content, producing absurdly tall images for stories with
-        // long sidebars or chat histories.
-        const pngBuffer = await page.screenshot({ type: "png" });
+        // long sidebars or chat histories. Stories may also provide a focused
+        // clip region (in CSS pixels) for zoomed-in README screenshots.
+        const pngBuffer = await page.screenshot({
+          type: "png",
+          ...(story.clip ? { clip: story.clip } : {}),
+        });
 
         // Convert to WebP (or run custom post-processing).
-        // The default pipeline resizes from native DPR resolution to TARGET_WIDTH.
+        // For full-viewport captures, resize from native DPR resolution to TARGET_WIDTH.
+        // For clipped captures, preserve the native DPR resolution and only encode to WebP.
         let webpBuffer: Buffer;
         if (story.postProcess) {
           webpBuffer = await story.postProcess(Buffer.from(pngBuffer));
         } else {
-          webpBuffer = await sharp(pngBuffer)
-            .resize({ width: TARGET_WIDTH, kernel: "lanczos3" })
-            .webp({ quality: WEBP_QUALITY })
-            .toBuffer();
+          const image = sharp(pngBuffer);
+          webpBuffer = story.clip
+            ? await image.webp({ quality: WEBP_QUALITY }).toBuffer()
+            : await image
+                .resize({ width: TARGET_WIDTH, kernel: "lanczos3" })
+                .webp({ quality: WEBP_QUALITY })
+                .toBuffer();
         }
 
         await Bun.write(outputPath, webpBuffer);

@@ -6,7 +6,6 @@
  * images from a named Storybook story.
  */
 
-import React from "react";
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import {
   NOW,
@@ -47,33 +46,11 @@ export default {
   ...appMeta,
   title: "Docs/README Screenshots",
   decorators: [
-    (Story: () => JSX.Element) => {
-      // Save and restore window.api to prevent leaking to other stories
-      const originalApiRef = React.useRef(window.api);
-      window.api = {
-        platform: "darwin",
-        versions: {
-          node: "20.0.0",
-          chrome: "120.0.0",
-          electron: "28.0.0",
-        },
-        // This function's presence triggers isDesktopMode() → true
-        getIsRosetta: () => Promise.resolve(false),
-      };
-
-      React.useEffect(() => {
-        const savedApi = originalApiRef.current;
-        return () => {
-          window.api = savedApi;
-        };
-      }, []);
-
-      return (
-        <div style={{ width: 1900, height: "100dvh", position: "relative" }}>
-          <Story />
-        </div>
-      );
-    },
+    (Story: () => JSX.Element) => (
+      <div style={{ width: 1900, height: "100dvh", position: "relative" }}>
+        <Story />
+      </div>
+    ),
   ],
   parameters: {
     ...appMeta.parameters,
@@ -92,38 +69,48 @@ const README_PROJECT_PATH = "/home/user/projects/mux";
 
 function createMultiModelSessionUsage(totalUsd: number): MockSessionUsage {
   // Split cost into model rows to make the Costs tab look realistic (cached + cacheCreate present).
-  const primary = totalUsd * 0.75;
-  const secondary = totalUsd * 0.25;
+  const primary = totalUsd * 0.62;
+  const secondary = totalUsd * 0.26;
+  const tertiary = totalUsd * 0.12;
 
   const modelA = "anthropic:claude-sonnet-4-20250514";
   const modelB = "openai:gpt-4.1-mini";
+  const modelC = "google:gemini-2.5-flash";
 
   return {
     byModel: {
       [modelA]: {
-        input: { tokens: 64_000, cost_usd: primary * 0.55 },
-        cached: { tokens: 220_000, cost_usd: primary * 0.08 },
-        cacheCreate: { tokens: 160_000, cost_usd: primary * 0.22 },
-        output: { tokens: 18_000, cost_usd: primary * 0.12 },
-        reasoning: { tokens: 0, cost_usd: primary * 0.03 },
+        input: { tokens: 180_000, cost_usd: primary * 0.55 },
+        cached: { tokens: 640_000, cost_usd: primary * 0.1 },
+        cacheCreate: { tokens: 320_000, cost_usd: primary * 0.21 },
+        output: { tokens: 42_000, cost_usd: primary * 0.11 },
+        reasoning: { tokens: 9_000, cost_usd: primary * 0.03 },
         model: modelA,
       },
       [modelB]: {
-        input: { tokens: 22_000, cost_usd: secondary * 0.6 },
-        cached: { tokens: 0, cost_usd: 0 },
-        cacheCreate: { tokens: 0, cost_usd: 0 },
-        output: { tokens: 8_000, cost_usd: secondary * 0.4 },
+        input: { tokens: 58_000, cost_usd: secondary * 0.6 },
+        cached: { tokens: 110_000, cost_usd: secondary * 0.08 },
+        cacheCreate: { tokens: 48_000, cost_usd: secondary * 0.12 },
+        output: { tokens: 13_500, cost_usd: secondary * 0.2 },
         reasoning: { tokens: 0, cost_usd: 0 },
         model: modelB,
+      },
+      [modelC]: {
+        input: { tokens: 16_000, cost_usd: tertiary * 0.62 },
+        cached: { tokens: 24_000, cost_usd: tertiary * 0.08 },
+        cacheCreate: { tokens: 8_000, cost_usd: tertiary * 0.1 },
+        output: { tokens: 4_200, cost_usd: tertiary * 0.2 },
+        reasoning: { tokens: 0, cost_usd: 0 },
+        model: modelC,
       },
     },
     lastRequest: {
       model: modelA,
       usage: {
-        input: { tokens: 12_000, cost_usd: 0.03 },
-        cached: { tokens: 0, cost_usd: 0 },
+        input: { tokens: 24_000, cost_usd: 0.07 },
+        cached: { tokens: 8_500, cost_usd: 0.002 },
         cacheCreate: { tokens: 0, cost_usd: 0 },
-        output: { tokens: 3_200, cost_usd: 0.012 },
+        output: { tokens: 5_400, cost_usd: 0.02 },
         reasoning: { tokens: 0, cost_usd: 0 },
         model: modelA,
       },
