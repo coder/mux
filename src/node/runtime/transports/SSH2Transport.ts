@@ -168,7 +168,7 @@ class SSH2Pty implements PtyHandle {
         return;
       }
 
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       const code =
         error && typeof error === "object" && "code" in error && typeof error.code === "string"
           ? error.code

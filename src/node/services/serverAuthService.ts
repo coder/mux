@@ -7,6 +7,7 @@ import assert from "@/common/utils/assert";
 import type { Config } from "@/node/config";
 import { log } from "@/node/services/log";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code";
 const GITHUB_ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
@@ -364,7 +365,7 @@ export class ServerAuthService {
         userCode: payload.user_code,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to start GitHub device flow: ${message}`);
     } finally {
       assert(
@@ -458,7 +459,7 @@ export class ServerAuthService {
         // persistence fails.
         log.warn("Failed to prune expired server auth session", {
           sessionId: session.id,
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
       }
 
@@ -488,7 +489,7 @@ export class ServerAuthService {
         // Best-effort metadata update: auth should succeed as long as token validation passes.
         log.warn("Failed to persist server auth session metadata", {
           sessionId: session.id,
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
       }
     }
@@ -520,7 +521,7 @@ export class ServerAuthService {
         // Listing sessions should remain available even if cleanup persistence fails.
         log.warn("Failed to persist expired server auth session cleanup", {
           removedCount,
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
       }
     }
@@ -683,7 +684,7 @@ export class ServerAuthService {
           return;
         }
 
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         log.warn("GitHub device-flow polling request failed; retrying", {
           flowId: flow.flowId,
           error: message,

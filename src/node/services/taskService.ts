@@ -56,6 +56,7 @@ import {
   upsertSubagentReportArtifact,
 } from "@/node/services/subagentReportArtifacts";
 import { secretsToRecord } from "@/common/types/secrets";
+import { getErrorMessage } from "@/common/utils/errors";
 
 export type TaskKind = "agent";
 
@@ -979,7 +980,7 @@ export class TaskService {
     } catch (error: unknown) {
       log.error("Task.create rollback: failed to remove workspace from config", {
         taskId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
     }
 
@@ -996,7 +997,7 @@ export class TaskService {
     } catch (error: unknown) {
       log.error("Task.create rollback: runtime.deleteWorkspace threw", {
         taskId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
     }
 
@@ -1006,7 +1007,7 @@ export class TaskService {
     } catch (error: unknown) {
       log.error("Task.create rollback: failed to remove session directory", {
         taskId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
     }
   }
@@ -1925,7 +1926,7 @@ export class TaskService {
               log.debug("Queued task: failed to read agent definition for skip_init_hook", {
                 taskId,
                 agentId: parsedAgentId.data,
-                error: error instanceof Error ? error.message : String(error),
+                error: getErrorMessage(error),
               });
             }
           }

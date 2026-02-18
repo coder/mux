@@ -84,6 +84,7 @@ import { WindowsToolchainBanner } from "./components/WindowsToolchainBanner";
 import { RosettaBanner } from "./components/RosettaBanner";
 import { isDesktopMode } from "./hooks/useDesktopTitlebar";
 import { cn } from "@/common/lib/utils";
+import { getErrorMessage } from "@/common/utils/errors";
 
 function AppInner() {
   // Get workspace state from context
@@ -518,7 +519,7 @@ function AppInner() {
           }
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         if (typeof window !== "undefined") {
           window.alert(message);
         }

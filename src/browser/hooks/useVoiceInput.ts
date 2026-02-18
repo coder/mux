@@ -11,6 +11,7 @@ import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import type { APIClient } from "@/browser/contexts/API";
 import { trackVoiceTranscription } from "@/common/telemetry";
+import { getErrorMessage } from "@/common/utils/errors";
 
 export type VoiceInputState = "idle" | "requesting" | "recording" | "transcribing";
 
@@ -190,7 +191,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
         setTimeout(() => callbacksRef.current.onSend?.(), 0);
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       callbacksRef.current.onError?.(`Transcription failed: ${msg}`);
       trackVoiceTranscription(audioDurationSecs, false);
     } finally {
@@ -269,7 +270,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
       recordingStartTimeRef.current = Date.now();
       setState("recording");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       const isPermissionDenied = msg.includes("Permission denied") || msg.includes("NotAllowed");
 
       callbacksRef.current.onError?.(

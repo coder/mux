@@ -27,6 +27,7 @@ import {
 import { execBuffered, writeFileString } from "@/node/utils/runtime/helpers";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { toPosixPath } from "@/node/utils/paths";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * Quote a path for shell commands.
@@ -47,7 +48,7 @@ const FALLBACK_CWD = process.platform === "win32" ? (process.env.TEMP ?? "C:\\")
 
 /** Helper to extract error message for logging */
 function errorMsg(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return getErrorMessage(error);
 }
 
 /** Subdirectory under temp for background process output */

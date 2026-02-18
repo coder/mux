@@ -17,6 +17,7 @@ import { log } from "@/node/services/log";
 import { checkProviderConfigured } from "@/node/utils/providerRequirements";
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 import type { PolicyService } from "@/node/services/policyService";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // Re-export types for backward compatibility
 export type { AWSCredentialStatus, ProviderConfigInfo, ProvidersConfigMap };
@@ -233,7 +234,7 @@ export class ProviderService {
 
       return { success: true, data: undefined };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return { success: false, error: `Failed to set models: ${message}` };
     }
   }
@@ -300,7 +301,7 @@ export class ProviderService {
 
       return { success: true, data: undefined };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return { success: false, error: `Failed to set provider config: ${message}` };
     }
   }
@@ -384,7 +385,7 @@ export class ProviderService {
 
       return { success: true, data: undefined };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return { success: false, error: `Failed to set provider config: ${message}` };
     }
   }

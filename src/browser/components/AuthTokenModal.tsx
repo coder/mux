@@ -9,6 +9,7 @@ import {
 } from "@/browser/components/ui/dialog";
 import { Button } from "@/browser/components/ui/button";
 import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
+import { getErrorMessage } from "@/common/utils/errors";
 
 interface AuthTokenModalProps {
   isOpen: boolean;
@@ -229,7 +230,7 @@ export function AuthTokenModal(props: AuthTokenModalProps) {
           return;
         }
 
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         setGithubLoginStatus("error");
         setGithubLoginError(message);
       } finally {
@@ -238,7 +239,7 @@ export function AuthTokenModal(props: AuthTokenModalProps) {
         }
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       setGithubLoginStatus("error");
       setGithubLoginError(message);
     }

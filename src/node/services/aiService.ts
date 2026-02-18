@@ -67,6 +67,7 @@ import {
   type SimulationContext,
 } from "./streamSimulation";
 import { applyToolPolicyAndExperiments, captureMcpToolTelemetry } from "./toolAssembly";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // ---------------------------------------------------------------------------
 // streamMessage options
@@ -231,7 +232,7 @@ export class AIService extends EventEmitter {
           }
         }
       } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error);
+        const errMsg = getErrorMessage(error);
         log.warn("Failed to capture debug LLM response snapshot", { error: errMsg });
       }
 
@@ -300,7 +301,7 @@ export class AIService extends EventEmitter {
 
       return Ok(metadata);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to read workspace metadata: ${message}`);
     }
   }
@@ -904,7 +905,7 @@ export class AIService extends EventEmitter {
       try {
         this.lastLlmRequestByWorkspace.set(workspaceId, safeClone(snapshot));
       } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error);
+        const errMsg = getErrorMessage(error);
         workspaceLog.warn("Failed to capture debug LLM request snapshot", { error: errMsg });
       }
       const toolsForStream =
@@ -975,7 +976,7 @@ export class AIService extends EventEmitter {
       // No need for event listener here
       return Ok(undefined);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       log.error("Stream message error:", error);
       // Return as unknown error type
       return Err({ type: "unknown", raw: `Failed to stream message: ${errorMessage}` });
@@ -1123,7 +1124,7 @@ export class AIService extends EventEmitter {
       await fs.rm(workspaceDir, { recursive: true, force: true });
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to delete workspace: ${message}`);
     }
   }

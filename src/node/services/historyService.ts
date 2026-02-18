@@ -17,6 +17,7 @@ import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { safeStringifyForCounting } from "@/common/utils/tokens/safeStringifyForCounting";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
 import { isDurableCompactionBoundaryMarker } from "@/common/utils/messages/compactionBoundary";
+import { getErrorMessage } from "@/common/utils/errors";
 
 function isPositiveInteger(value: unknown): value is number {
   return (
@@ -407,7 +408,7 @@ export class HistoryService {
           // Skip malformed lines but log error for debugging
           log.warn(
             `Skipping malformed JSON at line ${i + 1} in ${workspaceId}/chat.jsonl:`,
-            parseError instanceof Error ? parseError.message : String(parseError),
+            getErrorMessage(parseError),
             "\nLine content:",
             lines[i].substring(0, 100) + (lines[i].length > 100 ? "..." : "")
           );
@@ -643,7 +644,7 @@ export class HistoryService {
       }
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to iterate history: ${message}`);
     }
   }
@@ -675,7 +676,7 @@ export class HistoryService {
       const messages = await this.readChatHistory(workspaceId);
       return Ok(messages);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to read history from boundary: ${message}`);
     }
   }
@@ -689,7 +690,7 @@ export class HistoryService {
       const messages = await this.readLastMessages(workspaceId, n);
       return Ok(messages);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to read last ${n} messages: ${message}`);
     }
   }
@@ -750,7 +751,7 @@ export class HistoryService {
         await writeFileAtomic(partialPath, JSON.stringify(partialMessage, null, 2));
         return Ok(undefined);
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         return Err(`Failed to write partial: ${errorMessage}`);
       }
     });
@@ -769,7 +770,7 @@ export class HistoryService {
         if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
           return Ok(undefined);
         }
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         return Err(`Failed to delete partial: ${errorMessage}`);
       }
     });
@@ -848,7 +849,7 @@ export class HistoryService {
 
       return this.deletePartial(workspaceId);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       return Err(`Failed to commit partial: ${errorMessage}`);
     }
   }
@@ -981,7 +982,7 @@ export class HistoryService {
       await fs.appendFile(historyPath, JSON.stringify(historyEntry) + "\n");
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to append to history: ${message}`);
     }
   }
@@ -1057,7 +1058,7 @@ export class HistoryService {
         await writeFileAtomic(historyPath, historyEntries);
         return Ok(undefined);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         return Err(`Failed to update history: ${message}`);
       }
     });
@@ -1122,7 +1123,7 @@ export class HistoryService {
 
         return Ok(undefined);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         return Err(`Failed to delete message: ${message}`);
       }
     });
@@ -1186,7 +1187,7 @@ export class HistoryService {
 
         return Ok(undefined);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         return Err(`Failed to truncate history: ${message}`);
       }
     });
@@ -1328,7 +1329,7 @@ export class HistoryService {
 
         return Ok(deletedSequences);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         return Err(`Failed to truncate history: ${message}`);
       }
     });
@@ -1381,7 +1382,7 @@ export class HistoryService {
 
         return Ok(undefined);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         return Err(`Failed to migrate workspace ID: ${message}`);
       }
     });

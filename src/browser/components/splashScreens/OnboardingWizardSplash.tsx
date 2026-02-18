@@ -38,6 +38,7 @@ import { getAgentsInitNudgeKey } from "@/common/constants/storage";
 import { PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { getAllowedProvidersForUi } from "@/browser/utils/policyUi";
+import { getErrorMessage } from "@/common/utils/errors";
 
 interface OAuthMessage {
   type?: unknown;
@@ -374,7 +375,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
         return;
       }
 
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       setMuxGatewayLoginStatus("error");
       setMuxGatewayLoginError(message);
     }

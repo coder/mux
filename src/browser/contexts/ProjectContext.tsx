@@ -19,6 +19,7 @@ import {
   deleteWorkspaceStorage,
   getDraftScopeId,
 } from "@/common/constants/storage";
+import { getErrorMessage } from "@/common/utils/errors";
 
 interface WorkspaceModalState {
   isOpen: boolean;
@@ -196,7 +197,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
           return { success: false, error: result.error };
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         console.error("Failed to remove project:", errorMessage);
         return { success: false, error: errorMessage };
       }

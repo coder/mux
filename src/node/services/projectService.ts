@@ -25,6 +25,7 @@ import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import * as path from "path";
 import { getMuxProjectsDir } from "@/common/constants/paths";
 import { expandTilde } from "@/node/runtime/tildeExpansion";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * List directory contents for the DirectoryPickerModal.
@@ -271,7 +272,7 @@ export class ProjectService {
 
       return Ok({ projectConfig, normalizedPath });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to create project: ${message}`);
     }
   }
@@ -316,7 +317,7 @@ export class ProjectService {
         cloneParentDir,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(message);
     }
   }
@@ -598,7 +599,7 @@ export class ProjectService {
       cloneSucceeded = true;
       yield { type: "success", projectConfig, normalizedPath };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       yield { type: "error", error: `Failed to clone repository: ${message}` };
     } finally {
       await cleanupPartialClone();
@@ -647,7 +648,7 @@ export class ProjectService {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to remove project: ${message}`);
     }
   }
@@ -739,7 +740,7 @@ export class ProjectService {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       log.error("Failed to initialize git repository:", error);
       return Err(`Failed to initialize git repository: ${message}`);
     }
@@ -796,7 +797,7 @@ export class ProjectService {
         } catch (error) {
           log.debug("getFileCompletions: failed to list files", {
             projectPath: normalizedPath,
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           });
         } finally {
           cacheEntry.fetchedAt = Date.now();
@@ -828,7 +829,7 @@ export class ProjectService {
     } catch (error) {
       return {
         success: false as const,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       };
     }
   }
@@ -847,7 +848,7 @@ export class ProjectService {
       await fsPromises.mkdir(normalizedPath, { recursive: true });
       return Ok({ normalizedPath });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to create directory: ${message}`);
     }
   }
@@ -857,7 +858,7 @@ export class ProjectService {
       await this.config.updateProjectSecrets(projectPath, secrets);
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to update project secrets: ${message}`);
     }
   }
@@ -894,7 +895,7 @@ export class ProjectService {
       await this.config.saveConfig(config);
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to set idle compaction hours: ${message}`);
     }
   }
@@ -954,7 +955,7 @@ export class ProjectService {
       await this.config.saveConfig(config);
       return Ok(section);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to create section: ${message}`);
     }
   }
@@ -989,7 +990,7 @@ export class ProjectService {
       await this.config.saveConfig(config);
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to update section: ${message}`);
     }
   }
@@ -1037,7 +1038,7 @@ export class ProjectService {
       await this.config.saveConfig(config);
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to remove section: ${message}`);
     }
   }
@@ -1073,7 +1074,7 @@ export class ProjectService {
       await this.config.saveConfig(config);
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to reorder sections: ${message}`);
     }
   }
@@ -1112,7 +1113,7 @@ export class ProjectService {
       await this.config.saveConfig(config);
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to assign workspace to section: ${message}`);
     }
   }

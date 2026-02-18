@@ -22,6 +22,7 @@
 
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
+import { getErrorMessage } from "@/common/utils/errors";
 
 type APIClient = RouterClient<AppRouter>;
 
@@ -349,7 +350,7 @@ export class TerminalSessionRouter {
       } catch (err) {
         if (!signal.aborted) {
           // Ignore "session not found" errors for exit stream
-          const errMsg = err instanceof Error ? err.message : String(err);
+          const errMsg = getErrorMessage(err);
           if (!errMsg.includes("isOpen") && !errMsg.includes("undefined")) {
             console.error(`[TerminalRouter] Exit stream error for ${sessionId}:`, err);
           }

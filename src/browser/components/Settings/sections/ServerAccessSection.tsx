@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/browser/components/ui/button";
 import { useAPI } from "@/browser/contexts/API";
 import type { ServerAuthSession } from "@/common/orpc/types";
+import { getErrorMessage } from "@/common/utils/errors";
 
 function formatTimestamp(timestampMs: number): string {
   return new Date(timestampMs).toLocaleString();
@@ -54,7 +55,7 @@ export function ServerAccessSection() {
       const nextSessions = await api.serverAuth.listSessions();
       setSessions(nextSessions);
     } catch (refreshError) {
-      const message = refreshError instanceof Error ? refreshError.message : String(refreshError);
+      const message = getErrorMessage(refreshError);
       setError(message);
       setSessions([]);
     } finally {
@@ -81,7 +82,7 @@ export function ServerAccessSection() {
           setError("Session not found");
         }
       } catch (revokeError) {
-        const message = revokeError instanceof Error ? revokeError.message : String(revokeError);
+        const message = getErrorMessage(revokeError);
         setError(message);
       } finally {
         setRevokingSessionId(null);
@@ -107,7 +108,7 @@ export function ServerAccessSection() {
     try {
       await api.serverAuth.revokeOtherSessions();
     } catch (revokeError) {
-      const message = revokeError instanceof Error ? revokeError.message : String(revokeError);
+      const message = getErrorMessage(revokeError);
       setError(message);
     } finally {
       setRevokingOthers(false);

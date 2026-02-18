@@ -70,6 +70,7 @@ import { WorkspaceDragLayer } from "./WorkspaceDragLayer";
 import { SectionDragLayer } from "./SectionDragLayer";
 import { DraggableSection } from "./DraggableSection";
 import type { SectionConfig } from "@/common/types/project";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // Re-export WorkspaceSelection for backwards compatibility
 export type { WorkspaceSelection } from "./WorkspaceListItem";
@@ -639,7 +640,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         workspaceForkError.showError(workspaceId, result.error ?? "Failed to fork chat", anchor);
       } catch (error) {
         // IPC/transport failures throw instead of returning { success: false }
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         workspaceForkError.showError(workspaceId, message, anchor);
       }
     },

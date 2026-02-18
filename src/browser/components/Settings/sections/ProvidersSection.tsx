@@ -46,6 +46,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/browser/components/ui/tooltip";
+import { getErrorMessage } from "@/common/utils/errors";
 
 type MuxGatewayLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
 type CodexOauthFlowStatus = "idle" | "starting" | "waiting" | "error";
@@ -369,7 +370,7 @@ export function ProvidersSection() {
       }
 
       setCodexOauthStatus("error");
-      setCodexOauthError(err instanceof Error ? err.message : String(err));
+      setCodexOauthError(getErrorMessage(err));
     }
   };
 
@@ -443,7 +444,7 @@ export function ProvidersSection() {
       }
 
       setCodexOauthStatus("error");
-      setCodexOauthError(err instanceof Error ? err.message : String(err));
+      setCodexOauthError(getErrorMessage(err));
     }
   };
 
@@ -492,7 +493,7 @@ export function ProvidersSection() {
       }
 
       setCodexOauthStatus("error");
-      setCodexOauthError(err instanceof Error ? err.message : String(err));
+      setCodexOauthError(getErrorMessage(err));
     }
   };
 
@@ -688,7 +689,7 @@ export function ProvidersSection() {
         return;
       }
 
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       setMuxGatewayAuthorizeUrl(null);
       setMuxGatewayLoginStatus("error");
       setMuxGatewayLoginError(message);
@@ -881,7 +882,7 @@ export function ProvidersSection() {
       setCopilotLoginError(waitResult.error);
     } catch (err) {
       if (attempt !== copilotLoginAttemptRef.current) return;
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       setCopilotLoginStatus("error");
       setCopilotLoginError(message);
     }

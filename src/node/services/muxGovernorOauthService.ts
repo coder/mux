@@ -22,6 +22,7 @@ import { log } from "@/node/services/log";
 import { createDeferred, renderOAuthCallbackHtml } from "@/node/utils/oauthUtils";
 import { startLoopbackServer } from "@/node/utils/oauthLoopbackServer";
 import { OAuthFlowManager } from "@/node/utils/oauthFlowManager";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const DEFAULT_DESKTOP_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_SERVER_TIMEOUT_MS = 10 * 60 * 1000;
@@ -50,7 +51,7 @@ export class MuxGovernorOauthService {
     try {
       governorOrigin = normalizeGovernorUrl(input.governorOrigin);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Invalid Governor URL: ${message}`);
     }
 
@@ -71,7 +72,7 @@ export class MuxGovernorOauthService {
           }),
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to start OAuth callback listener: ${message}`);
     }
 
@@ -156,7 +157,7 @@ export class MuxGovernorOauthService {
     try {
       governorOrigin = normalizeGovernorUrl(input.governorOrigin);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Invalid Governor URL: ${message}`);
     }
 
@@ -257,7 +258,7 @@ export class MuxGovernorOauthService {
         muxGovernorToken: tokenResult.data,
       }));
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to save Governor credentials: ${message}`);
     }
 
@@ -303,7 +304,7 @@ export class MuxGovernorOauthService {
 
       return Ok(token);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Mux Governor exchange failed: ${message}`);
     }
   }

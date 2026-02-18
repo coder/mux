@@ -32,6 +32,7 @@ import {
 } from "@/common/types/tasks";
 import { getThinkingOptionLabel, type ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const INHERIT = "__inherit__";
 
@@ -345,7 +346,7 @@ export function TasksSection() {
         setLoaded(true);
       })
       .catch((error: unknown) => {
-        setSaveError(error instanceof Error ? error.message : String(error));
+        setSaveError(getErrorMessage(error));
         setLoadFailed(true);
         setLoaded(true);
       });
@@ -480,7 +481,7 @@ export function TasksSection() {
             }
           })
           .catch((error: unknown) => {
-            setSaveError(error instanceof Error ? error.message : String(error));
+            setSaveError(getErrorMessage(error));
           })
           .finally(() => {
             savingRef.current = false;

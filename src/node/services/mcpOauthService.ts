@@ -22,6 +22,7 @@ import type {
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
 import { closeServer, createDeferred, renderOAuthCallbackHtml } from "@/node/utils/oauthUtils";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const DEFAULT_DESKTOP_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_SERVER_TIMEOUT_MS = 10 * 60 * 1000;
@@ -482,7 +483,7 @@ export class McpOauthService {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(message);
     }
   }
@@ -652,7 +653,7 @@ export class McpOauthService {
         serverListener.listen(0, "127.0.0.1", () => resolve());
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to start OAuth callback listener: ${message}`);
     }
 
@@ -728,7 +729,7 @@ export class McpOauthService {
 
       return Ok({ flowId, authorizeUrl: flow.authorizeUrl, redirectUri });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       await this.finishDesktopFlow(flowId, Err(message));
       return Err(message);
     }
@@ -866,7 +867,7 @@ export class McpOauthService {
 
       return Ok({ flowId, authorizeUrl: flow.authorizeUrl, redirectUri: flow.redirectUri });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       await this.finishServerFlow(flowId, Err(message));
       return Err(message);
     }
@@ -1170,7 +1171,7 @@ export class McpOauthService {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(message);
     }
   }

@@ -31,6 +31,7 @@ import type {
   ToolErrorResult,
 } from "@/common/types/tools";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const OTHER_VALUE = "__other__";
 
@@ -326,7 +327,7 @@ export function AskUserQuestionToolCall(props: {
       assert(props.workspaceId, "workspaceId is required");
       workspaceId = props.workspaceId;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       setSubmitError(errorMessage);
       setIsSubmitting(false);
       return;
@@ -354,7 +355,7 @@ export function AskUserQuestionToolCall(props: {
         );
       })
       .catch((error) => {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         setSubmitError(errorMessage);
       })
       .finally(() => {

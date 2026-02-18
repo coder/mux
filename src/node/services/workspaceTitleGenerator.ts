@@ -5,6 +5,7 @@ import { log } from "./log";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { NameGenerationError, SendMessageError } from "@/common/types/errors";
+import { getErrorMessage } from "@/common/utils/errors";
 import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
 import crypto from "crypto";
 
@@ -221,7 +222,7 @@ export function mapNameGenerationError(error: unknown, modelString: string): Nam
     return { type: "network", raw: error.message };
   }
 
-  const raw = error instanceof Error ? error.message : String(error);
+  const raw = getErrorMessage(error);
   return { type: "unknown", raw };
 }
 

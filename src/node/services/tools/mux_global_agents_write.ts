@@ -7,6 +7,7 @@ import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { FILE_EDIT_DIFF_OMITTED_MESSAGE } from "@/common/types/tools";
 import { generateDiff } from "./fileCommon";
+import { getErrorMessage } from "@/common/utils/errors";
 
 function getMuxHomeFromWorkspaceSessionDir(config: ToolConfiguration): string {
   if (!config.workspaceSessionDir) {
@@ -113,7 +114,7 @@ export const createMuxGlobalAgentsWriteTool: ToolFactory = (config: ToolConfigur
           },
         };
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         return {
           success: false,
           error: `Failed to write global AGENTS.md: ${message}`,

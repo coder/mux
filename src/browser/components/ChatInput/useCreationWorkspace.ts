@@ -45,6 +45,7 @@ import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
 import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
 import { resolveDevcontainerSelection } from "@/browser/utils/devcontainerSelection";
+import { getErrorMessage } from "@/common/utils/errors";
 
 export type CreationSendResult = { success: true } | { success: false; error?: SendMessageError };
 
@@ -552,7 +553,7 @@ export function useCreationWorkspace({
 
         return { success: true };
       } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
+        const errorMessage = getErrorMessage(err);
         setToast({
           id: Date.now().toString(),
           type: "error",

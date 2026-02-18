@@ -18,6 +18,7 @@ import { log } from "@/node/services/log";
 import { isCommandAvailable, findAvailableCommand } from "@/node/utils/commandDiscovery";
 import { Terminal } from "@xterm/headless";
 import { SerializeAddon } from "@xterm/addon-serialize";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * Configuration for opening a native terminal
@@ -344,7 +345,7 @@ export class TerminalService {
         });
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       log.error(`Failed to open native terminal: ${message}`);
       throw err;
     }

@@ -71,6 +71,7 @@ import {
   readSubagentTranscriptArtifactsFile,
   type SubagentTranscriptArtifactIndexEntry,
 } from "@/node/services/subagentTranscriptArtifacts";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * Resolves runtime and discovery path for agent operations.
@@ -163,7 +164,7 @@ async function readChatJsonlAllowMissing(params: {
       } catch (parseError) {
         log.warn(
           `Skipping malformed JSON at line ${i + 1} in ${params.logLabel}:`,
-          parseError instanceof Error ? parseError.message : String(parseError),
+          getErrorMessage(parseError),
           "\nLine content:",
           lines[i].substring(0, 100) + (lines[i].length > 100 ? "..." : "")
         );
@@ -193,7 +194,7 @@ async function readPartialJsonBestEffort(partialPath: string): Promise<MuxMessag
     // Never fail transcript viewing because partial.json is corrupted.
     log.warn("Failed to read partial.json for transcript", {
       partialPath,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
     return null;
   }
@@ -1116,7 +1117,7 @@ export const router = (authToken?: string) => {
               },
             });
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = getErrorMessage(error);
             return Err(`Mux Gateway balance request failed: ${message}`);
           }
 
@@ -1151,7 +1152,7 @@ export const router = (authToken?: string) => {
           try {
             json = await response.json();
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = getErrorMessage(error);
             return Err(`Mux Gateway balance response was not valid JSON: ${message}`);
           }
 
@@ -1344,7 +1345,7 @@ export const router = (authToken?: string) => {
             clearLogEntries();
             return { success: true };
           } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            const message = getErrorMessage(err);
             return { success: false, error: message };
           }
         }),
@@ -1456,7 +1457,7 @@ export const router = (authToken?: string) => {
 
             return Ok(undefined);
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = getErrorMessage(error);
             return Err(message);
           }
         }),
@@ -2714,7 +2715,7 @@ export const router = (authToken?: string) => {
               log.warn("workspace.getSubagentTranscript: descendant check failed", {
                 requestingWorkspaceId,
                 taskId,
-                error: error instanceof Error ? error.message : String(error),
+                error: getErrorMessage(error),
               });
             }
           }
@@ -3413,7 +3414,7 @@ export const router = (authToken?: string) => {
               await context.sessionTimingService.clearTimingFile(input.workspaceId);
               return { success: true, data: undefined };
             } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
+              const message = getErrorMessage(error);
               return { success: false, error: message };
             }
           }),
@@ -3453,7 +3454,7 @@ export const router = (authToken?: string) => {
               );
               return { success: true, data: undefined };
             } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
+              const message = getErrorMessage(error);
               return { success: false, error: message };
             }
           }),

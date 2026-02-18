@@ -262,6 +262,7 @@ export function normalizeAnthropicBaseURL(baseURL: string): string {
 
 // Canonical definition lives in providerOptions; import for local use + re-export for backward compat.
 import { ANTHROPIC_1M_CONTEXT_HEADER } from "@/common/utils/ai/providerOptions";
+import { getErrorMessage } from "@/common/utils/errors";
 export { ANTHROPIC_1M_CONTEXT_HEADER };
 
 /**
@@ -1202,7 +1203,7 @@ export class ProviderModelFactory {
         provider: providerName,
       });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       return Err({ type: "unknown", raw: `Failed to create model: ${errorMessage}` });
     }
   }

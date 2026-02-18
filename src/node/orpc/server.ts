@@ -27,6 +27,7 @@ import {
   SERVER_AUTH_SESSION_MAX_AGE_SECONDS,
 } from "@/node/services/serverAuthService";
 import { attachStreamErrorHandler, isIgnorableStreamError } from "@/node/utils/streamErrors";
+import { getErrorMessage } from "@/common/utils/errors";
 
 type AliveWebSocket = WebSocket & { isAlive?: boolean };
 
@@ -1234,7 +1235,7 @@ export async function createOrpcServer({
       return;
     }
 
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     const code =
       error && typeof error === "object" && "code" in error && typeof error.code === "string"
         ? error.code

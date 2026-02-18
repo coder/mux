@@ -58,6 +58,7 @@ import { isBashAvailable } from "../node/utils/main/bashPath";
 import windowStateKeeper from "electron-window-state";
 import { getTitleBarOptions } from "./titleBarOptions";
 import { isUpdateInstallInProgress } from "./updateInstallState";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // React DevTools for development profiling
 // Using dynamic import() to avoid loading electron-devtools-installer at module init time
@@ -111,7 +112,7 @@ if (process.env.MUX_DEBUG_START_TIME === "1") {
 process.on("uncaughtException", (error: unknown) => {
   console.error("Uncaught Exception:", error);
 
-  const message = error instanceof Error ? error.message : String(error);
+  const message = getErrorMessage(error);
   const stack = error instanceof Error ? error.stack : undefined;
 
   console.error("Stack:", stack);
@@ -130,7 +131,7 @@ process.on("unhandledRejection", (reason, promise) => {
   console.error("Reason:", reason);
 
   if (app.isPackaged) {
-    const message = reason instanceof Error ? reason.message : String(reason);
+    const message = getErrorMessage(reason);
     const stack = reason instanceof Error ? reason.stack : undefined;
     dialog.showErrorBox(
       "Unhandled Promise Rejection",

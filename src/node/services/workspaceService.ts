@@ -111,6 +111,7 @@ import {
   updateSubagentTranscriptArtifactsFile,
   upsertSubagentTranscriptArtifactIndexEntry,
 } from "@/node/services/subagentTranscriptArtifacts";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /** Maximum number of retry attempts when workspace name collides */
 const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
@@ -423,7 +424,7 @@ async function copyFileBestEffort(params: {
       ...params.logContext,
       srcPath: params.srcPath,
       destPath: params.destPath,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
     return false;
   }
@@ -458,7 +459,7 @@ async function copyDirIfMissingBestEffort(params: {
       ...params.logContext,
       srcDir: params.srcDir,
       destDir: params.destDir,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
   }
 }
@@ -590,7 +591,7 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
     log.error("Failed to archive child transcript into parent session dir", {
       parentWorkspaceId: params.parentWorkspaceId,
       childWorkspaceId: params.childWorkspaceId,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
   }
 
@@ -670,7 +671,7 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
     log.error("Failed to roll up subagent patch artifacts into parent", {
       parentWorkspaceId: params.parentWorkspaceId,
       childWorkspaceId: params.childWorkspaceId,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
   }
 
@@ -751,7 +752,7 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
     log.error("Failed to roll up subagent report artifacts into parent", {
       parentWorkspaceId: params.parentWorkspaceId,
       childWorkspaceId: params.childWorkspaceId,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
   }
 
@@ -833,7 +834,7 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
     log.error("Failed to roll up subagent transcript artifacts into parent", {
       parentWorkspaceId: params.parentWorkspaceId,
       childWorkspaceId: params.childWorkspaceId,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
   }
 }
@@ -1438,7 +1439,7 @@ export class WorkspaceService extends EventEmitter {
       );
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to set exclusion: ${message}`);
     }
   }
@@ -1503,7 +1504,7 @@ export class WorkspaceService extends EventEmitter {
         }
       }
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getErrorMessage(error);
       return Err(errorMsg);
     }
 
@@ -1665,7 +1666,7 @@ export class WorkspaceService extends EventEmitter {
       return Ok({ metadata: this.enrichFrontendMetadata(completeMetadata) });
     } catch (error) {
       initLogger.logComplete(-1);
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to create workspace: ${message}`);
     }
   }
@@ -1811,7 +1812,7 @@ export class WorkspaceService extends EventEmitter {
             log.error("Failed to roll up child session timing into parent", {
               workspaceId,
               parentWorkspaceId,
-              error: error instanceof Error ? error.message : String(error),
+              error: getErrorMessage(error),
             });
           }
         }
@@ -1843,7 +1844,7 @@ export class WorkspaceService extends EventEmitter {
             log.error("Failed to roll up child session usage into parent", {
               workspaceId,
               parentWorkspaceId,
-              error: error instanceof Error ? error.message : String(error),
+              error: getErrorMessage(error),
             });
           }
         }
@@ -1877,7 +1878,7 @@ export class WorkspaceService extends EventEmitter {
             log.error("Failed to roll up child session artifacts into parent", {
               workspaceId,
               parentWorkspaceId,
-              error: error instanceof Error ? error.message : String(error),
+              error: getErrorMessage(error),
             });
           }
         }
@@ -1905,7 +1906,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to remove workspace: ${message}`);
     } finally {
       this.removingWorkspaces.delete(workspaceId);
@@ -2098,7 +2099,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok({ newWorkspaceId: workspaceId });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to rename workspace: ${message}`);
     } finally {
       // Always clear renaming flag, even on error
@@ -2146,7 +2147,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to update workspace title: ${message}`);
     }
   }
@@ -2281,7 +2282,7 @@ export class WorkspaceService extends EventEmitter {
         } catch (error) {
           log.debug("Failed to emit metadata after init cancellation during archive", {
             workspaceId,
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           });
         }
       }
@@ -2351,7 +2352,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to archive workspace: ${message}`);
     } finally {
       this.archivingWorkspaces.delete(workspaceId);
@@ -2443,7 +2444,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to unarchive workspace: ${message}`);
     }
   }
@@ -2512,7 +2513,7 @@ export class WorkspaceService extends EventEmitter {
           try {
             parsed = JSON.parse(output);
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = getErrorMessage(error);
             errors.push({ workspaceId, error: `Failed to parse gh output: ${message}` });
             return;
           }
@@ -2536,7 +2537,7 @@ export class WorkspaceService extends EventEmitter {
 
           skippedWorkspaceIds.push(workspaceId);
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message = getErrorMessage(error);
           errors.push({ workspaceId, error: message });
         }
       });
@@ -2561,7 +2562,7 @@ export class WorkspaceService extends EventEmitter {
         errors,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to archive merged workspaces: ${message}`);
     }
   }
@@ -2761,7 +2762,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to update workspace AI settings: ${message}`);
     }
   }
@@ -2820,7 +2821,7 @@ export class WorkspaceService extends EventEmitter {
         } catch (error) {
           log.debug("Failed to list local branches for fork auto-name preflight", {
             projectPath: foundProjectPath,
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           });
         }
 
@@ -2933,7 +2934,7 @@ export class WorkspaceService extends EventEmitter {
           log.error(`Failed to clean up session dir ${newSessionDir}:`, cleanupError);
         }
         initLogger.logComplete(-1);
-        const message = copyError instanceof Error ? copyError.message : String(copyError);
+        const message = getErrorMessage(copyError);
         return Err(`Failed to copy chat history: ${message}`);
       }
 
@@ -2999,7 +3000,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok({ metadata: enrichedMetadata, projectPath: foundProjectPath });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to fork workspace: ${message}`);
     }
   }
@@ -3144,7 +3145,7 @@ export class WorkspaceService extends EventEmitter {
             log.debug("Failed to cancel pending ask_user_question", {
               workspaceId,
               toolCallId: pendingAskUserQuestion.toolCallId,
-              error: error instanceof Error ? error.message : String(error),
+              error: getErrorMessage(error),
             });
           }
         }
@@ -3261,7 +3262,7 @@ export class WorkspaceService extends EventEmitter {
       }
       return result;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       log.error("Unexpected error in resumeStream handler:", error);
 
       // Handle incompatible workspace errors from downgraded configs
@@ -3312,7 +3313,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       log.error("Unexpected error in interruptStream handler:", error);
       return Err(`Failed to interrupt stream: ${errorMessage}`);
     }
@@ -3454,7 +3455,7 @@ export class WorkspaceService extends EventEmitter {
         }
 
         if (!best) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
+          const errorMessage = getErrorMessage(error);
           return Err(`Failed to answer ask_user_question: ${errorMessage}`);
         }
 
@@ -3496,7 +3497,7 @@ export class WorkspaceService extends EventEmitter {
 
         return Ok(undefined);
       } catch (innerError) {
-        const errorMessage = innerError instanceof Error ? innerError.message : String(innerError);
+        const errorMessage = getErrorMessage(innerError);
         return Err(errorMessage);
       }
     }
@@ -3508,7 +3509,7 @@ export class WorkspaceService extends EventEmitter {
       session.clearQueue();
       return Ok(undefined);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       log.error("Unexpected error in clearQueue handler:", error);
       return Err(`Failed to clear queue: ${errorMessage}`);
     }
@@ -3754,7 +3755,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to replace history: ${message}`);
     }
   }
@@ -3839,7 +3840,7 @@ export class WorkspaceService extends EventEmitter {
         } catch (error) {
           log.debug("getFileCompletions: failed to list files", {
             workspaceId,
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           });
 
           // Keep any previously indexed data, but avoid retrying in a tight loop.
@@ -3959,7 +3960,7 @@ export class WorkspaceService extends EventEmitter {
     } catch (error) {
       // bashTool.execute returns error results instead of throwing, so this only catches
       // failures from setup code (getWorkspaceMetadata, findWorkspace, createRuntime, etc.)
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to execute bash command: ${message}`);
     }
   }

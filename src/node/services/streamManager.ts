@@ -54,6 +54,7 @@ import { extractToolMediaAsUserMessagesFromModelMessages } from "@/node/utils/me
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 import { getModelStats } from "@/common/utils/tokens/modelStats";
+import { getErrorMessage } from "@/common/utils/errors";
 import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
 
 // Disable AI SDK warning logging (e.g., "setting `toolChoice` to `none` is not supported")
@@ -526,7 +527,7 @@ export class StreamManager extends EventEmitter {
     try {
       await runtime.ensureDir(resolvedPath);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       throw new Error(`Failed to create temp directory ${resolvedPath}: ${msg}`);
     }
 
@@ -2029,9 +2030,7 @@ export class StreamManager extends EventEmitter {
   ): StreamErrorPayload & { errorType: StreamErrorType } {
     // Extract error message (errors thrown from 'error' parts already have the correct message)
     // Apply prefix stripping to remove noisy "undefined: " prefixes from provider errors
-    let errorMessage: string = stripNoisyErrorPrefix(
-      error instanceof Error ? error.message : String(error)
-    );
+    let errorMessage: string = stripNoisyErrorPrefix(getErrorMessage(error));
     let actualError: unknown = error;
 
     // For categorization, use the cause if available (preserves the original error structure)
@@ -2347,7 +2346,7 @@ export class StreamManager extends EventEmitter {
     // }
 
     // Fallback for unknown errors
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     return { type: "unknown", raw: message };
   }
 
@@ -2838,7 +2837,7 @@ export class StreamManager extends EventEmitter {
       }
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to stop stream: ${message}`);
     }
   }
