@@ -657,13 +657,37 @@ export class AgentSession {
     return metadataResult.data;
   }
 
+  private shouldUseUserMessageForRetry(message: MuxMessage): boolean {
+    if (message.role !== "user") {
+      return false;
+    }
+
+    // Ignore synthetic snapshot rows used only for prompt cache stability.
+    if (
+      message.metadata?.synthetic === true &&
+      (message.metadata.fileAtMentionSnapshot || message.metadata.agentSkillSnapshot)
+    ) {
+      return false;
+    }
+
+    // Other synthetic user rows are usually internal sentinels; only keep them when
+    // they carry compaction metadata needed for restart-safe retries.
+    if (message.metadata?.synthetic === true) {
+      return isCompactionRequestMetadata(message.metadata?.muxMetadata);
+    }
+
+    return true;
+  }
+
   private async deriveStartupAutoRetryOptions(params: {
     partial: MuxMessage | null;
     historyTail: MuxMessage[];
   }): Promise<SendMessageOptions | undefined> {
     const lastUserMessage = [...params.historyTail]
       .reverse()
-      .find((message): message is MuxMessage & { role: "user" } => message.role === "user");
+      .find((message): message is MuxMessage & { role: "user" } =>
+        this.shouldUseUserMessageForRetry(message)
+      );
 
     const lastAssistantMessage =
       params.partial?.role === "assistant"
@@ -1539,6 +1563,7 @@ export class AgentSession {
           {
             timestamp: Date.now(),
             toolPolicy: autoCompactionRequest.sendOptions.toolPolicy,
+            disableWorkspaceAgents: optionsForStream.disableWorkspaceAgents,
             muxMetadata: autoCompactionRequest.metadata,
             synthetic: true,
             uiVisible: true,

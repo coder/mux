@@ -118,6 +118,16 @@ describe("AgentSession startup auto-retry recovery", () => {
     );
     expect(appendResult.success).toBe(true);
 
+    const appendSnapshotResult = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("snapshot-1", "user", "<snapshot>", {
+        timestamp: Date.now(),
+        synthetic: true,
+        fileAtMentionSnapshot: ["token"],
+      })
+    );
+    expect(appendSnapshotResult.success).toBe(true);
+
     session.ensureStartupAutoRetryCheck();
 
     const startupCheckPromise = (

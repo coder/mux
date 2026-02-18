@@ -104,6 +104,7 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     const result = await session.sendMessage("please inspect @foo.ts", {
       model: "openai:gpt-4o",
       agentId: "exec",
+      disableWorkspaceAgents: true,
     });
 
     expect(result.success).toBe(true);
@@ -120,10 +121,11 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     );
     expect(persistedSnapshot).toBe(false);
 
-    const persistedCompactionRequest = historyResult.data.some(
+    const persistedCompactionMessage = historyResult.data.find(
       (message) => message.metadata?.muxMetadata?.type === "compaction-request"
     );
-    expect(persistedCompactionRequest).toBe(true);
+    expect(persistedCompactionMessage).toBeDefined();
+    expect(persistedCompactionMessage?.metadata?.disableWorkspaceAgents).toBe(true);
 
     const emittedSnapshot = events.some(
       (message) =>
