@@ -6,6 +6,7 @@ import { resolveModelAlias } from "@/common/utils/ai/models";
 import type { AppRouter } from "@/node/orpc/router";
 import {
   createWorkspaceBackedSession,
+  forkWorkspaceBackedSession,
   listWorkspaceBackedSessions,
   parseMuxMeta,
 } from "./workspace";
@@ -45,13 +46,15 @@ function makeWorkspaceMetadata(
 function makeClient(overrides: {
   create?: ReturnType<typeof vi.fn>;
   list?: ReturnType<typeof vi.fn>;
+  getInfo?: ReturnType<typeof vi.fn>;
+  fork?: ReturnType<typeof vi.fn>;
 }): RouterClient<AppRouter> {
   return {
     workspace: {
       create: overrides.create ?? vi.fn(),
       list: overrides.list ?? vi.fn(),
-      getInfo: vi.fn(),
-      fork: vi.fn(),
+      getInfo: overrides.getInfo ?? vi.fn(),
+      fork: overrides.fork ?? vi.fn(),
     },
   } as unknown as RouterClient<AppRouter>;
 }
@@ -260,6 +263,56 @@ describe("createWorkspaceBackedSession", () => {
     expect(session.modeId).toBe("plan");
     expect(session.modelId).toBe("openai:gpt-5.2");
     expect(session.thinkingLevel).toBe("medium");
+  });
+});
+
+describe("forkWorkspaceBackedSession", () => {
+  it("canonicalizes cwd matching and normalizes fork branch names", async () => {
+    const getInfoMock = vi.fn().mockResolvedValue(
+      makeWorkspaceMetadata({
+        id: "workspace-source",
+        projectPath: "/repo",
+        namedWorkspacePath: "/repo/.mux/workspace-source",
+        agentId: "exec",
+      })
+    );
+
+    const forkMock = vi.fn().mockResolvedValue({
+      success: true,
+      metadata: makeWorkspaceMetadata({
+        id: "workspace-forked",
+        projectPath: "/repo",
+        namedWorkspacePath: "/repo/.mux/workspace-forked",
+        agentId: "exec",
+      }),
+      projectPath: "/repo",
+    });
+
+    const client = makeClient({
+      getInfo: getInfoMock,
+      fork: forkMock,
+    });
+
+    const session = await forkWorkspaceBackedSession(
+      client,
+      {
+        sessionId: "workspace-source",
+        cwd: "/repo/",
+        mcpServers: [],
+        _meta: {
+          mux: {
+            branchName: "feature/acp",
+          },
+        },
+      },
+      undefined
+    );
+
+    expect(forkMock).toHaveBeenCalledWith({
+      sourceWorkspaceId: "workspace-source",
+      newName: "feature-acp",
+    });
+    expect(session.workspaceId).toBe("workspace-forked");
   });
 });
 

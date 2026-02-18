@@ -120,16 +120,22 @@ function ensureAbsolutePath(cwd: string): string {
   return trimmed;
 }
 
+function canonicalizeAbsolutePathForComparison(inputPath: string): string {
+  const absolutePath = ensureAbsolutePath(inputPath);
+  const normalizedPath = path.resolve(path.normalize(absolutePath));
+  return process.platform === "win32" ? normalizedPath.toLowerCase() : normalizedPath;
+}
+
 function createFallbackBranchName(): string {
   const timestamp = Date.now().toString(36);
   const randomSuffix = Math.random().toString(36).slice(2, 8);
   return `acp-${timestamp}-${randomSuffix}`.slice(0, 64);
 }
 
-function normalizeWorkspaceBranchName(branchName: string | undefined): string {
+function normalizeWorkspaceBranchName(branchName: string | undefined): string | undefined {
   const trimmed = branchName?.trim() ?? "";
   if (trimmed.length === 0) {
-    return createFallbackBranchName();
+    return undefined;
   }
 
   // Workspace names must satisfy [a-z0-9_-]{1,64}. ACP clients commonly pass
@@ -143,11 +149,11 @@ function normalizeWorkspaceBranchName(branchName: string | undefined): string {
     .slice(0, 64);
 
   const validation = validateWorkspaceName(normalized);
-  if (validation.valid) {
-    return normalized;
-  }
+  return validation.valid ? normalized : undefined;
+}
 
-  return createFallbackBranchName();
+function resolveWorkspaceBranchName(branchName: string | undefined): string {
+  return normalizeWorkspaceBranchName(branchName) ?? createFallbackBranchName();
 }
 
 export function getWorkspaceAiSettings(
@@ -219,11 +225,14 @@ function assertWorkspaceBelongsToCwd(
   metadata: FrontendWorkspaceMetadataSchemaType,
   cwd: string
 ): void {
-  const expectedPath = ensureAbsolutePath(cwd);
+  const expectedPath = canonicalizeAbsolutePathForComparison(cwd);
   // Accept both the project path and the named worktree path as valid cwd values.
   // Clients may send either depending on whether they opened the project root
   // or the specific workspace directory (named worktree).
-  const validPaths = [metadata.projectPath, metadata.namedWorkspacePath];
+  const validPaths = [metadata.projectPath, metadata.namedWorkspacePath].map(
+    canonicalizeAbsolutePathForComparison
+  );
+
   if (!validPaths.includes(expectedPath)) {
     throw new Error(
       `Workspace ${metadata.id} belongs to ${metadata.projectPath}, but ACP requested cwd ${expectedPath}`
@@ -260,7 +269,7 @@ export async function createWorkspaceBackedSession(
     );
   }
 
-  const branchName = normalizeWorkspaceBranchName(meta.branchName);
+  const branchName = resolveWorkspaceBranchName(meta.branchName);
 
   const createResult = await client.workspace.create({
     projectPath,
@@ -332,9 +341,11 @@ export async function forkWorkspaceBackedSession(
 
   const meta = parseMuxMeta(params._meta ?? undefined);
 
+  const normalizedForkName = normalizeWorkspaceBranchName(meta.branchName);
+
   const forkResult = await client.workspace.fork({
     sourceWorkspaceId,
-    newName: meta.branchName,
+    newName: normalizedForkName,
   });
 
   if (!forkResult.success) {
