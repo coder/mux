@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -68,13 +69,21 @@ export function SettingsProvider(props: { children: ReactNode }) {
     };
   }, []);
 
+  // Fire close subscribers whenever settings transitions from open → closed,
+  // regardless of how the navigation happened (explicit close, back button, etc.).
+  const wasOpenRef = useRef(isOpen);
+  useEffect(() => {
+    if (wasOpenRef.current && !isOpen) {
+      for (const callback of closeCallbacksRef.current) {
+        callback();
+      }
+    }
+    wasOpenRef.current = isOpen;
+  }, [isOpen]);
+
   const close = useCallback(() => {
     setProvidersExpandedProvider(null);
     router.navigateFromSettings();
-
-    for (const callback of closeCallbacksRef.current) {
-      callback();
-    }
   }, [router]);
 
   const setActiveSection = useCallback(
