@@ -137,6 +137,46 @@ describe("RetryManager", () => {
     expect(scheduledTimers.size).toBe(0);
   });
 
+  it("exposes pending scheduled retry for reconnect snapshots", () => {
+    const { manager } = createRetryManager();
+
+    manager.handleStreamFailure({ type: "unknown", message: "transient" });
+
+    const snapshot = manager.getScheduledStatusSnapshot();
+    expect(snapshot).toEqual({
+      type: "auto-retry-scheduled",
+      attempt: 1,
+      delayMs: calculateBackoffDelay(1),
+      scheduledAt: Date.now(),
+    });
+
+    // Snapshot should be defensive-copied.
+    if (!snapshot) {
+      throw new Error("Expected a pending retry snapshot");
+    }
+    snapshot.attempt = 99;
+
+    expect(manager.getScheduledStatusSnapshot()).toEqual({
+      type: "auto-retry-scheduled",
+      attempt: 1,
+      delayMs: calculateBackoffDelay(1),
+      scheduledAt: Date.now(),
+    });
+
+    runNextTimer();
+    expect(manager.getScheduledStatusSnapshot()).toBeNull();
+  });
+
+  it("clears pending scheduled snapshot when retry is canceled", () => {
+    const { manager } = createRetryManager();
+
+    manager.handleStreamFailure({ type: "unknown" });
+    expect(manager.getScheduledStatusSnapshot()).not.toBeNull();
+
+    manager.cancel();
+    expect(manager.getScheduledStatusSnapshot()).toBeNull();
+  });
+
   it("cancel clears pending retry timer", () => {
     const { manager, onRetry } = createRetryManager();
 

@@ -152,6 +152,41 @@ describe("AgentSession startup auto-retry recovery", () => {
     session.dispose();
   });
 
+  test("replays pending auto-retry schedule during reconnect catch-up", async () => {
+    const workspaceId = "startup-retry-replay-snapshot";
+    const { session, historyService, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const appendResult = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-1", "user", "Interrupted before reconnect", {
+        timestamp: Date.now(),
+      })
+    );
+    expect(appendResult.success).toBe(true);
+
+    session.ensureStartupAutoRetryCheck();
+
+    const startupCheckPromise = (
+      session as unknown as { startupAutoRetryCheckPromise: Promise<void> | null }
+    ).startupAutoRetryCheckPromise;
+    await startupCheckPromise;
+
+    const replayEvents: WorkspaceChatMessage[] = [];
+    await session.replayHistory(({ message }) => {
+      replayEvents.push(message);
+    });
+
+    const scheduledIndex = replayEvents.findIndex((event) => event.type === "auto-retry-scheduled");
+    const caughtUpIndex = replayEvents.findIndex((event) => event.type === "caught-up");
+
+    expect(scheduledIndex).toBeGreaterThanOrEqual(0);
+    expect(caughtUpIndex).toBeGreaterThanOrEqual(0);
+    expect(scheduledIndex).toBeLessThan(caughtUpIndex);
+
+    session.dispose();
+  });
+
   test("respects persisted auto-retry opt-out across restart", async () => {
     const workspaceId = "startup-retry-opt-out";
     const {

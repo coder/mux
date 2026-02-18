@@ -40,6 +40,7 @@ export class RetryManager {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private enabled = true;
   private retryGeneration = 0;
+  private pendingScheduledEvent: AutoRetryScheduledEvent | null = null;
 
   constructor(
     private readonly workspaceId: string,
@@ -71,6 +72,7 @@ export class RetryManager {
     // a timer, but a later non-retryable error supersedes it.
     if (isNonRetryableSendError(error) || isNonRetryableStreamError(error)) {
       this.cancelPendingTimer();
+      this.pendingScheduledEvent = null;
       this.retryGeneration += 1;
       this.onStatusChange({ type: "auto-retry-abandoned", reason: error.type });
       return;
@@ -85,15 +87,18 @@ export class RetryManager {
     this.retryGeneration += 1;
     const scheduledGeneration = this.retryGeneration;
 
-    this.onStatusChange({
+    const scheduledEvent: AutoRetryScheduledEvent = {
       type: "auto-retry-scheduled",
       attempt: this.state.attempt,
       delayMs: delay,
       scheduledAt: Date.now(),
-    });
+    };
+    this.pendingScheduledEvent = scheduledEvent;
+    this.onStatusChange(scheduledEvent);
 
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
+      this.pendingScheduledEvent = null;
 
       // Guard against stale timers or stop requests that race with callback execution.
       if (!this.enabled || scheduledGeneration !== this.retryGeneration) {
@@ -139,6 +144,7 @@ export class RetryManager {
 
   cancel(): void {
     this.cancelPendingTimer();
+    this.pendingScheduledEvent = null;
     this.retryGeneration += 1;
     this.state = createFreshRetryState<RetryFailureError>();
   }
@@ -161,6 +167,15 @@ export class RetryManager {
 
   get isRetryPending(): boolean {
     return this.retryTimer !== null;
+  }
+
+  getScheduledStatusSnapshot(): AutoRetryScheduledEvent | null {
+    if (!this.pendingScheduledEvent) {
+      return null;
+    }
+
+    // Return a copy so callers cannot mutate internal retry state.
+    return { ...this.pendingScheduledEvent };
   }
 
   dispose(): void {

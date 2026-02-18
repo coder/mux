@@ -1154,6 +1154,16 @@ export class AgentSession {
         },
       });
 
+      // Rehydrate pending auto-retry countdown state on reconnect/reload so
+      // RetryBarrier keeps showing "Stop" while a backend timer is already armed.
+      const pendingRetrySnapshot = this.retryManager.getScheduledStatusSnapshot();
+      if (pendingRetrySnapshot) {
+        listener({
+          workspaceId: this.workspaceId,
+          message: pendingRetrySnapshot,
+        });
+      }
+
       // Send caught-up after ALL historical data (including init events)
       // This signals frontend that replay is complete and future events are real-time
       listener({
