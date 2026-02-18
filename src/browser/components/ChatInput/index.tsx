@@ -2300,7 +2300,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           "relative flex flex-col gap-1",
           variant === "creation"
             ? "bg-separator w-full max-w-3xl rounded-lg border border-border-light px-6 py-5 shadow-lg"
-            : "bg-separator border-border-light border-t px-[15px] pt-[5px] pb-[max(8px,min(env(safe-area-inset-bottom,0px),40px))] mb-[calc(-1*min(env(safe-area-inset-bottom,0px),40px))]"
+            : "bg-separator border-border-light border-t px-[15px] pt-[15px] pb-[max(15px,min(env(safe-area-inset-bottom,0px),40px))] mb-[calc(-1*min(env(safe-area-inset-bottom,0px),40px))]"
         )}
         data-component="ChatInputSection"
         data-autofocus-state="done"
@@ -2368,7 +2368,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             anchorRef={variant === "creation" ? inputRef : undefined}
           />
 
-          <div className="relative flex items-end pb-1" data-component="ChatInputControls">
+          <div className="relative flex items-end pb-2 pt-1" data-component="ChatInputControls">
             {/* Recording/transcribing overlay - replaces textarea when active */}
             {voiceInput.state !== "idle" ? (
               <RecordingOverlay
