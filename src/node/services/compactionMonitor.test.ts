@@ -112,6 +112,23 @@ describe("CompactionMonitor", () => {
     expect(statusEvents).toHaveLength(1);
   });
 
+  test("checkMidStream does not double-count cachedInputTokens", () => {
+    const { monitor, statusEvents } = createMonitor();
+
+    // Force threshold is 75% with defaults (70% + 5% buffer).
+    // 145k / 200k = 72.5%, so this should NOT trigger even when
+    // cachedInputTokens is present.
+    expect(
+      monitor.checkMidStream({
+        model: KNOWN_MODELS.SONNET.id,
+        usage: createMidStreamUsage(145_000, 10_000),
+        use1MContext: false,
+        providersConfig: null,
+      })
+    ).toBe(false);
+    expect(statusEvents).toHaveLength(0);
+  });
+
   test("resetForNewStream allows a new mid-stream trigger", () => {
     const { monitor, statusEvents } = createMonitor();
 

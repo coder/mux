@@ -106,7 +106,10 @@ export class CompactionMonitor {
       `CompactionMonitor(${this.workspaceId}): effective context limit must be positive`
     );
 
-    const usageTokens = (params.usage.inputTokens ?? 0) + (params.usage.cachedInputTokens ?? 0);
+    // AI SDK v6 reports inputTokens as the full prompt context (including cache reads),
+    // so adding cachedInputTokens here double-counts prompt-cached requests.
+    // Fallback to cachedInputTokens only when inputTokens is unavailable.
+    const usageTokens = params.usage.inputTokens ?? params.usage.cachedInputTokens ?? 0;
     assert(
       usageTokens >= 0,
       `CompactionMonitor(${this.workspaceId}): usage tokens must be non-negative`
