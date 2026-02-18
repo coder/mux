@@ -1307,7 +1307,8 @@ export class AgentSession {
       system1Model: options?.system1Model,
       system1ThinkingLevel: options?.system1ThinkingLevel,
       disableWorkspaceAgents: options?.disableWorkspaceAgents,
-      hasQueuedMessage: () => !this.messageQueue.isEmpty(),
+      hasQueuedMessage: () =>
+        !this.messageQueue.isEmpty() && this.messageQueue.getQueueDispatchMode() === "tool-end",
       openaiTruncationModeOverride,
     });
 
@@ -2202,8 +2203,10 @@ export class AgentSession {
     this.assertNotDisposed("queueMessage");
     this.messageQueue.add(message, options);
     this.emitQueuedMessageChanged();
-    // Signal to bash_output that it should return early to process the queued message
-    this.backgroundProcessManager.setMessageQueued(this.workspaceId, true);
+    // Signal to bash_output that it should return early to process queued messages
+    // only for tool-end dispatches.
+    const shouldEarlyReturn = this.messageQueue.getQueueDispatchMode() === "tool-end";
+    this.backgroundProcessManager.setMessageQueued(this.workspaceId, shouldEarlyReturn);
   }
 
   clearQueue(): void {

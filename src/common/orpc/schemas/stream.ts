@@ -549,6 +549,7 @@ export const SendMessageOptionsSchema = z.object({
    * iterating on agent files - a broken agent in the worktree won't affect message sending.
    */
   disableWorkspaceAgents: z.boolean().optional(),
+  queueDispatchMode: z.enum(["tool-end", "turn-end"]).nullish(),
 });
 
 // Re-export ChatUsageDisplaySchema for convenience

@@ -166,6 +166,51 @@ describe("MessageQueue", () => {
     });
   });
 
+  describe("queue dispatch mode", () => {
+    it("should default to tool-end when queueing without explicit mode", () => {
+      queue.add("Follow up");
+
+      expect(queue.getQueueDispatchMode()).toBe("tool-end");
+    });
+
+    it("should store explicit turn-end mode", () => {
+      queue.add("Follow up", {
+        model: "gpt-4",
+        agentId: "exec",
+        queueDispatchMode: "turn-end",
+      });
+
+      expect(queue.getQueueDispatchMode()).toBe("turn-end");
+    });
+
+    it("should prioritize tool-end mode when mixed", () => {
+      queue.add("Wait until turn ends", {
+        model: "gpt-4",
+        agentId: "exec",
+        queueDispatchMode: "turn-end",
+      });
+      queue.add("Interrupt at next tool step", {
+        model: "gpt-4",
+        agentId: "exec",
+        queueDispatchMode: "tool-end",
+      });
+
+      expect(queue.getQueueDispatchMode()).toBe("tool-end");
+    });
+
+    it("should reset mode to tool-end when cleared", () => {
+      queue.add("Follow up", {
+        model: "gpt-4",
+        agentId: "exec",
+        queueDispatchMode: "turn-end",
+      });
+
+      queue.clear();
+
+      expect(queue.getQueueDispatchMode()).toBe("tool-end");
+    });
+  });
+
   describe("addOnce", () => {
     it("should dedupe repeated entries by key", () => {
       const image = { url: "data:image/png;base64,abc", mediaType: "image/png" };

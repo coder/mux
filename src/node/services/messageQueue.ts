@@ -42,6 +42,8 @@ function hasReviews(meta: unknown): meta is MetadataWithReviews {
   return Array.isArray(obj.reviews);
 }
 
+type QueueDispatchMode = "tool-end" | "turn-end";
+
 /**
  * Queue for messages sent during active streaming.
  *
@@ -67,12 +69,17 @@ export class MessageQueue {
   private latestOptions?: SendMessageOptions;
   private accumulatedFileParts: FilePart[] = [];
   private dedupeKeys: Set<string> = new Set<string>();
+  private queueDispatchMode: QueueDispatchMode = "tool-end";
 
   /**
    * Check if the queue currently contains a compaction request.
    */
   hasCompactionRequest(): boolean {
     return isCompactionMetadata(this.firstMuxMetadata);
+  }
+
+  getQueueDispatchMode(): QueueDispatchMode {
+    return this.queueDispatchMode;
   }
 
   /**
@@ -121,6 +128,15 @@ export class MessageQueue {
     const incomingIsCompaction = isCompactionMetadata(options?.muxMetadata);
     const incomingIsAgentSkill = isAgentSkillMetadata(options?.muxMetadata);
     const queueHasMessages = !this.isEmpty();
+    const incomingMode = options?.queueDispatchMode ?? "tool-end";
+
+    if (!queueHasMessages) {
+      this.queueDispatchMode = incomingMode;
+    } else if (incomingMode === "tool-end") {
+      // tool-end (more urgent) takes precedence if mixed in same batch
+      this.queueDispatchMode = "tool-end";
+    }
+
     const queueHasAgentSkill = isAgentSkillMetadata(this.firstMuxMetadata);
 
     // Avoid leaking agent-skill metadata to later queued messages.
@@ -230,11 +246,15 @@ export class MessageQueue {
         ? this.firstMuxMetadata
         : (this.latestOptions?.muxMetadata as unknown);
     const options = this.latestOptions
-      ? {
-          ...this.latestOptions,
-          muxMetadata,
-          fileParts: this.accumulatedFileParts.length > 0 ? this.accumulatedFileParts : undefined,
-        }
+      ? (() => {
+          const restOptions: SendMessageOptions = { ...this.latestOptions };
+          delete restOptions.queueDispatchMode;
+          return {
+            ...restOptions,
+            muxMetadata,
+            fileParts: this.accumulatedFileParts.length > 0 ? this.accumulatedFileParts : undefined,
+          };
+        })()
       : undefined;
 
     return { message: joinedMessages, options };
@@ -249,6 +269,7 @@ export class MessageQueue {
     this.latestOptions = undefined;
     this.accumulatedFileParts = [];
     this.dedupeKeys.clear();
+    this.queueDispatchMode = "tool-end";
   }
 
   /**
