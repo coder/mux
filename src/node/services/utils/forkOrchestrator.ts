@@ -26,6 +26,12 @@ interface OrchestrateForkParams {
    */
   allowCreateFallback: boolean;
 
+  /**
+   * Caller-supplied trunk fallback, preferred over local git discovery.
+   * Useful when local git metadata is unavailable (e.g. SSH/Docker queues).
+   */
+  preferredTrunkBranch?: string;
+
   abortSignal?: AbortSignal;
 }
 
@@ -103,6 +109,10 @@ export async function orchestrateFork(
   let trunkBranch: string;
   if (forkResult.success && forkResult.sourceBranch) {
     trunkBranch = forkResult.sourceBranch;
+  } else if (params.preferredTrunkBranch?.trim()) {
+    // Caller-supplied fallback (e.g., queued task's persisted trunk branch).
+    // Preferred over local git discovery, which may be unavailable in SSH/Docker.
+    trunkBranch = params.preferredTrunkBranch.trim();
   } else {
     try {
       const localBranches = await listLocalBranches(projectPath);

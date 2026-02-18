@@ -21,6 +21,7 @@ import type { BashToolResult } from "@/common/types/tools";
 import { createMuxMessage } from "@/common/types/message";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import * as runtimeFactory from "@/node/runtime/runtimeFactory";
+import * as forkOrchestratorModule from "@/node/services/utils/forkOrchestrator";
 import * as workspaceTitleGenerator from "./workspaceTitleGenerator";
 
 // Helper to access private renamingWorkspaces set
@@ -2066,6 +2067,102 @@ describe("WorkspaceService regenerateTitle", () => {
     } finally {
       updateTitleSpy.mockRestore();
       generateIdentitySpy.mockRestore();
+    }
+  });
+});
+
+describe("WorkspaceService fork", () => {
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+
+  beforeEach(async () => {
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
+  test("cleans up init state when orchestrateFork rejects", async () => {
+    const sourceWorkspaceId = "source-workspace";
+    const newWorkspaceId = "forked-workspace";
+    const sourceProjectPath = "/tmp/project";
+
+    const mockAIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() =>
+        Promise.resolve(
+          Ok({
+            id: sourceWorkspaceId,
+            name: "source-branch",
+            projectPath: sourceProjectPath,
+            projectName: "project",
+            runtimeConfig: { type: "local" },
+          })
+        )
+      ),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    const startInitMock = mock(() => undefined);
+    const endInitMock = mock(() => Promise.resolve());
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => ({ status: "running" }) as unknown as InitStatus),
+      startInit: startInitMock,
+      endInit: endInitMock,
+      appendOutput: mock(() => undefined),
+      enterHookPhase: mock(() => undefined),
+    };
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/src",
+      generateStableId: mock(() => newWorkspaceId),
+      findWorkspace: mock(() => null),
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+    };
+
+    const workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      mockAIService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    const getOrCreateSessionSpy = spyOn(workspaceService, "getOrCreateSession").mockReturnValue({
+      emitMetadata: mock(() => undefined),
+    } as unknown as AgentSession);
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue(
+      {} as ReturnType<typeof runtimeFactory.createRuntime>
+    );
+    const orchestrateForkSpy = spyOn(forkOrchestratorModule, "orchestrateFork").mockRejectedValue(
+      new Error("runtime explosion")
+    );
+
+    try {
+      const result = await workspaceService.fork(sourceWorkspaceId, "fork-child");
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toBe("Failed to fork workspace: runtime explosion");
+      }
+
+      expect(startInitMock).toHaveBeenCalledWith(newWorkspaceId, sourceProjectPath);
+      expect(endInitMock).toHaveBeenCalledWith(newWorkspaceId, -1);
+
+      const initAbortControllers = (
+        workspaceService as unknown as { initAbortControllers: Map<string, AbortController> }
+      ).initAbortControllers;
+      expect(initAbortControllers.has(newWorkspaceId)).toBe(false);
+    } finally {
+      orchestrateForkSpy.mockRestore();
+      createRuntimeSpy.mockRestore();
+      getOrCreateSessionSpy.mockRestore();
     }
   });
 });

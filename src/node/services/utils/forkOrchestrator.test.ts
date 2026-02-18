@@ -68,6 +68,7 @@ interface RunOrchestrateForkOptions {
   allowCreateFallback: boolean;
   config?: Config;
   sourceRuntimeConfig?: RuntimeConfig;
+  preferredTrunkBranch?: string;
 }
 
 async function runOrchestrateFork(options: RunOrchestrateForkOptions) {
@@ -83,6 +84,7 @@ async function runOrchestrateFork(options: RunOrchestrateForkOptions) {
     sourceWorkspaceId: SOURCE_WORKSPACE_ID,
     sourceRuntimeConfig: options.sourceRuntimeConfig ?? SOURCE_RUNTIME_CONFIG,
     allowCreateFallback: options.allowCreateFallback,
+    preferredTrunkBranch: options.preferredTrunkBranch,
   });
 }
 
@@ -285,6 +287,46 @@ describe("orchestrateFork", () => {
 
     expect(result.data.trunkBranch).toBe("main");
     expect(detectDefaultTrunkBranchMock).not.toHaveBeenCalled();
+  });
+
+  it("uses preferredTrunkBranch when fork fails and git discovery is unavailable", async () => {
+    const { sourceRuntime, forkWorkspace, createWorkspace } = createSourceRuntimeMocks();
+
+    forkWorkspace.mockResolvedValue({
+      success: false,
+      failureIsFatal: false,
+      error: "fork not supported",
+    } satisfies WorkspaceForkResult);
+
+    createWorkspace.mockResolvedValue({
+      success: true,
+      workspacePath: "/workspaces/new",
+    } satisfies WorkspaceCreationResult);
+
+    // Simulate SSH/Docker where local git discovery is unavailable.
+    listLocalBranchesMock.mockRejectedValue(new Error("git not available"));
+
+    const result = await runOrchestrateFork({
+      sourceRuntime,
+      allowCreateFallback: true,
+      preferredTrunkBranch: "develop",
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error(`Expected success result, got error: ${result.error}`);
+    }
+
+    expect(result.data.trunkBranch).toBe("develop");
+    expect(result.data.forkedFromSource).toBe(false);
+
+    // createWorkspace should receive the preferred trunk branch.
+    expect(createWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({ trunkBranch: "develop" })
+    );
+
+    // preferredTrunkBranch short-circuits local git discovery.
+    expect(listLocalBranchesMock).not.toHaveBeenCalled();
   });
 
   it("surfaces sourceRuntimeConfigUpdate without persisting it in orchestrator", async () => {

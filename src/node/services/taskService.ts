@@ -1769,6 +1769,7 @@ export class TaskService {
           sourceWorkspaceId: parentId,
           sourceRuntimeConfig: parentRuntimeConfig,
           allowCreateFallback: true,
+          preferredTrunkBranch: trunkBranch,
         });
 
         if (

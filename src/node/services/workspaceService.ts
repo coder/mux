@@ -2875,18 +2875,26 @@ export class WorkspaceService extends EventEmitter {
       const initAbortController = new AbortController();
       this.initAbortControllers.set(newWorkspaceId, initAbortController);
 
-      const forkResult = await orchestrateFork({
-        sourceRuntime,
-        projectPath: foundProjectPath,
-        sourceWorkspaceName: sourceMetadata.name,
-        newWorkspaceName: resolvedName,
-        initLogger,
-        config: this.config,
-        sourceWorkspaceId,
-        sourceRuntimeConfig,
-        allowCreateFallback: false,
-        abortSignal: initAbortController.signal,
-      });
+      let forkResult: Awaited<ReturnType<typeof orchestrateFork>>;
+      try {
+        forkResult = await orchestrateFork({
+          sourceRuntime,
+          projectPath: foundProjectPath,
+          sourceWorkspaceName: sourceMetadata.name,
+          newWorkspaceName: resolvedName,
+          initLogger,
+          config: this.config,
+          sourceWorkspaceId,
+          sourceRuntimeConfig,
+          allowCreateFallback: false,
+          abortSignal: initAbortController.signal,
+        });
+      } catch (error) {
+        // Guarantee init lifecycle cleanup when orchestrateFork rejects.
+        // initLogger.logComplete deletes from initAbortControllers and ends init state.
+        initLogger.logComplete(-1);
+        throw error;
+      }
 
       if (!forkResult.success) {
         initLogger.logComplete(-1);
