@@ -16,7 +16,7 @@ import { getSlashCommandSuggestions } from "@/browser/utils/slashCommands/sugges
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { getDisableWorkspaceAgentsKey, GLOBAL_SCOPE_ID } from "@/common/constants/storage";
 import { filterCommandsByPrefix } from "@/browser/utils/commandPaletteFiltering";
-import { matchesAllTerms } from "@/browser/utils/fuzzySearch";
+import { matchesAllTerms, scoreAllTerms } from "@/browser/utils/fuzzySearch";
 
 interface CommandPaletteProps {
   getSlashContext?: () => { workspaceId?: string };
@@ -277,12 +277,38 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
     // Filter actions based on prefix (extracted to utility for testing)
     const actionsToShow = filterCommandsByPrefix(q, rawActions);
 
-    const filtered = [...actionsToShow].sort((a, b) => {
-      const ai = recentIndex.has(a.id) ? recentIndex.get(a.id)! : 9999;
-      const bi = recentIndex.has(b.id) ? recentIndex.get(b.id)! : 9999;
-      if (ai !== bi) return ai - bi;
-      return a.title.localeCompare(b.title);
-    });
+    // Build searchable text matching what cmdk would see (title + keywords + subtitle).
+    const buildSearchableText = (action: CommandAction): string => {
+      const parts = [action.title];
+      if (action.keywords) parts.push(...action.keywords);
+      if (action.subtitle) parts.push(action.subtitle);
+      return parts.join(" ");
+    };
+
+    const commandQuery = q.startsWith(">") ? q.slice(1).trim() : "";
+
+    const filtered =
+      commandQuery.length > 0
+        ? actionsToShow
+            .map((action) => ({
+              action,
+              score: scoreAllTerms(buildSearchableText(action), commandQuery),
+            }))
+            .filter((entry) => entry.score > 0)
+            .sort((a, b) => {
+              if (b.score !== a.score) return b.score - a.score;
+              const ai = recentIndex.get(a.action.id) ?? 9999;
+              const bi = recentIndex.get(b.action.id) ?? 9999;
+              if (ai !== bi) return ai - bi;
+              return a.action.title.localeCompare(b.action.title);
+            })
+            .map((entry) => entry.action)
+        : [...actionsToShow].sort((a, b) => {
+            const ai = recentIndex.has(a.id) ? recentIndex.get(a.id)! : 9999;
+            const bi = recentIndex.has(b.id) ? recentIndex.get(b.id)! : 9999;
+            if (ai !== bi) return ai - bi;
+            return a.title.localeCompare(b.title);
+          });
 
     const bySection = new Map<string, CommandAction[]>();
     for (const action of filtered) {
@@ -376,8 +402,11 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
 
   const isSlashQuery = !currentField && query.trim().startsWith("/");
   const isCommandQuery = !currentField && query.trim().startsWith(">");
-  // Enable cmdk filtering for all cases except slash queries (which we handle manually)
-  const shouldUseCmdkFilter = currentField ? currentField.type === "select" : !isSlashQuery;
+  const hasCommandSearchText = isCommandQuery && query.trim().slice(1).trim().length > 0;
+  // Enable cmdk filtering for all cases except slash queries and ranked command-query mode.
+  const shouldUseCmdkFilter = currentField
+    ? currentField.type === "select"
+    : !isSlashQuery && !hasCommandSearchText;
 
   let groups: PaletteGroup[] = generalResults.groups;
   let emptyText: string | undefined = generalResults.emptyText;
@@ -443,9 +472,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
         onMouseDown={(e: React.MouseEvent) => e.stopPropagation()}
         shouldFilter={shouldUseCmdkFilter}
         filter={(value, search, keywords) => {
-          // We intentionally *don't* use cmdk's scoring/ranking so we can keep our
-          // stable ordering (recent-first, then alphabetical). We just decide
-          // whether an item matches and return 1|0.
+          // We intentionally use cmdk as a boolean matcher only; ordering/ranking
+          // is handled in our own pre-processing so section/group ordering stays
+          // predictable.
           //
           // This is expected to feel more like fzf:
           // - space-separated terms are ANDed
