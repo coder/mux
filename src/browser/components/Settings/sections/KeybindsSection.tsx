@@ -21,6 +21,7 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   GENERATE_WORKSPACE_TITLE: "Generate new title",
   ARCHIVE_WORKSPACE: "Archive workspace",
   JUMP_TO_BOTTOM: "Jump to bottom",
+  LOAD_OLDER_MESSAGES: "Load older messages",
   NEXT_WORKSPACE: "Next workspace",
   PREV_WORKSPACE: "Previous workspace",
   TOGGLE_SIDEBAR: "Toggle sidebar",
@@ -111,6 +112,7 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
       "NAVIGATE_BACK",
       "NAVIGATE_FORWARD",
       "JUMP_TO_BOTTOM",
+      "LOAD_OLDER_MESSAGES",
     ],
   },
   {

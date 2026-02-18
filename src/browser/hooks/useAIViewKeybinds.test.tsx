@@ -54,6 +54,7 @@ describe("useAIViewKeybinds", () => {
         showRetryBarrier: false,
         chatInputAPI,
         jumpToBottom: () => undefined,
+        loadOlderHistory: null,
         handleOpenTerminal: () => undefined,
         handleOpenInEditor: () => undefined,
         aggregator: undefined,
@@ -92,6 +93,7 @@ describe("useAIViewKeybinds", () => {
         showRetryBarrier: false,
         chatInputAPI,
         jumpToBottom: () => undefined,
+        loadOlderHistory: null,
         handleOpenTerminal: () => undefined,
         handleOpenInEditor: () => undefined,
         aggregator: undefined,
@@ -134,6 +136,7 @@ describe("useAIViewKeybinds", () => {
         showRetryBarrier: false,
         chatInputAPI,
         jumpToBottom: () => undefined,
+        loadOlderHistory: null,
         handleOpenTerminal: () => undefined,
         handleOpenInEditor: () => undefined,
         aggregator: undefined,
@@ -177,6 +180,7 @@ describe("useAIViewKeybinds", () => {
         showRetryBarrier: false,
         chatInputAPI,
         jumpToBottom: () => undefined,
+        loadOlderHistory: null,
         handleOpenTerminal: () => undefined,
         handleOpenInEditor: () => undefined,
         aggregator: undefined,
@@ -201,6 +205,38 @@ describe("useAIViewKeybinds", () => {
     expect(interruptStream.mock.calls.length).toBe(1);
   });
 
+  test("Shift+H loads older history when callback is provided", () => {
+    const loadOlderHistory = mock(() => undefined);
+    const chatInputAPI: RefObject<ChatInputAPI | null> = { current: null };
+
+    renderHook(() =>
+      useAIViewKeybinds({
+        workspaceId: "ws",
+        canInterrupt: false,
+        showRetryBarrier: false,
+        chatInputAPI,
+        jumpToBottom: () => undefined,
+        loadOlderHistory,
+        handleOpenTerminal: () => undefined,
+        handleOpenInEditor: () => undefined,
+        aggregator: undefined,
+        setEditingMessage: () => undefined,
+        vimEnabled: false,
+      })
+    );
+
+    document.body.dispatchEvent(
+      new window.KeyboardEvent("keydown", {
+        key: "H",
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+
+    expect(loadOlderHistory.mock.calls.length).toBe(1);
+  });
+
   test("Escape does not interrupt when a modal stops propagation (e.g., Settings)", () => {
     const interruptStream = mock(() =>
       Promise.resolve({ success: true as const, data: undefined })
@@ -220,6 +256,7 @@ describe("useAIViewKeybinds", () => {
         showRetryBarrier: false,
         chatInputAPI,
         jumpToBottom: () => undefined,
+        loadOlderHistory: null,
         handleOpenTerminal: () => undefined,
         handleOpenInEditor: () => undefined,
         aggregator: undefined,

@@ -20,6 +20,7 @@ interface UseAIViewKeybindsParams {
   showRetryBarrier: boolean;
   chatInputAPI: React.RefObject<ChatInputAPI | null>;
   jumpToBottom: () => void;
+  loadOlderHistory: (() => void) | null;
   handleOpenTerminal: () => void;
   handleOpenInEditor: () => void;
   aggregator: StreamingMessageAggregator | undefined; // For compaction detection
@@ -31,7 +32,8 @@ interface UseAIViewKeybindsParams {
  * Manages keyboard shortcuts for AIView:
  * - Esc (non-vim) or Ctrl+C (vim): Interrupt stream (Escape skips text inputs by default)
  * - Ctrl+I: Focus chat input
- * - Ctrl+G: Jump to bottom
+ * - Shift+H: Load older transcript messages (when available)
+ * - Shift+G: Jump to bottom
  * - Ctrl+T: Open terminal
  * - Ctrl+Shift+E: Open in editor
  * - Ctrl+C (during compaction in vim mode): Cancel compaction, restore command
@@ -44,6 +46,7 @@ export function useAIViewKeybinds({
   showRetryBarrier,
   chatInputAPI,
   jumpToBottom,
+  loadOlderHistory,
   handleOpenTerminal,
   handleOpenInEditor,
   aggregator,
@@ -135,6 +138,12 @@ export function useAIViewKeybinds({
         return;
       }
 
+      if (matchesKeybind(e, KEYBINDS.LOAD_OLDER_MESSAGES) && loadOlderHistory) {
+        e.preventDefault();
+        loadOlderHistory();
+        return;
+      }
+
       if (matchesKeybind(e, KEYBINDS.JUMP_TO_BOTTOM)) {
         e.preventDefault();
         jumpToBottom();
@@ -154,6 +163,7 @@ export function useAIViewKeybinds({
     };
   }, [
     jumpToBottom,
+    loadOlderHistory,
     handleOpenTerminal,
     handleOpenInEditor,
     workspaceId,

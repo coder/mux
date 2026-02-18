@@ -228,6 +228,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     loadingOlderHistory,
   } = workspaceState;
   const shouldRenderLoadOlderMessagesButton = hasOlderHistory && !isChromaticStorybookEnvironment();
+  const loadOlderMessagesShortcutLabel = formatKeybind(KEYBINDS.LOAD_OLDER_MESSAGES);
 
   const {
     warning: contextSwitchWarning,
@@ -622,6 +623,16 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     lastActionableMessage.errorType === "context_exceeded";
   const showRetryBarrierUI = showRetryBarrier && !suppressRetryBarrier;
 
+  const handleLoadOlderHistory = useCallback(() => {
+    if (!shouldRenderLoadOlderMessagesButton || loadingOlderHistory) {
+      return;
+    }
+
+    storeRaw.loadOlderHistory(workspaceId).catch((error) => {
+      console.warn(`[ChatPane] Failed to load older history for ${workspaceId}:`, error);
+    });
+  }, [loadingOlderHistory, shouldRenderLoadOlderMessagesButton, storeRaw, workspaceId]);
+
   // Handle keyboard shortcuts (using optional refs that are safe even if not initialized)
   useAIViewKeybinds({
     workspaceId,
@@ -632,6 +643,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     showRetryBarrier,
     chatInputAPI,
     jumpToBottom,
+    loadOlderHistory: shouldRenderLoadOlderMessagesButton ? handleLoadOlderHistory : null,
     handleOpenTerminal: onOpenTerminal,
     handleOpenInEditor,
     aggregator,
@@ -758,8 +770,9 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                         <div className="flex justify-center py-3">
                           <button
                             type="button"
-                            onClick={() => void storeRaw.loadOlderHistory(workspaceId)}
+                            onClick={handleLoadOlderHistory}
                             disabled={loadingOlderHistory}
+                            title={`Load older messages (${loadOlderMessagesShortcutLabel})`}
                             className="text-muted hover:text-foreground text-xs underline underline-offset-2 transition-colors disabled:opacity-50"
                           >
                             {loadingOlderHistory ? "Loading..." : "Load older messages"}
