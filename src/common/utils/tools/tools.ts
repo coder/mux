@@ -327,11 +327,15 @@ export async function getToolsForModel(
           ...(mcpTools ?? {}),
           // Provider-specific tool types are compatible with Tool at runtime
           web_search: anthropic.tools.webSearch_20250305({ maxUses: 1000 }) as Tool,
-          // Note: we intentionally keep the built-in curl-based web_fetch rather than replacing
-          // it with anthropic.tools.webFetch_20250910. The built-in runs inside the workspace
-          // runtime, which means it can reach private/localhost URLs and handles mux.md share
-          // links (which use client-side decryption via URL fragment) correctly. Anthropic's
-          // server-side fetch can't reach private networks and would lose the fragment.
+          // Prefer Anthropic's native web_fetch over our built-in curl-based one.
+          // It performs better for public pages (Cloudflare bypass, server-side caching).
+          //
+          // Known limitations for Anthropic sessions:
+          // - Cannot reach private/localhost URLs (Anthropic servers can't see workspace network).
+          // - mux.md share links rely on client-side decryption via URL fragment (#key);
+          //   Anthropic drops the fragment when making HTTP requests, so decryption silently fails.
+          // - Not bridgeable in the PTC sandbox (no execute()); see BridgeableToolName comment.
+          web_fetch: anthropic.tools.webFetch_20250910({ maxUses: 1000 }) as Tool,
         };
         break;
       }

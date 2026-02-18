@@ -70,13 +70,17 @@ describeIntegration("web_fetch integration tests", () => {
         expect(webFetchStart).toBeDefined();
         expect(webFetchStart?.args).toMatchObject({ url: "https://lite.cnn.com/" });
 
-        // Assert the tool completed and returned some result.
-        // We don't assert success here because lite.cnn.com may return Cloudflare
-        // challenges in some CI network environments — but the model handles that
-        // gracefully and still produces a text response.
+        // Assert the tool completed with the Anthropic-native result shape.
+        // The native tool runs server-side (Anthropic's infrastructure), so it can reach
+        // lite.cnn.com even when the workspace's curl cannot (Cloudflare).
         const webFetchEnd = events.filter(isToolCallEnd).find((e) => e.toolName === "web_fetch");
         expect(webFetchEnd).toBeDefined();
-        expect(webFetchEnd?.result).toBeTruthy();
+
+        // Native success: { type: 'web_fetch_result', url, content: { ... } }
+        // Native error:   { type: 'web_fetch_tool_result_error', errorCode }
+        const toolResult = webFetchEnd?.result as Record<string, unknown> | null | undefined;
+        expect(toolResult).toBeTruthy();
+        expect(toolResult?.type).toBe("web_fetch_result");
 
         // Assert the model produced a substantive text response about CNN content
         const deltas = collector.getDeltas();
