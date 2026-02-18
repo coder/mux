@@ -342,7 +342,7 @@ describe("listWorkspaceBackedSessions", () => {
     const client = makeClient({ list: listMock });
 
     const response = await listWorkspaceBackedSessions(client, {
-      cwd: "/repo",
+      cwd: "/repo/",
     });
 
     expect(response).toEqual({

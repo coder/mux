@@ -187,16 +187,24 @@ export class MuxAcpAgent implements Agent {
     });
   }
 
-  private async persistSessionAISettings(session: SessionState): Promise<void> {
-    const aiSettings = {
-      model: session.modelId,
-      thinkingLevel: session.thinkingLevel,
-    } as const;
+  private async persistSessionAISettings(
+    session: SessionState,
+    aiSettings?: {
+      model: string;
+      thinkingLevel: SessionState["thinkingLevel"];
+    }
+  ): Promise<void> {
+    const nextAiSettings =
+      aiSettings ??
+      ({
+        model: session.modelId,
+        thinkingLevel: session.thinkingLevel,
+      } as const);
 
     const updateResult = await this.orpcClient.workspace.updateAgentAISettings({
       workspaceId: session.workspaceId,
       agentId: session.modeId,
-      aiSettings,
+      aiSettings: nextAiSettings,
     });
 
     if (!updateResult.success) {
@@ -206,7 +214,8 @@ export class MuxAcpAgent implements Agent {
     // Keep the local snapshot in sync so mode switches restore the latest
     // user-chosen values rather than stale creation-time defaults.
     session.aiSettingsByAgent ??= {};
-    (session.aiSettingsByAgent as Record<string, typeof aiSettings>)[session.modeId] = aiSettings;
+    (session.aiSettingsByAgent as Record<string, typeof nextAiSettings>)[session.modeId] =
+      nextAiSettings;
   }
 
   /**
@@ -358,8 +367,11 @@ export class MuxAcpAgent implements Agent {
       return {};
     }
 
+    await this.persistSessionAISettings(session, {
+      model: nextModelId,
+      thinkingLevel: session.thinkingLevel,
+    });
     session.modelId = nextModelId;
-    await this.persistSessionAISettings(session);
 
     await this.conn.sessionUpdate({
       sessionId: session.sessionId,
@@ -377,15 +389,17 @@ export class MuxAcpAgent implements Agent {
   ): Promise<schema.SetSessionConfigOptionResponse> {
     const session = this.sessions.require(params.sessionId);
 
-    let persistAiSettings = false;
     let emitModeUpdate = false;
 
     switch (params.configId) {
       case MODEL_CONFIG_ID: {
         const nextModelId = parseModelId(params.value);
         if (session.modelId !== nextModelId) {
+          await this.persistSessionAISettings(session, {
+            model: nextModelId,
+            thinkingLevel: session.thinkingLevel,
+          });
           session.modelId = nextModelId;
-          persistAiSettings = true;
         }
         break;
       }
@@ -393,8 +407,11 @@ export class MuxAcpAgent implements Agent {
       case THINKING_LEVEL_CONFIG_ID: {
         const nextThinkingLevel = parseThinkingLevel(params.value);
         if (session.thinkingLevel !== nextThinkingLevel) {
+          await this.persistSessionAISettings(session, {
+            model: session.modelId,
+            thinkingLevel: nextThinkingLevel,
+          });
           session.thinkingLevel = nextThinkingLevel;
-          persistAiSettings = true;
         }
         break;
       }
@@ -415,10 +432,6 @@ export class MuxAcpAgent implements Agent {
         throw new Error(
           `Unknown config option "${params.configId}". Supported options: ${MODEL_CONFIG_ID}, ${THINKING_LEVEL_CONFIG_ID}, mode`
         );
-    }
-
-    if (persistAiSettings) {
-      await this.persistSessionAISettings(session);
     }
 
     if (emitModeUpdate) {

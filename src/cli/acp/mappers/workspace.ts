@@ -424,10 +424,15 @@ export async function listWorkspaceBackedSessions(
   const allWorkspaces = await client.workspace.list();
 
   const filtered = params.cwd
-    ? allWorkspaces.filter(
-        (workspace) =>
-          workspace.projectPath === params.cwd || workspace.namedWorkspacePath === params.cwd
-      )
+    ? (() => {
+        const expectedCwd = canonicalizeAbsolutePathForComparison(params.cwd);
+        return allWorkspaces.filter((workspace) => {
+          const workspacePaths = [workspace.projectPath, workspace.namedWorkspacePath].map(
+            canonicalizeAbsolutePathForComparison
+          );
+          return workspacePaths.includes(expectedCwd);
+        });
+      })()
     : allWorkspaces;
 
   const sorted = [...filtered].sort((left, right) => {
