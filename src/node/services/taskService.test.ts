@@ -3138,6 +3138,10 @@ describe("TaskService", () => {
     childAgentId?: string;
     disableOrchestrator?: boolean;
     parentAiSettingsByAgent?: Record<string, { model: string; thinkingLevel: ThinkingLevel }>;
+    agentAiDefaults?: Record<
+      string,
+      { modelString: string; thinkingLevel: ThinkingLevel; enabled?: boolean }
+    >;
     sendMessageOverride?: ReturnType<typeof mock>;
   }) {
     const config = await createTestConfig(rootDir);
@@ -3166,6 +3170,19 @@ describe("TaskService", () => {
         ].join("\n")
       );
     }
+
+    const agentAiDefaults = {
+      ...(options?.agentAiDefaults ?? {}),
+      ...(options?.disableOrchestrator
+        ? {
+            orchestrator: {
+              modelString: "openai:gpt-4o-mini",
+              thinkingLevel: "off" as ThinkingLevel,
+              enabled: false,
+            },
+          }
+        : {}),
+    };
 
     await config.saveConfig({
       projects: new Map([
@@ -3201,15 +3218,7 @@ describe("TaskService", () => {
         maxTaskNestingDepth: 3,
         planSubagentDefaultsToOrchestrator: options?.planSubagentDefaultsToOrchestrator ?? false,
       },
-      agentAiDefaults: options?.disableOrchestrator
-        ? {
-            orchestrator: {
-              modelString: "openai:gpt-4o-mini",
-              thinkingLevel: "off",
-              enabled: false,
-            },
-          }
-        : undefined,
+      agentAiDefaults: Object.keys(agentAiDefaults).length > 0 ? agentAiDefaults : undefined,
     });
 
     const getInfo = mock(() => ({
@@ -3413,6 +3422,41 @@ describe("TaskService", () => {
 
     expect(updatedTask?.agentId).toBe("orchestrator");
     expect(updatedTask?.taskStatus).toBe("running");
+  });
+
+  test("orchestrator handoff uses exec defaults via base-agent fallback when orchestrator defaults are unset", async () => {
+    const { config, childId, sendMessage, internal } = await setupPlanModeStreamEndHarness({
+      planSubagentDefaultsToOrchestrator: true,
+      agentAiDefaults: {
+        exec: {
+          modelString: "openai:gpt-5.3-codex",
+          thinkingLevel: "xhigh",
+        },
+      },
+    });
+
+    await internal.handleStreamEnd(makeSuccessfulProposePlanStreamEndEvent(childId));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      childId,
+      expect.stringContaining("orchestrating"),
+      expect.objectContaining({
+        agentId: "orchestrator",
+        model: "openai:gpt-5.3-codex",
+        thinkingLevel: "xhigh",
+      }),
+      expect.objectContaining({ synthetic: true })
+    );
+
+    const postCfg = config.loadConfigOrDefault();
+    const updatedTask = Array.from(postCfg.projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === childId);
+
+    expect(updatedTask?.agentId).toBe("orchestrator");
+    expect(updatedTask?.taskModelString).toBe("openai:gpt-5.3-codex");
+    expect(updatedTask?.taskThinkingLevel).toBe("xhigh");
   });
 
   test("stream-end with propose_plan success falls back to exec when orchestrator is disabled", async () => {

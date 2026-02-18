@@ -2419,8 +2419,55 @@ export class TaskService {
           ? parentEntry?.workspace.aiSettings
           : undefined;
 
-      const globalDefaults =
+      let globalDefaults =
         latestCfg.agentAiDefaults?.[targetAgentId] ?? latestCfg.subagentAiDefaults?.[targetAgentId];
+
+      // Match Task.create behavior: if target agent has no direct defaults, inherit
+      // from the base-agent chain (e.g. orchestrator -> exec) before falling back
+      // to the current task model.
+      if (!globalDefaults) {
+        const workspaceName =
+          coerceNonEmptyString(args.entry.workspace.name) ?? args.entry.workspace.id;
+        const workspacePath = coerceNonEmptyString(args.entry.workspace.path);
+
+        if (workspaceName && workspacePath) {
+          try {
+            const runtime = createRuntimeForWorkspace({
+              runtimeConfig: args.entry.workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
+              projectPath: args.entry.projectPath,
+              name: workspaceName,
+            });
+
+            const agentDefinition = await readAgentDefinition(
+              runtime,
+              workspacePath,
+              targetAgentId
+            );
+            const chain = await resolveAgentInheritanceChain({
+              runtime,
+              workspacePath,
+              agentId: agentDefinition.id,
+              agentDefinition,
+              workspaceId: args.workspaceId,
+            });
+
+            const inheritedDefaults = chain
+              .slice(1)
+              .map((entry) => latestCfg.agentAiDefaults?.[entry.id])
+              .find((entry) => entry !== undefined);
+
+            if (inheritedDefaults) {
+              globalDefaults = inheritedDefaults;
+            }
+          } catch (error: unknown) {
+            log.debug("Failed to resolve base-agent defaults for plan-task auto-handoff target", {
+              workspaceId: args.workspaceId,
+              targetAgentId,
+              error: getErrorMessage(error),
+            });
+          }
+        }
+      }
 
       // Keep handoff model selection aligned with sub-agent creation precedence so switching
       // from plan → exec/orchestrator uses the same configured defaults users expect:
