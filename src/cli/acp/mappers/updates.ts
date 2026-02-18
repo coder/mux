@@ -319,11 +319,20 @@ export function mapWorkspaceChatEventToAcp(
   }
 
   if (isStreamError(event)) {
-    // Only treat stream errors as fatal if they belong to the active message.
-    // During reconnect/interruption races, stale errors from a previous stream
-    // should be ignored rather than aborting the current prompt.
+    // Stream startup can fail before any stream-start event is emitted. In that
+    // case activeMessageId is still null, and ignoring the stream-error would
+    // leave the pump waiting indefinitely for a stop event.
     const match = ensureMessageId(state, event.messageId, event.type);
     if (!match.ok) {
+      if (state.activeMessageId == null) {
+        return {
+          kind: "error",
+          error: new Error(event.error),
+        };
+      }
+
+      // During reconnect/interruption races, stale errors from a previous stream
+      // should not abort the currently active stream.
       return { kind: "ignore" };
     }
 

@@ -89,6 +89,15 @@ function streamAbortEvent(
   };
 }
 
+function streamErrorEvent(messageId = MESSAGE_ID, error = "stream failure"): WorkspaceChatMessage {
+  return {
+    type: "stream-error",
+    messageId,
+    error,
+    errorType: "unknown",
+  };
+}
+
 function usageDeltaEvent(messageId = MESSAGE_ID): WorkspaceChatMessage {
   return {
     type: "usage-delta",
@@ -274,6 +283,49 @@ describe("mapWorkspaceChatEventToAcp", () => {
 
     expect(mapped).toEqual({ kind: "ignore" });
     expect(state.activeMessageId).toBeNull();
+  });
+
+  it("maps stream-error to an error when it matches the active message", () => {
+    const state = createUpdateMappingState();
+    state.activeMessageId = MESSAGE_ID;
+
+    const mapped = mapWorkspaceChatEventToAcp(streamErrorEvent(MESSAGE_ID, "boom"), state, false);
+
+    expect(mapped).toEqual({
+      kind: "error",
+      error: new Error("boom"),
+    });
+    expect(state.activeMessageId).toBe(MESSAGE_ID);
+  });
+
+  it("surfaces stream-error before stream-start when activeMessageId is null", () => {
+    const state = createUpdateMappingState();
+
+    const mapped = mapWorkspaceChatEventToAcp(
+      streamErrorEvent(STALE_MESSAGE_ID, "startup failed"),
+      state,
+      false
+    );
+
+    expect(mapped).toEqual({
+      kind: "error",
+      error: new Error("startup failed"),
+    });
+    expect(state.activeMessageId).toBeNull();
+  });
+
+  it("ignores stale stream-error from a previous stream while one is active", () => {
+    const state = createUpdateMappingState();
+    state.activeMessageId = MESSAGE_ID;
+
+    const mapped = mapWorkspaceChatEventToAcp(
+      streamErrorEvent(STALE_MESSAGE_ID, "old stream failure"),
+      state,
+      false
+    );
+
+    expect(mapped).toEqual({ kind: "ignore" });
+    expect(state.activeMessageId).toBe(MESSAGE_ID);
   });
 
   it("ignores heartbeat and caught-up events", () => {
