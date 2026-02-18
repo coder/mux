@@ -1185,6 +1185,11 @@ export class AgentSession {
     // contains the new prompt, then replay it again post-compaction).
     let autoCompactionMessage: MuxMessage | null = null;
     if (!isCompactionRequest && !editMessageId) {
+      // Seed usage state from persisted history on the first send after restart
+      // so the compaction monitor can detect context limits even before any live
+      // stream events have populated lastUsageState.
+      await this.seedUsageStateFromHistory();
+
       const compactionResult = this.compactionMonitor.checkBeforeSend({
         model: modelForStream,
         usage: this.getUsageState(),
@@ -1435,6 +1440,45 @@ export class AgentSession {
       ...this.lastUsageState,
       liveUsage: undefined,
     };
+  }
+
+  /**
+   * Seed `lastUsageState` from persisted history so the compaction monitor
+   * can trigger on-send compaction even when no live stream has occurred yet
+   * (e.g., after an app restart). Walks the last N messages backwards to find
+   * the most recent assistant message carrying `contextUsage` metadata.
+   *
+   * This is a lazy one-shot: called from `sendMessage` only when
+   * `lastUsageState` is still undefined.
+   */
+  private async seedUsageStateFromHistory(): Promise<void> {
+    if (this.lastUsageState !== undefined) {
+      return;
+    }
+
+    // Read a small tail of history — the last assistant message with context
+    // usage is almost always within the most recent few turns.
+    const historyResult = await this.historyService.getLastMessages(this.workspaceId, 10);
+    if (!historyResult.success) {
+      return;
+    }
+
+    // Walk backwards to find the most recent message with contextUsage.
+    for (let i = historyResult.data.length - 1; i >= 0; i--) {
+      const msg = historyResult.data[i];
+      const meta = msg.metadata;
+      if (!meta?.contextUsage || !meta.model) {
+        continue;
+      }
+
+      this.updateUsageStateFromModelUsage({
+        model: meta.model,
+        usage: meta.contextUsage,
+        providerMetadata: meta.contextProviderMetadata ?? meta.providerMetadata,
+        live: false,
+      });
+      return;
+    }
   }
 
   private buildAutoCompactionFollowUp(params: {
