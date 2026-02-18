@@ -52,6 +52,7 @@ function makeClient(overrides: {
   list?: ReturnType<typeof vi.fn>;
   getInfo?: ReturnType<typeof vi.fn>;
   fork?: ReturnType<typeof vi.fn>;
+  remove?: ReturnType<typeof vi.fn>;
   mcpList?: ReturnType<typeof vi.fn>;
   mcpAdd?: ReturnType<typeof vi.fn>;
   mcpSetEnabled?: ReturnType<typeof vi.fn>;
@@ -70,6 +71,7 @@ function makeClient(overrides: {
       list: overrides.list ?? vi.fn(),
       getInfo: overrides.getInfo ?? vi.fn(),
       fork: overrides.fork ?? vi.fn(),
+      remove: overrides.remove ?? vi.fn().mockResolvedValue({ success: true }),
       mcp: {
         get: overrides.workspaceMcpGet ?? vi.fn().mockResolvedValue({}),
         set:
@@ -398,6 +400,102 @@ describe("createWorkspaceBackedSession", () => {
         },
       },
     });
+  });
+
+  it("removes newly created workspaces when ACP MCP setup fails", async () => {
+    const createMock = vi.fn().mockResolvedValue({
+      success: true,
+      metadata: makeWorkspaceMetadata({
+        id: "workspace-rollback",
+        projectPath: "/repo",
+      }),
+    });
+    const removeMock = vi.fn().mockResolvedValue({ success: true });
+
+    const client = makeClient({
+      create: createMock,
+      remove: removeMock,
+    });
+
+    let thrownError: unknown;
+    try {
+      await createWorkspaceBackedSession(client, {
+        cwd: "/repo",
+        mcpServers: [
+          {
+            name: "duplicate",
+            command: "node",
+            args: [],
+            env: [],
+          },
+          {
+            name: "duplicate",
+            command: "bun",
+            args: [],
+            env: [],
+          },
+        ],
+      });
+    } catch (error) {
+      thrownError = error;
+    }
+
+    expect(thrownError).toBeInstanceOf(Error);
+    expect((thrownError as Error).message).toContain("was removed to avoid orphaned state");
+
+    expect(removeMock).toHaveBeenCalledWith({
+      workspaceId: "workspace-rollback",
+      options: {
+        force: true,
+      },
+    });
+  });
+
+  it("includes rollback errors when workspace cleanup fails", async () => {
+    const createMock = vi.fn().mockResolvedValue({
+      success: true,
+      metadata: makeWorkspaceMetadata({
+        id: "workspace-rollback-fail",
+        projectPath: "/repo",
+      }),
+    });
+    const removeMock = vi.fn().mockResolvedValue({
+      success: false,
+      error: "remove failed",
+    });
+
+    const client = makeClient({
+      create: createMock,
+      remove: removeMock,
+    });
+
+    let thrownError: unknown;
+    try {
+      await createWorkspaceBackedSession(client, {
+        cwd: "/repo",
+        mcpServers: [
+          {
+            name: "duplicate",
+            command: "node",
+            args: [],
+            env: [],
+          },
+          {
+            name: "duplicate",
+            command: "bun",
+            args: [],
+            env: [],
+          },
+        ],
+      });
+    } catch (error) {
+      thrownError = error;
+    }
+
+    expect(thrownError).toBeInstanceOf(Error);
+    expect((thrownError as Error).message).toContain(
+      "Rollback failed for workspace workspace-rollback-fail: remove failed"
+    );
   });
 
   it("falls back to persisted workspace AI settings when _meta is absent", async () => {

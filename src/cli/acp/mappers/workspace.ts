@@ -145,6 +145,10 @@ function tryCanonicalizeAbsolutePathForComparison(
   }
 }
 
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function createFallbackBranchName(): string {
   const timestamp = Date.now().toString(36);
   const randomSuffix = Math.random().toString(36).slice(2, 8);
@@ -533,11 +537,38 @@ export async function createWorkspaceBackedSession(
     throw new Error(`workspace.create failed: ${createResult.error}`);
   }
 
-  await applyAcpMcpServersToWorkspace(client, {
-    workspaceId: createResult.metadata.id,
-    projectPath,
-    mcpServers: params.mcpServers,
-  });
+  try {
+    await applyAcpMcpServersToWorkspace(client, {
+      workspaceId: createResult.metadata.id,
+      projectPath,
+      mcpServers: params.mcpServers,
+    });
+  } catch (error) {
+    const setupError = toErrorMessage(error);
+
+    try {
+      const rollbackResult = await client.workspace.remove({
+        workspaceId: createResult.metadata.id,
+        options: {
+          force: true,
+        },
+      });
+
+      if (!rollbackResult.success) {
+        throw new Error(rollbackResult.error ?? "unknown error");
+      }
+    } catch (rollbackError) {
+      throw new Error(
+        `Failed to apply ACP MCP configuration: ${setupError}. ` +
+          `Rollback failed for workspace ${createResult.metadata.id}: ${toErrorMessage(rollbackError)}`
+      );
+    }
+
+    throw new Error(
+      `Failed to apply ACP MCP configuration: ${setupError}. ` +
+        `Workspace ${createResult.metadata.id} was removed to avoid orphaned state.`
+    );
+  }
 
   return buildSessionState({
     sessionId: createResult.metadata.id,
