@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, spyOn, vi } from "bun:test";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import type { Config } from "@/node/config";
 import * as gitModule from "@/node/git";
+import { getContainerName } from "@/node/runtime/DockerRuntime";
 import type {
   InitLogger,
   Runtime,
@@ -26,7 +27,11 @@ const SOURCE_WORKSPACE_NAME = "feature/source";
 const NEW_WORKSPACE_NAME = "feature/new";
 const SOURCE_WORKSPACE_ID = "workspace-source";
 const SOURCE_RUNTIME_CONFIG: RuntimeConfig = { type: "local" };
-const DEFAULT_FORKED_RUNTIME_CONFIG: RuntimeConfig = { type: "docker", image: "node:20" };
+const DEFAULT_FORKED_RUNTIME_CONFIG: RuntimeConfig = {
+  type: "docker",
+  image: "node:20",
+  containerName: getContainerName(PROJECT_PATH, NEW_WORKSPACE_NAME),
+};
 
 function createInitLogger(): InitLogger {
   return {
@@ -341,6 +346,52 @@ describe("orchestrateFork", () => {
       projectPath: PROJECT_PATH,
       workspaceName: NEW_WORKSPACE_NAME,
     });
+  });
+
+  it("normalizes Docker containerName to destination workspace identity", async () => {
+    const { sourceRuntime, forkWorkspace } = createSourceRuntimeMocks();
+    forkWorkspace.mockResolvedValue({
+      success: true,
+      workspacePath: "/workspaces/new",
+    } satisfies WorkspaceForkResult);
+
+    // Source Docker config with a container name belonging to the source workspace
+    const sourceDockerConfig: RuntimeConfig = {
+      type: "docker",
+      image: "node:20",
+      containerName: "mux-demo-source-aaaaaa",
+    };
+
+    // applyForkRuntimeUpdates returns the source config unchanged (simulating fallback)
+    applyForkRuntimeUpdatesMock.mockResolvedValue({
+      forkedRuntimeConfig: sourceDockerConfig,
+    });
+
+    const result = await runOrchestrateFork({
+      sourceRuntime,
+      allowCreateFallback: false,
+      sourceRuntimeConfig: sourceDockerConfig,
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) throw new Error("Expected success");
+
+    // Must use destination-derived container name, not the inherited source name
+    const expectedContainerName = getContainerName(PROJECT_PATH, NEW_WORKSPACE_NAME);
+    expect(result.data.forkedRuntimeConfig).toEqual({
+      type: "docker",
+      image: "node:20",
+      containerName: expectedContainerName,
+    });
+    expect(result.data.forkedRuntimeConfig).not.toEqual(
+      expect.objectContaining({ containerName: "mux-demo-source-aaaaaa" })
+    );
+
+    // createRuntime should also receive the normalized config
+    expect(createRuntimeMock).toHaveBeenCalledWith(
+      expect.objectContaining({ containerName: expectedContainerName }),
+      { projectPath: PROJECT_PATH, workspaceName: NEW_WORKSPACE_NAME }
+    );
   });
   it("returns Err when create fallback also fails", async () => {
     const { sourceRuntime, forkWorkspace, createWorkspace } = createSourceRuntimeMocks();

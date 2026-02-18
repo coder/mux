@@ -3,6 +3,7 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import type { Config } from "@/node/config";
 import { detectDefaultTrunkBranch, listLocalBranches } from "@/node/git";
 import type { InitLogger, Runtime } from "@/node/runtime/Runtime";
+import { getContainerName } from "@/node/runtime/DockerRuntime";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
 
@@ -75,6 +76,17 @@ export async function orchestrateFork(
   );
   const sourceRuntimeConfigUpdated = forkResult.sourceRuntimeConfig != null;
 
+  // Forked workspace metadata must use destination identity, not inherited source state.
+  // Docker containerName is derived from (projectPath, workspaceName); if the fork
+  // inherits source config, the containerName would point at the wrong container.
+  const normalizedForkedRuntimeConfig: RuntimeConfig =
+    forkedRuntimeConfig.type === "docker"
+      ? {
+          ...forkedRuntimeConfig,
+          containerName: getContainerName(projectPath, newWorkspaceName),
+        }
+      : forkedRuntimeConfig;
+
   if (!forkResult.success) {
     if (forkResult.failureIsFatal) {
       return Err(forkResult.error ?? "Fork failed (fatal)");
@@ -127,7 +139,7 @@ export async function orchestrateFork(
     forkedFromSource = false;
   }
 
-  const targetRuntime = createRuntime(forkedRuntimeConfig, {
+  const targetRuntime = createRuntime(normalizedForkedRuntimeConfig, {
     projectPath,
     workspaceName: newWorkspaceName,
   });
@@ -135,7 +147,7 @@ export async function orchestrateFork(
   return Ok({
     workspacePath,
     trunkBranch,
-    forkedRuntimeConfig,
+    forkedRuntimeConfig: normalizedForkedRuntimeConfig,
     targetRuntime,
     forkedFromSource,
     sourceRuntimeConfigUpdated,

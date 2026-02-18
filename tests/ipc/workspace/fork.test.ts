@@ -25,6 +25,7 @@ import {
   type SSHServerConfig,
 } from "../../runtime/test-fixtures/ssh-fixture";
 import type { RuntimeConfig } from "../../../src/common/types/runtime";
+import { getContainerName } from "../../../src/node/runtime/DockerRuntime";
 import { HistoryService } from "../../../src/node/services/historyService";
 import { createMuxMessage, type MuxMessage } from "../../../src/common/types/message";
 import assert from "node:assert";
@@ -556,11 +557,16 @@ describeIntegration("Workspace fork", () => {
         if (!forkResult.success) return;
         forkedWorkspaceId = forkResult.metadata.id;
 
-        // Regression coverage: docker user forks must preserve docker runtime type.
+        // Regression: docker forks must use destination identity, not source container.
         expect(forkResult.metadata.runtimeConfig.type).toBe("docker");
         if (forkResult.metadata.runtimeConfig.type === "docker") {
           expect(forkResult.metadata.runtimeConfig.image).toBe(dockerRuntimeConfig.image);
-          expect(forkResult.metadata.runtimeConfig.containerName).toBeDefined();
+          expect(forkResult.metadata.runtimeConfig.containerName).toBe(
+            getContainerName(tempGitRepo, "docker-forked")
+          );
+          expect(forkResult.metadata.runtimeConfig.containerName).not.toBe(
+            getContainerName(tempGitRepo, "docker-source")
+          );
         }
 
         const workspaces = await client.workspace.list();
@@ -572,7 +578,12 @@ describeIntegration("Workspace fork", () => {
         expect(forkedWorkspace?.runtimeConfig.type).toBe("docker");
         if (forkedWorkspace?.runtimeConfig.type === "docker") {
           expect(forkedWorkspace.runtimeConfig.image).toBe(dockerRuntimeConfig.image);
-          expect(forkedWorkspace.runtimeConfig.containerName).toBeDefined();
+          expect(forkedWorkspace.runtimeConfig.containerName).toBe(
+            getContainerName(tempGitRepo, "docker-forked")
+          );
+          expect(forkedWorkspace.runtimeConfig.containerName).not.toBe(
+            getContainerName(tempGitRepo, "docker-source")
+          );
         }
       } finally {
         if (forkedWorkspaceId) {
