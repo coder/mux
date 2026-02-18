@@ -112,6 +112,7 @@ interface StreamingContext {
   isComplete: boolean;
   isCompacting: boolean;
   hasCompactionContinue: boolean;
+  isReplay: boolean;
   model: string;
   routedThroughGateway?: boolean;
 
@@ -1395,6 +1396,7 @@ export class StreamingMessageAggregator {
       isComplete: false,
       isCompacting,
       hasCompactionContinue,
+      isReplay: data.replay === true,
       model: data.model,
       routedThroughGateway: data.routedThroughGateway,
       serverFirstTokenTime: null,
@@ -2355,6 +2357,7 @@ export class StreamingMessageAggregator {
       // Check if this message has an active stream (for inferring streaming status)
       // Direct Map.has() check - O(1) instead of O(n) iteration
       const hasActiveStream = this.activeStreams.has(message.id);
+      const streamContext = hasActiveStream ? this.activeStreams.get(message.id) : undefined;
 
       // isPartial from metadata (set by stream-abort event)
       const isPartial = message.metadata?.partial === true;
@@ -2400,6 +2403,9 @@ export class StreamingMessageAggregator {
             isPartial,
             isLastPartOfMessage: isLastPart,
             timestamp: part.timestamp ?? baseTimestamp,
+            streamPresentation: isStreaming
+              ? { source: streamContext?.isReplay ? "replay" : "live" }
+              : undefined,
           });
         } else if (part.type === "text" && part.text) {
           // Skip empty text parts
@@ -2421,6 +2427,9 @@ export class StreamingMessageAggregator {
             mode: message.metadata?.mode,
             agentId: message.metadata?.agentId ?? message.metadata?.mode,
             timestamp: part.timestamp ?? baseTimestamp,
+            streamPresentation: isStreaming
+              ? { source: streamContext?.isReplay ? "replay" : "live" }
+              : undefined,
           });
         } else if (isDynamicToolPart(part)) {
           // Determine status based on part state and result

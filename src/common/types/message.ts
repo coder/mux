@@ -531,6 +531,10 @@ export type DisplayedMessage =
       mode?: AgentMode;
       timestamp?: number;
       tokens?: number;
+      /** Presentation hint for smooth streaming — indicates if this is live or replayed content. */
+      streamPresentation?: {
+        source: "live" | "replay";
+      };
     }
   | {
       type: "tool";
@@ -569,6 +573,10 @@ export type DisplayedMessage =
       isLastPartOfMessage?: boolean; // True if this is the last part of a multi-part message
       timestamp?: number;
       tokens?: number; // Reasoning tokens if available
+      /** Presentation hint for smooth streaming — indicates if this is live or replayed content. */
+      streamPresentation?: {
+        source: "live" | "replay";
+      };
     }
   | {
       type: "stream-error";

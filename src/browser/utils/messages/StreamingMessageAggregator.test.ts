@@ -1104,6 +1104,69 @@ describe("StreamingMessageAggregator", () => {
       const afterReplayCursor = aggregator.getOnChatCursor();
       expect(afterReplayCursor?.stream?.lastTimestamp).toBe(deltaTimestamp);
     });
+
+    test("marks streamed assistant rows as replay presentation when stream-start is replayed", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-replay-presentation",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+        startTime: 1_000,
+        replay: true,
+      });
+
+      aggregator.handleStreamDelta({
+        type: "stream-delta",
+        workspaceId: "test-workspace",
+        messageId: "msg-replay-presentation",
+        delta: "replayed partial",
+        tokens: 1,
+        timestamp: 1_100,
+      });
+
+      const displayed = aggregator.getDisplayedMessages();
+      const assistant = displayed.find(
+        (message): message is Extract<(typeof displayed)[number], { type: "assistant" }> =>
+          message.type === "assistant" && message.historyId === "msg-replay-presentation"
+      );
+
+      expect(assistant).toBeDefined();
+      expect(assistant?.streamPresentation).toEqual({ source: "replay" });
+    });
+
+    test("marks streamed assistant rows as live presentation when stream-start is not replayed", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-live-presentation",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+        startTime: 1_000,
+      });
+
+      aggregator.handleStreamDelta({
+        type: "stream-delta",
+        workspaceId: "test-workspace",
+        messageId: "msg-live-presentation",
+        delta: "live partial",
+        tokens: 1,
+        timestamp: 1_100,
+      });
+
+      const displayed = aggregator.getDisplayedMessages();
+      const assistant = displayed.find(
+        (message): message is Extract<(typeof displayed)[number], { type: "assistant" }> =>
+          message.type === "assistant" && message.historyId === "msg-live-presentation"
+      );
+
+      expect(assistant).toBeDefined();
+      expect(assistant?.streamPresentation).toEqual({ source: "live" });
+    });
   });
 
   describe("append replay cache invalidation", () => {
