@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { EventEmitter } from "events";
 
-import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import type { ProvidersConfigMap, WorkspaceChatMessage } from "@/common/orpc/types";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import { Ok } from "@/common/types/result";
 import type { Config } from "@/node/config";
@@ -133,6 +133,120 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
         message.id === "file-snapshot-1"
     );
     expect(emittedSnapshot).toBe(false);
+
+    session.dispose();
+  });
+
+  test("threads providers config into pre-send and mid-stream compaction checks", async () => {
+    const workspaceId = "ws-auto-compaction-providers-config";
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const providersConfig = {
+      openai: {
+        models: [
+          {
+            id: "openai:gpt-4o",
+            contextWindow: 222_222,
+          },
+        ],
+      },
+    } as unknown as ProvidersConfigMap;
+
+    const aiEmitter = new EventEmitter();
+    const streamMessage = mock((_history: MuxMessage[]) => {
+      const usage = {
+        inputTokens: 42,
+        outputTokens: 1,
+        totalTokens: 43,
+      };
+
+      aiEmitter.emit("usage-delta", {
+        type: "usage-delta",
+        workspaceId,
+        messageId: "assistant-providers-config",
+        usage,
+      });
+
+      aiEmitter.emit("stream-end", {
+        type: "stream-end",
+        workspaceId,
+        messageId: "assistant-providers-config",
+        parts: [],
+        metadata: {
+          model: "openai:gpt-4o",
+          contextUsage: usage,
+          providerMetadata: {},
+        },
+      });
+
+      return Promise.resolve(Ok(undefined));
+    });
+
+    const aiService = Object.assign(aiEmitter, {
+      isStreaming: mock((_workspaceId: string) => false),
+      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
+      streamMessage: streamMessage as unknown as (
+        ...args: Parameters<AIService["streamMessage"]>
+      ) => Promise<unknown>,
+    }) as unknown as AIService;
+
+    const initStateManager = new EventEmitter() as unknown as InitStateManager;
+
+    const backgroundProcessManager = {
+      cleanup: mock((_workspaceId: string) => Promise.resolve()),
+      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
+        void _queued;
+      }),
+    } as unknown as BackgroundProcessManager;
+
+    const config = {
+      srcDir: "/tmp",
+      getSessionDir: (_workspaceId: string) => "/tmp",
+      loadProvidersConfig: () => providersConfig,
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const checkBeforeSend = mock((_params: unknown) => ({
+      shouldShowWarning: false,
+      shouldForceCompact: false,
+      usagePercentage: 0,
+      thresholdPercentage: 85,
+    }));
+    const checkMidStream = mock((_params: unknown) => false);
+
+    (session as unknown as { compactionMonitor: CompactionMonitor }).compactionMonitor = {
+      checkBeforeSend,
+      checkMidStream,
+      resetForNewStream: mock(() => undefined),
+      setThreshold: mock(() => undefined),
+      getThreshold: mock(() => 0.85),
+    } as unknown as CompactionMonitor;
+
+    const result = await session.sendMessage("hello", {
+      model: "openai:gpt-4o",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(true);
+    expect(checkBeforeSend).toHaveBeenCalledTimes(1);
+    expect(checkBeforeSend.mock.calls[0]?.[0]).toMatchObject({
+      providersConfig,
+    });
+
+    expect(checkMidStream).toHaveBeenCalledTimes(1);
+    expect(checkMidStream.mock.calls[0]?.[0]).toMatchObject({
+      providersConfig,
+    });
 
     session.dispose();
   });

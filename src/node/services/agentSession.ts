@@ -24,6 +24,7 @@ import type {
   DeleteMessage,
   OnChatMode,
   OnChatCursor,
+  ProvidersConfigMap,
 } from "@/common/orpc/types";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { SendMessageError } from "@/common/types/errors";
@@ -290,6 +291,7 @@ export class AgentSession {
     modelString: string;
     options?: SendMessageOptions;
     openaiTruncationModeOverride?: "auto" | "disabled";
+    providersConfig: ProvidersConfigMap | null;
   };
 
   private activeCompactionRequest?: {
@@ -1172,11 +1174,12 @@ export class AgentSession {
       // stream events have populated lastUsageState.
       await this.seedUsageStateFromHistory();
 
+      const providersConfigForCompaction = this.getProvidersConfigForCompaction();
       const compactionResult = this.compactionMonitor.checkBeforeSend({
         model: modelForStream,
         usage: this.getUsageState(),
         use1MContext: this.is1MContextEnabledForModel(modelForStream, optionsForStream),
-        providersConfig: null,
+        providersConfig: providersConfigForCompaction,
       });
 
       if (compactionResult.shouldForceCompact) {
@@ -1389,6 +1392,31 @@ export class AgentSession {
 
   private getUsageState(): AutoCompactionUsageState | undefined {
     return this.lastUsageState;
+  }
+
+  private getProvidersConfigForCompaction(): ProvidersConfigMap | null {
+    try {
+      // Some unit tests provide a minimal Config mock without providers helpers.
+      const maybeConfig = this.config as Config & {
+        loadProvidersConfig?: () => ProvidersConfigMap | null;
+      };
+      if (typeof maybeConfig.loadProvidersConfig !== "function") {
+        return null;
+      }
+
+      const providersConfig = maybeConfig.loadProvidersConfig();
+      if (!providersConfig) {
+        return null;
+      }
+
+      // Compaction limit resolution only reads provider model overrides (models[*].contextWindow*).
+      // Runtime config stores these in providers.jsonc, so the raw config shape is sufficient here.
+      return providersConfig as unknown as ProvidersConfigMap;
+    } catch {
+      // Best-effort read: if config cannot be loaded, keep null and rely on
+      // built-in model limits. This matches prior behavior without crashing.
+      return null;
+    }
   }
 
   private is1MContextEnabledForModel(modelString: string, options?: SendMessageOptions): boolean {
@@ -1753,10 +1781,12 @@ export class AgentSession {
     this.activeStreamHadAnyDelta = false;
     this.activeStreamHadPostCompactionInjection = false;
     this.lastAutoRetryOptions = options;
+    const providersConfigForCompaction = this.getProvidersConfigForCompaction();
     this.activeStreamContext = {
       modelString,
       options,
       openaiTruncationModeOverride,
+      providersConfig: providersConfigForCompaction,
     };
     this.activeStreamUserMessageId = undefined;
 
@@ -2592,12 +2622,13 @@ export class AgentSession {
         return;
       }
 
-      const streamOptions = this.activeStreamContext?.options;
+      const streamContext = this.activeStreamContext;
+      const streamOptions = streamContext?.options;
       const shouldInterruptForCompaction = this.compactionMonitor.checkMidStream({
         model: modelForUsage,
         usage: payload.usage,
         use1MContext: this.is1MContextEnabledForModel(modelForUsage, streamOptions),
-        providersConfig: null,
+        providersConfig: streamContext?.providersConfig ?? null,
       });
 
       if (shouldInterruptForCompaction) {
