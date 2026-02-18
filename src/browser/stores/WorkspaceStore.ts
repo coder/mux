@@ -1185,13 +1185,21 @@ export class WorkspaceStore {
         this.historyPagination.get(workspaceId) ?? createInitialHistoryPaginationState();
       const activeStreams = aggregator.getActiveStreams();
       const activity = this.workspaceActivity.get(workspaceId);
+      const isActiveWorkspace = this.activeOnChatWorkspaceId === workspaceId;
       const messages = aggregator.getAllMessages();
       const metadata = this.workspaceMetadata.get(workspaceId);
       const pendingStreamStartTime = aggregator.getPendingStreamStartTime();
-      const canInterrupt = activeStreams.length > 0 || activity?.streaming === true;
-      const currentModel = aggregator.getCurrentModel() ?? activity?.lastModel ?? null;
-      const currentThinkingLevel =
-        aggregator.getCurrentThinkingLevel() ?? activity?.lastThinkingLevel ?? null;
+      // For the actively subscribed workspace, trust the live onChat aggregator state.
+      // Activity snapshots can lag and should only backfill non-active workspaces.
+      const canInterrupt = isActiveWorkspace
+        ? activeStreams.length > 0
+        : activeStreams.length > 0 || activity?.streaming === true;
+      const currentModel = isActiveWorkspace
+        ? (aggregator.getCurrentModel() ?? null)
+        : (aggregator.getCurrentModel() ?? activity?.lastModel ?? null);
+      const currentThinkingLevel = isActiveWorkspace
+        ? (aggregator.getCurrentThinkingLevel() ?? null)
+        : (aggregator.getCurrentThinkingLevel() ?? activity?.lastThinkingLevel ?? null);
       const aggregatorRecency = aggregator.getRecencyTimestamp();
       const recencyTimestamp =
         aggregatorRecency === null
@@ -2731,6 +2739,18 @@ export class WorkspaceStore {
       } else {
         // Process live events immediately (after history loaded)
         applyWorkspaceChatEventToAggregator(aggregator, data);
+
+        const isCompactionBoundarySummary =
+          data.role === "assistant" &&
+          (data.metadata?.compactionBoundary === true ||
+            data.metadata?.muxMetadata?.type === "compaction-summary");
+
+        if (isCompactionBoundarySummary) {
+          // Live compaction prunes older messages inside the aggregator; refresh the
+          // pagination cursor so "Load more" starts from the new oldest visible sequence.
+          this.historyPagination.set(workspaceId, this.deriveHistoryPaginationState(aggregator));
+        }
+
         this.states.bump(workspaceId);
         this.usageStore.bump(workspaceId);
         this.checkAndBumpRecencyIfChanged();
