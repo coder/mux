@@ -15,7 +15,32 @@ import {
   withSharedWorkspace,
   configureTestRetries,
 } from "../sendMessageTestHelpers";
-import { isToolCallStart, isToolCallEnd } from "@/common/orpc/types";
+import { isToolCallStart } from "@/common/orpc/types";
+import type { WorkspaceChatMessage } from "@/common/orpc/types";
+
+type ToolCallEndEvent = Extract<WorkspaceChatMessage, { type: "tool-call-end" }>;
+
+/**
+ * Poll for a tool-call-end event by toolName after stream-end.
+ * tool-call-end can arrive slightly after stream-end (documented in mcpConfig.test.ts),
+ * so we poll briefly rather than reading getEvents() once.
+ */
+async function waitForToolCallEnd(
+  collector: { getEvents(): WorkspaceChatMessage[] },
+  toolName: string,
+  timeoutMs: number
+): Promise<ToolCallEndEvent | undefined> {
+  const startTime = Date.now();
+  while (Date.now() - startTime < timeoutMs) {
+    const match = collector
+      .getEvents()
+      .filter((e): e is ToolCallEndEvent => e.type === "tool-call-end")
+      .find((e) => e.toolName === toolName);
+    if (match) return match;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return undefined;
+}
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -70,10 +95,10 @@ describeIntegration("web_fetch integration tests", () => {
         expect(webFetchStart).toBeDefined();
         expect(webFetchStart?.args).toMatchObject({ url: "https://lite.cnn.com/" });
 
-        // Assert the tool completed with the Anthropic-native result shape.
+        // Poll for tool-call-end after stream-end; it can arrive slightly late.
         // The native tool runs server-side (Anthropic's infrastructure), so it can reach
         // lite.cnn.com even when the workspace's curl cannot (Cloudflare).
-        const webFetchEnd = events.filter(isToolCallEnd).find((e) => e.toolName === "web_fetch");
+        const webFetchEnd = await waitForToolCallEnd(collector, "web_fetch", 5000);
         expect(webFetchEnd).toBeDefined();
 
         // Native success: { type: 'web_fetch_result', url, content: { ... } }

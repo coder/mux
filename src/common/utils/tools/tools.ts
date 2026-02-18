@@ -335,6 +335,8 @@ export async function getToolsForModel(
           // - mux.md share links rely on client-side decryption via URL fragment (#key);
           //   Anthropic drops the fragment when making HTTP requests, so decryption silently fails.
           // - Not bridgeable in the PTC sandbox (no execute()); see BridgeableToolName comment.
+          // - Tool hooks (.mux/tool_pre/.mux/tool_post) are skipped because withHooks() returns
+          //   early when execute() is absent — same limitation as web_search (provider-native).
           web_fetch: anthropic.tools.webFetch_20250910({ maxUses: 1000 }) as Tool,
         };
         break;
