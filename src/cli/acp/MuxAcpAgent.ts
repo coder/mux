@@ -282,6 +282,26 @@ export class MuxAcpAgent implements AcpAgent {
       );
     }
 
+    if (params.prompt.length === 0) {
+      throw this.deps.sdk.RequestError.invalidParams(
+        undefined,
+        "session/prompt requires at least one content block"
+      );
+    }
+
+    // Mux currently only supports text-based messages. Reject prompts that
+    // contain any non-text blocks (images, resources, etc.) rather than
+    // silently dropping them — the backend would answer without the full
+    // context the user intended, producing misleading results.
+    const nonTextBlocks = params.prompt.filter((block) => block.type !== "text");
+    if (nonTextBlocks.length > 0) {
+      const types = [...new Set(nonTextBlocks.map((b) => b.type))].join(", ");
+      throw this.deps.sdk.RequestError.invalidParams(
+        undefined,
+        `session/prompt contains unsupported block types (${types}); only text blocks are currently supported`
+      );
+    }
+
     const rawMessageText = params.prompt
       .flatMap((block) => {
         if (block.type === "text") {
@@ -290,23 +310,6 @@ export class MuxAcpAgent implements AcpAgent {
         return [];
       })
       .join("\n");
-
-    if (params.prompt.length === 0) {
-      throw this.deps.sdk.RequestError.invalidParams(
-        undefined,
-        "session/prompt requires at least one content block"
-      );
-    }
-
-    // Mux currently only supports text-based messages. If the client sent
-    // only non-text blocks (images, resources, etc.), reject rather than
-    // silently sending an empty message to the backend.
-    if (rawMessageText.length === 0) {
-      throw this.deps.sdk.RequestError.invalidParams(
-        undefined,
-        "session/prompt contains only non-text blocks which are not yet supported"
-      );
-    }
 
     // Install the resolver BEFORE awaiting sendMessage.
     //
@@ -1267,8 +1270,9 @@ export class MuxAcpAgent implements AcpAgent {
     });
 
     if (!generationResult.success) {
-      this.deps.log("nameGeneration.generate failed", generationResult.error);
-      return;
+      // Throw so the caller's .then() does not fire and firstPromptSent stays
+      // false, allowing a retry on the next prompt.
+      throw new Error(`nameGeneration.generate failed: ${JSON.stringify(generationResult.error)}`);
     }
 
     const renameResult = await this.deps.orpcClient.workspace.rename({
@@ -1277,7 +1281,9 @@ export class MuxAcpAgent implements AcpAgent {
     });
 
     if (!renameResult.success) {
-      this.deps.log("workspace.rename failed during ACP name generation", renameResult.error);
+      throw new Error(
+        `workspace.rename failed during ACP name generation: ${JSON.stringify(renameResult.error)}`
+      );
     }
 
     const titleResult = await this.deps.orpcClient.workspace.updateTitle({
@@ -1286,7 +1292,9 @@ export class MuxAcpAgent implements AcpAgent {
     });
 
     if (!titleResult.success) {
-      this.deps.log("workspace.updateTitle failed during ACP name generation", titleResult.error);
+      throw new Error(
+        `workspace.updateTitle failed during ACP name generation: ${JSON.stringify(titleResult.error)}`
+      );
     }
   }
 
