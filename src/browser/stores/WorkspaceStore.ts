@@ -2740,10 +2740,10 @@ export class WorkspaceStore {
         // Process live events immediately (after history loaded)
         applyWorkspaceChatEventToAggregator(aggregator, data);
 
+        const muxMeta = data.metadata?.muxMetadata as { type?: string } | undefined;
         const isCompactionBoundarySummary =
           data.role === "assistant" &&
-          (data.metadata?.compactionBoundary === true ||
-            data.metadata?.muxMetadata?.type === "compaction-summary");
+          (data.metadata?.compactionBoundary === true || muxMeta?.type === "compaction-summary");
 
         if (isCompactionBoundarySummary) {
           // Live compaction prunes older messages inside the aggregator; refresh the
