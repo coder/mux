@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import type { SessionConfigOption, SessionConfigSelectOption } from "@agentclientprotocol/sdk";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import { THINKING_LEVELS, isThinkingLevel } from "@/common/types/thinking";
+import type { AgentDefinitionFrontmatter } from "@/common/types/agentDefinition";
+import { getThinkingOptionLabel, isThinkingLevel } from "@/common/types/thinking";
+import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
+import { getBuiltInAgentDefinitions } from "@/node/services/agentDefinitions/builtInAgentDefinitions";
 import type { ORPCClient } from "./serverConnection";
 import { resolveAgentAiSettings, type ResolvedAiSettings } from "./resolveAgentAiSettings";
 
@@ -9,11 +12,82 @@ export const AGENT_MODE_CONFIG_ID = "agentMode";
 const MODEL_CONFIG_ID = "model";
 const THINKING_LEVEL_CONFIG_ID = "thinkingLevel";
 
-const EXPOSED_AGENT_MODES = [
-  { value: "exec", label: "Exec" },
-  { value: "ask", label: "Ask" },
-  { value: "plan", label: "Plan" },
-] as const;
+const ORDERED_AGENT_MODE_IDS = ["exec", "ask", "plan"] as const;
+type AgentModeId = (typeof ORDERED_AGENT_MODE_IDS)[number];
+
+const DEFAULT_AGENT_MODE_METADATA: Readonly<
+  Record<AgentModeId, { label: string; description: string }>
+> = {
+  exec: {
+    label: "Exec",
+    description: "Implement changes in the repository",
+  },
+  ask: {
+    label: "Ask",
+    description: "Delegate questions to Explore sub-agents and synthesize an answer.",
+  },
+  plan: {
+    label: "Plan",
+    description: "Create a plan before coding",
+  },
+};
+
+interface ExposedAgentMode {
+  value: AgentModeId;
+  label: string;
+  description: string;
+}
+
+function isUiSelectableAgentMode(frontmatter: AgentDefinitionFrontmatter): boolean {
+  if (frontmatter.disabled === true || frontmatter.ui?.disabled === true) {
+    return false;
+  }
+
+  if (frontmatter.ui?.hidden != null) {
+    return !frontmatter.ui.hidden;
+  }
+
+  if (frontmatter.ui?.selectable != null) {
+    return frontmatter.ui.selectable;
+  }
+
+  return true;
+}
+
+function resolveExposedAgentModes(): ExposedAgentMode[] {
+  const builtInFrontmatterById = new Map(
+    getBuiltInAgentDefinitions().map((agent) => [agent.id, agent.frontmatter])
+  );
+
+  return ORDERED_AGENT_MODE_IDS.flatMap((modeId) => {
+    const fallback = DEFAULT_AGENT_MODE_METADATA[modeId];
+    const frontmatter = builtInFrontmatterById.get(modeId);
+
+    if (frontmatter == null) {
+      return [
+        {
+          value: modeId,
+          label: fallback.label,
+          description: fallback.description,
+        },
+      ];
+    }
+
+    if (!isUiSelectableAgentMode(frontmatter)) {
+      return [];
+    }
+
+    return [
+      {
+        value: modeId,
+        label: frontmatter.name,
+        description: frontmatter.description ?? fallback.description,
+      },
+    ];
+  });
+}
+
+const EXPOSED_AGENT_MODES = resolveExposedAgentModes();
 
 type WorkspaceInfo = NonNullable<Awaited<ReturnType<ORPCClient["workspace"]["getInfo"]>>>;
 type UpdateAgentAiSettingsResult = Awaited<
@@ -63,16 +137,27 @@ async function resolveCurrentAiSettings(
 ): Promise<ResolvedAiSettings> {
   const workspaceAiSettings = workspace.aiSettingsByAgent?.[agentId] ?? workspace.aiSettings;
   if (workspaceAiSettings) {
-    return workspaceAiSettings;
+    return {
+      model: workspaceAiSettings.model,
+      thinkingLevel: enforceThinkingPolicy(
+        workspaceAiSettings.model,
+        workspaceAiSettings.thinkingLevel
+      ),
+    };
   }
 
-  return resolveAgentAiSettings(client, agentId, workspaceId);
+  const resolvedDefaults = await resolveAgentAiSettings(client, agentId, workspaceId);
+  return {
+    model: resolvedDefaults.model,
+    thinkingLevel: enforceThinkingPolicy(resolvedDefaults.model, resolvedDefaults.thinkingLevel),
+  };
 }
 
 function buildAgentModeSelectOptions(currentAgentId: string): SessionConfigSelectOption[] {
   const options: SessionConfigSelectOption[] = EXPOSED_AGENT_MODES.map((mode) => ({
     value: mode.value,
     name: mode.label,
+    description: mode.description,
   }));
 
   if (!options.some((option) => option.value === currentAgentId)) {
@@ -95,10 +180,12 @@ function buildModelSelectOptions(currentModel: string): SessionConfigSelectOptio
   return options;
 }
 
-function buildThinkingLevelSelectOptions(): SessionConfigSelectOption[] {
-  return THINKING_LEVELS.map((level) => ({
+function buildThinkingLevelSelectOptions(modelString: string): SessionConfigSelectOption[] {
+  const allowedThinkingLevels = getThinkingPolicyForModel(modelString);
+
+  return allowedThinkingLevels.map((level) => ({
     value: level,
-    name: level,
+    name: getThinkingOptionLabel(level, modelString),
   }));
 }
 
@@ -146,6 +233,11 @@ export async function buildConfigOptions(
     currentAgentId
   );
 
+  const effectiveThinkingLevel = enforceThinkingPolicy(
+    currentAiSettings.model,
+    currentAiSettings.thinkingLevel
+  );
+
   const configOptions: SessionConfigOption[] = [
     {
       id: AGENT_MODE_CONFIG_ID,
@@ -168,8 +260,8 @@ export async function buildConfigOptions(
       name: "Thinking Level",
       type: "select",
       category: "thought_level",
-      currentValue: currentAiSettings.thinkingLevel,
-      options: buildThinkingLevelSelectOptions(),
+      currentValue: effectiveThinkingLevel,
+      options: buildThinkingLevelSelectOptions(currentAiSettings.model),
     },
   ];
 
@@ -210,9 +302,17 @@ export async function handleSetConfigOption(
         ? { model: existingSettings.model, thinkingLevel: existingSettings.thinkingLevel }
         : await resolveAgentAiSettings(client, nextAgentId, trimmedWorkspaceId);
 
-    await persistAgentAiSettings(client, trimmedWorkspaceId, nextAgentId, resolvedAiSettings);
+    const normalizedAiSettings: ResolvedAiSettings = {
+      model: resolvedAiSettings.model,
+      thinkingLevel: enforceThinkingPolicy(
+        resolvedAiSettings.model,
+        resolvedAiSettings.thinkingLevel
+      ),
+    };
+
+    await persistAgentAiSettings(client, trimmedWorkspaceId, nextAgentId, normalizedAiSettings);
     if (args?.onAgentModeChanged != null) {
-      await args.onAgentModeChanged(nextAgentId, resolvedAiSettings);
+      await args.onAgentModeChanged(nextAgentId, normalizedAiSettings);
     }
 
     return buildConfigOptions(client, trimmedWorkspaceId, { activeAgentId: nextAgentId });
@@ -226,9 +326,14 @@ export async function handleSetConfigOption(
   );
 
   if (trimmedConfigId === MODEL_CONFIG_ID) {
+    const clampedThinkingLevel = enforceThinkingPolicy(
+      trimmedValue,
+      currentAiSettings.thinkingLevel
+    );
+
     await persistAgentAiSettings(client, trimmedWorkspaceId, currentAgentId, {
       model: trimmedValue,
-      thinkingLevel: currentAiSettings.thinkingLevel,
+      thinkingLevel: clampedThinkingLevel,
     });
 
     return buildConfigOptions(client, trimmedWorkspaceId, { activeAgentId: currentAgentId });
@@ -241,9 +346,11 @@ export async function handleSetConfigOption(
       );
     }
 
+    const clampedThinkingLevel = enforceThinkingPolicy(currentAiSettings.model, trimmedValue);
+
     await persistAgentAiSettings(client, trimmedWorkspaceId, currentAgentId, {
       model: currentAiSettings.model,
-      thinkingLevel: trimmedValue,
+      thinkingLevel: clampedThinkingLevel,
     });
 
     return buildConfigOptions(client, trimmedWorkspaceId, { activeAgentId: currentAgentId });
