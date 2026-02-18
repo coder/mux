@@ -418,23 +418,25 @@ export class MuxAcpAgent implements AcpAgent {
 
     const promptResolver = session.promptResolver;
 
+    // No active ACP prompt for this session — nothing to cancel.
+    // Return early to avoid accidentally interrupting an unrelated stream
+    // in the same workspace (e.g., from the Mux UI or another producer).
+    if (!promptResolver) {
+      return;
+    }
+
     // If the prompt is still queued (unbound — no stream-start arrived yet),
     // resolve it locally as cancelled without calling interruptStream, which
     // would abort the active stream of another producer on this workspace.
-    if (promptResolver?.messageId.length === 0) {
+    //
+    // NOTE: There is no server-side API to selectively cancel a single queued
+    // message (workspace.clearQueue clears the entire workspace queue, which
+    // would drop other producers' queued messages). The queued backend message
+    // may therefore still execute after this local cancellation. A proper fix
+    // requires a server-side selective cancel API (by message/correlation ID).
+    if (promptResolver.messageId.length === 0) {
       this.sessionManager.clearPromptResolver(params.sessionId);
       promptResolver.resolve({ stopReason: "cancelled" });
-
-      // Best-effort: tell the backend to drop queued messages so the cancelled
-      // prompt does not execute later. clearQueue is workspace-wide, but the
-      // ACP bridge only ever queues one message per session at a time.
-      try {
-        await this.deps.orpcClient.workspace.clearQueue({
-          workspaceId: session.workspaceId,
-        });
-      } catch (error) {
-        this.deps.log("workspace.clearQueue failed (best-effort)", error);
-      }
       return;
     }
 
