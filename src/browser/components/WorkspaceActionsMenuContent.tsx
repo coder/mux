@@ -58,6 +58,8 @@ export const WorkspaceActionsMenuContent: React.FC<WorkspaceActionsMenuContentPr
       {props.onEditTitle && (
         <WorkspaceActionButton
           label="Edit chat title"
+          shortcut={formatKeybind(KEYBINDS.EDIT_WORKSPACE_TITLE)}
+          shortcutClassName={props.shortcutClassName}
           icon={<Pencil className="h-3 w-3 shrink-0" />}
           onClick={(e) => {
             e.stopPropagation();
