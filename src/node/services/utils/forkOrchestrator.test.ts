@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "bun:test";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "bun:test";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import type { Config } from "@/node/config";
 import type {
@@ -21,17 +21,27 @@ vi.mock("@/node/git", () => ({
   detectDefaultTrunkBranch: vi.fn(),
 }));
 
-const { orchestrateFork } = await import("./forkOrchestrator");
-const { applyForkRuntimeUpdates } = await import("@/node/services/utils/forkRuntimeUpdates");
-const { createRuntime } = await import("@/node/runtime/runtimeFactory");
-const { detectDefaultTrunkBranch, listLocalBranches } = await import("@/node/git");
+let orchestrateFork!: typeof import("./forkOrchestrator").orchestrateFork;
+let applyForkRuntimeUpdatesMock!: ReturnType<typeof vi.fn>;
+let createRuntimeMock!: ReturnType<typeof vi.fn>;
+let detectDefaultTrunkBranchMock!: ReturnType<typeof vi.fn>;
+let listLocalBranchesMock!: ReturnType<typeof vi.fn>;
 
-const applyForkRuntimeUpdatesMock = applyForkRuntimeUpdates as unknown as ReturnType<typeof vi.fn>;
-const createRuntimeMock = createRuntime as unknown as ReturnType<typeof vi.fn>;
-const detectDefaultTrunkBranchMock = detectDefaultTrunkBranch as unknown as ReturnType<
-  typeof vi.fn
->;
-const listLocalBranchesMock = listLocalBranches as unknown as ReturnType<typeof vi.fn>;
+beforeAll(async () => {
+  ({ orchestrateFork } = await import("./forkOrchestrator"));
+
+  const runtimeUpdatesModule = await import("@/node/services/utils/forkRuntimeUpdates");
+  const runtimeFactoryModule = await import("@/node/runtime/runtimeFactory");
+  const gitModule = await import("@/node/git");
+
+  applyForkRuntimeUpdatesMock =
+    runtimeUpdatesModule.applyForkRuntimeUpdates as unknown as ReturnType<typeof vi.fn>;
+  createRuntimeMock = runtimeFactoryModule.createRuntime as unknown as ReturnType<typeof vi.fn>;
+  detectDefaultTrunkBranchMock = gitModule.detectDefaultTrunkBranch as unknown as ReturnType<
+    typeof vi.fn
+  >;
+  listLocalBranchesMock = gitModule.listLocalBranches as unknown as ReturnType<typeof vi.fn>;
+});
 
 const PROJECT_PATH = "/projects/demo";
 const SOURCE_WORKSPACE_NAME = "feature/source";

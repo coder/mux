@@ -18,7 +18,7 @@ import { createAppHarness } from "../harness";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 const dockerAvailable = shouldRunIntegrationTests() ? await isDockerAvailable() : false;
-const testDocker = test.skipIf(!dockerAvailable);
+const testDocker = dockerAvailable ? test : test.skip;
 
 describeIntegration("Workspace Fork (UI)", () => {
   beforeAll(async () => {

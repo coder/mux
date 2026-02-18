@@ -1996,6 +1996,13 @@ describeIntegration("Runtime integration tests", () => {
 
             expect(forkResult.workspacePath).toBe("/src");
             expect(forkResult.sourceBranch).toBe("feature");
+
+            if (!forkResult.workspacePath || !forkResult.sourceBranch) {
+              throw new Error(
+                "Expected successful Docker fork to include workspacePath and sourceBranch"
+              );
+            }
+
             expect(runtime.getContainerName()).toBe(forkContainerName);
 
             const runningCheck = await dockerCommand(
