@@ -17,7 +17,13 @@ type SendOptions = SendMessageOptions & { fileParts?: FilePart[] };
 
 interface SessionInternals {
   dispatchPendingFollowUp: () => Promise<void>;
-  sendMessage: (message: string, options?: SendOptions) => Promise<{ success: boolean }>;
+  sendMessage: (
+    message: string,
+    options?: SendOptions,
+    internal?: { synthetic?: boolean }
+  ) => Promise<{ success: boolean }>;
+  scheduleStartupRecovery: () => void;
+  startupRecoveryPromise: Promise<void> | null;
 }
 
 describe("AgentSession continue-message agentId fallback", () => {
@@ -30,6 +36,7 @@ describe("AgentSession continue-message agentId fallback", () => {
     // Track the follow-up message that gets dispatched
     let dispatchedMessage: string | undefined;
     let dispatchedOptions: SendOptions | undefined;
+    let dispatchedInternal: { synthetic?: boolean } | undefined;
 
     const aiService: AIService = {
       on() {
@@ -108,11 +115,14 @@ describe("AgentSession continue-message agentId fallback", () => {
     const internals = session as unknown as SessionInternals;
 
     // Intercept sendMessage to capture what dispatchPendingFollowUp sends
-    internals.sendMessage = mock((message: string, options?: SendOptions) => {
-      dispatchedMessage = message;
-      dispatchedOptions = options;
-      return Promise.resolve({ success: true });
-    });
+    internals.sendMessage = mock(
+      (message: string, options?: SendOptions, internal?: { synthetic?: boolean }) => {
+        dispatchedMessage = message;
+        dispatchedOptions = options;
+        dispatchedInternal = internal;
+        return Promise.resolve({ success: true });
+      }
+    );
 
     // Call dispatchPendingFollowUp directly (normally called after compaction completes)
     await internals.dispatchPendingFollowUp();
@@ -120,6 +130,85 @@ describe("AgentSession continue-message agentId fallback", () => {
     // Verify the follow-up was dispatched with correct agentId derived from legacy mode
     expect(dispatchedMessage).toBe("follow up");
     expect(dispatchedOptions?.agentId).toBe("plan");
+    expect(dispatchedInternal?.synthetic).toBe(true);
+
+    session.dispose();
+  });
+
+  test("startup recovery dispatches pending follow-up only once", async () => {
+    let sendCount = 0;
+
+    const aiService: AIService = {
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+      isStreaming: () => false,
+      stopStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
+    } as unknown as AIService;
+
+    const mockSummaryMessage = {
+      id: "summary-once",
+      role: "assistant" as const,
+      parts: [{ type: "text" as const, text: "Compaction summary" }],
+      metadata: {
+        muxMetadata: {
+          type: "compaction-summary" as const,
+          pendingFollowUp: {
+            text: "follow up once",
+            model: "openai:gpt-4o",
+            agentId: "exec",
+          },
+        },
+      },
+    } satisfies MuxMessage;
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+    await historyService.appendToHistory("ws", mockSummaryMessage);
+
+    const initStateManager: InitStateManager = {
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      cleanup: mock(() => Promise.resolve()),
+      setMessageQueued: mock(() => undefined),
+    } as unknown as BackgroundProcessManager;
+
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => "/tmp"),
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId: "ws",
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const internals = session as unknown as SessionInternals;
+    internals.sendMessage = mock(() => {
+      sendCount += 1;
+      return Promise.resolve({ success: true });
+    });
+
+    internals.scheduleStartupRecovery();
+    internals.scheduleStartupRecovery();
+
+    await internals.startupRecoveryPromise;
+
+    expect(sendCount).toBe(1);
 
     session.dispose();
   });

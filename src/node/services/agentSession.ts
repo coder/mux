@@ -236,6 +236,8 @@ export class AgentSession {
   private readonly retryManager: RetryManager;
   private lastAutoRetryOptions?: SendMessageOptions;
   /** Startup recovery should run once per session to avoid duplicate retry timers on reconnect. */
+  private startupRecoveryScheduled = false;
+  private startupRecoveryPromise: Promise<void> | null = null;
   private startupAutoRetryCheckScheduled = false;
   private startupAutoRetryCheckPromise: Promise<void> | null = null;
   private autoRetryEnabledPreference: boolean | null = null;
@@ -831,11 +833,15 @@ export class AgentSession {
   }
 
   scheduleStartupRecovery(): void {
+    if (this.disposed || this.startupRecoveryScheduled || this.startupRecoveryPromise) {
+      return;
+    }
+
     // Crash recovery: check if the last message is a compaction summary with
     // a pending follow-up that was never dispatched. If so, dispatch it now.
     // This handles the case where the app crashed after compaction completed
     // but before the follow-up was sent.
-    void this.dispatchPendingFollowUp()
+    this.startupRecoveryPromise = this.dispatchPendingFollowUp()
       .catch((error) => {
         log.warn("Failed to dispatch pending follow-up during startup recovery", {
           workspaceId: this.workspaceId,
@@ -843,6 +849,8 @@ export class AgentSession {
         });
       })
       .finally(() => {
+        this.startupRecoveryScheduled = true;
+        this.startupRecoveryPromise = null;
         this.ensureStartupAutoRetryCheck();
       });
   }
@@ -3780,7 +3788,9 @@ export class AgentSession {
     // Await sendMessage to ensure the follow-up is persisted before returning.
     // This guarantees ordering: the follow-up message is written to history
     // before sendQueuedMessages() runs, preventing race conditions.
-    await this.sendMessage(finalText, options);
+    // Mark as synthetic so recovery/background dispatches do not implicitly
+    // re-enable auto-retry after a user explicitly opted out.
+    await this.sendMessage(finalText, options, { synthetic: true });
   }
 
   /**
