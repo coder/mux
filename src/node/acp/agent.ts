@@ -563,6 +563,10 @@ export class MuxAgent implements Agent {
     const promptCorrelationId = randomUUID();
     const turnPromise = this.beginTurn(args.sessionId, promptCorrelationId);
 
+    // Attach a sink immediately so early stream failures cannot produce
+    // unhandled rejections before this method awaits turnPromise.
+    void turnPromise.catch(() => undefined);
+
     try {
       // Re-establish chat subscription if a prior one dropped (e.g., transient
       // websocket interruption). Register the turn first so subscription
@@ -606,10 +610,8 @@ export class MuxAgent implements Agent {
       };
     } catch (error) {
       // workspace.sendMessage / subscription failures can happen before stream
-      // events settle the turn promise. Clear state and attach a sink handler
-      // so rejected turns never surface as unhandled rejections.
+      // events settle the turn promise. Clear turn state before rethrowing.
       this.turnCompletions.delete(args.sessionId);
-      void turnPromise.catch(() => undefined);
       throw error;
     }
   }
