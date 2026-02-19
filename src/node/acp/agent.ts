@@ -1244,10 +1244,10 @@ export class MuxAgent implements Agent {
       if (isReplayEvent) {
         return;
       }
-      // stream-end is a normal completion.  Only honour it for the identified
-      // message — otherwise a prior in-flight message's completion could
-      // prematurely resolve a freshly queued prompt.
-      if (!this.isActiveTurnMessage(sessionId, event.messageId)) {
+      // stream-end is a normal completion. Prefer exact message-id matching
+      // once stream-start identifies the turn, but also allow correlation-id
+      // fallback while pending so a dropped stream-start cannot hang prompt().
+      if (!this.isActiveTurnMessageOrPending(sessionId, event.messageId, event.acpPromptId)) {
         return;
       }
       const usage =

@@ -1962,6 +1962,9 @@ export class StreamManager extends EventEmitter {
               type: "stream-end",
               workspaceId: workspaceId as string,
               messageId: streamInfo.messageId,
+              ...(streamInfo.initialMetadata?.acpPromptId != null
+                ? { acpPromptId: streamInfo.initialMetadata.acpPromptId }
+                : {}),
               metadata: {
                 ...streamInfo.initialMetadata, // AIService-provided metadata (systemMessageTokens, etc)
                 model: canonicalModel,

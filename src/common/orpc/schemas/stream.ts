@@ -221,6 +221,10 @@ export const StreamEndEventSchema = z.object({
   type: z.literal("stream-end"),
   workspaceId: z.string(),
   messageId: z.string(),
+  acpPromptId: z
+    .string()
+    .optional()
+    .meta({ description: "ACP prompt correlation id for matching terminal events" }),
   metadata: z
     .object({
       model: z.string(),
