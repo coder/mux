@@ -1218,7 +1218,12 @@ export class MuxAgent implements Agent {
       try {
         for await (const event of chatIterable) {
           this.handleStreamEvent(sessionId, event);
-          push(event);
+          // Skip heartbeats from the queue: they produce no sessionUpdate
+          // output and are emitted periodically, so they would accumulate
+          // unboundedly if the consumer is blocked on stdout backpressure.
+          if (event.type !== "heartbeat") {
+            push(event);
+          }
         }
       } finally {
         end();
