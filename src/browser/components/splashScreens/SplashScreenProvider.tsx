@@ -7,13 +7,16 @@ import {
   useMemo,
   type ReactNode,
 } from "react";
-import { SPLASH_REGISTRY, DISABLE_SPLASH_SCREENS, type SplashConfig } from "./index";
+import {
+  SPLASH_REGISTRY,
+  DISABLE_SPLASH_SCREENS,
+  ONBOARDING_WIZARD_SPLASH_ID,
+  type SplashConfig,
+} from "./index";
 import { useAPI } from "@/browser/contexts/API";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 
 const SplashScreenActiveContext = createContext(false);
-
-const ONBOARDING_WIZARD_SPLASH_ID = "onboarding-wizard-v1";
 
 interface PausedOnboardingState {
   stepIndex: number;
