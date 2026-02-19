@@ -2300,7 +2300,14 @@ export class WorkspaceStore {
           // Connection is alive again - don't carry old backoff into the next failure.
           attempt = 0;
 
+          const attemptSignal = attemptController.signal;
           queueMicrotask(() => {
+            // Workspace switches abort the previous attempt before starting a new one.
+            // Drop any already-queued chat events from that aborted attempt so stale
+            // replay buffers cannot be repopulated after we synchronously cleared them.
+            if (signal.aborted || attemptSignal.aborted) {
+              return;
+            }
             this.handleChatMessage(workspaceId, data);
           });
         }

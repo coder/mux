@@ -407,6 +407,62 @@ describe("WorkspaceStore", () => {
       expect(transientState!.historicalMessages).toHaveLength(0);
       expect(transientState!.pendingStreamEvents).toHaveLength(0);
     });
+    it("drops queued chat events from an aborted subscription attempt", async () => {
+      const queuedMicrotasks: Array<() => void> = [];
+      const originalQueueMicrotask = global.queueMicrotask;
+      let resolveQueuedEvent!: () => void;
+      const queuedEvent = new Promise<void>((resolve) => {
+        resolveQueuedEvent = resolve;
+      });
+
+      global.queueMicrotask = (callback) => {
+        queuedMicrotasks.push(callback);
+        resolveQueuedEvent();
+      };
+
+      try {
+        mockOnChat.mockImplementation(async function* (
+          input?: { workspaceId: string; mode?: unknown },
+          options?: { signal?: AbortSignal }
+        ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+          if (input?.workspaceId === "workspace-1") {
+            yield createHistoryMessageEvent("queued-after-switch", 11);
+          }
+          await waitForAbortSignal(options?.signal);
+        });
+
+        createAndAddWorkspace(store, "workspace-1", {}, false);
+        createAndAddWorkspace(store, "workspace-2", {}, false);
+
+        store.setActiveWorkspaceId("workspace-1");
+        await queuedEvent;
+
+        const transientState = (
+          store as unknown as {
+            chatTransientState: Map<
+              string,
+              {
+                historicalMessages: WorkspaceChatMessage[];
+                pendingStreamEvents: WorkspaceChatMessage[];
+              }
+            >;
+          }
+        ).chatTransientState.get("workspace-1");
+        expect(transientState).toBeDefined();
+
+        // Abort workspace-1 attempt by moving focus; the queued callback should now no-op.
+        store.setActiveWorkspaceId("workspace-2");
+
+        for (const callback of queuedMicrotasks) {
+          callback();
+        }
+
+        expect(transientState!.historicalMessages).toHaveLength(0);
+        expect(transientState!.pendingStreamEvents).toHaveLength(0);
+      } finally {
+        global.queueMicrotask = originalQueueMicrotask;
+      }
+    });
   });
 
   it("tracks which workspace currently has the active onChat subscription", async () => {
