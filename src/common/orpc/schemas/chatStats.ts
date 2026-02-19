@@ -56,6 +56,10 @@ export const ChatStatsSchema = z.object({
 export const SessionUsageTokenStatsCacheSchema = z.object({
   version: z.literal(1),
   computedAt: z.number().meta({ description: "Unix timestamp (ms) when this cache was computed" }),
+  providersConfigVersion: z
+    .number()
+    .optional()
+    .meta({ description: "WorkspaceStore providers config version used for this cache" }),
   model: z
     .string()
     .meta({ description: "Model used for tokenization (affects tokenizer + tool definitions)" }),

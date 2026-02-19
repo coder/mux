@@ -22,6 +22,12 @@ export interface SessionUsageTokenStatsCacheV1 {
 
   computedAt: number;
 
+  /**
+   * WorkspaceStore providers config version used when this cache was computed.
+   * Optional for backward compatibility with pre-versioned cache entries.
+   */
+  providersConfigVersion?: number;
+
   /** Tokenization model (impacts tokenizer + tool definition counting) */
   model: string;
 

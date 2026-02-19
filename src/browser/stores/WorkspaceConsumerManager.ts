@@ -12,7 +12,8 @@ const latestRequestByWorkspace = new Map<string, number>();
 async function calculateTokenStatsLatest(
   workspaceId: string,
   messages: MuxMessage[],
-  model: string
+  model: string,
+  providersConfigVersion: number
 ): Promise<ChatStats> {
   const orpcClient = window.__ORPC_CLIENT__;
   if (!orpcClient) {
@@ -23,7 +24,12 @@ async function calculateTokenStatsLatest(
   latestRequestByWorkspace.set(workspaceId, requestId);
 
   try {
-    const stats = await orpcClient.tokenizer.calculateStats({ workspaceId, messages, model });
+    const stats = await orpcClient.tokenizer.calculateStats({
+      workspaceId,
+      messages,
+      model,
+      providersConfigVersion,
+    });
     const latestRequestId = latestRequestByWorkspace.get(workspaceId);
     if (latestRequestId !== requestId) {
       throw new Error(TOKENIZER_CANCELLED_MESSAGE);
@@ -79,12 +85,18 @@ export class WorkspaceConsumerManager {
 
   // Callback to bump the store when calculation completes
   private readonly onCalculationComplete: (workspaceId: string) => void;
+  // WorkspaceStore providers config version to stamp persisted token stats cache entries.
+  private readonly getProvidersConfigVersion: () => number;
 
   // Track pending store notifications to avoid duplicate bumps within the same tick
   private pendingNotifications = new Set<string>();
 
-  constructor(onCalculationComplete: (workspaceId: string) => void) {
+  constructor(
+    onCalculationComplete: (workspaceId: string) => void,
+    getProvidersConfigVersion: () => number
+  ) {
     this.onCalculationComplete = onCalculationComplete;
+    this.getProvidersConfigVersion = getProvidersConfigVersion;
   }
 
   /**
@@ -209,7 +221,7 @@ export class WorkspaceConsumerManager {
         );
 
         const fullStats = await Promise.race([
-          calculateTokenStatsLatest(workspaceId, messages, model),
+          calculateTokenStatsLatest(workspaceId, messages, model, this.getProvidersConfigVersion()),
           timeoutPromise,
         ]);
 

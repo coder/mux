@@ -65,7 +65,8 @@ export class TokenizerService {
     workspaceId: string,
     messages: MuxMessage[],
     model: string,
-    providersConfig: ProvidersConfigMap | null = null
+    providersConfig: ProvidersConfigMap | null = null,
+    providersConfigVersion?: number
   ): Promise<ChatStats> {
     assert(
       typeof workspaceId === "string" && workspaceId.length > 0,
@@ -91,6 +92,7 @@ export class TokenizerService {
     const cache: SessionUsageTokenStatsCacheV1 = {
       version: 1,
       computedAt: Date.now(),
+      ...(providersConfigVersion !== undefined ? { providersConfigVersion } : {}),
       model: stats.model,
       tokenizerName: stats.tokenizerName,
       history: {

@@ -331,7 +331,8 @@ export const router = (authToken?: string) => {
             input.workspaceId,
             input.messages,
             input.model,
-            context.providerService.getConfig()
+            context.providerService.getConfig(),
+            input.providersConfigVersion
           );
         }),
     },

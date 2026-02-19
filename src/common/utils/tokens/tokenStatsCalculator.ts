@@ -412,7 +412,7 @@ export async function calculateTokenStats(
 
   // Phase 1: Fetch all tool definitions in parallel (first await point)
   const toolNames = collectUniqueToolNames(messages);
-  const toolDefinitions = await fetchAllToolDefinitions(toolNames, model);
+  const toolDefinitions = await fetchAllToolDefinitions(toolNames, metadataModel);
 
   // Phase 2: Extract sync metadata (no awaits)
   const { systemMessageTokens, usageHistory } = extractSyncMetadata(messages, model);

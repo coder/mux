@@ -773,9 +773,12 @@ export class WorkspaceStore {
     this.onModelUsed = onModelUsed;
 
     // Initialize consumer calculation manager
-    this.consumerManager = new WorkspaceConsumerManager((workspaceId) => {
-      this.consumersStore.bump(workspaceId);
-    });
+    this.consumerManager = new WorkspaceConsumerManager(
+      (workspaceId) => {
+        this.consumersStore.bump(workspaceId);
+      },
+      () => this.providersConfigAppliedVersion
+    );
 
     // Note: We DON'T auto-check recency on every state bump.
     // Instead, checkAndBumpRecencyIfChanged() is called explicitly after
@@ -1854,6 +1857,10 @@ export class WorkspaceStore {
 
     const model = aggregator.getCurrentModel() ?? "unknown";
     if (tokenStatsCache.model !== model) {
+      return false;
+    }
+
+    if (tokenStatsCache.providersConfigVersion !== this.providersConfigAppliedVersion) {
       return false;
     }
 
