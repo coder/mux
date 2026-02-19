@@ -255,6 +255,7 @@ export function AskUserQuestionToolCall(props: {
       }
     }
   );
+  const autoRetryRollbackWorkspaceIdRef = useRef<string | null>(null);
   const autoRetryRollbackPendingRef = useRef(false);
   const autoRetryRollbackArmedRef = useRef(false);
 
@@ -263,26 +264,39 @@ export function AskUserQuestionToolCall(props: {
       return;
     }
 
+    const rollbackWorkspaceId = autoRetryRollbackWorkspaceIdRef.current;
+
     autoRetryRollbackPendingRef.current = false;
     autoRetryRollbackArmedRef.current = false;
+    autoRetryRollbackWorkspaceIdRef.current = null;
 
-    if (!api || !props.workspaceId) {
+    if (!api || !rollbackWorkspaceId) {
       return;
     }
 
     const rollbackResult = await api.workspace.setAutoRetryEnabled?.({
-      workspaceId: props.workspaceId,
+      workspaceId: rollbackWorkspaceId,
       enabled: false,
     });
     if (rollbackResult && !rollbackResult.success) {
       setSubmitError(rollbackResult.error);
     }
-  }, [api, props.workspaceId]);
+  }, [api]);
 
   useEffect(() => {
-    autoRetryRollbackPendingRef.current = false;
-    autoRetryRollbackArmedRef.current = false;
-  }, [props.workspaceId]);
+    if (!autoRetryRollbackPendingRef.current) {
+      return;
+    }
+
+    // If rendering moves away from the workspace that enabled temporary retry,
+    // rollback immediately so the prior workspace preference is restored.
+    const rollbackWorkspaceId = autoRetryRollbackWorkspaceIdRef.current;
+    if (!rollbackWorkspaceId || rollbackWorkspaceId === props.workspaceId) {
+      return;
+    }
+
+    void rollbackAutoRetryIfNeeded();
+  }, [props.workspaceId, rollbackAutoRetryIfNeeded]);
 
   useEffect(() => {
     if (!autoRetryRollbackPendingRef.current) {
@@ -461,6 +475,7 @@ export function AskUserQuestionToolCall(props: {
         if (enableResult?.success && enableResult.data.previousEnabled === false) {
           // Ask-user resume temporarily enables auto-retry for this attempt.
           // Roll back only after the resumed stream reaches a terminal outcome.
+          autoRetryRollbackWorkspaceIdRef.current = workspaceId;
           autoRetryRollbackPendingRef.current = true;
           autoRetryRollbackArmedRef.current = false;
         }
