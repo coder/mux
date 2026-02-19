@@ -60,15 +60,25 @@ export class StreamTranslator {
     );
     assert(chatStream != null, "consumeAndForward: chatStream is required");
 
+    let isReplayPhase = true;
+
     for await (const event of chatStream) {
-      const updates = this.translateEvent(sessionId, event);
+      const updates = this.translateEvent(sessionId, event, isReplayPhase);
       for (const update of updates) {
         await this.connection.sessionUpdate({ sessionId, update });
+      }
+
+      if (event.type === "caught-up") {
+        isReplayPhase = false;
       }
     }
   }
 
-  private translateEvent(sessionId: string, event: WorkspaceChatMessage): SessionUpdate[] {
+  private translateEvent(
+    sessionId: string,
+    event: WorkspaceChatMessage,
+    isReplayPhase: boolean
+  ): SessionUpdate[] {
     switch (event.type) {
       case "stream-delta":
         return this.toSingleChunkUpdate("agent_message_chunk", event.delta);
@@ -175,7 +185,7 @@ export class StreamTranslator {
         return this.translateToolFailure(sessionId, event.messageId, event.error, event.errorType);
 
       case "message":
-        return this.translateReplayMessage(sessionId, event);
+        return this.translateReplayMessage(sessionId, event, isReplayPhase);
 
       case "stream-end":
         this.clearMessageToolCalls(sessionId, event.messageId);
@@ -214,7 +224,8 @@ export class StreamTranslator {
 
   private translateReplayMessage(
     sessionId: string,
-    event: Extract<WorkspaceChatMessage, { type: "message" }>
+    event: Extract<WorkspaceChatMessage, { type: "message" }>,
+    isReplayPhase: boolean
   ): SessionUpdate[] {
     const updates: SessionUpdate[] = [];
 
@@ -299,7 +310,7 @@ export class StreamTranslator {
     }
 
     if (event.role === "user") {
-      const forwarding = this.resolveUserMessageForwarding(event);
+      const forwarding = this.resolveUserMessageForwarding(event, isReplayPhase);
       if (forwarding.kind === "suppress") {
         return updates;
       }
@@ -321,7 +332,8 @@ export class StreamTranslator {
   }
 
   private resolveUserMessageForwarding(
-    event: Extract<WorkspaceChatMessage, { type: "message" }>
+    event: Extract<WorkspaceChatMessage, { type: "message" }>,
+    isReplayPhase: boolean
   ): UserMessageForwarding {
     // Agent skill snapshots are synthetic context injections (<agent-skill ...>)
     // and should never be surfaced to ACP clients as user-visible text.
@@ -334,7 +346,7 @@ export class StreamTranslator {
       return { kind: "parts" };
     }
 
-    const isReplayEvent = (event as { replay?: boolean }).replay === true;
+    const isReplayEvent = (event as { replay?: boolean }).replay === true || isReplayPhase;
 
     if (!isReplayEvent) {
       // Live slash-command sends already include the user's original /skill prompt

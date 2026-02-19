@@ -96,6 +96,13 @@ function makeStreamError(
   } as WorkspaceChatMessage;
 }
 
+function makeCaughtUp(replay: "full" | "since" | "live" = "full"): WorkspaceChatMessage {
+  return {
+    type: "caught-up",
+    replay,
+  } as WorkspaceChatMessage;
+}
+
 function makeUserMessage(
   text: string,
   options?: {
@@ -417,6 +424,7 @@ describe("ACP user message translation for agent skills", () => {
     const { translator, sessionUpdates } = createHarness();
 
     await forwardEvents(translator, [
+      makeCaughtUp("live"),
       makeUserMessage("Using skill mux-docs: what is mux?", {
         metadata: {
           muxMetadata: {
