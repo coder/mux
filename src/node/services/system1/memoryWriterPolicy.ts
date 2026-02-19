@@ -106,6 +106,10 @@ export class MemoryWriterPolicy {
   private readonly stateByWorkspace = new Map<string, MemoryWriterSchedulingState>();
   private readonly queueByWorkspace = new Map<string, Promise<void>>();
   private readonly inFlightByWorkspace = new Map<string, Promise<void>>();
+  // Tracks the latest resolved System 1 gate from stream contexts per workspace.
+  // Deferred runs re-check this value at execution time instead of trusting any
+  // cached context that may have gone stale.
+  private readonly system1EnabledByWorkspace = new Map<string, boolean>();
   // Keep the most recent eligible stream context so we can trigger a deferred run
   // when turns reach the interval while another run is still in-flight.
   private readonly latestContextByWorkspace = new Map<string, MemoryWriterStreamContext>();
@@ -134,6 +138,8 @@ export class MemoryWriterPolicy {
       workspaceName: ctx.workspaceName,
       messageId: ctx.messageId,
     });
+
+    this.system1EnabledByWorkspace.set(ctx.workspaceId, ctx.system1Enabled === true);
 
     if (ctx.system1Enabled !== true) {
       // Clear any stale eligible context so an in-flight run completion cannot
@@ -326,9 +332,9 @@ export class MemoryWriterPolicy {
       return;
     }
 
-    // Re-check the same guard conditions as onAssistantStreamEnd before launching
-    // a deferred run from cached context.
-    if (latestCtx.system1Enabled !== true || latestCtx.parentWorkspaceId) {
+    // Re-check the latest System 1 gate at execution time before launching a
+    // deferred run from cached context.
+    if (this.system1EnabledByWorkspace.get(workspaceId) !== true || latestCtx.parentWorkspaceId) {
       return;
     }
 

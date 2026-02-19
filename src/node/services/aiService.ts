@@ -578,6 +578,7 @@ export class AIService extends EventEmitter {
     });
 
     const combinedAbortSignal = pendingAbortController.signal;
+    let memoryWriterContextMessageId: string | undefined;
 
     try {
       if (this.mockModeEnabled && this.mockAiStreamPlayer) {
@@ -981,6 +982,8 @@ export class AIService extends EventEmitter {
       // Create assistant message ID early so the PTC callback closure captures it.
       // The placeholder is appended to history below (after abort check).
       const assistantMessageId = createAssistantMessageId();
+
+      memoryWriterContextMessageId = assistantMessageId;
 
       // Apply tool policy and PTC experiments (lazy-loads PTC dependencies only when needed).
       const tools = await applyToolPolicyAndExperiments({
@@ -1889,6 +1892,9 @@ export class AIService extends EventEmitter {
       // No need for event listener here
       return Ok(undefined);
     } catch (error) {
+      if (memoryWriterContextMessageId) {
+        this.memoryWriterContextsByMessageId.delete(memoryWriterContextMessageId);
+      }
       const errorMessage = getErrorMessage(error);
       log.error("Stream message error:", error);
       // Return as unknown error type
