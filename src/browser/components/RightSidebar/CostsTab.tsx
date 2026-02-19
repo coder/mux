@@ -1,6 +1,6 @@
 import React from "react";
 import { useWorkspaceUsage, useWorkspaceConsumers } from "@/browser/stores/WorkspaceStore";
-import { getModelStats } from "@/common/utils/tokens/modelStats";
+import { getModelStatsResolved } from "@/common/utils/tokens/modelStats";
 import {
   sumUsageHistory,
   formatCostWithDollar,
@@ -188,7 +188,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
               // Cost and Details use viewMode-dependent data
               // Get model from the displayUsage (which could be last request or session sum)
               const model = displayUsage?.model ?? lastRequestUsage?.model ?? "unknown";
-              const modelStats = getModelStats(model);
+              const modelStats = getModelStatsResolved(model, providersConfig);
               const is1MActive = has1MContext(model) && supports1MContext(model);
 
               // Helper to calculate cost percentage

@@ -6,6 +6,7 @@ import type {
   WorkspaceChatMessage,
   WorkspaceStatsSnapshot,
   OnChatMode,
+  ProvidersConfigMap,
 } from "@/common/orpc/types";
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
@@ -38,6 +39,7 @@ import type {
 } from "@/common/types/stream";
 import { MapStore } from "./MapStore";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { isDurableCompactionBoundaryMarker } from "@/common/utils/messages/compactionBoundary";
 import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
@@ -394,6 +396,7 @@ export class WorkspaceStore {
   private usageStore = new MapStore<string, WorkspaceUsageState>();
   private client: RouterClient<AppRouter> | null = null;
   private clientChangeController = new AbortController();
+  private providersConfig: ProvidersConfigMap | null = null;
   // Workspaces that need a clean history replay once a new iterator is established.
   // We keep the existing UI visible until the replay can actually start.
   private pendingReplayReset = new Set<string>();
@@ -525,7 +528,12 @@ export class WorkspaceStore {
       const rawUsage = streamEndData.metadata?.usage;
       const providerMetadata = streamEndData.metadata?.providerMetadata;
       if (model && rawUsage) {
-        const usage = createDisplayUsage(rawUsage, model, providerMetadata);
+        const usage = createDisplayUsage(
+          rawUsage,
+          model,
+          providerMetadata,
+          this.resolveMetadataModel(model)
+        );
         if (usage) {
           const normalizedModel = normalizeGatewayModel(model);
           const current = this.sessionUsage.get(workspaceId) ?? {
@@ -770,6 +778,30 @@ export class WorkspaceStore {
     // message completion events (not on deltas) to prevent App.tsx re-renders.
   }
 
+  private resolveMetadataModel(model: string): string {
+    return resolveModelForMetadata(model, this.providersConfig);
+  }
+
+  private bumpAllUsageStoreEntries(): void {
+    for (const workspaceId of this.aggregators.keys()) {
+      this.usageStore.bump(workspaceId);
+    }
+  }
+
+  private async refreshProvidersConfig(client: RouterClient<AppRouter>): Promise<void> {
+    try {
+      const config = await client.providers.getConfig();
+      if (this.client !== client || this.clientChangeController.signal.aborted) {
+        return;
+      }
+
+      this.providersConfig = config;
+      this.bumpAllUsageStoreEntries();
+    } catch {
+      // Ignore provider config fetch errors.
+    }
+  }
+
   setStatsEnabled(enabled: boolean): void {
     if (this.statsEnabled === enabled) {
       return;
@@ -813,6 +845,9 @@ export class WorkspaceStore {
     this.clientChangeController.abort();
     this.clientChangeController = new AbortController();
 
+    this.providersConfig = null;
+    this.bumpAllUsageStoreEntries();
+
     for (const workspaceId of this.workspaceMetadata.keys()) {
       this.pendingReplayReset.add(workspaceId);
     }
@@ -833,6 +868,7 @@ export class WorkspaceStore {
     }
 
     this.ensureActiveOnChatSubscription();
+    void this.refreshProvidersConfig(client);
   }
 
   setActiveWorkspaceId(workspaceId: string | null): void {
@@ -1698,7 +1734,12 @@ export class WorkspaceStore {
               msg.metadata?.contextProviderMetadata ?? msg.metadata?.providerMetadata;
             if (rawUsage) {
               const msgModel = msg.metadata?.model ?? model ?? "unknown";
-              return createDisplayUsage(rawUsage, msgModel, providerMeta);
+              return createDisplayUsage(
+                rawUsage,
+                msgModel,
+                providerMeta,
+                this.resolveMetadataModel(msgModel)
+              );
             }
           }
         }
@@ -1715,7 +1756,12 @@ export class WorkspaceStore {
         : undefined;
       const liveUsage =
         rawContextUsage && model
-          ? createDisplayUsage(rawContextUsage, model, rawStepProviderMetadata)
+          ? createDisplayUsage(
+              rawContextUsage,
+              model,
+              rawStepProviderMetadata,
+              this.resolveMetadataModel(model)
+            )
           : undefined;
 
       const rawCumulativeUsage = activeStreamId
@@ -1726,7 +1772,12 @@ export class WorkspaceStore {
         : undefined;
       const liveCostUsage =
         rawCumulativeUsage && model
-          ? createDisplayUsage(rawCumulativeUsage, model, rawCumulativeProviderMetadata)
+          ? createDisplayUsage(
+              rawCumulativeUsage,
+              model,
+              rawCumulativeProviderMetadata,
+              this.resolveMetadataModel(model)
+            )
           : undefined;
 
       return { sessionTotal, lastRequest, lastContextUsage, totalTokens, liveUsage, liveCostUsage };

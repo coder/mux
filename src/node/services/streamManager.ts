@@ -28,6 +28,7 @@ import type { SendMessageError, StreamErrorType } from "@/common/types/errors";
 import type { MuxMetadata, MuxMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { NestedToolCall } from "@/common/orpc/schemas/message";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 import {
   coerceStreamErrorTypeForMessage,
   createErrorEvent,
@@ -54,6 +55,7 @@ import { extractToolMediaAsUserMessagesFromModelMessages } from "@/node/utils/me
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 import { getModelStats } from "@/common/utils/tokens/modelStats";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { getErrorMessage } from "@/common/utils/errors";
 import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
 
@@ -291,6 +293,8 @@ interface WorkspaceStreamInfo {
   toolCompletionTimestamps: Map<string, number>;
 
   model: string;
+  /** Metadata model resolved from provider mapping for cost/token metadata lookups. */
+  metadataModel: string;
   /** Effective thinking level after model policy clamping */
   thinkingLevel?: string;
   initialMetadata?: Partial<MuxMetadata>;
@@ -358,16 +362,22 @@ export class StreamManager extends EventEmitter {
   private readonly historyService: HistoryService;
   private mcpServerManager?: MCPServerManager;
   private readonly sessionUsageService?: SessionUsageService;
+  private readonly getProvidersConfig: () => ProvidersConfigMap | null;
   // Token tracker for live streaming statistics
   private tokenTracker = new StreamingTokenTracker();
   // Track OpenAI previousResponseIds that have been invalidated
   // When frontend retries, buildProviderOptions will omit these IDs
   private lostResponseIds = new Set<string>();
 
-  constructor(historyService: HistoryService, sessionUsageService?: SessionUsageService) {
+  constructor(
+    historyService: HistoryService,
+    sessionUsageService?: SessionUsageService,
+    getProvidersConfig?: () => ProvidersConfigMap | null
+  ) {
     super();
     this.historyService = historyService;
     this.sessionUsageService = sessionUsageService;
+    this.getProvidersConfig = getProvidersConfig ?? (() => null);
   }
 
   private getWorkspaceLogger(
@@ -380,6 +390,18 @@ export class StreamManager extends EventEmitter {
     }
     return log.withFields(fields);
   }
+  private resolveMetadataModel(modelString: string): string {
+    try {
+      return resolveModelForMetadata(modelString, this.getProvidersConfig());
+    } catch (error) {
+      log.debug("Failed to resolve metadata model override", {
+        modelString,
+        error: getErrorMessage(error),
+      });
+      return modelString;
+    }
+  }
+
   setMCPServerManager(manager: MCPServerManager | undefined): void {
     this.mcpServerManager = manager;
   }
@@ -939,12 +961,17 @@ export class StreamManager extends EventEmitter {
     providerMetadata: Record<string, unknown> | undefined,
     logMessage: string,
     logLevel: "warn" | "error",
-    streamInfo?: Pick<WorkspaceStreamInfo, "workspaceName">
+    streamInfo?: Pick<WorkspaceStreamInfo, "workspaceName" | "metadataModel">
   ): Promise<void> {
     if (!this.sessionUsageService || !usage) {
       return;
     }
-    const messageUsage = createDisplayUsage(usage, model, providerMetadata);
+    const messageUsage = createDisplayUsage(
+      usage,
+      model,
+      providerMetadata,
+      streamInfo?.metadataModel
+    );
     if (!messageUsage) {
       return;
     }
@@ -963,6 +990,7 @@ export class StreamManager extends EventEmitter {
   private buildStreamRequestConfig(
     model: LanguageModel,
     modelString: string,
+    metadataModel: string,
     messages: ModelMessage[],
     system: string,
     tools?: Record<string, Tool>,
@@ -1037,7 +1065,7 @@ export class StreamManager extends EventEmitter {
     // Use model's max_output_tokens if available and caller didn't specify.
     // If no metadata exists for the model, omit the parameter entirely to let
     // the provider use its default (Anthropic requires this but has low defaults).
-    const modelStats = getModelStats(modelString);
+    const modelStats = getModelStats(metadataModel);
     const effectiveMaxOutputTokens = maxOutputTokens ?? modelStats?.max_output_tokens;
 
     return {
@@ -1198,9 +1226,11 @@ export class StreamManager extends EventEmitter {
     // abortController is created and linked to the caller-provided abortSignal in startStream().
 
     const stepTracker: StepMessageTracker = {};
+    const metadataModel = this.resolveMetadataModel(modelString);
     const request = this.buildStreamRequestConfig(
       model,
       modelString,
+      metadataModel,
       messages,
       system,
       tools,
@@ -1236,6 +1266,7 @@ export class StreamManager extends EventEmitter {
       lastPartTimestamp: startTime,
       toolCompletionTimestamps: new Map(),
       model: modelString,
+      metadataModel,
       thinkingLevel,
       initialMetadata,
       didRetryPreviousResponseIdAtStep: false,
@@ -1531,7 +1562,7 @@ export class StreamManager extends EventEmitter {
       this.emitStreamStart(workspaceId, streamInfo, historySequence);
 
       // Initialize token tracker for this model
-      await this.tokenTracker.setModel(streamInfo.model);
+      await this.tokenTracker.setModel(streamInfo.model, streamInfo.metadataModel);
 
       let didRetryPreviousResponseId = false;
       const workspaceLog = this.getWorkspaceLogger(workspaceId, streamInfo);
@@ -2969,7 +3000,7 @@ export class StreamManager extends EventEmitter {
     }
 
     // Initialize token tracker for this model (required for tokenization)
-    await this.tokenTracker.setModel(streamInfo.model);
+    await this.tokenTracker.setModel(streamInfo.model, streamInfo.metadataModel);
 
     // Emit stream-start event (include mode from initialMetadata if available)
     this.emitStreamStart(typedWorkspaceId, streamInfo, streamInfo.historySequence, {

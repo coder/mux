@@ -15,6 +15,7 @@ import {
   getToolDefinitionTokens,
   type Tokenizer,
 } from "@/node/utils/main/tokenizer";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { createDisplayUsage } from "./displayUsage";
 import type { ChatUsageDisplay } from "./usageAggregator";
 
@@ -401,7 +402,8 @@ export async function calculateTokenStats(
 
   performance.mark("calculateTokenStatsStart");
 
-  const tokenizer = await getTokenizerForModel(model);
+  const metadataModel = resolveModelForMetadata(model, null);
+  const tokenizer = await getTokenizerForModel(model, metadataModel);
 
   // Phase 1: Fetch all tool definitions in parallel (first await point)
   const toolNames = collectUniqueToolNames(messages);

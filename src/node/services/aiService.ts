@@ -120,6 +120,7 @@ export class AIService extends EventEmitter {
   private mockAiStreamPlayer?: MockAiStreamPlayer;
   private readonly backgroundProcessManager?: BackgroundProcessManager;
   private readonly sessionUsageService?: SessionUsageService;
+  private readonly providerService: ProviderService;
   private readonly providerModelFactory: ProviderModelFactory;
 
   // Tracks in-flight stream startup (before StreamManager emits stream-start).
@@ -158,7 +159,10 @@ export class AIService extends EventEmitter {
     this.sessionUsageService = sessionUsageService;
     this.policyService = policyService;
     this.telemetryService = telemetryService;
-    this.streamManager = new StreamManager(historyService, sessionUsageService);
+    this.providerService = providerService;
+    this.streamManager = new StreamManager(historyService, sessionUsageService, () =>
+      this.providerService.getConfig()
+    );
     this.providerModelFactory = new ProviderModelFactory(config, providerService, policyService);
     void this.ensureSessionsDir();
     this.setupStreamEventForwarding();
@@ -642,6 +646,7 @@ export class AIService extends EventEmitter {
         effectiveAdditionalInstructions,
         modelString,
         cfg,
+        providersConfig: this.providerService.getConfig(),
         mcpServers,
       });
 
