@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useAPI } from "@/browser/contexts/API";
-import { useWorkspaceState } from "@/browser/stores/WorkspaceStore";
+import { useWorkspaceState, useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { getLastNonDecorativeMessage } from "@/common/utils/messages/retryEligibility";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
@@ -19,6 +19,7 @@ interface RetryBarrierProps {
 
 export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
   const { api } = useAPI();
+  const workspaceStore = useWorkspaceStoreRaw();
   const workspaceState = useWorkspaceState(props.workspaceId);
   const [countdown, setCountdown] = useState(0);
   const [manualRetryError, setManualRetryError] = useState<string | null>(null);
@@ -210,6 +211,30 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
 
         // Keep preference consistent when resume fails before retry/stream events.
         await rollbackManualRetryAutoRetryIfNeeded();
+      }
+
+      // Fast-terminal fallback: resumeStream can return success without starting a
+      // retry stream (e.g. busy guard), so rollback immediately when no active state
+      // is observed after yielding one microtask for store updates.
+      await Promise.resolve();
+      try {
+        const latestWorkspaceState = workspaceStore.getWorkspaceState(props.workspaceId);
+        const resumeAttemptActive =
+          latestWorkspaceState.autoRetryStatus?.type === "auto-retry-scheduled" ||
+          latestWorkspaceState.autoRetryStatus?.type === "auto-retry-starting" ||
+          latestWorkspaceState.isStreamStarting ||
+          latestWorkspaceState.canInterrupt;
+
+        if (
+          manualRetryRollbackPendingRef.current &&
+          !manualRetryRollbackArmedRef.current &&
+          !resumeAttemptActive
+        ) {
+          await rollbackManualRetryAutoRetryIfNeeded();
+        }
+      } catch {
+        // Workspace can disappear while async retry handlers run; ignore and let
+        // teardown cleanup path restore preference if still pending.
       }
     } catch (error) {
       setManualRetryError(getErrorMessage(error));

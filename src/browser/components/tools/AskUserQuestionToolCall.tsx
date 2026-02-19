@@ -539,7 +539,29 @@ export function AskUserQuestionToolCall(props: {
           return;
         }
 
-        // On success, rollback is deferred until stream outcome is known.
+        // Fast-terminal fallback: resumeStream can return success without starting
+        // an attempt (e.g. busy guard). Roll back immediately when no active state
+        // is observed after yielding one microtask for store updates.
+        await Promise.resolve();
+        try {
+          const latestWorkspaceState = workspaceStore.getWorkspaceState(workspaceId);
+          const resumeAttemptActive =
+            latestWorkspaceState.autoRetryStatus?.type === "auto-retry-scheduled" ||
+            latestWorkspaceState.autoRetryStatus?.type === "auto-retry-starting" ||
+            latestWorkspaceState.isStreamStarting ||
+            latestWorkspaceState.canInterrupt;
+
+          if (
+            autoRetryRollbackPendingRef.current &&
+            !autoRetryRollbackArmedRef.current &&
+            !resumeAttemptActive
+          ) {
+            await rollbackAutoRetryIfNeeded({ suppressErrors: true });
+          }
+        } catch {
+          // Workspace can disappear while async tool handlers run; ignore and let
+          // teardown cleanup path restore preference if still pending.
+        }
       })
       .catch(async (error) => {
         const errorMessage = getErrorMessage(error);

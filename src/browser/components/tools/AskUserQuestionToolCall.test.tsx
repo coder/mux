@@ -114,7 +114,7 @@ describe("AskUserQuestionToolCall", () => {
     await waitFor(() => {
       expect(answerAskUserQuestion).toHaveBeenCalledTimes(1);
       expect(resumeStream).toHaveBeenCalledTimes(1);
-      expect(setAutoRetryEnabled).toHaveBeenCalledTimes(1);
+      expect(setAutoRetryEnabled.mock.calls.length).toBeGreaterThanOrEqual(1);
     });
 
     view.unmount();
@@ -151,7 +151,7 @@ describe("AskUserQuestionToolCall", () => {
     await waitFor(() => {
       expect(answerAskUserQuestion).toHaveBeenCalledTimes(1);
       expect(resumeStream).toHaveBeenCalledTimes(1);
-      expect(setAutoRetryEnabled).toHaveBeenCalledTimes(1);
+      expect(setAutoRetryEnabled.mock.calls.length).toBeGreaterThanOrEqual(1);
     });
 
     currentWorkspaceState = {
