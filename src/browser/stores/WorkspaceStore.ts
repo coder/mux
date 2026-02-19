@@ -802,6 +802,39 @@ export class WorkspaceStore {
     }
   }
 
+  private subscribeToProvidersConfig(client: RouterClient<AppRouter>): void {
+    const { signal } = this.clientChangeController;
+
+    (async () => {
+      // Some oRPC iterators don't eagerly close on abort alone.
+      // Ensure we `return()` them so backend subscriptions clean up EventEmitter listeners.
+      let iterator: AsyncIterator<unknown> | null = null;
+
+      try {
+        const subscribedIterator = await client.providers.onConfigChanged(undefined, { signal });
+
+        if (signal.aborted || this.client !== client) {
+          void subscribedIterator.return?.();
+          return;
+        }
+
+        iterator = subscribedIterator;
+
+        for await (const _ of subscribedIterator) {
+          if (signal.aborted || this.client !== client) {
+            break;
+          }
+
+          void this.refreshProvidersConfig(client);
+        }
+      } catch {
+        // Ignore provider config subscription errors.
+      } finally {
+        void iterator?.return?.();
+      }
+    })();
+  }
+
   setStatsEnabled(enabled: boolean): void {
     if (this.statsEnabled === enabled) {
       return;
@@ -869,6 +902,7 @@ export class WorkspaceStore {
 
     this.ensureActiveOnChatSubscription();
     void this.refreshProvidersConfig(client);
+    this.subscribeToProvidersConfig(client);
   }
 
   setActiveWorkspaceId(workspaceId: string | null): void {

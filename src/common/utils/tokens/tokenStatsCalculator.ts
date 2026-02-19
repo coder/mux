@@ -7,6 +7,7 @@
  */
 
 import type { MuxMessage } from "@/common/types/message";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
 import type { ChatStats, TokenConsumer } from "@/common/types/chatStats";
 import {
@@ -388,7 +389,8 @@ export function mergeResults(
  */
 export async function calculateTokenStats(
   messages: MuxMessage[],
-  model: string
+  model: string,
+  providersConfig: ProvidersConfigMap | null = null
 ): Promise<ChatStats> {
   if (messages.length === 0) {
     return {
@@ -402,8 +404,11 @@ export async function calculateTokenStats(
 
   performance.mark("calculateTokenStatsStart");
 
-  const metadataModel = resolveModelForMetadata(model, null);
-  const tokenizer = await getTokenizerForModel(model, metadataModel);
+  const metadataModel = resolveModelForMetadata(model, providersConfig);
+  const tokenizer = await getTokenizerForModel(
+    model,
+    metadataModel !== model ? metadataModel : undefined
+  );
 
   // Phase 1: Fetch all tool definitions in parallel (first await point)
   const toolNames = collectUniqueToolNames(messages);

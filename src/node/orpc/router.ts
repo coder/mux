@@ -330,7 +330,8 @@ export const router = (authToken?: string) => {
           return context.tokenizerService.calculateStats(
             input.workspaceId,
             input.messages,
-            input.model
+            input.model,
+            context.providerService.getConfig()
           );
         }),
     },

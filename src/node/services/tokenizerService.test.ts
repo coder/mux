@@ -74,7 +74,7 @@ describe("TokenizerService", () => {
 
       const result = await service.calculateStats("test-workspace", messages, "gpt-4");
       expect(result).toBe(mockResult);
-      expect(statsSpy).toHaveBeenCalledWith(messages, "gpt-4");
+      expect(statsSpy).toHaveBeenCalledWith(messages, "gpt-4", null);
       expect(persistSpy).toHaveBeenCalledWith(
         "test-workspace",
         expect.objectContaining({
