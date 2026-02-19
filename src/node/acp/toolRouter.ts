@@ -182,10 +182,53 @@ export class ToolRouter {
     }
 
     if (isTerminalTool(normalizedToolName)) {
-      const terminal = await this.connection.createTerminal(
-        this.buildCreateTerminalRequest(sessionId, params, toolName)
-      );
-      return { terminalId: terminal.id };
+      const startedAt = Date.now();
+
+      try {
+        await using terminal = await this.connection.createTerminal(
+          this.buildCreateTerminalRequest(sessionId, params, toolName)
+        );
+
+        const [exitStatus, currentOutput] = await Promise.all([
+          terminal.waitForExit(),
+          terminal.currentOutput(),
+        ]);
+
+        const wallDurationMs = Date.now() - startedAt;
+        const exitCode =
+          typeof exitStatus.exitCode === "number" && Number.isFinite(exitStatus.exitCode)
+            ? exitStatus.exitCode
+            : 1;
+
+        if (exitCode === 0) {
+          return {
+            success: true,
+            output: currentOutput.output,
+            exitCode,
+            wall_duration_ms: wallDurationMs,
+          };
+        }
+
+        const signal = exitStatus.signal;
+        return {
+          success: false,
+          output: currentOutput.output,
+          exitCode,
+          error:
+            typeof signal === "string" && signal.length > 0
+              ? `Command terminated by signal ${signal}`
+              : `Command failed with exit code ${exitCode}`,
+          wall_duration_ms: wallDurationMs,
+        };
+      } catch (error) {
+        return {
+          success: false,
+          output: "",
+          exitCode: 1,
+          error: stringifyError(error),
+          wall_duration_ms: Date.now() - startedAt,
+        };
+      }
     }
 
     return this.connection.extMethod(toolName, {
@@ -590,6 +633,22 @@ function getOptionalEnvVariables(
   throw new Error(
     `ToolRouter: ${toolName} parameter '${key}' must be an array of entries or object map when provided`
   );
+}
+
+function stringifyError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

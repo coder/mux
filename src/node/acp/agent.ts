@@ -1195,6 +1195,10 @@ export class MuxAgent implements Agent {
     const isReplayEvent = (event as { replay?: boolean }).replay === true;
 
     if (event.type === "usage-delta") {
+      if (!this.isActiveTurnMessage(sessionId, event.messageId)) {
+        return;
+      }
+
       this.latestUsageBySessionId.set(sessionId, convertToAcpUsage(event.cumulativeUsage));
       return;
     }

@@ -4,7 +4,13 @@ import { ToolRouter } from "../../src/node/acp/toolRouter";
 function createRouter(overrides?: {
   readTextFile?: (input: { sessionId: string; path: string }) => Promise<{ content: string }>;
   writeTextFile?: (input: { sessionId: string; path: string; content: string }) => Promise<unknown>;
-  createTerminal?: (input: Record<string, unknown>) => Promise<{ id: string }>;
+  createTerminal?: (input: Record<string, unknown>) => Promise<{
+    id: string;
+    currentOutput: () => Promise<{ output: string; truncated: boolean }>;
+    waitForExit: () => Promise<{ exitCode?: number | null; signal?: string | null }>;
+    release: () => Promise<void>;
+    [Symbol.asyncDispose]: () => Promise<void>;
+  }>;
   extMethod?: (toolName: string, params: Record<string, unknown>) => Promise<unknown>;
 }): {
   router: ToolRouter;
@@ -27,7 +33,13 @@ function createRouter(overrides?: {
     createTerminal:
       overrides?.createTerminal ??
       (async () => {
-        return { id: "term-1" };
+        return {
+          id: "term-1",
+          currentOutput: async () => ({ output: "", truncated: false }),
+          waitForExit: async () => ({ exitCode: 0 }),
+          release: async () => undefined,
+          [Symbol.asyncDispose]: async () => undefined,
+        };
       }),
     requestPermission: async () => ({
       outcome: { outcome: "selected", optionId: "allow_once" },
@@ -56,6 +68,33 @@ describe("ACP ToolRouter", () => {
 
     expect(router.shouldDelegateToEditor("session-1", "file_custom_unknown")).toBe(false);
     expect(router.shouldDelegateToEditor("session-1", "fs/custom_tool")).toBe(false);
+  });
+
+  it("returns bash command output when delegating terminal calls", async () => {
+    const { router } = createRouter({
+      createTerminal: async () => ({
+        id: "term-1",
+        currentOutput: async () => ({ output: "hello\n", truncated: false }),
+        waitForExit: async () => ({ exitCode: 0 }),
+        release: async () => undefined,
+        [Symbol.asyncDispose]: async () => undefined,
+      }),
+    });
+
+    const result = await router.delegateToEditor("session-1", "bash", {
+      script: "echo hello",
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      output: "hello\n",
+      exitCode: 0,
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        wall_duration_ms: expect.any(Number),
+      })
+    );
   });
 
   it("delegates file_edit_replace_string through editor fs read/write", async () => {
