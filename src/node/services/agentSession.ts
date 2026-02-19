@@ -2077,7 +2077,12 @@ export class AgentSession {
 
       streamOptions = actorOptions;
     } else {
-      streamOptions = this.buildCriticTurnOptions(actorOptions);
+      // If the latest message is from the user (e.g. after a failed send that never
+      // produced an actor response), start an actor turn so the pending request gets
+      // answered before the critic evaluates. Otherwise start a critic turn as normal.
+      const lastMessage = historyCheck.data[historyCheck.data.length - 1];
+      const needsActorFirst = lastMessage?.role === "user";
+      streamOptions = needsActorFirst ? actorOptions : this.buildCriticTurnOptions(actorOptions);
     }
 
     this.setTurnPhase(TurnPhase.PREPARING);
