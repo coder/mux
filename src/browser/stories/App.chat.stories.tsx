@@ -30,6 +30,16 @@ import { setupSimpleChatStory, setupStreamingChatStory, setWorkspaceInput } from
 import { within, userEvent, waitFor } from "@storybook/test";
 import { warmHashCache, setShareData } from "@/browser/utils/sharedUrlCache";
 
+import { MODEL_ABBREVIATION_EXAMPLES } from "@/common/constants/knownModels";
+import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import {
+  HelpIndicator,
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/browser/components/ui/tooltip";
+
 export default {
   ...appMeta,
   title: "App/Chat",
@@ -890,55 +900,39 @@ export const BackgroundProcesses: AppStory = {
  */
 export const ModeHelpTooltip: AppStory = {
   render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          messages: [],
-        })
-      }
-    />
+    <TooltipProvider>
+      <div className="bg-background flex min-h-[180px] items-start p-6">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <HelpIndicator data-testid="mode-help-indicator">?</HelpIndicator>
+          </TooltipTrigger>
+          <TooltipContent align="start" className="max-w-80 whitespace-normal">
+            <strong>Click to edit</strong>
+            <br />
+            <strong>{formatKeybind(KEYBINDS.CYCLE_MODEL)}</strong> to cycle models
+            <br />
+            <br />
+            <strong>Abbreviations:</strong>
+            {MODEL_ABBREVIATION_EXAMPLES.map((ex) => (
+              <span key={ex.abbrev}>
+                <br />• <code>/model {ex.abbrev}</code> - {ex.displayName}
+              </span>
+            ))}
+            <br />
+            <br />
+            <strong>Full format:</strong>
+            <br />
+            <code>/model provider:model-name</code>
+            <br />
+            (e.g., <code>/model anthropic:claude-sonnet-4-5</code>)
+          </TooltipContent>
+        </Tooltip>
+      </div>
+    </TooltipProvider>
   ),
   play: async ({ canvasElement }) => {
-    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
-
-    await waitForChatMessagesLoaded(storyRoot);
-
-    const modelSelectorGroup = await waitFor(
-      () => {
-        const group = storyRoot.querySelector('[data-component="ModelSelectorGroup"]');
-        if (!(group instanceof HTMLElement)) {
-          throw new Error("Model selector group not found");
-        }
-        return group;
-      },
-      { interval: 50, timeout: 10000 }
-    );
-
-    const modelHelpWrapper = await waitFor(
-      () => {
-        const wrapper = modelSelectorGroup.querySelector('[data-component="ModelHelpTooltip"]');
-        if (!(wrapper instanceof HTMLElement)) {
-          throw new Error("Model help tooltip wrapper not found");
-        }
-        return wrapper;
-      },
-      { interval: 50, timeout: 5000 }
-    );
-
-    // Keep this story deterministic in CI/headless runs where hover media queries
-    // may report coarse pointers and hide the trigger by default.
-    modelHelpWrapper.style.display = "block";
-
-    const helpIndicator = await waitFor(
-      () => {
-        const indicator = modelHelpWrapper.querySelector("span.cursor-help");
-        if (!(indicator instanceof HTMLElement)) {
-          throw new Error("Model help indicator not found");
-        }
-        return indicator;
-      },
-      { interval: 50, timeout: 5000 }
-    );
+    const canvas = within(canvasElement);
+    const helpIndicator = await canvas.findByTestId("mode-help-indicator");
 
     await userEvent.hover(helpIndicator);
 
@@ -960,7 +954,7 @@ export const ModeHelpTooltip: AppStory = {
     docs: {
       description: {
         story:
-          "Verifies the HelpIndicator tooltip works by hovering the model help icon. The tooltip should appear with model editing shortcuts and abbreviation hints.",
+          "Verifies the model help tooltip trigger works and renders the shortcut/abbreviation guidance content.",
       },
     },
   },

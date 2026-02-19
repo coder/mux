@@ -2490,10 +2490,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     onOpenSettings={() => open("models")}
                     className="w-[clamp(5.5rem,28vw,8rem)] min-w-0"
                   />
-                  <div
-                    data-component="ModelHelpTooltip"
-                    className="hidden [@container(min-width:500px)]:[@media(hover:hover)_and_(pointer:fine)]:block"
-                  >
+                  <div className="hidden [@container(min-width:500px)]:[@media(hover:hover)_and_(pointer:fine)]:block">
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <HelpIndicator>?</HelpIndicator>
