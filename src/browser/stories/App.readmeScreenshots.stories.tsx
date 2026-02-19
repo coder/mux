@@ -1321,6 +1321,15 @@ export const OpportunisticCompactionTooltip: AppStory = {
 // Parent workspace is selected in plan mode while six running child workspaces
 // show nested status indicators in the expanded left sidebar.
 export const OrchestrateAgents: AppStory = {
+  // Override the module-level 1900px decorator so the app itself renders at 1200px,
+  // matching the narrower capture viewport for a tighter orchestrator screenshot.
+  decorators: [
+    (Story: () => JSX.Element) => (
+      <div style={{ width: 1200, height: "100dvh", position: "relative" }}>
+        <Story />
+      </div>
+    ),
+  ],
   render: () => (
     <AppWithMocks
       setup={() => {
