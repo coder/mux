@@ -399,6 +399,8 @@ export class WorkspaceStore {
   private providersConfig: ProvidersConfigMap | null = null;
   /** Monotonic version counter for serializing provider config refreshes (latest wins). */
   private providersConfigVersion = 0;
+  /** Version of the last successfully applied provider config (prevents stale overwrites). */
+  private providersConfigAppliedVersion = 0;
   // Workspaces that need a clean history replay once a new iterator is established.
   // We keep the existing UI visible until the replay can actually start.
   private pendingReplayReset = new Set<string>();
@@ -791,19 +793,21 @@ export class WorkspaceStore {
   }
 
   private async refreshProvidersConfig(client: RouterClient<AppRouter>): Promise<void> {
-    // Bump version before the async call so later invocations get a higher number.
-    // If a slower request finishes after a faster one, it will see its version is stale and bail.
+    // Version counter prevents an older, slower response from overwriting a newer one.
+    // We bump eagerly so concurrent requests each get unique versions, then only apply
+    // if no newer response has already been written (version >= lastApplied).
     const version = ++this.providersConfigVersion;
     try {
       const config = await client.providers.getConfig();
       if (
         this.client !== client ||
         this.clientChangeController.signal.aborted ||
-        version !== this.providersConfigVersion
+        version < this.providersConfigAppliedVersion
       ) {
         return;
       }
 
+      this.providersConfigAppliedVersion = version;
       this.providersConfig = config;
       this.bumpAllUsageStoreEntries();
       // Invalidate consumer token stats — both in-memory and persisted —
@@ -813,7 +817,8 @@ export class WorkspaceStore {
         usage.tokenStatsCache = undefined;
       }
     } catch {
-      // Ignore provider config fetch errors.
+      // Silently ignore — existing providersConfig is preserved so
+      // metadata resolution continues using the last successful snapshot.
     }
   }
 
