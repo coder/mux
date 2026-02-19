@@ -549,7 +549,7 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
     expect(persistSpy).toHaveBeenCalledTimes(1);
   });
 
-  test("does not persist AI settings for sub-agent workspaces", async () => {
+  test("persists AI settings for sub-agent workspaces so auto-resume can use latest model", async () => {
     const persistSpy = mock(() => Promise.resolve({ success: true as const, data: true }));
 
     interface WorkspaceServiceTestAccess {
@@ -605,7 +605,13 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
       "send"
     );
 
-    expect(persistSpy).not.toHaveBeenCalled();
+    expect(persistSpy).toHaveBeenCalledTimes(1);
+    expect(persistSpy).toHaveBeenCalledWith(
+      "ws",
+      "exec",
+      { model: "openai:gpt-4o-mini", thinkingLevel: "off" },
+      { emitMetadata: false }
+    );
   });
 });
 describe("WorkspaceService remove timing rollup", () => {

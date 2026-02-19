@@ -2646,25 +2646,6 @@ export class WorkspaceService extends EventEmitter {
       return;
     }
 
-    const foundWorkspace = this.config.findWorkspace(workspaceId);
-    if (!foundWorkspace) {
-      return;
-    }
-
-    const cfg = this.config.loadConfigOrDefault();
-    const project = cfg.projects.get(foundWorkspace.projectPath);
-    const workspaceEntry =
-      project?.workspaces.find((workspace) => workspace.id === workspaceId) ??
-      project?.workspaces.find((workspace) => workspace.path === foundWorkspace.workspacePath);
-
-    // Sub-agent (task) workspaces should always resolve model/thinking from
-    // global per-agent defaults (or parent inheritance) at spawn time. Persisting
-    // per-workspace send options here creates sticky overrides that leak into later
-    // handoffs, so only root workspaces keep this behavior.
-    if (workspaceEntry?.parentWorkspaceId) {
-      return;
-    }
-
     const extractedSettings = this.extractWorkspaceAISettingsFromSendOptions(options);
     if (!extractedSettings) return;
 
