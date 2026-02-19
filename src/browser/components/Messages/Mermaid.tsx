@@ -30,6 +30,55 @@ mermaid.initialize({
   },
 });
 
+function decodeEntity(entityBody: string): string | null {
+  if (entityBody.startsWith("#x") || entityBody.startsWith("#X")) {
+    const parsed = Number.parseInt(entityBody.slice(2), 16);
+    return Number.isNaN(parsed) ? null : String.fromCodePoint(parsed);
+  }
+
+  if (entityBody.startsWith("#")) {
+    const parsed = Number.parseInt(entityBody.slice(1), 10);
+    return Number.isNaN(parsed) ? null : String.fromCodePoint(parsed);
+  }
+
+  const named: Record<string, string> = {
+    tab: "\t",
+    newline: "\n",
+    colon: ":",
+    nbsp: " ",
+  };
+
+  return named[entityBody.toLowerCase()] ?? null;
+}
+
+function canonicalizeUrlForSchemeCheck(value: string): string {
+  // Normalize encoded and obfuscated schemes before comparison so payloads like
+  // java&#10;script:, java%0Ascript:, or java\nscript: reduce to javascript:.
+  let normalized = value.toLowerCase();
+
+  normalized = normalized.replace(/&([^;\s]+);?/g, (fullMatch, entityBody: string) => {
+    return decodeEntity(entityBody) ?? fullMatch;
+  });
+
+  normalized = normalized.replace(/%([0-9a-f]{2})/gi, (fullMatch, hex: string) => {
+    const parsed = Number.parseInt(hex, 16);
+    return Number.isNaN(parsed) ? fullMatch : String.fromCodePoint(parsed);
+  });
+
+  let canonical = "";
+  for (const char of normalized) {
+    const charCode = char.charCodeAt(0);
+    const isAsciiControl = charCode <= 0x1f || charCode === 0x7f;
+    if (isAsciiControl || /\s/.test(char)) {
+      continue;
+    }
+
+    canonical += char;
+  }
+
+  return canonical;
+}
+
 export function sanitizeMermaidSvg(svg: string): string | null {
   const parser = new DOMParser();
   const doc = parser.parseFromString(svg, "image/svg+xml");
@@ -55,7 +104,7 @@ export function sanitizeMermaidSvg(svg: string): string | null {
   doc.querySelectorAll("*").forEach((element) => {
     for (const attribute of Array.from(element.attributes)) {
       const attributeName = attribute.name.toLowerCase();
-      const attributeValue = attribute.value.trim().toLowerCase();
+      const canonicalUrlValue = canonicalizeUrlForSchemeCheck(attribute.value.trim());
 
       if (attributeName.startsWith("on")) {
         element.removeAttribute(attribute.name);
@@ -64,7 +113,7 @@ export function sanitizeMermaidSvg(svg: string): string | null {
 
       if (
         urlAttributes.has(attributeName) &&
-        blockedSchemes.some((scheme) => attributeValue.startsWith(scheme))
+        blockedSchemes.some((scheme) => canonicalUrlValue.startsWith(scheme))
       ) {
         element.removeAttribute(attribute.name);
       }
