@@ -3372,6 +3372,18 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  async getStartupAutoRetryModel(workspaceId: string): Promise<Result<string | null>> {
+    try {
+      const session = this.getOrCreateSession(workspaceId);
+      const model = await session.getStartupAutoRetryModelHint();
+      return Ok(model);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log.error("Unexpected error in getStartupAutoRetryModel handler:", error);
+      return Err(`Failed to inspect startup auto-retry model: ${errorMessage}`);
+    }
+  }
+
   setAutoCompactionThreshold(workspaceId: string, threshold: number): Result<void> {
     try {
       const session = this.getOrCreateSession(workspaceId);

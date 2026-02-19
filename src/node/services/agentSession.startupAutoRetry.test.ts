@@ -300,6 +300,9 @@ describe("AgentSession startup auto-retry recovery", () => {
     );
     expect(appendResult.success).toBe(true);
 
+    const startupRetryModelHint = await session.getStartupAutoRetryModelHint();
+    expect(startupRetryModelHint).toBe("anthropic:claude-sonnet-4-5");
+
     session.ensureStartupAutoRetryCheck();
 
     const startupCheckPromise = (

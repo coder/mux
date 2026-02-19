@@ -990,6 +990,44 @@ export class AgentSession {
     return retryOptions;
   }
 
+  async getStartupAutoRetryModelHint(): Promise<string | null> {
+    this.assertNotDisposed("getStartupAutoRetryModelHint");
+
+    if (this.lastAutoRetryOptions?.model) {
+      return this.lastAutoRetryOptions.model;
+    }
+
+    const [partial, historyResult] = await Promise.all([
+      this.historyService.readPartial(this.workspaceId),
+      this.historyService.getLastMessages(this.workspaceId, 20),
+    ]);
+    if (!historyResult.success) {
+      return null;
+    }
+
+    if (partial && this.isPendingAskUserQuestion(partial)) {
+      return null;
+    }
+
+    const lastHistoryMessage = this.getLastNonSystemHistoryMessage(historyResult.data);
+    const interruptedByPartial = partial?.role === "assistant";
+    const interruptedByHistory =
+      lastHistoryMessage?.role === "user" ||
+      (lastHistoryMessage?.role === "assistant" &&
+        lastHistoryMessage.metadata?.partial === true &&
+        !this.isPendingAskUserQuestion(lastHistoryMessage));
+
+    if (!interruptedByPartial && !interruptedByHistory) {
+      return null;
+    }
+
+    const retryOptions = await this.deriveStartupAutoRetryOptions({
+      partial,
+      historyTail: historyResult.data,
+    });
+    return retryOptions?.model ?? null;
+  }
+
   private async scheduleStartupAutoRetryIfNeeded(): Promise<StartupAutoRetryCheckOutcome> {
     if (this.disposed || this.isBusy() || this.isAiStreaming()) {
       return "deferred";

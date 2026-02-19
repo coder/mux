@@ -2246,12 +2246,16 @@ export class WorkspaceStore {
     this.checkAndBumpRecencyIfChanged();
   }
 
-  private getStartupAutoCompactionThreshold(workspaceId: string): number {
+  private getStartupAutoCompactionThreshold(
+    workspaceId: string,
+    retryModelHint?: string | null
+  ): number {
     const metadata = this.workspaceMetadata.get(workspaceId);
     const modelFromActiveAgent = metadata?.agentId
       ? metadata.aiSettingsByAgent?.[metadata.agentId]?.model
       : undefined;
     const pendingModel =
+      retryModelHint ??
       modelFromActiveAgent ??
       metadata?.aiSettingsByAgent?.exec?.model ??
       metadata?.aiSettings?.model;
@@ -2273,9 +2277,19 @@ export class WorkspaceStore {
     workspaceId: string
   ): Promise<void> {
     try {
+      // Startup auto-retry can resume a turn with a model different from the current
+      // workspace selector. Ask backend for that retry-turn model first so threshold
+      // sync uses the matching per-model localStorage key.
+      const startupRetryModelResult = await client.workspace.getStartupAutoRetryModel?.({
+        workspaceId,
+      });
+      const startupRetryModel = startupRetryModelResult?.success
+        ? startupRetryModelResult.data
+        : null;
+
       await client.workspace.setAutoCompactionThreshold({
         workspaceId,
-        threshold: this.getStartupAutoCompactionThreshold(workspaceId),
+        threshold: this.getStartupAutoCompactionThreshold(workspaceId, startupRetryModel),
       });
     } catch (error) {
       console.warn(

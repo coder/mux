@@ -936,6 +936,10 @@ export const workspace = {
       z.string()
     ),
   },
+  getStartupAutoRetryModel: {
+    input: z.object({ workspaceId: z.string() }),
+    output: ResultSchema(z.string().nullable(), z.string()),
+  },
   setAutoCompactionThreshold: {
     input: z.object({
       workspaceId: z.string(),

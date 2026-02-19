@@ -2598,6 +2598,16 @@ export const router = (authToken?: string) => {
           }
           return { success: true, data: result.data };
         }),
+      getStartupAutoRetryModel: t
+        .input(schemas.workspace.getStartupAutoRetryModel.input)
+        .output(schemas.workspace.getStartupAutoRetryModel.output)
+        .handler(async ({ context, input }) => {
+          const result = await context.workspaceService.getStartupAutoRetryModel(input.workspaceId);
+          if (!result.success) {
+            return { success: false, error: result.error };
+          }
+          return { success: true, data: result.data };
+        }),
       setAutoCompactionThreshold: t
         .input(schemas.workspace.setAutoCompactionThreshold.input)
         .output(schemas.workspace.setAutoCompactionThreshold.output)
