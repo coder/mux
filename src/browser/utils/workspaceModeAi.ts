@@ -19,8 +19,12 @@ export function resolveWorkspaceAiSettingsForAgent(args: {
   const normalizedAgentId = normalizeAgentId(args.agentId);
   const globalDefault = args.agentAiDefaults[normalizedAgentId];
 
-  const configuredModel = globalDefault?.modelString?.trim();
-  const inheritedModel = args.existingModel.trim();
+  const configuredModelCandidate = globalDefault?.modelString;
+  const configuredModel =
+    typeof configuredModelCandidate === "string" ? configuredModelCandidate.trim() : undefined;
+  const inheritedModelCandidate =
+    typeof args.existingModel === "string" ? args.existingModel : undefined;
+  const inheritedModel = inheritedModelCandidate?.trim() ?? "";
   const resolvedModel =
     configuredModel && configuredModel.length > 0
       ? configuredModel

@@ -52,6 +52,23 @@ describe("resolveWorkspaceAiSettingsForAgent", () => {
     });
   });
 
+  test("guards non-string global default model values", () => {
+    const result = resolveWorkspaceAiSettingsForAgent({
+      agentId: "exec",
+      agentAiDefaults: {
+        exec: { modelString: 42 as unknown as string },
+      },
+      fallbackModel: "openai:gpt-5.2-mini",
+      existingModel: "anthropic:claude-opus-4-6",
+      existingThinking: "off",
+    });
+
+    expect(result).toEqual({
+      resolvedModel: "anthropic:claude-opus-4-6",
+      resolvedThinking: "off",
+    });
+  });
+
   test("self-heals invalid inherited workspace settings", () => {
     const result = resolveWorkspaceAiSettingsForAgent({
       agentId: "exec",
@@ -59,6 +76,21 @@ describe("resolveWorkspaceAiSettingsForAgent", () => {
       fallbackModel: "openai:gpt-5.2",
       existingModel: "   ",
       existingThinking: "legacy-invalid" as unknown as ThinkingLevel,
+    });
+
+    expect(result).toEqual({
+      resolvedModel: "openai:gpt-5.2",
+      resolvedThinking: "off",
+    });
+  });
+
+  test("guards non-string persisted model values", () => {
+    const result = resolveWorkspaceAiSettingsForAgent({
+      agentId: "exec",
+      agentAiDefaults: {},
+      fallbackModel: "openai:gpt-5.2",
+      existingModel: 42 as unknown as string,
+      existingThinking: "off",
     });
 
     expect(result).toEqual({

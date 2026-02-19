@@ -16,6 +16,7 @@ import type { WorkspaceForkParams } from "@/node/runtime/Runtime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { Ok, Err, type Result } from "@/common/types/result";
+import { defaultModel } from "@/common/utils/ai/models";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { StreamEndEvent } from "@/common/types/stream";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
@@ -3348,6 +3349,40 @@ describe("TaskService", () => {
     expect(updatedTask?.agentId).toBe("exec");
     expect(updatedTask?.taskModelString).toBe("openai:gpt-5.3-codex");
     expect(updatedTask?.taskThinkingLevel).toBe("xhigh");
+  });
+
+  test("stream-end handoff falls back to default model when inherited task model is whitespace", async () => {
+    const { config, childId, sendMessage, internal } = await setupPlanModeStreamEndHarness();
+
+    const preCfg = config.loadConfigOrDefault();
+    const childEntry = Array.from(preCfg.projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === childId);
+    expect(childEntry).toBeTruthy();
+    if (!childEntry) return;
+
+    childEntry.taskModelString = "   ";
+    await config.saveConfig(preCfg);
+
+    await internal.handleStreamEnd(makeSuccessfulProposePlanStreamEndEvent(childId));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      childId,
+      expect.stringContaining("Implement the plan"),
+      expect.objectContaining({
+        agentId: "exec",
+        model: defaultModel,
+      }),
+      expect.objectContaining({ synthetic: true })
+    );
+
+    const postCfg = config.loadConfigOrDefault();
+    const updatedTask = Array.from(postCfg.projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === childId);
+
+    expect(updatedTask?.taskModelString).toBe(defaultModel);
   });
 
   test("stream-end with propose_plan success triggers handoff for custom plan-like agents", async () => {
