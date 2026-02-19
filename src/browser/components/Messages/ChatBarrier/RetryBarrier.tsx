@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useAPI } from "@/browser/contexts/API";
@@ -35,6 +35,94 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
     autoRetryStatus?.type === "auto-retry-scheduled" ||
     autoRetryStatus?.type === "auto-retry-starting";
 
+  const manualRetryRollbackWorkspaceIdRef = useRef<string | null>(null);
+  const manualRetryRollbackPendingRef = useRef(false);
+  const manualRetryRollbackArmedRef = useRef(false);
+  const apiRef = useRef(api);
+
+  useEffect(() => {
+    apiRef.current = api;
+  }, [api]);
+
+  const rollbackManualRetryAutoRetryIfNeeded = useCallback(
+    async (options?: { suppressErrors?: boolean }): Promise<void> => {
+      if (!manualRetryRollbackPendingRef.current) {
+        return;
+      }
+
+      const rollbackWorkspaceId = manualRetryRollbackWorkspaceIdRef.current;
+      manualRetryRollbackPendingRef.current = false;
+      manualRetryRollbackArmedRef.current = false;
+      manualRetryRollbackWorkspaceIdRef.current = null;
+
+      const activeApi = apiRef.current;
+      if (!activeApi || !rollbackWorkspaceId) {
+        return;
+      }
+
+      const rollbackResult = await activeApi.workspace.setAutoRetryEnabled?.({
+        workspaceId: rollbackWorkspaceId,
+        enabled: false,
+      });
+      if (rollbackResult && !rollbackResult.success && !options?.suppressErrors) {
+        setManualRetryError(rollbackResult.error);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!manualRetryRollbackPendingRef.current) {
+      return;
+    }
+
+    const rollbackWorkspaceId = manualRetryRollbackWorkspaceIdRef.current;
+    if (!rollbackWorkspaceId || rollbackWorkspaceId === props.workspaceId) {
+      return;
+    }
+
+    void rollbackManualRetryAutoRetryIfNeeded();
+  }, [props.workspaceId, rollbackManualRetryAutoRetryIfNeeded]);
+
+  useEffect(() => {
+    return () => {
+      if (!manualRetryRollbackPendingRef.current) {
+        return;
+      }
+
+      void rollbackManualRetryAutoRetryIfNeeded({ suppressErrors: true });
+    };
+  }, [rollbackManualRetryAutoRetryIfNeeded]);
+
+  useEffect(() => {
+    if (!manualRetryRollbackPendingRef.current) {
+      return;
+    }
+
+    const autoRetryActive =
+      autoRetryStatus?.type === "auto-retry-scheduled" ||
+      autoRetryStatus?.type === "auto-retry-starting";
+    const streamInFlight = workspaceState.isStreamStarting || workspaceState.canInterrupt;
+
+    // Mirror ask_user rollback semantics: keep temporary enablement while the resumed
+    // stream/retry attempt is in flight, then restore preference after terminal outcome.
+    if (autoRetryActive || streamInFlight) {
+      manualRetryRollbackArmedRef.current = true;
+      return;
+    }
+
+    if (!manualRetryRollbackArmedRef.current) {
+      return;
+    }
+
+    void rollbackManualRetryAutoRetryIfNeeded();
+  }, [
+    autoRetryStatus,
+    workspaceState.isStreamStarting,
+    workspaceState.canInterrupt,
+    rollbackManualRetryAutoRetryIfNeeded,
+  ]);
+
   useEffect(() => {
     if (!isAutoRetryScheduled) {
       setCountdown(0);
@@ -70,20 +158,6 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
     setIsManualRetrying(true);
     setManualRetryError(null);
 
-    let rollbackAutoRetryTo: boolean | null = null;
-    const rollbackAutoRetryIfNeeded = async (): Promise<void> => {
-      if (rollbackAutoRetryTo === null) {
-        return;
-      }
-
-      const rollbackTarget = rollbackAutoRetryTo;
-      rollbackAutoRetryTo = null;
-      await api.workspace.setAutoRetryEnabled?.({
-        workspaceId: props.workspaceId,
-        enabled: rollbackTarget,
-      });
-    };
-
     try {
       let options = getSendOptionsFromStorage(props.workspaceId);
       const lastUserMessage = [...workspaceState.messages]
@@ -106,9 +180,11 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
       }
 
       if (enableResult?.success && enableResult.data.previousEnabled === false) {
-        // Manual retry temporarily enables auto-retry so transient resume failures
-        // can still back off automatically; only roll back when we changed preference.
-        rollbackAutoRetryTo = false;
+        // Manual retry temporarily enables auto-retry for this resumed attempt.
+        // Restore only when stream/retry outcome is terminal.
+        manualRetryRollbackWorkspaceIdRef.current = props.workspaceId;
+        manualRetryRollbackPendingRef.current = true;
+        manualRetryRollbackArmedRef.current = false;
       }
 
       const resumeResult = await api.workspace.resumeStream({
@@ -123,18 +199,12 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
           : formatted.message;
         setManualRetryError(details);
 
-        // Keep auto-retry preference consistent when manual resume fails before
-        // stream events can update retry status. Await to avoid stale rollbacks
-        // racing with subsequent retry attempts.
-        await rollbackAutoRetryIfNeeded();
+        // Keep preference consistent when resume fails before retry/stream events.
+        await rollbackManualRetryAutoRetryIfNeeded();
       }
-
-      // Successful resume means temporary enablement is no longer needed.
-      // Restore the user's prior preference immediately after resume request completion.
-      await rollbackAutoRetryIfNeeded();
     } catch (error) {
       setManualRetryError(getErrorMessage(error));
-      await rollbackAutoRetryIfNeeded();
+      await rollbackManualRetryAutoRetryIfNeeded();
     } finally {
       setIsManualRetrying(false);
     }

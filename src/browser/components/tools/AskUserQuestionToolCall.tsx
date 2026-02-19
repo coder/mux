@@ -258,6 +258,7 @@ export function AskUserQuestionToolCall(props: {
   const autoRetryRollbackWorkspaceIdRef = useRef<string | null>(null);
   const autoRetryRollbackPendingRef = useRef(false);
   const autoRetryRollbackArmedRef = useRef(false);
+  const isMountedRef = useRef(true);
   const apiRef = useRef(api);
 
   useEffect(() => {
@@ -308,7 +309,10 @@ export function AskUserQuestionToolCall(props: {
   }, [props.workspaceId, rollbackAutoRetryIfNeeded]);
 
   useEffect(() => {
+    isMountedRef.current = true;
+
     return () => {
+      isMountedRef.current = false;
       if (!autoRetryRollbackPendingRef.current) {
         return;
       }
@@ -496,9 +500,16 @@ export function AskUserQuestionToolCall(props: {
         if (enableResult?.success && enableResult.data.previousEnabled === false) {
           // Ask-user resume temporarily enables auto-retry for this attempt.
           // Roll back only after the resumed stream reaches a terminal outcome.
-          autoRetryRollbackWorkspaceIdRef.current = workspaceId;
-          autoRetryRollbackPendingRef.current = true;
-          autoRetryRollbackArmedRef.current = false;
+          if (!isMountedRef.current) {
+            await api.workspace.setAutoRetryEnabled?.({
+              workspaceId,
+              enabled: false,
+            });
+          } else {
+            autoRetryRollbackWorkspaceIdRef.current = workspaceId;
+            autoRetryRollbackPendingRef.current = true;
+            autoRetryRollbackArmedRef.current = false;
+          }
         }
 
         const resumeResult = await api.workspace.resumeStream({

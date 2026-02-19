@@ -14,6 +14,18 @@ let currentWorkspaceState: {
   messages: [],
 };
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+
+  return { promise, resolve, reject };
+}
+
 const answerAskUserQuestion = mock((_input: unknown) =>
   Promise.resolve({ success: true as const, data: undefined })
 );
@@ -118,6 +130,48 @@ describe("AskUserQuestionToolCall", () => {
 
     view.unmount();
 
+    await waitFor(() => {
+      expect(setAutoRetryEnabled).toHaveBeenCalledTimes(2);
+    });
+
+    expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(1, {
+      workspaceId: "ws-ask",
+      enabled: true,
+    });
+    expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(2, {
+      workspaceId: "ws-ask",
+      enabled: false,
+    });
+  });
+
+  test("restores auto-retry even when unmounted before async resume setup finishes", async () => {
+    const answerDeferred = createDeferred<{ success: true; data: undefined }>();
+    const resumeDeferred = createDeferred<{ success: true; data: undefined }>();
+
+    answerAskUserQuestion.mockImplementationOnce((_input: unknown) => answerDeferred.promise);
+    resumeStream.mockImplementationOnce((_input: unknown) => resumeDeferred.promise);
+
+    const view = render(
+      <AskUserQuestionToolCall
+        args={{ questions: [], answers: {} }}
+        result={null}
+        status="executing"
+        toolCallId="ask-2"
+        workspaceId="ws-ask"
+      />
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "Submit answers" }));
+
+    // Simulate workspace switch/removal before async setup finishes.
+    view.unmount();
+
+    answerDeferred.resolve({ success: true, data: undefined });
+    await waitFor(() => {
+      expect(setAutoRetryEnabled).toHaveBeenCalledTimes(2);
+    });
+
+    resumeDeferred.resolve({ success: true, data: undefined });
     await waitFor(() => {
       expect(setAutoRetryEnabled).toHaveBeenCalledTimes(2);
     });
