@@ -156,7 +156,8 @@ function createWorkspaceServiceMocks(
   const sendMessage =
     overrides?.sendMessage ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
   const resumeStream =
-    overrides?.resumeStream ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
+    overrides?.resumeStream ??
+    mock((): Promise<Result<{ started: boolean }>> => Promise.resolve(Ok({ started: true })));
   const remove =
     overrides?.remove ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
   const emit = overrides?.emit ?? mock(() => true);

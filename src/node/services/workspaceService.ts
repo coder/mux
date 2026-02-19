@@ -3266,7 +3266,7 @@ export class WorkspaceService extends EventEmitter {
     workspaceId: string,
     options: SendMessageOptions,
     internal?: { allowQueuedAgentTask?: boolean }
-  ): Promise<Result<void, SendMessageError>> {
+  ): Promise<Result<{ started: boolean }, SendMessageError>> {
     try {
       // Block streaming while workspace is being renamed to prevent path conflicts
       if (this.renamingWorkspaces.has(workspaceId)) {

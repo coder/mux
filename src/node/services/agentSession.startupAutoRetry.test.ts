@@ -530,7 +530,9 @@ describe("AgentSession startup auto-retry recovery", () => {
       retryActiveStream: () => Promise<void>;
       getAutoRetryPreferencePath: () => string;
       lastAutoRetryOptions?: SendMessageOptions;
-      resumeStream: (options: SendMessageOptions) => Promise<{ success: true; data: undefined }>;
+      resumeStream: (
+        options: SendMessageOptions
+      ) => Promise<{ success: true; data: { started: boolean } }>;
       startupAutoRetryAbandon: { reason: string; userMessageId?: string } | null;
     };
 
@@ -545,7 +547,7 @@ describe("AgentSession startup auto-retry recovery", () => {
     };
 
     const resumeStreamMock = mock((_options: SendMessageOptions) =>
-      Promise.resolve({ success: true as const, data: undefined })
+      Promise.resolve({ success: true as const, data: { started: true } })
     );
     privateSession.resumeStream = resumeStreamMock;
 
@@ -570,7 +572,7 @@ describe("AgentSession startup auto-retry recovery", () => {
       resumeStream: (
         options: SendMessageOptions
       ) => Promise<
-        | { success: true; data: undefined }
+        | { success: true; data: { started: boolean } }
         | { success: false; error: { type: "runtime_start_failed"; message: string } }
       >;
     };
@@ -615,7 +617,7 @@ describe("AgentSession startup auto-retry recovery", () => {
       resumeStream: (
         options: SendMessageOptions
       ) => Promise<
-        | { success: true; data: undefined }
+        | { success: true; data: { started: boolean } }
         | { success: false; error: { type: "runtime_start_failed"; message: string } }
       >;
     };

@@ -2582,7 +2582,7 @@ export const router = (authToken?: string) => {
                 : result.error;
             return { success: false, error };
           }
-          return { success: true, data: undefined };
+          return { success: true, data: result.data };
         }),
       setAutoRetryEnabled: t
         .input(schemas.workspace.setAutoRetryEnabled.input)

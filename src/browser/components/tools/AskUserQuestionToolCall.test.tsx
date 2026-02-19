@@ -31,7 +31,7 @@ const answerAskUserQuestion = mock((_input: unknown) =>
 );
 
 const resumeStream = mock((_input: unknown) =>
-  Promise.resolve({ success: true as const, data: undefined })
+  Promise.resolve({ success: true as const, data: { started: true } })
 );
 
 const setAutoRetryEnabled = mock((input: unknown) => {
@@ -187,9 +187,42 @@ describe("AskUserQuestionToolCall", () => {
     });
   });
 
+  test("rolls back temporary retry enable when resume reports not started", async () => {
+    resumeStream.mockImplementationOnce((_input: unknown) =>
+      Promise.resolve({ success: true as const, data: { started: false } })
+    );
+
+    const view = render(
+      <AskUserQuestionToolCall
+        args={{ questions: [], answers: {} }}
+        result={null}
+        status="executing"
+        toolCallId="ask-busy"
+        workspaceId="ws-ask"
+      />
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "Submit answers" }));
+
+    await waitFor(() => {
+      expect(setAutoRetryEnabled).toHaveBeenCalledTimes(2);
+    });
+
+    expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(1, {
+      workspaceId: "ws-ask",
+      enabled: true,
+      persist: false,
+    });
+    expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(2, {
+      workspaceId: "ws-ask",
+      enabled: false,
+      persist: false,
+    });
+  });
+
   test("restores auto-retry even when unmounted before async resume setup finishes", async () => {
     const answerDeferred = createDeferred<{ success: true; data: undefined }>();
-    const resumeDeferred = createDeferred<{ success: true; data: undefined }>();
+    const resumeDeferred = createDeferred<{ success: true; data: { started: boolean } }>();
 
     answerAskUserQuestion.mockImplementationOnce((_input: unknown) => answerDeferred.promise);
     resumeStream.mockImplementationOnce((_input: unknown) => resumeDeferred.promise);
@@ -214,7 +247,7 @@ describe("AskUserQuestionToolCall", () => {
       expect(setAutoRetryEnabled).toHaveBeenCalledTimes(2);
     });
 
-    resumeDeferred.resolve({ success: true, data: undefined });
+    resumeDeferred.resolve({ success: true, data: { started: true } });
     await waitFor(() => {
       expect(setAutoRetryEnabled).toHaveBeenCalledTimes(2);
     });

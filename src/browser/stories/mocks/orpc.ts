@@ -1111,7 +1111,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         }),
       fork: () => Promise.resolve({ success: false, error: "Not implemented in mock" }),
       sendMessage: () => Promise.resolve({ success: true, data: undefined }),
-      resumeStream: () => Promise.resolve({ success: true, data: undefined }),
+      resumeStream: () => Promise.resolve({ success: true, data: { started: true } }),
       setAutoRetryEnabled: () =>
         Promise.resolve({
           success: true,

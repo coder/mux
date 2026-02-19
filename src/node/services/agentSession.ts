@@ -513,6 +513,10 @@ export class AgentSession {
 
     const result = await this.resumeStream(options);
     if (result.success) {
+      if (!result.data.started) {
+        return;
+      }
+
       // Retry resumed the stream successfully. Clear stale startup-abandon markers now
       // (not only on stream-end) so a crash/restart mid-stream doesn't suppress recovery.
       await this.clearStartupAutoRetryAbandon();
@@ -2021,7 +2025,9 @@ export class AgentSession {
     }
   }
 
-  async resumeStream(options: SendMessageOptions): Promise<Result<void, SendMessageError>> {
+  async resumeStream(
+    options: SendMessageOptions
+  ): Promise<Result<{ started: boolean }, SendMessageError>> {
     this.assertNotDisposed("resumeStream");
 
     assert(options, "resumeStream requires options");
@@ -2044,7 +2050,7 @@ export class AgentSession {
     // Guard against auto-retry starting a second stream while the initial send is
     // still waiting for init hooks to complete (or while completion cleanup is running).
     if (this.isBusy()) {
-      return Ok(undefined);
+      return Ok({ started: false });
     }
 
     this.setTurnPhase(TurnPhase.PREPARING);
@@ -2052,7 +2058,11 @@ export class AgentSession {
       // Must await here so the finally block runs after streaming completes,
       // not immediately when the Promise is returned.
       const result = await this.streamWithHistory(modelForStream, optionsForStream);
-      return result;
+      if (!result.success) {
+        return result;
+      }
+
+      return Ok({ started: true });
     } finally {
       if (this.turnPhase === TurnPhase.PREPARING) {
         this.setTurnPhase(TurnPhase.IDLE);

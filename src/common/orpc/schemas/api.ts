@@ -914,7 +914,12 @@ export const workspace = {
       workspaceId: z.string(),
       options: SendMessageOptionsSchema,
     }),
-    output: ResultSchema(z.void(), SendMessageErrorSchema),
+    output: ResultSchema(
+      z.object({
+        started: z.boolean(),
+      }),
+      SendMessageErrorSchema
+    ),
   },
   setAutoRetryEnabled: {
     input: z.object({
