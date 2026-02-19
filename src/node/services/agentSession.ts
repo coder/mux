@@ -2051,6 +2051,7 @@ export class AgentSession {
     // an actor turn first. The actor works on the task, then
     // maybeContinueActorCriticLoop fires the critic evaluation automatically.
     let streamOptions: SendMessageOptions;
+    let seededMessageId: string | undefined;
     if (isEmptyHistory) {
       const promptText = options.criticPrompt?.trim();
       if (!promptText) {
@@ -2070,6 +2071,7 @@ export class AgentSession {
         return Err(createUnknownSendMessageError(appendResult.error));
       }
       this.emitChatEvent({ ...userMessage, type: "message" });
+      seededMessageId = userMessage.id;
 
       streamOptions = actorOptions;
     } else {
@@ -2080,6 +2082,12 @@ export class AgentSession {
     try {
       const result = await this.streamWithHistory(options.model, streamOptions);
       if (!result.success) {
+        // Roll back the seeded prompt so retries still see empty history and
+        // take the actor-first path instead of starting a critic turn against
+        // a transcript with no actor response.
+        if (seededMessageId) {
+          await this.historyService.deleteMessage(this.workspaceId, seededMessageId);
+        }
         return result;
       }
       return Ok(undefined);
