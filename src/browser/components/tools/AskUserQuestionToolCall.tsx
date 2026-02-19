@@ -258,30 +258,39 @@ export function AskUserQuestionToolCall(props: {
   const autoRetryRollbackWorkspaceIdRef = useRef<string | null>(null);
   const autoRetryRollbackPendingRef = useRef(false);
   const autoRetryRollbackArmedRef = useRef(false);
+  const apiRef = useRef(api);
 
-  const rollbackAutoRetryIfNeeded = useCallback(async (): Promise<void> => {
-    if (!autoRetryRollbackPendingRef.current) {
-      return;
-    }
-
-    const rollbackWorkspaceId = autoRetryRollbackWorkspaceIdRef.current;
-
-    autoRetryRollbackPendingRef.current = false;
-    autoRetryRollbackArmedRef.current = false;
-    autoRetryRollbackWorkspaceIdRef.current = null;
-
-    if (!api || !rollbackWorkspaceId) {
-      return;
-    }
-
-    const rollbackResult = await api.workspace.setAutoRetryEnabled?.({
-      workspaceId: rollbackWorkspaceId,
-      enabled: false,
-    });
-    if (rollbackResult && !rollbackResult.success) {
-      setSubmitError(rollbackResult.error);
-    }
+  useEffect(() => {
+    apiRef.current = api;
   }, [api]);
+
+  const rollbackAutoRetryIfNeeded = useCallback(
+    async (options?: { suppressErrors?: boolean }): Promise<void> => {
+      if (!autoRetryRollbackPendingRef.current) {
+        return;
+      }
+
+      const rollbackWorkspaceId = autoRetryRollbackWorkspaceIdRef.current;
+
+      autoRetryRollbackPendingRef.current = false;
+      autoRetryRollbackArmedRef.current = false;
+      autoRetryRollbackWorkspaceIdRef.current = null;
+
+      const activeApi = apiRef.current;
+      if (!activeApi || !rollbackWorkspaceId) {
+        return;
+      }
+
+      const rollbackResult = await activeApi.workspace.setAutoRetryEnabled?.({
+        workspaceId: rollbackWorkspaceId,
+        enabled: false,
+      });
+      if (rollbackResult && !rollbackResult.success && !options?.suppressErrors) {
+        setSubmitError(rollbackResult.error);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     if (!autoRetryRollbackPendingRef.current) {
@@ -297,6 +306,18 @@ export function AskUserQuestionToolCall(props: {
 
     void rollbackAutoRetryIfNeeded();
   }, [props.workspaceId, rollbackAutoRetryIfNeeded]);
+
+  useEffect(() => {
+    return () => {
+      if (!autoRetryRollbackPendingRef.current) {
+        return;
+      }
+
+      // Teardown-safe rollback: if the tool component unmounts before stream-state
+      // transitions fire (workspace switch/removal/app exit), restore preference now.
+      void rollbackAutoRetryIfNeeded({ suppressErrors: true });
+    };
+  }, [rollbackAutoRetryIfNeeded]);
 
   useEffect(() => {
     if (!autoRetryRollbackPendingRef.current) {
