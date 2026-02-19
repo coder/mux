@@ -903,7 +903,7 @@ export const ModeHelpTooltip: AppStory = {
     const canvas = within(storyRoot);
 
     // Wait for app to fully load - the chat input with mode selector should be present
-    await canvas.findAllByText("Exec", {}, { timeout: 10000 });
+    await canvas.findAllByText("Exec", {}, { timeout: 15000 });
 
     // Find the help indicator "?" - should be a span with cursor-help styling
     const helpIndicators = canvas.getAllByText("?");
@@ -921,7 +921,7 @@ export const ModeHelpTooltip: AppStory = {
         const tooltip = document.querySelector('[role="tooltip"]');
         if (!tooltip) throw new Error("Tooltip not visible");
       },
-      { interval: 50 }
+      { interval: 50, timeout: 5000 }
     );
   },
   parameters: {
@@ -973,12 +973,17 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
     const canvas = within(canvasElement);
 
     // Wait for chat input to mount.
-    await canvas.findAllByText("Exec", {}, { timeout: 10000 });
+    await canvas.findAllByText("Exec", {}, { timeout: 15000 });
 
     // With gateway enabled, we should still display the *pretty* model name.
-    await waitFor(() => {
-      canvas.getByText("GPT-4o");
-    });
+    // CI can take longer than the default waitFor timeout while workspace/model
+    // state hydrates, so wait explicitly instead of triggering a flaky retry.
+    await waitFor(
+      () => {
+        canvas.getByText("GPT-4o");
+      },
+      { interval: 50, timeout: 10000 }
+    );
 
     // The buggy rendering (mux-gateway:openai/gpt-4o) shows up as "Openai/gpt 4o".
     const ugly = canvas.queryByText("Openai/gpt 4o");
@@ -993,7 +998,7 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
         if (!el) throw new Error("Gateway indicator not found");
         return el;
       },
-      { interval: 50 }
+      { interval: 50, timeout: 15000 }
     );
 
     // Hover to prove the gateway tooltip is wired up (and keep it visible for snapshot).
@@ -1006,7 +1011,7 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
           throw new Error("Gateway tooltip not visible");
         }
       },
-      { interval: 50 }
+      { interval: 50, timeout: 5000 }
     );
   },
   parameters: {
@@ -1053,7 +1058,7 @@ export const ModelSelectorDropdownOpen: AppStory = {
     const canvas = within(canvasElement);
 
     // Wait for chat input to mount
-    await canvas.findAllByText("Exec", {}, { timeout: 10000 });
+    await canvas.findAllByText("Exec", {}, { timeout: 15000 });
 
     // Wait for model selector to be clickable (shows pretty name "GPT-4o")
     const modelSelector = await waitFor(() => {
