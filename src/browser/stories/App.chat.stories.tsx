@@ -898,12 +898,69 @@ export const ModeHelpTooltip: AppStory = {
       }
     />
   ),
+  play: async ({ canvasElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+
+    await waitForChatMessagesLoaded(storyRoot);
+
+    const modelSelectorGroup = await waitFor(
+      () => {
+        const group = storyRoot.querySelector('[data-component="ModelSelectorGroup"]');
+        if (!(group instanceof HTMLElement)) {
+          throw new Error("Model selector group not found");
+        }
+        return group;
+      },
+      { interval: 50, timeout: 10000 }
+    );
+
+    const modelHelpWrapper = await waitFor(
+      () => {
+        const wrapper = modelSelectorGroup.querySelector('[data-component="ModelHelpTooltip"]');
+        if (!(wrapper instanceof HTMLElement)) {
+          throw new Error("Model help tooltip wrapper not found");
+        }
+        return wrapper;
+      },
+      { interval: 50, timeout: 5000 }
+    );
+
+    // Keep this story deterministic in CI/headless runs where hover media queries
+    // may report coarse pointers and hide the trigger by default.
+    modelHelpWrapper.style.display = "block";
+
+    const helpIndicator = await waitFor(
+      () => {
+        const indicator = modelHelpWrapper.querySelector("span.cursor-help");
+        if (!(indicator instanceof HTMLElement)) {
+          throw new Error("Model help indicator not found");
+        }
+        return indicator;
+      },
+      { interval: 50, timeout: 5000 }
+    );
+
+    await userEvent.hover(helpIndicator);
+
+    await waitFor(
+      () => {
+        const tooltip = document.querySelector('[role="tooltip"]');
+        if (!(tooltip instanceof HTMLElement)) {
+          throw new Error("Tooltip not visible");
+        }
+        if (!tooltip.textContent?.includes("Click to edit")) {
+          throw new Error("Expected model help tooltip content to be visible");
+        }
+      },
+      { interval: 50, timeout: 5000 }
+    );
+  },
 
   parameters: {
     docs: {
       description: {
         story:
-          "Verifies the HelpIndicator tooltip works by focusing the ? icon. The tooltip should appear with Exec/Plan mode explanations.",
+          "Verifies the HelpIndicator tooltip works by hovering the model help icon. The tooltip should appear with model editing shortcuts and abbreviation hints.",
       },
     },
   },
