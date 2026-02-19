@@ -223,11 +223,13 @@ export async function resolveAgentForStream(
   // --- Tool policy composition ---
   // Agent policy establishes baseline (deny-all + enable whitelist + runtime restrictions).
   // Caller policy then narrows further if needed.
+  // Auto must be able to call switch_agent on its first turn even before metadata persistence.
+  const shouldEnableAgentSwitchTool = enableAgentSwitchTool || agentDefinition.id === "auto";
   const agentToolPolicy = resolveToolPolicyForAgent({
     agents: agentsForInheritance,
     isSubagent: isSubagentWorkspace,
     disableTaskToolsForDepth: shouldDisableTaskToolsForDepth,
-    enableAgentSwitchTool,
+    enableAgentSwitchTool: shouldEnableAgentSwitchTool,
     requireSwitchAgentTool: agentDefinition.id === "auto",
   });
 
