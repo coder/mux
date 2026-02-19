@@ -797,6 +797,9 @@ export class WorkspaceStore {
 
       this.providersConfig = config;
       this.bumpAllUsageStoreEntries();
+      // Invalidate consumer token stats cache so mapped-model changes
+      // take effect on next access (triggers recalculation with new metadata).
+      this.consumerManager.invalidateAll();
     } catch {
       // Ignore provider config fetch errors.
     }

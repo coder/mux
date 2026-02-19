@@ -293,6 +293,15 @@ export class WorkspaceConsumerManager {
   }
 
   /**
+   * Invalidate cached consumer data for all workspaces.
+   * Clears the in-memory cache so the next access triggers recalculation
+   * (e.g., after provider config changes affect tokenizer/metadata resolution).
+   */
+  invalidateAll(): void {
+    this.cache.clear();
+  }
+
+  /**
    * Cleanup all resources.
    */
   dispose(): void {
