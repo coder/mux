@@ -128,6 +128,10 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
         // racing with subsequent retry attempts.
         await rollbackAutoRetryIfNeeded();
       }
+
+      // Successful resume means temporary enablement is no longer needed.
+      // Restore the user's prior preference immediately after resume request completion.
+      await rollbackAutoRetryIfNeeded();
     } catch (error) {
       setManualRetryError(getErrorMessage(error));
       await rollbackAutoRetryIfNeeded();

@@ -160,6 +160,30 @@ describe("RetryBarrier", () => {
     expect(resumeStream).toHaveBeenCalledTimes(1);
   });
 
+  test("restores disabled auto-retry preference after successful manual retry", async () => {
+    resumeStreamResult = { success: true, data: undefined };
+    previousAutoRetryEnabled = false;
+
+    const view = render(<RetryBarrier workspaceId="ws-1" />);
+
+    fireEvent.click(view.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => {
+      expect(resumeStream).toHaveBeenCalledTimes(1);
+    });
+
+    await waitFor(() => {
+      expect(setAutoRetryEnabled).toHaveBeenCalledTimes(2);
+    });
+
+    expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(1, { workspaceId: "ws-1", enabled: true });
+    expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(2, {
+      workspaceId: "ws-1",
+      enabled: false,
+    });
+    expect(view.queryByText("Retry failed:")).toBeNull();
+  });
+
   test("keeps auto-retry enabled when manual retry fails and preference was already on", async () => {
     previousAutoRetryEnabled = true;
     resumeStreamResult = {
