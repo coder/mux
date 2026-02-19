@@ -19,7 +19,7 @@ import { SearchableModelSelect } from "../components/SearchableModelSelect";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { isCodexOauthRequiredModelId } from "@/common/constants/codexOAuth";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
-import { supports1MContext } from "@/common/utils/ai/models";
+import { getModelProvider, supports1MContext } from "@/common/utils/ai/models";
 import { getAllowedProvidersForUi, isModelAllowedByPolicy } from "@/browser/utils/policyUi";
 import {
   LAST_CUSTOM_MODEL_PROVIDER_KEY,
@@ -86,6 +86,12 @@ function buildProviderModelEntry(
 }
 
 export function shouldShowModelInSettings(modelId: string, codexOauthConfigured: boolean): boolean {
+  // OpenAI OAuth gating only applies to OpenAI-routed models; other providers can
+  // reuse the same providerModelId string without requiring OpenAI OAuth.
+  if (getModelProvider(modelId) !== "openai") {
+    return true;
+  }
+
   // Keep OAuth-required OpenAI models out of Settings until OAuth is connected,
   // so users don't pick defaults that fail at send time.
   return codexOauthConfigured || !isCodexOauthRequiredModelId(modelId);

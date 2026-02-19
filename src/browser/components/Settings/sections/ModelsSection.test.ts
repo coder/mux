@@ -11,6 +11,9 @@ describe("shouldShowModelInSettings", () => {
     expect(shouldShowModelInSettings(KNOWN_MODELS.GPT_53_CODEX.id, true)).toBe(true);
   });
 
+  test("does not gate non-OpenAI models that share the same model id", () => {
+    expect(shouldShowModelInSettings("openrouter:gpt-5.3-codex", false)).toBe(true);
+  });
   test("keeps non-required OpenAI models visible without OAuth", () => {
     expect(shouldShowModelInSettings(KNOWN_MODELS.GPT.id, false)).toBe(true);
   });
