@@ -74,9 +74,11 @@ export async function resolveAgentAiSettings(
 
   const agentAiDefaults = config.agentAiDefaults ?? {};
   const directDefaults = agentAiDefaults[trimmedAgentId];
-  const inheritedDefaults = directDefaults
-    ? undefined
-    : resolveInheritedConfigDefaults(trimmedAgentId, agentDefsById, agentAiDefaults);
+  const inheritedDefaults = resolveInheritedConfigDefaults(
+    trimmedAgentId,
+    agentDefsById,
+    agentAiDefaults
+  );
   const descriptorDefaults = agentDef?.aiDefaults;
 
   const model =
