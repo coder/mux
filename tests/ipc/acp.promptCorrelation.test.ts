@@ -249,9 +249,14 @@ describe("ACP prompt stream correlation", () => {
     }
 
     let promptSettled = false;
-    void promptPromise.finally(() => {
-      promptSettled = true;
-    });
+    void promptPromise.then(
+      () => {
+        promptSettled = true;
+      },
+      () => {
+        promptSettled = true;
+      }
+    );
 
     harness.pushChatEvent({
       type: "stream-start",
@@ -336,9 +341,14 @@ describe("ACP prompt stream correlation", () => {
     }
 
     let promptSettled = false;
-    void promptPromise.finally(() => {
-      promptSettled = true;
-    });
+    void promptPromise.then(
+      () => {
+        promptSettled = true;
+      },
+      () => {
+        promptSettled = true;
+      }
+    );
 
     harness.pushChatEvent({
       type: "error",
