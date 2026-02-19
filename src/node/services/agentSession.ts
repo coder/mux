@@ -199,6 +199,12 @@ export class AgentSession {
   private turnPhase: TurnPhase = TurnPhase.IDLE;
   // When true, stream-end skips auto-flushing queued messages so an edit can truncate first.
   private deferQueuedFlushUntilAfterEdit = false;
+  /**
+   * Tracks in-flight persistence for agentSwitchingEnabled that starts at stream-start.
+   * Stream-end awaits this before dispatching switch follow-ups to avoid metadata races.
+   */
+  private pendingAgentSwitchingSync?: Promise<void>;
+
   /** Guardrail against synthetic switch_agent ping-pong loops. */
   private consecutiveAgentSwitches = 0;
 
@@ -2048,7 +2054,7 @@ export class AgentSession {
         return;
       }
 
-      void this.syncAgentSwitchingForResolvedAgent(
+      this.pendingAgentSwitchingSync = this.syncAgentSwitchingForResolvedAgent(
         this.activeStreamContext?.options?.agentId,
         streamStartPayload.agentId
       );
@@ -2112,6 +2118,7 @@ export class AgentSession {
       if (hadCompactionRequest && !this.disposed) {
         this.clearQueue();
       }
+      this.pendingAgentSwitchingSync = undefined;
       this.emitChatEvent(payload);
       this.setTurnPhase(TurnPhase.IDLE);
     });
@@ -2158,6 +2165,12 @@ export class AgentSession {
         if (handled) {
           // Dispatch follow-up AFTER reset so it can set its own stream state.
           await this.dispatchPendingFollowUp();
+        }
+
+        const pendingAgentSwitchingSync = this.pendingAgentSwitchingSync;
+        this.pendingAgentSwitchingSync = undefined;
+        if (pendingAgentSwitchingSync) {
+          await pendingAgentSwitchingSync;
         }
 
         const switchResult = this.extractSwitchAgentResult(streamEndPayload);
