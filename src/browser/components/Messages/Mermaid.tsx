@@ -30,15 +30,29 @@ mermaid.initialize({
   },
 });
 
+function decodeNumericCodePoint(codePoint: number): string {
+  if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {
+    // Treat invalid numeric entities as empty content to avoid parser crashes
+    // and collapse obfuscated scheme separators.
+    return "";
+  }
+
+  try {
+    return String.fromCodePoint(codePoint);
+  } catch {
+    return "";
+  }
+}
+
 function decodeEntity(entityBody: string): string | null {
   if (entityBody.startsWith("#x") || entityBody.startsWith("#X")) {
     const parsed = Number.parseInt(entityBody.slice(2), 16);
-    return Number.isNaN(parsed) ? null : String.fromCodePoint(parsed);
+    return Number.isNaN(parsed) ? "" : decodeNumericCodePoint(parsed);
   }
 
   if (entityBody.startsWith("#")) {
     const parsed = Number.parseInt(entityBody.slice(1), 10);
-    return Number.isNaN(parsed) ? null : String.fromCodePoint(parsed);
+    return Number.isNaN(parsed) ? "" : decodeNumericCodePoint(parsed);
   }
 
   const named: Record<string, string> = {

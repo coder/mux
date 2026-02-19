@@ -17,6 +17,7 @@ describe("sanitizeMermaidSvg", () => {
       '<foreignObject><div onclick="evil()">label</div></foreignObject>' +
       '<a href="javascript:alert(1)"><text>link</text></a>' +
       '<a xlink:href="java&#10;script:alert(3)"><text>split-link</text></a>' +
+      '<a href="java&#1114112;script:alert(4)"><text>invalid-codepoint</text></a>' +
       '<image src="javascript:alert(2)" />' +
       '<rect width="10" height="10" onclick="steal()" />' +
       "</svg>";
@@ -29,7 +30,9 @@ describe("sanitizeMermaidSvg", () => {
     expect(sanitized).not.toContain("onclick=");
     expect(sanitized).not.toContain("javascript:");
     expect(sanitized).not.toContain("java&#10;script:");
+    expect(sanitized).not.toContain("&#1114112;");
     expect(sanitized).not.toContain("xlink:href=");
+    expect(sanitized).not.toContain("href=");
     expect(sanitized).toContain("<svg");
     expect(sanitized).toContain("<rect");
     expect(sanitized).toContain("<foreignObject");
