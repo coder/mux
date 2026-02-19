@@ -73,17 +73,6 @@ void mock.module("@/browser/stores/WorkspaceStore", () => ({
   }),
 }));
 
-void mock.module("@/browser/utils/messages/sendOptions", () => ({
-  getSendOptionsFromStorage: (_workspaceId: string) => ({
-    model: "openai:gpt-4o",
-    agentId: "exec",
-  }),
-}));
-
-void mock.module("@/browser/utils/messages/compactionOptions", () => ({
-  applyCompactionOverrides: (options: unknown, _parsed: unknown) => options,
-}));
-
 import { AskUserQuestionToolCall } from "./AskUserQuestionToolCall";
 
 describe("AskUserQuestionToolCall", () => {

@@ -78,13 +78,6 @@ const setAutoRetryEnabled = mock((input: unknown) => {
   });
 });
 
-const getSendOptionsFromStorage = mock((_workspaceId: string) => ({
-  model: "openai:gpt-4o",
-  agentId: "exec",
-}));
-
-const applyCompactionOverrides = mock((options: unknown, _parsed: unknown) => options);
-
 void mock.module("@/browser/contexts/API", () => ({
   useAPI: () => ({
     api: {
@@ -108,14 +101,6 @@ void mock.module("@/browser/hooks/usePersistedState", () => ({
   usePersistedState: () => [false, () => undefined] as const,
 }));
 
-void mock.module("@/browser/utils/messages/sendOptions", () => ({
-  getSendOptionsFromStorage,
-}));
-
-void mock.module("@/browser/utils/messages/compactionOptions", () => ({
-  applyCompactionOverrides,
-}));
-
 import { RetryBarrier } from "./RetryBarrier";
 
 describe("RetryBarrier", () => {
@@ -128,8 +113,6 @@ describe("RetryBarrier", () => {
     previousAutoRetryEnabled = false;
     resumeStream.mockClear();
     setAutoRetryEnabled.mockClear();
-    getSendOptionsFromStorage.mockClear();
-    applyCompactionOverrides.mockClear();
   });
 
   afterEach(() => {
