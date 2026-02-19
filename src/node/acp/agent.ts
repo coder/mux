@@ -1189,7 +1189,7 @@ export class MuxAgent implements Agent {
       return;
     }
 
-    if (event.type === "stream-error") {
+    if (event.type === "stream-error" || event.type === "error") {
       if (isReplayEvent) {
         return;
       }

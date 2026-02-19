@@ -304,4 +304,66 @@ describe("ACP prompt stream correlation", () => {
     harness.closeConnection();
     await harness.connectionClosed;
   });
+
+  it("treats runtime error events as terminal failures for the matching prompt", async () => {
+    const harness = createHarness();
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    const newSessionResponse = await harness.agent.newSession({
+      cwd: "/repo/acp-go-sdk",
+      mcpServers: [],
+      _meta: {
+        trunkBranch: "main",
+      },
+    });
+
+    const promptPromise = harness.agent.prompt({
+      sessionId: newSessionResponse.sessionId,
+      prompt: [{ type: "text", text: "hello" }],
+    });
+
+    await waitForCondition(() => harness.sendMessageCalls.length === 1);
+
+    const firstSend = harness.sendMessageCalls[0];
+    const muxMetadata = firstSend.options["muxMetadata"];
+    if (!isRecord(muxMetadata)) {
+      throw new Error("Expected prompt send options to include muxMetadata record");
+    }
+
+    const promptCorrelationId = muxMetadata["acpPromptId"];
+    if (typeof promptCorrelationId !== "string") {
+      throw new Error("Expected prompt send options to include acpPromptId");
+    }
+
+    let promptSettled = false;
+    void promptPromise.finally(() => {
+      promptSettled = true;
+    });
+
+    harness.pushChatEvent({
+      type: "error",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-other",
+      error: "runtime unavailable",
+      errorType: "runtime_not_ready",
+      acpPromptId: "unrelated-prompt-id",
+    } as WorkspaceChatMessage);
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(promptSettled).toBe(false);
+
+    harness.pushChatEvent({
+      type: "error",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-target",
+      error: "runtime unavailable",
+      errorType: "runtime_not_ready",
+      acpPromptId: promptCorrelationId,
+    } as WorkspaceChatMessage);
+
+    await expect(promptPromise).rejects.toThrow("runtime unavailable");
+
+    harness.closeConnection();
+    await harness.connectionClosed;
+  });
 });
