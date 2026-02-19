@@ -35,6 +35,44 @@ describe("resolveWorkspaceAiSettingsForAgent", () => {
     });
   });
 
+  test("uses workspace-by-agent fallback when explicitly enabled", () => {
+    const result = resolveWorkspaceAiSettingsForAgent({
+      agentId: "exec",
+      agentAiDefaults: {},
+      workspaceByAgent: {
+        exec: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+      },
+      useWorkspaceByAgentFallback: true,
+      fallbackModel: "openai:gpt-5.2-mini",
+      existingModel: "anthropic:claude-opus-4-6",
+      existingThinking: "off",
+    });
+
+    expect(result).toEqual({
+      resolvedModel: "openai:gpt-5.2",
+      resolvedThinking: "medium",
+    });
+  });
+
+  test("ignores workspace-by-agent fallback when disabled", () => {
+    const result = resolveWorkspaceAiSettingsForAgent({
+      agentId: "exec",
+      agentAiDefaults: {},
+      workspaceByAgent: {
+        exec: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+      },
+      useWorkspaceByAgentFallback: false,
+      fallbackModel: "openai:gpt-5.2-mini",
+      existingModel: "anthropic:claude-opus-4-6",
+      existingThinking: "off",
+    });
+
+    expect(result).toEqual({
+      resolvedModel: "anthropic:claude-opus-4-6",
+      resolvedThinking: "off",
+    });
+  });
+
   test('treats empty modelString as "inherit"', () => {
     const result = resolveWorkspaceAiSettingsForAgent({
       agentId: "exec",

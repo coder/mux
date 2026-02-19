@@ -122,51 +122,56 @@ describe("WorkspaceModeAISync", () => {
     });
   });
 
-  test("inherits existing workspace values when settings are inherit", async () => {
+  test("falls through to workspace-by-agent values when settings are inherit", async () => {
     const workspaceId = nextWorkspaceId();
 
-    const existingModel = "some-legacy-model";
-    const existingThinking = "off";
+    const workspaceModel = "openai:gpt-5.2";
+    const workspaceThinking = "medium";
 
     // Inherit in Settings removes explicit per-agent defaults from AGENT_AI_DEFAULTS_KEY.
     updatePersistedState(AGENT_AI_DEFAULTS_KEY, {});
     updatePersistedState(getWorkspaceAISettingsByAgentKey(workspaceId), {
-      exec: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+      exec: { model: workspaceModel, thinkingLevel: workspaceThinking },
     });
 
-    updatePersistedState(getModelKey(workspaceId), existingModel);
-    updatePersistedState(getThinkingLevelKey(workspaceId), existingThinking);
+    updatePersistedState(getModelKey(workspaceId), "some-legacy-model");
+    updatePersistedState(getThinkingLevelKey(workspaceId), "off");
 
     renderSync({ workspaceId, agentId: "exec" });
 
     await waitFor(() => {
-      expect(readPersistedState(getModelKey(workspaceId), "")).toBe(existingModel);
-      expect(readPersistedState(getThinkingLevelKey(workspaceId), "high")).toBe(existingThinking);
+      expect(readPersistedState(getModelKey(workspaceId), "")).toBe(workspaceModel);
+      expect(readPersistedState(getThinkingLevelKey(workspaceId), "off")).toBe(workspaceThinking);
     });
   });
 
-  test("does not apply workspace-by-agent overrides or base settings when no global default", async () => {
+  test("keeps same-agent workspace override ahead of inherited base settings defaults", async () => {
     const workspaceId = nextWorkspaceId();
 
-    const existingModel = "some-legacy-model";
-    const existingThinking = "high";
+    const baseConfiguredModel = "anthropic:claude-haiku-4-5";
+    const baseConfiguredThinking = "off";
+    const customWorkspaceModel = "openai:gpt-5.2-pro";
+    const customWorkspaceThinking = "medium";
 
+    // No explicit "custom" configured default exists, so this is a base fallback candidate.
     updatePersistedState(AGENT_AI_DEFAULTS_KEY, {
-      exec: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
+      exec: { modelString: baseConfiguredModel, thinkingLevel: baseConfiguredThinking },
     });
     updatePersistedState(getWorkspaceAISettingsByAgentKey(workspaceId), {
-      custom: { model: "openai:gpt-5.2-pro", thinkingLevel: "medium" },
+      custom: { model: customWorkspaceModel, thinkingLevel: customWorkspaceThinking },
     });
 
-    updatePersistedState(getModelKey(workspaceId), existingModel);
-    updatePersistedState(getThinkingLevelKey(workspaceId), existingThinking);
+    updatePersistedState(getModelKey(workspaceId), "some-legacy-model");
+    updatePersistedState(getThinkingLevelKey(workspaceId), "high");
 
-    // Unknown non-plan agent IDs without explicit global defaults inherit the current workspace value.
+    // Unknown non-plan agent IDs fall back to exec defaults unless this agent has workspace overrides.
     renderSync({ workspaceId, agentId: "custom" });
 
     await waitFor(() => {
-      expect(readPersistedState(getModelKey(workspaceId), "")).toBe(existingModel);
-      expect(readPersistedState(getThinkingLevelKey(workspaceId), "off")).toBe(existingThinking);
+      expect(readPersistedState(getModelKey(workspaceId), "")).toBe(customWorkspaceModel);
+      expect(readPersistedState(getThinkingLevelKey(workspaceId), "off")).toBe(
+        customWorkspaceThinking
+      );
     });
   });
 

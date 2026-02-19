@@ -708,10 +708,15 @@ export class TaskService {
     }
 
     // User-requested precedence: use global per-agent defaults when configured;
-    // otherwise inherit the parent workspace's active stream model.
-    const parentActiveModel =
+    // otherwise inherit the parent workspace's active model/thinking.
+    const parentAiSettings = this.resolveWorkspaceAISettings(parentMeta, agentId);
+    const inheritedModelCandidate =
       typeof args.modelString === "string" && args.modelString.trim().length > 0
-        ? args.modelString.trim()
+        ? args.modelString
+        : parentAiSettings?.model;
+    const parentActiveModel =
+      typeof inheritedModelCandidate === "string" && inheritedModelCandidate.trim().length > 0
+        ? inheritedModelCandidate.trim()
         : defaultModel;
     const globalDefault = cfg.agentAiDefaults?.[agentId];
     const configuredModel = globalDefault?.modelString?.trim();
@@ -721,7 +726,10 @@ export class TaskService {
     assert(canonicalModel.length > 0, "Task.create: resolved model must be non-empty");
 
     const requestedThinkingLevel: ThinkingLevel =
-      globalDefault?.thinkingLevel ?? args.thinkingLevel ?? "off";
+      globalDefault?.thinkingLevel ??
+      args.thinkingLevel ??
+      parentAiSettings?.thinkingLevel ??
+      "off";
     const effectiveThinkingLevel = enforceThinkingPolicy(canonicalModel, requestedThinkingLevel);
 
     const parentRuntimeConfig = parentMeta.runtimeConfig;
