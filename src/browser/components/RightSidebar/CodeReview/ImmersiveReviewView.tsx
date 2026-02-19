@@ -499,6 +499,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   // Keyboard line cursor state within the whole rendered file.
   const [activeLineIndex, setActiveLineIndex] = useState<number | null>(null);
   const [selectedLineRange, setSelectedLineRange] = useState<SelectedLineRange | null>(null);
+  const [scrollNonce, setScrollNonce] = useState(0);
   const [boundaryToast, setBoundaryToast] = useState<string | null>(null);
 
   useEffect(() => {
@@ -640,6 +641,9 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       const targetHunkId = findReviewHunkId(review, fileHunks) ?? fileHunks[0].id;
       hunkJumpRef.current = true;
       onSelectHunk(targetHunkId);
+      // Force scroll effect to re-fire even when activeLineIndex is unchanged
+      // (for example when the cursor is already inside the selected hunk).
+      setScrollNonce((previousNonce) => previousNonce + 1);
     },
     [allHunks, onSelectHunk]
   );
@@ -876,7 +880,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     hunkJumpRef.current = false;
 
     lineElement.scrollIntoView({ behavior: "auto", block });
-  }, [activeLineIndex, overlayData.content]);
+  }, [activeLineIndex, overlayData.content, scrollNonce]);
 
   useEffect(() => {
     return () => {

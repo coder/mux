@@ -993,6 +993,9 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       }
 
       lastExternalSelectionSignatureRef.current = signature;
+      // Sync to internal state so drag interactions work after external requests.
+      // renderSelection/renderNoteText below ensure the composer appears
+      // immediately without waiting for this async state update.
       setSelection({
         startIndex: externalSelectionRequest.selection.startIndex,
         endIndex: externalSelectionRequest.selection.endIndex,
@@ -1000,10 +1003,24 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       setSelectionInitialNoteText(externalSelectionRequest.initialNoteText ?? "");
     }, [externalSelectionRequest]);
 
+    // Derive effective selection synchronously from external requests to avoid
+    // an extra render cycle through useEffect -> setSelection on large diffs.
+    const renderSelection: LineSelection | null = externalSelectionRequest
+      ? {
+          startIndex: externalSelectionRequest.selection.startIndex,
+          endIndex: externalSelectionRequest.selection.endIndex,
+        }
+      : selection;
+    const renderNoteText = externalSelectionRequest
+      ? (externalSelectionRequest.initialNoteText ?? "")
+      : selectionInitialNoteText;
+    const renderSelectionStartIndex = renderSelection?.startIndex ?? null;
+
     // Notify parent when composition state changes
+    const isComposing = renderSelection !== null;
     React.useEffect(() => {
-      onComposingChange?.(selection !== null);
-    }, [selection, onComposingChange]);
+      onComposingChange?.(isComposing);
+    }, [isComposing, onComposingChange]);
 
     // On unmount, ensure we release the pause if we were composing
     // (separate effect with empty deps so cleanup only runs on unmount)
@@ -1148,13 +1165,14 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
         // Notify parent that this hunk should become active
         onLineClick?.();
 
-        const anchor = shiftKey && selection ? selection.startIndex : lineIndex;
+        const anchor =
+          shiftKey && renderSelectionStartIndex !== null ? renderSelectionStartIndex : lineIndex;
         dragAnchorRef.current = anchor;
         setIsDragging(true);
         setSelectionInitialNoteText("");
         setSelection({ startIndex: anchor, endIndex: lineIndex });
       },
-      [onLineClick, onReviewNote, selection]
+      [onLineClick, onReviewNote, renderSelectionStartIndex]
     );
 
     const updateDragSelection = React.useCallback(
@@ -1173,8 +1191,8 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       onLineClick?.();
 
       // Shift-click: extend existing selection
-      if (shiftKey && selection) {
-        const start = selection.startIndex;
+      if (shiftKey && renderSelection) {
+        const start = renderSelection.startIndex;
         setSelectionInitialNoteText("");
         setSelection({
           startIndex: start,
@@ -1232,7 +1250,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
         lastLineType={lastLineType}
       >
         {highlightedLineData.map((lineInfo, displayIndex) => {
-          const isComposerSelected = isLineInSelection(displayIndex, selection);
+          const isComposerSelected = isLineInSelection(displayIndex, renderSelection);
           const isRangeSelected = isLineInSelection(displayIndex, selectedLineRange);
           const isActiveLine = activeLineIndex === displayIndex;
           const isInReviewRange = reviewRangeByLineIndex[displayIndex] ?? false;
@@ -1301,7 +1319,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                   }}
                   reviewButton={
                     onReviewNote && (
-                      <Tooltip open={selection || isDragging ? false : undefined}>
+                      <Tooltip open={renderSelection || isDragging ? false : undefined}>
                         <TooltipTrigger asChild>
                           <button
                             className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:text-[var(--color-review-accent)] active:scale-90"
@@ -1336,10 +1354,10 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
 
               {/* Show textarea after the last selected line */}
               {isComposerSelected &&
-                selection &&
-                displayIndex === Math.max(selection.startIndex, selection.endIndex) && (
+                renderSelection &&
+                displayIndex === Math.max(renderSelection.startIndex, renderSelection.endIndex) && (
                   <ReviewNoteInput
-                    selection={selection}
+                    selection={renderSelection}
                     lineData={lineData}
                     filePath={filePath}
                     showLineNumbers={showLineNumbers}
@@ -1347,7 +1365,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                     lineNumberWidths={lineNumberWidths}
                     onSubmit={handleSubmitNote}
                     onCancel={handleCancelNote}
-                    initialNoteText={selectionInitialNoteText}
+                    initialNoteText={renderNoteText}
                   />
                 )}
 
