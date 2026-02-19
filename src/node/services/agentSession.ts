@@ -34,6 +34,7 @@ import {
   type StreamErrorPayload,
 } from "@/node/services/utils/sendMessageError";
 import {
+  createAssistantMessageId,
   createUserMessageId,
   createFileSnapshotMessageId,
   createAgentSkillSnapshotMessageId,
@@ -117,6 +118,10 @@ interface SwitchAgentResult {
 }
 
 const MAX_CONSECUTIVE_AGENT_SWITCHES = 3;
+
+const SAFE_AGENT_SWITCH_FALLBACK_CANDIDATES = ["exec", "ask", "plan"] as const;
+const SWITCH_AGENT_TARGET_UNAVAILABLE_ERROR =
+  "Agent handoff failed because the requested target is unavailable. Please retry or choose a different mode.";
 
 const PDF_MEDIA_TYPE = "application/pdf";
 
@@ -2576,6 +2581,52 @@ export class AgentSession {
     }
   }
 
+  private async resolveAgentSwitchFallbackTarget(
+    currentOptions: SendMessageOptions | undefined
+  ): Promise<string | undefined> {
+    const preferredAgentId = currentOptions?.agentId?.trim();
+    const disableWorkspaceAgents = currentOptions?.disableWorkspaceAgents;
+
+    const candidates: string[] = [];
+    // Prefer returning to the caller's previous non-auto agent when possible.
+    if (preferredAgentId != null && preferredAgentId.length > 0 && preferredAgentId !== "auto") {
+      candidates.push(preferredAgentId);
+    }
+
+    for (const candidate of SAFE_AGENT_SWITCH_FALLBACK_CANDIDATES) {
+      candidates.push(candidate);
+    }
+
+    const seen = new Set<string>();
+    for (const candidate of candidates) {
+      assert(candidate.trim().length > 0, "Fallback candidate agent IDs must be non-empty");
+      if (seen.has(candidate)) {
+        continue;
+      }
+      seen.add(candidate);
+
+      if (await this.isAgentSwitchTargetValid(candidate, disableWorkspaceAgents)) {
+        return candidate;
+      }
+    }
+
+    return undefined;
+  }
+
+  private buildAgentSwitchFallbackFollowUp(switchResult: SwitchAgentResult): string {
+    const normalizedReason = switchResult.reason?.trim();
+    const lines = [
+      `Agent handoff failed: target "${switchResult.agentId}" is unavailable in this workspace.`,
+      "Continue assisting the user's latest request using this mode.",
+    ];
+
+    if (normalizedReason != null && normalizedReason.length > 0) {
+      lines.splice(1, 0, `Router rationale: ${normalizedReason}`);
+    }
+
+    return lines.join("\n");
+  }
+
   /** Dispatch follow-up message after switch_agent and guard against ping-pong loops. */
   private async dispatchAgentSwitch(
     switchResult: SwitchAgentResult,
@@ -2602,18 +2653,45 @@ export class AgentSession {
       return false;
     }
 
+    let targetAgentId = switchResult.agentId;
+
     const targetValid = await this.isAgentSwitchTargetValid(
-      switchResult.agentId,
+      targetAgentId,
       currentOptions?.disableWorkspaceAgents
     );
     if (!targetValid) {
-      return false;
+      const fallbackAgentId = await this.resolveAgentSwitchFallbackTarget(currentOptions);
+      if (fallbackAgentId == null) {
+        log.warn("switch_agent target invalid and no safe fallback agent is available", {
+          workspaceId: this.workspaceId,
+          requestedTargetAgentId: switchResult.agentId,
+        });
+        this.emitChatEvent(
+          createStreamErrorMessage({
+            messageId: createAssistantMessageId(),
+            error: `${SWITCH_AGENT_TARGET_UNAVAILABLE_ERROR} Requested target: "${switchResult.agentId}".`,
+            errorType: "unknown",
+          })
+        );
+        return false;
+      }
+
+      log.warn("switch_agent target invalid; routing synthetic follow-up to fallback agent", {
+        workspaceId: this.workspaceId,
+        requestedTargetAgentId: switchResult.agentId,
+        fallbackAgentId,
+      });
+      targetAgentId = fallbackAgentId;
     }
 
     // Fall back to "Continue." for nullish, empty, or whitespace-only followUp strings.
     const trimmedFollowUp = switchResult.followUp?.trim();
     const followUpText =
-      trimmedFollowUp != null && trimmedFollowUp.length > 0 ? trimmedFollowUp : "Continue.";
+      targetAgentId === switchResult.agentId
+        ? trimmedFollowUp != null && trimmedFollowUp.length > 0
+          ? trimmedFollowUp
+          : "Continue."
+        : this.buildAgentSwitchFallbackFollowUp(switchResult);
     const normalizedOptionModel = currentOptions?.model?.trim();
     const effectiveModel =
       normalizedOptionModel && normalizedOptionModel.length > 0
@@ -2625,7 +2703,7 @@ export class AgentSession {
     // follow-up from entering edit/truncation logic.
     const followUpOptions: SendMessageOptions = {
       model: effectiveModel,
-      agentId: switchResult.agentId,
+      agentId: targetAgentId,
       // Preserve relevant settings from the original request
       ...(currentOptions?.thinkingLevel != null && { thinkingLevel: currentOptions.thinkingLevel }),
       ...(currentOptions?.system1ThinkingLevel != null && {
@@ -2656,7 +2734,8 @@ export class AgentSession {
     if (!sendResult.success) {
       log.warn("Failed to dispatch switch_agent follow-up", {
         workspaceId: this.workspaceId,
-        targetAgentId: switchResult.agentId,
+        requestedTargetAgentId: switchResult.agentId,
+        dispatchedTargetAgentId: targetAgentId,
         error: sendResult.error,
       });
       return false;

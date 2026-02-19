@@ -153,7 +153,7 @@ describe("AgentSession switch_agent target validation", () => {
     }
   });
 
-  test("rejects hidden switch target and skips follow-up dispatch", async () => {
+  test("falls back to safe agent when switch target is hidden", async () => {
     using projectDir = new DisposableTempDir("agent-session-switch-hidden");
     await writeAgentDefinition(projectDir.path, "hidden-agent", "ui:\n  hidden: true\n");
 
@@ -176,14 +176,20 @@ describe("AgentSession switch_agent target validation", () => {
         "openai:gpt-4o"
       );
 
-      expect(result).toBe(false);
-      expect(sendMessageMock).toHaveBeenCalledTimes(0);
+      expect(result).toBe(true);
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+
+      const firstCall = sendMessageMock.mock.calls[0];
+      expect(firstCall).toBeDefined();
+      const [messageArg, optionsArg] = firstCall as unknown as [string, SendMessageOptions];
+      expect(messageArg).toContain('target "hidden-agent" is unavailable');
+      expect(optionsArg.agentId).toBe("exec");
     } finally {
       session.dispose();
     }
   });
 
-  test("rejects effectively disabled switch target and skips follow-up dispatch", async () => {
+  test("falls back to safe agent when switch target is disabled", async () => {
     using projectDir = new DisposableTempDir("agent-session-switch-disabled");
     await writeAgentDefinition(projectDir.path, "disabled-agent", "disabled: true\n");
 
@@ -206,14 +212,20 @@ describe("AgentSession switch_agent target validation", () => {
         "openai:gpt-4o"
       );
 
-      expect(result).toBe(false);
-      expect(sendMessageMock).toHaveBeenCalledTimes(0);
+      expect(result).toBe(true);
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+
+      const firstCall = sendMessageMock.mock.calls[0];
+      expect(firstCall).toBeDefined();
+      const [messageArg, optionsArg] = firstCall as unknown as [string, SendMessageOptions];
+      expect(messageArg).toContain('target "disabled-agent" is unavailable');
+      expect(optionsArg.agentId).toBe("exec");
     } finally {
       session.dispose();
     }
   });
 
-  test("rejects unresolved switch target and skips follow-up dispatch", async () => {
+  test("falls back to exec when auto requests an unresolved switch target", async () => {
     using projectDir = new DisposableTempDir("agent-session-switch-missing");
     const { historyService, cleanup } = await createTestHistoryService();
     historyCleanup = cleanup;
@@ -230,12 +242,18 @@ describe("AgentSession switch_agent target validation", () => {
           agentId: "missing-agent",
           followUp: "Should not send",
         },
-        { model: "openai:gpt-4o-mini", agentId: "exec" },
+        { model: "openai:gpt-4o-mini", agentId: "auto" },
         "openai:gpt-4o"
       );
 
-      expect(result).toBe(false);
-      expect(sendMessageMock).toHaveBeenCalledTimes(0);
+      expect(result).toBe(true);
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+
+      const firstCall = sendMessageMock.mock.calls[0];
+      expect(firstCall).toBeDefined();
+      const [messageArg, optionsArg] = firstCall as unknown as [string, SendMessageOptions];
+      expect(messageArg).toContain('target "missing-agent" is unavailable');
+      expect(optionsArg.agentId).toBe("exec");
     } finally {
       session.dispose();
     }
