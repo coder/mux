@@ -103,4 +103,49 @@ describe("resolveAgentAiSettings", () => {
       thinkingLevel: "low",
     });
   });
+
+  it("traverses multiple base levels to fill missing inherited fields", async () => {
+    const client = createClient({
+      agentAiDefaults: {
+        ask: {
+          modelString: "openai:gpt-5",
+        },
+        exec: {
+          thinkingLevel: "high",
+        },
+      },
+      agents: [
+        {
+          id: "review",
+          base: "ask",
+          aiDefaults: {
+            model: "google:gemini-2.5-pro",
+            thinkingLevel: "off",
+          },
+        },
+        {
+          id: "ask",
+          base: "exec",
+          aiDefaults: {
+            model: "anthropic:claude-sonnet-4-5",
+            thinkingLevel: "medium",
+          },
+        },
+        {
+          id: "exec",
+          aiDefaults: {
+            model: "anthropic:claude-opus-4-6",
+            thinkingLevel: "low",
+          },
+        },
+      ],
+    });
+
+    const resolved = await resolveAgentAiSettings(client, "review", "ws-1");
+
+    expect(resolved).toEqual({
+      model: "openai:gpt-5",
+      thinkingLevel: "high",
+    });
+  });
 });

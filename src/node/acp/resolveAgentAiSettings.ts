@@ -24,20 +24,40 @@ function resolveInheritedConfigDefaults(
   const visited = new Set<string>([agentId]);
   let cursor = agentId;
 
+  let inheritedModel: string | undefined;
+  let inheritedThinkingLevel: ThinkingLevel | undefined;
+
   while (true) {
     const baseAgentId = agentDefsById.get(cursor)?.base ?? getFallbackBaseAgentId(cursor);
     if (baseAgentId === cursor || visited.has(baseAgentId)) {
-      return undefined;
+      break;
     }
 
     const inheritedDefaults = agentAiDefaults[baseAgentId];
-    if (inheritedDefaults) {
-      return inheritedDefaults;
+    if (inheritedDefaults != null) {
+      // Inheritance is field-wise across the full base chain. If an intermediate
+      // base defines only one field, continue traversing so deeper bases can
+      // still provide missing fields.
+      inheritedModel ??= inheritedDefaults.modelString;
+      inheritedThinkingLevel ??= inheritedDefaults.thinkingLevel;
+
+      if (inheritedModel != null && inheritedThinkingLevel != null) {
+        break;
+      }
     }
 
     visited.add(baseAgentId);
     cursor = baseAgentId;
   }
+
+  if (inheritedModel == null && inheritedThinkingLevel == null) {
+    return undefined;
+  }
+
+  return {
+    modelString: inheritedModel,
+    thinkingLevel: inheritedThinkingLevel,
+  };
 }
 
 function buildAgentsListInput(
