@@ -258,6 +258,7 @@ export function AskUserQuestionToolCall(props: {
   const autoRetryRollbackWorkspaceIdRef = useRef<string | null>(null);
   const autoRetryRollbackPendingRef = useRef(false);
   const autoRetryRollbackArmedRef = useRef(false);
+  const autoRetryRollbackBaselineMessageCountRef = useRef<number | null>(null);
   const isMountedRef = useRef(true);
   const apiRef = useRef(api);
 
@@ -275,6 +276,7 @@ export function AskUserQuestionToolCall(props: {
 
       autoRetryRollbackPendingRef.current = false;
       autoRetryRollbackArmedRef.current = false;
+      autoRetryRollbackBaselineMessageCountRef.current = null;
       autoRetryRollbackWorkspaceIdRef.current = null;
 
       const activeApi = apiRef.current;
@@ -343,7 +345,11 @@ export function AskUserQuestionToolCall(props: {
       return;
     }
 
-    if (!autoRetryRollbackArmedRef.current) {
+    const baselineMessageCount = autoRetryRollbackBaselineMessageCountRef.current;
+    const hasObservedPostResumeMessage =
+      baselineMessageCount !== null &&
+      (workspaceState?.messages.length ?? 0) > baselineMessageCount;
+    if (!autoRetryRollbackArmedRef.current && !hasObservedPostResumeMessage) {
       return;
     }
 
@@ -353,6 +359,7 @@ export function AskUserQuestionToolCall(props: {
     workspaceState?.autoRetryStatus,
     workspaceState?.isStreamStarting,
     workspaceState?.canInterrupt,
+    workspaceState?.messages.length,
   ]);
 
   const [draftAnswers, setDraftAnswers] = useState<Record<string, DraftAnswer>>(() => {
@@ -509,6 +516,7 @@ export function AskUserQuestionToolCall(props: {
             autoRetryRollbackWorkspaceIdRef.current = workspaceId;
             autoRetryRollbackPendingRef.current = true;
             autoRetryRollbackArmedRef.current = false;
+            autoRetryRollbackBaselineMessageCountRef.current = workspaceState?.messages.length ?? 0;
           }
         }
 

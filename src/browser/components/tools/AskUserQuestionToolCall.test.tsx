@@ -133,6 +133,56 @@ describe("AskUserQuestionToolCall", () => {
     });
   });
 
+  test("restores preference when terminal update arrives without in-flight snapshots", async () => {
+    const view = render(
+      <AskUserQuestionToolCall
+        args={{ questions: [], answers: {} }}
+        result={null}
+        status="executing"
+        toolCallId="ask-3"
+        workspaceId="ws-ask"
+      />
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "Submit answers" }));
+
+    await waitFor(() => {
+      expect(answerAskUserQuestion).toHaveBeenCalledTimes(1);
+      expect(resumeStream).toHaveBeenCalledTimes(1);
+      expect(setAutoRetryEnabled).toHaveBeenCalledTimes(1);
+    });
+
+    currentWorkspaceState = {
+      ...currentWorkspaceState,
+      autoRetryStatus: null,
+      isStreamStarting: false,
+      canInterrupt: false,
+      messages: [{ type: "assistant" }],
+    };
+    view.rerender(
+      <AskUserQuestionToolCall
+        args={{ questions: [], answers: {} }}
+        result={null}
+        status="executing"
+        toolCallId="ask-3"
+        workspaceId="ws-ask"
+      />
+    );
+
+    await waitFor(() => {
+      expect(setAutoRetryEnabled).toHaveBeenCalledTimes(2);
+    });
+
+    expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(1, {
+      workspaceId: "ws-ask",
+      enabled: true,
+    });
+    expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(2, {
+      workspaceId: "ws-ask",
+      enabled: false,
+    });
+  });
+
   test("restores auto-retry even when unmounted before async resume setup finishes", async () => {
     const answerDeferred = createDeferred<{ success: true; data: undefined }>();
     const resumeDeferred = createDeferred<{ success: true; data: undefined }>();

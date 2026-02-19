@@ -38,6 +38,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
   const manualRetryRollbackWorkspaceIdRef = useRef<string | null>(null);
   const manualRetryRollbackPendingRef = useRef(false);
   const manualRetryRollbackArmedRef = useRef(false);
+  const manualRetryRollbackBaselineMessageCountRef = useRef<number | null>(null);
   const apiRef = useRef(api);
 
   useEffect(() => {
@@ -53,6 +54,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
       const rollbackWorkspaceId = manualRetryRollbackWorkspaceIdRef.current;
       manualRetryRollbackPendingRef.current = false;
       manualRetryRollbackArmedRef.current = false;
+      manualRetryRollbackBaselineMessageCountRef.current = null;
       manualRetryRollbackWorkspaceIdRef.current = null;
 
       const activeApi = apiRef.current;
@@ -111,7 +113,10 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
       return;
     }
 
-    if (!manualRetryRollbackArmedRef.current) {
+    const baselineMessageCount = manualRetryRollbackBaselineMessageCountRef.current;
+    const hasObservedPostRetryMessage =
+      baselineMessageCount !== null && workspaceState.messages.length > baselineMessageCount;
+    if (!manualRetryRollbackArmedRef.current && !hasObservedPostRetryMessage) {
       return;
     }
 
@@ -120,6 +125,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
     autoRetryStatus,
     workspaceState.isStreamStarting,
     workspaceState.canInterrupt,
+    workspaceState.messages.length,
     rollbackManualRetryAutoRetryIfNeeded,
   ]);
 
@@ -185,6 +191,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
         manualRetryRollbackWorkspaceIdRef.current = props.workspaceId;
         manualRetryRollbackPendingRef.current = true;
         manualRetryRollbackArmedRef.current = false;
+        manualRetryRollbackBaselineMessageCountRef.current = workspaceState.messages.length;
       }
 
       const resumeResult = await api.workspace.resumeStream({
