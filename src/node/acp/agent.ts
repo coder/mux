@@ -66,6 +66,7 @@ const ACP_PROMPT_CORRELATION_MUX_METADATA_KEY = "acpPromptId";
 const ACP_DELEGATED_TOOLS_MUX_METADATA_KEY = "acpDelegatedTools";
 const ACP_DELEGATION_CANDIDATE_TOOLS = [
   "file_read",
+  "file_write",
   "file_edit_replace_string",
   "file_edit_insert",
   "bash",

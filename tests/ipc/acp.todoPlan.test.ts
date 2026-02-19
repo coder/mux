@@ -23,8 +23,9 @@ function createHarness(): {
   };
 }
 
-async function forwardEvents(
+async function forwardEventsForSession(
   translator: StreamTranslator,
+  sessionId: string,
   events: WorkspaceChatMessage[]
 ): Promise<void> {
   async function* stream(): AsyncIterable<WorkspaceChatMessage> {
@@ -33,7 +34,14 @@ async function forwardEvents(
     }
   }
 
-  await translator.consumeAndForward("session-1", stream());
+  await translator.consumeAndForward(sessionId, stream());
+}
+
+async function forwardEvents(
+  translator: StreamTranslator,
+  events: WorkspaceChatMessage[]
+): Promise<void> {
+  await forwardEventsForSession(translator, "session-1", events);
 }
 
 function getUpdateKinds(sessionUpdates: SessionNotification[]): string[] {
@@ -279,6 +287,61 @@ describe("ACP tool call terminal state translation", () => {
         },
       ]);
     }
+  });
+
+  it("isolates tool-call tracking across sessions when toolCallIds collide", async () => {
+    const { translator, sessionUpdates } = createHarness();
+
+    await forwardEventsForSession(translator, "session-1", [
+      makeToolCallStart("call_0", "bash", { cmd: "echo session1" }, "msg-s1"),
+    ]);
+
+    await forwardEventsForSession(translator, "session-2", [
+      makeToolCallStart("call_0", "bash", { cmd: "echo session2" }, "msg-s2"),
+      makeStreamError("msg-s2", "session2 failed", "provider_error"),
+    ]);
+
+    await forwardEventsForSession(translator, "session-1", [
+      makeStreamError("msg-s1", "session1 failed", "provider_error"),
+    ]);
+
+    const session1Notifications = sessionUpdates.filter(
+      (notification) => notification.sessionId === "session-1"
+    );
+    const session2Notifications = sessionUpdates.filter(
+      (notification) => notification.sessionId === "session-2"
+    );
+
+    expect(getUpdateKinds(session1Notifications)).toEqual(["tool_call", "tool_call_update"]);
+    expect(getUpdateKinds(session2Notifications)).toEqual(["tool_call", "tool_call_update"]);
+
+    const session1Failure = session1Notifications[1]?.update;
+    const session2Failure = session2Notifications[1]?.update;
+
+    if (session1Failure == null || session1Failure.sessionUpdate !== "tool_call_update") {
+      throw new Error("Expected session-1 to receive a terminal tool_call_update");
+    }
+    if (session2Failure == null || session2Failure.sessionUpdate !== "tool_call_update") {
+      throw new Error("Expected session-2 to receive a terminal tool_call_update");
+    }
+
+    expect(session1Failure.toolCallId).toBe("call_0");
+    expect(session1Failure.status).toBe("failed");
+    expect(session1Failure.content).toEqual([
+      {
+        type: "content",
+        content: { type: "text", text: "session1 failed" },
+      },
+    ]);
+
+    expect(session2Failure.toolCallId).toBe("call_0");
+    expect(session2Failure.status).toBe("failed");
+    expect(session2Failure.content).toEqual([
+      {
+        type: "content",
+        content: { type: "text", text: "session2 failed" },
+      },
+    ]);
   });
 
   it("keeps replayed input-available tool calls in progress until terminal events", async () => {

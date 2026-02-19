@@ -377,6 +377,7 @@ describe("ACP prompt stream correlation", () => {
 
     expect(muxMetadata["acpDelegatedTools"]).toEqual([
       "file_read",
+      "file_write",
       "file_edit_replace_string",
       "file_edit_insert",
       "bash",

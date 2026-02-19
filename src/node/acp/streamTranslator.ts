@@ -8,7 +8,9 @@ import type {
 import type { WorkspaceChatMessage } from "../../common/orpc/types";
 
 interface ActiveToolCall {
+  toolCallId: string;
   messageId: string;
+  scopedMessageKey: string;
   toolName: string;
   rawInput: unknown;
 }
@@ -34,10 +36,11 @@ interface MessageMetadataWithFrontendFields {
 
 const TODO_WRITE_TOOL_NAME = "todo_write";
 const DEFAULT_PLAN_ENTRY_PRIORITY: PlanEntryPriority = "medium";
+const SESSION_SCOPED_TOOL_KEY_DELIMITER = "\u0000";
 
 export class StreamTranslator {
-  private readonly activeToolCalls = new Map<string, string[]>();
-  private readonly toolCallsById = new Map<string, ActiveToolCall>();
+  private readonly activeToolCallsByMessageKey = new Map<string, string[]>();
+  private readonly toolCallsByKey = new Map<string, ActiveToolCall>();
 
   constructor(private readonly connection: AgentSideConnection) {
     assert(connection != null, "StreamTranslator: connection is required");
@@ -58,14 +61,14 @@ export class StreamTranslator {
     assert(chatStream != null, "consumeAndForward: chatStream is required");
 
     for await (const event of chatStream) {
-      const updates = this.translateEvent(event);
+      const updates = this.translateEvent(sessionId, event);
       for (const update of updates) {
         await this.connection.sessionUpdate({ sessionId, update });
       }
     }
   }
 
-  private translateEvent(event: WorkspaceChatMessage): SessionUpdate[] {
+  private translateEvent(sessionId: string, event: WorkspaceChatMessage): SessionUpdate[] {
     switch (event.type) {
       case "stream-delta":
         return this.toSingleChunkUpdate("agent_message_chunk", event.delta);
@@ -74,7 +77,13 @@ export class StreamTranslator {
         return this.toSingleChunkUpdate("agent_thought_chunk", event.delta);
 
       case "tool-call-start": {
-        this.registerToolCall(event.messageId, event.toolCallId, event.toolName, event.args);
+        this.registerToolCall(
+          sessionId,
+          event.messageId,
+          event.toolCallId,
+          event.toolName,
+          event.args
+        );
         return [
           {
             sessionUpdate: "tool_call",
@@ -88,8 +97,15 @@ export class StreamTranslator {
       }
 
       case "tool-call-delta": {
-        if (!this.toolCallsById.has(event.toolCallId)) {
-          this.registerToolCall(event.messageId, event.toolCallId, event.toolName, event.delta);
+        const scopedToolCallKey = this.getScopedToolCallKey(sessionId, event.toolCallId);
+        if (!this.toolCallsByKey.has(scopedToolCallKey)) {
+          this.registerToolCall(
+            sessionId,
+            event.messageId,
+            event.toolCallId,
+            event.toolName,
+            event.delta
+          );
         }
         return [
           {
@@ -104,14 +120,16 @@ export class StreamTranslator {
       }
 
       case "tool-call-end": {
-        const toolState = this.toolCallsById.get(event.toolCallId);
+        const toolState = this.toolCallsByKey.get(
+          this.getScopedToolCallKey(sessionId, event.toolCallId)
+        );
         const todoPlanUpdate = this.translateTodoWritePlanUpdate(
           event.toolName,
           toolState?.rawInput,
           event.result
         );
 
-        this.unregisterToolCall(event.toolCallId);
+        this.unregisterToolCall(sessionId, event.toolCallId);
 
         const updates: SessionUpdate[] = [
           {
@@ -151,23 +169,23 @@ export class StreamTranslator {
       }
 
       case "error":
-        return this.translateToolFailure(event.messageId, event.error, event.errorType);
+        return this.translateToolFailure(sessionId, event.messageId, event.error, event.errorType);
 
       case "stream-error":
-        return this.translateToolFailure(event.messageId, event.error, event.errorType);
+        return this.translateToolFailure(sessionId, event.messageId, event.error, event.errorType);
 
       case "message":
-        return this.translateReplayMessage(event);
+        return this.translateReplayMessage(sessionId, event);
 
       case "stream-end":
-        this.clearMessageToolCalls(event.messageId);
+        this.clearMessageToolCalls(sessionId, event.messageId);
         return [];
 
       case "stream-abort": {
         // Emit terminal "failed" updates for any tool calls still in progress
         // so ACP clients don't see started-but-never-finished tool calls.
-        const abortUpdates = this.terminateActiveToolCalls(event.messageId, "failed");
-        this.clearMessageToolCalls(event.messageId);
+        const abortUpdates = this.terminateActiveToolCalls(sessionId, event.messageId, "failed");
+        this.clearMessageToolCalls(sessionId, event.messageId);
         return abortUpdates;
       }
 
@@ -195,6 +213,7 @@ export class StreamTranslator {
   }
 
   private translateReplayMessage(
+    sessionId: string,
     event: Extract<WorkspaceChatMessage, { type: "message" }>
   ): SessionUpdate[] {
     const updates: SessionUpdate[] = [];
@@ -215,7 +234,7 @@ export class StreamTranslator {
           continue;
         }
 
-        this.registerToolCall(event.id, part.toolCallId, part.toolName, part.input);
+        this.registerToolCall(sessionId, event.id, part.toolCallId, part.toolName, part.input);
         updates.push({
           sessionUpdate: "tool_call",
           toolCallId: part.toolCallId,
@@ -232,7 +251,7 @@ export class StreamTranslator {
             part.output
           );
 
-          this.unregisterToolCall(part.toolCallId);
+          this.unregisterToolCall(sessionId, part.toolCallId);
           updates.push({
             sessionUpdate: "tool_call_update",
             toolCallId: part.toolCallId,
@@ -250,7 +269,7 @@ export class StreamTranslator {
         }
 
         if (part.state === "output-redacted") {
-          this.unregisterToolCall(part.toolCallId);
+          this.unregisterToolCall(sessionId, part.toolCallId);
           const redactionMessage = part.failed
             ? "Tool output was redacted because the tool failed."
             : "Tool output was redacted.";
@@ -333,15 +352,16 @@ export class StreamTranslator {
   }
 
   private translateToolFailure(
+    sessionId: string,
     messageId: string,
     error: string,
     errorType?: string
   ): SessionUpdate[] {
-    const failureUpdates = this.terminateActiveToolCalls(messageId, "failed", {
+    const failureUpdates = this.terminateActiveToolCalls(sessionId, messageId, "failed", {
       failureReason: error,
       errorType,
     });
-    this.clearMessageToolCalls(messageId);
+    this.clearMessageToolCalls(sessionId, messageId);
     return failureUpdates;
   }
 
@@ -417,45 +437,60 @@ export class StreamTranslator {
   }
 
   private registerToolCall(
+    sessionId: string,
     messageId: string,
     toolCallId: string,
     toolName: string,
     rawInput: unknown
   ): void {
+    assert(sessionId.trim().length > 0, "registerToolCall: sessionId must be non-empty");
     assert(messageId.trim().length > 0, "registerToolCall: messageId must be non-empty");
     assert(toolCallId.trim().length > 0, "registerToolCall: toolCallId must be non-empty");
     assert(toolName.trim().length > 0, "registerToolCall: toolName must be non-empty");
 
-    this.toolCallsById.set(toolCallId, { messageId, toolName, rawInput });
+    const scopedToolCallKey = this.getScopedToolCallKey(sessionId, toolCallId);
+    const scopedMessageKey = this.getScopedMessageKey(sessionId, messageId);
 
-    const existing = this.activeToolCalls.get(messageId);
+    this.toolCallsByKey.set(scopedToolCallKey, {
+      toolCallId,
+      messageId,
+      scopedMessageKey,
+      toolName,
+      rawInput,
+    });
+
+    const existing = this.activeToolCallsByMessageKey.get(scopedMessageKey);
     if (existing == null) {
-      this.activeToolCalls.set(messageId, [toolCallId]);
+      this.activeToolCallsByMessageKey.set(scopedMessageKey, [scopedToolCallKey]);
       return;
     }
 
-    if (!existing.includes(toolCallId)) {
-      existing.push(toolCallId);
+    if (!existing.includes(scopedToolCallKey)) {
+      existing.push(scopedToolCallKey);
     }
   }
 
-  private unregisterToolCall(toolCallId: string): void {
-    const tool = this.toolCallsById.get(toolCallId);
+  private unregisterToolCall(sessionId: string, toolCallId: string): void {
+    assert(sessionId.trim().length > 0, "unregisterToolCall: sessionId must be non-empty");
+    assert(toolCallId.trim().length > 0, "unregisterToolCall: toolCallId must be non-empty");
+
+    const scopedToolCallKey = this.getScopedToolCallKey(sessionId, toolCallId);
+    const tool = this.toolCallsByKey.get(scopedToolCallKey);
     if (tool == null) {
       return;
     }
 
-    const activeForMessage = this.activeToolCalls.get(tool.messageId);
+    const activeForMessage = this.activeToolCallsByMessageKey.get(tool.scopedMessageKey);
     if (activeForMessage != null) {
-      const filtered = activeForMessage.filter((id) => id !== toolCallId);
+      const filtered = activeForMessage.filter((id) => id !== scopedToolCallKey);
       if (filtered.length === 0) {
-        this.activeToolCalls.delete(tool.messageId);
+        this.activeToolCallsByMessageKey.delete(tool.scopedMessageKey);
       } else {
-        this.activeToolCalls.set(tool.messageId, filtered);
+        this.activeToolCallsByMessageKey.set(tool.scopedMessageKey, filtered);
       }
     }
 
-    this.toolCallsById.delete(toolCallId);
+    this.toolCallsByKey.delete(scopedToolCallKey);
   }
 
   /**
@@ -464,6 +499,7 @@ export class StreamTranslator {
    * proper ACP status transition (e.g., "failed" on abort).
    */
   private terminateActiveToolCalls(
+    sessionId: string,
     messageId: string,
     status: "failed" | "completed",
     options?: {
@@ -471,7 +507,8 @@ export class StreamTranslator {
       errorType?: string;
     }
   ): SessionUpdate[] {
-    const activeForMessage = this.activeToolCalls.get(messageId);
+    const scopedMessageKey = this.getScopedMessageKey(sessionId, messageId);
+    const activeForMessage = this.activeToolCallsByMessageKey.get(scopedMessageKey);
     if (activeForMessage == null || activeForMessage.length === 0) {
       return [];
     }
@@ -479,15 +516,15 @@ export class StreamTranslator {
     const failureReason = options?.failureReason ?? "Cancelled";
 
     const updates: SessionUpdate[] = [];
-    for (const toolCallId of activeForMessage) {
-      const tool = this.toolCallsById.get(toolCallId);
+    for (const scopedToolCallKey of activeForMessage) {
+      const tool = this.toolCallsByKey.get(scopedToolCallKey);
       if (tool == null) {
         continue;
       }
 
       const update: ToolCallUpdateSessionUpdate = {
         sessionUpdate: "tool_call_update",
-        toolCallId,
+        toolCallId: tool.toolCallId,
         title: tool.toolName,
         kind: inferToolKind(tool.toolName),
         status,
@@ -505,17 +542,32 @@ export class StreamTranslator {
     return updates;
   }
 
-  private clearMessageToolCalls(messageId: string): void {
-    const activeForMessage = this.activeToolCalls.get(messageId);
+  private clearMessageToolCalls(sessionId: string, messageId: string): void {
+    const scopedMessageKey = this.getScopedMessageKey(sessionId, messageId);
+    const activeForMessage = this.activeToolCallsByMessageKey.get(scopedMessageKey);
     if (activeForMessage == null) {
       return;
     }
 
-    for (const toolCallId of activeForMessage) {
-      this.toolCallsById.delete(toolCallId);
+    for (const scopedToolCallKey of activeForMessage) {
+      this.toolCallsByKey.delete(scopedToolCallKey);
     }
 
-    this.activeToolCalls.delete(messageId);
+    this.activeToolCallsByMessageKey.delete(scopedMessageKey);
+  }
+
+  private getScopedMessageKey(sessionId: string, messageId: string): string {
+    assert(sessionId.trim().length > 0, "getScopedMessageKey: sessionId must be non-empty");
+    assert(messageId.trim().length > 0, "getScopedMessageKey: messageId must be non-empty");
+
+    return `${sessionId}${SESSION_SCOPED_TOOL_KEY_DELIMITER}${messageId}`;
+  }
+
+  private getScopedToolCallKey(sessionId: string, toolCallId: string): string {
+    assert(sessionId.trim().length > 0, "getScopedToolCallKey: sessionId must be non-empty");
+    assert(toolCallId.trim().length > 0, "getScopedToolCallKey: toolCallId must be non-empty");
+
+    return `${sessionId}${SESSION_SCOPED_TOOL_KEY_DELIMITER}${toolCallId}`;
   }
 }
 
