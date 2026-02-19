@@ -1,10 +1,10 @@
 import assert from "@/common/utils/assert";
 
 import { AlertTriangle, Check } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { useAPI } from "@/browser/contexts/API";
-import { useWorkspaceState } from "@/browser/stores/WorkspaceStore";
+import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
 import { useAutoResizeTextarea } from "@/browser/hooks/useAutoResizeTextarea";
@@ -232,7 +232,29 @@ export function AskUserQuestionToolCall(props: {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const workspaceState = useWorkspaceState(props.workspaceId ?? "");
+  const workspaceStore = useWorkspaceStoreRaw();
+  const workspaceState = useSyncExternalStore(
+    (listener) => {
+      if (!props.workspaceId) {
+        return () => undefined;
+      }
+
+      return workspaceStore.subscribeKey(props.workspaceId, listener);
+    },
+    () => {
+      if (!props.workspaceId) {
+        return null;
+      }
+
+      // Some render paths (nested tool rendering) do not have workspace context.
+      // Fail-soft so ask_user_question still renders instead of crashing the tree.
+      try {
+        return workspaceStore.getWorkspaceState(props.workspaceId);
+      } catch {
+        return null;
+      }
+    }
+  );
   const autoRetryRollbackPendingRef = useRef(false);
   const autoRetryRollbackArmedRef = useRef(false);
 
@@ -267,11 +289,12 @@ export function AskUserQuestionToolCall(props: {
       return;
     }
 
-    const autoRetryStatusType = workspaceState.autoRetryStatus?.type;
+    const autoRetryStatusType = workspaceState?.autoRetryStatus?.type;
     const autoRetryActive =
       autoRetryStatusType === "auto-retry-scheduled" ||
       autoRetryStatusType === "auto-retry-starting";
-    const streamInFlight = workspaceState.isStreamStarting || workspaceState.canInterrupt;
+    const streamInFlight =
+      workspaceState?.isStreamStarting === true || workspaceState?.canInterrupt === true;
 
     // Wait until the resumed stream has actually reached an in-flight state before
     // considering rollback. This avoids disabling auto-retry immediately after
@@ -288,9 +311,9 @@ export function AskUserQuestionToolCall(props: {
     void rollbackAutoRetryIfNeeded();
   }, [
     rollbackAutoRetryIfNeeded,
-    workspaceState.autoRetryStatus,
-    workspaceState.isStreamStarting,
-    workspaceState.canInterrupt,
+    workspaceState?.autoRetryStatus,
+    workspaceState?.isStreamStarting,
+    workspaceState?.canInterrupt,
   ]);
 
   const [draftAnswers, setDraftAnswers] = useState<Record<string, DraftAnswer>>(() => {
@@ -412,7 +435,7 @@ export function AskUserQuestionToolCall(props: {
         // If the stream was interrupted (e.g. app restart), explicitly resume using
         // the latest persisted send options for this workspace.
         let sendOptions = getSendOptionsFromStorage(workspaceId);
-        const lastUserMessage = [...workspaceState.messages]
+        const lastUserMessage = [...(workspaceState?.messages ?? [])]
           .reverse()
           .find(
             (message): message is Extract<typeof message, { type: "user" }> =>
