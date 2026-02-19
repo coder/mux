@@ -75,6 +75,19 @@ function makeToolCallEnd(
   } as WorkspaceChatMessage;
 }
 
+function makeStreamError(
+  messageId: string,
+  error: string,
+  errorType = "api_error"
+): WorkspaceChatMessage {
+  return {
+    type: "stream-error",
+    messageId,
+    error,
+    errorType,
+  } as WorkspaceChatMessage;
+}
+
 function makeUserMessage(
   text: string,
   options?: {
@@ -228,6 +241,84 @@ describe("ACP todo_write plan translation", () => {
     expect(planUpdate.entries).toEqual([
       { content: "Completed previous task", status: "completed", priority: "medium" },
       { content: "Current task", status: "in_progress", priority: "medium" },
+    ]);
+  });
+});
+
+describe("ACP tool call terminal state translation", () => {
+  it("fails every active tool call when a stream-level error arrives", async () => {
+    const { translator, sessionUpdates } = createHarness();
+
+    await forwardEvents(translator, [
+      makeToolCallStart("tool-1", "file_read", { path: "README.md" }),
+      makeToolCallStart("tool-2", "bash", { cmd: "echo hi" }),
+      makeStreamError("msg-1", "provider timeout", "provider_error"),
+    ]);
+
+    expect(getUpdateKinds(sessionUpdates)).toEqual([
+      "tool_call",
+      "tool_call",
+      "tool_call_update",
+      "tool_call_update",
+    ]);
+
+    const failureUpdates = sessionUpdates
+      .map((notification) => notification.update)
+      .filter((update) => update.sessionUpdate === "tool_call_update");
+
+    expect(failureUpdates).toHaveLength(2);
+    expect(failureUpdates.map((update) => update.toolCallId)).toEqual(["tool-1", "tool-2"]);
+
+    for (const update of failureUpdates) {
+      expect(update.status).toBe("failed");
+      expect(update._meta).toEqual({ errorType: "provider_error" });
+      expect(update.content).toEqual([
+        {
+          type: "content",
+          content: { type: "text", text: "provider timeout" },
+        },
+      ]);
+    }
+  });
+
+  it("closes replayed input-available tool calls as failed", async () => {
+    const { translator, sessionUpdates } = createHarness();
+
+    const replayMessage: WorkspaceChatMessage = {
+      type: "message",
+      id: "assistant-pending",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "tool-pending",
+          toolName: "bash",
+          input: { cmd: "sleep 1" },
+          state: "input-available",
+        },
+      ],
+    } as WorkspaceChatMessage;
+
+    await forwardEvents(translator, [
+      replayMessage,
+      makeStreamError("assistant-pending", "late replay error", "api_error"),
+    ]);
+
+    expect(getUpdateKinds(sessionUpdates)).toEqual(["tool_call", "tool_call_update"]);
+
+    const terminalUpdate = sessionUpdates[1]?.update;
+    expect(terminalUpdate).toBeDefined();
+    if (terminalUpdate == null || terminalUpdate.sessionUpdate !== "tool_call_update") {
+      throw new Error("Expected replayed pending tool call to emit terminal tool_call_update");
+    }
+
+    expect(terminalUpdate.toolCallId).toBe("tool-pending");
+    expect(terminalUpdate.status).toBe("failed");
+    expect(terminalUpdate.content).toEqual([
+      {
+        type: "content",
+        content: { type: "text", text: "Interrupted before completion." },
+      },
     ]);
   });
 });

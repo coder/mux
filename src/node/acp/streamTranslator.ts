@@ -246,6 +246,7 @@ export class StreamTranslator {
           if (todoPlanUpdate != null) {
             updates.push(todoPlanUpdate);
           }
+          continue;
         }
 
         if (part.state === "output-redacted") {
@@ -261,7 +262,26 @@ export class StreamTranslator {
             status: part.failed ? "failed" : "completed",
             content: [textToolContent(redactionMessage)],
           });
+          continue;
         }
+
+        assert(
+          part.state === "input-available",
+          `translateReplayMessage: unexpected dynamic-tool state '${part.state}'`
+        );
+
+        // Historical replay can include interrupted tool calls that never produced
+        // output. Close them immediately so ACP clients don't render stale
+        // in-progress calls forever after session load.
+        this.unregisterToolCall(part.toolCallId);
+        updates.push({
+          sessionUpdate: "tool_call_update",
+          toolCallId: part.toolCallId,
+          title: part.toolName,
+          kind: inferToolKind(part.toolName),
+          status: "failed",
+          content: [textToolContent("Interrupted before completion.")],
+        });
       }
 
       return updates;
@@ -325,28 +345,12 @@ export class StreamTranslator {
     error: string,
     errorType?: string
   ): SessionUpdate[] {
-    const activeToolCallId = this.getLatestActiveToolCallId(messageId);
-    if (activeToolCallId == null) {
-      return [];
-    }
-
-    const toolState = this.toolCallsById.get(activeToolCallId);
-    this.unregisterToolCall(activeToolCallId);
-
-    const update: ToolCallUpdateSessionUpdate = {
-      sessionUpdate: "tool_call_update",
-      toolCallId: activeToolCallId,
-      title: toolState?.toolName,
-      kind: inferToolKind(toolState?.toolName ?? "other"),
-      status: "failed",
-      content: [textToolContent(error)],
-    };
-
-    if (errorType != null) {
-      update._meta = { errorType };
-    }
-
-    return [update];
+    const failureUpdates = this.terminateActiveToolCalls(messageId, "failed", {
+      failureReason: error,
+      errorType,
+    });
+    this.clearMessageToolCalls(messageId);
+    return failureUpdates;
   }
 
   private toSingleChunkUpdate(
@@ -469,12 +473,18 @@ export class StreamTranslator {
    */
   private terminateActiveToolCalls(
     messageId: string,
-    status: "failed" | "completed"
+    status: "failed" | "completed",
+    options?: {
+      failureReason?: string;
+      errorType?: string;
+    }
   ): SessionUpdate[] {
     const activeForMessage = this.activeToolCalls.get(messageId);
     if (activeForMessage == null || activeForMessage.length === 0) {
       return [];
     }
+
+    const failureReason = options?.failureReason ?? "Cancelled";
 
     const updates: SessionUpdate[] = [];
     for (const toolCallId of activeForMessage) {
@@ -482,17 +492,22 @@ export class StreamTranslator {
       if (tool == null) {
         continue;
       }
+
       const update: ToolCallUpdateSessionUpdate = {
         sessionUpdate: "tool_call_update",
         toolCallId,
+        title: tool.toolName,
+        kind: inferToolKind(tool.toolName),
         status,
-        content: [
-          {
-            type: "content",
-            content: { type: "text", text: status === "failed" ? "Cancelled" : "" },
-          },
-        ],
       };
+
+      if (status === "failed") {
+        update.content = [textToolContent(failureReason)];
+        if (options?.errorType != null) {
+          update._meta = { errorType: options.errorType };
+        }
+      }
+
       updates.push(update);
     }
     return updates;
@@ -509,22 +524,6 @@ export class StreamTranslator {
     }
 
     this.activeToolCalls.delete(messageId);
-  }
-
-  private getLatestActiveToolCallId(messageId: string): string | undefined {
-    const activeForMessage = this.activeToolCalls.get(messageId);
-    if (activeForMessage == null || activeForMessage.length === 0) {
-      return undefined;
-    }
-
-    for (let i = activeForMessage.length - 1; i >= 0; i--) {
-      const toolCallId = activeForMessage[i];
-      if (toolCallId != null && this.toolCallsById.has(toolCallId)) {
-        return toolCallId;
-      }
-    }
-
-    return undefined;
   }
 }
 
