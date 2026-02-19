@@ -414,6 +414,57 @@ describe("AgentSession startup auto-retry recovery", () => {
     secondSession.dispose();
   });
 
+  test("does not persist temporary auto-retry enable across restart", async () => {
+    const workspaceId = "startup-retry-temporary-enable";
+    const {
+      session: firstSession,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+      cleanup,
+    } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const appendResult = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-1", "user", "Interrupted before restart", {
+        timestamp: Date.now(),
+      })
+    );
+    expect(appendResult.success).toBe(true);
+
+    await firstSession.setAutoRetryEnabled(false);
+    await firstSession.setAutoRetryEnabled(true, { persist: false });
+    firstSession.dispose();
+
+    const secondSession = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const events: WorkspaceChatMessage[] = [];
+    secondSession.onChatEvent(({ message }) => {
+      events.push(message);
+    });
+
+    secondSession.ensureStartupAutoRetryCheck();
+
+    const startupCheckPromise = (
+      secondSession as unknown as { startupAutoRetryCheckPromise: Promise<void> | null }
+    ).startupAutoRetryCheckPromise;
+    await startupCheckPromise;
+
+    expect(events.some((event) => event.type === "auto-retry-scheduled")).toBe(false);
+
+    secondSession.dispose();
+  });
+
   test("does not reschedule startup retries after persisted non-retryable failure", async () => {
     const workspaceId = "startup-retry-non-retryable";
     const {

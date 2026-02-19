@@ -268,7 +268,7 @@ describe("WorkspaceService idle compaction dispatch", () => {
     );
   });
 
-  test("does not emit idle-compaction-started when workspace became busy", async () => {
+  test("emits idle-compaction-started before busy-skip result is returned", async () => {
     const workspaceId = "idle-busy-ws";
     const sendMessage = mock(() =>
       Promise.resolve(
@@ -318,7 +318,7 @@ describe("WorkspaceService idle compaction dispatch", () => {
     }
     expect(executionError.message).toContain("idle-only send was skipped");
 
-    expect(emitIdleCompactionStarted).not.toHaveBeenCalled();
+    expect(emitIdleCompactionStarted).toHaveBeenCalledTimes(1);
   });
 });
 

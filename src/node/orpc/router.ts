@@ -2590,7 +2590,8 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           const result = await context.workspaceService.setAutoRetryEnabled(
             input.workspaceId,
-            input.enabled
+            input.enabled,
+            input.persist ?? true
           );
           if (!result.success) {
             return { success: false, error: result.error };

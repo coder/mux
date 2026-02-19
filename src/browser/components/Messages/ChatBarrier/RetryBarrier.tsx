@@ -65,6 +65,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
       const rollbackResult = await activeApi.workspace.setAutoRetryEnabled?.({
         workspaceId: rollbackWorkspaceId,
         enabled: false,
+        persist: false,
       });
       if (rollbackResult && !rollbackResult.success && !options?.suppressErrors) {
         setManualRetryError(rollbackResult.error);
@@ -179,6 +180,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
       const enableResult = await api.workspace.setAutoRetryEnabled?.({
         workspaceId: props.workspaceId,
         enabled: true,
+        persist: false,
       });
       if (enableResult && !enableResult.success) {
         setManualRetryError(enableResult.error);

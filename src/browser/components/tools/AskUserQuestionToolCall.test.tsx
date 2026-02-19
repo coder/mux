@@ -126,10 +126,12 @@ describe("AskUserQuestionToolCall", () => {
     expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(1, {
       workspaceId: "ws-ask",
       enabled: true,
+      persist: false,
     });
     expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(2, {
       workspaceId: "ws-ask",
       enabled: false,
+      persist: false,
     });
   });
 
@@ -176,10 +178,12 @@ describe("AskUserQuestionToolCall", () => {
     expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(1, {
       workspaceId: "ws-ask",
       enabled: true,
+      persist: false,
     });
     expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(2, {
       workspaceId: "ws-ask",
       enabled: false,
+      persist: false,
     });
   });
 
@@ -218,10 +222,12 @@ describe("AskUserQuestionToolCall", () => {
     expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(1, {
       workspaceId: "ws-ask",
       enabled: true,
+      persist: false,
     });
     expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(2, {
       workspaceId: "ws-ask",
       enabled: false,
+      persist: false,
     });
   });
 });

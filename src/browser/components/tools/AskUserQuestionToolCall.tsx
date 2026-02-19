@@ -287,6 +287,7 @@ export function AskUserQuestionToolCall(props: {
       const rollbackResult = await activeApi.workspace.setAutoRetryEnabled?.({
         workspaceId: rollbackWorkspaceId,
         enabled: false,
+        persist: false,
       });
       if (rollbackResult && !rollbackResult.success && !options?.suppressErrors) {
         setSubmitError(rollbackResult.error);
@@ -498,6 +499,7 @@ export function AskUserQuestionToolCall(props: {
         const enableResult = await api.workspace.setAutoRetryEnabled?.({
           workspaceId,
           enabled: true,
+          persist: false,
         });
         if (enableResult && !enableResult.success) {
           setSubmitError(enableResult.error);
@@ -511,6 +513,7 @@ export function AskUserQuestionToolCall(props: {
             await api.workspace.setAutoRetryEnabled?.({
               workspaceId,
               enabled: false,
+              persist: false,
             });
           } else {
             autoRetryRollbackWorkspaceIdRef.current = workspaceId;

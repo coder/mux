@@ -3358,11 +3358,12 @@ export class WorkspaceService extends EventEmitter {
 
   async setAutoRetryEnabled(
     workspaceId: string,
-    enabled: boolean
+    enabled: boolean,
+    persist = true
   ): Promise<Result<{ previousEnabled: boolean; enabled: boolean }>> {
     try {
       const session = this.getOrCreateSession(workspaceId);
-      const state = await session.setAutoRetryEnabled(enabled);
+      const state = await session.setAutoRetryEnabled(enabled, { persist });
       return Ok(state);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -4330,6 +4331,17 @@ export class WorkspaceService extends EventEmitter {
       displayStatus: { emoji: "💤", message: "Compacting idle workspace..." },
     };
 
+    const session = this.getOrCreateSession(workspaceId);
+    if (session.isBusy()) {
+      throw new Error(
+        "Failed to execute idle compaction: Workspace is busy; idle-only send was skipped."
+      );
+    }
+
+    // Notify listeners before awaiting sendMessage so UI can reflect that
+    // backend idle compaction has started while the compaction stream runs.
+    this.emitIdleCompactionStarted(workspaceId);
+
     const sendResult = await this.sendMessage(
       workspaceId,
       buildCompactionMessageText({}),
@@ -4362,8 +4374,6 @@ export class WorkspaceService extends EventEmitter {
           : String(rawError);
       throw new Error(`Failed to execute idle compaction: ${formattedError}`);
     }
-
-    this.emitIdleCompactionStarted(workspaceId);
   }
 
   private async buildIdleCompactionSendOptions(workspaceId: string): Promise<SendMessageOptions> {

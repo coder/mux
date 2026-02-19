@@ -2061,7 +2061,8 @@ export class AgentSession {
   }
 
   async setAutoRetryEnabled(
-    enabled: boolean
+    enabled: boolean,
+    options?: { persist?: boolean }
   ): Promise<{ previousEnabled: boolean; enabled: boolean }> {
     this.assertNotDisposed("setAutoRetryEnabled");
     assert(typeof enabled === "boolean", "setAutoRetryEnabled requires a boolean");
@@ -2073,7 +2074,10 @@ export class AgentSession {
       this.retryManager.cancel();
     }
 
-    await this.persistAutoRetryEnabledPreference(enabled);
+    if (options?.persist ?? true) {
+      await this.persistAutoRetryEnabledPreference(enabled);
+    }
+
     return { previousEnabled, enabled };
   }
 

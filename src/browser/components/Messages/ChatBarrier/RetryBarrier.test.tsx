@@ -139,10 +139,15 @@ describe("RetryBarrier", () => {
     });
     expect(view.getByText(/Runtime failed to start/)).toBeTruthy();
 
-    expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(1, { workspaceId: "ws-1", enabled: true });
+    expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(1, {
+      workspaceId: "ws-1",
+      enabled: true,
+      persist: false,
+    });
     expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(2, {
       workspaceId: "ws-1",
       enabled: false,
+      persist: false,
     });
     expect(resumeStream).toHaveBeenCalledTimes(1);
   });
@@ -182,10 +187,15 @@ describe("RetryBarrier", () => {
       expect(setAutoRetryEnabled).toHaveBeenCalledTimes(2);
     });
 
-    expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(1, { workspaceId: "ws-1", enabled: true });
+    expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(1, {
+      workspaceId: "ws-1",
+      enabled: true,
+      persist: false,
+    });
     expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(2, {
       workspaceId: "ws-1",
       enabled: false,
+      persist: false,
     });
     expect(view.queryByText("Retry failed:")).toBeNull();
   });
@@ -228,10 +238,15 @@ describe("RetryBarrier", () => {
       expect(setAutoRetryEnabled).toHaveBeenCalledTimes(2);
     });
 
-    expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(1, { workspaceId: "ws-1", enabled: true });
+    expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(1, {
+      workspaceId: "ws-1",
+      enabled: true,
+      persist: false,
+    });
     expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(2, {
       workspaceId: "ws-1",
       enabled: false,
+      persist: false,
     });
   });
 
@@ -254,10 +269,15 @@ describe("RetryBarrier", () => {
       expect(setAutoRetryEnabled).toHaveBeenCalledTimes(2);
     });
 
-    expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(1, { workspaceId: "ws-1", enabled: true });
+    expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(1, {
+      workspaceId: "ws-1",
+      enabled: true,
+      persist: false,
+    });
     expect(setAutoRetryEnabled).toHaveBeenNthCalledWith(2, {
       workspaceId: "ws-1",
       enabled: false,
+      persist: false,
     });
   });
 
@@ -280,7 +300,11 @@ describe("RetryBarrier", () => {
     });
 
     expect(setAutoRetryEnabled).toHaveBeenCalledTimes(1);
-    expect(setAutoRetryEnabled).toHaveBeenCalledWith({ workspaceId: "ws-1", enabled: true });
+    expect(setAutoRetryEnabled).toHaveBeenCalledWith({
+      workspaceId: "ws-1",
+      enabled: true,
+      persist: false,
+    });
     expect(resumeStream).toHaveBeenCalledTimes(1);
   });
 });

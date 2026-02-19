@@ -920,6 +920,8 @@ export const workspace = {
     input: z.object({
       workspaceId: z.string(),
       enabled: z.boolean(),
+      // Runtime-only toggle for temporary retry flows (do not mutate persisted preference).
+      persist: z.boolean().nullish(),
     }),
     output: ResultSchema(
       z.object({
