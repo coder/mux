@@ -2081,9 +2081,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             ? resolveThinkingInput(rawThinkingOverride, policyModel)
             : undefined;
         // In critic mode, the message text IS the critic prompt.
-        // Persist it for resumability (context recovery, etc.) and override the send options.
-        if (criticEnabled && messageText) {
-          setCriticPrompt(messageText);
+        // Use the parsed send text (not raw input) so command prefixes like
+        // "/haiku" are stripped — the critic should evaluate what the actor sees.
+        // Persist for resumability (context recovery, etc.) and override send options.
+        if (criticEnabled && actualMessageText) {
+          setCriticPrompt(actualMessageText);
         }
 
         const sendOptions = {
@@ -2092,9 +2094,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           ...(modelOverride ? { model: modelOverride } : {}),
           ...(thinkingOverride ? { thinkingLevel: thinkingOverride } : {}),
           ...(modelOneShot ? { skipAiSettingsPersistence: true } : {}),
-          // When critic mode is on, use the message text as the critic prompt
+          // When critic mode is on, use the parsed send text as the critic prompt
           // (overrides whatever was in sendMessageOptions from storage).
-          ...(criticEnabled && messageText ? { criticPrompt: messageText } : {}),
+          ...(criticEnabled && actualMessageText ? { criticPrompt: actualMessageText } : {}),
           additionalSystemInstructions,
           editMessageId: editingMessage?.id,
           fileParts: sendFileParts,
