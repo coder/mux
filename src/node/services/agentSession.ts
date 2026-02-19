@@ -3385,6 +3385,13 @@ export class AgentSession {
           workspaceId: this.workspaceId,
           turnPhase: this.turnPhase,
         });
+
+        const preStreamAbortReason = "abortReason" in payload ? payload.abortReason : undefined;
+        await this.updateStartupAutoRetryAbandonFromAbort(
+          preStreamAbortReason,
+          this.activeStreamUserMessageId
+        );
+
         this.emitChatEvent(payload);
         return;
       }

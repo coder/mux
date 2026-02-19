@@ -650,6 +650,90 @@ describe("AgentSession startup auto-retry recovery", () => {
     session.dispose();
   });
 
+  test("persists startup abandon marker for pre-stream user aborts", async () => {
+    const workspaceId = "startup-retry-pre-stream-abort";
+    const { historyService, config, cleanup } = await createTestHistoryService();
+    cleanups.push(cleanup);
+
+    const workspaceMetadata: WorkspaceMetadata = {
+      id: workspaceId,
+      name: workspaceId,
+      projectName: "project",
+      projectPath: "/tmp/project",
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+      aiSettingsByAgent: {
+        exec: { model: "anthropic:claude-sonnet-4-5", thinkingLevel: "medium" },
+      },
+    };
+
+    const aiEmitter = new EventEmitter();
+    const aiService = Object.assign(aiEmitter, {
+      stopStream: mock(() => Promise.resolve(Ok(undefined))),
+      isStreaming: mock(() => false),
+      streamMessage: mock(() => Promise.resolve(Ok(undefined))),
+      getWorkspaceMetadata: mock(() => Promise.resolve(Ok(workspaceMetadata))),
+    }) as unknown as AIService;
+
+    const initStateManager: InitStateManager = {
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      cleanup: mock(() => Promise.resolve()),
+      setMessageQueued: mock(() => undefined),
+    } as unknown as BackgroundProcessManager;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const privateSession = session as unknown as {
+      setTurnPhase: (phase: "idle" | "preparing" | "streaming" | "completing") => void;
+      activeStreamUserMessageId?: string;
+      getAutoRetryPreferencePath: () => string;
+      startupAutoRetryAbandon: { reason: string; userMessageId?: string } | null;
+    };
+
+    privateSession.activeStreamUserMessageId = "user-1";
+    privateSession.setTurnPhase("preparing");
+
+    aiEmitter.emit("stream-abort", {
+      type: "stream-abort",
+      workspaceId,
+      messageId: "assistant-1",
+      abortReason: "user",
+      metadata: {},
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(privateSession.startupAutoRetryAbandon).toEqual({
+      reason: "aborted",
+      userMessageId: "user-1",
+    });
+
+    const preferencePath = privateSession.getAutoRetryPreferencePath();
+    const persisted = JSON.parse(await Bun.file(preferencePath).text()) as {
+      startupAutoRetryAbandon?: { reason?: string; userMessageId?: string };
+    };
+    expect(persisted.startupAutoRetryAbandon).toEqual({
+      reason: "aborted",
+      userMessageId: "user-1",
+    });
+
+    session.dispose();
+  });
+
   test("skips persisting startup abandon marker for system aborts", async () => {
     const workspaceId = "startup-retry-system-abort-skip";
     const { session, cleanup } = await createSessionBundle(workspaceId);
