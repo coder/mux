@@ -296,6 +296,34 @@ describe("ACP tool call terminal state translation", () => {
     }
   });
 
+  it("ignores terminal events with empty messageIds instead of crashing", async () => {
+    const { translator, sessionUpdates } = createHarness();
+
+    await expect(
+      forwardEvents(translator, [
+        makeToolCallStart("tool-1", "bash", { cmd: "echo hi" }),
+        {
+          type: "stream-abort",
+          workspaceId: "workspace-1",
+          messageId: "",
+          abortReason: "system",
+          metadata: {},
+        } as WorkspaceChatMessage,
+        makeStreamError("msg-1", "provider timeout", "provider_error"),
+      ])
+    ).resolves.toBeUndefined();
+
+    expect(getUpdateKinds(sessionUpdates)).toEqual(["tool_call", "tool_call_update"]);
+
+    const failureUpdate = sessionUpdates[1]?.update;
+    if (failureUpdate == null || failureUpdate.sessionUpdate !== "tool_call_update") {
+      throw new Error("Expected terminal tool_call_update after message-scoped stream error");
+    }
+
+    expect(failureUpdate.toolCallId).toBe("tool-1");
+    expect(failureUpdate.status).toBe("failed");
+  });
+
   it("isolates tool-call tracking across sessions when toolCallIds collide", async () => {
     const { translator, sessionUpdates } = createHarness();
 

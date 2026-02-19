@@ -369,6 +369,13 @@ export class StreamTranslator {
     error: string,
     errorType?: string
   ): SessionUpdate[] {
+    // Synthetic abort/error events (e.g., cancel when no stream exists) can carry an
+    // empty messageId. Tool-call tracking is keyed by messageId, so there is no scoped
+    // tool state to terminate in that case.
+    if (!this.hasNonEmptyMessageId(messageId)) {
+      return [];
+    }
+
     const failureUpdates = this.terminateActiveToolCalls(sessionId, messageId, "failed", {
       failureReason: error,
       errorType,
@@ -519,6 +526,10 @@ export class StreamTranslator {
       errorType?: string;
     }
   ): SessionUpdate[] {
+    if (!this.hasNonEmptyMessageId(messageId)) {
+      return [];
+    }
+
     const scopedMessageKey = this.getScopedMessageKey(sessionId, messageId);
     const activeForMessage = this.activeToolCallsByMessageKey.get(scopedMessageKey);
     if (activeForMessage == null || activeForMessage.length === 0) {
@@ -555,6 +566,10 @@ export class StreamTranslator {
   }
 
   private clearMessageToolCalls(sessionId: string, messageId: string): void {
+    if (!this.hasNonEmptyMessageId(messageId)) {
+      return;
+    }
+
     const scopedMessageKey = this.getScopedMessageKey(sessionId, messageId);
     const activeForMessage = this.activeToolCallsByMessageKey.get(scopedMessageKey);
     if (activeForMessage == null) {
@@ -566,6 +581,10 @@ export class StreamTranslator {
     }
 
     this.activeToolCallsByMessageKey.delete(scopedMessageKey);
+  }
+
+  private hasNonEmptyMessageId(messageId: string): boolean {
+    return messageId.trim().length > 0;
   }
 
   private getScopedMessageKey(sessionId: string, messageId: string): string {

@@ -434,6 +434,104 @@ describe("ACP prompt stream correlation", () => {
     await harness.connectionClosed;
   });
 
+  it("resolves pending prompts as cancelled when cancel succeeds without terminal stream events", async () => {
+    const harness = createHarness();
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    const newSessionResponse = await harness.agent.newSession({
+      cwd: "/repo/acp-go-sdk",
+      mcpServers: [],
+      _meta: {
+        trunkBranch: "main",
+      },
+    });
+
+    const promptPromise = harness.agent.prompt({
+      sessionId: newSessionResponse.sessionId,
+      prompt: [{ type: "text", text: "hello" }],
+    });
+
+    await waitForCondition(() => harness.sendMessageCalls.length === 1);
+
+    await harness.agent.cancel({
+      sessionId: newSessionResponse.sessionId,
+    });
+
+    await expect(promptPromise).resolves.toEqual({
+      stopReason: "cancelled",
+      usage: undefined,
+    });
+
+    expect(harness.interruptCalls).toEqual([
+      {
+        workspaceId: newSessionResponse.sessionId,
+      },
+    ]);
+
+    harness.closeConnection();
+    await harness.connectionClosed;
+  });
+
+  it("accepts correlated terminal events even when messageId is empty", async () => {
+    const harness = createHarness();
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    const newSessionResponse = await harness.agent.newSession({
+      cwd: "/repo/acp-go-sdk",
+      mcpServers: [],
+      _meta: {
+        trunkBranch: "main",
+      },
+    });
+
+    const promptPromise = harness.agent.prompt({
+      sessionId: newSessionResponse.sessionId,
+      prompt: [{ type: "text", text: "hello" }],
+    });
+
+    await waitForCondition(() => harness.sendMessageCalls.length === 1);
+
+    const firstSend = harness.sendMessageCalls[0];
+    const muxMetadata = firstSend.options["muxMetadata"];
+    if (!isRecord(muxMetadata)) {
+      throw new Error("Expected prompt send options to include muxMetadata record");
+    }
+
+    const promptCorrelationId = muxMetadata["acpPromptId"];
+    if (typeof promptCorrelationId !== "string") {
+      throw new Error("Expected prompt send options to include acpPromptId");
+    }
+
+    harness.pushChatEvent({
+      type: "stream-start",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-target",
+      model: "anthropic:claude-sonnet-4-5",
+      historySequence: 3,
+      startTime: Date.now(),
+      acpPromptId: promptCorrelationId,
+    } as WorkspaceChatMessage);
+
+    harness.pushChatEvent({
+      type: "stream-abort",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "",
+      abortReason: "system",
+      acpPromptId: promptCorrelationId,
+      metadata: {
+        duration: 1,
+      },
+    } as WorkspaceChatMessage);
+
+    await expect(promptPromise).resolves.toEqual({
+      stopReason: "cancelled",
+      usage: undefined,
+    });
+
+    harness.closeConnection();
+    await harness.connectionClosed;
+  });
+
   it("attaches delegated tool metadata when local runtime and editor capabilities allow delegation", async () => {
     const harness = createHarness();
     await harness.agent.initialize({

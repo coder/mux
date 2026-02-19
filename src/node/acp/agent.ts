@@ -499,6 +499,15 @@ export class MuxAgent implements Agent {
     if (!interruptResult.success) {
       throw new Error(`cancel: workspace.interruptStream failed: ${interruptResult.error}`);
     }
+
+    // Resolve any pending prompt immediately after a successful interrupt request.
+    // Backend abort events can be dropped or synthesized without a messageId when no
+    // active stream exists; waiting exclusively for terminal chat events can leave
+    // ACP prompt requests hanging indefinitely.
+    this.resolveTurn(sessionId, {
+      stopReason: "cancelled",
+      usage: this.latestUsageBySessionId.get(sessionId),
+    });
   }
 
   async setSessionConfigOption(
@@ -1384,9 +1393,20 @@ export class MuxAgent implements Agent {
     if (completion == null) {
       return false;
     }
-    // Turn already identified — exact match only.
+    // Turn already identified — prefer exact message match.
     if (completion.messageId != null) {
-      return completion.messageId === eventMessageId;
+      if (completion.messageId === eventMessageId) {
+        return true;
+      }
+
+      // Defensive fallback: some synthetic terminal events can carry an empty
+      // messageId. Allow correlation-id matching in that case so cancellation
+      // and completion cannot hang when IDs are omitted in transit.
+      return (
+        eventMessageId.trim().length === 0 &&
+        eventPromptCorrelationId != null &&
+        eventPromptCorrelationId === completion.promptCorrelationId
+      );
     }
 
     // Pending turn: require explicit correlation id match.
