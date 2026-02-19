@@ -88,7 +88,7 @@ import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
 import { buildCompactionMessageText } from "@/common/utils/compaction/compactionPrompt";
 import type { AutoCompactionUsageState } from "@/common/utils/compaction/autoCompactionCheck";
-import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
+import { getModelCapabilitiesResolved } from "@/common/utils/ai/modelCapabilities";
 import {
   normalizeGatewayModel,
   isValidModelFormat,
@@ -1886,7 +1886,7 @@ export class AgentSession {
       );
 
       if (pdfParts.length > 0) {
-        const caps = getModelCapabilities(options.model);
+        const caps = getModelCapabilitiesResolved(options.model, null);
 
         if (caps && !caps.supportsPdfInput) {
           return Err(

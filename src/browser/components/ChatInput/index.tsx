@@ -101,7 +101,10 @@ import {
   prepareUserMessageForSend,
 } from "@/common/types/message";
 import type { Review } from "@/common/types/review";
-import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
+import {
+  getModelCapabilities,
+  getModelCapabilitiesResolved,
+} from "@/common/utils/ai/modelCapabilities";
 import { KNOWN_MODELS, MODEL_ABBREVIATION_EXAMPLES } from "@/common/constants/knownModels";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 import { trackCommandUsed } from "@/common/telemetry";
@@ -1821,7 +1824,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         (attachment) => getBaseMediaType(attachment.mediaType) === PDF_MEDIA_TYPE
       );
       if (pdfAttachments.length > 0) {
-        const caps = getModelCapabilities(policyModel);
+        const caps = getModelCapabilitiesResolved(policyModel, providersConfig);
         if (caps && !caps.supportsPdfInput) {
           const pdfCapableKnownModels = Object.values(KNOWN_MODELS)
             .map((m) => m.id)

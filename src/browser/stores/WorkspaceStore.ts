@@ -898,7 +898,6 @@ export class WorkspaceStore {
     this.clientChangeController.abort();
     this.clientChangeController = new AbortController();
 
-    this.providersConfig = null;
     this.bumpAllUsageStoreEntries();
 
     for (const workspaceId of this.workspaceMetadata.keys()) {

@@ -33,6 +33,7 @@ import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext
 import { useRouter } from "@/browser/contexts/RouterContext";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import { useAPI } from "@/browser/contexts/API";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 import type { WorkspaceCreatedOptions } from "@/browser/components/ChatInput/types";
 import {
@@ -42,7 +43,10 @@ import {
 } from "@/browser/hooks/useWorkspaceName";
 
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
+import {
+  getModelCapabilities,
+  getModelCapabilitiesResolved,
+} from "@/common/utils/ai/modelCapabilities";
 import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
 import { resolveDevcontainerSelection } from "@/browser/utils/devcontainerSelection";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -214,6 +218,7 @@ export function useCreationWorkspace({
   // Keep router state fresh synchronously so auto-navigation checks don't lag behind route changes.
   latestRouteRef.current = { currentWorkspaceId, currentProjectId, pendingDraftId };
   const { api } = useAPI();
+  const { config: providersConfig } = useProvidersConfig();
   const [branches, setBranches] = useState<string[]>([]);
   const [branchesLoaded, setBranchesLoaded] = useState(false);
   const [recommendedTrunk, setRecommendedTrunk] = useState<string | null>(null);
@@ -393,7 +398,7 @@ export function useCreationWorkspace({
           (part) => getBaseMediaType(part.mediaType) === PDF_MEDIA_TYPE
         );
         if (pdfFileParts.length > 0) {
-          const caps = getModelCapabilities(baseModel);
+          const caps = getModelCapabilitiesResolved(baseModel, providersConfig);
           if (caps && !caps.supportsPdfInput) {
             const pdfCapableKnownModels = Object.values(KNOWN_MODELS)
               .map((m) => m.id)
