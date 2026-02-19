@@ -8,6 +8,7 @@ type WorkspaceInfo = NonNullable<Awaited<ReturnType<ORPCClient["workspace"]["get
 interface HarnessOptions {
   getReplayEvents?: (workspaceId: string) => WorkspaceChatMessage[];
   beforeCreateResolves?: Promise<void>;
+  disconnectCleanupMaxWaitMs?: number;
 }
 
 interface Harness {
@@ -177,7 +178,9 @@ function createHarness(options?: HarnessOptions): Harness {
 
   let agentInstance: MuxAgent | null = null;
   const connection = new AgentSideConnection((connectionToAgent) => {
-    const createdAgent = new MuxAgent(connectionToAgent, server);
+    const createdAgent = new MuxAgent(connectionToAgent, server, {
+      disconnectCleanupMaxWaitMs: options?.disconnectCleanupMaxWaitMs,
+    });
     agentInstance = createdAgent;
     return createdAgent;
   }, stream);
@@ -295,5 +298,38 @@ describe("ACP disconnect cleanup for untouched session/new workspaces", () => {
     }
 
     await waitForCondition(() => harness.removeCalls.includes(createdWorkspaceId));
+  });
+
+  it("bounds disconnect cleanup wait when session/new creation never settles", async () => {
+    const neverResolves = new Promise<void>(() => undefined);
+    const harness = createHarness({
+      beforeCreateResolves: neverResolves,
+      disconnectCleanupMaxWaitMs: 20,
+    });
+
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    const newSessionPromise = harness.agent.newSession({
+      cwd: "/repo/acp-go-sdk",
+      mcpServers: [],
+      _meta: {
+        trunkBranch: "main",
+      },
+    });
+    void newSessionPromise.catch(() => undefined);
+
+    harness.closeConnection();
+    await harness.connectionClosed;
+
+    let cleanupSettled = false;
+    const cleanupPromise = harness.agent.waitForDisconnectCleanup().then(() => {
+      cleanupSettled = true;
+    });
+
+    await waitForCondition(() => cleanupSettled, 500);
+    await cleanupPromise;
+
+    expect(harness.createdWorkspaceIds).toEqual([]);
+    expect(harness.removeCalls).toEqual([]);
   });
 });

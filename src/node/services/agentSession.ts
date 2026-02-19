@@ -144,6 +144,7 @@ const SWITCH_AGENT_TARGET_UNAVAILABLE_ERROR =
   "Agent handoff failed because the requested target is unavailable. Please retry or choose a different mode.";
 
 const PDF_MEDIA_TYPE = "application/pdf";
+const ACP_PROMPT_ID_METADATA_KEY = "acpPromptId";
 
 function normalizeMediaType(mediaType: string): string {
   return mediaType.toLowerCase().trim().split(";")[0];
@@ -161,6 +162,20 @@ function estimateBase64DataUrlBytes(dataUrl: string): number | null {
   const base64 = dataUrl.slice(commaIndex + 1);
   const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
   return Math.floor((base64.length * 3) / 4) - padding;
+}
+
+function extractAcpPromptId(muxMetadata: unknown): string | undefined {
+  if (typeof muxMetadata !== "object" || muxMetadata == null || Array.isArray(muxMetadata)) {
+    return undefined;
+  }
+
+  const candidate = (muxMetadata as Record<string, unknown>)[ACP_PROMPT_ID_METADATA_KEY];
+  if (typeof candidate !== "string") {
+    return undefined;
+  }
+
+  const trimmed = candidate.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 function isCompactionRequestMetadata(meta: unknown): meta is CompactionRequestMetadata {
   if (typeof meta !== "object" || meta === null) return false;
@@ -2762,6 +2777,7 @@ export class AgentSession {
       maxOutputTokens: options?.maxOutputTokens,
       muxProviderOptions: options?.providerOptions,
       agentId: options?.agentId,
+      acpPromptId: extractAcpPromptId(options?.muxMetadata),
       recordFileState,
       changedFileAttachments:
         changedFileAttachments.length > 0 ? changedFileAttachments : undefined,

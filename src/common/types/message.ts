@@ -443,6 +443,12 @@ export interface MuxMetadata {
   cmuxMetadata?: MuxMessageMetadata; // Command metadata persisted for legacy message formats
   muxMetadata?: MuxMessageMetadata; // Command metadata used by both frontend and backend message flows
   /**
+   * ACP-only correlation id propagated through stream events so prompt() can
+   * match terminal events to the originating ACP request in shared workspaces.
+   */
+  acpPromptId?: string;
+
+  /**
    * @file mention snapshot token(s) this message provides content for.
    * When present, injectFileAtMentions() skips re-reading these tokens,
    * preserving prompt cache stability across turns.

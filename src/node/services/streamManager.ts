@@ -947,7 +947,8 @@ export class StreamManager extends EventEmitter {
       streamInfo.messageId,
       { usage, contextUsage, duration, providerMetadata, contextProviderMetadata },
       abortReason,
-      abandonPartial
+      abandonPartial,
+      streamInfo.initialMetadata?.acpPromptId
     );
 
     // Clean up immediately
@@ -1527,6 +1528,9 @@ export class StreamManager extends EventEmitter {
       ...(streamStartAgentId && { agentId: streamStartAgentId }),
       ...(streamStartMode && { mode: streamStartMode }),
       ...(streamInfo.thinkingLevel && { thinkingLevel: streamInfo.thinkingLevel }),
+      ...(streamInfo.initialMetadata?.acpPromptId != null
+        ? { acpPromptId: streamInfo.initialMetadata.acpPromptId }
+        : {}),
     } as StreamStartEvent);
   }
 
@@ -1535,7 +1539,8 @@ export class StreamManager extends EventEmitter {
     messageId: string,
     metadata: Record<string, unknown>,
     abortReason: StreamAbortReason,
-    abandonPartial?: boolean
+    abandonPartial?: boolean,
+    acpPromptId?: string
   ): void {
     this.emit("stream-abort", {
       type: "stream-abort",
@@ -1544,6 +1549,7 @@ export class StreamManager extends EventEmitter {
       abortReason,
       metadata,
       abandonPartial,
+      acpPromptId,
     });
   }
 
@@ -2187,6 +2193,7 @@ export class StreamManager extends EventEmitter {
       messageId: streamInfo.messageId,
       error: errorMessage,
       errorType,
+      acpPromptId: streamInfo.initialMetadata?.acpPromptId,
     };
   }
 

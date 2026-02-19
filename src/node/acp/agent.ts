@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import type {
   Agent,
   AgentSideConnection,
@@ -59,6 +60,13 @@ const ON_CHAT_MODE_FULL: OnChatMode = { type: "full" };
 const ON_CHAT_MODE_LIVE: OnChatMode = { type: "live" };
 const SESSION_LIST_PAGE_SIZE = 100;
 
+const ACP_PROMPT_CORRELATION_MUX_METADATA_KEY = "acpPromptId";
+const DEFAULT_DISCONNECT_CLEANUP_MAX_WAIT_MS = 10_000;
+
+interface MuxAgentOptions {
+  disconnectCleanupMaxWaitMs?: number;
+}
+
 interface SessionState {
   workspaceId: string;
   runtimeMode: RuntimeMode;
@@ -78,7 +86,9 @@ interface TurnResult {
 interface TurnCompletion {
   resolve: (result: TurnResult) => void;
   reject: (error: Error) => void;
-  /** Set after sendMessage returns; only events with this messageId resolve/reject the turn. */
+  /** Stable per-prompt correlation id injected into send options and stream events. */
+  promptCorrelationId: string;
+  /** Set after stream-start; only this message id may resolve/reject the turn. */
   messageId?: string;
 }
 
@@ -136,13 +146,25 @@ export class MuxAgent implements Agent {
   private readonly lastStreamMessageIdBySession = new Map<string, string>();
   private inFlightNewSessionCount = 0;
   private disconnectCleanupPromise: Promise<void> | null = null;
+  private readonly disconnectCleanupMaxWaitMs: number;
 
   constructor(
     private readonly connection: AgentSideConnection,
-    private readonly server: ServerConnection
+    private readonly server: ServerConnection,
+    options?: MuxAgentOptions
   ) {
     assert(connection != null, "MuxAgent: connection is required");
     assert(server != null, "MuxAgent: server connection is required");
+
+    const configuredDisconnectCleanupMaxWaitMs = options?.disconnectCleanupMaxWaitMs;
+    assert(
+      configuredDisconnectCleanupMaxWaitMs == null ||
+        (Number.isFinite(configuredDisconnectCleanupMaxWaitMs) &&
+          configuredDisconnectCleanupMaxWaitMs >= 0),
+      "MuxAgent: disconnectCleanupMaxWaitMs must be a finite non-negative number"
+    );
+    this.disconnectCleanupMaxWaitMs =
+      configuredDisconnectCleanupMaxWaitMs ?? DEFAULT_DISCONNECT_CLEANUP_MAX_WAIT_MS;
 
     this.streamTranslator = new StreamTranslator(connection);
   }
@@ -528,14 +550,19 @@ export class MuxAgent implements Agent {
       this.getSessionOnChatMode(args.sessionId)
     );
 
-    const turnPromise = this.beginTurn(args.sessionId);
+    const promptCorrelationId = randomUUID();
+    const turnPromise = this.beginTurn(args.sessionId, promptCorrelationId);
+    const optionsWithPromptCorrelation = this.attachPromptCorrelationToSendOptions(
+      args.options,
+      promptCorrelationId
+    );
 
     try {
       const sendResult = await this.server.client.workspace.sendMessage({
         workspaceId: args.workspaceId,
         message: args.message,
         options: {
-          ...args.options,
+          ...optionsWithPromptCorrelation,
           fileParts:
             args.fileParts != null && args.fileParts.length > 0 ? args.fileParts : undefined,
         },
@@ -563,6 +590,24 @@ export class MuxAgent implements Agent {
     }
   }
 
+  private attachPromptCorrelationToSendOptions(
+    options: SendMessageOptions,
+    promptCorrelationId: string
+  ): SendMessageOptions {
+    assert(
+      promptCorrelationId.trim().length > 0,
+      "attachPromptCorrelationToSendOptions: promptCorrelationId must be non-empty"
+    );
+
+    const existingMuxMetadata = isRecord(options.muxMetadata) ? options.muxMetadata : {};
+    return {
+      ...options,
+      muxMetadata: {
+        ...existingMuxMetadata,
+        [ACP_PROMPT_CORRELATION_MUX_METADATA_KEY]: promptCorrelationId,
+      },
+    };
+  }
   private async tryHandleSlashCommand(
     sessionId: string,
     workspaceId: string,
@@ -866,6 +911,8 @@ export class MuxAgent implements Agent {
   }
 
   private async cleanupNewSessionWorkspacesOnDisconnect(): Promise<void> {
+    const startedAt = Date.now();
+
     while (true) {
       const nextEntry = this.newSessionWorkspaceLifecycleById.entries().next();
       if (nextEntry.done) {
@@ -873,6 +920,14 @@ export class MuxAgent implements Agent {
         // registered their workspace lifecycle entry. Keep draining until all
         // in-flight creations settle so late registrations are still cleaned up.
         if (this.inFlightNewSessionCount === 0) {
+          return;
+        }
+
+        const elapsedMs = Date.now() - startedAt;
+        if (elapsedMs >= this.disconnectCleanupMaxWaitMs) {
+          console.warn(
+            `[acp] Timed out waiting for ${this.inFlightNewSessionCount} in-flight session/new request(s) during disconnect cleanup`
+          );
           return;
         }
 
@@ -1086,8 +1141,13 @@ export class MuxAgent implements Agent {
 
       const completion = this.turnCompletions.get(sessionId);
       // Reconnect replay can emit a prior message's stream-start while a new
-      // prompt is pending.  Do not bind replayed starts to the pending turn.
-      if (!isReplayEvent && completion != null && completion.messageId == null) {
+      // prompt is pending. Only bind starts that carry this turn's correlation id.
+      if (
+        !isReplayEvent &&
+        completion != null &&
+        completion.messageId == null &&
+        event.acpPromptId === completion.promptCorrelationId
+      ) {
         completion.messageId = event.messageId;
       }
       return;
@@ -1118,7 +1178,7 @@ export class MuxAgent implements Agent {
       // stream-abort can arrive before stream-start when the user cancels
       // immediately.  Always honour abort for any pending turn so prompt()
       // doesn't hang forever.
-      if (!this.isActiveTurnMessageOrPending(sessionId, event.messageId)) {
+      if (!this.isActiveTurnMessageOrPending(sessionId, event.messageId, event.acpPromptId)) {
         return;
       }
       const usage =
@@ -1135,17 +1195,21 @@ export class MuxAgent implements Agent {
       }
       // Like abort, errors must be propagated even before stream-start to
       // prevent hanging turns.
-      if (!this.isActiveTurnMessageOrPending(sessionId, event.messageId)) {
+      if (!this.isActiveTurnMessageOrPending(sessionId, event.messageId, event.acpPromptId)) {
         return;
       }
       this.rejectTurn(sessionId, new Error(`prompt stream failed: ${event.error}`));
     }
   }
 
-  private beginTurn(sessionId: string): Promise<TurnResult> {
+  private beginTurn(sessionId: string, promptCorrelationId: string): Promise<TurnResult> {
     assert(
       !this.turnCompletions.has(sessionId),
       `prompt: session '${sessionId}' already has a running turn`
+    );
+    assert(
+      promptCorrelationId.trim().length > 0,
+      "beginTurn: promptCorrelationId must be non-empty"
     );
 
     // Replay events from loadSession can include historical usage deltas; clear stale usage before
@@ -1153,7 +1217,7 @@ export class MuxAgent implements Agent {
     this.latestUsageBySessionId.delete(sessionId);
 
     return new Promise<TurnResult>((resolve, reject) => {
-      this.turnCompletions.set(sessionId, { resolve, reject });
+      this.turnCompletions.set(sessionId, { resolve, reject, promptCorrelationId });
     });
   }
   /**
@@ -1185,7 +1249,11 @@ export class MuxAgent implements Agent {
    * belong to a prior stream, not to the freshly queued prompt.  Only truly
    * unknown messageIds (or sessions with no prior stream) pass through.
    */
-  private isActiveTurnMessageOrPending(sessionId: string, eventMessageId: string): boolean {
+  private isActiveTurnMessageOrPending(
+    sessionId: string,
+    eventMessageId: string,
+    eventPromptCorrelationId?: string
+  ): boolean {
     const completion = this.turnCompletions.get(sessionId);
     if (completion == null) {
       return false;
@@ -1194,8 +1262,14 @@ export class MuxAgent implements Agent {
     if (completion.messageId != null) {
       return completion.messageId === eventMessageId;
     }
-    // Turn pending (not yet identified).  Reject events from a known prior
-    // stream to avoid a stale abort/error resolving the new turn.
+
+    // For pending turns, prefer explicit ACP correlation ids when available.
+    if (eventPromptCorrelationId != null) {
+      return eventPromptCorrelationId === completion.promptCorrelationId;
+    }
+
+    // Fallback for legacy events that do not yet include ACP correlation metadata.
+    // Reject events from a known prior stream to avoid stale abort/error updates.
     const lastKnown = this.lastStreamMessageIdBySession.get(sessionId);
     if (lastKnown != null && eventMessageId === lastKnown) {
       return false;

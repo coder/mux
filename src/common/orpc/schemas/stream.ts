@@ -126,6 +126,10 @@ export const StreamErrorMessageSchema = z.object({
   messageId: z.string(),
   error: z.string(),
   errorType: StreamErrorTypeSchema,
+  acpPromptId: z
+    .string()
+    .optional()
+    .meta({ description: "ACP prompt correlation id for matching terminal events" }),
 });
 
 export const DeleteMessageSchema = z.object({
@@ -160,6 +164,10 @@ export const StreamStartEventSchema = z.object({
   thinkingLevel: ThinkingLevelSchema.optional().meta({
     description: "Effective thinking level after model policy clamping",
   }),
+  acpPromptId: z
+    .string()
+    .optional()
+    .meta({ description: "ACP prompt correlation id for matching stream events" }),
 });
 
 export const StreamDeltaEventSchema = z.object({
@@ -268,6 +276,10 @@ export const StreamAbortEventSchema = z.object({
       description: "Metadata may contain usage if abort occurred after stream completed processing",
     }),
   abandonPartial: z.boolean().optional(),
+  acpPromptId: z
+    .string()
+    .optional()
+    .meta({ description: "ACP prompt correlation id for matching terminal events" }),
 });
 
 export const ToolCallStartEventSchema = z.object({
@@ -383,6 +395,10 @@ export const ErrorEventSchema = z.object({
   messageId: z.string(),
   error: z.string(),
   errorType: StreamErrorTypeSchema.optional(),
+  acpPromptId: z
+    .string()
+    .optional()
+    .meta({ description: "ACP prompt correlation id for matching terminal events" }),
 });
 
 /**

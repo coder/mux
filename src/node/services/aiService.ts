@@ -85,6 +85,8 @@ export interface StreamMessageOptions {
   maxOutputTokens?: number;
   muxProviderOptions?: MuxProviderOptions;
   agentId?: string;
+  /** ACP prompt correlation id used to match stream events to a specific request. */
+  acpPromptId?: string;
   recordFileState?: (filePath: string, state: FileState) => void;
   changedFileAttachments?: EditedFileAttachment[];
   postCompactionAttachments?: PostCompactionAttachment[] | null;
@@ -127,7 +129,12 @@ export class AIService extends EventEmitter {
   // This enables user interrupts (Esc/Ctrl+C) during the UI "starting..." phase.
   private readonly pendingStreamStarts = new Map<
     string,
-    { abortController: AbortController; startTime: number; syntheticMessageId: string }
+    {
+      abortController: AbortController;
+      startTime: number;
+      syntheticMessageId: string;
+      acpPromptId?: string;
+    }
   >();
 
   // Debug: captured LLM request payloads for last send per workspace
@@ -346,6 +353,7 @@ export class AIService extends EventEmitter {
       maxOutputTokens,
       muxProviderOptions,
       agentId,
+      acpPromptId,
       recordFileState,
       changedFileAttachments,
       postCompactionAttachments,
@@ -369,6 +377,7 @@ export class AIService extends EventEmitter {
       abortController: pendingAbortController,
       startTime,
       syntheticMessageId,
+      acpPromptId,
     });
 
     const combinedAbortSignal = pendingAbortController.signal;
@@ -537,6 +546,7 @@ export class AIService extends EventEmitter {
             messageId: errorMessageId,
             error: errorMessage,
             errorType,
+            acpPromptId,
           })
         );
 
@@ -969,6 +979,7 @@ export class AIService extends EventEmitter {
           agentId: effectiveAgentId,
           mode: effectiveMode,
           routedThroughGateway,
+          ...(acpPromptId != null ? { acpPromptId } : {}),
           ...(modelCostsIncluded(modelResult.data.model) ? { costsIncluded: true } : {}),
         },
         providerOptions,
@@ -1035,6 +1046,7 @@ export class AIService extends EventEmitter {
           messageId: pending.syntheticMessageId,
           metadata: { duration: Date.now() - pending.startTime },
           abandonPartial: options?.abandonPartial,
+          acpPromptId: pending.acpPromptId,
         } satisfies StreamAbortEvent);
       }
     }
