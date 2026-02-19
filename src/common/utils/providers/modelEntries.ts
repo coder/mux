@@ -17,6 +17,13 @@ export function getProviderModelEntryContextWindowTokens(entry: ProviderModelEnt
   return entry.contextWindowTokens ?? null;
 }
 
+export function getProviderModelEntryMappedTo(entry: ProviderModelEntry): string | null {
+  if (typeof entry === "string") {
+    return null;
+  }
+  return entry.mappedToModel ?? null;
+}
+
 export function parseProviderModelId(fullModelId: string): ParsedProviderModelId | null {
   const separatorIndex = fullModelId.indexOf(":");
   if (separatorIndex <= 0 || separatorIndex >= fullModelId.length - 1) {
@@ -66,6 +73,24 @@ export function getModelContextWindowOverride(
   return getProviderModelEntryContextWindowTokens(modelEntry);
 }
 
+export function resolveModelForMetadata(
+  fullModelId: string,
+  providersConfig: ProvidersConfigMap | null
+): string {
+  const normalized = normalizeGatewayModel(fullModelId);
+  const parsed = parseProviderModelId(normalized);
+  if (!parsed) {
+    return fullModelId;
+  }
+
+  const entry = findProviderModelEntry(providersConfig, parsed.provider, parsed.modelId);
+  if (!entry) {
+    return fullModelId;
+  }
+
+  return getProviderModelEntryMappedTo(entry) ?? fullModelId;
+}
+
 function parseModelId(rawValue: unknown): string | null {
   if (typeof rawValue !== "string") {
     return null;
@@ -93,18 +118,27 @@ export function normalizeProviderModelEntry(rawEntry: unknown): ProviderModelEnt
     return null;
   }
 
-  const entry = rawEntry as { id?: unknown; contextWindowTokens?: unknown };
+  const entry = rawEntry as {
+    id?: unknown;
+    contextWindowTokens?: unknown;
+    mappedToModel?: unknown;
+  };
   const modelId = parseModelId(entry.id);
   if (!modelId) {
     return null;
   }
 
   const contextWindowTokens = parseContextWindowTokens(entry.contextWindowTokens);
-  if (contextWindowTokens === null) {
+  const mappedToModel = parseModelId(entry.mappedToModel);
+  if (contextWindowTokens === null && mappedToModel === null) {
     return modelId;
   }
 
-  return { id: modelId, contextWindowTokens };
+  return {
+    id: modelId,
+    ...(contextWindowTokens !== null ? { contextWindowTokens } : {}),
+    ...(mappedToModel !== null ? { mappedToModel } : {}),
+  };
 }
 
 export function normalizeProviderModelEntries(rawEntries: unknown): ProviderModelEntry[] {
