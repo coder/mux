@@ -2851,6 +2851,10 @@ export class WorkspaceStore {
         // queued-message-changed snapshot before caught-up.
         transient.queuedMessage = null;
 
+        // Auto-retry status is ephemeral and may have resolved while disconnected.
+        // Clear stale banners so reconnect UI reflects replayed events only.
+        transient.autoRetryStatus = null;
+
         // Server can downgrade a requested since reconnect to full replay.
         // Clear stale interruption suppression state so retry UI is derived solely
         // from the replayed transcript instead of a pre-disconnect abort reason.

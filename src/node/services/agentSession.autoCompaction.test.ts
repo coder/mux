@@ -253,6 +253,117 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     session.dispose();
   });
 
+  test("seeds on-send compaction usage from the active compaction epoch only", async () => {
+    const workspaceId = "ws-auto-compaction-seed-active-epoch";
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const oldUsage = {
+      inputTokens: 95_000,
+      outputTokens: 100,
+      totalTokens: 95_100,
+    };
+
+    const appendOldUser = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-old-before-boundary", "user", "old prompt", {
+        timestamp: Date.now() - 4_000,
+      })
+    );
+    expect(appendOldUser.success).toBe(true);
+
+    const appendOldAssistant = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("assistant-old-before-boundary", "assistant", "old reply", {
+        timestamp: Date.now() - 3_000,
+        model: "openai:gpt-4o",
+        contextUsage: oldUsage,
+      })
+    );
+    expect(appendOldAssistant.success).toBe(true);
+
+    const appendBoundary = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("assistant-compaction-boundary", "assistant", "compacted summary", {
+        timestamp: Date.now() - 2_000,
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 7,
+      })
+    );
+    expect(appendBoundary.success).toBe(true);
+
+    const appendCurrentEpochUser = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-after-boundary", "user", "fresh prompt after compaction", {
+        timestamp: Date.now() - 1_000,
+      })
+    );
+    expect(appendCurrentEpochUser.success).toBe(true);
+
+    const aiEmitter = new EventEmitter();
+    const streamMessage = mock((_history: MuxMessage[]) => Promise.resolve(Ok(undefined)));
+    const aiService = Object.assign(aiEmitter, {
+      isStreaming: mock((_workspaceId: string) => false),
+      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
+      streamMessage: streamMessage as unknown as (
+        ...args: Parameters<AIService["streamMessage"]>
+      ) => Promise<unknown>,
+    }) as unknown as AIService;
+
+    const initStateManager = new EventEmitter() as unknown as InitStateManager;
+
+    const backgroundProcessManager = {
+      cleanup: mock((_workspaceId: string) => Promise.resolve()),
+      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
+        void _queued;
+      }),
+    } as unknown as BackgroundProcessManager;
+
+    const config = {
+      srcDir: "/tmp",
+      getSessionDir: (_workspaceId: string) => "/tmp",
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const checkBeforeSend = mock((params: unknown) => {
+      expect((params as { usage?: unknown }).usage).toBeUndefined();
+      return {
+        shouldShowWarning: false,
+        shouldForceCompact: false,
+        usagePercentage: 0,
+        thresholdPercentage: 85,
+      };
+    });
+
+    (session as unknown as { compactionMonitor: CompactionMonitor }).compactionMonitor = {
+      checkBeforeSend,
+      checkMidStream: mock(() => false),
+      resetForNewStream: mock(() => undefined),
+      setThreshold: mock(() => undefined),
+      getThreshold: mock(() => 0.85),
+    } as unknown as CompactionMonitor;
+
+    const result = await session.sendMessage("new prompt after restart", {
+      model: "openai:gpt-4o",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(true);
+    expect(checkBeforeSend).toHaveBeenCalledTimes(1);
+
+    session.dispose();
+  });
+
   test("hides default follow-up sentinel in mid-stream auto-compaction prompts", async () => {
     const workspaceId = "ws-auto-compaction-mid-stream-sentinel";
 

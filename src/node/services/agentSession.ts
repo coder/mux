@@ -2182,9 +2182,12 @@ export class AgentSession {
     }
 
     try {
-      // Read a small tail of history — the last assistant message with context
-      // usage is almost always within the most recent few turns.
-      const historyResult = await this.historyService.getLastMessages(this.workspaceId, 10);
+      // Seed from the active compaction epoch only. Using a generic tail read can
+      // accidentally pull context usage from pre-boundary assistant rows after
+      // compaction, which makes post-compaction turns immediately re-compact.
+      const historyResult = await this.historyService.getHistoryFromLatestBoundary(
+        this.workspaceId
+      );
       if (!historyResult.success) {
         return;
       }

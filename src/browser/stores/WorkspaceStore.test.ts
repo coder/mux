@@ -2255,6 +2255,67 @@ describe("WorkspaceStore", () => {
       expect(clearedAbortReason).toBe(true);
     });
 
+    it("clears stale auto-retry status when full replay reconnect replaces history", async () => {
+      const workspaceId = "task-created-workspace-auto-retry-reset";
+      let subscriptionCount = 0;
+      let releaseFirstSubscription: (() => void) | undefined;
+      const holdFirstSubscription = new Promise<void>((resolve) => {
+        releaseFirstSubscription = resolve;
+      });
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        subscriptionCount += 1;
+
+        if (subscriptionCount === 1) {
+          yield { type: "caught-up" };
+          await Promise.resolve();
+          yield {
+            type: "auto-retry-starting",
+            attempt: 2,
+          };
+
+          await holdFirstSubscription;
+          return;
+        }
+
+        yield {
+          type: "caught-up",
+          replay: "full",
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const seededRetryStatus = await waitUntil(() => {
+        return store.getWorkspaceState(workspaceId).autoRetryStatus?.type === "auto-retry-starting";
+      });
+      expect(seededRetryStatus).toBe(true);
+
+      releaseFirstSubscription?.();
+
+      const clearedRetryStatus = await waitUntil(() => {
+        return (
+          subscriptionCount >= 2 && store.getWorkspaceState(workspaceId).autoRetryStatus === null
+        );
+      });
+      expect(clearedRetryStatus).toBe(true);
+    });
+
     it("replays pre-caught-up task-created after full replay catches up", async () => {
       const workspaceId = "task-created-workspace-3";
 
