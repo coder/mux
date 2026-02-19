@@ -756,7 +756,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     sectionId: string,
     buttonElement: HTMLElement
   ) => {
-    const workspacesInSection = (sortedWorkspacesByProject.get(projectPath) ?? []).filter(
+    // removeSection unsections every workspace in the project (including archived),
+    // so confirmation needs to count from the full project config.
+    const workspacesInSection = (projects.get(projectPath)?.workspaces ?? []).filter(
       (workspace) => workspace.sectionId === sectionId
     );
 
