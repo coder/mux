@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from "react";
+import React, { useState, useCallback } from "react";
 import type { GitStatus } from "@/common/types/workspace";
 import { GIT_STATUS_INDICATOR_MODE_KEY } from "@/common/constants/storage";
 import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
@@ -18,7 +18,7 @@ interface GitStatusIndicatorProps {
 
 /**
  * Container component for git status indicator.
- * Manages hover card visibility and data fetching.
+ * Manages dialog visibility and data fetching.
  * Delegates rendering to GitStatusIndicatorView.
  */
 export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
@@ -29,8 +29,6 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
   isWorking = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [isPopoverOpen, setIsPopoverOpen] = useState(false);
-  const pendingHoverCardCloseRef = useRef(false);
   const trimmedWorkspaceId = workspaceId.trim();
   const isRefreshing = useGitStatusRefreshing(trimmedWorkspaceId);
 
@@ -62,34 +60,6 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
     [setBaseRef, trimmedWorkspaceId]
   );
 
-  // Prevent HoverCard from closing while the base selector popover is open.
-  // If Radix requests a close while the popover is open, defer the close until
-  // the popover closes (otherwise the hovercard can get "stuck" open).
-  const handleHoverCardOpenChange = useCallback(
-    (open: boolean) => {
-      if (!open && isPopoverOpen) {
-        pendingHoverCardCloseRef.current = true;
-        return;
-      }
-
-      pendingHoverCardCloseRef.current = false;
-      setIsOpen(open);
-    },
-    [isPopoverOpen]
-  );
-
-  const handlePopoverOpenChange = useCallback(
-    (open: boolean) => {
-      setIsPopoverOpen(open);
-
-      if (!open && pendingHoverCardCloseRef.current) {
-        pendingHoverCardCloseRef.current = false;
-        setIsOpen(false);
-      }
-    },
-    [setIsPopoverOpen]
-  );
-
   const handleModeChange = useCallback(
     (nextMode: GitStatusIndicatorMode) => {
       setMode(nextMode);
@@ -102,7 +72,7 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
     "GitStatusIndicator requires workspaceId to be a non-empty string."
   );
 
-  // Fetch branch details only when hover card is open
+  // Fetch branch details only while the divergence dialog is open
   const { branchHeaders, commits, dirtyFiles, isLoading, errorMessage } = useGitBranchDetails(
     trimmedWorkspaceId,
     gitStatus,
@@ -120,11 +90,10 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
       isLoading={isLoading}
       errorMessage={errorMessage}
       isOpen={isOpen}
-      onOpenChange={handleHoverCardOpenChange}
+      onOpenChange={setIsOpen}
       onModeChange={handleModeChange}
       baseRef={baseRef}
       onBaseChange={handleBaseChange}
-      onPopoverOpenChange={handlePopoverOpenChange}
       isWorking={isWorking}
       isRefreshing={isRefreshing}
     />

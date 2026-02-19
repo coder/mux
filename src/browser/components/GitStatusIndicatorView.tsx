@@ -3,20 +3,8 @@ import type { GitStatus } from "@/common/types/workspace";
 import type { GitCommit, GitBranchHeader } from "@/common/utils/git/parseGitLog";
 import { cn } from "@/common/lib/utils";
 import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { BaseSelectorPopover } from "./RightSidebar/CodeReview/BaseSelectorPopover";
-
-const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
-
-function preventHoverCardDismissForRadixPortals(e: {
-  target: EventTarget | null;
-  preventDefault: () => void;
-}) {
-  const target = e.target;
-  if (target instanceof HTMLElement && target.closest(RADIX_PORTAL_WRAPPER_SELECTOR)) {
-    e.preventDefault();
-  }
-}
 
 // Helper for indicator colors
 const getIndicatorColor = (branch: number): string => {
@@ -69,8 +57,6 @@ export interface GitStatusIndicatorViewProps {
   // Base ref for divergence (shared with review panel)
   baseRef: string;
   onBaseChange: (value: string) => void;
-  /** Callback when the base selector popover open state changes */
-  onPopoverOpenChange?: (open: boolean) => void;
   /** When true, shows blue pulsing styling to indicate agent is working */
   isWorking?: boolean;
   /** When true, shows shimmer effect to indicate git status is refreshing */
@@ -79,12 +65,12 @@ export interface GitStatusIndicatorViewProps {
 
 /**
  * Pure presentation component for git status indicator.
- * Displays git status (ahead/behind/dirty) with tooltip on hover.
+ * Displays git status (ahead/behind/dirty) and opens divergence details in a dialog.
  * All data is passed as props - no IPC calls or side effects.
  */
 export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   gitStatus,
-  tooltipPosition = "right",
+  tooltipPosition: _tooltipPosition = "right",
   mode,
   branchHeaders,
   commits,
@@ -96,7 +82,6 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   onModeChange,
   baseRef,
   onBaseChange,
-  onPopoverOpenChange,
   isWorking = false,
   isRefreshing = false,
 }) => {
@@ -243,8 +228,8 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   const additionsColor = isWorking ? "text-success-light" : "text-muted";
   const deletionsColor = isWorking ? "text-warning-light" : "text-muted";
 
-  // HoverCard content with git divergence details
-  const hoverCardContent = (
+  // Dialog content with git divergence details
+  const dialogContent = (
     <>
       <div className="border-separator-light mb-2 flex flex-col gap-1 border-b pb-2">
         <div className="flex items-center gap-2">
@@ -270,11 +255,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
 
         <div className="flex items-center gap-2">
           <span className="text-muted-light">Base:</span>
-          <BaseSelectorPopover
-            value={baseRef}
-            onChange={onBaseChange}
-            onOpenChange={onPopoverOpenChange}
-          />
+          <BaseSelectorPopover value={baseRef} onChange={onBaseChange} />
         </div>
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
@@ -342,7 +323,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
             </span>
           ) : (
             // No outgoing lines but behind remote - show muted behind indicator
-            // so users know they can hover to toggle to divergence view
+            // so users know they can open the divergence dialog for commit details
             gitStatus.behind > 0 && (
               <span className="text-muted flex items-center font-normal">
                 ↓{formatCountAbbrev(gitStatus.behind)}
@@ -358,29 +339,33 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   );
 
   return (
-    <HoverCard open={isOpen} onOpenChange={onOpenChange} openDelay={0} closeDelay={150}>
-      <HoverCardTrigger asChild>
-        <span
-          className={cn(
-            "relative flex items-center gap-1 font-mono text-[11px] transition-colors",
-            statusColor,
-            isRefreshing && "animate-pulse"
-          )}
-        >
-          {triggerContent}
-        </span>
-      </HoverCardTrigger>
-      <HoverCardContent
-        side={tooltipPosition === "right" ? "right" : "bottom"}
-        align={tooltipPosition === "right" ? "center" : "start"}
-        sideOffset={26}
-        collisionPadding={8}
-        className="bg-modal-bg text-foreground border-separator-light z-[10000] max-h-[400px] w-auto max-w-96 min-w-0 overflow-auto px-3 py-2 font-mono text-[11px] whitespace-pre shadow-[0_4px_12px_rgba(0,0,0,0.5)]"
-        onPointerDownOutside={preventHoverCardDismissForRadixPortals}
-        onFocusOutside={preventHoverCardDismissForRadixPortals}
+    <Dialog open={isOpen} onOpenChange={onOpenChange}>
+      {/* Click to inspect divergence details; hover previews were removed per UX request. */}
+      <button
+        type="button"
+        className={cn(
+          "relative flex cursor-pointer items-center gap-1 border-0 bg-transparent p-0 font-mono text-[11px] transition-colors",
+          statusColor,
+          isRefreshing && "animate-pulse"
+        )}
+        aria-label="View git divergence details"
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpenChange(true);
+        }}
       >
-        {hoverCardContent}
-      </HoverCardContent>
-    </HoverCard>
+        {triggerContent}
+      </button>
+      <DialogContent
+        maxWidth="680px"
+        maxHeight="80vh"
+        className="bg-modal-bg text-foreground border-separator-light z-[10000] min-w-0 overflow-auto px-3 py-2 font-mono text-[11px] whitespace-pre shadow-[0_4px_12px_rgba(0,0,0,0.5)]"
+      >
+        <DialogHeader className="mb-1">
+          <DialogTitle className="text-foreground text-sm">Git divergence details</DialogTitle>
+        </DialogHeader>
+        {dialogContent}
+      </DialogContent>
+    </Dialog>
   );
 };
