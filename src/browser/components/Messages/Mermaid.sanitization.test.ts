@@ -10,12 +10,13 @@ describe("sanitizeMermaidSvg", () => {
     expect(sanitizeMermaidSvg("<svg><g></svg")).toBeNull();
   });
 
-  it("removes active content and unsafe attributes", () => {
+  it("removes active content/unsafe attributes while preserving foreignObject labels", () => {
     const input =
       '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)">' +
       "<script>alert(1)</script>" +
-      "<foreignObject><div>unsafe</div></foreignObject>" +
+      '<foreignObject><div onclick="evil()">label</div></foreignObject>' +
       '<a href="javascript:alert(1)"><text>link</text></a>' +
+      '<image src="javascript:alert(2)" />' +
       '<rect width="10" height="10" onclick="steal()" />' +
       "</svg>";
 
@@ -23,11 +24,12 @@ describe("sanitizeMermaidSvg", () => {
 
     expect(sanitized).not.toBeNull();
     expect(sanitized).not.toContain("<script");
-    expect(sanitized).not.toContain("foreignObject");
     expect(sanitized).not.toContain("onload=");
     expect(sanitized).not.toContain("onclick=");
     expect(sanitized).not.toContain("javascript:");
     expect(sanitized).toContain("<svg");
     expect(sanitized).toContain("<rect");
+    expect(sanitized).toContain("<foreignObject");
+    expect(sanitized).toContain("label");
   });
 });

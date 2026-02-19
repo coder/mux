@@ -43,12 +43,15 @@ export function sanitizeMermaidSvg(svg: string): string | null {
     return null;
   }
 
-  // Defense in depth: remove known active content containers and inline event handlers.
-  doc.querySelectorAll("script,foreignObject,iframe,object,embed").forEach((node) => {
+  // Defense in depth: remove active content containers and sanitize remaining attributes.
+  // NOTE: Keep <foreignObject> because Mermaid uses it for wrapped node labels.
+  doc.querySelectorAll("script,iframe,object,embed").forEach((node) => {
     node.remove();
   });
 
-  const linkAttributes = new Set(["href", "xlink:href"]);
+  const urlAttributes = new Set(["href", "xlink:href", "src", "action", "formaction"]);
+  const blockedSchemes = ["javascript:", "vbscript:", "data:text/html"];
+
   doc.querySelectorAll("*").forEach((element) => {
     for (const attribute of Array.from(element.attributes)) {
       const attributeName = attribute.name.toLowerCase();
@@ -60,8 +63,8 @@ export function sanitizeMermaidSvg(svg: string): string | null {
       }
 
       if (
-        linkAttributes.has(attributeName) &&
-        (attributeValue.startsWith("javascript:") || attributeValue.startsWith("data:text/html"))
+        urlAttributes.has(attributeName) &&
+        blockedSchemes.some((scheme) => attributeValue.startsWith(scheme))
       ) {
         element.removeAttribute(attribute.name);
       }
