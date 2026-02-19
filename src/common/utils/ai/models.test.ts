@@ -85,7 +85,7 @@ describe("isValidModelFormat", () => {
   it("returns true for valid model formats", () => {
     expect(isValidModelFormat("anthropic:claude-sonnet-4-5")).toBe(true);
     expect(isValidModelFormat("openai:gpt-5.2")).toBe(true);
-    expect(isValidModelFormat("google:gemini-3-pro-preview")).toBe(true);
+    expect(isValidModelFormat("google:gemini-3.1-pro-preview")).toBe(true);
     expect(isValidModelFormat("mux-gateway:anthropic/claude-opus-4-5")).toBe(true);
     // Ollama-style model names with colons in the model ID
     expect(isValidModelFormat("ollama:gpt-oss:20b")).toBe(true);
@@ -113,7 +113,9 @@ describe("resolveModelAlias", () => {
     expect(resolveModelAlias("opus")).toBe("anthropic:claude-opus-4-6");
     expect(resolveModelAlias("grok")).toBe("xai:grok-4-1-fast");
     expect(resolveModelAlias("codex")).toBe("openai:gpt-5.2-codex");
-    expect(resolveModelAlias("codex-5.1")).toBe("openai:gpt-5.1-codex");
+    expect(resolveModelAlias("gemini")).toBe("google:gemini-3.1-pro-preview");
+    expect(resolveModelAlias("gemini-pro")).toBe("google:gemini-3.1-pro-preview");
+    expect(resolveModelAlias("gemini-flash")).toBe("google:gemini-3-flash-preview");
   });
 
   it("returns non-alias strings unchanged", () => {

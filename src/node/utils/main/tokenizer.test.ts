@@ -12,7 +12,7 @@ import { KNOWN_MODELS } from "@/common/constants/knownModels";
 jest.setTimeout(20000);
 
 const openaiModel = KNOWN_MODELS.GPT.id;
-const googleModel = KNOWN_MODELS.GEMINI_3_PRO.id;
+const googleModel = KNOWN_MODELS.GEMINI_31_PRO.id;
 
 beforeAll(async () => {
   // warm up the worker_thread and tokenizer before running tests

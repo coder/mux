@@ -9,6 +9,8 @@ interface ModelData {
   max_output_tokens?: number;
   input_cost_per_token: number;
   output_cost_per_token: number;
+  input_cost_per_token_above_200k_tokens?: number;
+  output_cost_per_token_above_200k_tokens?: number;
   cache_creation_input_token_cost?: number;
   cache_read_input_token_cost?: number;
   litellm_provider?: string;
@@ -115,6 +117,27 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_vision: true,
     supports_reasoning: true,
     supports_response_schema: true,
+  },
+
+  // Gemini 3.1 Pro Preview - Released February 19, 2026
+  // Tiered pricing: ≤200K tokens $2/M input, $12/M output; >200K tokens $4/M input, $18/M output
+  // 1M input context, ~64K max output tokens
+  "gemini-3.1-pro-preview": {
+    max_input_tokens: 1048576,
+    max_output_tokens: 65535,
+    input_cost_per_token: 0.000002, // $2 per million input tokens (≤200K)
+    output_cost_per_token: 0.000012, // $12 per million output tokens (≤200K)
+    input_cost_per_token_above_200k_tokens: 0.000004, // $4 per million input tokens (>200K)
+    output_cost_per_token_above_200k_tokens: 0.000018, // $18 per million output tokens (>200K)
+    cache_read_input_token_cost: 2e-7,
+    litellm_provider: "vertex_ai-language-models",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_pdf_input: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+    knowledge_cutoff: "2025-01",
   },
 
   // GPT-5.3-Codex - same pricing as gpt-5.2-codex
