@@ -1192,6 +1192,12 @@ export class MuxAgent implements Agent {
     // backpressure. Without this decoupling, stream-end can stall behind
     // a blocked sessionUpdate write, preventing resolveTurn from firing
     // and causing prompt() to hang indefinitely.
+    //
+    // Queue size is bounded in practice: the drain loop can only outpace
+    // consumeAndForward by the number of events in the oRPC stream between
+    // forwarding ticks. A typical turn produces hundreds of small events
+    // (a few KB each), so the buffer stays well within acceptable memory
+    // even if the editor stalls momentarily.
     const { push, iterate, end } = createAsyncMessageQueue<WorkspaceChatMessage>();
 
     // Drain the oRPC stream: observe events for turn resolution, buffer
@@ -1210,11 +1216,19 @@ export class MuxAgent implements Agent {
 
     // Forward buffered events as ACP session updates (may block on
     // stdout backpressure — that's fine, the queue absorbs the gap).
-    await this.streamTranslator.consumeAndForward(sessionId, iterate());
-
-    // Wait for oRPC drain to complete (usually already done when
-    // consumeAndForward exits, but guards against edge cases).
-    await drainPromise;
+    // Wrap in try/finally to ensure the drain loop is always cleaned up:
+    // if consumeAndForward throws (e.g. editor stream drops), we must
+    // signal the queue to end so the drain loop doesn't run orphaned,
+    // and await drainPromise to avoid leaking the background task.
+    try {
+      await this.streamTranslator.consumeAndForward(sessionId, iterate());
+    } finally {
+      // Signal the drain loop to stop (idempotent if already ended).
+      end();
+      // Wait for the drain loop to finish — it may still be iterating
+      // the oRPC stream when consumeAndForward exits or throws.
+      await drainPromise;
+    }
 
     // If the stream ends without a terminal event (e.g., transient transport
     // closure), reject any pending turn so `prompt()` doesn't hang forever.
