@@ -1203,6 +1203,7 @@ export class MuxAgent implements Agent {
     // Drain the oRPC stream: observe events for turn resolution, buffer
     // for translation. push() is non-blocking so handleStreamEvent always
     // runs immediately — even when consumeAndForward is blocked on stdout.
+    let drainFinished = false;
     const drainPromise = (async () => {
       try {
         for await (const event of chatStream) {
@@ -1210,24 +1211,31 @@ export class MuxAgent implements Agent {
           push(event);
         }
       } finally {
+        drainFinished = true;
         end();
       }
     })();
 
     // Forward buffered events as ACP session updates (may block on
     // stdout backpressure — that's fine, the queue absorbs the gap).
-    // Wrap in try/finally to ensure the drain loop is always cleaned up:
-    // if consumeAndForward throws (e.g. editor stream drops), we must
-    // signal the queue to end so the drain loop doesn't run orphaned,
-    // and await drainPromise to avoid leaking the background task.
     try {
       await this.streamTranslator.consumeAndForward(sessionId, iterate());
     } finally {
-      // Signal the drain loop to stop (idempotent if already ended).
+      // Signal the drain loop to stop producing events (idempotent if
+      // already ended).
       end();
-      // Wait for the drain loop to finish — it may still be iterating
-      // the oRPC stream when consumeAndForward exits or throws.
-      await drainPromise;
+      // Only await drain if it has already completed. If consumeAndForward
+      // errored while the drain loop is still blocked waiting on chatStream
+      // (e.g. editor stream drops but oRPC stream stays open), awaiting
+      // drainPromise would hang indefinitely and block subscription cleanup
+      // (chatSubscriptions/chatSubscriptionReady never clear). In that case
+      // the drain loop will self-terminate when chatStream closes — the
+      // finally block in drainPromise ensures end() is called regardless.
+      if (drainFinished) {
+        await drainPromise;
+      } else {
+        drainPromise.catch(() => {});
+      }
     }
 
     // If the stream ends without a terminal event (e.g., transient transport
