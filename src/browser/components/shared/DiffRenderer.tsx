@@ -607,6 +607,8 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
                 lineNumberWidths={lineNumberWidths}
               />
               <DiffIndicator type={chunk.type} background={codeBg} />
+              {/* SECURITY AUDIT: line.html comes from Shiki token output or escapeHtml fallback.
+                  User/repo text is escaped before insertion and search highlighting only wraps text nodes. */}
               <span
                 className="min-w-0 whitespace-pre [&_span:not(.search-highlight)]:!bg-transparent"
                 style={{
@@ -1243,6 +1245,8 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                     )
                   }
                 />
+                {/* SECURITY AUDIT: lineInfo.html is derived from Shiki/escapeHtml output
+                    (optionally transformed by text-node-only search highlighting). */}
                 <span
                   className="min-w-0 whitespace-pre [&_span:not(.search-highlight)]:!bg-transparent"
                   style={{

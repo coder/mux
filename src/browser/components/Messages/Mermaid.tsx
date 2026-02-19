@@ -12,7 +12,9 @@ mermaid.initialize({
   startOnLoad: false,
   theme: "dark",
   layout: "elk",
-  securityLevel: "loose",
+  // Security hardening: Mermaid content is untrusted (comes from markdown),
+  // so keep Mermaid's strict sanitization and disallow scriptable links.
+  securityLevel: "strict",
   fontFamily: "var(--font-monospace)",
   darkMode: true,
   elk: {
@@ -27,6 +29,47 @@ mermaid.initialize({
     defaultRenderer: "elk",
   },
 });
+
+export function sanitizeMermaidSvg(svg: string): string | null {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(svg, "image/svg+xml");
+
+  if (doc.querySelector("parsererror")) {
+    return null;
+  }
+
+  const svgRoot = doc.documentElement;
+  if (svgRoot.tagName.toLowerCase() !== "svg") {
+    return null;
+  }
+
+  // Defense in depth: remove known active content containers and inline event handlers.
+  doc.querySelectorAll("script,foreignObject,iframe,object,embed").forEach((node) => {
+    node.remove();
+  });
+
+  const linkAttributes = new Set(["href", "xlink:href"]);
+  doc.querySelectorAll("*").forEach((element) => {
+    for (const attribute of Array.from(element.attributes)) {
+      const attributeName = attribute.name.toLowerCase();
+      const attributeValue = attribute.value.trim().toLowerCase();
+
+      if (attributeName.startsWith("on")) {
+        element.removeAttribute(attribute.name);
+        continue;
+      }
+
+      if (
+        linkAttributes.has(attributeName) &&
+        (attributeValue.startsWith("javascript:") || attributeValue.startsWith("data:text/html"))
+      ) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  });
+
+  return svgRoot.outerHTML;
+}
 
 // Common button styles
 const getButtonStyle = (disabled = false): CSSProperties => ({
@@ -162,11 +205,18 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
         const { svg: renderedSvg } = await mermaid.render(id, debouncedChart);
         if (cancelled) return;
 
-        lastValidSvgRef.current = renderedSvg;
-        setSvg(renderedSvg);
+        const sanitizedSvg = sanitizeMermaidSvg(renderedSvg);
+        if (!sanitizedSvg) {
+          throw new Error("Mermaid returned invalid SVG output");
+        }
+
+        lastValidSvgRef.current = sanitizedSvg;
+        setSvg(sanitizedSvg);
         setError(null);
         if (containerRef.current) {
-          containerRef.current.innerHTML = renderedSvg;
+          // SECURITY AUDIT: sanitizedSvg is produced by sanitizeMermaidSvg(),
+          // which strips active SVG/HTML content before insertion.
+          containerRef.current.innerHTML = sanitizedSvg;
         }
       } catch (err) {
         if (cancelled) return;
@@ -189,6 +239,7 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
   // Update modal container when opened
   useEffect(() => {
     if (isModalOpen && modalContainerRef.current && svg) {
+      // SECURITY AUDIT: svg state only stores sanitizeMermaidSvg() output.
       modalContainerRef.current.innerHTML = svg;
     }
   }, [isModalOpen, svg]);
