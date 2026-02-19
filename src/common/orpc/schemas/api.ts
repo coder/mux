@@ -1073,6 +1073,9 @@ export const workspace = {
     input: z.object({
       workspaceId: z.string(),
       mode: OnChatModeSchema.optional(),
+      // One-shot migration hint: legacy renderer localStorage opt-out value.
+      // Used only when backend auto-retry preference file is missing.
+      legacyAutoRetryEnabled: z.boolean().optional(),
     }),
     output: eventIterator(WorkspaceChatMessageSchema), // Stream event
   },

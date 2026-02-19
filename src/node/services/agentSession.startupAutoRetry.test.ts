@@ -414,6 +414,44 @@ describe("AgentSession startup auto-retry recovery", () => {
     secondSession.dispose();
   });
 
+  test("respects legacy auto-retry opt-out hint when backend preference is missing", async () => {
+    const workspaceId = "startup-retry-legacy-opt-out";
+    const { session, historyService, events, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const appendResult = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-1", "user", "Interrupted before migration", {
+        timestamp: Date.now(),
+      })
+    );
+    expect(appendResult.success).toBe(true);
+
+    session.setLegacyAutoRetryEnabledHint(false);
+    session.ensureStartupAutoRetryCheck();
+
+    const startupCheckPromise = (
+      session as unknown as { startupAutoRetryCheckPromise: Promise<void> | null }
+    ).startupAutoRetryCheckPromise;
+    await startupCheckPromise;
+
+    expect(events.some((event) => event.type === "auto-retry-scheduled")).toBe(false);
+
+    const preferencePath = (
+      session as unknown as {
+        getAutoRetryPreferencePath: () => string;
+      }
+    ).getAutoRetryPreferencePath();
+    expect(await Bun.file(preferencePath).exists()).toBe(true);
+
+    const persisted = JSON.parse(await Bun.file(preferencePath).text()) as {
+      enabled?: unknown;
+    };
+    expect(persisted.enabled).toBe(false);
+
+    session.dispose();
+  });
+
   test("does not persist temporary auto-retry enable across restart", async () => {
     const workspaceId = "startup-retry-temporary-enable";
     const {

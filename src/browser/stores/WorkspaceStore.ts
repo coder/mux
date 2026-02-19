@@ -52,8 +52,8 @@ import {
   type LiveBashOutputInternal,
   type LiveBashOutputView,
 } from "@/browser/utils/messages/liveBashOutputBuffer";
-import { readPersistedState } from "@/browser/hooks/usePersistedState";
-import { getAutoCompactionThresholdKey } from "@/common/constants/storage";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { getAutoCompactionThresholdKey, getAutoRetryKey } from "@/common/constants/storage";
 import { DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT } from "@/common/constants/ui";
 import { trackStreamCompleted } from "@/common/telemetry";
 
@@ -2340,10 +2340,26 @@ export class WorkspaceStore {
 
         await this.syncAutoCompactionThresholdAtStartup(client, workspaceId);
 
-        const iterator = await client.workspace.onChat(
-          { workspaceId, mode },
-          { signal: attemptController.signal }
+        const legacyAutoRetryEnabled = readPersistedState<boolean | undefined>(
+          getAutoRetryKey(workspaceId),
+          undefined
         );
+
+        const onChatInput =
+          legacyAutoRetryEnabled === undefined
+            ? { workspaceId, mode }
+            : { workspaceId, mode, legacyAutoRetryEnabled };
+
+        const iterator = await client.workspace.onChat(onChatInput, {
+          signal: attemptController.signal,
+        });
+
+        if (legacyAutoRetryEnabled !== undefined) {
+          // One-way migration: once we have successfully forwarded the legacy value
+          // to the backend, clear the renderer key so future sessions rely solely
+          // on backend persistence.
+          updatePersistedState<boolean | undefined>(getAutoRetryKey(workspaceId), undefined);
+        }
 
         // Full replay: clear stale derived/transient state now that the subscription
         // is active. Deferred to after the iterator is established so the UI continues

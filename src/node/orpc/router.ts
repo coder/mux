@@ -2888,6 +2888,10 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.onChat.output)
         .handler(async function* ({ context, input, signal }) {
           const session = context.workspaceService.getOrCreateSession(input.workspaceId);
+          if (typeof input.legacyAutoRetryEnabled === "boolean") {
+            session.setLegacyAutoRetryEnabledHint(input.legacyAutoRetryEnabled);
+          }
+
           const { push, iterate, end } = createAsyncMessageQueue<WorkspaceChatMessage>();
 
           const onAbort = () => {

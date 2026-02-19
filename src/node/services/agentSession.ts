@@ -249,6 +249,7 @@ export class AgentSession {
   private startupAutoRetryCheckScheduled = false;
   private startupAutoRetryCheckPromise: Promise<void> | null = null;
   private autoRetryEnabledPreference: boolean | null = null;
+  private legacyAutoRetryEnabledHint: boolean | null = null;
   private startupAutoRetryAbandon: { reason: string; userMessageId?: string } | null = null;
 
   /** Latest context-usage snapshot used for on-send compaction checks. */
@@ -547,6 +548,17 @@ export class AgentSession {
     return path.join(this.config.getSessionDir(this.workspaceId), AUTO_RETRY_PREFERENCE_FILE);
   }
 
+  setLegacyAutoRetryEnabledHint(enabled: boolean): void {
+    this.assertNotDisposed("setLegacyAutoRetryEnabledHint");
+    assert(typeof enabled === "boolean", "setLegacyAutoRetryEnabledHint requires a boolean");
+
+    if (this.autoRetryEnabledPreference !== null) {
+      return;
+    }
+
+    this.legacyAutoRetryEnabledHint = enabled;
+  }
+
   private parseStartupAutoRetryAbandon(
     value: unknown
   ): { reason: string; userMessageId?: string } | null {
@@ -584,29 +596,39 @@ export class AgentSession {
       };
       const enabled = parsed.enabled !== false;
       this.autoRetryEnabledPreference = enabled;
+      this.legacyAutoRetryEnabledHint = null;
       this.startupAutoRetryAbandon = this.parseStartupAutoRetryAbandon(
         parsed.startupAutoRetryAbandon
       );
       this.retryManager.setEnabled(enabled);
       return enabled;
     } catch (error) {
-      this.autoRetryEnabledPreference = true;
-      this.startupAutoRetryAbandon = null;
-
-      // Missing preference file is the default path. Only log malformed JSON or IO surprises.
+      // Missing preference file is the default path. Use any legacy frontend hint
+      // (captured at onChat subscribe time) before falling back to enabled.
       const errno =
         typeof error === "object" && error !== null && "code" in error
           ? (error as { code?: unknown }).code
           : undefined;
-      if (errno !== "ENOENT") {
+      const defaultEnabled =
+        errno === "ENOENT" && this.legacyAutoRetryEnabledHint === false ? false : true;
+
+      this.autoRetryEnabledPreference = defaultEnabled;
+      this.legacyAutoRetryEnabledHint = null;
+      this.startupAutoRetryAbandon = null;
+      this.retryManager.setEnabled(defaultEnabled);
+
+      if (errno === "ENOENT" && defaultEnabled === false) {
+        // Persist migrated legacy opt-out so restart behavior no longer depends
+        // on renderer localStorage keys.
+        await this.persistAutoRetryState();
+      } else if (errno !== "ENOENT") {
         log.warn("Failed to load auto-retry preference; defaulting to enabled", {
           workspaceId: this.workspaceId,
           error: getErrorMessage(error),
         });
       }
 
-      this.retryManager.setEnabled(true);
-      return true;
+      return defaultEnabled;
     }
   }
 

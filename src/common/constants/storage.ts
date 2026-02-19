@@ -189,6 +189,15 @@ export function getPendingWorkspaceSendErrorKey(workspaceId: string): string {
 }
 
 /**
+ * LEGACY: Get the localStorage key for pre-backend auto-retry preference.
+ *
+ * Kept only for one-way migration during onChat subscription.
+ */
+export function getAutoRetryKey(workspaceId: string): string {
+  return `${workspaceId}-autoRetry`;
+}
+
+/**
  * Get storage key for cancelled compaction tracking.
  * Stores compaction-request user message ID to verify freshness across reloads.
  */
