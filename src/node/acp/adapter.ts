@@ -32,11 +32,17 @@ export async function runAcpAdapter(server: ServerConnection): Promise<void> {
   const output = Writable.toWeb(process.stdout) as WritableStream<Uint8Array>;
   const stream = ndJsonStream(output, input);
 
-  const connection = new AgentSideConnection((conn) => new MuxAgent(conn, server), stream);
+  let waitForDisconnectCleanup: () => Promise<void> = () => Promise.resolve();
+  const connection = new AgentSideConnection((conn) => {
+    const createdAgent = new MuxAgent(conn, server);
+    waitForDisconnectCleanup = () => createdAgent.waitForDisconnectCleanup();
+    return createdAgent;
+  }, stream);
 
   try {
     await connection.closed;
   } finally {
+    await waitForDisconnectCleanup();
     await server.close();
   }
 }

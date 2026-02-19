@@ -134,6 +134,7 @@ export class MuxAgent implements Agent {
    * to a freshly queued (but not yet identified) turn.
    */
   private readonly lastStreamMessageIdBySession = new Map<string, string>();
+  private disconnectCleanupPromise: Promise<void> | null = null;
 
   constructor(
     private readonly connection: AgentSideConnection,
@@ -157,7 +158,11 @@ export class MuxAgent implements Agent {
           this.rejectTurn(sessionId, disconnectError);
         }
 
-        void this.cleanupNewSessionWorkspacesOnDisconnect();
+        this.disconnectCleanupPromise = this.cleanupNewSessionWorkspacesOnDisconnect().catch(
+          (cleanupError) => {
+            console.error("[acp] Failed during disconnect workspace cleanup", cleanupError);
+          }
+        );
       },
       { once: true }
     );
@@ -1277,6 +1282,10 @@ export class MuxAgent implements Agent {
     if (!updateAgentResult.success) {
       throw new Error(`workspace.updateAgentAISettings failed: ${updateAgentResult.error}`);
     }
+  }
+
+  async waitForDisconnectCleanup(): Promise<void> {
+    await this.disconnectCleanupPromise;
   }
 
   private assertInitialized(methodName: string): void {
