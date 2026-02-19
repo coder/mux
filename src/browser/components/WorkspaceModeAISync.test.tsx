@@ -145,6 +145,41 @@ describe("WorkspaceModeAISync", () => {
     });
   });
 
+  test("restores workspace-by-agent override on explicit agent switch when defaults inherit", async () => {
+    const workspaceId = nextWorkspaceId();
+
+    const planModel = "anthropic:claude-sonnet-4-5";
+    const planThinking = "high";
+    const execWorkspaceModel = "openai:gpt-5.2-pro";
+    const execWorkspaceThinking = "medium";
+
+    updatePersistedState(AGENT_AI_DEFAULTS_KEY, {});
+    updatePersistedState(getWorkspaceAISettingsByAgentKey(workspaceId), {
+      exec: { model: execWorkspaceModel, thinkingLevel: execWorkspaceThinking },
+    });
+
+    updatePersistedState(getModelKey(workspaceId), planModel);
+    updatePersistedState(getThinkingLevelKey(workspaceId), planThinking);
+
+    const { rerender } = renderSync({ workspaceId, agentId: "plan" });
+
+    await waitFor(() => {
+      expect(readPersistedState(getModelKey(workspaceId), "")).toBe(planModel);
+      expect(readPersistedState(getThinkingLevelKey(workspaceId), "off")).toBe(planThinking);
+    });
+
+    rerender(<SyncHarness workspaceId={workspaceId} agentId="exec" />);
+
+    await waitFor(() => {
+      expect(readPersistedState(getModelKey(workspaceId), "")).toBe(execWorkspaceModel);
+      expect(readPersistedState(getThinkingLevelKey(workspaceId), "off")).toBe(
+        execWorkspaceThinking
+      );
+    });
+
+    expect(consumeWorkspaceModelChange(workspaceId, execWorkspaceModel)).toBe("agent");
+  });
+
   test("ignores same-agent workspace overrides when agent defaults are missing", async () => {
     const workspaceId = nextWorkspaceId();
 

@@ -8,11 +8,15 @@ import {
 import {
   getModelKey,
   getThinkingLevelKey,
+  getWorkspaceAISettingsByAgentKey,
   AGENT_AI_DEFAULTS_KEY,
 } from "@/common/constants/storage";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
-import { resolveWorkspaceAiSettingsForAgent } from "@/browser/utils/workspaceModeAi";
+import {
+  resolveWorkspaceAiSettingsForAgent,
+  type WorkspaceAISettingsCache,
+} from "@/browser/utils/workspaceModeAi";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 
@@ -22,6 +26,11 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
 
   const [agentAiDefaults] = usePersistedState<AgentAiDefaults>(
     AGENT_AI_DEFAULTS_KEY,
+    {},
+    { listener: true }
+  );
+  const [workspaceByAgent] = usePersistedState<WorkspaceAISettingsCache>(
+    getWorkspaceAISettingsByAgentKey(workspaceId),
     {},
     { listener: true }
   );
@@ -57,6 +66,11 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
     const { resolvedModel, resolvedThinking } = resolveWorkspaceAiSettingsForAgent({
       agentId: normalizedAgentId,
       agentAiDefaults,
+      // Keep deterministic handoff behavior: background sync should trust the
+      // currently active workspace model, but explicit mode switches should
+      // restore the selected agent's per-workspace override (if any).
+      workspaceByAgent,
+      useWorkspaceByAgentFallback: isExplicitAgentSwitch,
       fallbackModel,
       existingModel,
       existingThinking,
@@ -73,7 +87,7 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
     if (existingThinking !== resolvedThinking) {
       updatePersistedState(thinkingKey, resolvedThinking);
     }
-  }, [agentAiDefaults, agentId, workspaceId]);
+  }, [agentAiDefaults, agentId, workspaceByAgent, workspaceId]);
 
   return null;
 }
