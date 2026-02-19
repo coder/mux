@@ -133,28 +133,12 @@ export const UserMessage: React.FC<UserMessageProps> = ({
     },
   ];
 
-  // If it's a local command output, render with TerminalOutput
-
   const label = isSynthetic ? (
     <span className="bg-muted/20 text-muted rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
       auto
     </span>
   ) : null;
   const syntheticClassName = cn(className, isSynthetic && "opacity-70");
-
-  if (isLocalCommandOutput) {
-    return (
-      <MessageWindow
-        label={label}
-        message={message}
-        buttons={buttons}
-        className={syntheticClassName}
-        variant="user"
-      >
-        <TerminalOutput output={extractedOutput} isError={false} />
-      </MessageWindow>
-    );
-  }
 
   return (
     <MessageWindow
@@ -164,14 +148,18 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       className={syntheticClassName}
       variant="user"
     >
-      <UserMessageContent
-        content={content}
-        commandPrefix={message.commandPrefix}
-        agentSkillSnapshot={message.agentSkill?.snapshot}
-        reviews={message.reviews}
-        fileParts={message.fileParts}
-        variant="sent"
-      />
+      {isLocalCommandOutput ? (
+        <TerminalOutput output={extractedOutput} isError={false} />
+      ) : (
+        <UserMessageContent
+          content={content}
+          commandPrefix={message.commandPrefix}
+          agentSkillSnapshot={message.agentSkill?.snapshot}
+          reviews={message.reviews}
+          fileParts={message.fileParts}
+          variant="sent"
+        />
+      )}
     </MessageWindow>
   );
 };
