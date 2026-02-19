@@ -7,88 +7,318 @@ if [ $# -eq 0 ]; then
 fi
 
 PR_NUMBER=$1
+if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+  echo "❌ PR number must be numeric. Got: '$PR_NUMBER'" >&2
+  exit 1
+fi
+
 BOT_LOGIN_GRAPHQL="chatgpt-codex-connector"
+PR_DATA_FILE="${MUX_PR_DATA_FILE:-}"
+REGULAR_COMMENTS='[]'
+UNRESOLVED_THREADS='[]'
 
-echo "Checking for unresolved Codex comments in PR #${PR_NUMBER}..."
+resolve_repo_context() {
+  if [[ -n "${MUX_GH_OWNER:-}" || -n "${MUX_GH_REPO:-}" ]]; then
+    if [[ -z "${MUX_GH_OWNER:-}" || -z "${MUX_GH_REPO:-}" ]]; then
+      echo "❌ assertion failed: MUX_GH_OWNER and MUX_GH_REPO must both be set when one is provided" >&2
+      return 1
+    fi
 
-# Use GraphQL to get all comments (including minimized status)
-# shellcheck disable=SC2016 # Single quotes are intentional - this is a GraphQL query, not shell expansion
-GRAPHQL_QUERY='query($owner: String!, $repo: String!, $pr: Int!) {
-  repository(owner: $owner, name: $repo) {
-    pullRequest(number: $pr) {
-      comments(first: 100) {
-        nodes {
-          id
-          author { login }
-          body
-          createdAt
-          isMinimized
+    OWNER="$MUX_GH_OWNER"
+    REPO="$MUX_GH_REPO"
+  else
+    local repo_info
+    if ! repo_info=$(gh repo view --json owner,name --jq '{owner: .owner.login, name: .name}'); then
+      echo "❌ Failed to resolve repository owner/name via 'gh repo view'." >&2
+      return 1
+    fi
+
+    OWNER=$(echo "$repo_info" | jq -r '.owner // empty')
+    REPO=$(echo "$repo_info" | jq -r '.name // empty')
+  fi
+
+  if [[ -z "$OWNER" || -z "$REPO" ]]; then
+    echo "❌ assertion failed: owner/repo must be non-empty" >&2
+    return 1
+  fi
+}
+
+# Retry GraphQL calls to avoid transient network/API hiccups from failing readiness checks.
+MAX_ATTEMPTS=5
+BACKOFF_SECS=2
+
+graphql_with_retries() {
+  local query="$1"
+  local cursor="$2"
+  local attempt
+  local backoff="$BACKOFF_SECS"
+  local response
+
+  for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
+    if response=$(gh api graphql \
+      -f query="$query" \
+      -F owner="$OWNER" \
+      -F repo="$REPO" \
+      -F pr="$PR_NUMBER" \
+      -F cursor="$cursor"); then
+      printf '%s\n' "$response"
+      return 0
+    fi
+
+    if [ "$attempt" -eq "$MAX_ATTEMPTS" ]; then
+      echo "❌ GraphQL query failed after ${MAX_ATTEMPTS} attempts" >&2
+      return 1
+    fi
+
+    echo "⚠️ GraphQL query failed (attempt ${attempt}/${MAX_ATTEMPTS}); retrying in ${backoff}s..." >&2
+    sleep "$backoff"
+    backoff=$((backoff * 2))
+  done
+}
+
+compute_codex_sets_from_arrays() {
+  local comments_json="$1"
+  local threads_json="$2"
+
+  REGULAR_COMMENTS=$(jq -cn --argjson comments "$comments_json" --arg bot "$BOT_LOGIN_GRAPHQL" '[
+    $comments[]
+    | select(.author.login == $bot and .isMinimized == false and (.body | test("Didn.t find any major issues|usage limits have been reached") | not))
+  ]')
+
+  UNRESOLVED_THREADS=$(jq -cn --argjson threads "$threads_json" --arg bot "$BOT_LOGIN_GRAPHQL" '[
+    $threads[]
+    | select(.isResolved == false and .comments.nodes[0].author.login == $bot)
+  ]')
+}
+
+load_result_from_cache() {
+  if [[ -z "$PR_DATA_FILE" || ! -s "$PR_DATA_FILE" ]]; then
+    return 1
+  fi
+
+  if ! jq -e '.data.repository.pullRequest != null and .data.repository.pullRequest.comments.nodes != null and .data.repository.pullRequest.reviewThreads.nodes != null' "$PR_DATA_FILE" >/dev/null 2>&1; then
+    echo "⚠️ MUX_PR_DATA_FILE at '$PR_DATA_FILE' does not contain the expected PR payload; falling back to API query." >&2
+    return 1
+  fi
+
+  # Cached data from wait_pr_codex uses comments/reviewThreads(last: 100). If either
+  # connection has older pages, the cache is incomplete and cannot be trusted for a clean
+  # "no unresolved Codex comments" result.
+  local comments_has_previous
+  local threads_has_previous
+  comments_has_previous=$(jq -r '(.data.repository.pullRequest.comments.pageInfo.hasPreviousPage | if . == null then "unknown" else tostring end)' "$PR_DATA_FILE")
+  threads_has_previous=$(jq -r '(.data.repository.pullRequest.reviewThreads.pageInfo.hasPreviousPage | if . == null then "unknown" else tostring end)' "$PR_DATA_FILE")
+
+  case "$comments_has_previous" in
+    false) ;;
+    true)
+      echo "⚠️ Cached comments window is incomplete (hasPreviousPage=true); fetching full Codex comment set." >&2
+      return 1
+      ;;
+    unknown)
+      echo "⚠️ Cached comment pageInfo is missing; fetching full Codex comment set." >&2
+      return 1
+      ;;
+    *)
+      echo "❌ assertion failed: unexpected cached comments hasPreviousPage value '$comments_has_previous'" >&2
+      return 1
+      ;;
+  esac
+
+  case "$threads_has_previous" in
+    false) ;;
+    true)
+      echo "⚠️ Cached reviewThreads window is incomplete (hasPreviousPage=true); fetching full Codex comment set." >&2
+      return 1
+      ;;
+    unknown)
+      echo "⚠️ Cached review-thread pageInfo is missing; fetching full Codex comment set." >&2
+      return 1
+      ;;
+    *)
+      echo "❌ assertion failed: unexpected cached reviewThreads hasPreviousPage value '$threads_has_previous'" >&2
+      return 1
+      ;;
+  esac
+
+  local cached_comments
+  local cached_threads
+  cached_comments=$(jq -c '.data.repository.pullRequest.comments.nodes // []' "$PR_DATA_FILE")
+  cached_threads=$(jq -c '.data.repository.pullRequest.reviewThreads.nodes // []' "$PR_DATA_FILE")
+  compute_codex_sets_from_arrays "$cached_comments" "$cached_threads"
+  return 0
+}
+
+fetch_all_comments_via_api() {
+  # shellcheck disable=SC2016 # Single quotes are intentional - this is a GraphQL query.
+  local graphql_query='query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $pr) {
+        comments(first: 100, after: $cursor) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          nodes {
+            id
+            author { login }
+            body
+            createdAt
+            isMinimized
+          }
         }
       }
-      reviewThreads(first: 100) {
-        nodes {
-          id
-          isResolved
-          comments(first: 1) {
-            nodes {
-              id
-              author { login }
-              body
-              createdAt
-              path
-              line
+    }
+  }'
+
+  local all_comments='[]'
+  local cursor="null"
+  local page_data
+  local page_comments
+  local has_next
+  local end_cursor
+
+  while true; do
+    if ! page_data=$(graphql_with_retries "$graphql_query" "$cursor"); then
+      return 1
+    fi
+
+    if [ "$(echo "$page_data" | jq -r '.data.repository.pullRequest == null')" = "true" ]; then
+      echo "❌ PR #$PR_NUMBER does not exist in ${OWNER}/${REPO}." >&2
+      return 1
+    fi
+
+    page_comments=$(echo "$page_data" | jq -c '.data.repository.pullRequest.comments.nodes // []')
+    all_comments=$(jq -cn --argjson existing "$all_comments" --argjson page "$page_comments" '$existing + $page')
+
+    has_next=$(echo "$page_data" | jq -r '.data.repository.pullRequest.comments.pageInfo.hasNextPage')
+    end_cursor=$(echo "$page_data" | jq -r '.data.repository.pullRequest.comments.pageInfo.endCursor // empty')
+
+    case "$has_next" in
+      false)
+        break
+        ;;
+      true)
+        if [[ -z "$end_cursor" ]]; then
+          echo "❌ assertion failed: comments hasNextPage=true with empty endCursor" >&2
+          return 1
+        fi
+        cursor="$end_cursor"
+        ;;
+      *)
+        echo "❌ assertion failed: unexpected comments hasNextPage value '$has_next'" >&2
+        return 1
+        ;;
+    esac
+  done
+
+  ALL_COMMENTS_JSON="$all_comments"
+}
+
+fetch_all_threads_via_api() {
+  # shellcheck disable=SC2016 # Single quotes are intentional - this is a GraphQL query.
+  local graphql_query='query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $pr) {
+        reviewThreads(first: 100, after: $cursor) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          nodes {
+            id
+            isResolved
+            comments(first: 1) {
+              nodes {
+                id
+                author { login }
+                body
+                createdAt
+                path
+                line
+              }
             }
           }
         }
       }
     }
-  }
-}'
+  }'
 
-REPO_INFO=$(gh repo view --json owner,name --jq '{owner: .owner.login, name: .name}')
-OWNER=$(echo "$REPO_INFO" | jq -r '.owner')
-REPO=$(echo "$REPO_INFO" | jq -r '.name')
+  local all_threads='[]'
+  local cursor="null"
+  local page_data
+  local page_threads
+  local has_next
+  local end_cursor
 
-# Depot runners sometimes hit transient network timeouts to api.github.com.
-# Retry the GraphQL request a few times before failing the required check.
-MAX_ATTEMPTS=5
-BACKOFF_SECS=2
+  while true; do
+    if ! page_data=$(graphql_with_retries "$graphql_query" "$cursor"); then
+      return 1
+    fi
 
-for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
-  if RESULT=$(gh api graphql \
-    -f query="$GRAPHQL_QUERY" \
-    -F owner="$OWNER" \
-    -F repo="$REPO" \
-    -F pr="$PR_NUMBER"); then
-    break
-  fi
+    if [ "$(echo "$page_data" | jq -r '.data.repository.pullRequest == null')" = "true" ]; then
+      echo "❌ PR #$PR_NUMBER does not exist in ${OWNER}/${REPO}." >&2
+      return 1
+    fi
 
-  if [ "$attempt" -eq "$MAX_ATTEMPTS" ]; then
-    echo "❌ GraphQL query failed after ${MAX_ATTEMPTS} attempts"
-    exit 1
-  fi
+    page_threads=$(echo "$page_data" | jq -c '.data.repository.pullRequest.reviewThreads.nodes // []')
+    all_threads=$(jq -cn --argjson existing "$all_threads" --argjson page "$page_threads" '$existing + $page')
 
-  echo "⚠️ GraphQL query failed (attempt ${attempt}/${MAX_ATTEMPTS}); retrying in ${BACKOFF_SECS}s..."
-  sleep "$BACKOFF_SECS"
-  BACKOFF_SECS=$((BACKOFF_SECS * 2))
-done
+    has_next=$(echo "$page_data" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')
+    end_cursor=$(echo "$page_data" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // empty')
 
-# Filter regular comments from bot that aren't minimized, excluding:
-# - "Didn't find any major issues" (no issues found)
-# - "usage limits have been reached" (rate limit error, not a real review)
-REGULAR_COMMENTS=$(echo "$RESULT" | jq "[.data.repository.pullRequest.comments.nodes[] | select(.author.login == \"${BOT_LOGIN_GRAPHQL}\" and .isMinimized == false and (.body | test(\"Didn't find any major issues|usage limits have been reached\") | not))]")
+    case "$has_next" in
+      false)
+        break
+        ;;
+      true)
+        if [[ -z "$end_cursor" ]]; then
+          echo "❌ assertion failed: reviewThreads hasNextPage=true with empty endCursor" >&2
+          return 1
+        fi
+        cursor="$end_cursor"
+        ;;
+      *)
+        echo "❌ assertion failed: unexpected reviewThreads hasNextPage value '$has_next'" >&2
+        return 1
+        ;;
+    esac
+  done
+
+  ALL_THREADS_JSON="$all_threads"
+}
+
+fetch_result_via_api() {
+  resolve_repo_context
+  fetch_all_comments_via_api
+  fetch_all_threads_via_api
+  compute_codex_sets_from_arrays "$ALL_COMMENTS_JSON" "$ALL_THREADS_JSON"
+}
+
+echo "Checking for unresolved Codex comments in PR #${PR_NUMBER}..."
+
+loaded_from_cache=0
+if load_result_from_cache; then
+  loaded_from_cache=1
+else
+  fetch_result_via_api
+fi
+
+# The shared cache is fetched earlier in wait_pr_ready's loop and can become stale
+# before this final Codex comment gate executes. Re-query before returning either
+# success or failure so recently-added/resolved Codex comments are not misclassified.
+if [ "$loaded_from_cache" -eq 1 ]; then
+  fetch_result_via_api
+fi
+
 REGULAR_COUNT=$(echo "$REGULAR_COMMENTS" | jq 'length')
-
-# Filter unresolved review threads from bot
-UNRESOLVED_THREADS=$(echo "$RESULT" | jq "[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .comments.nodes[0].author.login == \"${BOT_LOGIN_GRAPHQL}\")]")
 UNRESOLVED_COUNT=$(echo "$UNRESOLVED_THREADS" | jq 'length')
-
 TOTAL_UNRESOLVED=$((REGULAR_COUNT + UNRESOLVED_COUNT))
 
 echo "Found ${REGULAR_COUNT} unminimized regular comment(s) from bot"
 echo "Found ${UNRESOLVED_COUNT} unresolved review thread(s) from bot"
 
-if [ $TOTAL_UNRESOLVED -gt 0 ]; then
+if [ "$TOTAL_UNRESOLVED" -gt 0 ]; then
   echo ""
   echo "❌ Found ${TOTAL_UNRESOLVED} unresolved comment(s) from Codex in PR #${PR_NUMBER}"
   echo ""
@@ -107,7 +337,7 @@ if [ $TOTAL_UNRESOLVED -gt 0 ]; then
   echo ""
   echo "Please address or resolve all Codex comments before merging."
   exit 1
-else
-  echo "✅ No unresolved Codex comments found"
-  exit 0
 fi
+
+echo "✅ No unresolved Codex comments found"
+exit 0

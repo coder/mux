@@ -16,6 +16,7 @@
  */
 
 import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import {
   DEFAULT_AUTO_COMPACTION_THRESHOLD,
@@ -58,6 +59,7 @@ const WARNING_ADVANCE_PERCENT = 10;
  * @param use1M - Whether 1M context is enabled
  * @param threshold - Usage percentage threshold (0.0-1.0, default 0.7 = 70%). If >= 1.0, auto-compaction is considered disabled.
  * @param warningAdvancePercent - Show warning this many percentage points before threshold (default 10)
+ * @param providersConfig - Provider config used for custom model context overrides
  * @returns Check result with warning flag and usage percentage
  */
 export function checkAutoCompaction(
@@ -65,7 +67,8 @@ export function checkAutoCompaction(
   model: string | null,
   use1M: boolean,
   threshold: number = DEFAULT_AUTO_COMPACTION_THRESHOLD,
-  warningAdvancePercent: number = WARNING_ADVANCE_PERCENT
+  warningAdvancePercent: number = WARNING_ADVANCE_PERCENT,
+  providersConfig: ProvidersConfigMap | null = null
 ): AutoCompactionCheckResult {
   const thresholdPercentage = threshold * 100;
   const isEnabled = threshold < 1.0;
@@ -81,7 +84,7 @@ export function checkAutoCompaction(
   }
 
   // Determine max tokens for this model
-  const maxTokens = getEffectiveContextLimit(model, use1M);
+  const maxTokens = getEffectiveContextLimit(model, use1M, providersConfig);
 
   // No max tokens known - safe default (can't calculate percentage)
   if (!maxTokens) {

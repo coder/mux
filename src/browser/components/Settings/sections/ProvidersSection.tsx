@@ -6,6 +6,7 @@ import {
   Eye,
   EyeOff,
   ExternalLink,
+  Loader2,
   ShieldCheck,
   X,
 } from "lucide-react";
@@ -45,6 +46,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/browser/components/ui/tooltip";
+import { getErrorMessage } from "@/common/utils/errors";
 
 type MuxGatewayLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
 type CodexOauthFlowStatus = "idle" | "starting" | "waiting" | "error";
@@ -245,17 +247,7 @@ export function ProvidersSection() {
   const [codexOauthDeviceFlow, setCodexOauthDeviceFlow] = useState<CodexOauthDeviceFlow | null>(
     null
   );
-
-  const [codexOauthCodeCopied, setCodexOauthCodeCopied] = useState(false);
-  const codexOauthCopiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (codexOauthCopiedTimeoutRef.current !== null) {
-        clearTimeout(codexOauthCopiedTimeoutRef.current);
-      }
-    };
-  }, []);
+  const [codexOauthAuthorizeUrl, setCodexOauthAuthorizeUrl] = useState<string | null>(null);
 
   const codexOauthIsConnected = config?.openai?.codexOauthSet === true;
   const openaiApiKeySet = config?.openai?.apiKeySet === true;
@@ -286,18 +278,9 @@ export function ProvidersSection() {
     setCodexOauthError(null);
     setCodexOauthDesktopFlowId(null);
     setCodexOauthDeviceFlow(null);
-
-    let popup: Window | null = null;
+    setCodexOauthAuthorizeUrl(null);
 
     try {
-      if (!isDesktop) {
-        // Open popup synchronously to preserve user gesture context (avoids popup blockers).
-        popup = window.open("about:blank", "_blank");
-        if (!popup) {
-          throw new Error("Popup blocked - please allow popups and try again.");
-        }
-      }
-
       setCodexOauthStatus("starting");
 
       if (!isDesktop) {
@@ -307,12 +290,10 @@ export function ProvidersSection() {
           if (startResult.success) {
             void api.codexOauth.cancelDeviceFlow({ flowId: startResult.data.flowId });
           }
-          popup?.close();
           return;
         }
 
         if (!startResult.success) {
-          popup?.close();
           setCodexOauthStatus("error");
           setCodexOauthError(startResult.error);
           return;
@@ -325,10 +306,8 @@ export function ProvidersSection() {
         });
         setCodexOauthStatus("waiting");
 
-        if (popup) {
-          popup.location.href = startResult.data.verifyUrl;
-        }
-
+        // Keep device-code login manual per user request: we only open the
+        // verification page from the explicit "Copy & Open" action.
         const waitResult = await api.codexOauth.waitForDeviceFlow({
           flowId: startResult.data.flowId,
         });
@@ -345,6 +324,7 @@ export function ProvidersSection() {
 
         setCodexOauthStatus("idle");
         setCodexOauthDeviceFlow(null);
+        setCodexOauthAuthorizeUrl(null);
         await refresh();
         return;
       }
@@ -355,12 +335,10 @@ export function ProvidersSection() {
         if (startResult.success) {
           void api.codexOauth.cancelDesktopFlow({ flowId: startResult.data.flowId });
         }
-        popup?.close();
         return;
       }
 
       if (!startResult.success) {
-        popup?.close();
         setCodexOauthStatus("error");
         setCodexOauthError(startResult.error);
         return;
@@ -368,10 +346,8 @@ export function ProvidersSection() {
 
       const { flowId, authorizeUrl } = startResult.data;
       setCodexOauthDesktopFlowId(flowId);
+      setCodexOauthAuthorizeUrl(authorizeUrl);
       setCodexOauthStatus("waiting");
-
-      // Desktop main process intercepts external window.open() calls and routes them via shell.openExternal.
-      window.open(authorizeUrl, "_blank", "noopener");
 
       const waitResult = await api.codexOauth.waitForDesktopFlow({ flowId });
 
@@ -389,14 +365,12 @@ export function ProvidersSection() {
       setCodexOauthDesktopFlowId(null);
       await refresh();
     } catch (err) {
-      popup?.close();
-
       if (attempt !== codexOauthAttemptRef.current) {
         return;
       }
 
       setCodexOauthStatus("error");
-      setCodexOauthError(err instanceof Error ? err.message : String(err));
+      setCodexOauthError(getErrorMessage(err));
     }
   };
 
@@ -420,6 +394,7 @@ export function ProvidersSection() {
     setCodexOauthError(null);
     setCodexOauthDesktopFlowId(null);
     setCodexOauthDeviceFlow(null);
+    setCodexOauthAuthorizeUrl(null);
 
     try {
       setCodexOauthStatus("starting");
@@ -461,6 +436,7 @@ export function ProvidersSection() {
 
       setCodexOauthStatus("idle");
       setCodexOauthDeviceFlow(null);
+      setCodexOauthAuthorizeUrl(null);
       await refresh();
     } catch (err) {
       if (attempt !== codexOauthAttemptRef.current) {
@@ -468,7 +444,7 @@ export function ProvidersSection() {
       }
 
       setCodexOauthStatus("error");
-      setCodexOauthError(err instanceof Error ? err.message : String(err));
+      setCodexOauthError(getErrorMessage(err));
     }
   };
 
@@ -492,6 +468,7 @@ export function ProvidersSection() {
     setCodexOauthError(null);
     setCodexOauthDesktopFlowId(null);
     setCodexOauthDeviceFlow(null);
+    setCodexOauthAuthorizeUrl(null);
 
     try {
       setCodexOauthStatus("starting");
@@ -516,7 +493,7 @@ export function ProvidersSection() {
       }
 
       setCodexOauthStatus("error");
-      setCodexOauthError(err instanceof Error ? err.message : String(err));
+      setCodexOauthError(getErrorMessage(err));
     }
   };
 
@@ -535,6 +512,7 @@ export function ProvidersSection() {
 
     setCodexOauthDesktopFlowId(null);
     setCodexOauthDeviceFlow(null);
+    setCodexOauthAuthorizeUrl(null);
     setCodexOauthStatus("idle");
     setCodexOauthError(null);
   };
@@ -546,6 +524,8 @@ export function ProvidersSection() {
   const [muxGatewayDesktopFlowId, setMuxGatewayDesktopFlowId] = useState<string | null>(null);
   const [muxGatewayServerState, setMuxGatewayServerState] = useState<string | null>(null);
 
+  const [muxGatewayAuthorizeUrl, setMuxGatewayAuthorizeUrl] = useState<string | null>(null);
+
   const cancelMuxGatewayLogin = () => {
     muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
     muxGatewayLoginAttemptRef.current++;
@@ -556,6 +536,7 @@ export function ProvidersSection() {
 
     setMuxGatewayDesktopFlowId(null);
     setMuxGatewayServerState(null);
+    setMuxGatewayAuthorizeUrl(null);
     setMuxGatewayLoginStatus("idle");
     setMuxGatewayLoginError(null);
   };
@@ -592,6 +573,7 @@ export function ProvidersSection() {
       setMuxGatewayLoginError(null);
       setMuxGatewayDesktopFlowId(null);
       setMuxGatewayServerState(null);
+      setMuxGatewayAuthorizeUrl(null);
 
       if (isDesktop) {
         if (!api) {
@@ -618,10 +600,8 @@ export function ProvidersSection() {
 
         const { flowId, authorizeUrl } = startResult.data;
         setMuxGatewayDesktopFlowId(flowId);
+        setMuxGatewayAuthorizeUrl(authorizeUrl);
         setMuxGatewayLoginStatus("waiting");
-
-        // Desktop main process intercepts external window.open() calls and routes them via shell.openExternal.
-        window.open(authorizeUrl, "_blank", "noopener");
 
         if (attempt !== muxGatewayLoginAttemptRef.current) {
           return;
@@ -655,70 +635,62 @@ export function ProvidersSection() {
           return;
         }
 
+        setMuxGatewayAuthorizeUrl(null);
         setMuxGatewayLoginStatus("error");
         setMuxGatewayLoginError(waitResult.error);
         return;
       }
 
       // Browser/server mode: use unauthenticated bootstrap route.
-      // Open popup synchronously to preserve user gesture context (avoids popup blockers).
-      const popup = window.open("about:blank", "_blank");
-      if (!popup) {
-        throw new Error("Popup blocked - please allow popups and try again.");
-      }
-
       setMuxGatewayLoginStatus("starting");
 
       const startUrl = new URL(`${backendBaseUrl}/auth/mux-gateway/start`);
       const authToken = getServerAuthToken();
 
-      let json: { authorizeUrl?: unknown; state?: unknown; error?: unknown };
-      try {
-        const res = await fetch(startUrl, {
-          headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
-        });
+      const res = await fetch(startUrl, {
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+      });
 
-        const contentType = res.headers.get("content-type") ?? "";
-        if (!contentType.includes("application/json")) {
-          const body = await res.text();
-          const prefix = body.trim().slice(0, 80);
-          throw new Error(
-            `Unexpected response from ${startUrl.toString()} (expected JSON, got ${
-              contentType || "unknown"
-            }): ${prefix}`
-          );
-        }
+      const contentType = res.headers.get("content-type") ?? "";
+      if (!contentType.includes("application/json")) {
+        const body = await res.text();
+        const prefix = body.trim().slice(0, 80);
+        throw new Error(
+          `Unexpected response from ${startUrl.toString()} (expected JSON, got ${
+            contentType || "unknown"
+          }): ${prefix}`
+        );
+      }
 
-        json = (await res.json()) as typeof json;
+      const json = (await res.json()) as {
+        authorizeUrl?: unknown;
+        state?: unknown;
+        error?: unknown;
+      };
 
-        if (!res.ok) {
-          const message = typeof json.error === "string" ? json.error : `HTTP ${res.status}`;
-          throw new Error(message);
-        }
-      } catch (err) {
-        popup.close();
-        throw err;
+      if (!res.ok) {
+        const message = typeof json.error === "string" ? json.error : `HTTP ${res.status}`;
+        throw new Error(message);
       }
 
       if (attempt !== muxGatewayLoginAttemptRef.current) {
-        popup.close();
         return;
       }
 
       if (typeof json.authorizeUrl !== "string" || typeof json.state !== "string") {
-        popup.close();
         throw new Error(`Invalid response from ${startUrl.pathname}`);
       }
 
       setMuxGatewayServerState(json.state);
-      popup.location.href = json.authorizeUrl;
+      setMuxGatewayAuthorizeUrl(json.authorizeUrl);
       setMuxGatewayLoginStatus("waiting");
     } catch (err) {
       if (attempt !== muxGatewayLoginAttemptRef.current) {
         return;
       }
 
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
+      setMuxGatewayAuthorizeUrl(null);
       setMuxGatewayLoginStatus("error");
       setMuxGatewayLoginError(message);
     }
@@ -759,12 +731,14 @@ export function ProvidersSection() {
           }
         }
 
+        setMuxGatewayAuthorizeUrl(null);
         setMuxGatewayLoginStatus("success");
         void refreshMuxGatewayAccountStatus();
         return;
       }
 
       const msg = typeof data.error === "string" ? data.error : "Login failed";
+      setMuxGatewayAuthorizeUrl(null);
       setMuxGatewayLoginStatus("error");
       setMuxGatewayLoginError(msg);
     };
@@ -803,18 +777,8 @@ export function ProvidersSection() {
   const [copilotFlowId, setCopilotFlowId] = useState<string | null>(null);
   const [copilotUserCode, setCopilotUserCode] = useState<string | null>(null);
   const [copilotVerificationUri, setCopilotVerificationUri] = useState<string | null>(null);
-  const [copilotCodeCopied, setCopilotCodeCopied] = useState(false);
   const copilotLoginAttemptRef = useRef(0);
   const copilotFlowIdRef = useRef<string | null>(null);
-  const copilotCopiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (copilotCopiedTimeoutRef.current !== null) {
-        clearTimeout(copilotCopiedTimeoutRef.current);
-      }
-    };
-  }, []);
 
   const copilotApiKeySet = config?.["github-copilot"]?.apiKeySet ?? false;
   const copilotLoginInProgress =
@@ -836,14 +800,18 @@ export function ProvidersSection() {
     setCopilotLoginError(null);
   };
 
-  // Cancel any in-flight Copilot login if the component unmounts
+  // Cancel any in-flight Copilot login if the component unmounts.
+  // Use a ref for api so this only fires on true unmount, not on api identity
+  // changes (e.g. reconnection), which would spuriously cancel active flows.
+  const apiRef = useRef(api);
+  apiRef.current = api;
   useEffect(() => {
     return () => {
-      if (copilotFlowIdRef.current && api) {
-        void api.copilotOauth.cancelDeviceFlow({ flowId: copilotFlowIdRef.current });
+      if (copilotFlowIdRef.current && apiRef.current) {
+        void apiRef.current.copilotOauth.cancelDeviceFlow({ flowId: copilotFlowIdRef.current });
       }
     };
-  }, [api]);
+  }, []);
 
   const clearCopilotCredentials = () => {
     if (!api) return;
@@ -868,9 +836,21 @@ export function ProvidersSection() {
         return;
       }
 
+      // Best-effort: cancel any in-progress flow before starting a new one.
+      if (copilotFlowIdRef.current) {
+        void api.copilotOauth.cancelDeviceFlow({ flowId: copilotFlowIdRef.current });
+        copilotFlowIdRef.current = null;
+        setCopilotFlowId(null);
+      }
+
       const startResult = await api.copilotOauth.startDeviceFlow();
 
-      if (attempt !== copilotLoginAttemptRef.current) return;
+      if (attempt !== copilotLoginAttemptRef.current) {
+        if (startResult.success) {
+          void api.copilotOauth.cancelDeviceFlow({ flowId: startResult.data.flowId });
+        }
+        return;
+      }
 
       if (!startResult.success) {
         setCopilotLoginStatus("error");
@@ -885,8 +865,8 @@ export function ProvidersSection() {
       setCopilotVerificationUri(verificationUri);
       setCopilotLoginStatus("waiting");
 
-      // Open verification URL in browser
-      window.open(verificationUri, "_blank", "noopener");
+      // Keep device-code login manual per user request: we only open the
+      // verification page from the explicit "Copy & Open" action.
 
       // Wait for flow to complete (polling happens on backend)
       const waitResult = await api.copilotOauth.waitForDeviceFlow({ flowId });
@@ -902,7 +882,7 @@ export function ProvidersSection() {
       setCopilotLoginError(waitResult.error);
     } catch (err) {
       if (attempt !== copilotLoginAttemptRef.current) return;
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       setCopilotLoginStatus("error");
       setCopilotLoginError(message);
     }
@@ -1194,7 +1174,7 @@ export function ProvidersSection() {
                     </div>
 
                     <div className="space-y-2">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <Button
                           size="sm"
                           onClick={() => {
@@ -1204,6 +1184,20 @@ export function ProvidersSection() {
                         >
                           {muxGatewayLoginButtonLabel}
                         </Button>
+
+                        {muxGatewayLoginStatus === "waiting" && muxGatewayAuthorizeUrl && (
+                          <Button
+                            size="sm"
+                            aria-label="Copy and open Mux Gateway authorization page"
+                            onClick={() => {
+                              void navigator.clipboard.writeText(muxGatewayAuthorizeUrl);
+                              window.open(muxGatewayAuthorizeUrl, "_blank", "noopener");
+                            }}
+                            className="h-8 px-3 text-xs"
+                          >
+                            Copy & Open Mux Gateway
+                          </Button>
+                        )}
 
                         {muxGatewayLoginInProgress && (
                           <Button variant="secondary" size="sm" onClick={cancelMuxGatewayLogin}>
@@ -1219,8 +1213,9 @@ export function ProvidersSection() {
                       </div>
 
                       {muxGatewayLoginStatus === "waiting" && (
-                        <p className="text-muted text-xs">
-                          Finish the login flow in your browser, then return here.
+                        <p className="text-muted inline-flex items-center gap-2 text-xs">
+                          <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
+                          Waiting for authorization...
                         </p>
                       )}
 
@@ -1320,43 +1315,28 @@ export function ProvidersSection() {
                         <div className="bg-background-tertiary space-y-2 rounded-md p-3">
                           <p className="text-muted text-xs">Enter this code on GitHub:</p>
                           <div className="flex items-center gap-2">
-                            <code className="text-accent text-lg font-bold tracking-widest">
+                            <code className="text-foreground text-lg font-bold tracking-widest">
                               {copilotUserCode}
                             </code>
                             <Button
-                              variant="ghost"
                               size="sm"
-                              aria-label="Copy verification code"
+                              aria-label="Copy and open GitHub verification page"
                               onClick={() => {
                                 void navigator.clipboard.writeText(copilotUserCode);
-                                setCopilotCodeCopied(true);
-                                if (copilotCopiedTimeoutRef.current !== null) {
-                                  clearTimeout(copilotCopiedTimeoutRef.current);
+                                if (copilotVerificationUri) {
+                                  window.open(copilotVerificationUri, "_blank", "noopener");
                                 }
-                                copilotCopiedTimeoutRef.current = setTimeout(
-                                  () => setCopilotCodeCopied(false),
-                                  2000
-                                );
                               }}
-                              className="text-muted hover:text-foreground h-auto px-1 py-0 text-xs"
+                              className="h-8 px-3 text-xs"
+                              disabled={!copilotVerificationUri}
                             >
-                              {copilotCodeCopied ? "Copied!" : "Copy"}
+                              Copy & Open GitHub
                             </Button>
                           </div>
-                          {copilotVerificationUri && (
-                            <p className="text-muted text-xs">
-                              If the browser didn&apos;t open,{" "}
-                              <a
-                                href={copilotVerificationUri}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-accent hover:text-accent-light underline"
-                              >
-                                open the verification page
-                              </a>
-                              .
-                            </p>
-                          )}
+                          <p className="text-muted inline-flex items-center gap-2 text-xs">
+                            <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
+                            Waiting for authorization...
+                          </p>
                         </div>
                       )}
 
@@ -1468,6 +1448,63 @@ export function ProvidersSection() {
                   );
                 })}
 
+                {/* Anthropic: prompt cache TTL */}
+                {provider === "anthropic" && (
+                  <div className="border-border-light border-t pt-3">
+                    <div className="mb-1 flex items-center gap-1">
+                      <label className="text-muted block text-xs">Prompt cache TTL</label>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <HelpIndicator aria-label="Anthropic prompt cache TTL help">
+                              ?
+                            </HelpIndicator>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <div className="max-w-[280px]">
+                              <div className="font-semibold">Prompt cache TTL</div>
+                              <div className="mt-1">
+                                Default is <span className="font-semibold">5m</span>. Use{" "}
+                                <span className="font-semibold">1h</span> for longer workflows at a
+                                higher cache-write cost.
+                              </div>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
+
+                    <Select
+                      value={config?.anthropic?.cacheTtl === "1h" ? "1h" : "default"}
+                      onValueChange={(next) => {
+                        if (!api) {
+                          return;
+                        }
+                        if (next !== "default" && next !== "1h") {
+                          return;
+                        }
+
+                        const cacheTtl = next === "1h" ? "1h" : undefined;
+                        updateOptimistically("anthropic", { cacheTtl });
+                        void api.providers.setProviderConfig({
+                          provider: "anthropic",
+                          keyPath: ["cacheTtl"],
+                          // Empty string clears providers.jsonc key; backend defaults to 5m when unset.
+                          value: next === "1h" ? "1h" : "",
+                        });
+                      }}
+                    >
+                      <SelectTrigger className="w-40">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="default">Default (5m)</SelectItem>
+                        <SelectItem value="1h">1 hour</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
                 {/* OpenAI: ChatGPT OAuth + service tier */}
                 {provider === "openai" && (
                   <div className="border-border-light space-y-3 border-t pt-3">
@@ -1509,6 +1546,22 @@ export function ProvidersSection() {
                         Connect (Device)
                       </Button>
 
+                      {codexOauthStatus === "waiting" &&
+                        !codexOauthDeviceFlow &&
+                        codexOauthAuthorizeUrl && (
+                          <Button
+                            size="sm"
+                            aria-label="Copy and open OpenAI authorization page"
+                            onClick={() => {
+                              void navigator.clipboard.writeText(codexOauthAuthorizeUrl);
+                              window.open(codexOauthAuthorizeUrl, "_blank", "noopener");
+                            }}
+                            className="h-8 px-3 text-xs"
+                          >
+                            Copy & Open OpenAI
+                          </Button>
+                        )}
+
                       {codexOauthLoginInProgress && (
                         <Button variant="secondary" size="sm" onClick={cancelCodexOauth}>
                           Cancel
@@ -1535,47 +1588,32 @@ export function ProvidersSection() {
                           Enter this code on the OpenAI verification page:
                         </p>
                         <div className="flex items-center gap-2">
-                          <code className="text-accent text-lg font-bold tracking-widest">
+                          <code className="text-foreground text-lg font-bold tracking-widest">
                             {codexOauthDeviceFlow.userCode}
                           </code>
                           <Button
-                            variant="ghost"
                             size="sm"
-                            aria-label="Copy verification code"
+                            aria-label="Copy and open OpenAI verification page"
                             onClick={() => {
                               void navigator.clipboard.writeText(codexOauthDeviceFlow.userCode);
-                              setCodexOauthCodeCopied(true);
-                              if (codexOauthCopiedTimeoutRef.current !== null) {
-                                clearTimeout(codexOauthCopiedTimeoutRef.current);
-                              }
-                              codexOauthCopiedTimeoutRef.current = setTimeout(
-                                () => setCodexOauthCodeCopied(false),
-                                2000
-                              );
+                              window.open(codexOauthDeviceFlow.verifyUrl, "_blank", "noopener");
                             }}
-                            className="text-muted hover:text-foreground h-auto px-1 py-0 text-xs"
+                            className="h-8 px-3 text-xs"
                           >
-                            {codexOauthCodeCopied ? "Copied!" : "Copy"}
+                            Copy & Open OpenAI
                           </Button>
                         </div>
-                        <p className="text-muted text-xs">
-                          If the browser didn&apos;t open,{" "}
-                          <a
-                            href={codexOauthDeviceFlow.verifyUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-accent hover:text-accent-light underline"
-                          >
-                            open the verification page
-                          </a>
-                          .
+                        <p className="text-muted inline-flex items-center gap-2 text-xs">
+                          <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
+                          Waiting for authorization...
                         </p>
                       </div>
                     )}
 
                     {codexOauthStatus === "waiting" && !codexOauthDeviceFlow && (
-                      <p className="text-muted text-xs">
-                        Finish the login flow in your browser, then return here.
+                      <p className="text-muted inline-flex items-center gap-2 text-xs">
+                        <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
+                        Waiting for authorization...
                       </p>
                     )}
 

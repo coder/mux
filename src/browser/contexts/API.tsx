@@ -16,6 +16,7 @@ import {
   clearStoredAuthToken,
 } from "@/browser/components/AuthTokenModal";
 import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
+import { getErrorMessage } from "@/common/utils/errors";
 
 type APIClient = ReturnType<typeof createClient>;
 
@@ -84,6 +85,56 @@ function closeWebSocketSafely(ws: WebSocket) {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function tryParseJSONFramePayload(data: unknown): Record<string, unknown> | null {
+  if (typeof data !== "string" && !(data instanceof ArrayBuffer) && !ArrayBuffer.isView(data)) {
+    return null;
+  }
+
+  const rawPayload =
+    typeof data === "string"
+      ? data
+      : new TextDecoder().decode(
+          data instanceof ArrayBuffer
+            ? new Uint8Array(data)
+            : new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+        );
+
+  try {
+    const parsed: unknown = JSON.parse(rawPayload);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function isLikelyOrpcPongResponseFrame(data: unknown): boolean {
+  const payload = tryParseJSONFramePayload(data);
+  if (!payload) {
+    return false;
+  }
+
+  // Defensive guard: ORPC frames should always carry a numeric request id.
+  if (typeof payload.i !== "number") {
+    return false;
+  }
+
+  // Event iterator and abort frames are never ping responses.
+  if (payload.t === 3 || payload.t === 4) {
+    return false;
+  }
+
+  if (!isRecord(payload.p)) {
+    return false;
+  }
+
+  // ORPC encodes normal response bodies at payload.p.b.
+  return payload.p.b === "pong";
+}
+
 function createElectronClient(): { client: APIClient; cleanup: () => void } {
   const { port1: clientPort, port2: serverPort } = new MessageChannel();
   window.postMessage("start-orpc-client", "*", [serverPort]);
@@ -137,6 +188,11 @@ export const APIProvider = (props: APIProviderProps) => {
     const urlToken = urlParams.get("token")?.trim();
     if (urlToken) {
       setStoredAuthToken(urlToken);
+      // Strip token from URL so it doesn't leak into bookmarks, browser
+      // history, PWA launch URLs, or Referer headers.
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete("token");
+      window.history.replaceState({}, "", cleanUrl.pathname + cleanUrl.search);
       return urlToken;
     }
 
@@ -151,6 +207,8 @@ export const APIProvider = (props: APIProviderProps) => {
   const consecutivePingFailuresRef = useRef(0);
   const connectionIdRef = useRef(0);
   const forceReconnectInProgressRef = useRef(false);
+  const livenessPingsInFlightCountRef = useRef(0);
+  const lastInboundBrowserFrameAtRef = useRef(0);
 
   // When we decide the user needs to provide a token, stop the reconnect loop.
   //
@@ -168,6 +226,10 @@ export const APIProvider = (props: APIProviderProps) => {
   const connect = useCallback(
     (token: string | null) => {
       const connectionId = ++connectionIdRef.current;
+      // Reset per-connection inbound traffic tracking so stale timestamps from a prior
+      // socket cannot suppress liveness pings on the next connection.
+      lastInboundBrowserFrameAtRef.current = 0;
+      livenessPingsInFlightCountRef.current = 0;
 
       authRequiredRef.current = false;
 
@@ -198,6 +260,27 @@ export const APIProvider = (props: APIProviderProps) => {
 
       setState({ status: "connecting" });
       const { client, cleanup, ws } = createBrowserClient(token, wsFactory);
+      ws.addEventListener("message", (event) => {
+        // User rationale: during large catch-up streams, ORPC ping responses can be delayed
+        // behind data frames. Treat inbound non-probe traffic as proof of liveness to avoid
+        // unnecessary reconnect loops for healthy-but-busy connections.
+        if (connectionId !== connectionIdRef.current) {
+          return;
+        }
+
+        // Keep counting stream frames while liveness probes are in flight; otherwise a slow
+        // probe could incorrectly hide active traffic and trigger false reconnects.
+        //
+        // Only ignore frames that look like ORPC "pong" responses from those probes.
+        const isLikelyProbeReply =
+          livenessPingsInFlightCountRef.current > 0 && isLikelyOrpcPongResponseFrame(event.data);
+
+        if (isLikelyProbeReply) {
+          return;
+        }
+
+        lastInboundBrowserFrameAtRef.current = Date.now();
+      });
 
       ws.addEventListener("open", () => {
         // Ignore stale connections (can happen if we force reconnect while the old socket is mid-flight).
@@ -231,7 +314,7 @@ export const APIProvider = (props: APIProviderProps) => {
             }
 
             forceReconnectInProgressRef.current = false;
-            const errMsg = err instanceof Error ? err.message : String(err);
+            const errMsg = getErrorMessage(err);
             const errMsgLower = errMsg.toLowerCase();
             const isAuthError =
               errMsgLower.includes("unauthorized") ||
@@ -426,10 +509,51 @@ export const APIProvider = (props: APIProviderProps) => {
     const client = state.client;
     const cleanup = state.cleanup;
 
+    const markConnectionHealthy = () => {
+      consecutivePingFailuresRef.current = 0;
+      forceReconnectInProgressRef.current = false;
+      if (state.status === "degraded") {
+        setState({ status: "connected", client, cleanup });
+      }
+    };
+
     const checkLiveness = async () => {
+      const timeSinceLastInboundFrameMs = Date.now() - lastInboundBrowserFrameAtRef.current;
+      const hasRecentInboundTraffic =
+        lastInboundBrowserFrameAtRef.current > 0 &&
+        timeSinceLastInboundFrameMs >= 0 &&
+        timeSinceLastInboundFrameMs <= LIVENESS_TIMEOUT_MS;
+
+      if (hasRecentInboundTraffic) {
+        // User rationale: if we're still receiving stream frames, the connection is alive
+        // even when application-level ping responses are delayed behind backlog.
+        markConnectionHealthy();
+        return;
+      }
+
       try {
         // Race ping against timeout
+        const livenessPingConnectionId = connectionIdRef.current;
         const pingPromise = client.general.ping("liveness");
+        livenessPingsInFlightCountRef.current += 1;
+        const finalizeLivenessProbe = () => {
+          // Ignore stale probes from an older socket after reconnect.
+          if (livenessPingConnectionId !== connectionIdRef.current) {
+            return;
+          }
+
+          // Multiple probes can overlap when a ping exceeds LIVENESS_INTERVAL_MS.
+          // Track count instead of boolean so one delayed probe cannot clear
+          // in-flight state for a newer still-pending probe.
+          livenessPingsInFlightCountRef.current = Math.max(
+            0,
+            livenessPingsInFlightCountRef.current - 1
+          );
+        };
+
+        // Handle both resolve/reject explicitly to avoid an unhandled rejection chain.
+        void pingPromise.then(finalizeLivenessProbe, finalizeLivenessProbe);
+
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("Ping timeout")), LIVENESS_TIMEOUT_MS)
         );
@@ -437,11 +561,7 @@ export const APIProvider = (props: APIProviderProps) => {
         await Promise.race([pingPromise, timeoutPromise]);
 
         // Ping succeeded - reset failure count and restore connected state if degraded
-        consecutivePingFailuresRef.current = 0;
-        forceReconnectInProgressRef.current = false;
-        if (state.status === "degraded") {
-          setState({ status: "connected", client, cleanup });
-        }
+        markConnectionHealthy();
       } catch {
         // Ping failed
         consecutivePingFailuresRef.current++;

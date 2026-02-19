@@ -44,6 +44,7 @@ import {
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
+  getWorkspaceLastReadKey,
   EXPANDED_PROJECTS_KEY,
   LEFT_SIDEBAR_COLLAPSED_KEY,
   LEFT_SIDEBAR_WIDTH_KEY,
@@ -65,9 +66,11 @@ import { ProjectPage } from "@/browser/components/ProjectPage";
 
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
 import { AboutDialogProvider } from "./contexts/AboutDialogContext";
+import { ConfirmDialogProvider, useConfirmDialog } from "./contexts/ConfirmDialogContext";
 import { AboutDialog } from "./components/About/AboutDialog";
 import { SettingsPage } from "@/browser/components/Settings/SettingsPage";
 import { MuxGatewaySessionExpiredDialog } from "./components/MuxGatewaySessionExpiredDialog";
+import { HostKeyVerificationDialog } from "./components/HostKeyVerificationDialog";
 import { SplashScreenProvider } from "./components/splashScreens/SplashScreenProvider";
 import { TutorialProvider } from "./contexts/TutorialContext";
 import { PowerModeProvider } from "./contexts/PowerModeContext";
@@ -82,6 +85,7 @@ import { WindowsToolchainBanner } from "./components/WindowsToolchainBanner";
 import { RosettaBanner } from "./components/RosettaBanner";
 import { isDesktopMode } from "./hooks/useDesktopTitlebar";
 import { cn } from "@/common/lib/utils";
+import { getErrorMessage } from "@/common/utils/errors";
 
 function AppInner() {
   // Get workspace state from context
@@ -90,7 +94,7 @@ function AppInner() {
     loading,
     setWorkspaceMetadata,
     removeWorkspace,
-    renameWorkspace,
+    updateWorkspaceTitle,
     refreshWorkspaceMetadata,
     selectedWorkspace,
     setSelectedWorkspace,
@@ -102,6 +106,7 @@ function AppInner() {
   const { currentWorkspaceId, currentSettingsSection } = useRouter();
   const { theme, setTheme, toggleTheme } = useTheme();
   const { open: openSettings, isOpen: isSettingsOpen } = useSettings();
+  const { confirm: confirmDialog } = useConfirmDialog();
   const setThemePreference = useCallback(
     (nextTheme: ThemeMode) => {
       setTheme(nextTheme);
@@ -109,7 +114,7 @@ function AppInner() {
     [setTheme]
   );
   const { layoutPresets, applySlotToWorkspace, saveCurrentWorkspaceToSlot } = useUILayouts();
-  const { api, status, error, authenticate } = useAPI();
+  const { api, status, error, authenticate, retry } = useAPI();
 
   const {
     projects,
@@ -198,6 +203,9 @@ function AppInner() {
   // Ref for selectedWorkspace to access in callbacks without stale closures
   const selectedWorkspaceRef = useRef(selectedWorkspace);
   selectedWorkspaceRef.current = selectedWorkspace;
+  // Ref for route-level workspace visibility to avoid stale closure in response callbacks
+  const currentWorkspaceIdRef = useRef(currentWorkspaceId);
+  currentWorkspaceIdRef.current = currentWorkspaceId;
   useEffect(() => {
     const prev = prevWorkspaceRef.current;
     if (prev && selectedWorkspace && prev.workspaceId !== selectedWorkspace.workspaceId) {
@@ -206,8 +214,9 @@ function AppInner() {
     prevWorkspaceRef.current = selectedWorkspace;
   }, [selectedWorkspace, telemetry]);
 
-  // Track last-read timestamps for unread indicators
-  useUnreadTracking(selectedWorkspace);
+  // Track last-read timestamps for unread indicators.
+  // Read-marking is gated on chat-route visibility (currentWorkspaceId).
+  useUnreadTracking(selectedWorkspace, currentWorkspaceId);
 
   const workspaceMetadataRef = useRef(workspaceMetadata);
   useEffect(() => {
@@ -511,7 +520,7 @@ function AppInner() {
           }
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         if (typeof window !== "undefined") {
           window.alert(message);
         }
@@ -555,9 +564,9 @@ function AppInner() {
     [removeWorkspace]
   );
 
-  const renameWorkspaceFromPalette = useCallback(
-    async (workspaceId: string, newName: string) => renameWorkspace(workspaceId, newName),
-    [renameWorkspace]
+  const updateTitleFromPalette = useCallback(
+    async (workspaceId: string, newTitle: string) => updateWorkspaceTitle(workspaceId, newTitle),
+    [updateWorkspaceTitle]
   );
 
   const addProjectFromPalette = useCallback(() => {
@@ -594,7 +603,7 @@ function AppInner() {
     getBranchesForProject,
     onSelectWorkspace: selectWorkspaceFromPalette,
     onRemoveWorkspace: removeWorkspaceFromPalette,
-    onRenameWorkspace: renameWorkspaceFromPalette,
+    onUpdateTitle: updateTitleFromPalette,
     onAddProject: addProjectFromPalette,
     onRemoveProject: removeProjectFromPalette,
     onToggleSidebar: toggleSidebarFromPalette,
@@ -623,6 +632,7 @@ function AppInner() {
     },
     onClearTimingStats: (workspaceId: string) => workspaceStore.clearTimingStats(workspaceId),
     api,
+    confirmDialog,
   };
 
   useEffect(() => {
@@ -659,26 +669,22 @@ function AppInner() {
   // Handle keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) {
+        return;
+      }
+
       if (matchesKeybind(e, KEYBINDS.NEXT_WORKSPACE)) {
         e.preventDefault();
         handleNavigateWorkspace("next");
       } else if (matchesKeybind(e, KEYBINDS.PREV_WORKSPACE)) {
         e.preventDefault();
         handleNavigateWorkspace("prev");
-      } else if (
-        matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE) ||
-        matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE_ALT)
-      ) {
+      } else if (matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE)) {
         e.preventDefault();
         if (isCommandPaletteOpen) {
           closeCommandPalette();
         } else {
-          // Alternate palette shortcut opens in command mode (with ">") while the
-          // primary Ctrl/Cmd+Shift+P shortcut opens default workspace-switch mode.
-          const initialQuery = matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE_ALT)
-            ? ">"
-            : undefined;
-          openCommandPalette(initialQuery);
+          openCommandPalette();
         }
       } else if (matchesKeybind(e, KEYBINDS.OPEN_MUX_CHAT)) {
         e.preventDefault();
@@ -707,7 +713,6 @@ function AppInner() {
     isCommandPaletteOpen,
     closeCommandPalette,
     openCommandPalette,
-    creationProjectPath,
     openSettings,
     navigate,
   ]);
@@ -839,17 +844,28 @@ function AppInner() {
       _messageId: string,
       isFinal: boolean,
       finalText: string,
-      compaction?: { hasContinueMessage: boolean }
+      compaction?: { hasContinueMessage: boolean },
+      completedAt?: number | null
     ) => {
       // Only notify on final message (when assistant is done with all work)
       if (!isFinal) return;
+
+      // Only mark read when the user is actively viewing this workspace's chat.
+      // Checking currentWorkspaceIdRef ensures we don't advance lastRead when
+      // a non-chat route (e.g. /settings) is active — the workspace remains
+      // "selected" but the chat content is not visible.
+      const isChatVisible = document.hasFocus() && currentWorkspaceIdRef.current === workspaceId;
+      if (completedAt != null && isChatVisible) {
+        updatePersistedState(getWorkspaceLastReadKey(workspaceId), completedAt);
+      }
 
       // Skip notification if compaction completed with a continue message.
       // We use the compaction metadata instead of queued state since the queue
       // can be drained before compaction finishes.
       if (compaction?.hasContinueMessage) return;
 
-      // Skip notification if workspace is focused (like Slack behavior)
+      // Skip notification if the selected workspace is focused (Slack-like behavior).
+      // Notification suppression intentionally follows selection state, not chat-route visibility.
       const isWorkspaceFocused =
         document.hasFocus() && selectedWorkspaceRef.current?.workspaceId === workspaceId;
       if (isWorkspaceFocused) return;
@@ -905,7 +921,14 @@ function AppInner() {
 
   // Show auth modal if authentication is required
   if (status === "auth_required") {
-    return <AuthTokenModal isOpen={true} onSubmit={authenticate} error={error} />;
+    return (
+      <AuthTokenModal
+        isOpen={true}
+        onSubmit={authenticate}
+        onSessionAuthenticated={retry}
+        error={error}
+      />
+    );
   }
 
   return (
@@ -1084,6 +1107,7 @@ function AppInner() {
         />
         <AboutDialog />
         <MuxGatewaySessionExpiredDialog />
+        <HostKeyVerificationDialog />
       </div>
     </>
   );
@@ -1102,7 +1126,9 @@ function App() {
                     <TutorialProvider>
                       <CommandRegistryProvider>
                         <PowerModeProvider>
-                          <AppInner />
+                          <ConfirmDialogProvider>
+                            <AppInner />
+                          </ConfirmDialogProvider>
                         </PowerModeProvider>
                       </CommandRegistryProvider>
                     </TutorialProvider>

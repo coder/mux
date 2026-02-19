@@ -76,6 +76,7 @@ describe("StreamManager - stopWhen configuration", () => {
   type BuildStopWhenCondition = (request: {
     toolChoice?: { type: "tool"; toolName: string } | "required";
     hasQueuedMessage?: () => boolean;
+    stopAfterSuccessfulProposePlan?: boolean;
   }) => StopWhenCondition | StopWhenCondition[];
 
   test("uses single-step stopWhen when a tool is required", () => {
@@ -171,6 +172,111 @@ describe("StreamManager - stopWhen configuration", () => {
 
     // Returns false when no steps.
     expect(reportStop({ steps: [] })).toBe(false);
+  });
+
+  test("stops when propose_plan succeeds and flag is enabled", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      stopAfterSuccessfulProposePlan: true,
+    });
+    if (!Array.isArray(stopWhen)) {
+      throw new Error("Expected autonomous stopWhen to be an array of conditions");
+    }
+    expect(stopWhen).toHaveLength(4);
+
+    const proposePlanSuccessSteps = [
+      {
+        toolResults: [
+          {
+            toolName: "propose_plan",
+            output: { success: true, planPath: "/tmp/plan.md" },
+          },
+        ],
+      },
+    ];
+
+    const proposePlanCondition = stopWhen[3];
+    if (!proposePlanCondition) {
+      throw new Error("Expected stopWhen to include propose_plan condition");
+    }
+
+    expect(proposePlanCondition({ steps: proposePlanSuccessSteps })).toBe(true);
+    expect(stopWhen.some((condition) => condition({ steps: proposePlanSuccessSteps }))).toBe(true);
+  });
+
+  test("does not stop when propose_plan fails", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      stopAfterSuccessfulProposePlan: true,
+    });
+    if (!Array.isArray(stopWhen)) {
+      throw new Error("Expected autonomous stopWhen to be an array of conditions");
+    }
+
+    const proposePlanFailedSteps = [
+      {
+        toolResults: [
+          {
+            toolName: "propose_plan",
+            output: { success: false },
+          },
+        ],
+      },
+    ];
+
+    const proposePlanCondition = stopWhen[3];
+    if (!proposePlanCondition) {
+      throw new Error("Expected stopWhen to include propose_plan condition");
+    }
+
+    expect(proposePlanCondition({ steps: proposePlanFailedSteps })).toBe(false);
+    expect(stopWhen.some((condition) => condition({ steps: proposePlanFailedSteps }))).toBe(false);
+  });
+
+  test("does not stop for propose_plan when flag is false/absent", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const proposePlanSuccessSteps = [
+      {
+        toolResults: [
+          {
+            toolName: "propose_plan",
+            output: { success: true, planPath: "/tmp/plan.md" },
+          },
+        ],
+      },
+    ];
+
+    const stopWhenWithoutProposePlanFlag = [
+      buildStopWhen!({ hasQueuedMessage: () => false, stopAfterSuccessfulProposePlan: false }),
+      buildStopWhen!({ hasQueuedMessage: () => false }),
+    ];
+
+    for (const stopWhen of stopWhenWithoutProposePlanFlag) {
+      if (!Array.isArray(stopWhen)) {
+        throw new Error("Expected autonomous stopWhen to be an array of conditions");
+      }
+      expect(stopWhen).toHaveLength(3);
+      expect(stopWhen.some((condition) => condition({ steps: proposePlanSuccessSteps }))).toBe(
+        false
+      );
+    }
   });
 
   test("treats missing queued-message callback as not queued", () => {
@@ -1048,6 +1154,108 @@ describe("StreamManager - replayStream", () => {
     // If replayStream iterates the live array, it would also emit "b".
     expect(deltas).toEqual(["a"]);
   });
+
+  test("replayStream filters output-available tool parts using completion timestamps", async () => {
+    const streamManager = new StreamManager(historyService);
+
+    // Suppress error events from bubbling up as uncaught exceptions during tests
+    streamManager.on("error", () => undefined);
+
+    const workspaceId = "ws-replay-tool-filter";
+
+    const replayedToolEnds: string[] = [];
+    streamManager.on(
+      "tool-call-end",
+      (event: { replay?: boolean | undefined; toolCallId: string }) => {
+        expect(event.replay).toBe(true);
+        replayedToolEnds.push(event.toolCallId);
+      }
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
+    if (!(workspaceStreamsValue instanceof Map)) {
+      throw new Error("StreamManager.workspaceStreams is not a Map");
+    }
+    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
+
+    const streamInfo = {
+      state: "streaming",
+      messageId: "msg-tools",
+      model: "claude-sonnet-4",
+      historySequence: 1,
+      startTime: 123,
+      initialMetadata: {},
+      toolCompletionTimestamps: new Map([
+        ["tool-old", 15],
+        ["tool-new", 30],
+      ]),
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "tool-old",
+          toolName: "bash",
+          input: {},
+          state: "output-available",
+          output: { ok: true },
+          timestamp: 10,
+        },
+        {
+          type: "dynamic-tool",
+          toolCallId: "tool-new",
+          toolName: "bash",
+          input: {},
+          state: "output-available",
+          output: { ok: true },
+          timestamp: 12,
+        },
+      ],
+    };
+
+    workspaceStreams.set(workspaceId, streamInfo);
+
+    const tokenTracker = Reflect.get(streamManager, "tokenTracker") as {
+      setModel: (model: string) => Promise<void>;
+      countTokens: (text: string) => Promise<number>;
+    };
+
+    tokenTracker.setModel = () => Promise.resolve();
+    tokenTracker.countTokens = () => Promise.resolve(1);
+
+    await streamManager.replayStream(workspaceId, { afterTimestamp: 20 });
+
+    expect(replayedToolEnds).toEqual(["tool-new"]);
+  });
+});
+
+describe("StreamManager - getStreamInfo", () => {
+  test("returns startTime so reconnect cursors can preserve live-only boundaries", () => {
+    const streamManager = new StreamManager(historyService);
+    const workspaceId = "ws-get-stream-info";
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
+    if (!(workspaceStreamsValue instanceof Map)) {
+      throw new Error("StreamManager.workspaceStreams is not a Map");
+    }
+    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
+
+    workspaceStreams.set(workspaceId, {
+      state: "starting",
+      messageId: "msg-starting",
+      model: "claude-sonnet-4",
+      historySequence: 1,
+      startTime: 4_321,
+      initialMetadata: {},
+      parts: [],
+      toolCompletionTimestamps: new Map<string, number>(),
+    });
+
+    const streamInfo = streamManager.getStreamInfo(workspaceId);
+
+    expect(streamInfo?.messageId).toBe("msg-starting");
+    expect(streamInfo?.startTime).toBe(4_321);
+  });
 });
 
 describe("StreamManager - categorizeError", () => {
@@ -1118,6 +1326,73 @@ describe("StreamManager - categorizeError", () => {
     });
 
     expect(categorizeMethod.call(streamManager, apiError)).toBe("quota");
+  });
+
+  test("classifies 429 insufficient_quota responses as quota", () => {
+    const streamManager = new StreamManager(historyService);
+
+    const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
+      error: unknown
+    ) => unknown;
+    expect(typeof categorizeMethod).toBe("function");
+
+    const apiError = new APICallError({
+      message: "Request failed",
+      url: "https://api.openai.com/v1/responses",
+      requestBodyValues: {},
+      statusCode: 429,
+      responseHeaders: {},
+      responseBody:
+        '{"error":{"code":"insufficient_quota","message":"You exceeded your current quota"}}',
+      isRetryable: false,
+      data: {
+        error: { code: "insufficient_quota", message: "You exceeded your current quota" },
+      },
+    });
+
+    expect(categorizeMethod.call(streamManager, apiError)).toBe("quota");
+  });
+
+  test("classifies generic 429 throttling as rate_limit", () => {
+    const streamManager = new StreamManager(historyService);
+
+    const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
+      error: unknown
+    ) => unknown;
+    expect(typeof categorizeMethod).toBe("function");
+
+    const apiError = new APICallError({
+      message: "Too many requests, please retry shortly",
+      url: "https://api.openai.com/v1/responses",
+      requestBodyValues: {},
+      statusCode: 429,
+      responseHeaders: {},
+      responseBody: '{"error":{"message":"Too many requests"}}',
+      isRetryable: true,
+    });
+
+    expect(categorizeMethod.call(streamManager, apiError)).toBe("rate_limit");
+  });
+
+  test("classifies 429 mentioning quota limits as rate_limit (not billing)", () => {
+    const streamManager = new StreamManager(historyService);
+
+    const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
+      error: unknown
+    ) => unknown;
+    expect(typeof categorizeMethod).toBe("function");
+
+    const apiError = new APICallError({
+      message: "Per-minute quota limit reached. Retry in 10s.",
+      url: "https://api.openai.com/v1/responses",
+      requestBodyValues: {},
+      statusCode: 429,
+      responseHeaders: {},
+      responseBody: '{"error":{"message":"Per-minute quota limit reached"}}',
+      isRetryable: true,
+    });
+
+    expect(categorizeMethod.call(streamManager, apiError)).toBe("rate_limit");
   });
 });
 

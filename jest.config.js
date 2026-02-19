@@ -15,15 +15,15 @@ module.exports = {
     // Vite query suffixes and binary assets must be matched BEFORE the @/ alias
     "^@/(.+)\\.svg\\?react$": "<rootDir>/tests/__mocks__/svgReactMock.js",
     "^@/(.+)\\.txt\\?raw$": "<rootDir>/tests/__mocks__/textMock.js",
-    "^@/(.+)\\.webm$": "<rootDir>/tests/__mocks__/textMock.js",
     "^@/(.*)$": "<rootDir>/src/$1",
+    // lottie-web probes canvas on import, which crashes in happy-dom/jsdom
+    "^lottie-react$": "<rootDir>/tests/__mocks__/lottieReactMock.js",
     "^chalk$": "<rootDir>/tests/__mocks__/chalk.js",
     "^jsdom$": "<rootDir>/tests/__mocks__/jsdom.js",
     // Mock static assets for full App rendering
     "\\.css$": "<rootDir>/tests/__mocks__/styleMock.js",
     "\\.txt$": "<rootDir>/tests/__mocks__/textMock.js",
     "\\.svg$": "<rootDir>/tests/__mocks__/svgMock.js",
-    "\\.webm$": "<rootDir>/tests/__mocks__/textMock.js",
   },
   // Avoid haste module collision with vscode extension
   modulePathIgnorePatterns: ["<rootDir>/vscode/"],

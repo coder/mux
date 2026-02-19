@@ -74,6 +74,7 @@ import { runFullInit } from "../node/runtime/runtimeFactory";
 import { execSync } from "child_process";
 import { getParseOptions } from "./argv";
 import { EXPERIMENT_IDS } from "../common/constants/experiments";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // Display labels for CLI help (OFF, LOW, MED, HIGH, MAX)
 const THINKING_LABELS_LIST = Object.values(THINKING_DISPLAY_LABELS).join(", ");
@@ -533,7 +534,7 @@ async function main(): Promise<number> {
         initLogger,
       });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       initLogger.logStderr(`Initialization failed: ${errorMessage}`);
       initLogger.logComplete(-1);
       initResult = { success: false, error: errorMessage };
@@ -1115,6 +1116,6 @@ main()
   })
   .catch((error) => {
     clearInterval(keepAliveInterval);
-    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`Error: ${getErrorMessage(error)}`);
     process.exit(1);
   });

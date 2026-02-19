@@ -61,6 +61,7 @@ import { cn } from "@/common/lib/utils";
 import { useAPI, type APIClient } from "@/browser/contexts/API";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import { invalidateGitStatus } from "@/browser/stores/GitStatusStore";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /** Stats reported to parent for tab display */
 interface ReviewPanelStats {
@@ -817,7 +818,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         });
       } catch (err) {
         if (cancelled) return;
-        const errorMsg = `Failed to load diff: ${err instanceof Error ? err.message : String(err)}`;
+        const errorMsg = `Failed to load diff: ${getErrorMessage(err)}`;
         console.error(errorMsg);
         setDiffState({ status: "error", message: errorMsg });
         setDiagnosticInfo(null);

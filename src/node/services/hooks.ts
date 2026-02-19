@@ -31,6 +31,7 @@ import { flattenToolHookValueToEnv } from "@/common/utils/tools/toolHookEnv";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { log } from "@/node/services/log";
 import { execBuffered, writeFileString } from "@/node/utils/runtime/helpers";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const HOOK_FILENAME = "tool_hook";
 const PRE_HOOK_FILENAME = "tool_pre";
@@ -380,7 +381,7 @@ export async function runWithHook<T>(
         success: false,
         stdoutBeforeExec: "",
         stdout: "",
-        stderr: `Failed to execute hook: ${err instanceof Error ? err.message : String(err)}`,
+        stderr: `Failed to execute hook: ${getErrorMessage(err)}`,
         exitCode: -1,
         toolExecuted: false,
       },
@@ -683,7 +684,7 @@ export async function runPreHook(
     log.error("[hooks] Pre-hook execution failed", { hookPath, error: err });
     return {
       allowed: false,
-      output: `Pre-hook failed: ${err instanceof Error ? err.message : String(err)}`,
+      output: `Pre-hook failed: ${getErrorMessage(err)}`,
       exitCode: -1,
     };
   } finally {
@@ -796,7 +797,7 @@ export async function runPostHook(
     log.error("[hooks] Post-hook execution failed", { hookPath, error: err });
     return {
       success: false,
-      output: `Post-hook failed: ${err instanceof Error ? err.message : String(err)}`,
+      output: `Post-hook failed: ${getErrorMessage(err)}`,
       exitCode: -1,
     };
   } finally {

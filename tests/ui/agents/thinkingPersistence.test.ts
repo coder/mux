@@ -17,9 +17,9 @@ import { createAppHarness } from "../harness";
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 const OPENAI_MODEL = "openai:gpt-5.2";
-// Use Sonnet 4.5 as the model that caps at HIGH (4 levels, no xhigh).
-// Opus 4.6 supports xhigh so it can't be used to test clamping behavior.
-const CAPPED_MODEL = "anthropic:claude-sonnet-4-5";
+// Use Haiku 4.5 as the model that caps at HIGH (4 levels, no xhigh).
+// Opus 4.6 and Sonnet 4.6 support xhigh so they can't be used to test clamping behavior.
+const CAPPED_MODEL = "anthropic:claude-haiku-4-5";
 
 async function openModelSelector(container: HTMLElement): Promise<HTMLInputElement> {
   window.dispatchEvent(new CustomEvent(CUSTOM_EVENTS.OPEN_MODEL_SELECTOR));

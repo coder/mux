@@ -20,6 +20,7 @@ import * as fs from "fs";
 import * as path from "path";
 import chalk from "chalk";
 import { parseBoolEnv } from "@/common/utils/env";
+import { getErrorMessage } from "@/common/utils/errors";
 import { getMuxHome, getMuxLogsDir } from "@/common/constants/paths";
 import { hasDebugSubscriber, pushLogEntry } from "./logBuffer";
 
@@ -115,10 +116,6 @@ const MAX_LOG_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const MAX_LOG_FILES = 3;
 const LOG_FILE_RETRY_BACKOFF_MS = 30_000;
 
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function createSafeStream(filePath: string): fs.WriteStream {
   const stream = fs.createWriteStream(filePath, { flags: "a" });
   stream.on("error", (error) => {
@@ -130,7 +127,7 @@ function createSafeStream(filePath: string): fs.WriteStream {
 
     fileSinkState = {
       status: "degraded",
-      reason: toErrorMessage(error),
+      reason: getErrorMessage(error),
       retryAfterMs: Date.now() + LOG_FILE_RETRY_BACKOFF_MS,
     };
 
@@ -146,7 +143,7 @@ function createSafeStream(filePath: string): fs.WriteStream {
 function setDegradedState(error: unknown): void {
   fileSinkState = {
     status: "degraded",
-    reason: toErrorMessage(error),
+    reason: getErrorMessage(error),
     retryAfterMs: Date.now() + LOG_FILE_RETRY_BACKOFF_MS,
   };
 }

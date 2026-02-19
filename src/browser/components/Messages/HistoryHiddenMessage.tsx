@@ -14,25 +14,23 @@ export const HistoryHiddenMessage: React.FC<HistoryHiddenMessageProps> = ({
   workspaceId,
   className,
 }) => {
-  const omittedParts: string[] = [];
-
+  const omittedMessageDetails: string[] = [];
   if (message.omittedMessageCounts?.tool) {
-    omittedParts.push(
-      `${message.omittedMessageCounts.tool} tool call${
-        message.omittedMessageCounts.tool === 1 ? "" : "s"
-      }`
+    omittedMessageDetails.push(
+      `${message.omittedMessageCounts.tool} tool call${message.omittedMessageCounts.tool === 1 ? "" : "s"}`
     );
   }
-
   if (message.omittedMessageCounts?.reasoning) {
-    omittedParts.push(
-      `${message.omittedMessageCounts.reasoning} thinking block${
-        message.omittedMessageCounts.reasoning === 1 ? "" : "s"
-      }`
+    omittedMessageDetails.push(
+      `${message.omittedMessageCounts.reasoning} thinking block${message.omittedMessageCounts.reasoning === 1 ? "" : "s"}`
     );
   }
 
-  const omittedSuffix = omittedParts.length > 0 ? ` (${omittedParts.join(", ")})` : "";
+  const hiddenCountSummary = `${message.hiddenCount} message${message.hiddenCount === 1 ? "" : "s"} hidden`;
+  const detailSummary =
+    omittedMessageDetails.length > 0
+      ? `${hiddenCountSummary} (${omittedMessageDetails.join(", ")})`
+      : hiddenCountSummary;
 
   return (
     <div
@@ -58,10 +56,7 @@ export const HistoryHiddenMessage: React.FC<HistoryHiddenMessageProps> = ({
           fill="none"
         />
       </svg>
-      <span className="text-muted">
-        Omitted {message.hiddenCount} message{message.hiddenCount !== 1 ? "s" : ""} for performance
-        {omittedSuffix}
-      </span>
+      <span className="text-muted">Some messages are hidden for performance • {detailSummary}</span>
       {workspaceId && (
         <button
           type="button"

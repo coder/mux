@@ -39,6 +39,7 @@ import { createAssistantMessageId } from "./utils/messageIds";
 import { createErrorEvent } from "./utils/sendMessageError";
 import { getTaskDepthFromConfig } from "./taskUtils";
 import { log } from "./log";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /** Options for agent resolution. */
 export interface ResolveAgentOptions {
@@ -141,7 +142,7 @@ export async function resolveAgentForStream(
       effectiveAgentId,
       agentDiscoveryPath,
       disableWorkspaceAgents,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
     agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, "exec");
   }
@@ -193,7 +194,7 @@ export async function resolveAgentForStream(
       // Best-effort only — do not fail a stream due to disablement resolution.
       workspaceLog.debug("Failed to resolve agent enablement; continuing", {
         agentId: agentDefinition.id,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
     }
   }

@@ -273,3 +273,34 @@ export async function copyPlanFile(
     }
   }
 }
+
+/**
+ * Copy a plan file across runtimes (e.g., during fork where source/target may be
+ * different containers). Uses separate runtime handles to avoid the identity mutation
+ * bug where DockerRuntime.forkWorkspace() changes this.containerName to the target.
+ * Silently succeeds if source file doesn't exist at either location.
+ */
+export async function copyPlanFileAcrossRuntimes(
+  sourceRuntime: Runtime,
+  targetRuntime: Runtime,
+  sourceWorkspaceName: string,
+  sourceWorkspaceId: string,
+  targetWorkspaceName: string,
+  projectName: string
+): Promise<void> {
+  const sourceMuxHome = sourceRuntime.getMuxHome();
+  const targetMuxHome = targetRuntime.getMuxHome();
+  const sourcePath = getPlanFilePath(sourceWorkspaceName, projectName, sourceMuxHome);
+  const legacySourcePath = getLegacyPlanFilePath(sourceWorkspaceId);
+  const targetPath = getPlanFilePath(targetWorkspaceName, projectName, targetMuxHome);
+
+  for (const candidatePath of [sourcePath, legacySourcePath]) {
+    try {
+      const content = await readFileString(sourceRuntime, candidatePath);
+      await writeFileString(targetRuntime, targetPath, content);
+      return;
+    } catch {
+      // Try next candidate
+    }
+  }
+}

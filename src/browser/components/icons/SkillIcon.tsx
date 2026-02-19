@@ -8,7 +8,7 @@ interface SkillIconProps {
 
 /**
  * Icon representing agent skills.
- * Used in skill tool call displays and the skill indicator in WorkspaceHeader.
+ * Used in skill tool call displays and the skill indicator in WorkspaceMenuBar.
  */
 export const SkillIcon: React.FC<SkillIconProps> = (props) => {
   return <GraduationCap aria-hidden="true" className={cn("h-4 w-4", props.className)} />;

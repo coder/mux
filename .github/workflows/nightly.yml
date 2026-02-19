@@ -1,0 +1,143 @@
+name: Nightly Desktop
+
+on:
+  schedule:
+    - cron: '0 8 * * *' # Daily at 8 AM UTC
+  workflow_dispatch: {} # Engineers can trigger manually any time
+
+concurrency:
+  group: nightly-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compute-version:
+    name: Compute version and create pre-release
+    # Only allow nightly builds from main — prevents workflow_dispatch from
+    # feature branches overwriting the shared nightly release.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Create and manage pre-releases
+    outputs:
+      release_tag: ${{ steps.compute.outputs.release_tag }}
+      nightly_version: ${{ steps.compute.outputs.nightly_version }}
+      build_sha: ${{ steps.compute.outputs.build_sha }}
+      should_build: ${{ steps.create-release.outputs.should_build }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # Use main HEAD at execution time so rerunning an old workflow run
+          # cannot rebuild/publish an older commit.
+          ref: refs/heads/main
+          fetch-depth: 0 # Required for git describe to find tags
+          persist-credentials: false
+
+      - name: Compute nightly pre-release version
+        id: compute
+        shell: bash
+        run: |
+          BUILD_SHA=$(git rev-parse HEAD)
+          # --exclude 'v*-*' skips pre-release tags (e.g. v1.2.3-nightly.5)
+          # so we always base version computation on the last stable release.
+          TAG_BASE=$(git describe --tags --abbrev=0 --match 'v*' --exclude 'v*-*')
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${TAG_BASE#v}"
+          PATCH="${PATCH%%-*}"
+          NEXT_PATCH="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          COMMITS=$(git rev-list --count HEAD "^$TAG_BASE")
+          NIGHTLY_VERSION="${NEXT_PATCH}-nightly.${COMMITS}"
+          RELEASE_TAG="v${NIGHTLY_VERSION}"
+
+          {
+            echo "release_tag=$RELEASE_TAG"
+            echo "nightly_version=$NIGHTLY_VERSION"
+            echo "build_sha=$BUILD_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create nightly pre-release
+        id: create-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.compute.outputs.release_tag }}
+          BUILD_SHA: ${{ steps.compute.outputs.build_sha }}
+        shell: bash
+        run: |
+          REQUIRED_ASSETS=(
+            nightly.yml
+            nightly-mac.yml
+            nightly-linux.yml
+          )
+
+          # Re-runs with no new commits may find an existing nightly release.
+          # Reuse only when sentinel updater assets are present; otherwise rebuild.
+          if gh release view "$RELEASE_TAG" &>/dev/null; then
+            mapfile -t RELEASE_ASSETS < <(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')
+            MISSING_ASSETS=()
+
+            for required_asset in "${REQUIRED_ASSETS[@]}"; do
+              if ! printf '%s\n' "${RELEASE_ASSETS[@]}" | grep -Fxq "$required_asset"; then
+                MISSING_ASSETS+=("$required_asset")
+              fi
+            done
+
+            if [ "${#MISSING_ASSETS[@]}" -eq 0 ]; then
+              echo "Release $RELEASE_TAG already has required assets — reusing existing assets"
+              echo "should_build=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            echo "Release $RELEASE_TAG is incomplete (missing: ${MISSING_ASSETS[*]})"
+            echo "Deleting $RELEASE_TAG so this run can rebuild desktop artifacts"
+            gh release delete "$RELEASE_TAG" --yes --cleanup-tag
+          fi
+
+          gh release create "$RELEASE_TAG" --prerelease --target "$BUILD_SHA" --title "$RELEASE_TAG" --notes "Automated nightly build from main ($(date -u +%Y-%m-%d))"
+          echo "should_build=true" >> "$GITHUB_OUTPUT"
+
+  desktop-builds:
+    name: Build and Release Desktop Apps
+    needs: compute-version
+    if: needs.compute-version.outputs.should_build == 'true'
+    permissions:
+      contents: write # Upload release assets
+      id-token: write # GCP workload identity for Windows code signing
+    uses: ./.github/workflows/_desktop-release.yml
+    with:
+      ref: ${{ needs.compute-version.outputs.build_sha }}
+      release_tag: ${{ needs.compute-version.outputs.release_tag }}
+      version_override: ${{ needs.compute-version.outputs.nightly_version }}
+    secrets: inherit # zizmor: ignore[secrets-inherit] -- reusable workflow needs platform signing secrets
+
+  # Clean up old nightly releases after version computation.
+  # - Reuse path (should_build=false): run cleanup to enforce single-nightly policy.
+  # - Build path (should_build=true): run cleanup only after desktop-builds succeeds.
+  cleanup-old-nightlies:
+    name: Clean up old nightly releases
+    needs: [compute-version, desktop-builds]
+    if: needs.compute-version.result == 'success' && (needs.compute-version.outputs.should_build != 'true' || needs.desktop-builds.result == 'success')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Delete old pre-releases
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      CURRENT_TAG: ${{ needs.compute-version.outputs.release_tag }}
+    steps:
+      - name: Delete previous nightly pre-releases
+        shell: bash
+        run: |
+          mapfile -t EXISTING < <(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" --jq '
+              .[]
+              | select(.prerelease)
+              | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-nightly\\.[0-9]+$"))
+              | .tag_name
+            '
+          )
+          for tag in "${EXISTING[@]}"; do
+            if [ "$tag" = "$CURRENT_TAG" ]; then
+              echo "Keeping current nightly release $tag"
+              continue
+            fi
+            echo "Deleting old nightly release $tag"
+            gh release delete "$tag" --yes --cleanup-tag
+          done

@@ -20,7 +20,7 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { StatsTab } from "./RightSidebar/StatsTab";
 import { OutputTab } from "./OutputTab";
 
-import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
+import { matchesKeybind, KEYBINDS, formatKeybind, isDialogOpen } from "@/browser/utils/ui/keybinds";
 import { SidebarCollapseButton } from "./ui/SidebarCollapseButton";
 import { cn } from "@/common/lib/utils";
 import type { ReviewNoteData } from "@/common/types/review";
@@ -831,6 +831,9 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!matchesKeybind(e, KEYBINDS.CLOSE_TAB)) return;
+      // Always prevent platform default (Cmd/Ctrl+W closes window), even during dialogs.
+      e.preventDefault();
+      if (isDialogOpen()) return;
 
       const focusedTabset = findTabset(layout.root, layout.focusedTabsetId);
       if (focusedTabset?.type !== "tabset") return;

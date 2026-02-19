@@ -4,6 +4,7 @@ import { useAPI } from "@/browser/contexts/API";
 import { MarkdownCore } from "@/browser/components/Messages/MarkdownCore";
 import { PlanMarkdownContainer } from "@/browser/components/Messages/MarkdownRenderer";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/browser/components/ui/dialog";
+import { getErrorMessage } from "@/common/utils/errors";
 
 interface PlanFileDialogProps {
   open: boolean;
@@ -65,7 +66,7 @@ export const PlanFileDialog: React.FC<PlanFileDialogProps> = (props) => {
           return;
         }
 
-        setError(error instanceof Error ? error.message : String(error));
+        setError(getErrorMessage(error));
         setIsLoading(false);
       }
     };

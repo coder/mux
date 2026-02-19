@@ -65,7 +65,11 @@ export {
   AgentIdSchema,
 } from "./schemas/agentDefinition";
 
-export { SendMessageErrorSchema, StreamErrorTypeSchema } from "./schemas/errors";
+export {
+  SendMessageErrorSchema,
+  StreamErrorTypeSchema,
+  NameGenerationErrorSchema,
+} from "./schemas/errors";
 
 // Tool schemas
 export { BashToolResultSchema, FileTreeNodeSchema } from "./schemas/tools";
@@ -185,6 +189,7 @@ export {
   mcp,
   secrets,
   ProviderConfigInfoSchema,
+  ProviderModelEntrySchema,
   muxGateway,
   muxGatewayOauth,
   copilotOauth,
@@ -194,6 +199,8 @@ export {
   providers,
   ProvidersConfigMapSchema,
   server,
+  ServerAuthSessionSchema,
+  serverAuth,
   splashScreens,
   tasks,
   experiments,
@@ -203,6 +210,7 @@ export {
   signing,
   type SigningCapabilities,
   type SignatureEnvelope,
+  ssh,
   terminal,
   tokenizer,
   update,

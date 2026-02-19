@@ -99,11 +99,15 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
   // Emits event to useResumeManager instead of calling resumeStream directly
   // This keeps all retry logic centralized in one place
   const handleManualRetry = () => {
+    const resetBackoff = !autoRetry;
     enableAutoRetryPreference(props.workspaceId); // Re-enable auto-retry for next failure
 
-    // Create manual retry state: immediate retry BUT preserves attempt counter
-    // This prevents infinite retry loops without backoff if the retry fails
-    updatePersistedState(getRetryStateKey(props.workspaceId), createManualRetryState(attempt));
+    // User rationale: after explicitly stopping auto-retry, hitting Retry should
+    // start a fresh backoff window instead of inheriting a long prior delay.
+    updatePersistedState(
+      getRetryStateKey(props.workspaceId),
+      createManualRetryState(attempt, { resetBackoff })
+    );
 
     // Emit event to useResumeManager - it will handle the actual resume
     // Pass isManual flag to bypass eligibility checks (user explicitly wants to retry)

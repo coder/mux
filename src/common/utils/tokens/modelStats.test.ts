@@ -83,6 +83,33 @@ describe("getModelStats", () => {
     });
   });
 
+  describe("github copilot models", () => {
+    test("should prefer github copilot provider-specific limits", () => {
+      const stats = getModelStats("github-copilot:gpt-4-o-preview");
+      expect(stats).not.toBeNull();
+      expect(stats?.max_input_tokens).toBe(64000);
+    });
+
+    test("should default missing copilot costs to zero", () => {
+      const stats = getModelStats("github-copilot:gpt-4.1");
+      expect(stats).not.toBeNull();
+      expect(stats?.max_input_tokens).toBe(128000);
+      expect(stats?.input_cost_per_token).toBe(0);
+      expect(stats?.output_cost_per_token).toBe(0);
+    });
+
+    test("should resolve claude sonnet copilot entries", () => {
+      const stats = getModelStats("github-copilot:claude-sonnet-4.5");
+      expect(stats).not.toBeNull();
+      expect(stats?.max_input_tokens).toBeGreaterThan(0);
+    });
+
+    test("should resolve claude haiku copilot entries", () => {
+      const stats = getModelStats("github-copilot:claude-haiku-4.5");
+      expect(stats).not.toBeNull();
+    });
+  });
+
   describe("unknown models", () => {
     test("should return null for completely unknown model", () => {
       const stats = getModelStats("unknown:fake-model-9000");

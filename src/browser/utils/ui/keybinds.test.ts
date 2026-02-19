@@ -165,10 +165,10 @@ describe("matchesKeybind", () => {
     expect(matchesKeybind(event, keybind)).toBe(true);
   });
 
-  it("should match F2 for OPEN_COMMAND_PALETTE_ALT", () => {
-    const event = createEvent({ key: "F2" });
+  it("should match Ctrl/Cmd+Shift+P for OPEN_COMMAND_PALETTE", () => {
+    const event = createEvent({ key: "P", ctrlKey: true, shiftKey: true });
 
-    expect(matchesKeybind(event, KEYBINDS.OPEN_COMMAND_PALETTE_ALT)).toBe(true);
+    expect(matchesKeybind(event, KEYBINDS.OPEN_COMMAND_PALETTE)).toBe(true);
   });
 
   it("should match complex multi-modifier combination", () => {

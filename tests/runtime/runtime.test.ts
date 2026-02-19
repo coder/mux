@@ -1958,6 +1958,93 @@ describeIntegration("Runtime integration tests", () => {
       });
     });
 
+    describe("forkWorkspace", () => {
+      testForDocker(
+        "forks into a valid container workspace and supports runFullInit on the fork",
+        async () => {
+          const { DockerRuntime, getContainerName } = await import("@/node/runtime/DockerRuntime");
+          const projectName = `docker-fork-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+          const projectPath = `/tmp/${projectName}`;
+          const sourceWorkspaceName = "source";
+          const newWorkspaceName = "forked";
+          const sourceContainerName = getContainerName(projectPath, sourceWorkspaceName);
+          const forkContainerName = getContainerName(projectPath, newWorkspaceName);
+
+          const runtime = new DockerRuntime({ image: "mux-ssh-test" });
+
+          await dockerCommand(`mkdir -p ${projectPath}`);
+
+          try {
+            // Create a running source workspace container with a feature branch checked out.
+            await dockerCommand(
+              `docker run -d --name ${sourceContainerName} mux-ssh-test sleep infinity`
+            );
+            await dockerCommand(`docker exec ${sourceContainerName} mkdir -p /src`);
+            await dockerCommand(
+              `docker exec ${sourceContainerName} bash -c "cd /src && git init -b ${sourceWorkspaceName} && git config user.email test@test.com && git config user.name Test && echo root > root.txt && git add root.txt && git commit -m root && git checkout -b feature && echo feature > feature.txt && git add feature.txt && git commit -m feature"`
+            );
+
+            const forkResult = await runtime.forkWorkspace({
+              projectPath,
+              sourceWorkspaceName,
+              newWorkspaceName,
+              initLogger: noopInitLogger,
+            });
+
+            expect(forkResult.success).toBe(true);
+            if (!forkResult.success) return;
+
+            expect(forkResult.workspacePath).toBe("/src");
+            expect(forkResult.sourceBranch).toBe("feature");
+
+            if (!forkResult.workspacePath || !forkResult.sourceBranch) {
+              throw new Error(
+                "Expected successful Docker fork to include workspacePath and sourceBranch"
+              );
+            }
+
+            expect(runtime.getContainerName()).toBe(forkContainerName);
+
+            const runningCheck = await dockerCommand(
+              `docker inspect ${forkContainerName} --format='{{.State.Running}}'`
+            );
+            expect(runningCheck.exitCode).toBe(0);
+            expect(runningCheck.stdout.trim()).toBe("true");
+
+            const gitDirCheck = await dockerCommand(
+              `docker exec ${forkContainerName} test -d /src/.git && echo ok`
+            );
+            expect(gitDirCheck.exitCode).toBe(0);
+
+            const branchCheck = await dockerCommand(
+              `docker exec ${forkContainerName} git -C /src rev-parse --abbrev-ref HEAD`
+            );
+            expect(branchCheck.exitCode).toBe(0);
+            expect(branchCheck.stdout.trim()).toBe(newWorkspaceName);
+
+            const featureFileCheck = await dockerCommand(
+              `docker exec ${forkContainerName} test -f /src/feature.txt && echo ok`
+            );
+            expect(featureFileCheck.exitCode).toBe(0);
+
+            const initResult = await runFullInit(runtime, {
+              projectPath,
+              branchName: newWorkspaceName,
+              trunkBranch: forkResult.sourceBranch,
+              workspacePath: forkResult.workspacePath,
+              initLogger: noopInitLogger,
+            });
+            expect(initResult.success).toBe(true);
+          } finally {
+            await dockerCommand(`rm -rf ${projectPath}`);
+            await dockerCommand(`docker rm -f ${sourceContainerName} 2>/dev/null || true`);
+            await dockerCommand(`docker rm -f ${forkContainerName} 2>/dev/null || true`);
+          }
+        },
+        60000
+      );
+    });
+
     describe("initWorkspace skips setup for running containers (fork scenario)", () => {
       testForDocker(
         "skips container creation when container is already running",

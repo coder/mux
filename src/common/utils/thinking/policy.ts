@@ -49,8 +49,11 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
   //   mux-gateway:openai/gpt-5.2-pro -> openai/gpt-5.2-pro -> gpt-5.2-pro
   const withoutProviderNamespace = withoutPrefix.replace(/^[a-z0-9_-]+\//, "");
 
-  // Claude Opus 4.6 supports 5 levels including xhigh (mapped to "max" effort)
-  if (withoutProviderNamespace.includes("opus-4-6")) {
+  // Claude Opus 4.6 and Sonnet 4.6 support 5 levels including xhigh (mapped to "max" effort)
+  if (
+    withoutProviderNamespace.includes("opus-4-6") ||
+    withoutProviderNamespace.includes("sonnet-4-6")
+  ) {
     return ["off", "low", "medium", "high", "xhigh"];
   }
 

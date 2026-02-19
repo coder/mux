@@ -9,6 +9,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { SplashScreen } from "./SplashScreen";
+import { useOnboardingPause } from "./SplashScreenProvider";
 import { DocsLink } from "@/browser/components/DocsLink";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import {
@@ -38,6 +39,7 @@ import { getAgentsInitNudgeKey } from "@/common/constants/storage";
 import { PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { getAllowedProvidersForUi } from "@/browser/utils/policyUi";
+import { getErrorMessage } from "@/common/utils/errors";
 
 interface OAuthMessage {
   type?: unknown;
@@ -178,9 +180,19 @@ function CommandPalettePreview(props: { shortcut: string }) {
 }
 
 export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
-  const [stepIndex, setStepIndex] = useState(0);
+  const onboardingPause = useOnboardingPause();
+  const [stepIndex, setStepIndex] = useState(onboardingPause.paused?.stepIndex ?? 0);
 
   const { open: openSettings } = useSettings();
+  // Pause onboarding (not dismiss) so users can configure providers in full settings, then resume.
+  const openProvidersSettings = useCallback(
+    (provider?: string) => {
+      onboardingPause.pause({ stepIndex, reason: "providers-settings" });
+      openSettings("providers", provider ? { expandProvider: provider } : undefined);
+    },
+    [onboardingPause, openSettings, stepIndex]
+  );
+
   const policyState = usePolicy();
   const effectivePolicy =
     policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
@@ -374,7 +386,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
         return;
       }
 
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       setMuxGatewayLoginStatus("error");
       setMuxGatewayLoginError(message);
     }
@@ -481,7 +493,6 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   }, [configuredProviders.length, hasConfiguredProvidersAtStart, providersLoading]);
 
   const commandPaletteShortcut = formatKeybind(KEYBINDS.OPEN_COMMAND_PALETTE);
-  const commandPaletteShortcutAlt = formatKeybind(KEYBINDS.OPEN_COMMAND_PALETTE_ALT);
   const agentPickerShortcut = formatKeybind(KEYBINDS.TOGGLE_AGENT);
   const cycleAgentShortcut = formatKeybind(KEYBINDS.CYCLE_AGENT);
 
@@ -630,7 +641,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
               <button
                 type="button"
                 className="text-accent hover:underline"
-                onClick={() => openSettings("providers")}
+                onClick={() => openProvidersSettings()}
               >
                 Settings → Providers
               </button>
@@ -672,7 +683,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
                     type="button"
                     className="bg-background-secondary border-border-medium text-foreground hover:bg-hover flex w-full cursor-pointer items-center justify-between rounded-md border px-2 py-1 text-left text-xs"
                     title={configured ? "Configured" : "Not configured"}
-                    onClick={() => openSettings("providers", { expandProvider: provider })}
+                    onClick={() => openProvidersSettings(provider)}
                   >
                     <ProviderWithIcon provider={provider} displayName iconClassName="text-accent" />
                     <span
@@ -698,7 +709,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
             <button
               type="button"
               className="text-accent hover:underline"
-              onClick={() => openSettings("providers")}
+              onClick={() => openProvidersSettings()}
             >
               Settings → Providers
             </button>
@@ -871,8 +882,6 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <span className="text-muted text-sm">Open command palette</span>
             <kbd className={KBD_CLASSNAME}>{commandPaletteShortcut}</kbd>
-            <span className="text-muted text-sm">or</span>
-            <kbd className={KBD_CLASSNAME}>{commandPaletteShortcutAlt}</kbd>
           </div>
 
           <div className="mt-3">
@@ -893,7 +902,6 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     agentPickerShortcut,
     cancelMuxGatewayLogin,
     commandPaletteShortcut,
-    commandPaletteShortcutAlt,
     configuredProviders.length,
     configuredProvidersSummary,
     cycleAgentShortcut,
@@ -906,7 +914,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     muxGatewayLoginError,
     muxGatewayLoginInProgress,
     muxGatewayLoginStatus,
-    openSettings,
+    openProvidersSettings,
     projects.size,
     providersConfig,
     refreshMuxGatewayAccountStatus,
@@ -914,9 +922,14 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     visibleProviders,
   ]);
 
+  // Clamp stepIndex to valid range when the step list changes. Skip while still
+  // loading provider config — the temporary single-item "loading" array would
+  // reset a restored stepIndex (e.g. after resuming from paused onboarding).
+  const isLoading = hasConfiguredProvidersAtStart === null;
   useEffect(() => {
+    if (isLoading) return;
     setStepIndex((index) => Math.min(index, steps.length - 1));
-  }, [steps.length]);
+  }, [isLoading, steps.length]);
 
   const totalSteps = steps.length;
   const currentStep = steps[stepIndex] ?? steps[0];
@@ -931,7 +944,6 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     return null;
   }
 
-  const isLoading = hasConfiguredProvidersAtStart === null;
   const canGoBack = !isLoading && stepIndex > 0;
   const canGoForward = !isLoading && stepIndex < totalSteps - 1;
 

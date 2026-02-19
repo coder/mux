@@ -45,13 +45,17 @@ import { McpOauthService } from "@/node/services/mcpOauthService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
 import { getSigningService, type SigningService } from "@/node/services/signingService";
 import { coderService, type CoderService } from "@/node/services/coderService";
+import { HostKeyVerificationService } from "@/node/services/hostKeyVerificationService";
 import { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
 import {
   createStartCoderOnUnarchiveHook,
   createStopCoderOnArchiveHook,
 } from "@/node/runtime/coderLifecycleHooks";
 import { setGlobalCoderService } from "@/node/runtime/runtimeFactory";
+import { setHostKeyVerificationService } from "@/node/runtime/sshConnectionPool";
+import { setHostKeyVerificationService as setSSH2HostKeyVerificationService } from "@/node/runtime/SSH2ConnectionPool";
 import { PolicyService } from "@/node/services/policyService";
+import { ServerAuthService } from "@/node/services/serverAuthService";
 import type { ORPCContext } from "@/node/orpc/context";
 
 const MUX_HELP_CHAT_WELCOME_MESSAGE_ID = "mux-chat-welcome";
@@ -112,6 +116,8 @@ export class ServiceContainer {
   public readonly signingService: SigningService;
   public readonly policyService: PolicyService;
   public readonly coderService: CoderService;
+  public readonly serverAuthService: ServerAuthService;
+  public readonly hostKeyVerificationService = new HostKeyVerificationService();
   private readonly ptyService: PTYService;
   public readonly idleCompactionService: IdleCompactionService;
 
@@ -204,6 +210,8 @@ export class ServiceContainer {
     this.signingService = getSigningService();
     this.coderService = coderService;
 
+    this.serverAuthService = new ServerAuthService(config);
+
     const workspaceLifecycleHooks = new WorkspaceLifecycleHooks();
     workspaceLifecycleHooks.registerBeforeArchive(
       createStopCoderOnArchiveHook({
@@ -223,6 +231,8 @@ export class ServiceContainer {
 
     // Register globally so all createRuntime calls can create CoderSSHRuntime
     setGlobalCoderService(this.coderService);
+    setHostKeyVerificationService(this.hostKeyVerificationService);
+    setSSH2HostKeyVerificationService(this.hostKeyVerificationService);
 
     // Backend timing stats (behind feature flag).
     this.aiService.on("stream-start", (data: StreamStartEvent) =>
@@ -435,6 +445,8 @@ export class ServiceContainer {
       policyService: this.policyService,
       signingService: this.signingService,
       coderService: this.coderService,
+      serverAuthService: this.serverAuthService,
+      hostKeyVerificationService: this.hostKeyVerificationService,
     };
   }
 
@@ -467,6 +479,7 @@ export class ServiceContainer {
     await this.codexOauthService.dispose();
 
     this.copilotOauthService.dispose();
+    this.serverAuthService.dispose();
     await this.backgroundProcessManager.terminateAll();
   }
 }

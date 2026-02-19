@@ -11,6 +11,8 @@ import {
   WarningText,
 } from "@/browser/components/ui/dialog";
 import { Button } from "@/browser/components/ui/button";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
+import { isEditableElement, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 
 interface ConfirmationModalProps {
   isOpen: boolean;
@@ -20,6 +22,7 @@ interface ConfirmationModalProps {
   warning?: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  confirmVariant?: "default" | "destructive" | "secondary" | "outline" | "ghost" | "link";
   /** Called when user confirms. Can be async - buttons will be disabled during execution. */
   onConfirm: () => void | Promise<void>;
   onCancel: () => void;
@@ -54,9 +57,30 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = (props) => {
     [isConfirming, onCancel]
   );
 
+  const handleDialogKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (isEditableElement(e.target)) return;
+
+      // Block all global shortcuts while dialog is active.
+      // Radix handles Escape in capture phase (via onEscapeKeyDown) before this fires.
+      stopKeyboardPropagation(e);
+
+      if (isConfirming) return;
+
+      if (matchesKeybind(e, KEYBINDS.CONFIRM_DIALOG_YES)) {
+        e.preventDefault();
+        void handleConfirm();
+      } else if (matchesKeybind(e, KEYBINDS.CONFIRM_DIALOG_NO)) {
+        e.preventDefault();
+        onCancel();
+      }
+    },
+    [isConfirming, handleConfirm, onCancel]
+  );
+
   return (
     <Dialog open={props.isOpen} onOpenChange={handleOpenChange}>
-      <DialogContent maxWidth="450px" showCloseButton={false}>
+      <DialogContent maxWidth="450px" showCloseButton={false} onKeyDown={handleDialogKeyDown}>
         <DialogHeader>
           <DialogTitle>{props.title}</DialogTitle>
           {props.description && <DialogDescription>{props.description}</DialogDescription>}
@@ -72,13 +96,25 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = (props) => {
         <DialogFooter className="justify-center">
           <Button variant="secondary" onClick={onCancel} disabled={isConfirming}>
             {props.cancelLabel ?? "Cancel"}
+            <span
+              aria-hidden="true"
+              className="ml-2 inline-flex items-center rounded border border-current/25 px-1.5 py-0.5 font-mono text-[10px] leading-none opacity-60"
+            >
+              N
+            </span>
           </Button>
           <Button
-            variant="destructive"
+            variant={props.confirmVariant ?? "destructive"}
             onClick={() => void handleConfirm()}
             disabled={isConfirming}
           >
             {isConfirming ? "Processing..." : (props.confirmLabel ?? "Confirm")}
+            <span
+              aria-hidden="true"
+              className="ml-2 inline-flex items-center rounded border border-current/25 px-1.5 py-0.5 font-mono text-[10px] leading-none opacity-60"
+            >
+              Y
+            </span>
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -1,7 +1,7 @@
 import assert from "@/common/utils/assert";
 import type { MuxMessage, DisplayedMessage, QueuedMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { WorkspaceChatMessage, WorkspaceStatsSnapshot } from "@/common/orpc/types";
+import type { WorkspaceChatMessage, WorkspaceStatsSnapshot, OnChatMode } from "@/common/orpc/types";
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { TodoItem } from "@/common/types/tools";
@@ -387,7 +387,8 @@ export class WorkspaceStore {
         messageId: string,
         isFinal: boolean,
         finalText: string,
-        compaction?: { hasContinueMessage: boolean }
+        compaction?: { hasContinueMessage: boolean },
+        completedAt?: number | null
       ) => void)
     | null = null;
 
@@ -747,7 +748,8 @@ export class WorkspaceStore {
       messageId: string,
       isFinal: boolean,
       finalText: string,
-      compaction?: { hasContinueMessage: boolean }
+      compaction?: { hasContinueMessage: boolean },
+      completedAt?: number | null
     ) => void
   ): void {
     this.responseCompleteCallback = callback;
@@ -776,6 +778,10 @@ export class WorkspaceStore {
    * slow machines naturally throttle without dropping data.
    *
    * Data is always updated immediately in the aggregator - only UI notification is deferred.
+   *
+   * NOTE: This is the "ingestion clock" half of the two-clock streaming model.
+   * The "presentation clock" (useSmoothStreamingText) handles visual cadence
+   * independently — do not collapse them into a single mechanism.
    */
   private scheduleIdleStateBump(workspaceId: string): void {
     // Skip if already scheduled
@@ -804,6 +810,27 @@ export class WorkspaceStore {
     );
 
     this.deltaIdleHandles.set(workspaceId, handle);
+  }
+
+  /**
+   * Defer the caught-up usage bump until idle time so first transcript paint is not blocked
+   * by a second full ChatPane pass that only refreshes usage-derived UI.
+   */
+  private scheduleCaughtUpUsageBump(workspaceId: string): void {
+    const bumpUsage = () => {
+      const transient = this.chatTransientState.get(workspaceId);
+      if (!transient?.caughtUp || !this.aggregators.has(workspaceId)) {
+        return;
+      }
+      this.usageStore.bump(workspaceId);
+    };
+
+    if (typeof requestIdleCallback !== "function") {
+      setTimeout(bumpUsage, 0);
+      return;
+    }
+
+    requestIdleCallback(bumpUsage, { timeout: 100 });
   }
 
   /**
@@ -1624,13 +1651,35 @@ export class WorkspaceStore {
       let lastChatEventAt = Date.now();
 
       try {
+        // Reconnect incrementally whenever we can build a valid cursor.
+        // Do not gate on transient.caughtUp here: retry paths may optimistically
+        // set caughtUp=false to re-enable buffering, but the cursor can still
+        // represent the latest rendered state for an incremental reconnect.
+        const aggregator = this.aggregators.get(workspaceId);
+        let mode: OnChatMode | undefined;
+
+        if (aggregator) {
+          const cursor = aggregator.getOnChatCursor();
+          if (cursor?.history) {
+            mode = {
+              type: "since",
+              cursor: {
+                history: cursor.history,
+                stream: cursor.stream,
+              },
+            };
+          }
+        }
+
         const iterator = await client.workspace.onChat(
-          { workspaceId },
+          { workspaceId, mode },
           { signal: attemptController.signal }
         );
 
-        if (this.pendingReplayReset.delete(workspaceId)) {
-          // Keep the existing UI visible until the replay can actually start.
+        // Full replay: clear stale derived/transient state now that the subscription
+        // is active. Deferred to after the iterator is established so the UI continues
+        // displaying previous state until replay data actually starts arriving.
+        if (!mode || mode.type === "full") {
           this.resetChatStateForReplay(workspaceId);
         }
 
@@ -1718,7 +1767,16 @@ export class WorkspaceStore {
       }
 
       if (this.isWorkspaceSubscribed(workspaceId)) {
-        this.pendingReplayReset.add(workspaceId);
+        const transient = this.chatTransientState.get(workspaceId);
+        if (transient) {
+          // Failed reconnect attempts may have buffered partial replay data.
+          // Clear replay buffers before the next attempt so we don't append a
+          // second replay copy and duplicate deltas/tool events on caught-up.
+          transient.caughtUp = false;
+          transient.replayingHistory = false;
+          transient.historicalMessages.length = 0;
+          transient.pendingStreamEvents.length = 0;
+        }
       }
 
       const delayMs = calculateOnChatBackoffMs(attempt);
@@ -2019,7 +2077,17 @@ export class WorkspaceStore {
    * This ensures isStreamEvent() and processStreamEvent() can never fall out of sync.
    */
   private isBufferedEvent(data: WorkspaceChatMessage): boolean {
-    return "type" in data && data.type in this.bufferedEventHandlers;
+    if (!("type" in data)) {
+      return false;
+    }
+
+    // Buffer high-frequency stream events (including bash/task live updates) until
+    // caught-up so full-replay reconnects can deterministically rebuild transient state.
+    return (
+      data.type in this.bufferedEventHandlers ||
+      data.type === "bash-output" ||
+      data.type === "task-created"
+    );
   }
 
   private handleChatMessage(workspaceId: string, data: WorkspaceChatMessage): void {
@@ -2029,16 +2097,63 @@ export class WorkspaceStore {
     const transient = this.assertChatTransientState(workspaceId);
 
     if (isCaughtUpMessage(data)) {
+      const replay = data.replay ?? "full";
+
       // Check if there's an active stream in buffered events (reconnection scenario)
       const pendingEvents = transient.pendingStreamEvents;
       const hasActiveStream = pendingEvents.some(
         (event) => "type" in event && event.type === "stream-start"
       );
 
-      // Load historical messages first
+      const serverActiveStreamMessageId = data.cursor?.stream?.messageId;
+      const localActiveStreamMessageId = aggregator.getActiveStreamMessageId();
+      const streamContextMismatched =
+        serverActiveStreamMessageId !== undefined &&
+        serverActiveStreamMessageId !== localActiveStreamMessageId;
+
+      // Defensive cleanup:
+      // - full replay means backend rebuilt state from scratch, so stale local stream contexts
+      //   must be cleared even if a stream cursor is present in caught-up metadata.
+      // - no stream cursor means no active stream exists server-side.
+      // - mismatched stream IDs means local context is stale (e.g., stream A ended while
+      //   disconnected and stream B is now active), so clear before replaying pending events.
+      if (
+        replay === "full" ||
+        serverActiveStreamMessageId === undefined ||
+        streamContextMismatched
+      ) {
+        aggregator.clearActiveStreams();
+      }
+
+      if (replay === "full") {
+        // Full replay replaces backend-derived history state. Reset transient UI-only
+        // fields before replay hydration so stale values do not survive reconnect fallback.
+        // queuedMessage is safe to clear because backend now replays a fresh
+        // queued-message-changed snapshot before caught-up.
+        transient.queuedMessage = null;
+
+        // Server can downgrade a requested since reconnect to full replay.
+        // Clear stale interruption suppression state so retry UI is derived solely
+        // from the replayed transcript instead of a pre-disconnect abort reason.
+        aggregator.clearLastAbortReason();
+      }
+
+      if (replay === "full" || !data.cursor?.stream || streamContextMismatched) {
+        // Live tool-call UI is tied to the active stream context; clear it when replay
+        // replaces history, reports no active stream, or reports a different stream ID.
+        transient.liveBashOutput.clear();
+        transient.liveTaskIds.clear();
+      }
+
       if (transient.historicalMessages.length > 0) {
-        aggregator.loadHistoricalMessages(transient.historicalMessages, hasActiveStream);
+        const loadMode = replay === "full" ? "replace" : "append";
+        aggregator.loadHistoricalMessages(transient.historicalMessages, hasActiveStream, {
+          mode: loadMode,
+        });
         transient.historicalMessages.length = 0;
+      } else if (replay === "full") {
+        // Full replay can legitimately contain zero messages (e.g. compacted to empty).
+        aggregator.loadHistoricalMessages([], hasActiveStream, { mode: "replace" });
       }
 
       // Mark that we're replaying buffered history (prevents O(N) scheduling)
@@ -2058,8 +2173,9 @@ export class WorkspaceStore {
       this.states.bump(workspaceId);
       this.checkAndBumpRecencyIfChanged(); // Messages loaded, update recency
 
-      // Bump usage after loading history
-      this.usageStore.bump(workspaceId);
+      // Usage-only updates can trigger an extra full ChatPane render right after catch-up.
+      // Schedule this as idle follow-up so initial transcript paint wins the critical path.
+      this.scheduleCaughtUpUsageBump(workspaceId);
 
       // Hydrate consumer breakdown from persisted cache when possible.
       // Fall back to tokenization when no cache (or stale cache) exists.

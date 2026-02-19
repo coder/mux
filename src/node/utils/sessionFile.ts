@@ -6,6 +6,7 @@ import { Ok, Err } from "@/common/types/result";
 import type { Config } from "@/node/config";
 import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
 import { log } from "@/node/services/log";
+import { getErrorMessage } from "@/common/utils/errors";
 
 export interface SessionFileWriteOptions {
   /**
@@ -82,7 +83,7 @@ export class SessionFileManager<T> {
         await writeFileAtomic(filePath, JSON.stringify(data, null, 2));
         return Ok(undefined);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         return Err(`Failed to write ${this.fileName}: ${message}`);
       }
     });
@@ -102,7 +103,7 @@ export class SessionFileManager<T> {
         if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
           return Ok(undefined); // Already deleted
         }
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         return Err(`Failed to delete ${this.fileName}: ${message}`);
       }
     });

@@ -118,8 +118,9 @@ export function isStreamingPart(part: unknown): part is { type: "text"; state: "
  * any tool call is still executing (e.g. live bash output).
  *
  * We also bypass when the deferred snapshot appears stale (it still has active
- * streaming/executing rows after the immediate snapshot is idle), since showing
- * stale deferred tool state can cause output/layout flash at stream completion.
+ * streaming/executing rows after the immediate snapshot is idle), or when both
+ * snapshots have diverged in row identity/order. Showing stale deferred rows can
+ * cause hidden-marker placement and tool-state flash at stream completion.
  */
 export function shouldBypassDeferredMessages(
   messages: DisplayedMessage[],
@@ -133,6 +134,21 @@ export function shouldBypassDeferredMessages(
 
   if (messages.length !== deferredMessages.length) {
     return true;
+  }
+
+  for (let i = 0; i < messages.length; i++) {
+    const immediateMessage = messages[i];
+    const deferredMessage = deferredMessages[i];
+    if (!immediateMessage || !deferredMessage) {
+      return true;
+    }
+
+    if (
+      immediateMessage.id !== deferredMessage.id ||
+      immediateMessage.type !== deferredMessage.type
+    ) {
+      return true;
+    }
   }
 
   return hasActiveRows(messages) || hasActiveRows(deferredMessages);
@@ -193,87 +209,73 @@ export function mergeConsecutiveStreamErrors(messages: DisplayedMessage[]): Disp
 }
 
 /**
+ * Precompute bash_output grouping metadata for all rows in one linear pass.
+ *
+ * Why: workspace-open now renders full history in a single commit. Doing a backward+forward
+ * scan per row turns long transcripts into O(n²) grouping work right on the critical path.
+ */
+export function computeBashOutputGroupInfos(
+  messages: DisplayedMessage[]
+): Array<BashOutputGroupInfo | undefined> {
+  const groupInfos = new Array<BashOutputGroupInfo | undefined>(messages.length);
+
+  let index = 0;
+  while (index < messages.length) {
+    const msg = messages[index];
+    if (!isBashOutputTool(msg)) {
+      index++;
+      continue;
+    }
+
+    const processId = msg.args.process_id;
+    let groupEnd = index;
+
+    while (groupEnd < messages.length - 1) {
+      const nextMsg = messages[groupEnd + 1];
+      if (!isBashOutputTool(nextMsg) || nextMsg.args.process_id !== processId) {
+        break;
+      }
+      groupEnd++;
+    }
+
+    const groupSize = groupEnd - index + 1;
+    if (groupSize >= 3) {
+      const collapsedCount = groupSize - 2;
+
+      for (let groupIndex = index; groupIndex <= groupEnd; groupIndex++) {
+        let position: BashOutputGroupInfo["position"] = "middle";
+        if (groupIndex === index) {
+          position = "first";
+        } else if (groupIndex === groupEnd) {
+          position = "last";
+        }
+
+        groupInfos[groupIndex] = {
+          position,
+          totalCount: groupSize,
+          collapsedCount,
+          processId,
+          firstIndex: index,
+        };
+      }
+    }
+
+    index = groupEnd + 1;
+  }
+
+  return groupInfos;
+}
+
+/**
  * Computes the bash_output group info for a message at a given index.
- * Used at render-time to determine how to display bash_output messages.
- *
- * Returns:
- * - undefined if not a bash_output tool or group size < 3
- * - { position: 'first', ... } for the first item in a 3+ group
- * - { position: 'middle', ... } for middle items that should be collapsed
- * - { position: 'last', ... } for the last item in a 3+ group
- *
- * @param messages - The full array of DisplayedMessages
- * @param index - The index of the message to check
- * @returns Group info if in a 3+ group, undefined otherwise
  */
 export function computeBashOutputGroupInfo(
   messages: DisplayedMessage[],
   index: number
 ): BashOutputGroupInfo | undefined {
-  const msg = messages[index];
-
-  // Not a bash_output tool
-  if (!isBashOutputTool(msg)) {
+  if (index < 0 || index >= messages.length) {
     return undefined;
   }
 
-  const processId = msg.args.process_id;
-
-  // Find the start of the consecutive group (walk backwards)
-  let groupStart = index;
-  while (groupStart > 0) {
-    const prevMsg = messages[groupStart - 1];
-    if (isBashOutputTool(prevMsg) && prevMsg.args.process_id === processId) {
-      groupStart--;
-    } else {
-      break;
-    }
-  }
-
-  // Find the end of the consecutive group (walk forwards)
-  let groupEnd = index;
-  while (groupEnd < messages.length - 1) {
-    const nextMsg = messages[groupEnd + 1];
-    if (isBashOutputTool(nextMsg) && nextMsg.args.process_id === processId) {
-      groupEnd++;
-    } else {
-      break;
-    }
-  }
-
-  const groupSize = groupEnd - groupStart + 1;
-
-  // Groups of 1-2 don't need special handling
-  if (groupSize < 3) {
-    return undefined;
-  }
-
-  const collapsedCount = groupSize - 2;
-
-  // Determine position
-  if (index === groupStart) {
-    return {
-      position: "first",
-      totalCount: groupSize,
-      collapsedCount,
-      processId,
-      firstIndex: groupStart,
-    };
-  } else if (index === groupEnd) {
-    return {
-      position: "last",
-      totalCount: groupSize,
-      collapsedCount,
-      processId,
-      firstIndex: groupStart,
-    };
-  } else {
-    return {
-      position: "middle",
-      totalCount: groupSize,
-      collapsedCount,
-      processId,
-      firstIndex: groupStart,
-    };
-  }
+  return computeBashOutputGroupInfos(messages)[index];
 }

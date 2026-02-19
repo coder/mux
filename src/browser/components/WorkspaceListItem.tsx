@@ -1,4 +1,4 @@
-import { useRename } from "@/browser/contexts/WorkspaceRenameContext";
+import { useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
@@ -7,7 +7,7 @@ import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { useDrag } from "react-dnd";
 import { getEmptyImage } from "react-dnd-html5-backend";
 import { GitStatusIndicator } from "./GitStatusIndicator";
@@ -16,7 +16,9 @@ import { WorkspaceHoverPreview } from "./WorkspaceHoverPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
-import { Pencil, Trash2, Ellipsis, Loader2, Link2 } from "lucide-react";
+import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
+import { PositionedMenu, PositionedMenuItem } from "./ui/positioned-menu";
+import { Trash2, Ellipsis, Loader2, Sparkles } from "lucide-react";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
@@ -24,6 +26,8 @@ import { WORKSPACE_DRAG_TYPE, type WorkspaceDragItem } from "./WorkspaceSectionD
 import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ShareTranscriptDialog } from "./ShareTranscriptDialog";
+import { WorkspaceActionsMenuContent } from "./WorkspaceActionsMenuContent";
+import { useAPI } from "@/browser/contexts/API";
 
 const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
 
@@ -75,6 +79,7 @@ export interface WorkspaceListItemProps extends WorkspaceListItemBaseProps {
   /** Section ID this workspace belongs to (for drag-drop targeting) */
   sectionId?: string;
   onSelectWorkspace: (selection: WorkspaceSelection) => void;
+  onForkWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
   onArchiveWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
   onCancelCreation: (workspaceId: string) => Promise<void>;
 }
@@ -159,56 +164,7 @@ function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
   const paddingLeft = getItemPaddingLeft(depth);
   const hasPromptPreview = draft.promptPreview.length > 0;
 
-  // Context menu state for long-press / right-click on mobile
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(
-    null
-  );
-
-  // Long-press support for mobile: opens context menu on touch-and-hold
-  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
-  const longPressTriggeredRef = useRef(false);
-
-  useEffect(() => {
-    return () => {
-      if (longPressTimerRef.current) {
-        clearTimeout(longPressTimerRef.current);
-      }
-    };
-  }, []);
-
-  const handleTouchStart = (e: React.TouchEvent) => {
-    const touch = e.touches[0];
-    touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
-    longPressTriggeredRef.current = false;
-    longPressTimerRef.current = setTimeout(() => {
-      longPressTriggeredRef.current = true;
-      setContextMenuPosition({ x: touch.clientX, y: touch.clientY });
-      setIsMenuOpen(true);
-      longPressTimerRef.current = null;
-    }, 500);
-  };
-
-  const handleTouchEnd = () => {
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
-    }
-  };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    // Cancel long press if finger moves more than 10px (likely scrolling)
-    if (longPressTimerRef.current && touchStartPosRef.current) {
-      const touch = e.touches[0];
-      const dx = touch.clientX - touchStartPosRef.current.x;
-      const dy = touch.clientY - touchStartPosRef.current.y;
-      if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
-        clearTimeout(longPressTimerRef.current);
-        longPressTimerRef.current = null;
-      }
-    }
-  };
+  const ctxMenu = useContextMenuPosition({ longPress: true });
 
   return (
     <div
@@ -219,22 +175,11 @@ function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
       )}
       style={{ paddingLeft }}
       onClick={() => {
-        // Suppress click after a long-press triggered the context menu on mobile
-        if (longPressTriggeredRef.current) {
-          longPressTriggeredRef.current = false;
-          return;
-        }
+        if (ctxMenu.suppressClickIfLongPress()) return;
         draft.onOpen();
       }}
-      onTouchStart={handleTouchStart}
-      onTouchEnd={handleTouchEnd}
-      onTouchMove={handleTouchMove}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setContextMenuPosition({ x: e.clientX, y: e.clientY });
-        setIsMenuOpen(true);
-      }}
+      {...ctxMenu.touchHandlers}
+      onContextMenu={ctxMenu.onContextMenu}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
@@ -278,47 +223,21 @@ function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
         </Tooltip>
 
         {/* Mobile: context menu opened by long-press / right-click */}
-        <Popover
-          open={isMenuOpen}
-          onOpenChange={(open) => {
-            setIsMenuOpen(open);
-            if (!open) setContextMenuPosition(null);
-          }}
+        <PositionedMenu
+          open={ctxMenu.isOpen}
+          onOpenChange={ctxMenu.onOpenChange}
+          position={ctxMenu.position}
+          className="w-[150px]"
         >
-          {contextMenuPosition && (
-            <PopoverAnchor asChild>
-              <span
-                style={{
-                  position: "fixed",
-                  left: contextMenuPosition.x,
-                  top: contextMenuPosition.y,
-                  width: 0,
-                  height: 0,
-                }}
-              />
-            </PopoverAnchor>
-          )}
-          <PopoverContent
-            align="start"
-            side="right"
-            className="w-[150px] !min-w-0 p-1"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs"
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsMenuOpen(false);
-                draft.onDelete();
-              }}
-            >
-              <span className="flex items-center gap-2">
-                <Trash2 className="h-3 w-3" />
-                Delete draft
-              </span>
-            </button>
-          </PopoverContent>
-        </Popover>
+          <PositionedMenuItem
+            icon={<Trash2 />}
+            label="Delete draft"
+            onClick={() => {
+              ctxMenu.close();
+              draft.onDelete();
+            }}
+          />
+        </PositionedMenu>
       </ActionButtonWrapper>
 
       <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -348,6 +267,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     depth,
     sectionId,
     onSelectWorkspace,
+    onForkWorkspace,
     onArchiveWorkspace,
     onCancelCreation,
   } = props;
@@ -362,8 +282,17 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   const { isUnread } = useWorkspaceUnread(workspaceId);
   const gitStatus = useGitStatus(workspaceId);
 
-  // Get title edit context (renamed from rename context since we now edit titles, not names)
-  const { editingWorkspaceId, requestRename, confirmRename, cancelRename } = useRename();
+  // Get title edit context — manages inline title editing state across the sidebar
+  const {
+    editingWorkspaceId,
+    requestEdit,
+    confirmEdit,
+    cancelEdit,
+    generatingTitleWorkspaceIds,
+    wrapGenerateTitle,
+  } = useTitleEdit();
+  const isGeneratingTitle = generatingTitleWorkspaceIds.has(workspaceId);
+  const { api } = useAPI();
 
   // Local state for title editing
   const [editingTitle, setEditingTitle] = useState<string>("");
@@ -375,39 +304,51 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
 
   const linkSharingEnabled = useLinkSharingEnabled();
   const [shareTranscriptOpen, setShareTranscriptOpen] = useState(false);
+  const [isOverflowMenuPlaced, setIsOverflowMenuPlaced] = useState(false);
 
-  // Hover hamburger menu for discoverable title editing (requested to replace the double-click hint).
-  const [isTitleMenuOpen, setIsTitleMenuOpen] = useState(false);
-  const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(
-    null
-  );
+  // Context menu via right-click / long-press. The hook manages position + long-press state.
+  // The regular item also has a ⋮ trigger button, so we bridge the hook's isOpen into a
+  // Popover that can be anchored either at the cursor position or the trigger button.
+  const canOpenMenu = useCallback(() => !isDisabled && !isEditing, [isDisabled, isEditing]);
+  const ctxMenu = useContextMenuPosition({ longPress: true, canOpen: canOpenMenu });
+  // Hide menu content for one frame while Radix/Floating UI recalculates anchor
+  // placement. This avoids first-frame flashes at stale trigger/fallback coords.
+  useLayoutEffect(() => {
+    if (!ctxMenu.isOpen) {
+      setIsOverflowMenuPlaced(false);
+      return;
+    }
 
-  // Long-press support for mobile: opens context menu on touch-and-hold
-  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
-  const longPressTriggeredRef = useRef(false);
+    setIsOverflowMenuPlaced(false);
+    const frame = requestAnimationFrame(() => {
+      setIsOverflowMenuPlaced(true);
+    });
+
+    return () => {
+      cancelAnimationFrame(frame);
+    };
+  }, [ctxMenu.isOpen, ctxMenu.position?.x, ctxMenu.position?.y]);
 
   useEffect(() => {
     if (isEditing) {
-      setIsTitleMenuOpen(false);
-      setContextMenuPosition(null);
+      ctxMenu.close();
     }
-  }, [isEditing]);
+  }, [isEditing, ctxMenu]);
 
-  // Clean up long-press timer on unmount
+  const wasEditingRef = useRef(false);
   useEffect(() => {
-    return () => {
-      if (longPressTimerRef.current) {
-        clearTimeout(longPressTimerRef.current);
-      }
-    };
-  }, []);
+    if (isEditing && !wasEditingRef.current) {
+      setEditingTitle(displayTitle);
+      setTitleError(null);
+    }
+    wasEditingRef.current = isEditing;
+  }, [isEditing, displayTitle]);
 
-  // SHARE_TRANSCRIPT keybind is handled in WorkspaceHeader (always mounted),
+  // SHARE_TRANSCRIPT keybind is handled in WorkspaceMenuBar (always mounted),
   // so it works even when the sidebar is collapsed and list items are unmounted.
 
   const startEditing = () => {
-    if (requestRename(workspaceId, displayTitle)) {
+    if (requestEdit(workspaceId, displayTitle)) {
       setEditingTitle(displayTitle);
       setTitleError(null);
     }
@@ -419,7 +360,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
       return;
     }
 
-    const result = await confirmRename(workspaceId, editingTitle);
+    const result = await confirmEdit(workspaceId, editingTitle);
     if (!result.success) {
       setTitleError(result.error ?? "Failed to update title");
     } else {
@@ -428,7 +369,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   };
 
   const handleCancelEdit = () => {
-    cancelRename();
+    cancelEdit();
     setEditingTitle("");
     setTitleError(null);
   };
@@ -442,39 +383,6 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     } else if (e.key === "Escape") {
       e.preventDefault();
       handleCancelEdit();
-    }
-  };
-
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (isDisabled || isEditing) return;
-    const touch = e.touches[0];
-    touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
-    longPressTriggeredRef.current = false;
-    longPressTimerRef.current = setTimeout(() => {
-      longPressTriggeredRef.current = true;
-      setContextMenuPosition({ x: touch.clientX, y: touch.clientY });
-      setIsTitleMenuOpen(true);
-      longPressTimerRef.current = null;
-    }, 500);
-  };
-
-  const handleTouchEnd = () => {
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
-    }
-  };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    // Cancel long press if finger moves more than 10px (likely scrolling)
-    if (longPressTimerRef.current && touchStartPosRef.current) {
-      const touch = e.touches[0];
-      const dx = touch.clientX - touchStartPosRef.current.x;
-      const dy = touch.clientY - touchStartPosRef.current.y;
-      if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
-        clearTimeout(longPressTimerRef.current);
-        longPressTimerRef.current = null;
-      }
     }
   };
 
@@ -535,11 +443,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
         style={{ paddingLeft }}
         onClick={() => {
           if (isDisabled) return;
-          // Suppress click after a long-press triggered the context menu on mobile
-          if (longPressTriggeredRef.current) {
-            longPressTriggeredRef.current = false;
-            return;
-          }
+          if (ctxMenu.suppressClickIfLongPress()) return;
           onSelectWorkspace({
             projectPath,
             projectName,
@@ -547,9 +451,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
             workspaceId,
           });
         }}
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-        onTouchMove={handleTouchMove}
+        {...ctxMenu.touchHandlers}
         onKeyDown={(e) => {
           if (isDisabled || isEditing) return;
           if (e.key === "Enter" || e.key === " ") {
@@ -562,14 +464,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
             });
           }
         }}
-        onContextMenu={(e) => {
-          if (isDisabled || isEditing) return;
-
-          e.preventDefault();
-          e.stopPropagation();
-          setContextMenuPosition({ x: e.clientX, y: e.clientY });
-          setIsTitleMenuOpen(true);
-        }}
+        onContextMenu={ctxMenu.onContextMenu}
         role="button"
         tabIndex={isDisabled ? -1 : 0}
         aria-current={isSelected ? "true" : undefined}
@@ -637,22 +532,17 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
         ) : (
           !isEditing && (
             <ActionButtonWrapper hasSubtitle={hasStatusText}>
-              {/* Keep the overflow menu in the left action slot to avoid duplicate affordances. */}
-              <Popover
-                open={isTitleMenuOpen}
-                onOpenChange={(open) => {
-                  setIsTitleMenuOpen(open);
-                  if (!open) setContextMenuPosition(null);
-                }}
-              >
-                {/* When opened via right-click, anchor at click position */}
-                {contextMenuPosition && (
+              {/* Overflow menu: opens from ⋮ button (dropdown) or right-click/long-press (positioned).
+                  Uses a Popover so it can anchor at either the trigger button or the cursor. */}
+              <Popover open={ctxMenu.isOpen} onOpenChange={ctxMenu.onOpenChange}>
+                {/* When opened via right-click/long-press, anchor at cursor position */}
+                {ctxMenu.position && (
                   <PopoverAnchor asChild>
                     <span
                       style={{
                         position: "fixed",
-                        left: contextMenuPosition.x,
-                        top: contextMenuPosition.y,
+                        left: ctxMenu.position.x,
+                        top: ctxMenu.position.y,
                         width: 0,
                         height: 0,
                       }}
@@ -663,11 +553,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   <button
                     className={cn(
                       "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 transition-colors duration-200",
-                      // Hidden until row hover, but remain visible while open.
-                      isTitleMenuOpen ? "opacity-100" : "opacity-0",
-                      // On touch devices, fully hide the button so it can't intercept taps
-                      // and doesn't flash visible on transient hover states.
-                      // Long-press opens the context menu instead.
+                      ctxMenu.isOpen ? "opacity-100" : "opacity-0",
                       "[@media(hover:none)_and_(pointer:coarse)]:invisible [@media(hover:none)_and_(pointer:coarse)]:pointer-events-none"
                     )}
                     onClick={(e) => e.stopPropagation()}
@@ -679,63 +565,45 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 </PopoverTrigger>
 
                 <PopoverContent
-                  align={contextMenuPosition ? "start" : "end"}
-                  side={contextMenuPosition ? "right" : "bottom"}
-                  sideOffset={contextMenuPosition ? 0 : 6}
+                  align={ctxMenu.position ? "start" : "end"}
+                  side={ctxMenu.position ? "right" : "bottom"}
+                  sideOffset={ctxMenu.position ? 0 : 6}
                   className="w-[250px] !min-w-0 p-1"
+                  style={{
+                    visibility: !ctxMenu.isOpen || isOverflowMenuPlaced ? "visible" : "hidden",
+                  }}
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <button
-                    className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsTitleMenuOpen(false);
-                      startEditing();
+                  <WorkspaceActionsMenuContent
+                    onEditTitle={startEditing}
+                    onForkChat={(anchorEl) => {
+                      void onForkWorkspace(workspaceId, anchorEl);
                     }}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Pencil className="h-3 w-3 shrink-0" />
-                      Edit chat title
-                    </span>
-                  </button>
-                  {/* Share transcript link (gated on telemetry/link-sharing being enabled). */}
-                  {linkSharingEnabled === true && !isMuxHelpChat && (
-                    <button
-                      className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setIsTitleMenuOpen(false);
-                        setShareTranscriptOpen(true);
-                      }}
-                    >
-                      <span className="flex items-center gap-2">
-                        <Link2 className="h-3 w-3 shrink-0" />
-                        Share transcript{" "}
-                        <span className="text-muted text-[10px]">
-                          ({formatKeybind(KEYBINDS.SHARE_TRANSCRIPT)})
-                        </span>
-                      </span>
-                    </button>
-                  )}
-                  {/* Archive stays in the overflow menu to keep the sidebar row uncluttered. */}
-                  {!isMuxHelpChat && (
-                    <button
-                      className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setIsTitleMenuOpen(false);
-                        void onArchiveWorkspace(workspaceId, e.currentTarget);
-                      }}
-                    >
-                      <span className="flex items-center gap-2">
-                        <ArchiveIcon className="h-3 w-3 shrink-0" />
-                        Archive chat{" "}
-                        <span className="text-muted text-[10px]">
-                          ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
-                        </span>
-                      </span>
-                    </button>
-                  )}
+                    onShareTranscript={() => setShareTranscriptOpen(true)}
+                    onArchiveChat={(anchorEl) => {
+                      void onArchiveWorkspace(workspaceId, anchorEl);
+                    }}
+                    onCloseMenu={() => ctxMenu.close()}
+                    linkSharingEnabled={linkSharingEnabled === true}
+                    isMuxHelpChat={isMuxHelpChat}
+                  />
+                  <PositionedMenuItem
+                    icon={<Sparkles />}
+                    label="Generate new title"
+                    shortcut={formatKeybind(KEYBINDS.GENERATE_WORKSPACE_TITLE)}
+                    onClick={() => {
+                      ctxMenu.close();
+                      wrapGenerateTitle(workspaceId, () => {
+                        if (!api) {
+                          return Promise.resolve({
+                            success: false,
+                            error: "Not connected to server",
+                          });
+                        }
+                        return api.workspace.regenerateTitle({ workspaceId });
+                      });
+                    }}
+                  />
                 </PopoverContent>
               </Popover>
               {/* Share transcript dialog – rendered as a sibling to the overflow menu.
@@ -758,7 +626,9 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div
             className={cn(
-              "grid min-w-0 grid-cols-[1fr_auto] items-center gap-1.5",
+              // Keep the title column shrinkable on narrow/mobile viewports so the
+              // right-side git indicator never forces horizontal sidebar scrolling.
+              "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5",
               !hasSecondaryRow && "py-0.5"
             )}
           >
@@ -780,7 +650,8 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   <span
                     className={cn(
                       "text-foreground block truncate text-left text-[13px] transition-colors duration-200",
-                      !isDisabled && "cursor-pointer"
+                      !isDisabled && "cursor-pointer",
+                      isGeneratingTitle && "italic"
                     )}
                     onDoubleClick={(e) => {
                       if (isDisabled) return;
@@ -792,7 +663,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                     <Shimmer
                       className={cn(
                         "w-full truncate",
-                        !(isWorking || isInitializing) && "no-shimmer"
+                        !(isWorking || isInitializing || isGeneratingTitle) && "no-shimmer"
                       )}
                       colorClass="var(--color-foreground)"
                     >

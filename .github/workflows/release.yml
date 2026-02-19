@@ -39,62 +39,17 @@ jobs:
 
           echo "Publishing tag $RELEASE_TAG"
 
-  build-macos:
-    name: Build and Release macOS
+  desktop-builds:
+    name: Build and Release Desktop Apps
     needs: preflight
-    runs-on: ${{ github.repository_owner == 'coder' && 'depot-macos-15' || 'macos-latest' }}
     permissions:
       contents: write # Upload release assets
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          ref: ${{ inputs.tag || github.ref }}
-          fetch-depth: 0 # Required for git describe to find tags
-          persist-credentials: false
-
-      - uses: ./.github/actions/setup-mux
-
-      - name: Build application
-        run: bun run build
-
-      - name: Setup code signing
-        run: ./scripts/setup-macos-signing.sh
-        env:
-          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
-          AC_APIKEY_P8_BASE64: ${{ secrets.AC_APIKEY_P8_BASE64 }}
-          AC_APIKEY_ID: ${{ secrets.AC_APIKEY_ID }}
-          AC_APIKEY_ISSUER_ID: ${{ secrets.AC_APIKEY_ISSUER_ID }}
-
-      - name: Package and publish for macOS
-        run: make dist-mac-release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  build-linux:
-    name: Build and Release Linux
-    needs: preflight
-    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
-    permissions:
-      contents: write # Upload release assets
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          ref: ${{ inputs.tag || github.ref }}
-          fetch-depth: 0 # Required for git describe to find tags
-          persist-credentials: false
-
-      - uses: ./.github/actions/setup-mux
-
-      - name: Build application
-        run: bun run build
-
-      - name: Package and publish for Linux
-        run: bun x electron-builder --linux --publish always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      id-token: write # GCP workload identity for Windows code signing
+    uses: ./.github/workflows/_desktop-release.yml
+    with:
+      ref: ${{ inputs.tag || github.ref }}
+      release_tag: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
+    secrets: inherit # zizmor: ignore[secrets-inherit] -- reusable workflow needs platform signing secrets
 
   build-vscode-extension:
     name: Build and Release VS Code Extension
@@ -151,72 +106,10 @@ jobs:
 
           bunx vsce publish -p "$VSCE_PAT"
 
-  build-windows:
-    name: Build and Release Windows
-    needs: preflight
-    runs-on: windows-latest
-    permissions:
-      contents: write # Upload release assets
-      id-token: write # GCP workload identity for code signing
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          ref: ${{ inputs.tag || github.ref }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - uses: ./.github/actions/setup-mux
-
-      - name: Add MSYS2 make to PATH
-        shell: pwsh
-        run: |
-          # MSYS2 is pre-installed on Windows runners, just needs to be in PATH
-          # Install make via pacman (faster than choco)
-          C:\msys64\usr\bin\pacman.exe -S --noconfirm make
-          echo "C:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: Verify tools
-        shell: bash
-        run: |
-          make --version
-          bun --version
-          magick --version | head -1
-
-      - name: Build application
-        run: bun run build
-
-      - name: Setup code signing
-        id: signing
-        uses: ./.github/actions/setup-windows-signing
-        with:
-          ev_signing_cert: ${{ secrets.EV_SIGNING_CERT }}
-          gcp_workload_id_provider: ${{ vars.GCP_WORKLOAD_ID_PROVIDER }}
-          gcp_service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
-
-      - name: Package and publish for Windows (.exe)
-        run: bun x electron-builder --win --publish always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # EV signing environment variables (used by custom sign script if configured)
-          EV_KEYSTORE: ${{ vars.EV_KEYSTORE }}
-          EV_KEY: ${{ vars.EV_KEY }}
-          EV_TSA_URL: ${{ vars.EV_TSA_URL }}
-          GCLOUD_ACCESS_TOKEN: ${{ steps.signing.outputs.gcloud_access_token }}
-
-      - name: Upload Windows artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: windows-release
-          path: |
-            release/*.exe
-            release/*.exe.blockmap
-          if-no-files-found: error
-
   notify-slack-failure:
     name: Notify Slack on Failure
     runs-on: ubuntu-latest
-    needs: [build-macos, build-linux, build-windows, build-vscode-extension]
+    needs: [desktop-builds, build-vscode-extension]
     if: failure()
     steps:
       - name: Send failure notification to Slack
@@ -256,7 +149,7 @@ jobs:
   notify-discord:
     name: Notify Discord
     runs-on: ubuntu-latest
-    needs: [build-macos, build-linux, build-windows, build-vscode-extension]
+    needs: [desktop-builds, build-vscode-extension]
     # Only notify on actual releases, not manual workflow runs
     if: github.event_name == 'release'
     steps:

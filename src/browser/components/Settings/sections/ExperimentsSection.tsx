@@ -9,6 +9,7 @@ import {
   EXPERIMENT_IDS,
   type ExperimentId,
 } from "@/common/constants/experiments";
+import { getErrorMessage } from "@/common/utils/errors";
 import { Switch } from "@/browser/components/ui/switch";
 import { Button } from "@/browser/components/ui/button";
 import { CopyButton } from "@/browser/components/ui/CopyButton";
@@ -64,14 +65,6 @@ function ExperimentRow(props: ExperimentRowProps) {
 
 type BindHostMode = "localhost" | "all" | "custom";
 type PortMode = "random" | "fixed";
-
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return String(error);
-}
 
 function ConfigurableBindUrlControls() {
   const enabled = useExperimentValue(EXPERIMENT_IDS.CONFIGURABLE_BIND_URL);

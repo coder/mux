@@ -57,6 +57,7 @@ import { useRouter } from "@/browser/contexts/RouterContext";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { APIClient } from "@/browser/contexts/API";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * One-time best-effort migration: if the backend doesn't have model preferences yet,
@@ -404,9 +405,9 @@ export interface WorkspaceContext extends WorkspaceMetadataContextValue {
     workspaceId: string,
     options?: { force?: boolean }
   ) => Promise<{ success: boolean; error?: string }>;
-  renameWorkspace: (
+  updateWorkspaceTitle: (
     workspaceId: string,
-    newName: string
+    newTitle: string
   ) => Promise<{ success: boolean; error?: string }>;
   archiveWorkspace: (workspaceId: string) => Promise<{ success: boolean; error?: string }>;
   unarchiveWorkspace: (workspaceId: string) => Promise<{ success: boolean; error?: string }>;
@@ -1210,7 +1211,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           return { success: false, error: result.error };
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         console.error("Failed to remove workspace:", errorMessage);
         return { success: false, error: errorMessage };
       }
@@ -1234,7 +1235,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
    * We just reload metadata after the update - no need to update selectedWorkspace
    * since the ID stays the same and the metadata map refresh handles the title update.
    */
-  const renameWorkspace = useCallback(
+  const updateWorkspaceTitle = useCallback(
     async (
       workspaceId: string,
       newTitle: string
@@ -1252,7 +1253,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           return { success: false, error: result.error };
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         console.error("Failed to update workspace title:", errorMessage);
         return { success: false, error: errorMessage };
       }
@@ -1274,7 +1275,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         console.error("Failed to archive workspace:", result.error);
         return { success: false, error: result.error };
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         console.error("Failed to archive workspace:", errorMessage);
         return { success: false, error: errorMessage };
       }
@@ -1295,7 +1296,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           return { success: false, error: result.error };
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         console.error("Failed to unarchive workspace:", errorMessage);
         return { success: false, error: errorMessage };
       }
@@ -1515,7 +1516,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     () => ({
       createWorkspace,
       removeWorkspace,
-      renameWorkspace,
+      updateWorkspaceTitle,
       archiveWorkspace,
       unarchiveWorkspace,
       refreshWorkspaceMetadata,
@@ -1538,7 +1539,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     [
       createWorkspace,
       removeWorkspace,
-      renameWorkspace,
+      updateWorkspaceTitle,
       archiveWorkspace,
       unarchiveWorkspace,
       refreshWorkspaceMetadata,

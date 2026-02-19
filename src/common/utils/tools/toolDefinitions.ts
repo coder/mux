@@ -1345,6 +1345,9 @@ export type BridgeableToolName =
   | "agent_skill_read_file"
   | "file_edit_insert"
   | "file_edit_replace_string"
+  // Note: for Anthropic models, web_fetch is replaced by a provider-native tool
+  // (webFetch_20250910) that has no execute(). ToolBridge's hasExecute filter will drop it
+  // from the PTC sandbox for those sessions. That silent absence is intentional and accepted.
   | "web_fetch"
   | "task"
   | "task_await"

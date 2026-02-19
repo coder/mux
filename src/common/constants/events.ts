@@ -72,6 +72,12 @@ export const CUSTOM_EVENTS = {
   WORKSPACE_FORK_SWITCH: "mux:workspaceForkSwitch",
 
   /**
+   * Event to request AI title regeneration for a workspace.
+   * Detail: { workspaceId: string }
+   */
+  WORKSPACE_GENERATE_TITLE_REQUESTED: "mux:workspaceGenerateTitleRequested",
+
+  /**
    * Event to execute a command from the command palette
    * Detail: { commandId: string }
    */
@@ -125,6 +131,9 @@ export interface CustomEventPayloads {
     projectName: string;
     workspacePath: string;
     branch: string;
+  };
+  [CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED]: {
+    workspaceId: string;
   };
   [CUSTOM_EVENTS.EXECUTE_COMMAND]: {
     commandId: string;

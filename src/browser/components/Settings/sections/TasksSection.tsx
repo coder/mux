@@ -32,6 +32,7 @@ import {
 } from "@/common/types/tasks";
 import { getThinkingOptionLabel, type ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const INHERIT = "__inherit__";
 
@@ -42,7 +43,7 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     name: "Plan",
     description: "Create a plan before coding",
     uiSelectable: true,
-    subagentRunnable: false,
+    subagentRunnable: true,
     base: "plan",
   },
   {
@@ -79,6 +80,33 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     uiSelectable: false,
     subagentRunnable: true,
     base: "exec",
+  },
+  {
+    id: "mux",
+    scope: "built-in",
+    name: "Mux",
+    description: "Configure mux global behavior (system workspace)",
+    uiSelectable: false,
+    subagentRunnable: false,
+  },
+  {
+    // Keep every built-in agent ID in the fallback list so user overrides don't
+    // get mislabeled as "Unknown agents" when workspace discovery is unavailable.
+    id: "orchestrator",
+    scope: "built-in",
+    name: "Orchestrator",
+    description: "Coordinate sub-agent implementation and apply patches",
+    uiSelectable: true,
+    subagentRunnable: false,
+    base: "exec",
+  },
+  {
+    id: "system1_bash",
+    scope: "built-in",
+    name: "System1 Bash",
+    description: "Fast bash-output filtering (internal)",
+    uiSelectable: false,
+    subagentRunnable: false,
   },
 ];
 
@@ -208,6 +236,7 @@ function areTaskSettingsEqual(a: TaskSettings, b: TaskSettings): boolean {
     a.maxParallelAgentTasks === b.maxParallelAgentTasks &&
     a.maxTaskNestingDepth === b.maxTaskNestingDepth &&
     a.proposePlanImplementReplacesChatHistory === b.proposePlanImplementReplacesChatHistory &&
+    a.planSubagentDefaultsToOrchestrator === b.planSubagentDefaultsToOrchestrator &&
     a.bashOutputCompactionMinLines === b.bashOutputCompactionMinLines &&
     a.bashOutputCompactionMinTotalBytes === b.bashOutputCompactionMinTotalBytes &&
     a.bashOutputCompactionMaxKeptLines === b.bashOutputCompactionMaxKeptLines &&
@@ -318,7 +347,7 @@ export function TasksSection() {
         setLoaded(true);
       })
       .catch((error: unknown) => {
-        setSaveError(error instanceof Error ? error.message : String(error));
+        setSaveError(getErrorMessage(error));
         setLoadFailed(true);
         setLoaded(true);
       });
@@ -453,7 +482,7 @@ export function TasksSection() {
             }
           })
           .catch((error: unknown) => {
-            setSaveError(error instanceof Error ? error.message : String(error));
+            setSaveError(getErrorMessage(error));
           })
           .finally(() => {
             savingRef.current = false;
@@ -515,6 +544,12 @@ export function TasksSection() {
   const setProposePlanImplementReplacesChatHistory = (value: boolean) => {
     setTaskSettings((prev) =>
       normalizeTaskSettings({ ...prev, proposePlanImplementReplacesChatHistory: value })
+    );
+  };
+
+  const setPlanSubagentDefaultsToOrchestrator = (value: boolean) => {
+    setTaskSettings((prev) =>
+      normalizeTaskSettings({ ...prev, planSubagentDefaultsToOrchestrator: value })
     );
   };
 
@@ -899,6 +934,23 @@ export function TasksSection() {
               checked={taskSettings.proposePlanImplementReplacesChatHistory ?? false}
               onCheckedChange={setProposePlanImplementReplacesChatHistory}
               aria-label="Toggle plan Implement replaces conversation with plan"
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <div className="text-foreground text-sm">
+                Plan sub-agents: default to Orchestrator
+              </div>
+              <div className="text-muted text-xs">
+                When enabled, plan sub-agent tasks switch to Orchestrator after propose_plan.
+                Otherwise they switch to Exec.
+              </div>
+            </div>
+            <Switch
+              checked={taskSettings.planSubagentDefaultsToOrchestrator ?? false}
+              onCheckedChange={setPlanSubagentDefaultsToOrchestrator}
+              aria-label="Toggle plan sub-agents default to Orchestrator"
             />
           </div>
         </div>

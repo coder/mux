@@ -7,10 +7,18 @@ import React, {
   useDeferredValue,
   useMemo,
 } from "react";
-import { Lightbulb } from "lucide-react";
+import { Clipboard, Lightbulb, TextQuote } from "lucide-react";
+import { copyToClipboard } from "@/browser/utils/clipboard";
+import {
+  formatTranscriptTextAsQuote,
+  getTranscriptContextMenuText,
+} from "@/browser/utils/messages/transcriptContextMenu";
+import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
+import { PositionedMenu, PositionedMenuItem } from "./ui/positioned-menu";
 import { MessageListProvider } from "./Messages/MessageListContext";
 import { cn } from "@/common/lib/utils";
 import { MessageRenderer } from "./Messages/MessageRenderer";
+import type { UserMessageNavigation } from "./Messages/UserMessage";
 import { InterruptedBarrier } from "./Messages/ChatBarrier/InterruptedBarrier";
 import { EditCutoffBarrier } from "./Messages/ChatBarrier/EditCutoffBarrier";
 import { StreamingBarrier } from "./Messages/ChatBarrier/StreamingBarrier";
@@ -21,7 +29,7 @@ import { ChatInput, type ChatInputAPI } from "./ChatInput/index";
 import {
   shouldShowInterruptedBarrier,
   mergeConsecutiveStreamErrors,
-  computeBashOutputGroupInfo,
+  computeBashOutputGroupInfos,
   shouldBypassDeferredMessages,
 } from "@/browser/utils/messages/messageUtils";
 import { computeTaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
@@ -41,7 +49,7 @@ import {
   useWorkspaceStoreRaw,
   type WorkspaceState,
 } from "@/browser/stores/WorkspaceStore";
-import { WorkspaceHeader } from "./WorkspaceHeader";
+import { WorkspaceMenuBar } from "./WorkspaceMenuBar";
 import type { DisplayedMessage, QueuedMessage as QueuedMessageData } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
@@ -58,6 +66,7 @@ import { executeCompaction } from "@/browser/utils/chatCommands";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "../hooks/useAutoCompactionSettings";
 import { useContextSwitchWarning } from "@/browser/hooks/useContextSwitchWarning";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { useForceCompaction } from "@/browser/hooks/useForceCompaction";
 import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
@@ -163,6 +172,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   const pendingModel = pendingSendOptions.model;
   const use1M = has1MContext(pendingModel);
 
+  const { config: providersConfig } = useProvidersConfig();
+
   const { threshold: autoCompactionThreshold } = useAutoCompactionSettings(
     workspaceId,
     pendingModel
@@ -207,6 +218,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     workspaceUsage,
     api: api ?? undefined,
     pendingSendOptions,
+    providersConfig,
   });
 
   // Apply message transformations:
@@ -238,34 +250,28 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     [workspaceId, latestMessageId, onOpenTerminal]
   );
 
-  // Compute navigation map for user messages (prev/next historyIds for each user message)
-  // Only enabled when there are 2+ user messages to navigate between
-  const userMessageNavMap = useMemo(() => {
-    const userMessages = deferredMessages.filter(
-      (m): m is DisplayedMessage & { type: "user" } => m.type === "user"
-    );
-    // Only enable navigation when there are multiple user messages
-    if (userMessages.length < 2) return null;
-
-    const navMap = new Map<string, { prev?: string; next?: string }>();
-    for (let i = 0; i < userMessages.length; i++) {
-      const msg = userMessages[i];
-      navMap.set(msg.historyId, {
-        prev: i > 0 ? userMessages[i - 1].historyId : undefined,
-        next: i < userMessages.length - 1 ? userMessages[i + 1].historyId : undefined,
-      });
-    }
-    return navMap;
-  }, [deferredMessages]);
-
   const taskReportLinking = useMemo(
     () => computeTaskReportLinking(deferredMessages),
     [deferredMessages]
   );
 
+  // Precompute bash_output grouping once per message snapshot so row rendering stays O(n).
+  const bashOutputGroupInfos = useMemo(
+    () => computeBashOutputGroupInfos(deferredMessages),
+    [deferredMessages]
+  );
+
   const autoCompactionResult = useMemo(
-    () => checkAutoCompaction(workspaceUsage, pendingModel, use1M, autoCompactionThreshold / 100),
-    [workspaceUsage, pendingModel, use1M, autoCompactionThreshold]
+    () =>
+      checkAutoCompaction(
+        workspaceUsage,
+        pendingModel,
+        use1M,
+        autoCompactionThreshold / 100,
+        undefined,
+        providersConfig
+      ),
+    [workspaceUsage, pendingModel, use1M, providersConfig, autoCompactionThreshold]
   );
 
   // Show warning when: shouldShowWarning flag is true AND not currently compacting.
@@ -328,8 +334,76 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     [contentRef, setAutoScroll]
   );
 
+  // Precompute per-user navigation objects so MessageRenderer rows receive stable prop
+  // references across non-message updates (usage bumps, stats updates, etc.).
+  const userMessageNavigationByHistoryId = useMemo(() => {
+    const userHistoryIds: string[] = [];
+    for (const message of deferredMessages) {
+      if (message.type === "user") {
+        userHistoryIds.push(message.historyId);
+      }
+    }
+
+    if (userHistoryIds.length < 2) {
+      return null;
+    }
+
+    const navigationByHistoryId = new Map<string, UserMessageNavigation>();
+    for (let index = 0; index < userHistoryIds.length; index++) {
+      navigationByHistoryId.set(userHistoryIds[index], {
+        prevUserMessageId: index > 0 ? userHistoryIds[index - 1] : undefined,
+        nextUserMessageId:
+          index < userHistoryIds.length - 1 ? userHistoryIds[index + 1] : undefined,
+        onNavigate: handleNavigateToMessage,
+      });
+    }
+
+    return navigationByHistoryId;
+  }, [deferredMessages, handleNavigateToMessage]);
+
   // ChatInput API for focus management
   const chatInputAPI = useRef<ChatInputAPI | null>(null);
+
+  // Right-clicking transcript text offers quick quote/copy actions,
+  // using selection first and hovered text as a fallback when nothing is selected.
+  const transcriptMenu = useContextMenuPosition();
+  const transcriptMenuTextRef = useRef<string>("");
+
+  const handleTranscriptContextMenu = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      const transcriptRoot = contentRef.current;
+      if (!transcriptRoot) return;
+
+      const selection = typeof window === "undefined" ? null : window.getSelection();
+      const text = getTranscriptContextMenuText({
+        transcriptRoot,
+        target: event.target,
+        selection,
+      });
+
+      if (!text) {
+        transcriptMenu.close();
+        return;
+      }
+
+      transcriptMenuTextRef.current = text;
+      transcriptMenu.onContextMenu(event);
+    },
+    [contentRef, transcriptMenu]
+  );
+
+  const handleQuoteHoveredText = useCallback(() => {
+    const quotedText = formatTranscriptTextAsQuote(transcriptMenuTextRef.current.trim());
+    transcriptMenu.close();
+    if (!quotedText) return;
+    chatInputAPI.current?.appendText(quotedText);
+    chatInputAPI.current?.focus();
+  }, [transcriptMenu]);
+
+  const handleCopyHoveredText = useCallback(() => {
+    void copyToClipboard(transcriptMenuTextRef.current);
+    transcriptMenu.close();
+  }, [transcriptMenu]);
 
   // ChatPane is keyed by workspaceId (WorkspaceShell), so per-workspace UI state naturally
   // resets on workspace switches. Clear background errors so they don't leak across workspaces.
@@ -600,7 +674,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
         className="flex min-w-96 flex-1 flex-col [@media(max-width:768px)]:max-h-full [@media(max-width:768px)]:w-full [@media(max-width:768px)]:min-w-0"
       >
         <PerfRenderMarker id="chat-pane.header">
-          <WorkspaceHeader
+          <WorkspaceMenuBar
             workspaceId={workspaceId}
             projectName={projectName}
             projectPath={projectPath}
@@ -622,6 +696,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               onWheel={markUserInteraction}
               onTouchMove={markUserInteraction}
               onScroll={handleScroll}
+              onContextMenu={handleTranscriptContextMenu}
               role="log"
               aria-live={canInterrupt ? "polite" : "off"}
               aria-busy={canInterrupt}
@@ -656,8 +731,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                   <MessageListProvider value={messageListContextValue}>
                     <>
                       {deferredMessages.map((msg, index) => {
-                        // Compute bash_output grouping at render-time
-                        const bashOutputGroup = computeBashOutputGroupInfo(deferredMessages, index);
+                        const bashOutputGroup = bashOutputGroupInfos[index];
 
                         // For bash_output groups, use first message ID as expansion key
                         const groupKey = bashOutputGroup
@@ -676,6 +750,12 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                           msg.type !== "workspace-init" &&
                           msg.type !== "compaction-boundary" &&
                           msg.historyId === editCutoffHistoryId;
+
+                        const taskReportLinkingForMessage =
+                          msg.type === "tool" &&
+                          (msg.toolName === "task" || msg.toolName === "task_await")
+                            ? taskReportLinking
+                            : undefined;
 
                         return (
                           <React.Fragment key={msg.id}>
@@ -701,16 +781,10 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                                   msg.id === latestProposePlanId
                                 }
                                 bashOutputGroup={bashOutputGroup}
-                                taskReportLinking={taskReportLinking}
+                                taskReportLinking={taskReportLinkingForMessage}
                                 userMessageNavigation={
-                                  msg.type === "user" && userMessageNavMap
-                                    ? {
-                                        prevUserMessageId: userMessageNavMap.get(msg.historyId)
-                                          ?.prev,
-                                        nextUserMessageId: userMessageNavMap.get(msg.historyId)
-                                          ?.next,
-                                        onNavigate: handleNavigateToMessage,
-                                      }
+                                  msg.type === "user"
+                                    ? userMessageNavigationByHistoryId?.get(msg.historyId)
                                     : undefined
                                 }
                               />
@@ -774,6 +848,22 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                 />
               </div>
             </div>
+            <PositionedMenu
+              open={transcriptMenu.isOpen}
+              onOpenChange={transcriptMenu.onOpenChange}
+              position={transcriptMenu.position}
+            >
+              <PositionedMenuItem
+                icon={<TextQuote />}
+                label="Quote in input"
+                onClick={handleQuoteHoveredText}
+              />
+              <PositionedMenuItem
+                icon={<Clipboard />}
+                label="Copy text"
+                onClick={handleCopyHoveredText}
+              />
+            </PositionedMenu>
             {!autoScroll && (
               <button
                 onClick={jumpToBottom}

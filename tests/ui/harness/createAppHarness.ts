@@ -7,6 +7,7 @@ import {
 } from "../../ipc/setup";
 import { cleanupTempGitRepo, createTempGitRepo, generateBranchName } from "../../ipc/helpers";
 import { detectDefaultTrunkBranch } from "@/node/git";
+import type { RuntimeConfig } from "@/common/types/runtime";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 
 import { installDom } from "../dom";
@@ -39,6 +40,7 @@ export interface AppHarness {
 export async function createAppHarness(options?: {
   branchPrefix?: string;
   aiMode?: "mock-router" | "none";
+  runtimeConfig?: RuntimeConfig;
   /**
    * Optional hook to set up DOM-dependent globals (e.g. localStorage) before
    * the App is rendered.
@@ -65,6 +67,7 @@ export async function createAppHarness(options?: {
       projectPath: repoPath,
       branchName,
       trunkBranch,
+      runtimeConfig: options?.runtimeConfig,
     });
 
     if (!createResult.success) {

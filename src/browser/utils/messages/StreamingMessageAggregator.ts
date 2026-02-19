@@ -26,7 +26,13 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { TodoItem, StatusSetToolResult, NotifyToolResult } from "@/common/types/tools";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 
-import type { WorkspaceChatMessage, StreamErrorMessage, DeleteMessage } from "@/common/orpc/types";
+import { computePriorHistoryFingerprint } from "@/common/orpc/onChatCursorFingerprint";
+import type {
+  WorkspaceChatMessage,
+  StreamErrorMessage,
+  DeleteMessage,
+  OnChatCursor,
+} from "@/common/orpc/types";
 import { isInitStart, isInitOutput, isInitEnd, isMuxMessage } from "@/common/orpc/types";
 import type {
   DynamicToolPart,
@@ -38,6 +44,7 @@ import { INIT_HOOK_MAX_LINES } from "@/common/constants/toolLimits";
 import { isDynamicToolPart } from "@/common/types/toolParts";
 import { z } from "zod";
 import { createDeltaStorage, type DeltaRecordStorage } from "./StreamingTPSCalculator";
+import { buildTranscriptTruncationPlan } from "./transcriptTruncationPlan";
 import { computeRecencyTimestamp } from "./recency";
 import { assert } from "@/common/utils/assert";
 import { getStatusStateKey } from "@/common/constants/storage";
@@ -75,18 +82,17 @@ type AgentStatus = z.infer<typeof AgentStatusSchema>;
 
 /**
  * Maximum number of DisplayedMessages to render before truncation kicks in.
- * We keep all user/assistant text messages (fast to render) and filter out
- * tool calls and reasoning blocks from older history for DOM performance.
+ * We keep all user prompts and structural markers, while allowing older assistant
+ * content to collapse behind history-hidden markers for faster initial paint.
  */
-const MAX_DISPLAYED_MESSAGES = 128;
+const MAX_DISPLAYED_MESSAGES = 64;
 
 /**
  * Message types that are always preserved even in truncated history.
- * We only omit tool calls and reasoning blocks; everything else stays visible.
+ * Older assistant/tool/reasoning rows may be omitted until the user clicks “Load all”.
  */
 const ALWAYS_KEEP_MESSAGE_TYPES = new Set<DisplayedMessage["type"]>([
   "user",
-  "assistant",
   "stream-error",
   "compaction-boundary",
   "plan-display",
@@ -107,6 +113,7 @@ interface StreamingContext {
   isComplete: boolean;
   isCompacting: boolean;
   hasCompactionContinue: boolean;
+  isReplay: boolean;
   model: string;
   routedThroughGateway?: boolean;
 
@@ -259,6 +266,7 @@ export class StreamingMessageAggregator {
     latestStreamingBashToolCallId?: string | null; // null = computed, none found
   } = {};
   private recencyTimestamp: number | null = null;
+  private lastResponseCompletedAt: number | null = null;
 
   // Delta history for token counting and TPS calculation
   private deltaHistory = new Map<string, DeltaRecordStorage>();
@@ -389,12 +397,15 @@ export class StreamingMessageAggregator {
   // isFinal is true when no more active streams remain (assistant done with all work)
   // finalText is the text content after any tool calls (the final response to show in notification)
   // compaction is provided when this was a compaction stream (includes continue metadata)
+  // completedAt: non-null for all final streams. Drives read-marking in App.tsx.
+  // Only non-compaction completions also bump lastResponseCompletedAt (recency).
   onResponseComplete?: (
     workspaceId: string,
     messageId: string,
     isFinal: boolean,
     finalText: string,
-    compaction?: { hasContinueMessage: boolean }
+    compaction?: { hasContinueMessage: boolean },
+    completedAt?: number | null
   ) => void;
 
   constructor(createdAt: string, workspaceId?: string, unarchivedAt?: string) {
@@ -492,6 +503,27 @@ export class StreamingMessageAggregator {
     context.clockOffsetMs = Date.now() - serverTimestamp;
   }
 
+  /**
+   * Detect the replay→live transition for reconnect streams.
+   *
+   * During reconnect, `replayStream()` emits all catch-up events with `replay: true`.
+   * Once the catch-up phase is over, fresh live deltas arrive without the flag.
+   * This helper flips `isReplay` to false on the first non-replay event so that
+   * `streamPresentation.source` correctly transitions to "live" and smoothing
+   * resumes instead of staying bypassed.
+   *
+   * IMPORTANT: Only call from content handlers (handleStreamDelta, handleReasoningDelta).
+   * Tool events are not buffered by the reconnect relay and can arrive before replay
+   * text finishes flushing — calling this from tool handlers would prematurely end
+   * replay phase and reclassify catch-up content as live.
+   */
+  private syncReplayPhase(messageId: string, replay?: boolean): void {
+    const context = this.activeStreams.get(messageId);
+    if (context && context.isReplay && replay !== true) {
+      context.isReplay = false;
+    }
+  }
+
   private translateServerTime(context: StreamingContext, serverTimestamp: number): number {
     assert(context, "translateServerTime requires context");
     assert(typeof serverTimestamp === "number", "translateServerTime requires serverTimestamp");
@@ -531,7 +563,11 @@ export class StreamingMessageAggregator {
    */
   private updateRecency(): void {
     const messages = this.getAllMessages();
-    this.recencyTimestamp = computeRecencyTimestamp(messages, this.createdAt, this.unarchivedAt);
+    const messageRecency = computeRecencyTimestamp(messages, this.createdAt, this.unarchivedAt);
+    const candidates = [messageRecency, this.lastResponseCompletedAt].filter(
+      (t): t is number => t !== null
+    );
+    this.recencyTimestamp = candidates.length > 0 ? Math.max(...candidates) : null;
   }
 
   /**
@@ -804,30 +840,68 @@ export class StreamingMessageAggregator {
    *
    * @param messages - Historical messages to load
    * @param hasActiveStream - Whether there's an active stream in buffered events (for reconnection scenario)
+   * @param opts.mode - "replace" clears existing state first, "append" merges into existing state
    */
-  loadHistoricalMessages(messages: MuxMessage[], hasActiveStream = false): void {
-    // Clear existing state to prevent stale messages from persisting.
-    // This method replaces all messages, not merges them.
-    this.messages.clear();
-    this.displayedMessageCache.clear();
-    this.messageVersions.clear();
-    this.deltaHistory.clear();
-    this.activeStreamUsage.clear();
-    this.loadedSkills.clear();
-    this.loadedSkillsCache = [];
-    this.skillLoadErrors.clear();
-    this.skillLoadErrorsCache = [];
+  loadHistoricalMessages(
+    messages: MuxMessage[],
+    hasActiveStream = false,
+    opts?: { mode?: "replace" | "append" }
+  ): void {
+    const mode = opts?.mode ?? "replace";
 
-    // Add all messages to the map
+    if (mode === "replace") {
+      // Clear existing state to prevent stale messages from persisting.
+      this.messages.clear();
+      this.displayedMessageCache.clear();
+      this.messageVersions.clear();
+      this.deltaHistory.clear();
+      this.activeStreamUsage.clear();
+      this.loadedSkills.clear();
+      this.loadedSkillsCache = [];
+      this.skillLoadErrors.clear();
+      this.skillLoadErrorsCache = [];
+      this.lastResponseCompletedAt = null;
+    }
+
+    const overwrittenMessageIds: string[] = [];
+    const appliedMessages: MuxMessage[] = [];
+
+    // Add/overwrite messages in the map
     for (const message of messages) {
+      const existing = mode === "append" ? this.messages.get(message.id) : undefined;
+
+      if (existing) {
+        const existingParts = Array.isArray(existing.parts) ? existing.parts.length : 0;
+        const incomingParts = Array.isArray(message.parts) ? message.parts.length : 0;
+
+        // Since-replay can include a stale boundary row for an active stream message while
+        // richer in-memory parts already exist. Keep the richer message to avoid dropping
+        // in-flight tool/text parts that filtered replay deltas may not resend.
+        if (incomingParts < existingParts) {
+          continue;
+        }
+
+        overwrittenMessageIds.push(message.id);
+      }
+
       this.messages.set(message.id, message);
+      appliedMessages.push(message);
+    }
+
+    if (mode === "append") {
+      for (const messageId of overwrittenMessageIds) {
+        // Append replay can overwrite an existing message ID (e.g., partial -> finalized).
+        // Bump per-message version so displayed row caches are invalidated and rebuilt.
+        this.bumpMessageVersion(messageId);
+        this.displayedMessageCache.delete(messageId);
+      }
     }
 
     // Use "streaming" context if there's an active stream (reconnection), otherwise "historical"
     const context = hasActiveStream ? "streaming" : "historical";
 
-    // Sort messages in chronological order for processing
-    const chronologicalMessages = [...messages].sort(
+    // Sort applied messages in chronological order for processing
+    const chronologicalMessages = [...appliedMessages].sort(
       (a, b) => (a.metadata?.historySequence ?? 0) - (b.metadata?.historySequence ?? 0)
     );
 
@@ -871,6 +945,67 @@ export class StreamingMessageAggregator {
     return this.cache.allMessages;
   }
 
+  /**
+   * Build a cursor for incremental onChat reconnection.
+   * Returns undefined when we cannot safely represent the current state,
+   * forcing a full replay.
+   */
+  getOnChatCursor(): OnChatCursor | undefined {
+    let maxHistorySequence = -1;
+    let maxHistoryMessageId: string | undefined;
+    let minHistorySequence = Number.POSITIVE_INFINITY;
+
+    for (const message of this.messages.values()) {
+      const historySequence = message.metadata?.historySequence;
+      if (historySequence === undefined) {
+        continue;
+      }
+
+      if (historySequence > maxHistorySequence) {
+        maxHistorySequence = historySequence;
+        maxHistoryMessageId = message.id;
+      }
+
+      if (historySequence < minHistorySequence) {
+        minHistorySequence = historySequence;
+      }
+    }
+
+    if (!maxHistoryMessageId || !Number.isFinite(minHistorySequence)) {
+      return undefined;
+    }
+
+    if (this.activeStreams.size > 1) {
+      // Defensive fallback: multiple active streams is anomalous, so force a full replay.
+      return undefined;
+    }
+
+    const priorHistoryFingerprint = computePriorHistoryFingerprint(
+      this.getAllMessages(),
+      maxHistorySequence
+    );
+
+    const cursor: OnChatCursor = {
+      history: {
+        messageId: maxHistoryMessageId,
+        historySequence: maxHistorySequence,
+        oldestHistorySequence: minHistorySequence,
+        ...(priorHistoryFingerprint !== undefined ? { priorHistoryFingerprint } : {}),
+      },
+    };
+
+    if (this.activeStreams.size === 1) {
+      const activeStreamEntry = this.activeStreams.entries().next().value;
+      assert(activeStreamEntry, "activeStreams size reported 1 but no entry found");
+      const [messageId, context] = activeStreamEntry;
+      cursor.stream = {
+        messageId,
+        lastTimestamp: context.lastServerTimestamp,
+      };
+    }
+
+    return cursor;
+  }
   // Efficient methods to check message state without creating arrays
   getMessageCount(): number {
     return this.messages.size;
@@ -1231,6 +1366,7 @@ export class StreamingMessageAggregator {
     this.messageVersions.clear();
     this.interruptingMessageId = null;
     this.lastAbortReason = null;
+    this.lastResponseCompletedAt = null;
     this.invalidateCache();
   }
 
@@ -1282,6 +1418,7 @@ export class StreamingMessageAggregator {
       isComplete: false,
       isCompacting,
       hasCompactionContinue,
+      isReplay: data.replay === true,
       model: data.model,
       routedThroughGateway: data.routedThroughGateway,
       serverFirstTokenTime: null,
@@ -1291,8 +1428,40 @@ export class StreamingMessageAggregator {
       thinkingLevel: data.thinkingLevel,
     };
 
+    // For incremental replay: stream-start may be re-emitted to re-establish context.
+    // If we already have this message with accumulated parts, don't wipe its content.
+    const existingMessage = this.messages.get(data.messageId);
+    const existingContext = this.activeStreams.get(data.messageId);
+    if (data.replay && existingMessage && existingMessage.parts.length > 0) {
+      if (existingContext) {
+        // Preserve the highest observed server timestamp across reconnect boundaries.
+        // If replay emits only stream-start (no newer parts), regressing this value
+        // would cause the next since cursor to request already-seen stream events.
+        context.lastServerTimestamp = Math.max(
+          context.lastServerTimestamp,
+          existingContext.lastServerTimestamp
+        );
+        context.clockOffsetMs = Date.now() - context.lastServerTimestamp;
+
+        // Preserve in-flight timing context so reconnect doesn't reset active tool timing stats.
+        context.serverFirstTokenTime = existingContext.serverFirstTokenTime;
+        context.toolExecutionMs = existingContext.toolExecutionMs;
+        context.pendingToolStarts = new Map(existingContext.pendingToolStarts);
+      }
+
+      this.activeStreams.set(data.messageId, context);
+      if (existingMessage.metadata) {
+        existingMessage.metadata.model = data.model;
+        existingMessage.metadata.routedThroughGateway = data.routedThroughGateway;
+        existingMessage.metadata.mode = data.mode;
+        existingMessage.metadata.thinkingLevel = data.thinkingLevel;
+      }
+      this.markMessageDirty(data.messageId);
+      return;
+    }
+
     // Use messageId as key - ensures only ONE stream per message
-    // If called twice (e.g., during replay), second call safely overwrites first
+    // If called twice, second call safely overwrites first
     this.activeStreams.set(data.messageId, context);
 
     // Create initial streaming message with empty parts (deltas will append)
@@ -1312,6 +1481,8 @@ export class StreamingMessageAggregator {
   handleStreamDelta(data: StreamDeltaEvent): void {
     const message = this.messages.get(data.messageId);
     if (!message) return;
+
+    this.syncReplayPhase(data.messageId, data.replay);
 
     const context = this.activeStreams.get(data.messageId);
     if (context) {
@@ -1388,12 +1559,30 @@ export class StreamingMessageAggregator {
       // Clean up stream-scoped state (active stream tracking, TODOs)
       this.cleanupStreamState(data.messageId);
 
+      const isFinal = this.activeStreams.size === 0;
+
+      // Completion timestamp for ALL final streams — the "stream ended" fact.
+      // Read-marking uses this to keep the active workspace current.
+      const completedAt = isFinal ? Date.now() : null;
+
+      // Recency policy: only non-compaction finals inflate lastResponseCompletedAt.
+      // Compaction recency comes from the compacted summary's own timestamp.
+      if (completedAt !== null && !activeStream.isCompacting) {
+        this.lastResponseCompletedAt = completedAt;
+      }
+
       // Notify on normal stream completion (skip replay-only reconstruction)
       // isFinal = true when this was the last active stream (assistant done with all work)
       if (this.workspaceId && this.onResponseComplete) {
-        const isFinal = this.activeStreams.size === 0;
         const finalText = this.extractFinalResponseText(message);
-        this.onResponseComplete(this.workspaceId, data.messageId, isFinal, finalText, compaction);
+        this.onResponseComplete(
+          this.workspaceId,
+          data.messageId,
+          isFinal,
+          finalText,
+          compaction,
+          completedAt
+        );
       }
     } else {
       // Reconnection case: user reconnected after stream completed
@@ -1826,6 +2015,8 @@ export class StreamingMessageAggregator {
     const message = this.messages.get(data.messageId);
     if (!message) return;
 
+    this.syncReplayPhase(data.messageId, data.replay);
+
     const context = this.activeStreams.get(data.messageId);
     if (context) {
       this.updateStreamClock(context, data.timestamp);
@@ -2192,6 +2383,7 @@ export class StreamingMessageAggregator {
       // Check if this message has an active stream (for inferring streaming status)
       // Direct Map.has() check - O(1) instead of O(n) iteration
       const hasActiveStream = this.activeStreams.has(message.id);
+      const streamContext = hasActiveStream ? this.activeStreams.get(message.id) : undefined;
 
       // isPartial from metadata (set by stream-abort event)
       const isPartial = message.metadata?.partial === true;
@@ -2237,6 +2429,9 @@ export class StreamingMessageAggregator {
             isPartial,
             isLastPartOfMessage: isLastPart,
             timestamp: part.timestamp ?? baseTimestamp,
+            streamPresentation: isStreaming
+              ? { source: streamContext?.isReplay ? "replay" : "live" }
+              : undefined,
           });
         } else if (part.type === "text" && part.text) {
           // Skip empty text parts
@@ -2258,6 +2453,9 @@ export class StreamingMessageAggregator {
             mode: message.metadata?.mode,
             agentId: message.metadata?.agentId ?? message.metadata?.mode,
             timestamp: part.timestamp ?? baseTimestamp,
+            streamPresentation: isStreaming
+              ? { source: streamContext?.isReplay ? "replay" : "live" }
+              : undefined,
           });
         } else if (isDynamicToolPart(part)) {
           // Determine status based on part state and result
@@ -2479,52 +2677,20 @@ export class StreamingMessageAggregator {
       let resultMessages = displayedMessages;
 
       // Limit messages for DOM performance (unless explicitly disabled).
-      // Strategy: keep ALL user/assistant text messages (fast to render) but filter out
-      // tool calls and reasoning blocks from older portions of the chat.
+      // Strategy: keep recent rows intact, preserve structural rows in older history,
+      // and materialize omission runs as explicit history-hidden marker rows.
       // Full history is still maintained internally for token counting.
       if (!this.showAllMessages && displayedMessages.length > MAX_DISPLAYED_MESSAGES) {
-        // Split into "old" (candidates for filtering) and "recent" (always keep intact)
-        const recentMessages = displayedMessages.slice(-MAX_DISPLAYED_MESSAGES);
-        const oldMessages = displayedMessages.slice(0, -MAX_DISPLAYED_MESSAGES);
+        const truncationPlan = buildTranscriptTruncationPlan({
+          displayedMessages,
+          maxDisplayedMessages: MAX_DISPLAYED_MESSAGES,
+          alwaysKeepMessageTypes: ALWAYS_KEEP_MESSAGE_TYPES,
+        });
 
-        const omittedMessageCounts = { tool: 0, reasoning: 0 };
-        let hiddenCount = 0;
-        let insertionIndex: number | null = null;
-        const filteredOldMessages: DisplayedMessage[] = [];
-
-        for (const msg of oldMessages) {
-          if (ALWAYS_KEEP_MESSAGE_TYPES.has(msg.type)) {
-            filteredOldMessages.push(msg);
-            continue;
-          }
-
-          if (msg.type === "tool") {
-            omittedMessageCounts.tool += 1;
-          } else if (msg.type === "reasoning") {
-            omittedMessageCounts.reasoning += 1;
-          }
-
-          hiddenCount += 1;
-          insertionIndex ??= filteredOldMessages.length;
-        }
-
-        const hasOmissions = hiddenCount > 0;
-
-        if (hasOmissions) {
-          const insertAt = insertionIndex ?? filteredOldMessages.length;
-          const messagesWithMarker = [...filteredOldMessages];
-          messagesWithMarker.splice(insertAt, 0, {
-            type: "history-hidden" as const,
-            id: "history-hidden",
-            hiddenCount,
-            historySequence: -1, // Non-persisted marker for truncated history
-            omittedMessageCounts,
-          });
-
-          resultMessages = this.normalizeLastPartFlags([...messagesWithMarker, ...recentMessages]);
-        } else {
-          resultMessages = [...filteredOldMessages, ...recentMessages];
-        }
+        resultMessages =
+          truncationPlan.hiddenCount > 0
+            ? this.normalizeLastPartFlags(truncationPlan.rows)
+            : truncationPlan.rows;
       }
 
       // Add init state if present (ephemeral, appears at top)

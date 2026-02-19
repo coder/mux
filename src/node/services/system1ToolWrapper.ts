@@ -36,6 +36,7 @@ import type { SendMessageError } from "@/common/types/errors";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { log } from "./log";
 import type { SessionUsageService } from "./sessionUsageService";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -61,11 +62,6 @@ export interface System1WrapOptions {
   runtime: Runtime;
   agentDiscoveryPath: string;
   /** Callbacks to break the dependency on AIService / StreamManager. */
-  resolveGatewayModelString: (
-    modelString: string,
-    defaultModel?: string,
-    explicitGateway?: boolean
-  ) => string;
   createModel: (
     modelString: string,
     opts?: MuxProviderOptions
@@ -105,12 +101,8 @@ export function wrapToolsWithSystem1(opts: System1WrapOptions): Record<string, T
     if (cachedSystem1Model) return cachedSystem1Model;
     if (cachedSystem1ModelFailed) return undefined;
 
-    const resolvedModelString = opts.resolveGatewayModelString(
-      system1Ctx.modelString,
-      undefined,
-      system1Ctx.explicitGateway
-    );
-    const created = await opts.createModel(resolvedModelString, opts.muxProviderOptions);
+    // createModel handles gateway routing automatically — pass the raw string.
+    const created = await opts.createModel(system1Ctx.modelString, opts.muxProviderOptions);
     if (!created.success) {
       cachedSystem1ModelFailed = true;
       log.debug("[system1] Failed to create System 1 model", {
@@ -121,7 +113,7 @@ export function wrapToolsWithSystem1(opts: System1WrapOptions): Record<string, T
       return undefined;
     }
 
-    cachedSystem1Model = { modelString: resolvedModelString, model: created.data };
+    cachedSystem1Model = { modelString: system1Ctx.modelString, model: created.data };
     return cachedSystem1Model;
   };
 
@@ -184,21 +176,22 @@ function getExecuteFn(tool: Tool | undefined): ExecuteFn | undefined {
 }
 
 interface System1ModelContext {
+  /** Raw model string (may include mux-gateway: prefix). Passed to createModel which resolves gateway routing internally. */
   modelString: string;
-  explicitGateway: boolean;
   thinkingLevel: ThinkingLevel;
 }
 
 function buildSystem1ModelContext(opts: System1WrapOptions): System1ModelContext {
   const raw = typeof opts.system1Model === "string" ? opts.system1Model.trim() : "";
-  const modelString = raw ? normalizeGatewayModel(raw) : "";
-  const explicitGateway = raw.startsWith("mux-gateway:");
-  const effectiveModelForThinking = modelString || opts.modelString;
+  // Canonical form (gateway prefix stripped) for provider checks like thinking level.
+  const canonical = raw ? normalizeGatewayModel(raw) : "";
+  const effectiveModelForThinking = canonical || opts.modelString;
   const thinkingLevel = enforceThinkingPolicy(
     effectiveModelForThinking,
     opts.system1ThinkingLevel ?? "off"
   );
-  return { modelString, explicitGateway, thinkingLevel };
+  // Store the raw string so createModel can detect explicit mux-gateway: prefix.
+  return { modelString: raw, thinkingLevel };
 }
 
 // ---------------------------------------------------------------------------
@@ -336,7 +329,7 @@ async function maybeFilterBashOutput(
     } catch (error) {
       log.debug("[system1] Failed to save full bash output to temp file", {
         workspaceId: opts.workspaceId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       fullOutputPath = undefined;
     }
@@ -426,7 +419,7 @@ async function maybeFilterBashOutput(
       }
     } catch (error) {
       lastErrorName = error instanceof Error ? error.name : undefined;
-      lastErrorMessage = error instanceof Error ? error.message : String(error);
+      lastErrorMessage = getErrorMessage(error);
     }
 
     if (!applied || applied.keptLines === 0) {
@@ -504,7 +497,7 @@ async function maybeFilterBashOutput(
 
     return { filteredOutput: applied.filteredOutput, notice };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = getErrorMessage(error);
     const errorName = error instanceof Error ? error.name : undefined;
     const upstreamAborted = filterParams.abortSignal?.aborted ?? false;
     const isAbortError = errorName === "AbortError";
@@ -597,7 +590,7 @@ function wrapBashTool(
     } catch (error) {
       log.debug("[system1] Failed to filter bash tool output", {
         workspaceId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       return result;
     }
@@ -632,7 +625,7 @@ function wrapBashOutputTool(
     } catch (error) {
       log.debug("[system1] Failed to filter bash_output tool output", {
         workspaceId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       return result;
     }
@@ -720,7 +713,7 @@ function wrapTaskAwaitTool(
     } catch (error) {
       log.debug("[system1] Failed to filter task_await tool output", {
         workspaceId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       return result;
     }

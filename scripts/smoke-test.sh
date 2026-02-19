@@ -63,6 +63,7 @@ SERVER_PORT="${SERVER_PORT:-3000}"
 SERVER_HOST="${SERVER_HOST:-localhost}"
 STARTUP_TIMEOUT="${STARTUP_TIMEOUT:-30}"
 HEALTHCHECK_TIMEOUT="${HEALTHCHECK_TIMEOUT:-10}"
+AUTH_TOKEN="smoke-test-token-$(date +%s)"
 # When set to "1", strip npm-shrinkwrap.json from the package before installing.
 # This simulates package managers like `bun x` that ignore shrinkwrap, catching
 # dependency resolution issues that the lockfile would otherwise mask.
@@ -148,7 +149,7 @@ log_info "✅ mux api subcommand works"
 
 # Start the server in background
 log_info "Starting mux server on $SERVER_HOST:$SERVER_PORT..."
-node_modules/.bin/mux server --host "$SERVER_HOST" --port "$SERVER_PORT" >server.log 2>&1 &
+node_modules/.bin/mux server --host "$SERVER_HOST" --port "$SERVER_PORT" --auth-token "$AUTH_TOKEN" >server.log 2>&1 &
 SERVER_PID=$!
 
 log_info "Server started with PID: $SERVER_PID"
@@ -238,7 +239,10 @@ const PROJECT_DIR = '$PROJECT_DIR';
 async function runTests() {
   // Test 1: HTTP oRPC client - create project
   console.log('Testing oRPC project creation via HTTP...');
-  const httpLink = new RPCLink({ url: ORPC_URL });
+  const httpLink = new RPCLink({
+    url: ORPC_URL,
+    headers: { 'Authorization': 'Bearer ${AUTH_TOKEN}' }
+  });
   const client = createORPCClient(httpLink);
 
   const projectResult = await client.projects.create({ projectPath: PROJECT_DIR });
@@ -262,7 +266,7 @@ async function runTests() {
   // Test 3: WebSocket connection
   console.log('Testing oRPC WebSocket connection...');
   await new Promise((resolve, reject) => {
-    const ws = new WebSocket(WS_URL);
+    const ws = new WebSocket(WS_URL, { headers: { 'Authorization': 'Bearer ${AUTH_TOKEN}' } });
     const timeout = setTimeout(() => {
       ws.close();
       reject(new Error('WebSocket connection timed out'));

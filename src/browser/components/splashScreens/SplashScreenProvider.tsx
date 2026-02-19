@@ -1,17 +1,50 @@
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+  type ReactNode,
+} from "react";
 import { SPLASH_REGISTRY, DISABLE_SPLASH_SCREENS, type SplashConfig } from "./index";
 import { useAPI } from "@/browser/contexts/API";
+import { useSettings } from "@/browser/contexts/SettingsContext";
 
 const SplashScreenActiveContext = createContext(false);
+
+const ONBOARDING_WIZARD_SPLASH_ID = "onboarding-wizard-v1";
+
+interface PausedOnboardingState {
+  stepIndex: number;
+  reason: "providers-settings";
+}
+
+interface OnboardingPauseContextValue {
+  paused: PausedOnboardingState | null;
+  pause: (state: PausedOnboardingState) => void;
+  resume: () => void;
+}
+
+const OnboardingPauseContext = createContext<OnboardingPauseContextValue | null>(null);
 
 export function useIsSplashScreenActive(): boolean {
   return useContext(SplashScreenActiveContext);
 }
 
+export function useOnboardingPause(): OnboardingPauseContextValue {
+  const ctx = useContext(OnboardingPauseContext);
+  if (!ctx) throw new Error("useOnboardingPause must be used within SplashScreenProvider");
+  return ctx;
+}
+
 export function SplashScreenProvider({ children }: { children: ReactNode }) {
   const { api } = useAPI();
+  const { registerOnClose } = useSettings();
   const [queue, setQueue] = useState<SplashConfig[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [pausedOnboarding, setPausedOnboarding] = useState<PausedOnboardingState | null>(null);
+  const [onboardingPaused, setOnboardingPaused] = useState(false);
 
   // Load viewed splash screens from config on mount
   useEffect(() => {
@@ -45,10 +78,35 @@ export function SplashScreenProvider({ children }: { children: ReactNode }) {
     })();
   }, [api]);
 
+  const pause = useCallback((state: PausedOnboardingState) => {
+    setPausedOnboarding(state);
+    setOnboardingPaused(true);
+  }, []);
+
+  const resume = useCallback(() => {
+    setOnboardingPaused(false);
+  }, []);
+
+  useEffect(() => registerOnClose(() => resume()), [registerOnClose, resume]);
+
   const currentSplash = queue[0] ?? null;
+  const isOnboardingSplash = currentSplash?.id === ONBOARDING_WIZARD_SPLASH_ID;
+  const isPaused = isOnboardingSplash && onboardingPaused;
+
+  useEffect(() => {
+    if (!isOnboardingSplash || onboardingPaused || pausedOnboarding == null) {
+      return;
+    }
+
+    // Keep the paused step long enough to seed onboarding state on resume, then clear it.
+    setPausedOnboarding(null);
+  }, [isOnboardingSplash, onboardingPaused, pausedOnboarding]);
 
   const dismiss = useCallback(async () => {
     if (!currentSplash || !api) return;
+
+    setOnboardingPaused(false);
+    setPausedOnboarding(null);
 
     // Mark as viewed in config
     try {
@@ -61,12 +119,25 @@ export function SplashScreenProvider({ children }: { children: ReactNode }) {
     setQueue((q) => q.slice(1));
   }, [currentSplash, api]);
 
-  const isSplashScreenActive = loaded && currentSplash !== null;
+  const onboardingPauseValue = useMemo<OnboardingPauseContextValue>(
+    () => ({
+      paused: pausedOnboarding,
+      pause,
+      resume,
+    }),
+    [pausedOnboarding, pause, resume]
+  );
+
+  const isSplashScreenActive = loaded && currentSplash !== null && !isPaused;
 
   return (
     <SplashScreenActiveContext.Provider value={isSplashScreenActive}>
-      {children}
-      {loaded && currentSplash && <currentSplash.component onDismiss={() => void dismiss()} />}
+      <OnboardingPauseContext.Provider value={onboardingPauseValue}>
+        {children}
+        {loaded && currentSplash && !isPaused && (
+          <currentSplash.component onDismiss={() => void dismiss()} />
+        )}
+      </OnboardingPauseContext.Provider>
     </SplashScreenActiveContext.Provider>
   );
 }

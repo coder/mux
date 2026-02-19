@@ -2,6 +2,8 @@ import { timingSafeEqual } from "crypto";
 import { os } from "@orpc/server";
 import type { IncomingHttpHeaders, IncomingMessage } from "http";
 import { URL } from "url";
+import type { ORPCContext } from "@/node/orpc/context";
+import { SERVER_AUTH_SESSION_COOKIE_NAME } from "@/node/services/serverAuthService";
 
 // Best-effort time-constant string comparison.
 //
@@ -33,7 +35,90 @@ function extractBearerToken(header: string | string[] | undefined): string | nul
   return h.slice(7).trim() || null;
 }
 
-/** Create auth middleware that validates Authorization header from context */
+export function getFirstHeaderValue(
+  headers: IncomingHttpHeaders | undefined,
+  key: string
+): string | undefined {
+  const raw = headers?.[key];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+export function extractClientIpAddress(
+  headers: IncomingHttpHeaders | undefined
+): string | undefined {
+  const forwardedFor = getFirstHeaderValue(headers, "x-forwarded-for");
+  if (!forwardedFor) {
+    return undefined;
+  }
+
+  const first = forwardedFor.split(",")[0]?.trim();
+  return first?.length ? first : undefined;
+}
+
+export function extractCookieValues(
+  cookieHeader: string | string[] | undefined,
+  cookieName: string
+): string[] {
+  const rawCookieHeaders = Array.isArray(cookieHeader)
+    ? cookieHeader.filter((value): value is string => typeof value === "string")
+    : typeof cookieHeader === "string"
+      ? [cookieHeader]
+      : [];
+
+  if (rawCookieHeaders.length === 0) {
+    return [];
+  }
+
+  const tokens: string[] = [];
+
+  for (const rawCookieHeader of rawCookieHeaders) {
+    if (rawCookieHeader.trim().length === 0) {
+      continue;
+    }
+
+    const cookiePairs = rawCookieHeader.split(";");
+    for (const pair of cookiePairs) {
+      const separatorIndex = pair.indexOf("=");
+      if (separatorIndex <= 0) {
+        continue;
+      }
+
+      const key = pair.slice(0, separatorIndex).trim();
+      if (key !== cookieName) {
+        continue;
+      }
+
+      const value = pair.slice(separatorIndex + 1).trim();
+      if (value.length === 0) {
+        continue;
+      }
+
+      try {
+        tokens.push(decodeURIComponent(value));
+      } catch {
+        tokens.push(value);
+      }
+    }
+  }
+
+  return tokens;
+}
+
+export function extractCookieValue(
+  cookieHeader: string | string[] | undefined,
+  cookieName: string
+): string | null {
+  const values = extractCookieValues(cookieHeader, cookieName);
+  return values[0] ?? null;
+}
+
+/** Create auth middleware that validates Authorization header or session cookie from context */
 export function createAuthMiddleware(authToken?: string) {
   if (!authToken?.trim()) {
     return os.middleware(({ next }) => next());
@@ -42,20 +127,34 @@ export function createAuthMiddleware(authToken?: string) {
   const expectedToken = authToken.trim();
 
   return os
-    .$context<{ headers?: IncomingHttpHeaders }>()
+    .$context<ORPCContext>()
     .errors({
       UNAUTHORIZED: {
-        message: "Invalid or missing auth token",
+        message: "Invalid or missing auth token/session",
       },
     })
-    .middleware(({ context, errors, next }) => {
+    .middleware(async ({ context, errors, next }) => {
       const presentedToken = extractBearerToken(context.headers?.authorization);
 
-      if (!presentedToken || !safeEq(presentedToken, expectedToken)) {
-        throw errors.UNAUTHORIZED();
+      if (presentedToken && safeEq(presentedToken, expectedToken)) {
+        return next();
       }
 
-      return next();
+      const sessionTokens = extractCookieValues(
+        context.headers?.cookie,
+        SERVER_AUTH_SESSION_COOKIE_NAME
+      );
+      for (const sessionToken of sessionTokens) {
+        const sessionResult = await context.serverAuthService.validateSessionToken(sessionToken, {
+          userAgent: getFirstHeaderValue(context.headers, "user-agent"),
+          ipAddress: extractClientIpAddress(context.headers),
+        });
+        if (sessionResult) {
+          return next();
+        }
+      }
+
+      throw errors.UNAUTHORIZED();
     });
 }
 

@@ -50,7 +50,7 @@ describe("commandParser", () => {
     });
 
     it("should parse /model with full provider:model format", () => {
-      expectModelSet("/model anthropic:claude-sonnet-4-5", KNOWN_MODELS.SONNET.id);
+      expectModelSet("/model anthropic:claude-sonnet-4-6", KNOWN_MODELS.SONNET.id);
     });
 
     it("should parse /compact -m with alias", () => {
@@ -143,24 +143,15 @@ describe("commandParser", () => {
       });
     });
 
-    it("should parse /fork command with name only", () => {
-      expectParse("/fork feature-branch", {
-        type: "fork",
-        newName: "feature-branch",
-        startMessage: undefined,
-      });
+    it("should parse /fork with no args (seamless fork)", () => {
+      expectParse("/fork", { type: "fork" });
     });
 
-    it("should parse /fork command with start message", () => {
-      expectParse("/fork feature-branch let's go", {
+    it("should parse /fork with start message", () => {
+      expectParse("/fork let's explore this idea", {
         type: "fork",
-        newName: "feature-branch",
-        startMessage: "let's go",
+        startMessage: "let's explore this idea",
       });
-    });
-
-    it("should show /fork help when missing args", () => {
-      expectParse("/fork", { type: "fork-help" });
     });
   });
 });

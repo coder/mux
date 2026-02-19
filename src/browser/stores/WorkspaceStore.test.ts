@@ -772,8 +772,36 @@ describe("WorkspaceStore", () => {
       const live = store.getBashToolLiveOutput(workspaceId, "call-2");
       expect(live).toBeNull();
     });
-  });
 
+    it("replays pre-caught-up bash output after full replay catches up", async () => {
+      const workspaceId = "bash-output-workspace-3";
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield {
+          type: "bash-output",
+          workspaceId,
+          toolCallId: "call-3",
+          text: "buffered\n",
+          isError: false,
+          timestamp: 1,
+        };
+        await Promise.resolve();
+        yield { type: "caught-up", replay: "full" };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const live = store.getBashToolLiveOutput(workspaceId, "call-3");
+      expect(live).not.toBeNull();
+      if (!live) throw new Error("Expected buffered live output after caught-up");
+      expect(live.stdout).toContain("buffered");
+    });
+  });
   describe("task-created events", () => {
     it("exposes live taskId while the task tool is running", async () => {
       const workspaceId = "task-created-workspace-1";
@@ -832,6 +860,403 @@ describe("WorkspaceStore", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(store.getTaskToolLiveTaskId(workspaceId, "call-task-2")).toBeNull();
+    });
+
+    it("clears stale live tool state when since replay reports no active stream", async () => {
+      const workspaceId = "task-created-workspace-4";
+      let subscriptionCount = 0;
+      let releaseFirstSubscription: (() => void) | undefined;
+      const holdFirstSubscription = new Promise<void>((resolve) => {
+        releaseFirstSubscription = resolve;
+      });
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        subscriptionCount += 1;
+
+        if (subscriptionCount === 1) {
+          yield { type: "caught-up" };
+          await Promise.resolve();
+          yield {
+            type: "bash-output",
+            workspaceId,
+            toolCallId: "call-bash-4",
+            text: "stale-output\n",
+            isError: false,
+            timestamp: 1,
+          };
+          yield {
+            type: "task-created",
+            workspaceId,
+            toolCallId: "call-task-4",
+            taskId: "child-workspace-4",
+            timestamp: 2,
+          };
+
+          await holdFirstSubscription;
+          return;
+        }
+
+        yield {
+          type: "caught-up",
+          replay: "since",
+          cursor: {
+            history: {
+              messageId: "history-1",
+              historySequence: 1,
+            },
+          },
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const seededLiveState = await waitUntil(() => {
+        return (
+          store.getBashToolLiveOutput(workspaceId, "call-bash-4") !== null &&
+          store.getTaskToolLiveTaskId(workspaceId, "call-task-4") === "child-workspace-4"
+        );
+      });
+      expect(seededLiveState).toBe(true);
+
+      releaseFirstSubscription?.();
+
+      const clearedLiveState = await waitUntil(() => {
+        return (
+          subscriptionCount >= 2 &&
+          store.getBashToolLiveOutput(workspaceId, "call-bash-4") === null &&
+          store.getTaskToolLiveTaskId(workspaceId, "call-task-4") === null
+        );
+      });
+      expect(clearedLiveState).toBe(true);
+    });
+
+    it("clears stale live tool state when server stream exists but local stream context is missing", async () => {
+      const workspaceId = "task-created-workspace-7";
+      let subscriptionCount = 0;
+      let releaseFirstSubscription: (() => void) | undefined;
+      const holdFirstSubscription = new Promise<void>((resolve) => {
+        releaseFirstSubscription = resolve;
+      });
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        subscriptionCount += 1;
+
+        if (subscriptionCount === 1) {
+          yield { type: "caught-up" };
+          await Promise.resolve();
+          yield {
+            type: "stream-start",
+            workspaceId,
+            messageId: "msg-old-stream-missing-local",
+            historySequence: 1,
+            model: "claude-3-5-sonnet-20241022",
+            startTime: 1_000,
+          };
+          yield {
+            type: "bash-output",
+            workspaceId,
+            toolCallId: "call-bash-7",
+            text: "stale-after-end\n",
+            isError: false,
+            timestamp: 1_001,
+          };
+          yield {
+            type: "task-created",
+            workspaceId,
+            toolCallId: "call-task-7",
+            taskId: "child-workspace-7",
+            timestamp: 1_002,
+          };
+          yield {
+            type: "stream-end",
+            workspaceId,
+            messageId: "msg-old-stream-missing-local",
+            metadata: {
+              model: "claude-3-5-sonnet-20241022",
+              historySequence: 1,
+              timestamp: 1_003,
+            },
+            parts: [],
+          };
+
+          await holdFirstSubscription;
+          return;
+        }
+
+        yield {
+          type: "caught-up",
+          replay: "since",
+          cursor: {
+            history: {
+              messageId: "history-1",
+              historySequence: 1,
+            },
+            stream: {
+              messageId: "msg-new-stream-missing-local",
+              lastTimestamp: 2_000,
+            },
+          },
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const seededStaleLiveState = await waitUntil(() => {
+        return (
+          store.getAggregator(workspaceId)?.getOnChatCursor()?.stream === undefined &&
+          store.getBashToolLiveOutput(workspaceId, "call-bash-7") !== null &&
+          store.getTaskToolLiveTaskId(workspaceId, "call-task-7") === "child-workspace-7"
+        );
+      });
+      expect(seededStaleLiveState).toBe(true);
+
+      releaseFirstSubscription?.();
+
+      const clearedStaleLiveState = await waitUntil(() => {
+        return (
+          subscriptionCount >= 2 &&
+          store.getBashToolLiveOutput(workspaceId, "call-bash-7") === null &&
+          store.getTaskToolLiveTaskId(workspaceId, "call-task-7") === null
+        );
+      });
+      expect(clearedStaleLiveState).toBe(true);
+    });
+
+    it("clears stale active stream context when since replay reports a different stream", async () => {
+      const workspaceId = "task-created-workspace-5";
+      let subscriptionCount = 0;
+      let releaseFirstSubscription: (() => void) | undefined;
+      const holdFirstSubscription = new Promise<void>((resolve) => {
+        releaseFirstSubscription = resolve;
+      });
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        subscriptionCount += 1;
+
+        if (subscriptionCount === 1) {
+          yield { type: "caught-up" };
+          await Promise.resolve();
+          yield {
+            type: "stream-start",
+            workspaceId,
+            messageId: "msg-old-stream",
+            historySequence: 1,
+            model: "claude-3-5-sonnet-20241022",
+            startTime: 1_000,
+          };
+          yield {
+            type: "bash-output",
+            workspaceId,
+            toolCallId: "call-bash-5",
+            text: "old-stream-output\n",
+            isError: false,
+            timestamp: 1_001,
+          };
+          yield {
+            type: "task-created",
+            workspaceId,
+            toolCallId: "call-task-5",
+            taskId: "child-workspace-5",
+            timestamp: 1_002,
+          };
+
+          await holdFirstSubscription;
+          return;
+        }
+
+        yield {
+          type: "caught-up",
+          replay: "since",
+          cursor: {
+            history: {
+              messageId: "history-1",
+              historySequence: 1,
+            },
+            stream: {
+              messageId: "msg-new-stream",
+              lastTimestamp: 2_000,
+            },
+          },
+        };
+        await Promise.resolve();
+        yield {
+          type: "stream-start",
+          workspaceId,
+          messageId: "msg-new-stream",
+          historySequence: 2,
+          model: "claude-3-5-sonnet-20241022",
+          startTime: 2_000,
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const seededOldStream = await waitUntil(() => {
+        return (
+          store.getAggregator(workspaceId)?.getOnChatCursor()?.stream?.messageId ===
+          "msg-old-stream"
+        );
+      });
+      expect(seededOldStream).toBe(true);
+      expect(store.getBashToolLiveOutput(workspaceId, "call-bash-5")?.stdout).toContain(
+        "old-stream-output"
+      );
+      expect(store.getTaskToolLiveTaskId(workspaceId, "call-task-5")).toBe("child-workspace-5");
+
+      releaseFirstSubscription?.();
+
+      const switchedToNewStream = await waitUntil(() => {
+        return (
+          subscriptionCount >= 2 &&
+          store.getAggregator(workspaceId)?.getOnChatCursor()?.stream?.messageId ===
+            "msg-new-stream" &&
+          store.getBashToolLiveOutput(workspaceId, "call-bash-5") === null &&
+          store.getTaskToolLiveTaskId(workspaceId, "call-task-5") === null
+        );
+      });
+      expect(switchedToNewStream).toBe(true);
+    });
+
+    it("clears stale abort reason when since reconnect is downgraded to full replay", async () => {
+      const workspaceId = "task-created-workspace-6";
+      let subscriptionCount = 0;
+      let releaseFirstSubscription: (() => void) | undefined;
+      const holdFirstSubscription = new Promise<void>((resolve) => {
+        releaseFirstSubscription = resolve;
+      });
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        subscriptionCount += 1;
+
+        if (subscriptionCount === 1) {
+          yield { type: "caught-up" };
+          await Promise.resolve();
+          yield {
+            type: "stream-start",
+            workspaceId,
+            messageId: "msg-abort-old-stream",
+            historySequence: 1,
+            model: "claude-3-5-sonnet-20241022",
+            startTime: 1_000,
+          };
+          yield {
+            type: "stream-abort",
+            workspaceId,
+            messageId: "msg-abort-old-stream",
+            abortReason: "user",
+            metadata: {},
+          };
+
+          await holdFirstSubscription;
+          return;
+        }
+
+        yield {
+          type: "caught-up",
+          replay: "full",
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const seededAbortReason = await waitUntil(() => {
+        return store.getWorkspaceState(workspaceId).lastAbortReason?.reason === "user";
+      });
+      expect(seededAbortReason).toBe(true);
+
+      releaseFirstSubscription?.();
+
+      const clearedAbortReason = await waitUntil(() => {
+        return (
+          subscriptionCount >= 2 && store.getWorkspaceState(workspaceId).lastAbortReason === null
+        );
+      });
+      expect(clearedAbortReason).toBe(true);
+    });
+
+    it("replays pre-caught-up task-created after full replay catches up", async () => {
+      const workspaceId = "task-created-workspace-3";
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield {
+          type: "task-created",
+          workspaceId,
+          toolCallId: "call-task-3",
+          taskId: "child-workspace-3",
+          timestamp: 1,
+        };
+        await Promise.resolve();
+        yield { type: "caught-up", replay: "full" };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(store.getTaskToolLiveTaskId(workspaceId, "call-task-3")).toBe("child-workspace-3");
     });
   });
 });

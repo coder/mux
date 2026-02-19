@@ -1,10 +1,12 @@
-import { NoObjectGeneratedError, streamText, Output } from "ai";
+import { APICallError, NoObjectGeneratedError, Output, RetryError, streamText } from "ai";
 import { z } from "zod";
 import type { AIService } from "./aiService";
 import { log } from "./log";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
-import type { SendMessageError } from "@/common/types/errors";
+import type { NameGenerationError, SendMessageError } from "@/common/types/errors";
+import { getErrorMessage } from "@/common/utils/errors";
+import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
 import crypto from "crypto";
 
 /** Schema for AI-generated workspace identity (area name + descriptive title) */
@@ -176,6 +178,91 @@ async function recoverIdentityFromFallback(
   return null;
 }
 
+function inferProviderFromModelString(modelString: string): string | undefined {
+  const provider = modelString.split(":")[0]?.trim();
+  return provider && provider.length > 0 ? provider : undefined;
+}
+
+export function mapNameGenerationError(error: unknown, modelString: string): NameGenerationError {
+  if (RetryError.isInstance(error) && error.lastError) {
+    return mapNameGenerationError(error.lastError, modelString);
+  }
+
+  const provider = inferProviderFromModelString(modelString);
+
+  if (APICallError.isInstance(error)) {
+    if (error.statusCode === 401) {
+      return {
+        type: "authentication",
+        authKind: "invalid_credentials",
+        provider,
+        raw: error.message,
+      };
+    }
+    if (error.statusCode === 403) {
+      return { type: "permission_denied", provider, raw: error.message };
+    }
+    if (error.statusCode === 402) {
+      return { type: "quota", raw: error.message };
+    }
+    if (error.statusCode === 429) {
+      const kind = classify429Capacity({
+        message: error.message,
+        data: error.data,
+        responseBody: error.responseBody,
+      });
+      return { type: kind, raw: error.message };
+    }
+    if (error.statusCode != null && error.statusCode >= 500) {
+      return { type: "service_unavailable", raw: error.message };
+    }
+  }
+
+  if (error instanceof TypeError && error.message.toLowerCase().includes("fetch")) {
+    return { type: "network", raw: error.message };
+  }
+
+  const raw = getErrorMessage(error);
+  return { type: "unknown", raw };
+}
+
+export function mapModelCreationError(
+  error: SendMessageError,
+  modelString: string
+): NameGenerationError {
+  const provider = inferProviderFromModelString(modelString);
+
+  switch (error.type) {
+    case "api_key_not_found":
+      return {
+        type: "authentication",
+        authKind: "api_key_missing",
+        provider: error.provider ?? provider,
+      };
+    case "oauth_not_connected":
+      return {
+        type: "authentication",
+        authKind: "oauth_not_connected",
+        provider: error.provider ?? provider,
+      };
+    case "provider_disabled":
+      return { type: "configuration", raw: "Provider disabled" };
+    case "provider_not_supported":
+      return { type: "configuration", raw: "Provider not supported" };
+    case "policy_denied":
+      return { type: "policy", provider, raw: error.message };
+    case "unknown":
+      return { type: "unknown", raw: error.raw ?? "Unknown error" };
+    default: {
+      const raw =
+        "message" in error && typeof error.message === "string"
+          ? error.message
+          : `Failed to create model for ${modelString}: ${error.type}`;
+      return { type: "unknown", raw };
+    }
+  }
+}
+
 /**
  * Generate workspace identity (name + title) using AI.
  * Tries candidates in order, retrying on API errors (invalid keys, quota, etc.).
@@ -183,11 +270,50 @@ async function recoverIdentityFromFallback(
  * - name: Codebase area with 4-char suffix (e.g., "sidebar-a1b2")
  * - title: Human-readable description (e.g., "Fix plan mode over SSH")
  */
+export function buildWorkspaceIdentityPrompt(
+  message: string,
+  conversationContext?: string,
+  latestUserMessage?: string
+): string {
+  const promptSections: string[] = [`Primary user objective: "${message}"`];
+
+  const trimmedConversationContext = conversationContext?.trim();
+  if (trimmedConversationContext && trimmedConversationContext.length > 0) {
+    promptSections.push(
+      `Conversation turns (chronological sample):\n${trimmedConversationContext.slice(0, 6_000)}`
+    );
+
+    const normalizedLatestUserMessage = latestUserMessage?.replace(/\s+/g, " ").trim();
+    if (normalizedLatestUserMessage) {
+      promptSections.push(
+        `Most recent user message (extra context; do not prefer it over earlier turns): "${normalizedLatestUserMessage.slice(0, 1_000)}"`
+      );
+    }
+  }
+
+  // Prompt wording is tuned for short UI titles that stay accurate over the whole chat,
+  // rather than over-indexing on whichever message happened most recently.
+  return [
+    "Generate a workspace name and title for this development task:\n\n",
+    `${promptSections.join("\n\n")}\n\n`,
+    "Requirements:\n",
+    '- name: The area of the codebase being worked on (1-2 words, max 15 chars, git-safe: lowercase, hyphens only). Random bytes will be appended for uniqueness, so focus on the area not the specific task. Examples: "sidebar", "auth", "config", "api"\n',
+    '- title: 2-5 words, verb-noun format, describing the primary deliverable (what will be different when the work is done). Examples: "Fix plan mode", "Add user authentication", "Refactor sidebar layout"\n',
+    '- title quality: Be specific about the feature/system being changed. Prefer concrete nouns; avoid vague words ("stuff", "things"), self-referential meta phrases ("this chat", "this conversation", "regenerate title"), and temporal words ("latest", "recent", "today", "now").\n',
+    "- title scope: Choose the title that best represents the overall scope and goal across the entire conversation. Weigh all turns equally — do not favor the most recent message over earlier ones.\n",
+    "- title style: Sentence case, no punctuation, no quotes.\n",
+  ].join("");
+}
+
 export async function generateWorkspaceIdentity(
   message: string,
   candidates: string[],
-  aiService: AIService
-): Promise<Result<GenerateWorkspaceIdentityResult, SendMessageError>> {
+  aiService: AIService,
+  /** Optional conversation turns context used for regenerate-title prompts. */
+  conversationContext?: string,
+  /** Optional most recent user message; included as additional context only — not given precedence over older turns. */
+  latestUserMessage?: string
+): Promise<Result<GenerateWorkspaceIdentityResult, NameGenerationError>> {
   if (candidates.length === 0) {
     return Err({ type: "unknown", raw: "No model candidates provided for name generation" });
   }
@@ -195,15 +321,15 @@ export async function generateWorkspaceIdentity(
   // Try up to 3 candidates
   const maxAttempts = Math.min(candidates.length, 3);
 
-  // Track the last API error to return if all candidates fail
-  let lastApiError: string | undefined;
+  // Track the last classified error to return if all candidates fail
+  let lastError: NameGenerationError | null = null;
 
   for (let i = 0; i < maxAttempts; i++) {
     const modelString = candidates[i];
 
     const modelResult = await aiService.createModel(modelString);
     if (!modelResult.success) {
-      // No credentials for this model, try next
+      lastError = mapModelCreationError(modelResult.error, modelString);
       log.debug(`Name generation: skipping ${modelString} (${modelResult.error.type})`);
       continue;
     }
@@ -217,13 +343,7 @@ export async function generateWorkspaceIdentity(
       const currentStream = streamText({
         model: modelResult.data,
         output: Output.object({ schema: workspaceIdentitySchema }),
-        prompt: `Generate a workspace name and title for this development task:
-
-"${message}"
-
-Requirements:
-- name: The area of the codebase being worked on (1-2 words, max 15 chars, git-safe: lowercase, hyphens only). Random bytes will be appended for uniqueness, so focus on the area not the specific task. Examples: "sidebar", "auth", "config", "api"
-- title: A 2-5 word description in verb-noun format. Examples: "Fix plan mode", "Add user authentication", "Refactor sidebar layout"`,
+        prompt: buildWorkspaceIdentityPrompt(message, conversationContext, latestUserMessage),
       });
       stream = currentStream;
 
@@ -260,20 +380,18 @@ Requirements:
         });
       }
 
-      // API error (invalid key, quota, network, etc.) - try next candidate
-      lastApiError = error instanceof Error ? error.message : String(error);
-      log.warn(`Name generation failed with ${modelString}, trying next candidate`, {
-        error: lastApiError,
-      });
+      lastError = mapNameGenerationError(error, modelString);
+      log.warn("Name generation failed, trying next candidate", { modelString, error: lastError });
       continue;
     }
   }
 
-  // Return the last API error if available (more actionable than generic message)
-  const errorMessage = lastApiError
-    ? `Name generation failed: ${lastApiError}`
-    : "Name generation failed - no working model found";
-  return Err({ type: "unknown", raw: errorMessage });
+  return Err(
+    lastError ?? {
+      type: "configuration",
+      raw: "No working model candidates were available for name generation.",
+    }
+  );
 }
 
 /**

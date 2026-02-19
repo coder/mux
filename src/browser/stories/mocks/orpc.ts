@@ -20,10 +20,12 @@ import type {
   WorkspaceChatMessage,
   ProvidersConfigMap,
   WorkspaceStatsSnapshot,
+  ServerAuthSession,
 } from "@/common/orpc/types";
 import type { MuxMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
+import type { NameGenerationError } from "@/common/types/errors";
 import type { Secret } from "@/common/types/secrets";
 import type { MCPHttpServerInfo, MCPServerInfo } from "@/common/types/mcp";
 import type { MCPOAuthAuthStatus } from "@/common/types/mcpOauth";
@@ -34,6 +36,8 @@ import {
   MUX_HELP_CHAT_WORKSPACE_NAME,
   MUX_HELP_CHAT_WORKSPACE_TITLE,
 } from "@/common/constants/muxChat";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { getWorkspaceLastReadKey } from "@/common/constants/storage";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import {
   DEFAULT_TASK_SETTINGS,
@@ -109,8 +113,12 @@ export interface MockORPCClientOptions {
   providersConfig?: ProvidersConfigMap;
   /** List of available provider names */
   providersList?: string[];
+  /** Server auth sessions for Settings → Server Access stories */
+  serverAuthSessions?: ServerAuthSession[];
   /** Mock for projects.remove - return error string to simulate failure */
   onProjectRemove?: (projectPath: string) => { success: true } | { success: false; error: string };
+  /** Override for nameGeneration.generate result (default: success) */
+  nameGenerationResult?: { success: false; error: NameGenerationError };
   /** Background processes per workspace */
   backgroundProcesses?: Map<
     string,
@@ -269,7 +277,9 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     executeBash,
     providersConfig = { anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true } },
     providersList = [],
+    serverAuthSessions: initialServerAuthSessions = [],
     onProjectRemove,
+    nameGenerationResult,
     backgroundProcesses = new Map<string, MockBackgroundProcess[]>(),
     sessionUsage = new Map<string, MockSessionUsage>(),
     lastLlmRequestSnapshots = new Map<string, DebugLlmRequestSnapshot | null>(),
@@ -343,6 +353,13 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     ? inputWorkspaces
     : [muxChatWorkspace, ...inputWorkspaces];
 
+  // Keep Storybook's built-in mux-help workspace behavior deterministic:
+  // if stories haven't seeded a read baseline, treat it as "known but never read"
+  // rather than "unknown workspace" so the unread badge can render when recency exists.
+  const muxHelpLastReadKey = getWorkspaceLastReadKey(MUX_HELP_CHAT_WORKSPACE_ID);
+  if (readPersistedState<number | null>(muxHelpLastReadKey, null) === null) {
+    updatePersistedState(muxHelpLastReadKey, 0);
+  }
   const workspaceMap = new Map(workspaces.map((w) => [w.id, w]));
 
   let createdWorkspaceCounter = 0;
@@ -408,6 +425,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
 
   let globalSecretsState: Secret[] = [...globalSecrets];
   const globalMcpServersState: MockMcpServers = { ...globalMcpServers };
+
+  let serverAuthSessionsState: ServerAuthSession[] = initialServerAuthSessions.map((session) => ({
+    ...session,
+  }));
 
   const deriveSubagentAiDefaults = () => {
     const raw: Record<string, unknown> = {};
@@ -508,6 +529,36 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       getLaunchProject: () => Promise.resolve(null),
       getSshHost: () => Promise.resolve(null),
       setSshHost: () => Promise.resolve(undefined),
+    },
+    serverAuth: {
+      listSessions: () =>
+        Promise.resolve(
+          [...serverAuthSessionsState]
+            .map((session) => ({ ...session }))
+            .sort((a, b) => b.lastUsedAtMs - a.lastUsedAtMs)
+        ),
+      revokeSession: (input: { sessionId: string }) => {
+        const beforeCount = serverAuthSessionsState.length;
+        serverAuthSessionsState = serverAuthSessionsState.filter(
+          (session) => session.id !== input.sessionId
+        );
+
+        return Promise.resolve({ removed: serverAuthSessionsState.length < beforeCount });
+      },
+      revokeOtherSessions: () => {
+        const currentSession = serverAuthSessionsState.find((session) => session.isCurrent);
+        const beforeCount = serverAuthSessionsState.length;
+
+        if (!currentSession) {
+          return Promise.resolve({ revokedCount: 0 });
+        }
+
+        serverAuthSessionsState = serverAuthSessionsState.filter(
+          (session) => session.id === currentSession.id
+        );
+
+        return Promise.resolve({ revokedCount: beforeCount - serverAuthSessionsState.length });
+      },
     },
     // Settings → Layouts (layout presets)
     // Stored in-memory for Storybook only.
@@ -1208,11 +1259,15 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         Promise.resolve(coderWorkspacesResult ?? { ok: true, workspaces: coderWorkspaces }),
     },
     nameGeneration: {
-      generate: () =>
-        Promise.resolve({
-          success: true,
+      generate: () => {
+        if (nameGenerationResult) {
+          return Promise.resolve(nameGenerationResult);
+        }
+        return Promise.resolve({
+          success: true as const,
           data: { name: "generated-workspace", title: "Generated Workspace", modelUsed: "mock" },
-        }),
+        });
+      },
     },
     terminal: {
       listSessions: (_input: { workspaceId: string }) => Promise.resolve([]),

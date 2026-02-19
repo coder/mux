@@ -14,6 +14,8 @@ import {
   WarningText,
 } from "@/browser/components/ui/dialog";
 import { Button } from "@/browser/components/ui/button";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
+import { isEditableElement, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 
 interface ForceDeleteModalProps {
   isOpen: boolean;
@@ -32,7 +34,7 @@ export const ForceDeleteModal: React.FC<ForceDeleteModalProps> = ({
 }) => {
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const handleForceDelete = () => {
+  const handleForceDelete = useCallback(() => {
     setIsDeleting(true);
     void (async () => {
       try {
@@ -44,7 +46,7 @@ export const ForceDeleteModal: React.FC<ForceDeleteModalProps> = ({
         setIsDeleting(false);
       }
     })();
-  };
+  }, [onForceDelete, workspaceId, onClose]);
 
   const handleOpenChange = useCallback(
     (open: boolean) => {
@@ -55,9 +57,35 @@ export const ForceDeleteModal: React.FC<ForceDeleteModalProps> = ({
     [isDeleting, onClose]
   );
 
+  const handleDialogKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (isEditableElement(e.target)) return;
+
+      // Block all global shortcuts while dialog is active.
+      // Radix handles Escape in capture phase (via onEscapeKeyDown) before this fires.
+      stopKeyboardPropagation(e);
+
+      if (isDeleting) return;
+
+      if (matchesKeybind(e, KEYBINDS.CONFIRM_DIALOG_YES)) {
+        e.preventDefault();
+        handleForceDelete();
+      } else if (matchesKeybind(e, KEYBINDS.CONFIRM_DIALOG_NO)) {
+        e.preventDefault();
+        onClose();
+      }
+    },
+    [isDeleting, handleForceDelete, onClose]
+  );
+
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
-      <DialogContent maxWidth="600px" maxHeight="90vh" showCloseButton={false}>
+      <DialogContent
+        maxWidth="600px"
+        maxHeight="90vh"
+        showCloseButton={false}
+        onKeyDown={handleDialogKeyDown}
+      >
         <DialogHeader>
           <DialogTitle>Force Delete Workspace?</DialogTitle>
           <DialogDescription>The workspace could not be removed normally</DialogDescription>
@@ -81,9 +109,21 @@ export const ForceDeleteModal: React.FC<ForceDeleteModalProps> = ({
         <DialogFooter className="justify-center">
           <Button variant="secondary" onClick={onClose} disabled={isDeleting}>
             Cancel
+            <span
+              aria-hidden="true"
+              className="ml-2 inline-flex items-center rounded border border-current/25 px-1.5 py-0.5 font-mono text-[10px] leading-none opacity-60"
+            >
+              N
+            </span>
           </Button>
           <Button variant="destructive" onClick={handleForceDelete} disabled={isDeleting}>
             {isDeleting ? "Deleting..." : "Force Delete"}
+            <span
+              aria-hidden="true"
+              className="ml-2 inline-flex items-center rounded border border-current/25 px-1.5 py-0.5 font-mono text-[10px] leading-none opacity-60"
+            >
+              Y
+            </span>
           </Button>
         </DialogFooter>
       </DialogContent>

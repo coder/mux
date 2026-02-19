@@ -4,6 +4,7 @@ import * as path from "node:path";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { SSHRuntime } from "@/node/runtime/SSHRuntime";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
+import { getErrorMessage } from "@/common/utils/errors";
 import { execBuffered, readFileString } from "@/node/utils/runtime/helpers";
 
 import {
@@ -53,10 +54,6 @@ function getGlobalSkillRoots(roots: AgentSkillsRoots): string[] {
   );
 
   return Array.from(new Set(orderedRoots));
-}
-
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 async function listSkillDirectoriesFromLocalFs(root: string): Promise<string[]> {
@@ -151,7 +148,7 @@ async function readSkillDescriptorFromDir(
   try {
     content = await readFileString(runtime, skillFilePath);
   } catch (err) {
-    const message = formatError(err);
+    const message = getErrorMessage(err);
     log.warn(`Failed to read SKILL.md for ${directoryName}: ${message}`);
     options?.invalidSkills?.push({
       directoryName,
@@ -192,7 +189,7 @@ async function readSkillDescriptorFromDir(
 
     return validated.data;
   } catch (err) {
-    const message = err instanceof AgentSkillParseError ? err.message : formatError(err);
+    const message = err instanceof AgentSkillParseError ? err.message : getErrorMessage(err);
     log.warn(`Skipping invalid skill '${directoryName}' (${scope}): ${message}`);
     options?.invalidSkills?.push({
       directoryName,
@@ -229,7 +226,7 @@ export async function discoverAgentSkills(
     try {
       resolvedRoot = await runtime.resolvePath(scan.root);
     } catch (err) {
-      log.warn(`Failed to resolve skills root ${scan.root}: ${formatError(err)}`);
+      log.warn(`Failed to resolve skills root ${scan.root}: ${getErrorMessage(err)}`);
       continue;
     }
 
@@ -305,7 +302,7 @@ export async function discoverAgentSkillsDiagnostics(
     try {
       resolvedRoot = await runtime.resolvePath(scan.root);
     } catch (err) {
-      log.warn(`Failed to resolve skills root ${scan.root}: ${formatError(err)}`);
+      log.warn(`Failed to resolve skills root ${scan.root}: ${getErrorMessage(err)}`);
       continue;
     }
 

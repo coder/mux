@@ -29,6 +29,8 @@ import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { TaskService } from "@/node/services/taskService";
 import type { PolicyService } from "@/node/services/policyService";
 import type { CoderService } from "@/node/services/coderService";
+import type { ServerAuthService } from "@/node/services/serverAuthService";
+import type { HostKeyVerificationService } from "@/node/services/hostKeyVerificationService";
 
 export interface ORPCContext {
   config: Config;
@@ -61,5 +63,7 @@ export interface ORPCContext {
   policyService: PolicyService;
   signingService: SigningService;
   coderService: CoderService;
+  serverAuthService: ServerAuthService;
+  hostKeyVerificationService: HostKeyVerificationService;
   headers?: IncomingHttpHeaders;
 }

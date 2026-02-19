@@ -25,6 +25,7 @@ import { OpenSSHAgent, type KnownPublicKeys, type ParsedKey, type PublicKeyEntry
 import { getMuxHome } from "@/common/constants/paths";
 import { execAsync } from "@/node/utils/disposableExec";
 import { log } from "@/node/services/log";
+import { getErrorMessage } from "@/common/utils/errors";
 
 interface KeyPair {
   privateKey: sshpk.PrivateKey;
@@ -208,7 +209,7 @@ export class SigningService {
         log.info("[SigningService] Public key:", publicKeyOpenSSH.slice(0, 50) + "...");
         return keyPair;
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = getErrorMessage(err);
         // Check for encrypted key
         if (message.includes("encrypted") || message.includes("passphrase")) {
           log.info(
@@ -265,7 +266,7 @@ export class SigningService {
           muxKeyType: parsed.type,
         });
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = getErrorMessage(err);
         log.debug("[SigningService] Skipping unsupported SSH agent key:", message);
       }
     }
@@ -331,7 +332,7 @@ export class SigningService {
     try {
       candidates = await this.listSshAgentKeyCandidates(sshAuthSock);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       log.info("[SigningService] Failed to query SSH agent:", message);
       if (hasOverride) {
         return {
@@ -426,7 +427,7 @@ export class SigningService {
         this.signingKey = loaded;
         return loaded;
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = getErrorMessage(err);
         log.warn("[SigningService] Unexpected key load error:", message);
         this.signingKey = null;
         this.keyLoadError = "Failed to load signing key";
@@ -543,7 +544,7 @@ export class SigningService {
         error = "Not logged in to GitHub CLI (run: gh auth login)";
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       if (message.includes("command not found") || message.includes("ENOENT")) {
         log.info("[SigningService] gh CLI not installed");
         error = "GitHub CLI not installed (brew install gh)";
@@ -623,7 +624,7 @@ export class SigningService {
 
     // eslint-disable-next-line no-restricted-syntax -- not circular-dep hiding; startup resilience
     const sshAgentModule = await import("@coder/mux-md-client/ssh-agent").catch((err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       log.error("[SigningService] Failed to load ssh-agent signing module:", message);
       throw new Error(
         "SSH agent signing is unavailable — the @coder/mux-md-client/ssh-agent module failed to load. " +

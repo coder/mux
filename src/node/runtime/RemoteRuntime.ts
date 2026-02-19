@@ -36,6 +36,7 @@ import { attachStreamErrorHandler } from "@/node/utils/streamErrors";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { DisposableProcess } from "@/node/utils/disposableExec";
 import { streamToString, shescape } from "./streamUtils";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * Result from spawning a remote process.
@@ -364,7 +365,7 @@ export abstract class RemoteRuntime implements Runtime {
           } else {
             controller.error(
               new RuntimeError(
-                `Failed to read file ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+                `Failed to read file ${filePath}: ${getErrorMessage(err)}`,
                 "file_io",
                 err instanceof Error ? err : undefined
               )

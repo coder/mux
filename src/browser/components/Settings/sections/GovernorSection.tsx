@@ -13,6 +13,7 @@ import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { JsonHighlight } from "@/browser/components/tools/shared/HighlightedCode";
 import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
 import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /** Get server auth token from URL query param or localStorage. */
 function getServerAuthToken(): string | null {
@@ -222,7 +223,7 @@ export function GovernorSection() {
         popup.close();
         if (currentAttempt !== enrollAttemptRef.current) return;
         setEnrollStatus("error");
-        setEnrollError(err instanceof Error ? err.message : String(err));
+        setEnrollError(getErrorMessage(err));
         return;
       }
 
@@ -324,7 +325,7 @@ export function GovernorSection() {
         setRefreshPolicyError(result.error);
       }
     } catch (error) {
-      setRefreshPolicyError(error instanceof Error ? error.message : String(error));
+      setRefreshPolicyError(getErrorMessage(error));
     } finally {
       setRefreshingPolicy(false);
     }

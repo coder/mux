@@ -16,7 +16,16 @@ import type {
   FrontendWorkspaceMetadataSchemaType,
 } from "@/common/orpc/types";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
-import { createAuthMiddleware } from "./authMiddleware";
+import type {
+  HostKeyVerificationEvent,
+  HostKeyVerificationRequest,
+} from "@/common/orpc/schemas/ssh";
+import {
+  createAuthMiddleware,
+  extractClientIpAddress,
+  extractCookieValues,
+  getFirstHeaderValue,
+} from "./authMiddleware";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 import { clearLogFiles, getLogFilePath } from "@/node/services/log";
 import type { LogEntry } from "@/node/services/logBuffer";
@@ -61,10 +70,12 @@ import type { MuxMessage } from "@/common/types/message";
 import { coerceThinkingLevel } from "@/common/types/thinking";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
 import { log } from "@/node/services/log";
+import { SERVER_AUTH_SESSION_COOKIE_NAME } from "@/node/services/serverAuthService";
 import {
   readSubagentTranscriptArtifactsFile,
   type SubagentTranscriptArtifactIndexEntry,
 } from "@/node/services/subagentTranscriptArtifacts";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * Resolves runtime and discovery path for agent operations.
@@ -157,7 +168,7 @@ async function readChatJsonlAllowMissing(params: {
       } catch (parseError) {
         log.warn(
           `Skipping malformed JSON at line ${i + 1} in ${params.logLabel}:`,
-          parseError instanceof Error ? parseError.message : String(parseError),
+          getErrorMessage(parseError),
           "\nLine content:",
           lines[i].substring(0, 100) + (lines[i].length > 100 ? "..." : "")
         );
@@ -187,7 +198,7 @@ async function readPartialJsonBestEffort(partialPath: string): Promise<MuxMessag
     // Never fail transcript viewing because partial.json is corrupted.
     log.warn("Failed to read partial.json for transcript", {
       partialPath,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
     return null;
   }
@@ -270,6 +281,29 @@ async function findSubagentTranscriptEntryByScanningSessions(params: {
   }
 
   return best;
+}
+
+async function getCurrentServerAuthSessionId(context: ORPCContext): Promise<string | null> {
+  const sessionTokens = extractCookieValues(
+    context.headers?.cookie,
+    SERVER_AUTH_SESSION_COOKIE_NAME
+  );
+  if (sessionTokens.length === 0) {
+    return null;
+  }
+
+  for (const sessionToken of sessionTokens) {
+    const validation = await context.serverAuthService.validateSessionToken(sessionToken, {
+      userAgent: getFirstHeaderValue(context.headers, "user-agent"),
+      ipAddress: extractClientIpAddress(context.headers),
+    });
+
+    if (validation?.sessionId) {
+      return validation.sessionId;
+    }
+  }
+
+  return null;
 }
 
 export const router = (authToken?: string) => {
@@ -471,6 +505,31 @@ export const router = (authToken?: string) => {
             configuredPort,
             configuredServeWebUi,
           };
+        }),
+    },
+    serverAuth: {
+      listSessions: t
+        .input(schemas.serverAuth.listSessions.input)
+        .output(schemas.serverAuth.listSessions.output)
+        .handler(async ({ context }) => {
+          const currentSessionId = await getCurrentServerAuthSessionId(context);
+          return context.serverAuthService.listSessions(currentSessionId);
+        }),
+      revokeSession: t
+        .input(schemas.serverAuth.revokeSession.input)
+        .output(schemas.serverAuth.revokeSession.output)
+        .handler(async ({ context, input }) => {
+          const removed = await context.serverAuthService.revokeSession(input.sessionId);
+          return { removed };
+        }),
+      revokeOtherSessions: t
+        .input(schemas.serverAuth.revokeOtherSessions.input)
+        .output(schemas.serverAuth.revokeOtherSessions.output)
+        .handler(async ({ context }) => {
+          const currentSessionId = await getCurrentServerAuthSessionId(context);
+          const revokedCount =
+            await context.serverAuthService.revokeOtherSessions(currentSessionId);
+          return { revokedCount };
         }),
     },
     features: {
@@ -1062,7 +1121,7 @@ export const router = (authToken?: string) => {
               },
             });
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = getErrorMessage(error);
             return Err(`Mux Gateway balance request failed: ${message}`);
           }
 
@@ -1097,7 +1156,7 @@ export const router = (authToken?: string) => {
           try {
             json = await response.json();
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = getErrorMessage(error);
             return Err(`Mux Gateway balance response was not valid JSON: ${message}`);
           }
 
@@ -1290,7 +1349,7 @@ export const router = (authToken?: string) => {
             clearLogEntries();
             return { success: true };
           } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            const message = getErrorMessage(err);
             return { success: false, error: message };
           }
         }),
@@ -1402,7 +1461,7 @@ export const router = (authToken?: string) => {
 
             return Ok(undefined);
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = getErrorMessage(error);
             return Err(message);
           }
         }),
@@ -2314,7 +2373,7 @@ export const router = (authToken?: string) => {
         .input(schemas.nameGeneration.generate.input)
         .output(schemas.nameGeneration.generate.output)
         .handler(async ({ context, input }) => {
-          // Frontend provides ordered candidate list with gateway prefs applied.
+          // Frontend provides ordered candidate list; gateway routing resolved by createModel.
           // Backend tries candidates in order with retry on API errors.
           const result = await generateWorkspaceIdentity(
             input.message,
@@ -2434,6 +2493,12 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.updateTitle.output)
         .handler(async ({ context, input }) => {
           return context.workspaceService.updateTitle(input.workspaceId, input.title);
+        }),
+      regenerateTitle: t
+        .input(schemas.workspace.regenerateTitle.input)
+        .output(schemas.workspace.regenerateTitle.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.regenerateTitle(input.workspaceId);
         }),
       archive: t
         .input(schemas.workspace.archive.input)
@@ -2654,7 +2719,7 @@ export const router = (authToken?: string) => {
               log.warn("workspace.getSubagentTranscript: descendant check failed", {
                 requestingWorkspaceId,
                 taskId,
-                error: error instanceof Error ? error.message : String(error),
+                error: getErrorMessage(error),
               });
             }
           }
@@ -2829,7 +2894,7 @@ export const router = (authToken?: string) => {
           // 2. Replay history (sends caught-up at the end)
           await session.replayHistory(({ message }) => {
             push(message);
-          });
+          }, input.mode);
 
           replayRelay.finishReplay();
 
@@ -3353,7 +3418,7 @@ export const router = (authToken?: string) => {
               await context.sessionTimingService.clearTimingFile(input.workspaceId);
               return { success: true, data: undefined };
             } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
+              const message = getErrorMessage(error);
               return { success: false, error: message };
             }
           }),
@@ -3393,7 +3458,7 @@ export const router = (authToken?: string) => {
               );
               return { success: true, data: undefined };
             } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
+              const message = getErrorMessage(error);
               return { success: false, error: message };
             }
           }),
@@ -3838,6 +3903,49 @@ export const router = (authToken?: string) => {
           context.signingService.clearIdentityCache();
           return { success: true };
         }),
+    },
+    ssh: {
+      hostKeyVerification: {
+        subscribe: t
+          .input(schemas.ssh.hostKeyVerification.subscribe.input)
+          .output(schemas.ssh.hostKeyVerification.subscribe.output)
+          .handler(async function* ({ context, signal }) {
+            if (signal?.aborted) return;
+
+            const service = context.hostKeyVerificationService;
+            const releaseResponder = service.registerInteractiveResponder();
+            const queue = createAsyncEventQueue<HostKeyVerificationEvent>();
+
+            const onRequest = (req: HostKeyVerificationRequest) =>
+              queue.push({ type: "request" as const, ...req });
+            const onRemoved = (requestId: string) =>
+              queue.push({ type: "removed" as const, requestId });
+
+            // Atomic handshake: register listener + snapshot in one step.
+            // No requests can be lost between snapshot and subscription.
+            const { snapshot, unsubscribe } = service.subscribeRequests(onRequest, onRemoved);
+            for (const req of snapshot) queue.push({ type: "request" as const, ...req });
+
+            const onAbort = () => queue.end();
+            signal?.addEventListener("abort", onAbort, { once: true });
+
+            try {
+              yield* queue.iterate();
+            } finally {
+              signal?.removeEventListener("abort", onAbort);
+              releaseResponder();
+              queue.end();
+              unsubscribe();
+            }
+          }),
+        respond: t
+          .input(schemas.ssh.hostKeyVerification.respond.input)
+          .output(schemas.ssh.hostKeyVerification.respond.output)
+          .handler(({ context, input }) => {
+            context.hostKeyVerificationService.respond(input.requestId, input.accept);
+            return Ok(undefined);
+          }),
+      },
     },
   });
 };

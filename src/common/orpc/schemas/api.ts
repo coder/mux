@@ -2,14 +2,16 @@ import { eventIterator } from "@orpc/server";
 import { UIModeSchema } from "../../types/mode";
 import { z } from "zod";
 import { ChatStatsSchema, SessionUsageFileSchema } from "./chatStats";
-import { SendMessageErrorSchema } from "./errors";
+import { NameGenerationErrorSchema, SendMessageErrorSchema } from "./errors";
 import { BranchListResultSchema, FilePartSchema, MuxMessageSchema } from "./message";
 import { ProjectConfigSchema, SectionConfigSchema } from "./project";
 import { ResultSchema } from "./result";
+import { HostKeyVerificationEventSchema } from "./ssh";
 import { RuntimeConfigSchema, RuntimeAvailabilitySchema } from "./runtime";
 import { SecretSchema } from "./secrets";
 import {
   CompletedMessagePartSchema,
+  OnChatModeSchema,
   SendMessageOptionsSchema,
   StreamEndEventSchema,
   UpdateStatusSchema,
@@ -121,6 +123,16 @@ export const AWSCredentialStatusSchema = z.object({
   secretAccessKeySet: z.boolean(),
 });
 
+export const ProviderModelEntrySchema = z.union([
+  z.string().min(1),
+  z
+    .object({
+      id: z.string().min(1),
+      contextWindowTokens: z.number().int().positive().optional(),
+    })
+    .strict(),
+]);
+
 export const ProviderConfigInfoSchema = z.object({
   apiKeySet: z.boolean(),
   /** Whether this provider is enabled for model requests */
@@ -128,9 +140,11 @@ export const ProviderConfigInfoSchema = z.object({
   /** Whether this provider is configured and ready to use */
   isConfigured: z.boolean(),
   baseUrl: z.string().optional(),
-  models: z.array(z.string()).optional(),
+  models: z.array(ProviderModelEntrySchema).optional(),
   /** OpenAI-specific fields */
   serviceTier: z.enum(["auto", "default", "flex", "priority"]).optional(),
+  /** Anthropic-specific fields */
+  cacheTtl: z.enum(["5m", "1h"]).optional(),
   /** OpenAI-only: whether Codex OAuth tokens are present in providers.jsonc */
   codexOauthSet: z.boolean().optional(),
   /**
@@ -162,7 +176,7 @@ export const providers = {
   setModels: {
     input: z.object({
       provider: z.string(),
-      models: z.array(z.string()),
+      models: z.array(ProviderModelEntrySchema),
     }),
     output: ResultSchema(z.void(), z.string()),
   },
@@ -820,6 +834,10 @@ export const workspace = {
     input: z.object({ workspaceId: z.string(), title: z.string() }),
     output: ResultSchema(z.void(), z.string()),
   },
+  regenerateTitle: {
+    input: z.object({ workspaceId: z.string() }),
+    output: ResultSchema(z.object({ title: z.string() }), z.string()),
+  },
   updateAgentAISettings: {
     input: z.object({
       workspaceId: z.string(),
@@ -861,7 +879,7 @@ export const workspace = {
     ),
   },
   fork: {
-    input: z.object({ sourceWorkspaceId: z.string(), newName: z.string() }),
+    input: z.object({ sourceWorkspaceId: z.string(), newName: z.string().optional() }),
     output: z.discriminatedUnion("success", [
       z.object({
         success: z.literal(true),
@@ -1002,7 +1020,10 @@ export const workspace = {
   },
   // Subscriptions
   onChat: {
-    input: z.object({ workspaceId: z.string() }),
+    input: z.object({
+      workspaceId: z.string(),
+      mode: OnChatModeSchema.optional(),
+    }),
     output: eventIterator(WorkspaceChatMessageSchema), // Stream event
   },
   onMetadata: {
@@ -1254,7 +1275,7 @@ export const nameGeneration = {
   generate: {
     input: z.object({
       message: z.string(),
-      /** Ordered list of model candidates to try (frontend applies gateway prefs) */
+      /** Ordered list of model candidates to try (backend resolves gateway routing in createModel) */
       candidates: z.array(z.string()),
     }),
     output: ResultSchema(
@@ -1265,7 +1286,7 @@ export const nameGeneration = {
         title: z.string(),
         modelUsed: z.string(),
       }),
-      SendMessageErrorSchema
+      NameGenerationErrorSchema
     ),
   },
 };
@@ -1373,6 +1394,14 @@ export const ApiServerStatusSchema = z.object({
   configuredServeWebUi: z.boolean(),
 });
 
+export const ServerAuthSessionSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  createdAtMs: z.number().int().nonnegative(),
+  lastUsedAtMs: z.number().int().nonnegative(),
+  isCurrent: z.boolean(),
+});
+
 export const server = {
   getLaunchProject: {
     input: z.void(),
@@ -1400,6 +1429,21 @@ export const server = {
   },
 };
 
+export const serverAuth = {
+  listSessions: {
+    input: z.void(),
+    output: z.array(ServerAuthSessionSchema),
+  },
+  revokeSession: {
+    input: z.object({ sessionId: z.string() }).strict(),
+    output: z.object({ removed: z.boolean() }),
+  },
+  revokeOtherSessions: {
+    input: z.void(),
+    output: z.object({ revokedCount: z.number().int().nonnegative() }),
+  },
+};
+
 // Config (global settings)
 const SubagentAiDefaultsEntrySchema = z
   .object({
@@ -1420,6 +1464,7 @@ export const config = {
         maxParallelAgentTasks: z.number().int(),
         maxTaskNestingDepth: z.number().int(),
         proposePlanImplementReplacesChatHistory: z.boolean().optional(),
+        planSubagentDefaultsToOrchestrator: z.boolean().optional(),
         bashOutputCompactionMinLines: z.number().int().optional(),
         bashOutputCompactionMinTotalBytes: z.number().int().optional(),
         bashOutputCompactionMaxKeptLines: z.number().int().optional(),
@@ -1446,6 +1491,7 @@ export const config = {
         maxParallelAgentTasks: z.number().int(),
         maxTaskNestingDepth: z.number().int(),
         proposePlanImplementReplacesChatHistory: z.boolean().optional(),
+        planSubagentDefaultsToOrchestrator: z.boolean().optional(),
         bashOutputCompactionMinLines: z.number().int().optional(),
         bashOutputCompactionMinTotalBytes: z.number().int().optional(),
         bashOutputCompactionMaxKeptLines: z.number().int().optional(),
@@ -1693,5 +1739,23 @@ export const debug = {
       errorMessage: z.string().optional(),
     }),
     output: z.boolean(), // true if error was triggered on an active stream
+  },
+};
+
+export const ssh = {
+  hostKeyVerification: {
+    subscribe: {
+      input: z.void(),
+      output: eventIterator(HostKeyVerificationEventSchema),
+    },
+    respond: {
+      input: z
+        .object({
+          requestId: z.string(),
+          accept: z.boolean(),
+        })
+        .strict(),
+      output: ResultSchema(z.void(), z.string()),
+    },
   },
 };

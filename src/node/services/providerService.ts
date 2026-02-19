@@ -5,16 +5,37 @@ import type { Result } from "@/common/types/result";
 import type {
   AWSCredentialStatus,
   ProviderConfigInfo,
+  ProviderModelEntry,
   ProvidersConfigMap,
 } from "@/common/orpc/types";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
+import {
+  getProviderModelEntryId,
+  normalizeProviderModelEntries,
+} from "@/common/utils/providers/modelEntries";
 import { log } from "@/node/services/log";
 import { checkProviderConfigured } from "@/node/utils/providerRequirements";
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 import type { PolicyService } from "@/node/services/policyService";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // Re-export types for backward compatibility
 export type { AWSCredentialStatus, ProviderConfigInfo, ProvidersConfigMap };
+
+function filterProviderModelsByPolicy(
+  models: ProviderModelEntry[] | undefined,
+  allowedModels: string[] | null
+): ProviderModelEntry[] | undefined {
+  if (!models) {
+    return undefined;
+  }
+
+  if (!Array.isArray(allowedModels)) {
+    return models;
+  }
+
+  return models.filter((entry) => allowedModels.includes(getProviderModelEntryId(entry)));
+}
 
 export class ProviderService {
   private readonly policyService: PolicyService | null;
@@ -69,8 +90,9 @@ export class ProviderService {
       const config = (providersConfig[provider] ?? {}) as {
         apiKey?: string;
         baseUrl?: string;
-        models?: string[];
+        models?: unknown[];
         serviceTier?: unknown;
+        cacheTtl?: unknown;
         /** OpenAI-only: default auth precedence for Codex-OAuth-allowed models. */
         codexOauthDefaultAuth?: unknown;
         region?: string;
@@ -94,10 +116,9 @@ export class ProviderService {
             ?.allowedModels ?? null)
         : null;
 
-      const filteredModels =
-        Array.isArray(allowedModels) && config.models
-          ? config.models.filter((m) => allowedModels.includes(m))
-          : config.models;
+      const normalizedModels =
+        config.models === undefined ? undefined : normalizeProviderModelEntries(config.models);
+      const filteredModels = filterProviderModelsByPolicy(normalizedModels, allowedModels);
 
       const codexOauthSet =
         provider === "openai" && parseCodexOauthAuth(config.codexOauth) !== null;
@@ -122,6 +143,12 @@ export class ProviderService {
           serviceTier === "priority")
       ) {
         providerInfo.serviceTier = serviceTier;
+      }
+
+      // Anthropic-specific fields
+      const cacheTtl = config.cacheTtl;
+      if (provider === "anthropic" && (cacheTtl === "5m" || cacheTtl === "1h")) {
+        providerInfo.cacheTtl = cacheTtl;
       }
 
       if (provider === "openai") {
@@ -167,8 +194,10 @@ export class ProviderService {
   /**
    * Set custom models for a provider
    */
-  public setModels(provider: string, models: string[]): Result<void, string> {
+  public setModels(provider: string, models: ProviderModelEntry[]): Result<void, string> {
     try {
+      const normalizedModels = normalizeProviderModelEntries(models);
+
       if (this.policyService?.isEnforced()) {
         if (!this.policyService.isProviderAllowed(provider as ProviderName)) {
           return { success: false, error: `Provider ${provider} is not allowed by policy` };
@@ -181,7 +210,9 @@ export class ProviderService {
           null;
 
         if (Array.isArray(allowedModels)) {
-          const disallowed = models.filter((m) => !allowedModels.includes(m));
+          const disallowed = normalizedModels
+            .map((entry) => getProviderModelEntryId(entry))
+            .filter((modelId) => !allowedModels.includes(modelId));
           if (disallowed.length > 0) {
             return {
               success: false,
@@ -197,13 +228,13 @@ export class ProviderService {
         providersConfig[provider] = {};
       }
 
-      providersConfig[provider].models = models;
+      providersConfig[provider].models = normalizedModels;
       this.config.saveProvidersConfig(providersConfig);
       this.emitConfigChanged();
 
       return { success: true, data: undefined };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return { success: false, error: `Failed to set models: ${message}` };
     }
   }
@@ -270,7 +301,7 @@ export class ProviderService {
 
       return { success: true, data: undefined };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return { success: false, error: `Failed to set provider config: ${message}` };
     }
   }
@@ -337,10 +368,11 @@ export class ProviderService {
       // Add default models when setting up mux-gateway for the first time
       if (isFirstMuxGatewayCoupon) {
         const providerConfig = providersConfig[provider] as Record<string, unknown>;
-        if (!providerConfig.models || (providerConfig.models as string[]).length === 0) {
+        const existingModels = normalizeProviderModelEntries(providerConfig.models);
+        if (existingModels.length === 0) {
           providerConfig.models = [
-            "anthropic/claude-sonnet-4-5",
-            "anthropic/claude-opus-4-5",
+            "anthropic/claude-sonnet-4-6",
+            "anthropic/claude-opus-4-6",
             "openai/gpt-5.2",
             "openai/gpt-5.1-codex",
           ];
@@ -353,7 +385,7 @@ export class ProviderService {
 
       return { success: true, data: undefined };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return { success: false, error: `Failed to set provider config: ${message}` };
     }
   }

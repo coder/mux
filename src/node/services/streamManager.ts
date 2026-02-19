@@ -46,6 +46,7 @@ import type { Runtime } from "@/node/runtime/Runtime";
 import {
   createCachedSystemMessage,
   applyCacheControlToTools,
+  type AnthropicCacheTtl,
 } from "@/common/utils/ai/cacheStrategy";
 import type { SessionUsageService } from "./sessionUsageService";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
@@ -53,6 +54,8 @@ import { extractToolMediaAsUserMessagesFromModelMessages } from "@/node/utils/me
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 import { getModelStats } from "@/common/utils/tokens/modelStats";
+import { getErrorMessage } from "@/common/utils/errors";
+import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
 
 // Disable AI SDK warning logging (e.g., "setting `toolChoice` to `none` is not supported")
 globalThis.AI_SDK_LOG_WARNINGS = false;
@@ -101,6 +104,36 @@ interface StreamRequestConfig {
   headers?: Record<string, string | undefined>;
   maxOutputTokens?: number;
   hasQueuedMessage?: () => boolean;
+  stopAfterSuccessfulProposePlan?: boolean;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isAnthropicCacheTtl(value: unknown): value is AnthropicCacheTtl {
+  return value === "5m" || value === "1h";
+}
+
+function getAnthropicCacheTtl(
+  providerOptions?: Record<string, unknown>
+): AnthropicCacheTtl | undefined {
+  if (!providerOptions) {
+    return undefined;
+  }
+
+  const anthropicOptions = providerOptions.anthropic;
+  if (!isRecord(anthropicOptions)) {
+    return undefined;
+  }
+
+  const cacheControl = anthropicOptions.cacheControl;
+  if (!isRecord(cacheControl)) {
+    return undefined;
+  }
+
+  const ttl = cacheControl.ttl;
+  return isAnthropicCacheTtl(ttl) ? ttl : undefined;
 }
 
 // Stream state enum for exhaustive checking
@@ -251,6 +284,11 @@ interface WorkspaceStreamInfo {
   // same millisecond. This avoids collisions in reconnect replay dedupe logic which keys off of
   // (messageId, timestamp, delta).
   lastPartTimestamp: number;
+
+  // Timestamp when each tool call reached output-available (tool-call-end emission).
+  // Needed for reconnect replay filtering because dynamic-tool parts keep their
+  // original start timestamp even after they gain output.
+  toolCompletionTimestamps: Map<string, number>;
 
   model: string;
   /** Effective thinking level after model policy clamping */
@@ -490,7 +528,7 @@ export class StreamManager extends EventEmitter {
     try {
       await runtime.ensureDir(resolvedPath);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       throw new Error(`Failed to create temp directory ${resolvedPath}: ${msg}`);
     }
 
@@ -932,7 +970,9 @@ export class StreamManager extends EventEmitter {
     maxOutputTokens?: number,
     toolPolicy?: ToolPolicy,
     hasQueuedMessage?: () => boolean,
-    headers?: Record<string, string | undefined>
+    headers?: Record<string, string | undefined>,
+    anthropicCacheTtlOverride?: AnthropicCacheTtl,
+    stopAfterSuccessfulProposePlan?: boolean
   ): StreamRequestConfig {
     // Determine toolChoice based on toolPolicy.
     //
@@ -977,9 +1017,11 @@ export class StreamManager extends EventEmitter {
     let finalMessages = messages;
     let finalTools = tools;
     let finalSystem: string | undefined = system;
+    const anthropicCacheTtl =
+      anthropicCacheTtlOverride ?? getAnthropicCacheTtl(finalProviderOptions);
 
     // For Anthropic models, convert system message to a cached message at the start
-    const cachedSystemMessage = createCachedSystemMessage(system, modelString);
+    const cachedSystemMessage = createCachedSystemMessage(system, modelString, anthropicCacheTtl);
     if (cachedSystemMessage) {
       // Prepend cached system message and set system parameter to undefined
       // Note: Must be undefined, not empty string, to avoid Anthropic API error
@@ -989,7 +1031,7 @@ export class StreamManager extends EventEmitter {
 
     // Apply cache control to tools for Anthropic models
     if (tools) {
-      finalTools = applyCacheControlToTools(tools, modelString);
+      finalTools = applyCacheControlToTools(tools, modelString, anthropicCacheTtl);
     }
 
     // Use model's max_output_tokens if available and caller didn't specify.
@@ -1008,11 +1050,15 @@ export class StreamManager extends EventEmitter {
       headers,
       maxOutputTokens: effectiveMaxOutputTokens,
       hasQueuedMessage,
+      stopAfterSuccessfulProposePlan,
     };
   }
 
   private createStopWhenCondition(
-    request: Pick<StreamRequestConfig, "toolChoice" | "hasQueuedMessage">
+    request: Pick<
+      StreamRequestConfig,
+      "toolChoice" | "hasQueuedMessage" | "stopAfterSuccessfulProposePlan"
+    >
   ): ReturnType<typeof stepCountIs> | Array<ReturnType<typeof stepCountIs>> {
     if (request.toolChoice) {
       // Required tool calls must stop after a single step to avoid recursive loops.
@@ -1042,11 +1088,30 @@ export class StreamManager extends EventEmitter {
       );
     };
 
-    return [
+    const hasSuccessfulProposePlanResult: ReturnType<typeof stepCountIs> = ({ steps }) => {
+      const lastStep = steps[steps.length - 1];
+      return (
+        lastStep?.toolResults?.some(
+          (toolResult) =>
+            toolResult.toolName === "propose_plan" &&
+            typeof toolResult.output === "object" &&
+            toolResult.output !== null &&
+            (toolResult.output as { success?: unknown }).success === true
+        ) ?? false
+      );
+    };
+
+    const stopConditions: Array<ReturnType<typeof stepCountIs>> = [
       stepCountIs(100000),
       () => request.hasQueuedMessage?.() ?? false,
       hasSuccessfulAgentReportResult,
     ];
+
+    if (request.stopAfterSuccessfulProposePlan) {
+      stopConditions.push(hasSuccessfulProposePlanResult);
+    }
+
+    return stopConditions;
   }
 
   private createStreamResult(
@@ -1106,7 +1171,9 @@ export class StreamManager extends EventEmitter {
     hasQueuedMessage?: () => boolean,
     workspaceName?: string,
     thinkingLevel?: string,
-    headers?: Record<string, string | undefined>
+    headers?: Record<string, string | undefined>,
+    anthropicCacheTtlOverride?: AnthropicCacheTtl,
+    stopAfterSuccessfulProposePlan?: boolean
   ): WorkspaceStreamInfo {
     // abortController is created and linked to the caller-provided abortSignal in startStream().
 
@@ -1121,7 +1188,9 @@ export class StreamManager extends EventEmitter {
       maxOutputTokens,
       toolPolicy,
       hasQueuedMessage,
-      headers
+      headers,
+      anthropicCacheTtlOverride,
+      stopAfterSuccessfulProposePlan
     );
 
     // Start streaming - this can throw immediately if API key is missing
@@ -1145,6 +1214,7 @@ export class StreamManager extends EventEmitter {
       token: streamToken,
       startTime,
       lastPartTimestamp: startTime,
+      toolCompletionTimestamps: new Map(),
       model: modelString,
       thinkingLevel,
       initialMetadata,
@@ -1220,6 +1290,9 @@ export class StreamManager extends EventEmitter {
     await this.flushPartialWrite(workspaceId, streamInfo);
 
     // Emit tool-call-end event (listeners can now safely read partial)
+    const completionTimestamp = nextPartTimestamp(streamInfo);
+    streamInfo.toolCompletionTimestamps ??= new Map();
+    streamInfo.toolCompletionTimestamps.set(toolCallId, completionTimestamp);
     this.emit("tool-call-end", {
       type: "tool-call-end",
       workspaceId: workspaceId as string,
@@ -1227,7 +1300,7 @@ export class StreamManager extends EventEmitter {
       toolCallId,
       toolName,
       result: output,
-      timestamp: nextPartTimestamp(streamInfo),
+      timestamp: completionTimestamp,
     } as ToolCallEndEvent);
   }
 
@@ -1984,9 +2057,7 @@ export class StreamManager extends EventEmitter {
   ): StreamErrorPayload & { errorType: StreamErrorType } {
     // Extract error message (errors thrown from 'error' parts already have the correct message)
     // Apply prefix stripping to remove noisy "undefined: " prefixes from provider errors
-    let errorMessage: string = stripNoisyErrorPrefix(
-      error instanceof Error ? error.message : String(error)
-    );
+    let errorMessage: string = stripNoisyErrorPrefix(getErrorMessage(error));
     let actualError: unknown = error;
 
     // For categorization, use the cause if available (preserves the original error structure)
@@ -2302,7 +2373,7 @@ export class StreamManager extends EventEmitter {
     // }
 
     // Fallback for unknown errors
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     return { type: "unknown", raw: message };
   }
 
@@ -2318,9 +2389,16 @@ export class StreamManager extends EventEmitter {
       if (error.statusCode === 401) return "authentication";
       // 402 (Payment Required) is used by mux gateway for billing/credits issues
       // (e.g. "Insufficient balance. Please add credits to continue.").
-      // Treat as non-retryable quota; 429 (rate_limit) covers RPM/time-based throttling.
+      // Treat as non-retryable quota. Some providers also encode quota failures as
+      // 429, so classify 429 by payload intent instead of status code alone.
       if (error.statusCode === 402) return "quota";
-      if (error.statusCode === 429) return "rate_limit";
+      if (error.statusCode === 429) {
+        return classify429Capacity({
+          message: error.message,
+          data: error.data,
+          responseBody: error.responseBody,
+        });
+      }
       if (error.statusCode && error.statusCode >= 500) return "server_error";
 
       // Check for model_not_found errors (OpenAI and Anthropic)
@@ -2353,9 +2431,17 @@ export class StreamManager extends EventEmitter {
         return "model_not_found";
       }
 
-      // Check for Anthropic context exceeded errors
+      // Check for context exceeded errors (Anthropic + OpenAI-compatible / Copilot)
       const msgLower = error.message.toLowerCase();
-      if (msgLower.includes("prompt is too long") || msgLower.includes("input is too long")) {
+
+      // Anthropic: "prompt is too long" / "input is too long"
+      // Copilot / OpenAI-compatible: "prompt token count of X exceeds the limit of Y"
+      const isContextExceeded =
+        msgLower.includes("prompt is too long") ||
+        msgLower.includes("input is too long") ||
+        (msgLower.includes("token") && msgLower.includes("exceeds") && msgLower.includes("limit"));
+
+      if (isContextExceeded) {
         return "context_exceeded";
       }
 
@@ -2479,7 +2565,9 @@ export class StreamManager extends EventEmitter {
     hasQueuedMessage?: () => boolean,
     workspaceName?: string,
     thinkingLevel?: string,
-    headers?: Record<string, string | undefined>
+    headers?: Record<string, string | undefined>,
+    anthropicCacheTtlOverride?: AnthropicCacheTtl,
+    stopAfterSuccessfulProposePlan?: boolean
   ): Promise<Result<StreamToken, SendMessageError>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
@@ -2555,7 +2643,9 @@ export class StreamManager extends EventEmitter {
           hasQueuedMessage,
           workspaceName,
           thinkingLevel,
-          headers
+          headers,
+          anthropicCacheTtlOverride,
+          stopAfterSuccessfulProposePlan
         );
 
         // Guard against a narrow race:
@@ -2776,7 +2866,7 @@ export class StreamManager extends EventEmitter {
       }
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to stop stream: ${message}`);
     }
   }
@@ -2810,10 +2900,15 @@ export class StreamManager extends EventEmitter {
    * Returns undefined if no active stream exists
    * Used to re-establish streaming context on frontend reconnection
    */
-  getStreamInfo(
-    workspaceId: string
-  ):
-    | { messageId: string; model: string; historySequence: number; parts: CompletedMessagePart[] }
+  getStreamInfo(workspaceId: string):
+    | {
+        messageId: string;
+        model: string;
+        historySequence: number;
+        startTime: number;
+        parts: CompletedMessagePart[];
+        toolCompletionTimestamps: Map<string, number>;
+      }
     | undefined {
     const typedWorkspaceId = workspaceId as WorkspaceId;
     const streamInfo = this.workspaceStreams.get(typedWorkspaceId);
@@ -2827,6 +2922,8 @@ export class StreamManager extends EventEmitter {
         messageId: streamInfo.messageId,
         model: streamInfo.model,
         historySequence: streamInfo.historySequence,
+        startTime: streamInfo.startTime,
+        toolCompletionTimestamps: streamInfo.toolCompletionTimestamps ?? new Map(),
         parts: streamInfo.parts,
       };
     }
@@ -2839,7 +2936,7 @@ export class StreamManager extends EventEmitter {
    * Emits the same events (stream-start, stream-delta, etc.) that would be emitted during live streaming
    * This allows replay to flow through the same event path as live streaming (no duplication)
    */
-  async replayStream(workspaceId: string): Promise<void> {
+  async replayStream(workspaceId: string, opts?: { afterTimestamp?: number }): Promise<void> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
     const streamInfo = this.workspaceStreams.get(typedWorkspaceId);
 
@@ -2869,8 +2966,48 @@ export class StreamManager extends EventEmitter {
     // That blocks AgentSession.emitHistoricalEvents() from sending "caught-up" on reconnect,
     // leaving the renderer stuck in "Loading workspace" and suppressing the streaming indicator.
     const replayParts = streamInfo.parts.slice();
+    const afterTimestamp = opts?.afterTimestamp;
+    const filteredReplayParts =
+      afterTimestamp != null
+        ? replayParts.filter((part) => {
+            const partTimestamp = part.timestamp;
+
+            // Missing timestamps should be replayed defensively rather than dropped.
+            if (partTimestamp === undefined) {
+              return true;
+            }
+
+            if (partTimestamp > afterTimestamp) {
+              return true;
+            }
+
+            // Dynamic tool parts keep their original start timestamp even when they later
+            // transition to output-available. Use the recorded tool completion timestamp
+            // (from tool-call-end emission) to decide whether completion happened after
+            // the reconnect cursor.
+            if (part.type === "dynamic-tool" && part.state === "output-available") {
+              const completionTimestamp = streamInfo.toolCompletionTimestamps.get(part.toolCallId);
+              if (completionTimestamp === undefined) {
+                log.warn(
+                  "[streamManager] Missing tool completion timestamp during replay; dropping replayed completion to avoid duplicate side effects",
+                  {
+                    workspaceId,
+                    messageId: streamInfo.messageId,
+                    toolCallId: part.toolCallId,
+                  }
+                );
+                return false;
+              }
+
+              return completionTimestamp > afterTimestamp;
+            }
+
+            return false;
+          })
+        : replayParts;
+
     const replayMessageId = streamInfo.messageId;
-    for (const part of replayParts) {
+    for (const part of filteredReplayParts) {
       await this.emitPartAsEvent(typedWorkspaceId, replayMessageId, part, { replay: true });
     }
   }

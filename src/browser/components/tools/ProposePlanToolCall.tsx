@@ -59,6 +59,7 @@ import {
   X,
 } from "lucide-react";
 import { ShareMessagePopover } from "../ShareMessagePopover";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * Check if the result is a successful file-based propose_plan result.
@@ -544,7 +545,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
         editorError.showError("plan-editor", result.error, anchorPosition);
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       editorError.showError("plan-editor", message, anchorPosition);
     }
   };

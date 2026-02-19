@@ -6,6 +6,7 @@ import {
   KEYBINDS,
   isEditableElement,
   isTerminalFocused,
+  isDialogOpen,
 } from "@/browser/utils/ui/keybinds";
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { isCompactingStream, cancelCompaction } from "@/browser/utils/compaction/handler";
@@ -108,27 +109,29 @@ export function useAIViewKeybinds({
     };
 
     const handleKeyDownCapture = (e: KeyboardEvent) => {
+      const dialogOpen = isDialogOpen();
+
       // Focus chat input works anywhere (even in input fields)
       if (matchesKeybind(e, KEYBINDS.FOCUS_CHAT)) {
         e.preventDefault();
-        chatInputAPI.current?.focus();
+        if (!dialogOpen) chatInputAPI.current?.focus();
         return;
       }
 
       // Open in editor / terminal - work even in input fields (global feel, like TOGGLE_AGENT)
       if (matchesKeybind(e, KEYBINDS.OPEN_IN_EDITOR)) {
         e.preventDefault();
-        handleOpenInEditor();
+        if (!dialogOpen) handleOpenInEditor();
         return;
       }
       if (matchesKeybind(e, KEYBINDS.OPEN_TERMINAL)) {
         e.preventDefault();
-        handleOpenTerminal();
+        if (!dialogOpen) handleOpenTerminal();
         return;
       }
 
       // Don't handle other shortcuts if user is typing in an input field
-      if (isEditableElement(e.target)) {
+      if (dialogOpen || isEditableElement(e.target)) {
         return;
       }
 

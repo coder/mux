@@ -1,5 +1,5 @@
 import { describe, expect, test, mock, beforeEach, afterEach, spyOn } from "bun:test";
-import { WorkspaceService } from "./workspaceService";
+import { WorkspaceService, generateForkBranchName, generateForkTitle } from "./workspaceService";
 import type { AgentSession } from "./agentSession";
 import { WorkspaceLifecycleHooks } from "./workspaceLifecycleHooks";
 import { EventEmitter } from "events";
@@ -18,8 +18,11 @@ import type { ExtensionMetadataService } from "./ExtensionMetadataService";
 import type { FrontendWorkspaceMetadata, WorkspaceMetadata } from "@/common/types/workspace";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import type { BashToolResult } from "@/common/types/tools";
+import { createMuxMessage } from "@/common/types/message";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import * as runtimeFactory from "@/node/runtime/runtimeFactory";
+import * as forkOrchestratorModule from "@/node/services/utils/forkOrchestrator";
+import * as workspaceTitleGenerator from "./workspaceTitleGenerator";
 
 // Helper to access private renamingWorkspaces set
 function addToRenamingWorkspaces(service: WorkspaceService, workspaceId: string): void {
@@ -1879,5 +1882,368 @@ describe("WorkspaceService init cancellation", () => {
       createRuntimeSpy.mockRestore();
       await fsPromises.rm(tempRoot, { recursive: true, force: true });
     }
+  });
+});
+
+describe("WorkspaceService regenerateTitle", () => {
+  let workspaceService: WorkspaceService;
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+
+  beforeEach(async () => {
+    const mockAIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() =>
+        Promise.resolve({ success: false as const, error: "workspace metadata unavailable" })
+      ),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/test",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: mock(() => ({ projectPath: "/tmp/proj", workspacePath: "/tmp/proj/ws" })),
+    };
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => undefined),
+    };
+
+    workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      mockAIService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
+  test("returns updateTitle error when persisting generated title fails", async () => {
+    const workspaceId = "ws-regenerate-title";
+
+    await historyService.appendToHistory(workspaceId, createMuxMessage("user-1", "user", "Fix CI"));
+
+    const generateIdentitySpy = spyOn(
+      workspaceTitleGenerator,
+      "generateWorkspaceIdentity"
+    ).mockResolvedValue(
+      Ok({
+        name: "ci-fix-a1b2",
+        title: "Fix CI",
+        modelUsed: "anthropic:claude-3-5-haiku-latest",
+      })
+    );
+    const updateTitleSpy = spyOn(workspaceService, "updateTitle").mockResolvedValueOnce(
+      Err("Failed to update workspace title: disk full")
+    );
+
+    try {
+      const result = await workspaceService.regenerateTitle(workspaceId);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toBe("Failed to update workspace title: disk full");
+      }
+      expect(generateIdentitySpy).toHaveBeenCalledTimes(1);
+      const call = generateIdentitySpy.mock.calls[0];
+      expect(call?.[3]).toBeUndefined();
+      expect(call?.[4]).toBe("Fix CI");
+      expect(updateTitleSpy).toHaveBeenCalledWith(workspaceId, "Fix CI");
+    } finally {
+      updateTitleSpy.mockRestore();
+      generateIdentitySpy.mockRestore();
+    }
+  });
+  test("falls back to full history when latest compaction epoch has no user message", async () => {
+    const workspaceId = "ws-regenerate-title-compacted";
+
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-before-boundary", "user", "Refactor sidebar loading")
+    );
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("summary-boundary", "assistant", "Compacted summary", {
+        compacted: true,
+        compactionBoundary: true,
+        compactionEpoch: 1,
+      })
+    );
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("assistant-after-boundary", "assistant", "No new user messages yet")
+    );
+
+    const iterateSpy = spyOn(historyService, "iterateFullHistory");
+    const generateIdentitySpy = spyOn(
+      workspaceTitleGenerator,
+      "generateWorkspaceIdentity"
+    ).mockResolvedValue(
+      Ok({
+        name: "sidebar-refactor-a1b2",
+        title: "Refactor sidebar loading",
+        modelUsed: "anthropic:claude-3-5-haiku-latest",
+      })
+    );
+    const updateTitleSpy = spyOn(workspaceService, "updateTitle").mockResolvedValueOnce(
+      Ok(undefined)
+    );
+
+    try {
+      const result = await workspaceService.regenerateTitle(workspaceId);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.title).toBe("Refactor sidebar loading");
+      }
+      expect(iterateSpy).toHaveBeenCalledTimes(1);
+      expect(generateIdentitySpy).toHaveBeenCalledTimes(1);
+      const call = generateIdentitySpy.mock.calls[0];
+      expect(call?.[0]).toBe("Refactor sidebar loading");
+      const context = call?.[3];
+      expect(typeof context).toBe("string");
+      if (typeof context === "string") {
+        expect(context).toContain("Refactor sidebar loading");
+        expect(context).toContain("Compacted summary");
+        expect(context).toContain("No new user messages yet");
+        expect(context).not.toContain("omitted for brevity");
+      }
+      expect(call?.[4]).toBe("Refactor sidebar loading");
+      expect(updateTitleSpy).toHaveBeenCalledWith(workspaceId, "Refactor sidebar loading");
+    } finally {
+      updateTitleSpy.mockRestore();
+      generateIdentitySpy.mockRestore();
+      iterateSpy.mockRestore();
+    }
+  });
+  test("uses first user turn + latest 3 turns and flags omitted context", async () => {
+    const workspaceId = "ws-regenerate-title-first-plus-last-three";
+
+    for (let turn = 1; turn <= 12; turn++) {
+      const role: "user" | "assistant" = turn % 2 === 1 ? "user" : "assistant";
+      const text = `${role === "user" ? "User" : "Assistant"} turn ${turn}`;
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage(`${role}-${turn}`, role, text)
+      );
+    }
+
+    const generateIdentitySpy = spyOn(
+      workspaceTitleGenerator,
+      "generateWorkspaceIdentity"
+    ).mockResolvedValue(
+      Ok({
+        name: "title-refresh-a1b2",
+        title: "User turn 1",
+        modelUsed: "anthropic:claude-3-5-haiku-latest",
+      })
+    );
+    const updateTitleSpy = spyOn(workspaceService, "updateTitle").mockResolvedValueOnce(
+      Ok(undefined)
+    );
+
+    try {
+      const result = await workspaceService.regenerateTitle(workspaceId);
+
+      expect(result.success).toBe(true);
+      expect(generateIdentitySpy).toHaveBeenCalledTimes(1);
+      const call = generateIdentitySpy.mock.calls[0];
+      expect(call?.[0]).toBe("User turn 1");
+      const context = call?.[3];
+      expect(typeof context).toBe("string");
+      expect(call?.[4]).toBe("User turn 11");
+      expect(updateTitleSpy).toHaveBeenCalledWith(workspaceId, "User turn 1");
+    } finally {
+      updateTitleSpy.mockRestore();
+      generateIdentitySpy.mockRestore();
+    }
+  });
+});
+
+describe("WorkspaceService fork", () => {
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+
+  beforeEach(async () => {
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
+  test("cleans up init state when orchestrateFork rejects", async () => {
+    const sourceWorkspaceId = "source-workspace";
+    const newWorkspaceId = "forked-workspace";
+    const sourceProjectPath = "/tmp/project";
+
+    const mockAIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() =>
+        Promise.resolve(
+          Ok({
+            id: sourceWorkspaceId,
+            name: "source-branch",
+            projectPath: sourceProjectPath,
+            projectName: "project",
+            runtimeConfig: { type: "local" },
+          })
+        )
+      ),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    const startInitMock = mock(() => undefined);
+    const endInitMock = mock(() => Promise.resolve());
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => ({ status: "running" }) as unknown as InitStatus),
+      startInit: startInitMock,
+      endInit: endInitMock,
+      appendOutput: mock(() => undefined),
+      enterHookPhase: mock(() => undefined),
+    };
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/src",
+      generateStableId: mock(() => newWorkspaceId),
+      findWorkspace: mock(() => null),
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+    };
+
+    const workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      mockAIService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    const getOrCreateSessionSpy = spyOn(workspaceService, "getOrCreateSession").mockReturnValue({
+      emitMetadata: mock(() => undefined),
+    } as unknown as AgentSession);
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue(
+      {} as ReturnType<typeof runtimeFactory.createRuntime>
+    );
+    const orchestrateForkSpy = spyOn(forkOrchestratorModule, "orchestrateFork").mockRejectedValue(
+      new Error("runtime explosion")
+    );
+
+    try {
+      const result = await workspaceService.fork(sourceWorkspaceId, "fork-child");
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toBe("Failed to fork workspace: runtime explosion");
+      }
+
+      expect(startInitMock).toHaveBeenCalledWith(newWorkspaceId, sourceProjectPath);
+      expect(endInitMock).toHaveBeenCalledWith(newWorkspaceId, -1);
+
+      const initAbortControllers = (
+        workspaceService as unknown as { initAbortControllers: Map<string, AbortController> }
+      ).initAbortControllers;
+      expect(initAbortControllers.has(newWorkspaceId)).toBe(false);
+    } finally {
+      orchestrateForkSpy.mockRestore();
+      createRuntimeSpy.mockRestore();
+      getOrCreateSessionSpy.mockRestore();
+    }
+  });
+});
+
+// --- Pure helper tests (no mocks needed) ---
+
+describe("generateForkBranchName", () => {
+  test("returns -fork-1 when no existing forks", () => {
+    expect(generateForkBranchName("sidebar-a1b2", [])).toBe("sidebar-a1b2-fork-1");
+  });
+
+  test("increments past the highest existing fork number", () => {
+    expect(
+      generateForkBranchName("sidebar-a1b2", [
+        "sidebar-a1b2-fork-1",
+        "sidebar-a1b2-fork-3",
+        "other-workspace",
+      ])
+    ).toBe("sidebar-a1b2-fork-4");
+  });
+
+  test("ignores non-matching workspace names", () => {
+    expect(
+      generateForkBranchName("feature", ["feature-branch", "feature-impl", "other-fork-1"])
+    ).toBe("feature-fork-1");
+  });
+
+  test("handles gaps in numbering", () => {
+    expect(generateForkBranchName("ws", ["ws-fork-1", "ws-fork-5"])).toBe("ws-fork-6");
+  });
+
+  test("treats stale branch names as collisions when choosing next fork name", () => {
+    expect(generateForkBranchName("ws", ["ws-fork-1", "ws-fork-2"])).toBe("ws-fork-3");
+  });
+
+  test("ignores non-numeric suffixes", () => {
+    expect(generateForkBranchName("ws", ["ws-fork-abc", "ws-fork-"])).toBe("ws-fork-1");
+  });
+
+  test("ignores partially numeric suffixes", () => {
+    expect(generateForkBranchName("ws", ["ws-fork-1abc", "ws-fork-02x", "ws-fork-3"])).toBe(
+      "ws-fork-4"
+    );
+  });
+});
+
+describe("generateForkTitle", () => {
+  test("returns (1) when no existing forks", () => {
+    expect(generateForkTitle("Fix sidebar layout", [])).toBe("Fix sidebar layout (1)");
+  });
+
+  test("increments past the highest existing suffix", () => {
+    expect(
+      generateForkTitle("Fix sidebar layout", [
+        "Fix sidebar layout",
+        "Fix sidebar layout (1)",
+        "Fix sidebar layout (3)",
+      ])
+    ).toBe("Fix sidebar layout (4)");
+  });
+
+  test("strips existing suffix from parent before computing base", () => {
+    // Forking "Fix sidebar (2)" should produce "Fix sidebar (3)", not "Fix sidebar (2) (1)"
+    expect(generateForkTitle("Fix sidebar (2)", ["Fix sidebar (1)", "Fix sidebar (2)"])).toBe(
+      "Fix sidebar (3)"
+    );
+  });
+
+  test("ignores non-matching titles", () => {
+    expect(generateForkTitle("Refactor auth", ["Fix sidebar layout (1)", "Other task (2)"])).toBe(
+      "Refactor auth (1)"
+    );
+  });
+
+  test("handles gaps in numbering", () => {
+    expect(generateForkTitle("Task", ["Task (1)", "Task (5)"])).toBe("Task (6)");
+  });
+
+  test("ignores non-numeric suffixes when selecting the next title number", () => {
+    expect(generateForkTitle("Task", ["Task (2025 roadmap)", "Task (12abc)", "Task (2)"])).toBe(
+      "Task (3)"
+    );
   });
 });

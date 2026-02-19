@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/browser/comp
 import { Button } from "@/browser/components/ui/button";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { copyToClipboard } from "@/browser/utils/clipboard";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const JsonOutput: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <div className="bg-code-bg text-text mt-3 w-full max-w-full min-w-0 overflow-x-auto rounded-sm">
@@ -47,7 +48,7 @@ export const DebugLlmRequestModal: React.FC<DebugLlmRequestModalProps> = ({
 
       setSnapshot(result.data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(getErrorMessage(err));
       setSnapshot(null);
     } finally {
       setLoading(false);

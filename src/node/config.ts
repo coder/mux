@@ -168,6 +168,7 @@ export class Config {
           mdnsAdvertisementEnabled?: unknown;
           mdnsServiceName?: unknown;
           serverSshHost?: string;
+          serverAuthGithubOwner?: unknown;
           defaultProjectDir?: unknown;
           viewedSplashScreens?: string[];
           featureFlagOverrides?: Record<string, "default" | "on" | "off">;
@@ -184,6 +185,7 @@ export class Config {
           muxGovernorUrl?: unknown;
           muxGovernorToken?: unknown;
           stopCoderWorkspaceOnArchive?: unknown;
+          terminalDefaultShell?: unknown;
         };
 
         // Config is stored as array of [path, config] pairs
@@ -241,6 +243,7 @@ export class Config {
             mdnsAdvertisementEnabled: parseOptionalBoolean(parsed.mdnsAdvertisementEnabled),
             mdnsServiceName: parseOptionalNonEmptyString(parsed.mdnsServiceName),
             serverSshHost: parsed.serverSshHost,
+            serverAuthGithubOwner: parseOptionalNonEmptyString(parsed.serverAuthGithubOwner),
             defaultProjectDir: parseOptionalNonEmptyString(parsed.defaultProjectDir),
             viewedSplashScreens: parsed.viewedSplashScreens,
             layoutPresets,
@@ -258,6 +261,7 @@ export class Config {
             muxGovernorUrl: parseOptionalNonEmptyString(parsed.muxGovernorUrl),
             muxGovernorToken: parseOptionalNonEmptyString(parsed.muxGovernorToken),
             stopCoderWorkspaceOnArchive,
+            terminalDefaultShell: parseOptionalNonEmptyString(parsed.terminalDefaultShell),
           };
         }
       }
@@ -288,6 +292,7 @@ export class Config {
         mdnsAdvertisementEnabled?: boolean;
         mdnsServiceName?: string;
         serverSshHost?: string;
+        serverAuthGithubOwner?: string;
         defaultProjectDir?: string;
         viewedSplashScreens?: string[];
         layoutPresets?: ProjectsConfig["layoutPresets"];
@@ -304,6 +309,7 @@ export class Config {
         muxGovernorUrl?: string;
         muxGovernorToken?: string;
         stopCoderWorkspaceOnArchive?: boolean;
+        terminalDefaultShell?: string;
       } = {
         projects: Array.from(config.projects.entries()),
         taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
@@ -363,6 +369,10 @@ export class Config {
       if (config.serverSshHost) {
         data.serverSshHost = config.serverSshHost;
       }
+      const serverAuthGithubOwner = parseOptionalNonEmptyString(config.serverAuthGithubOwner);
+      if (serverAuthGithubOwner) {
+        data.serverAuthGithubOwner = serverAuthGithubOwner;
+      }
       const defaultProjectDir = parseOptionalNonEmptyString(config.defaultProjectDir);
       if (defaultProjectDir) {
         data.defaultProjectDir = defaultProjectDir;
@@ -414,6 +424,11 @@ export class Config {
       // Default ON: persist `false` only.
       if (config.stopCoderWorkspaceOnArchive === false) {
         data.stopCoderWorkspaceOnArchive = false;
+      }
+
+      const terminalDefaultShell = parseOptionalNonEmptyString(config.terminalDefaultShell);
+      if (terminalDefaultShell) {
+        data.terminalDefaultShell = terminalDefaultShell;
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
@@ -494,6 +509,18 @@ export class Config {
     return config.serverSshHost;
   }
 
+  /**
+   * Get the configured GitHub username allowed to authenticate server/browser mode.
+   */
+  getServerAuthGithubOwner(): string | undefined {
+    const envOwner = parseOptionalNonEmptyString(process.env.MUX_SERVER_AUTH_GITHUB_OWNER);
+    if (envOwner) {
+      return envOwner;
+    }
+
+    const config = this.loadConfigOrDefault();
+    return config.serverAuthGithubOwner;
+  }
   private getProjectName(projectPath: string): string {
     return PlatformPaths.getProjectName(projectPath);
   }

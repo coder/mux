@@ -3,21 +3,22 @@
  *
  * The unread indicator shows when a workspace has activity the user hasn't seen.
  * Key components:
- * - recencyTimestamp: derived from the most recent user message or compacted message
+ * - recencyTimestamp: derived from max of user message, compacted message, or stream completion time
  * - lastReadTimestamp: persisted in localStorage, updated when workspace is selected
  * - isUnread: recencyTimestamp > lastReadTimestamp
  *
- * Bug under test: The unread indicator may incorrectly show as "unread" after a stream
- * completes, even when the user is actively viewing the workspace.
+ * Behavior under test: stream completion should make non-selected workspaces unread,
+ * while selected workspaces should be auto-marked as read.
  */
 
 import "../dom";
-import { waitFor } from "@testing-library/react";
+import { fireEvent, waitFor } from "@testing-library/react";
 
 import { preloadTestModules } from "../../ipc/setup";
 import { createAppHarness, type AppHarness } from "../harness";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getWorkspaceLastReadKey } from "@/common/constants/storage";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 
 /**
@@ -95,6 +96,35 @@ describe("Unread indicator (mock AI router)", () => {
       expect(isUnread(lastRead)).toBe(false);
     });
 
+    test("workspace with missing lastRead key is not unread by default", async () => {
+      // Regression for pre-feature/legacy workspaces where no per-workspace
+      // read baseline exists in localStorage.
+
+      // Ensure the target workspace has recency so this test is sensitive.
+      await waitFor(() => {
+        const { recencyTimestamp } = workspaceStore.getWorkspaceSidebarState(
+          MUX_HELP_CHAT_WORKSPACE_ID
+        );
+        expect(recencyTimestamp).not.toBeNull();
+      });
+
+      // Simulate legacy state: no persisted lastRead key for this workspace.
+      updatePersistedState(getWorkspaceLastReadKey(MUX_HELP_CHAT_WORKSPACE_ID), null);
+      expect(window.localStorage.getItem(getWorkspaceLastReadKey(MUX_HELP_CHAT_WORKSPACE_ID))).toBe(
+        null
+      );
+
+      // Missing read baseline should not surface unread by default.
+      await waitFor(() => {
+        const muxHelpButton = app.view.container.querySelector(
+          'button[aria-label="Open Chat with Mux"]'
+        ) as HTMLButtonElement | null;
+        expect(muxHelpButton).not.toBeNull();
+        const unreadDot = muxHelpButton?.querySelector('[aria-label="Unread messages"]');
+        expect(unreadDot).toBeNull();
+      });
+    });
+
     test("recencyTimestamp updates when user sends a message", async () => {
       const beforeSend = getWorkspaceUnreadState(app.workspaceId);
       const beforeRecency = beforeSend.recencyTimestamp;
@@ -111,12 +141,14 @@ describe("Unread indicator (mock AI router)", () => {
       }
     });
 
-    test("assistant message alone does NOT update recencyTimestamp", async () => {
-      // This test validates that recency is computed from user messages,
-      // not from assistant responses.
+    test("recencyTimestamp is stable after stream completes (no further changes without new activity)", async () => {
+      // Recency now includes stream completion time.
+      // This test validates that once the stream is done, recency stays stable
+      // unless there is additional activity.
 
       await app.chat.send("First message");
       await app.chat.expectTranscriptContains("Mock response: First message");
+      await app.chat.expectStreamComplete();
 
       const afterFirstMessage = getWorkspaceUnreadState(app.workspaceId);
       const recencyAfterFirst = afterFirstMessage.recencyTimestamp;
@@ -124,8 +156,8 @@ describe("Unread indicator (mock AI router)", () => {
       // Wait a bit to ensure any timing differences would be detectable
       await new Promise((r) => setTimeout(r, 50));
 
-      // The recency should not have changed from just the assistant response
-      // (recency is set by the user message, not the assistant response)
+      // Stream completion already happened before we captured recencyAfterFirst,
+      // so without new activity the value should remain unchanged.
       const currentState = getWorkspaceUnreadState(app.workspaceId);
       expect(currentState.recencyTimestamp).toBe(recencyAfterFirst);
     });
@@ -151,20 +183,60 @@ describe("Unread indicator (mock AI router)", () => {
 
       await app.chat.send("Test message for unread bug");
       await app.chat.expectTranscriptContains("Mock response: Test message for unread bug");
+      await app.chat.expectStreamComplete();
 
       // After stream completes, check unread state
       const lastReadAfter = getLastReadTimestamp(app.workspaceId);
       const { recencyTimestamp, isUnread } = getWorkspaceUnreadState(app.workspaceId);
 
       // The workspace should NOT be unread while we're viewing it.
-      // The fix (in ChatInput) updates lastReadTimestamp when user sends a message,
-      // ensuring that user-initiated activity doesn't trigger the unread indicator.
+      // handleResponseComplete marks the selected workspace as read when a final
+      // stream completes, even though stream completion bumps recency.
       expect(isUnread(lastReadAfter)).toBe(false);
 
       // lastReadTimestamp should be >= recencyTimestamp after the fix
       if (recencyTimestamp !== null) {
         expect(lastReadAfter).toBeGreaterThanOrEqual(recencyTimestamp);
       }
+    });
+
+    test("selected workspace lastRead is updated on stream completion", async () => {
+      const lastReadBefore = getLastReadTimestamp(app.workspaceId);
+      const beforeSend = Date.now();
+
+      await app.chat.send("Test for read update");
+      await app.chat.expectTranscriptContains("Mock response: Test for read update");
+      await app.chat.expectStreamComplete();
+      const afterComplete = Date.now();
+
+      const lastRead = getLastReadTimestamp(app.workspaceId);
+      const { recencyTimestamp } = getWorkspaceUnreadState(app.workspaceId);
+
+      // handleResponseComplete updates selected workspace lastRead before any
+      // notification-related early return logic.
+      expect(lastRead).toBeGreaterThanOrEqual(lastReadBefore);
+      expect(lastRead).toBeGreaterThanOrEqual(beforeSend);
+      expect(lastRead).toBeLessThanOrEqual(afterComplete + 1000);
+      // Both lastRead and recencyTimestamp use the same completedAt value
+      // captured once in handleStreamEnd — exact equality, no ms-boundary race.
+      if (recencyTimestamp !== null) {
+        expect(lastRead).toBe(recencyTimestamp);
+      }
+    });
+
+    test("stream completion bumps recency for unread detection", async () => {
+      // Core behavior: stream completion now bumps recencyTimestamp,
+      // so a non-active reader should see this workspace as unread.
+      await app.chat.send("Message to trigger stream");
+      await app.chat.expectTranscriptContains("Mock response: Message to trigger stream");
+      await app.chat.expectStreamComplete();
+
+      const { recencyTimestamp, isUnread } = getWorkspaceUnreadState(app.workspaceId);
+      expect(recencyTimestamp).not.toBeNull();
+
+      // Simulate someone who last read this workspace before stream completion.
+      const lastReadBeforeStreamCompleted = recencyTimestamp! - 1000;
+      expect(isUnread(lastReadBeforeStreamCompleted)).toBe(true);
     });
 
     test("workspace should show unread when activity happens in non-selected workspace", async () => {
@@ -191,6 +263,119 @@ describe("Unread indicator (mock AI router)", () => {
       expect(recencyTimestamp).not.toBeNull();
       expect(isUnread(pastTime)).toBe(true);
     });
+
+    test("stream completion does NOT mark read when settings page is active", async () => {
+      // Regression: stream completion should not advance lastRead when the user
+      // is on a non-chat route (e.g. settings). The workspace remains "selected"
+      // but the chat content is not visible.
+
+      // Send a gated message so the stream stays pending while we navigate away.
+      await app.chat.send("[mock:wait-start] completion while in settings");
+      const lastReadAfterSend = getLastReadTimestamp(app.workspaceId);
+
+      // Navigate to settings — this replaces AIView with SettingsPage.
+      const settingsButton = app.view.container.querySelector(
+        '[data-testid="settings-button"]'
+      ) as HTMLButtonElement;
+      expect(settingsButton).not.toBeNull();
+      fireEvent.click(settingsButton);
+
+      // Verify chat view is no longer rendered.
+      await waitFor(() => {
+        const messageWindow = app.view.container.querySelector('[data-testid="message-window"]');
+        if (messageWindow) {
+          throw new Error("Expected settings to replace AIView");
+        }
+      });
+
+      // Release the stream gate so the stream completes while settings are active.
+      app.env.services.aiService.releaseMockStreamStartGate(app.workspaceId);
+      await app.chat.expectStreamComplete();
+
+      // lastRead should NOT have advanced — the user wasn't looking at chat.
+      const lastReadAfterComplete = getLastReadTimestamp(app.workspaceId);
+      expect(lastReadAfterComplete).toBe(lastReadAfterSend);
+
+      // The workspace should show as unread (recency > lastRead).
+      await waitFor(() => {
+        const { recencyTimestamp, isUnread } = getWorkspaceUnreadState(app.workspaceId);
+        expect(recencyTimestamp).not.toBeNull();
+        expect(isUnread(lastReadAfterComplete)).toBe(true);
+      });
+    }, 60_000);
+
+    test("focus while on settings does NOT mark read", async () => {
+      // Regression: window focus should not advance lastRead when the user
+      // is on a non-chat route, even if a workspace is selected.
+
+      // Send a gated message so the stream stays pending while we navigate away.
+      await app.chat.send("[mock:wait-start] focus bypass test");
+      const lastReadAfterSend = getLastReadTimestamp(app.workspaceId);
+
+      // Navigate to settings — this replaces AIView with SettingsPage.
+      const settingsButton = app.view.container.querySelector(
+        '[data-testid="settings-button"]'
+      ) as HTMLButtonElement;
+      expect(settingsButton).not.toBeNull();
+      fireEvent.click(settingsButton);
+
+      // Verify chat view is no longer rendered.
+      await waitFor(() => {
+        const messageWindow = app.view.container.querySelector('[data-testid="message-window"]');
+        if (messageWindow) {
+          throw new Error("Expected settings to replace AIView");
+        }
+      });
+
+      // Release the stream gate so the stream completes while settings are active.
+      app.env.services.aiService.releaseMockStreamStartGate(app.workspaceId);
+      await app.chat.expectStreamComplete();
+
+      // Simulate the user alt-tabbing back (window regains focus while still on settings).
+      const lastReadAfterComplete = getLastReadTimestamp(app.workspaceId);
+      expect(lastReadAfterComplete).toBe(lastReadAfterSend);
+      window.dispatchEvent(new Event("focus"));
+
+      // lastRead should NOT have advanced — the user still isn't looking at chat.
+      const lastReadAfterFocus = getLastReadTimestamp(app.workspaceId);
+      expect(lastReadAfterFocus).toBe(lastReadAfterComplete);
+
+      // The workspace should show as unread (recency > lastRead).
+      await waitFor(() => {
+        const { recencyTimestamp, isUnread } = getWorkspaceUnreadState(app.workspaceId);
+        expect(recencyTimestamp).not.toBeNull();
+        expect(isUnread(lastReadAfterFocus)).toBe(true);
+      });
+    }, 60_000);
+    test("expectStreamComplete does not resolve before stream-start in gated flows", async () => {
+      // Regression: expectStreamComplete() used to check only canInterrupt,
+      // which is false before stream-start — allowing early resolution in
+      // gated flows before handleStreamEnd finalizes state.
+
+      await app.chat.send("[mock:wait-start] gated stream-complete wait");
+
+      // Verify the workspace entered the start-pending phase.
+      await waitFor(() => {
+        const state = workspaceStore.getWorkspaceSidebarState(app.workspaceId);
+        expect(state.isStarting).toBe(true);
+        expect(state.canInterrupt).toBe(false);
+      });
+
+      // Start the stream-complete wait BEFORE releasing the gate.
+      let resolved = false;
+      const waitPromise = app.chat.expectStreamComplete(10_000).then(() => {
+        resolved = true;
+      });
+
+      // Flush microtasks — if expectStreamComplete incorrectly resolves
+      // during isStarting, `resolved` would become true here.
+      await Promise.resolve();
+      expect(resolved).toBe(false);
+
+      // Release the gate and let the stream complete normally.
+      app.env.services.aiService.releaseMockStreamStartGate(app.workspaceId);
+      await waitPromise;
+    }, 60_000);
   });
 
   describe("unread bar visibility", () => {
@@ -241,7 +426,7 @@ describe("Unread indicator (mock AI router)", () => {
       await app.dispose();
     });
 
-    test("recencyTimestamp is based on user message, not assistant message", async () => {
+    test("recencyTimestamp reflects stream completion time", async () => {
       // Send a user message and note the recency
       const beforeSend = Date.now();
       await app.chat.send("User message for recency test");
@@ -252,14 +437,12 @@ describe("Unread indicator (mock AI router)", () => {
 
       const { recencyTimestamp } = getWorkspaceUnreadState(app.workspaceId);
 
-      // The recency should be from the user message time, not the assistant completion time
-      // It should be between when we sent and shortly after (user message timestamp)
+      // Recency now includes stream completion time, so it should fall within
+      // the send/completion window.
       expect(recencyTimestamp).not.toBeNull();
       // Allow some tolerance for timing
       expect(recencyTimestamp!).toBeGreaterThanOrEqual(beforeSend - 100);
-      // Recency should NOT be updated to the stream completion time
-      // (this would be a bug - assistant messages shouldn't affect recency)
-      // A rough heuristic: if it's way past when we sent, something is wrong
+      // Recency should be no later than shortly after completion.
       expect(recencyTimestamp!).toBeLessThan(afterComplete + 1000);
     });
 

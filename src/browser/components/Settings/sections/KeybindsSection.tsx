@@ -17,6 +17,8 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   FOCUS_INPUT_I: "Focus input (i)",
   FOCUS_INPUT_A: "Focus input (a)",
   NEW_WORKSPACE: "New workspace",
+  EDIT_WORKSPACE_TITLE: "Edit workspace title",
+  GENERATE_WORKSPACE_TITLE: "Generate new title",
   ARCHIVE_WORKSPACE: "Archive workspace",
   JUMP_TO_BOTTOM: "Jump to bottom",
   NEXT_WORKSPACE: "Next workspace",
@@ -28,7 +30,6 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   SHARE_TRANSCRIPT: "Share transcript",
   CONFIGURE_MCP: "Configure MCP servers",
   OPEN_COMMAND_PALETTE: "Command palette",
-  OPEN_COMMAND_PALETTE_ALT: "Command palette (alternate)",
   OPEN_MUX_CHAT: "Open Chat with Mux",
   TOGGLE_THINKING: "Toggle thinking",
   FOCUS_CHAT: "Focus chat input",
@@ -55,6 +56,9 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   NAVIGATE_BACK: "Navigate back",
   NAVIGATE_FORWARD: "Navigate forward",
   TOGGLE_NOTIFICATIONS: "Toggle notifications",
+  // Modal-only keybinds; intentionally omitted from KEYBIND_GROUPS.
+  CONFIRM_DIALOG_YES: "Confirm dialog action",
+  CONFIRM_DIALOG_NO: "Cancel dialog action",
   // Easter egg keybind; intentionally omitted from KEYBIND_GROUPS.
   TOGGLE_POWER_MODE: "",
 };
@@ -99,6 +103,8 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
     label: "Navigation",
     keys: [
       "NEW_WORKSPACE",
+      "EDIT_WORKSPACE_TITLE",
+      "GENERATE_WORKSPACE_TITLE",
       "ARCHIVE_WORKSPACE",
       "NEXT_WORKSPACE",
       "PREV_WORKSPACE",
@@ -144,9 +150,7 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
 // Some actions have multiple equivalent shortcuts; render alternates on the same row.
 const KEYBIND_DISPLAY_ALTERNATES: Partial<
   Record<keyof typeof KEYBINDS, Array<keyof typeof KEYBINDS>>
-> = {
-  OPEN_COMMAND_PALETTE: ["OPEN_COMMAND_PALETTE_ALT"],
-};
+> = {};
 
 export function KeybindsSection() {
   return (

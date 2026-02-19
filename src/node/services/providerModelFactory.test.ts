@@ -58,6 +58,32 @@ describe("ProviderModelFactory.createModel", () => {
       }
     });
   });
+
+  it("routes allowlisted models through gateway automatically", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          enabled: false,
+        },
+        "mux-gateway": {
+          couponCode: "test-coupon",
+        },
+      });
+
+      const projectConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...projectConfig,
+        muxGatewayEnabled: true,
+        muxGatewayModels: ["openai:gpt-5"],
+      });
+
+      const result = await factory.createModel("openai:gpt-5");
+      if (!result.success) {
+        expect(result.error.type).not.toBe("provider_disabled");
+      }
+    });
+  });
 });
 
 describe("ProviderModelFactory.resolveGatewayModelString", () => {

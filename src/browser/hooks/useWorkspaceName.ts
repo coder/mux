@@ -3,38 +3,27 @@ import { z } from "zod";
 import { useAPI } from "@/browser/contexts/API";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getWorkspaceNameStateKey } from "@/common/constants/storage";
-import { useGateway, formatAsGatewayModel } from "./useGatewayModels";
-import { getKnownModel } from "@/common/constants/knownModels";
+import { NAME_GEN_PREFERRED_MODELS } from "@/common/constants/nameGeneration";
+import type { NameGenerationError } from "@/common/types/errors";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
+import { getErrorMessage } from "@/common/utils/errors";
 
-/** Small/fast models preferred for name generation */
-const PREFERRED_MODELS = [getKnownModel("HAIKU").id, getKnownModel("GPT_MINI").id];
+/** Discriminated error type for workspace name operations */
+export type WorkspaceNameUIError =
+  | { kind: "generation"; error: NameGenerationError }
+  | { kind: "validation"; message: string }
+  | { kind: "transport"; message: string };
 
 /**
- * Build ordered candidate list respecting gateway prefs.
- * Takes primitive/stable values to avoid re-computation on every render.
+ * Build ordered candidate list for name generation.
+ * Gateway routing is resolved automatically by createModel on the backend,
+ * so candidates are sent as canonical model IDs.
  */
-function buildCandidates(
-  isGatewayActive: boolean,
-  modelUsesGateway: (modelId: string) => boolean,
-  userModel: string | undefined
-): string[] {
-  const candidates: string[] = [];
-
-  // 1. Preferred models with gateway prefs applied
-  for (const modelId of PREFERRED_MODELS) {
-    const transformed =
-      isGatewayActive && modelUsesGateway(modelId) ? formatAsGatewayModel(modelId) : modelId;
-    if (!candidates.includes(transformed)) {
-      candidates.push(transformed);
-    }
-  }
-
-  // 2. User's selected model (already gateway-transformed by caller)
+function buildNameGenCandidates(userModel: string | undefined): string[] {
+  const candidates: string[] = [...NAME_GEN_PREFERRED_MODELS];
   if (userModel && !candidates.includes(userModel)) {
     candidates.push(userModel);
   }
-
   return candidates;
 }
 
@@ -74,8 +63,8 @@ export interface WorkspaceNameState {
   isGenerating: boolean;
   /** Whether auto-generation is enabled */
   autoGenerate: boolean;
-  /** Error message if generation failed */
-  error: string | null;
+  /** Error state for generation/validation/transport failures */
+  error: WorkspaceNameUIError | null;
   /** Set whether auto-generation is enabled */
   setAutoGenerate: (enabled: boolean) => void;
   /** Set manual name (for when auto-generate is off) */
@@ -140,13 +129,7 @@ export function getDisplayTitleFromPersistedState(state: unknown): string {
 export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspaceNameReturn {
   const { message, debounceMs = 500, userModel, scopeId } = options;
   const { api } = useAPI();
-  const { isActive: isGatewayActive, modelUsesGateway } = useGateway();
-  // Memoize candidates with stable dependencies (isGatewayActive is primitive,
-  // modelUsesGateway is a useCallback that only changes when enabledModels changes)
-  const candidates = useMemo(
-    () => buildCandidates(isGatewayActive, modelUsesGateway, userModel),
-    [isGatewayActive, modelUsesGateway, userModel]
-  );
+  const candidates = useMemo(() => buildNameGenCandidates(userModel), [userModel]);
 
   // Always call usePersistedState, but only *use* it when scopeId is provided.
   // This prevents draft switching from leaking name state across different creation drafts.
@@ -167,7 +150,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
   const { generatedIdentity, manualName, autoGenerate, lastGeneratedFor } = stored;
 
   const [isGenerating, setIsGenerating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<WorkspaceNameUIError | null>(null);
 
   // Debounce timer
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -232,7 +215,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
       generationPromiseRef.current = { promise, resolve: safeResolve, requestId };
 
       try {
-        // Frontend builds candidate list with gateway prefs applied.
+        // Frontend sends canonical candidates; backend createModel resolves gateway routing.
         // Backend tries candidates in order with retry on API errors.
         const result = await api.nameGeneration.generate({
           message: forMessage,
@@ -261,19 +244,15 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
           return identity;
         }
 
-        const errorMsg =
-          result.error.type === "unknown" && "raw" in result.error
-            ? result.error.raw
-            : `Generation failed: ${result.error.type}`;
-        setError(errorMsg);
+        setError({ kind: "generation", error: result.error });
         safeResolve(null);
         return null;
       } catch (err) {
         if (requestId !== requestIdRef.current) {
           return null;
         }
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        setError(errorMsg);
+        const errorMsg = getErrorMessage(err);
+        setError({ kind: "transport", message: errorMsg });
         safeResolve(null);
         return null;
       } finally {
@@ -358,7 +337,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
       // Validate in real-time as user types (skip empty - will show on submit)
       if (newName.trim()) {
         const validation = validateWorkspaceName(newName);
-        setError(validation.error ?? null);
+        setError(validation.error ? { kind: "validation", message: validation.error } : null);
       } else {
         setError(null);
       }
@@ -371,7 +350,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
     // Use that name directly with a generated title from the message
     if (!autoGenerate) {
       if (!manualName.trim()) {
-        setError("Please enter a workspace name");
+        setError({ kind: "validation", message: "Please enter a workspace name" });
         return null;
       }
       // Manual name provided — skip LLM call entirely.

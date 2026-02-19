@@ -67,6 +67,7 @@ import {
   type SimulationContext,
 } from "./streamSimulation";
 import { applyToolPolicyAndExperiments, captureMcpToolTelemetry } from "./toolAssembly";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // ---------------------------------------------------------------------------
 // streamMessage options
@@ -231,7 +232,7 @@ export class AIService extends EventEmitter {
           }
         }
       } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error);
+        const errMsg = getErrorMessage(error);
         log.warn("Failed to capture debug LLM response snapshot", { error: errMsg });
       }
 
@@ -300,7 +301,7 @@ export class AIService extends EventEmitter {
 
       return Ok(metadata);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to read workspace metadata: ${message}`);
     }
   }
@@ -618,6 +619,7 @@ export class AIService extends EventEmitter {
         providerForMessages: canonicalProviderName,
         effectiveThinkingLevel,
         modelString,
+        anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
         workspaceId,
       });
 
@@ -851,6 +853,9 @@ export class AIService extends EventEmitter {
       // This is the single injection site for provider-specific headers, handling
       // both direct and gateway-routed models identically.
       const requestHeaders = buildRequestHeaders(modelString, effectiveMuxProviderOptions);
+      const stopAfterSuccessfulProposePlan = Boolean(
+        metadata.parentWorkspaceId && effectiveMode === "plan"
+      );
 
       // Debug dump: Log the complete LLM request when MUX_DEBUG_LLM_REQUEST is set
       if (process.env.MUX_DEBUG_LLM_REQUEST === "1") {
@@ -903,7 +908,7 @@ export class AIService extends EventEmitter {
       try {
         this.lastLlmRequestByWorkspace.set(workspaceId, safeClone(snapshot));
       } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error);
+        const errMsg = getErrorMessage(error);
         workspaceLog.warn("Failed to capture debug LLM request snapshot", { error: errMsg });
       }
       const toolsForStream =
@@ -923,8 +928,6 @@ export class AIService extends EventEmitter {
               runtimeTempDir,
               runtime,
               agentDiscoveryPath,
-              resolveGatewayModelString: (ms, dm, eg) =>
-                this.providerModelFactory.resolveGatewayModelString(ms, dm, eg),
               createModel: (ms, o) => this.createModel(ms, o),
               emitBashOutput: (ev) => this.emit("bash-output", ev),
               sessionUsageService: this.sessionUsageService,
@@ -957,7 +960,9 @@ export class AIService extends EventEmitter {
         hasQueuedMessage,
         metadata.name,
         effectiveThinkingLevel,
-        requestHeaders
+        requestHeaders,
+        effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
+        stopAfterSuccessfulProposePlan
       );
 
       if (!streamResult.success) {
@@ -975,7 +980,7 @@ export class AIService extends EventEmitter {
       // No need for event listener here
       return Ok(undefined);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       log.error("Stream message error:", error);
       // Return as unknown error type
       return Err({ type: "unknown", raw: `Failed to stream message: ${errorMessage}` });
@@ -1058,12 +1063,12 @@ export class AIService extends EventEmitter {
    * Replay stream events
    * Emits the same events that would be emitted during live streaming
    */
-  async replayStream(workspaceId: string): Promise<void> {
+  async replayStream(workspaceId: string, opts?: { afterTimestamp?: number }): Promise<void> {
     if (this.mockModeEnabled && this.mockAiStreamPlayer) {
       await this.mockAiStreamPlayer.replayStream(workspaceId);
       return;
     }
-    await this.streamManager.replayStream(workspaceId);
+    await this.streamManager.replayStream(workspaceId, opts);
   }
 
   debugGetLastMockPrompt(workspaceId: string): Result<MuxMessage[] | null> {
@@ -1123,7 +1128,7 @@ export class AIService extends EventEmitter {
       await fs.rm(workspaceDir, { recursive: true, force: true });
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to delete workspace: ${message}`);
     }
   }

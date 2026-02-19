@@ -21,7 +21,9 @@ import {
 import { ConsumerBreakdown } from "./ConsumerBreakdown";
 import { FileBreakdown } from "./FileBreakdown";
 import { ContextUsageBar } from "./ContextUsageBar";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
+import { getEffectiveContextLimit } from "@/browser/utils/compaction/contextLimit";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { PostCompactionSection } from "./PostCompactionSection";
 import { usePostCompactionState } from "@/browser/hooks/usePostCompactionState";
@@ -62,6 +64,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   });
   const { has1MContext } = useProviderOptions();
   const pendingSendOptions = useSendMessageOptions(workspaceId);
+  const { config: providersConfig } = useProvidersConfig();
 
   // Post-compaction context state for UI display
   const postCompactionState = usePostCompactionState(workspaceId);
@@ -129,7 +132,8 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                     contextUsage,
                     contextDisplayModel,
                     has1MContext(contextDisplayModel),
-                    false
+                    false,
+                    providersConfig
                   )
                 : { segments: [], totalTokens: 0, totalPercentage: 0 };
 
@@ -140,12 +144,11 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                   return undefined;
 
                 const thresholdTokens = Math.round((autoCompactThreshold / 100) * maxTokens);
-                const compactionStats = getModelStats(effectiveCompactionModel);
-                const compactionMaxTokens =
-                  has1MContext(effectiveCompactionModel) &&
-                  supports1MContext(effectiveCompactionModel)
-                    ? 1_000_000
-                    : compactionStats?.max_input_tokens;
+                const compactionMaxTokens = getEffectiveContextLimit(
+                  effectiveCompactionModel,
+                  has1MContext(effectiveCompactionModel),
+                  providersConfig
+                );
 
                 if (compactionMaxTokens && compactionMaxTokens < thresholdTokens) {
                   return { compactionModelMaxTokens: compactionMaxTokens, thresholdTokens };

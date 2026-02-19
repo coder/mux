@@ -24,6 +24,7 @@ import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import type { AnthropicCacheTtl } from "@/common/utils/ai/cacheStrategy";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
 import {
@@ -91,6 +92,29 @@ if (typeof globalFetchWithExtras.certificate === "function") {
 // Fetch wrappers
 // ---------------------------------------------------------------------------
 
+function mergeAnthropicCacheControl(
+  existing: unknown,
+  cacheTtl?: AnthropicCacheTtl | null
+): Record<string, string> {
+  const merged: Record<string, string> = { type: "ephemeral" };
+
+  if (typeof existing === "object" && existing !== null) {
+    const existingRecord = existing as Record<string, unknown>;
+    if (typeof existingRecord.type === "string") {
+      merged.type = existingRecord.type;
+    }
+    if (typeof existingRecord.ttl === "string") {
+      merged.ttl = existingRecord.ttl;
+    }
+  }
+
+  if (cacheTtl) {
+    merged.ttl = cacheTtl;
+  }
+
+  return merged;
+}
+
 /**
  * Wrap fetch to inject Anthropic cache_control directly into the request body.
  * The AI SDK's providerOptions.anthropic.cacheControl doesn't get translated
@@ -101,7 +125,10 @@ if (typeof globalFetchWithExtras.certificate === "function") {
  * 1. Last tool (caches all tool definitions)
  * 2. Last message's last content part (caches entire conversation)
  */
-function wrapFetchWithAnthropicCacheControl(baseFetch: typeof fetch): typeof fetch {
+function wrapFetchWithAnthropicCacheControl(
+  baseFetch: typeof fetch,
+  cacheTtl?: AnthropicCacheTtl | null
+): typeof fetch {
   const cachingFetch = async (
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1]
@@ -114,10 +141,12 @@ function wrapFetchWithAnthropicCacheControl(baseFetch: typeof fetch): typeof fet
     try {
       const json = JSON.parse(init.body) as Record<string, unknown>;
 
-      // Inject cache_control on the last tool if tools array exists
+      // Inject cache_control on the last tool if tools array exists.
+      // If the SDK already populated cache_control, preserve it but override ttl
+      // when a higher-level cacheTtl is configured.
       if (Array.isArray(json.tools) && json.tools.length > 0) {
         const lastTool = json.tools[json.tools.length - 1] as Record<string, unknown>;
-        lastTool.cache_control ??= { type: "ephemeral" };
+        lastTool.cache_control = mergeAnthropicCacheControl(lastTool.cache_control, cacheTtl);
       }
 
       // Inject cache_control on last message's last content part
@@ -139,7 +168,10 @@ function wrapFetchWithAnthropicCacheControl(baseFetch: typeof fetch): typeof fet
         if (Array.isArray(json.prompt)) {
           const providerOpts = (lastMsg.providerOptions ?? {}) as Record<string, unknown>;
           const anthropicOpts = (providerOpts.anthropic ?? {}) as Record<string, unknown>;
-          anthropicOpts.cacheControl ??= { type: "ephemeral" };
+          anthropicOpts.cacheControl = mergeAnthropicCacheControl(
+            anthropicOpts.cacheControl,
+            cacheTtl
+          );
           providerOpts.anthropic = anthropicOpts;
           lastMsg.providerOptions = providerOpts;
         }
@@ -148,7 +180,7 @@ function wrapFetchWithAnthropicCacheControl(baseFetch: typeof fetch): typeof fet
         const content = lastMsg.content;
         if (Array.isArray(content) && content.length > 0) {
           const lastPart = content[content.length - 1] as Record<string, unknown>;
-          lastPart.cache_control ??= { type: "ephemeral" };
+          lastPart.cache_control = mergeAnthropicCacheControl(lastPart.cache_control, cacheTtl);
         }
       }
 
@@ -230,6 +262,7 @@ export function normalizeAnthropicBaseURL(baseURL: string): string {
 
 // Canonical definition lives in providerOptions; import for local use + re-export for backward compat.
 import { ANTHROPIC_1M_CONTEXT_HEADER } from "@/common/utils/ai/providerOptions";
+import { getErrorMessage } from "@/common/utils/errors";
 export { ANTHROPIC_1M_CONTEXT_HEADER };
 
 /**
@@ -307,6 +340,13 @@ export function parseModelString(modelString: string): [string, string] {
   const providerName = colonIndex !== -1 ? modelString.slice(0, colonIndex) : modelString;
   const modelId = colonIndex !== -1 ? modelString.slice(colonIndex + 1) : "";
   return [providerName, modelId];
+}
+
+function parseAnthropicCacheTtl(value: unknown): AnthropicCacheTtl | undefined {
+  if (value === "5m" || value === "1h") {
+    return value;
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -397,8 +437,17 @@ export class ProviderModelFactory {
     muxProviderOptions?: MuxProviderOptions
   ): Promise<Result<LanguageModel, SendMessageError>> {
     try {
+      // Gateway routing is resolved here so every caller gets correct behavior
+      // automatically. resolveGatewayModelString is idempotent — already-resolved
+      // strings (e.g. "mux-gateway:anthropic/model") pass through unchanged.
+      const explicitlyRequestedGateway = modelString.trim().startsWith("mux-gateway:");
+      modelString = this.resolveGatewayModelString(
+        modelString,
+        undefined,
+        explicitlyRequestedGateway
+      );
+
       // Parse model string (format: "provider:model-id")
-      // Parse provider and model ID from model string
       const [providerName, modelId] = parseModelString(modelString);
 
       if (!providerName || !modelId) {
@@ -435,8 +484,25 @@ export class ProviderModelFactory {
       }
 
       // Load providers configuration - the ONLY source of truth
-      const providersConfig = this.config.loadProvidersConfig();
-      let providerConfig = providersConfig?.[providerName] ?? {};
+      const providersConfig = this.config.loadProvidersConfig() ?? {};
+
+      // Backend config is authoritative for Anthropic prompt cache TTL on any
+      // Anthropic-routed model (direct Anthropic, mux-gateway:anthropic/*,
+      // openrouter:anthropic/*). We still allow request-level values when config
+      // is unset for backward compatibility with older clients.
+      const configAnthropicCacheTtl = parseAnthropicCacheTtl(providersConfig.anthropic?.cacheTtl);
+      const isAnthropicRoutedModel =
+        providerName === "anthropic" || modelId.startsWith("anthropic/");
+      if (isAnthropicRoutedModel && configAnthropicCacheTtl && muxProviderOptions) {
+        muxProviderOptions.anthropic = {
+          ...(muxProviderOptions.anthropic ?? {}),
+          cacheTtl: configAnthropicCacheTtl,
+        };
+      }
+      const effectiveAnthropicCacheTtl =
+        muxProviderOptions?.anthropic?.cacheTtl ?? configAnthropicCacheTtl;
+
+      let providerConfig = providersConfig[providerName] ?? {};
 
       // Providers can be disabled in providers.jsonc without deleting credentials.
       if (
@@ -496,7 +562,10 @@ export class ProviderModelFactory {
         // (SDK doesn't translate providerOptions to cache_control for these)
         // Use getProviderFetch to preserve any user-configured custom fetch (e.g., proxies)
         const baseFetch = getProviderFetch(providerConfig);
-        const fetchWithCacheControl = wrapFetchWithAnthropicCacheControl(baseFetch);
+        const fetchWithCacheControl = wrapFetchWithAnthropicCacheControl(
+          baseFetch,
+          effectiveAnthropicCacheTtl
+        );
         const provider = createAnthropic({
           ...normalizedConfig,
           fetch: fetchWithCacheControl,
@@ -1010,7 +1079,7 @@ export class ProviderModelFactory {
         const baseFetch = getProviderFetch(providerConfig);
         const isAnthropicModel = modelId.startsWith("anthropic/");
         const fetchWithCacheControl = isAnthropicModel
-          ? wrapFetchWithAnthropicCacheControl(baseFetch)
+          ? wrapFetchWithAnthropicCacheControl(baseFetch, effectiveAnthropicCacheTtl)
           : baseFetch;
         const fetchWithAutoLogout = wrapFetchWithMuxGatewayAutoLogout(
           fetchWithCacheControl,
@@ -1134,7 +1203,7 @@ export class ProviderModelFactory {
         provider: providerName,
       });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       return Err({ type: "unknown", raw: `Failed to create model: ${errorMessage}` });
     }
   }

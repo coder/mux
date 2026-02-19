@@ -28,6 +28,11 @@ describeIntegration("resumeStream", () => {
       const { env, workspaceId, cleanup } = await setupWorkspace("anthropic");
       const collector1 = createStreamCollector(env.orpc, workspaceId);
       collector1.start();
+      // Wait until the onChat subscription is fully established before sending.
+      // Without this guard, the initial history replay can race with the live user
+      // message append and emit the same user message twice in collector1.
+      await collector1.waitForSubscription(10000);
+
       try {
         // Ensure the onChat subscription has finished history replay before we send a new message.
         // Otherwise the user message can appear twice (once from live events, once from replay).

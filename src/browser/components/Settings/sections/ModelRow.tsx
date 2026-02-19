@@ -160,7 +160,10 @@ export interface ModelRowProps {
   isCustom: boolean;
   isDefault: boolean;
   isEditing: boolean;
-  editValue?: string;
+  editModelValue?: string;
+  editContextValue?: string;
+  editAutofocus?: "model" | "context";
+  customContextWindowTokens?: number | null;
   editError?: string | null;
   saving?: boolean;
   hasActiveEdit?: boolean;
@@ -172,9 +175,11 @@ export interface ModelRowProps {
   isHiddenFromSelector?: boolean;
   onSetDefault: () => void;
   onStartEdit?: () => void;
+  onStartContextEdit?: () => void;
   onSaveEdit?: () => void;
   onCancelEdit?: () => void;
-  onEditChange?: (value: string) => void;
+  onEditModelChange?: (value: string) => void;
+  onEditContextChange?: (value: string) => void;
   onRemove?: () => void;
   /** Toggle gateway mode for this model */
   onToggleGateway?: () => void;
@@ -186,6 +191,8 @@ export interface ModelRowProps {
 
 export function ModelRow(props: ModelRowProps) {
   const stats = getModelStats(props.fullId);
+
+  const contextBaseTokens = props.customContextWindowTokens ?? stats?.max_input_tokens ?? null;
 
   // Editing mode - render as a full-width row
   if (props.isEditing) {
@@ -200,14 +207,28 @@ export function ModelRow(props: ModelRowProps) {
             />
             <input
               type="text"
-              value={props.editValue ?? props.modelId}
-              onChange={(e) => props.onEditChange?.(e.target.value)}
+              value={props.editModelValue ?? props.modelId}
+              onChange={(e) => props.onEditModelChange?.(e.target.value)}
               onKeyDown={createEditKeyHandler({
                 onSave: () => props.onSaveEdit?.(),
                 onCancel: () => props.onCancelEdit?.(),
               })}
               className="bg-modal-bg border-border-medium focus:border-accent min-w-0 flex-1 rounded border px-2 py-0.5 font-mono text-xs focus:outline-none"
-              autoFocus
+              autoFocus={props.editAutofocus !== "context"}
+            />
+            <input
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={props.editContextValue ?? ""}
+              onChange={(e) => props.onEditContextChange?.(e.target.value)}
+              onKeyDown={createEditKeyHandler({
+                onSave: () => props.onSaveEdit?.(),
+                onCancel: () => props.onCancelEdit?.(),
+              })}
+              className="bg-modal-bg border-border-medium focus:border-accent w-28 shrink-0 rounded border px-2 py-0.5 text-right font-mono text-xs focus:outline-none"
+              placeholder="context"
+              autoFocus={props.editAutofocus === "context"}
             />
             <Button
               variant="ghost"
@@ -266,16 +287,44 @@ export function ModelRow(props: ModelRowProps) {
 
       {/* Context Window — inline slider for models that support 1M context */}
       <td className="w-16 py-1.5 pr-2 md:w-20">
-        {props.onToggle1MContext && stats ? (
+        {props.onToggle1MContext && contextBaseTokens ? (
           <ContextWindowSlider
-            baseTokens={stats.max_input_tokens}
+            baseTokens={contextBaseTokens}
             enabled={props.is1MContextEnabled ?? false}
             onToggle={props.onToggle1MContext}
           />
-        ) : (
+        ) : !stats && props.onStartContextEdit ? (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              props.onStartContextEdit?.();
+            }}
+            disabled={Boolean(props.saving) || Boolean(props.hasActiveEdit)}
+            className="text-muted hover:text-foreground ml-auto block text-right text-xs disabled:cursor-not-allowed disabled:opacity-60"
+            aria-label="Edit context window"
+          >
+            {contextBaseTokens ? formatTokenCount(contextBaseTokens) : "—"}
+          </button>
+        ) : contextBaseTokens ? (
           <span className="text-muted block text-right text-xs">
-            {stats ? formatTokenCount(stats.max_input_tokens) : "—"}
+            {formatTokenCount(contextBaseTokens)}
           </span>
+        ) : props.onStartContextEdit ? (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              props.onStartContextEdit?.();
+            }}
+            disabled={Boolean(props.saving) || Boolean(props.hasActiveEdit)}
+            className="text-muted hover:text-foreground ml-auto block text-right text-xs disabled:cursor-not-allowed disabled:opacity-60"
+            aria-label="Edit context window"
+          >
+            —
+          </button>
+        ) : (
+          <span className="text-muted block text-right text-xs">—</span>
         )}
       </td>
 

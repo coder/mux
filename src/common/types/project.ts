@@ -53,6 +53,12 @@ export interface ProjectsConfig {
   /** SSH hostname/alias for this machine (used for editor deep links in browser mode) */
   serverSshHost?: string;
   /**
+   * Optional GitHub username allowed to authenticate server/browser mode via Device Flow.
+   *
+   * When unset, GitHub login is disabled and token-only auth remains in effect.
+   */
+  serverAuthGithubOwner?: string;
+  /**
    * Default parent directory for new projects (cloning and bare-name creation).
    *
    * When unset, falls back to getMuxProjectsDir() (~/.mux/projects).
@@ -108,4 +114,14 @@ export interface ProjectsConfig {
    * Stored as `false` only (undefined behaves as true) to keep config.json minimal.
    */
   stopCoderWorkspaceOnArchive?: boolean;
+
+  /**
+   * Override the default shell for local integrated terminals.
+   *
+   * When set, all local terminals (not SSH/Docker/Devcontainer) spawn this shell
+   * instead of auto-detecting from $SHELL or platform defaults.
+   *
+   * Accepts an absolute path (e.g. "/usr/bin/fish") or a command name (e.g. "fish").
+   */
+  terminalDefaultShell?: string;
 }

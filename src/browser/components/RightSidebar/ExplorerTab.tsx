@@ -37,6 +37,7 @@ import {
   parseGitCheckIgnoreOutput,
   type GitStatusResult,
 } from "@/browser/utils/fileExplorer";
+import { getErrorMessage } from "@/common/utils/errors";
 
 interface ExplorerTabProps {
   workspaceId: string;
@@ -274,7 +275,7 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
             ...prev,
             entries: newEntries,
             loading: new Set([...prev.loading].filter((k) => k !== key)),
-            error: suppressErrors ? prev.error : err instanceof Error ? err.message : String(err),
+            error: suppressErrors ? prev.error : getErrorMessage(err),
           };
         });
         return null;

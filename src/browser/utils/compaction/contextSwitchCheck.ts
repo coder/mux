@@ -61,7 +61,7 @@ function resolveCompactionModel(
       providersConfig: options.providersConfig,
       policy: options.policy,
     });
-    const limit = getEffectiveContextLimit(preferred, use1M);
+    const limit = getEffectiveContextLimit(preferred, use1M, options.providersConfig);
     if (accessible && limit && limit > currentTokens) return preferred;
   }
   if (previousModel) {
@@ -70,7 +70,7 @@ function resolveCompactionModel(
       providersConfig: options.providersConfig,
       policy: options.policy,
     });
-    const limit = getEffectiveContextLimit(previousModel, use1M);
+    const limit = getEffectiveContextLimit(previousModel, use1M, options.providersConfig);
     if (accessible && limit && limit > currentTokens) return previousModel;
   }
   return null;
@@ -100,7 +100,7 @@ export function checkContextSwitch(
     return null;
   }
 
-  const targetLimit = getEffectiveContextLimit(targetModel, use1M);
+  const targetLimit = getEffectiveContextLimit(targetModel, use1M, options.providersConfig);
 
   // Unknown model or context fits with 10% buffer - no warning
   if (!targetLimit || currentTokens <= targetLimit * CONTEXT_FIT_THRESHOLD) {

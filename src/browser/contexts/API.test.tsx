@@ -38,6 +38,9 @@ class MockWebSocket {
   simulateError() {
     this.eventListeners.get("error")?.forEach((h) => h());
   }
+  simulateMessage(data: unknown = "data") {
+    this.eventListeners.get("message")?.forEach((h) => h({ data }));
+  }
 
   static reset() {
     MockWebSocket.instances = [];
@@ -46,6 +49,10 @@ class MockWebSocket {
   static lastInstance(): MockWebSocket | undefined {
     return MockWebSocket.instances[MockWebSocket.instances.length - 1];
   }
+}
+
+function createOrpcPongResponseFrame(id: number): string {
+  return JSON.stringify({ i: id, p: { b: "pong" } });
 }
 
 const originalFetch = globalThis.fetch;
@@ -436,6 +443,168 @@ describe("API reconnection", () => {
     const authRequiredAfterConnected = states.slice(states.indexOf("connected") + 1);
     expect(authRequiredAfterConnected.filter((s) => s === "auth_required")).toHaveLength(0);
   });
+  test(
+    "treats active inbound traffic as healthy and skips liveness pings",
+    async () => {
+      let pingCallCount = 0;
+      pingImpl = () => {
+        pingCallCount++;
+        return Promise.resolve("pong");
+      };
+
+      render(
+        <APIProvider createWebSocket={createMockWebSocket}>
+          <APIStateObserver onState={() => undefined} />
+        </APIProvider>
+      );
+
+      const ws1 = MockWebSocket.lastInstance();
+      expect(ws1).toBeDefined();
+
+      await act(async () => {
+        ws1!.simulateOpen();
+        await new Promise((r) => setTimeout(r, 10));
+      });
+
+      // Initial auth-check ping should run once on connect.
+      expect(pingCallCount).toBe(1);
+
+      // Keep inbound traffic flowing so the provider can infer liveness without adding
+      // more ping load to an already busy socket.
+      const messageInterval = setInterval(() => {
+        ws1!.simulateMessage({ type: "stream-delta" });
+      }, 250);
+
+      try {
+        await new Promise((r) => setTimeout(r, 6200));
+        expect(pingCallCount).toBe(1);
+      } finally {
+        clearInterval(messageInterval);
+      }
+
+      // Once traffic stops, periodic liveness pings should resume.
+      await waitFor(
+        () => {
+          expect(pingCallCount).toBeGreaterThan(1);
+        },
+        { timeout: 6000 }
+      );
+    },
+    { timeout: 15000 }
+  );
+  test(
+    "counts stream traffic while liveness probes are in flight",
+    async () => {
+      let pingCallCount = 0;
+      let isAuthCheck = true;
+
+      pingImpl = () => {
+        pingCallCount++;
+
+        if (isAuthCheck) {
+          isAuthCheck = false;
+          return Promise.resolve("pong");
+        }
+
+        // Keep liveness probes pending long enough to overlap with the next interval.
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            resolve("pong");
+          }, 9000);
+        });
+      };
+
+      render(
+        <APIProvider createWebSocket={createMockWebSocket}>
+          <APIStateObserver onState={() => undefined} />
+        </APIProvider>
+      );
+
+      const ws1 = MockWebSocket.lastInstance();
+      expect(ws1).toBeDefined();
+
+      await act(async () => {
+        ws1!.simulateOpen();
+        await new Promise((r) => setTimeout(r, 10));
+      });
+
+      await waitFor(
+        () => {
+          expect(pingCallCount).toBeGreaterThanOrEqual(2);
+        },
+        { timeout: 7000 }
+      );
+
+      const pingCallsWhenProbeStarted = pingCallCount;
+
+      const messageInterval = setInterval(() => {
+        ws1!.simulateMessage({ type: "stream-delta" });
+      }, 250);
+
+      try {
+        await new Promise((r) => setTimeout(r, 6000));
+      } finally {
+        clearInterval(messageInterval);
+      }
+
+      // Stream traffic during an in-flight probe should keep the connection healthy and
+      // suppress additional liveness probes for the next interval.
+      expect(pingCallCount).toBe(pingCallsWhenProbeStarted);
+    },
+    { timeout: 20000 }
+  );
+
+  test(
+    "does not treat delayed liveness ping replies as stream traffic",
+    async () => {
+      const states: string[] = [];
+      let pingCallCount = 0;
+      let activeSocket: MockWebSocket | null = null;
+
+      pingImpl = () => {
+        pingCallCount++;
+
+        // Simulate a slow liveness probe where the response arrives after timeout.
+        // The delayed reply is emitted as a WS message to mimic network delivery.
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            activeSocket?.simulateMessage(createOrpcPongResponseFrame(pingCallCount));
+            resolve("pong");
+          }, 3500);
+        });
+      };
+
+      render(
+        <APIProvider createWebSocket={createMockWebSocket}>
+          <APIStateObserver onState={(s) => states.push(s.status)} />
+        </APIProvider>
+      );
+
+      const ws1 = MockWebSocket.lastInstance();
+      expect(ws1).toBeDefined();
+      activeSocket = ws1!;
+
+      act(() => {
+        ws1!.simulateOpen();
+      });
+
+      await waitFor(
+        () => {
+          expect(states).toContain("connected");
+        },
+        { timeout: 7000 }
+      );
+
+      const pingCallsAfterAuthCheck = pingCallCount;
+      expect(pingCallsAfterAuthCheck).toBe(1);
+
+      // Wait long enough for two liveness intervals. If delayed ping replies were counted
+      // as stream traffic, the second interval would be skipped and this count would stay low.
+      await new Promise((r) => setTimeout(r, 12000));
+      expect(pingCallCount).toBeGreaterThanOrEqual(pingCallsAfterAuthCheck + 2);
+    },
+    { timeout: 25000 }
+  );
 
   test("does not flicker into reconnecting when auth is rejected by ping", async () => {
     const states: string[] = [];

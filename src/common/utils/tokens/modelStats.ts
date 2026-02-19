@@ -21,29 +21,44 @@ interface RawModelData {
   [key: string]: unknown;
 }
 
+const PROVIDER_KEY_ALIASES: Record<string, string> = {
+  // GitHub Copilot keys in models.json use underscores for LiteLLM provider names.
+  "github-copilot": "github_copilot",
+};
+
+function parseNum(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number(value.replace(/,/g, "").trim());
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
 /**
  * Validates raw model data has required fields
  */
 function isValidModelData(data: RawModelData): boolean {
-  return (
-    typeof data.max_input_tokens === "number" &&
-    typeof data.input_cost_per_token === "number" &&
-    typeof data.output_cost_per_token === "number"
-  );
+  const maxInputTokens = parseNum(data.max_input_tokens);
+  return maxInputTokens != null && maxInputTokens > 0;
 }
 
 /**
  * Extracts ModelStats from validated raw data
  */
 function extractModelStats(data: RawModelData): ModelStats {
-  // Type assertions are safe here because isValidModelData() already validated these fields
-  /* eslint-disable @typescript-eslint/non-nullable-type-assertion-style */
   return {
-    max_input_tokens: data.max_input_tokens as number,
-    max_output_tokens:
-      typeof data.max_output_tokens === "number" ? data.max_output_tokens : undefined,
-    input_cost_per_token: data.input_cost_per_token as number,
-    output_cost_per_token: data.output_cost_per_token as number,
+    max_input_tokens: parseNum(data.max_input_tokens) ?? 0,
+    max_output_tokens: parseNum(data.max_output_tokens) ?? undefined,
+    // Subscription providers like GitHub Copilot omit per-token costs.
+    input_cost_per_token:
+      typeof data.input_cost_per_token === "number" ? data.input_cost_per_token : 0,
+    output_cost_per_token:
+      typeof data.output_cost_per_token === "number" ? data.output_cost_per_token : 0,
     cache_creation_input_token_cost:
       typeof data.cache_creation_input_token_cost === "number"
         ? data.cache_creation_input_token_cost
@@ -53,7 +68,6 @@ function extractModelStats(data: RawModelData): ModelStats {
         ? data.cache_read_input_token_cost
         : undefined,
   };
-  /* eslint-enable @typescript-eslint/non-nullable-type-assertion-style */
 }
 
 /**
@@ -64,25 +78,23 @@ function generateLookupKeys(modelString: string): string[] {
   const colonIndex = modelString.indexOf(":");
   const provider = colonIndex !== -1 ? modelString.slice(0, colonIndex) : "";
   const modelName = colonIndex !== -1 ? modelString.slice(colonIndex + 1) : modelString;
+  const litellmProvider = PROVIDER_KEY_ALIASES[provider] ?? provider;
 
-  const keys: string[] = [
-    modelName, // Direct model name (e.g., "claude-opus-4-1")
-  ];
+  const keys: string[] = [];
 
-  // Add provider-prefixed variants for Ollama and other providers
+  // Prefer provider-scoped matches first so provider-specific limits win over generic entries.
   if (provider) {
-    keys.push(
-      `${provider}/${modelName}`, // "ollama/gpt-oss:20b"
-      `${provider}/${modelName}-cloud` // "ollama/gpt-oss:20b-cloud" (LiteLLM convention)
-    );
+    keys.push(`${litellmProvider}/${modelName}`, `${litellmProvider}/${modelName}-cloud`);
 
     // Fallback: strip size suffix for base model lookup
     // "ollama:gpt-oss:20b" → "ollama/gpt-oss"
     if (modelName.includes(":")) {
       const baseModel = modelName.split(":")[0];
-      keys.push(`${provider}/${baseModel}`);
+      keys.push(`${litellmProvider}/${baseModel}`);
     }
   }
+
+  keys.push(modelName);
 
   return keys;
 }
