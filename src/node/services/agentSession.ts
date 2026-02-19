@@ -2051,7 +2051,8 @@ export class AgentSession {
     // an actor turn first. The actor works on the task, then
     // maybeContinueActorCriticLoop fires the critic evaluation automatically.
     let streamOptions: SendMessageOptions;
-    let seededMessageId: string | undefined;
+    // Track seeded message for rollback if stream fails to start
+    let seededMessage: MuxMessage | undefined;
     if (isEmptyHistory) {
       const promptText = options.criticPrompt?.trim();
       if (!promptText) {
@@ -2061,17 +2062,18 @@ export class AgentSession {
         });
       }
 
+      // Don't mark as synthetic — the prompt is user-authored content that downstream
+      // recovery logic (e.g. maybeRetryExecSubagentHardRestart) should treat as replayable.
       const userMessage = createMuxMessage(createUserMessageId(), "user", promptText, {
         timestamp: Date.now(),
-        synthetic: true,
-        uiVisible: true,
       });
       const appendResult = await this.historyService.appendToHistory(this.workspaceId, userMessage);
       if (!appendResult.success) {
         return Err(createUnknownSendMessageError(appendResult.error));
       }
+      // appendToHistory mutates the message in place, setting historySequence
       this.emitChatEvent({ ...userMessage, type: "message" });
-      seededMessageId = userMessage.id;
+      seededMessage = userMessage;
 
       streamOptions = actorOptions;
     } else {
@@ -2084,9 +2086,14 @@ export class AgentSession {
       if (!result.success) {
         // Roll back the seeded prompt so retries still see empty history and
         // take the actor-first path instead of starting a critic turn against
-        // a transcript with no actor response.
-        if (seededMessageId) {
-          await this.historyService.deleteMessage(this.workspaceId, seededMessageId);
+        // a transcript with no actor response. Also emit a delete event so the
+        // UI removes the ghost message that was emitted before the stream attempt.
+        if (seededMessage) {
+          const seq = seededMessage.metadata?.historySequence;
+          await this.historyService.deleteMessage(this.workspaceId, seededMessage.id);
+          if (seq != null) {
+            this.emitChatEvent({ type: "delete", historySequences: [seq] });
+          }
         }
         return result;
       }
