@@ -509,13 +509,25 @@ function joinPositionalMessageTokens(
 
   const normalizedTokens: string[] = [];
   for (const token of tokens) {
-    if (typeof token !== "string") {
+    let tokenText: string;
+    if (typeof token === "string") {
+      tokenText = token;
+    } else if (typeof token === "number") {
+      if (!Number.isFinite(token)) {
+        return {
+          error: `Unexpected argument "${String(token)}". Usage: ${usage}`,
+        };
+      }
+      tokenText = String(token);
+    } else if (typeof token === "boolean" || typeof token === "bigint") {
+      tokenText = String(token);
+    } else {
       return {
         error: `Unexpected argument "${String(token)}". Usage: ${usage}`,
       };
     }
 
-    const trimmedToken = token.trim();
+    const trimmedToken = tokenText.trim();
     if (trimmedToken.length === 0) {
       continue;
     }

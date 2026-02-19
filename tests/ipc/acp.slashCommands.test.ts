@@ -84,6 +84,20 @@ describe("ACP slash command support", () => {
     expect(parsed.continueMessage).toBe("Continue with focused tests");
   });
 
+  it("parses /compact one-line follow-up containing numbers", () => {
+    const parsed = parseAcpSlashCommand(
+      "/compact -t 1200 continue in 2 steps",
+      mapSkillsByName(skills)
+    );
+
+    expect(parsed?.kind).toBe("compact");
+    if (parsed == null || parsed.kind !== "compact") {
+      throw new Error("Expected numeric one-line /compact command to parse");
+    }
+
+    expect(parsed.continueMessage).toBe("continue in 2 steps");
+  });
+
   it("rejects invalid /new runtime arguments", () => {
     const invalid = parseAcpSlashCommand("/new feature-branch -r ssh", mapSkillsByName(skills));
     expect(invalid?.kind).toBe("invalid");
@@ -122,6 +136,21 @@ describe("ACP slash command support", () => {
     expect(parsed.trunkBranch).toBe("main");
     expect(parsed.runtimeConfig?.type).toBe("ssh");
     expect(parsed.startMessage).toBe("start by summarizing the branch");
+  });
+
+  it("parses /new one-line start message containing numbers", () => {
+    const parsed = parseAcpSlashCommand(
+      "/new feature-branch start with step 1",
+      mapSkillsByName(skills)
+    );
+
+    expect(parsed?.kind).toBe("new");
+    if (parsed == null || parsed.kind !== "new") {
+      throw new Error("Expected numeric one-line /new command to parse");
+    }
+
+    expect(parsed.workspaceName).toBe("feature-branch");
+    expect(parsed.startMessage).toBe("start with step 1");
   });
 
   it("maps skill slash commands to formatted prompts", () => {
