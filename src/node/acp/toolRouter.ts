@@ -7,6 +7,7 @@ import type {
 } from "@agentclientprotocol/sdk";
 import type { RuntimeMode } from "../../common/types/runtime";
 import { handleStringReplace } from "../services/tools/file_edit_replace_shared";
+import { toBashTaskId } from "../services/tools/taskId";
 
 // Defined locally while ACP capability negotiation modules are developed.
 interface NegotiatedCapabilities {
@@ -183,16 +184,33 @@ export class ToolRouter {
 
     if (isTerminalTool(normalizedToolName)) {
       const startedAt = Date.now();
+      const runInBackground =
+        normalizedToolName === "bash" &&
+        (getOptionalBoolean(params, "run_in_background", toolName) ?? false);
 
       try {
-        await using terminal = await this.connection.createTerminal(
+        const terminal = await this.connection.createTerminal(
           this.buildCreateTerminalRequest(sessionId, params, toolName)
         );
+        const processId = terminal.id.trim();
+        assert(processId.length > 0, "delegateToEditor: terminal id must be non-empty");
 
-        const [exitStatus, currentOutput] = await Promise.all([
-          terminal.waitForExit(),
-          terminal.currentOutput(),
-        ]);
+        // Keep the terminal handle alive for background execution.
+        // Disposing it here would kill the child process immediately.
+        if (runInBackground) {
+          return {
+            success: true,
+            output: `Background process started with ID: ${processId}`,
+            exitCode: 0,
+            wall_duration_ms: Date.now() - startedAt,
+            taskId: toBashTaskId(processId),
+            backgroundProcessId: processId,
+          };
+        }
+
+        await using foregroundTerminal = terminal;
+        const exitStatus = await foregroundTerminal.waitForExit();
+        const currentOutput = await foregroundTerminal.currentOutput();
 
         const wallDurationMs = Date.now() - startedAt;
         const exitCode =
@@ -557,6 +575,23 @@ function getOptionalNumber(
       `ToolRouter: ${toolName} parameter '${key}' must be a finite number when provided`
     );
   }
+  return value;
+}
+
+function getOptionalBoolean(
+  params: Record<string, unknown>,
+  key: string,
+  toolName: string
+): boolean | undefined {
+  const value = params[key];
+  if (value == null) {
+    return undefined;
+  }
+
+  if (typeof value !== "boolean") {
+    throw new Error(`ToolRouter: ${toolName} parameter '${key}' must be a boolean when provided`);
+  }
+
   return value;
 }
 

@@ -97,6 +97,78 @@ describe("ACP ToolRouter", () => {
     );
   });
 
+  it("reads terminal output after delegated command exit", async () => {
+    let waitForExitResolved = false;
+    const callOrder: string[] = [];
+
+    const { router } = createRouter({
+      createTerminal: async () => ({
+        id: "term-1",
+        currentOutput: async () => {
+          callOrder.push("currentOutput");
+          return {
+            output: waitForExitResolved ? "final output\n" : "stale output\n",
+            truncated: false,
+          };
+        },
+        waitForExit: async () => {
+          callOrder.push("waitForExit");
+          waitForExitResolved = true;
+          return { exitCode: 0 };
+        },
+        release: async () => undefined,
+        [Symbol.asyncDispose]: async () => undefined,
+      }),
+    });
+
+    const result = await router.delegateToEditor("session-1", "bash", {
+      script: "echo hello",
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      output: "final output\n",
+      exitCode: 0,
+    });
+    expect(callOrder).toEqual(["waitForExit", "currentOutput"]);
+  });
+
+  it("honors run_in_background for delegated bash calls", async () => {
+    let waitForExitCalls = 0;
+    let currentOutputCalls = 0;
+
+    const { router } = createRouter({
+      createTerminal: async () => ({
+        id: "bg-123",
+        currentOutput: async () => {
+          currentOutputCalls += 1;
+          return { output: "", truncated: false };
+        },
+        waitForExit: async () => {
+          waitForExitCalls += 1;
+          return { exitCode: 0 };
+        },
+        release: async () => undefined,
+        [Symbol.asyncDispose]: async () => undefined,
+      }),
+    });
+
+    const result = await router.delegateToEditor("session-1", "bash", {
+      script: "bun run dev",
+      run_in_background: true,
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      output: "Background process started with ID: bg-123",
+      exitCode: 0,
+      taskId: "bash:bg-123",
+      backgroundProcessId: "bg-123",
+    });
+    expect(waitForExitCalls).toBe(0);
+    expect(currentOutputCalls).toBe(0);
+  });
+
   it("delegates file_edit_replace_string through editor fs read/write", async () => {
     const { router, writeCalls } = createRouter({
       readTextFile: async () => ({ content: "hello world" }),
