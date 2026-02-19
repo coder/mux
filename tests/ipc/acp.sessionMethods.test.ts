@@ -11,6 +11,7 @@ interface HarnessOptions {
   archivedWorkspaces?: WorkspaceInfo[];
   workspaceActivity?: WorkspaceActivityById;
   onChatEvents?: WorkspaceChatMessage[];
+  onChatStream?: AsyncIterable<WorkspaceChatMessage>;
 }
 
 interface Harness {
@@ -52,6 +53,7 @@ function createHarness(options?: HarnessOptions): Harness {
   const archivedWorkspaces = options?.archivedWorkspaces ?? [];
   const workspaceActivity = options?.workspaceActivity ?? {};
   const onChatEvents = options?.onChatEvents ?? [];
+  const sharedOnChatStream = options?.onChatStream;
 
   const allWorkspacesById = new Map<string, WorkspaceInfo>();
   for (const workspace of [...activeWorkspaces, ...archivedWorkspaces]) {
@@ -74,7 +76,7 @@ function createHarness(options?: HarnessOptions): Harness {
         allWorkspacesById.get(workspaceId) ?? null,
       onChat: async (input: { workspaceId: string; mode?: OnChatMode }) => {
         onChatCalls.push(input);
-        return createChatStream(onChatEvents);
+        return sharedOnChatStream ?? createChatStream(onChatEvents);
       },
     } as ORPCClient["workspace"],
     agentSkills: {
@@ -124,6 +126,21 @@ async function* createChatStream(
   }
 }
 
+function createNeverEndingChatStream(
+  seedEvents: WorkspaceChatMessage[] = []
+): AsyncIterable<WorkspaceChatMessage> {
+  return {
+    async *[Symbol.asyncIterator](): AsyncIterator<WorkspaceChatMessage> {
+      for (const event of seedEvents) {
+        yield event;
+      }
+
+      await new Promise<never>(() => {
+        // Keep stream open to simulate an existing active subscription.
+      });
+    },
+  };
+}
 describe("ACP unstable session support", () => {
   it("advertises unstable list/fork/resume session capabilities", async () => {
     const harness = createHarness();
@@ -280,5 +297,43 @@ describe("ACP unstable session support", () => {
       workspaceId: "ws-resume",
       mode: { type: "live" },
     });
+  });
+
+  it("updates cached onChat mode even when a subscription already exists", async () => {
+    const workspace = createWorkspaceInfo({
+      id: "ws-live-to-full",
+      projectPath: "/repo/resume",
+      namedWorkspacePath: "/repo/resume/.mux/ws-live-to-full",
+    });
+
+    const harness = createHarness({
+      activeWorkspaces: [workspace],
+      onChatStream: createNeverEndingChatStream([{ type: "caught-up" } as WorkspaceChatMessage]),
+    });
+
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    await harness.agent.unstable_resumeSession({
+      sessionId: "ws-live-to-full",
+      cwd: "/repo/resume",
+      mcpServers: [],
+    });
+
+    const modeMap = (
+      harness.agent as unknown as {
+        onChatModeBySessionId: Map<string, OnChatMode>;
+      }
+    ).onChatModeBySessionId;
+
+    expect(modeMap.get("ws-live-to-full")).toEqual({ type: "live" });
+
+    await harness.agent.loadSession({
+      sessionId: "ws-live-to-full",
+      cwd: "/repo/resume",
+      mcpServers: [],
+    });
+
+    expect(modeMap.get("ws-live-to-full")).toEqual({ type: "full" });
+    expect(harness.onChatCalls).toHaveLength(1);
   });
 });

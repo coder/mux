@@ -356,7 +356,6 @@ describe("ACP prompt stream correlation", () => {
       messageId: "assistant-other",
       error: "runtime unavailable",
       errorType: "runtime_not_ready",
-      acpPromptId: "unrelated-prompt-id",
     } as WorkspaceChatMessage);
 
     await new Promise((resolve) => setTimeout(resolve, 25));

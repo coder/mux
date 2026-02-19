@@ -139,12 +139,6 @@ export class MuxAgent implements Agent {
   private readonly chatSubscriptionReady = new Map<string, Promise<void>>();
   private readonly turnCompletions = new Map<string, TurnCompletion>();
   private readonly latestUsageBySessionId = new Map<string, Usage>();
-  /**
-   * Tracks the last messageId we saw via `stream-start` for each session.
-   * Used to distinguish prior-stream abort/error events from events belonging
-   * to a freshly queued (but not yet identified) turn.
-   */
-  private readonly lastStreamMessageIdBySession = new Map<string, string>();
   private inFlightNewSessionCount = 0;
   private disconnectCleanupPromise: Promise<void> | null = null;
   private readonly disconnectCleanupMaxWaitMs: number;
@@ -1042,6 +1036,11 @@ export class MuxAgent implements Agent {
     workspaceId: string,
     onChatMode: OnChatMode
   ): Promise<void> {
+    // Always persist the latest desired replay mode, even when an existing
+    // subscription is already connected. Future reconnects should honor the
+    // most recent caller intent (e.g., loadSession full vs resumeSession live).
+    this.onChatModeBySessionId.set(sessionId, onChatMode);
+
     // If a subscription is already being established, wait for it to become
     // connected rather than returning immediately.  This prevents callers
     // (e.g., prompt after session load) from racing ahead of the onChat attach.
@@ -1050,8 +1049,6 @@ export class MuxAgent implements Agent {
       await existingReady;
       return;
     }
-
-    this.onChatModeBySessionId.set(sessionId, onChatMode);
 
     // `connectedPromise` resolves once `onChat` returns the async iterable,
     // signalling the subscription is live.  If `onChat` fails before the
@@ -1135,11 +1132,6 @@ export class MuxAgent implements Agent {
     // event) to avoid binding to a stale in-flight message when the workspace
     // has queued the new prompt behind a still-running stream.
     if (event.type === "stream-start") {
-      // Always record the latest stream-start messageId so that
-      // isActiveTurnMessageOrPending can distinguish prior-stream
-      // abort/error events from events for a pending turn.
-      this.lastStreamMessageIdBySession.set(sessionId, event.messageId);
-
       const completion = this.turnCompletions.get(sessionId);
       // Reconnect replay can emit a prior message's stream-start while a new
       // prompt is pending. Only bind starts that carry this turn's correlation id.
@@ -1241,14 +1233,11 @@ export class MuxAgent implements Agent {
     return completion.messageId === eventMessageId;
   }
   /**
-   * Like `isActiveTurnMessage` but also returns `true` when the turn exists
-   * but hasn't been identified yet (messageId is null).  Used for error/abort
-   * events that must be processed even before `stream-start` arrives.
+   * Like `isActiveTurnMessage` but also supports pre-stream terminal events.
    *
-   * When the turn is pending (messageId not yet set), we reject events whose
-   * messageId matches the most recent `stream-start` we recorded — those
-   * belong to a prior stream, not to the freshly queued prompt.  Only truly
-   * unknown messageIds (or sessions with no prior stream) pass through.
+   * Pending turns (messageId not yet known) only accept terminal events that
+   * carry a matching ACP prompt correlation id. This prevents unrelated streams
+   * in shared workspaces from cancelling/rejecting the current prompt.
    */
   private isActiveTurnMessageOrPending(
     sessionId: string,
@@ -1264,18 +1253,11 @@ export class MuxAgent implements Agent {
       return completion.messageId === eventMessageId;
     }
 
-    // For pending turns, prefer explicit ACP correlation ids when available.
-    if (eventPromptCorrelationId != null) {
-      return eventPromptCorrelationId === completion.promptCorrelationId;
-    }
-
-    // Fallback for legacy events that do not yet include ACP correlation metadata.
-    // Reject events from a known prior stream to avoid stale abort/error updates.
-    const lastKnown = this.lastStreamMessageIdBySession.get(sessionId);
-    if (lastKnown != null && eventMessageId === lastKnown) {
-      return false;
-    }
-    return true;
+    // Pending turn: require explicit correlation id match.
+    return (
+      eventPromptCorrelationId != null &&
+      eventPromptCorrelationId === completion.promptCorrelationId
+    );
   }
 
   private resolveTurn(sessionId: string, result: TurnResult): void {
