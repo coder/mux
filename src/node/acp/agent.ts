@@ -37,6 +37,7 @@ import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { CompactionRequestData } from "@/common/types/message";
 import { buildAgentSkillMetadata } from "@/common/types/message";
 import { isWorktreeRuntime, type RuntimeConfig, type RuntimeMode } from "@/common/types/runtime";
+import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 import { negotiateCapabilities, type NegotiatedCapabilities } from "./capabilities";
 import { AGENT_MODE_CONFIG_ID, buildConfigOptions, handleSetConfigOption } from "./configOptions";
 import { forkSessionFromWorkspace } from "./experimental/sessionFork";
@@ -1185,8 +1186,35 @@ export class MuxAgent implements Agent {
       mode: onChatMode,
     });
     onConnected();
-    const observedStream = this.observeChatStream(sessionId, chatStream);
-    await this.streamTranslator.consumeAndForward(sessionId, observedStream);
+
+    // Decouple turn resolution from sessionUpdate writes.
+    // handleStreamEvent must fire for every event regardless of stdout
+    // backpressure. Without this decoupling, stream-end can stall behind
+    // a blocked sessionUpdate write, preventing resolveTurn from firing
+    // and causing prompt() to hang indefinitely.
+    const { push, iterate, end } = createAsyncMessageQueue<WorkspaceChatMessage>();
+
+    // Drain the oRPC stream: observe events for turn resolution, buffer
+    // for translation. push() is non-blocking so handleStreamEvent always
+    // runs immediately — even when consumeAndForward is blocked on stdout.
+    const drainPromise = (async () => {
+      try {
+        for await (const event of chatStream) {
+          this.handleStreamEvent(sessionId, event);
+          push(event);
+        }
+      } finally {
+        end();
+      }
+    })();
+
+    // Forward buffered events as ACP session updates (may block on
+    // stdout backpressure — that's fine, the queue absorbs the gap).
+    await this.streamTranslator.consumeAndForward(sessionId, iterate());
+
+    // Wait for oRPC drain to complete (usually already done when
+    // consumeAndForward exits, but guards against edge cases).
+    await drainPromise;
 
     // If the stream ends without a terminal event (e.g., transient transport
     // closure), reject any pending turn so `prompt()` doesn't hang forever.
@@ -1194,16 +1222,6 @@ export class MuxAgent implements Agent {
       sessionId,
       new Error("Chat stream ended unexpectedly without a terminal event")
     );
-  }
-
-  private async *observeChatStream(
-    sessionId: string,
-    chatStream: AsyncIterable<WorkspaceChatMessage>
-  ): AsyncIterable<WorkspaceChatMessage> {
-    for await (const event of chatStream) {
-      this.handleStreamEvent(sessionId, event);
-      yield event;
-    }
   }
 
   private handleStreamEvent(sessionId: string, event: WorkspaceChatMessage): void {

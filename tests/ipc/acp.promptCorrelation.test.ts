@@ -54,7 +54,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value != null && !Array.isArray(value);
 }
 
-function createControllableAcpStream(): {
+function createControllableAcpStream(options?: { output?: WritableStream<Uint8Array> }): {
   stream: ReturnType<typeof ndJsonStream>;
   closeInput: () => void;
 } {
@@ -65,7 +65,7 @@ function createControllableAcpStream(): {
     },
   });
 
-  const output = new WritableStream<Uint8Array>({});
+  const output = options?.output ?? new WritableStream<Uint8Array>({});
   return {
     stream: ndJsonStream(output, input),
     closeInput: () => {
@@ -125,6 +125,8 @@ interface HarnessOptions {
     message: string;
     options: Record<string, unknown>;
   }) => Promise<{ success: boolean; data?: unknown; error?: unknown }>;
+  /** Custom output WritableStream for simulating stdout backpressure. */
+  acpOutputStream?: WritableStream<Uint8Array>;
 }
 
 function createHarness(options?: HarnessOptions): Harness {
@@ -233,7 +235,9 @@ function createHarness(options?: HarnessOptions): Harness {
     close: async () => undefined,
   };
 
-  const { stream, closeInput } = createControllableAcpStream();
+  const { stream, closeInput } = createControllableAcpStream({
+    output: options?.acpOutputStream,
+  });
 
   let agentInstance: MuxAgent | null = null;
   const connection = new AgentSideConnection((connectionToAgent) => {
@@ -941,6 +945,106 @@ describe("ACP prompt stream correlation", () => {
     } as WorkspaceChatMessage);
 
     await expect(promptPromise).rejects.toThrow("runtime unavailable");
+
+    harness.closeConnection();
+    await harness.connectionClosed;
+  });
+
+  it("resolves prompt turn even when stdout backpressure blocks sessionUpdate writes", async () => {
+    // Simulate stdout backpressure: each sessionUpdate write is artificially
+    // slow. Without the asyncMessageQueue decoupling, stream-end would stall
+    // behind the blocked writes and prompt() would hang indefinitely.
+    let writeCount = 0;
+    const slowOutput = new WritableStream<Uint8Array>({
+      async write() {
+        writeCount++;
+        // 50ms per write — 20 events × 50ms = ~1s of backpressure, but
+        // prompt() should resolve as soon as stream-end is observed.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      },
+    });
+
+    const harness = createHarness({ acpOutputStream: slowOutput });
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    const session = await harness.agent.newSession({
+      cwd: "/repo/backpressure-test",
+      mcpServers: [],
+      _meta: { trunkBranch: "main" },
+    });
+
+    const promptPromise = harness.agent.prompt({
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "hello" }],
+    });
+
+    await waitForCondition(() => harness.sendMessageCalls.length === 1);
+
+    const firstSend = harness.sendMessageCalls[0];
+    const muxMetadata = firstSend.options["muxMetadata"];
+    if (!isRecord(muxMetadata)) {
+      throw new Error("Expected prompt send options to include muxMetadata record");
+    }
+
+    const promptCorrelationId = muxMetadata["acpPromptId"];
+    if (typeof promptCorrelationId !== "string") {
+      throw new Error("Expected prompt send options to include acpPromptId");
+    }
+
+    // Emit stream-start to bind the turn to a message
+    harness.pushChatEvent({
+      type: "stream-start",
+      workspaceId: session.sessionId,
+      messageId: "assistant-bp",
+      model: "anthropic:claude-sonnet-4-5",
+      historySequence: 2,
+      startTime: Date.now(),
+      acpPromptId: promptCorrelationId,
+    } as WorkspaceChatMessage);
+
+    // Flood 20 stream-delta events. Each translates to a sessionUpdate write
+    // that takes ~50ms, creating substantial backpressure.
+    for (let i = 0; i < 20; i++) {
+      harness.pushChatEvent({
+        type: "stream-delta",
+        workspaceId: session.sessionId,
+        messageId: "assistant-bp",
+        delta: `chunk-${i} `,
+        tokens: 1,
+        timestamp: Date.now(),
+      } as WorkspaceChatMessage);
+    }
+
+    // Emit stream-end. With the old observeChatStream approach, this event
+    // would be stuck behind the 20 blocked sessionUpdate writes, causing
+    // handleStreamEvent(stream-end) to never fire and prompt() to hang.
+    harness.pushChatEvent({
+      type: "stream-end",
+      workspaceId: session.sessionId,
+      messageId: "assistant-bp",
+      metadata: { model: "anthropic:claude-sonnet-4-5" },
+      parts: [],
+      acpPromptId: promptCorrelationId,
+    } as WorkspaceChatMessage);
+
+    // prompt() should resolve quickly — well before the ~1s of backpressured
+    // writes complete — because handleStreamEvent runs in the drain loop,
+    // decoupled from the forwarding pipeline.
+    const result = await Promise.race([
+      promptPromise,
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error("prompt() hung — backpressure deadlock regression")),
+          2_000
+        )
+      ),
+    ]);
+
+    expect(result).toBeDefined();
+    expect(result.stopReason).toBe("end_turn");
+
+    // Sanity: some writes happened (stream was being forwarded)
+    expect(writeCount).toBeGreaterThan(0);
 
     harness.closeConnection();
     await harness.connectionClosed;
