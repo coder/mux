@@ -24,6 +24,7 @@ import { ContextUsageBar } from "./ContextUsageBar";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
 import { getEffectiveContextLimit } from "@/common/utils/compaction/contextLimit";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { PostCompactionSection } from "./PostCompactionSection";
 import { usePostCompactionState } from "@/browser/hooks/usePostCompactionState";
@@ -188,8 +189,9 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
               // Cost and Details use viewMode-dependent data
               // Get model from the displayUsage (which could be last request or session sum)
               const model = displayUsage?.model ?? lastRequestUsage?.model ?? "unknown";
+              const metadataModel = resolveModelForMetadata(model, providersConfig);
               const modelStats = getModelStatsResolved(model, providersConfig);
-              const is1MActive = has1MContext(model) && supports1MContext(model);
+              const is1MActive = has1MContext(model) && supports1MContext(metadataModel);
 
               // Helper to calculate cost percentage
               const getCostPercentage = (cost: number | undefined, total: number | undefined) =>

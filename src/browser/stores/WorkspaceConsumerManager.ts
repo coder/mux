@@ -220,10 +220,18 @@ export class WorkspaceConsumerManager {
           setTimeout(() => reject(new Error("Calculation timeout")), CALCULATION_TIMEOUT_MS)
         );
 
+        const providersConfigVersion = this.getProvidersConfigVersion();
         const fullStats = await Promise.race([
-          calculateTokenStatsLatest(workspaceId, messages, model, this.getProvidersConfigVersion()),
+          calculateTokenStatsLatest(workspaceId, messages, model, providersConfigVersion),
           timeoutPromise,
         ]);
+
+        // Provider mappings may change while tokenization is in flight.
+        // Drop outdated results instead of repopulating cache with stale tokenizer metadata.
+        if (this.getProvidersConfigVersion() !== providersConfigVersion) {
+          this.needsRecalc.set(workspaceId, aggregator);
+          throw new Error(TOKENIZER_CANCELLED_MESSAGE);
+        }
 
         // Store result in cache
         this.cache.set(workspaceId, {
