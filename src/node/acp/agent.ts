@@ -1203,15 +1203,24 @@ export class MuxAgent implements Agent {
     // Drain the oRPC stream: observe events for turn resolution, buffer
     // for translation. push() is non-blocking so handleStreamEvent always
     // runs immediately — even when consumeAndForward is blocked on stdout.
-    let drainFinished = false;
+    //
+    // We capture the async iterator explicitly so we can call .return() to
+    // cancel the drain loop when consumeAndForward errors. Without this,
+    // the drain loop would keep calling handleStreamEvent for stale events
+    // (potentially duplicating tool execution via tool-call-start) and leak
+    // the oRPC subscription until the server eventually closes it.
+    const chatIterator = chatStream[Symbol.asyncIterator]();
+    const chatIterable: AsyncIterable<WorkspaceChatMessage> = {
+      [Symbol.asyncIterator]: () => chatIterator,
+    };
+
     const drainPromise = (async () => {
       try {
-        for await (const event of chatStream) {
+        for await (const event of chatIterable) {
           this.handleStreamEvent(sessionId, event);
           push(event);
         }
       } finally {
-        drainFinished = true;
         end();
       }
     })();
@@ -1224,19 +1233,12 @@ export class MuxAgent implements Agent {
       // Signal the drain loop to stop producing events (idempotent if
       // already ended).
       end();
-      // Only await drain if it has already completed. If consumeAndForward
-      // errored while the drain loop is still blocked waiting on chatStream
-      // (e.g. editor stream drops but oRPC stream stays open), awaiting
-      // drainPromise would hang indefinitely and block subscription cleanup
-      // (chatSubscriptions/chatSubscriptionReady never clear). In that case
-      // the drain loop will self-terminate when chatStream closes — the
-      // finally block in drainPromise ensures end() is called regardless.
-      if (drainFinished) {
-        await drainPromise;
-      } else {
-        // eslint-disable-next-line @typescript-eslint/no-empty-function -- Suppress unhandled rejection; drain self-terminates when chatStream closes.
-        drainPromise.catch(() => {});
-      }
+      // Cancel the underlying chat stream iterator so the drain loop
+      // doesn't keep running with stale handleStreamEvent calls.
+      // .return() causes the pending .next() to resolve {done: true},
+      // breaking the for-await loop and running its finally block.
+      await chatIterator.return?.();
+      await drainPromise;
     }
 
     // If the stream ends without a terminal event (e.g., transient transport
