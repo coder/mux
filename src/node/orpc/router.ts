@@ -2664,6 +2664,22 @@ export const router = (authToken?: string) => {
 
           return { success: true, data: undefined };
         }),
+      answerDelegatedToolCall: t
+        .input(schemas.workspace.answerDelegatedToolCall.input)
+        .output(schemas.workspace.answerDelegatedToolCall.output)
+        .handler(({ context, input }) => {
+          const result = context.workspaceService.answerDelegatedToolCall(
+            input.workspaceId,
+            input.toolCallId,
+            input.result
+          );
+
+          if (!result.success) {
+            return { success: false, error: result.error };
+          }
+
+          return { success: true, data: undefined };
+        }),
       resumeStream: t
         .input(schemas.workspace.resumeStream.input)
         .output(schemas.workspace.resumeStream.output)

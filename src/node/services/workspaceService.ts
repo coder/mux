@@ -9,6 +9,7 @@ import type { Config } from "@/node/config";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import { askUserQuestionManager } from "@/node/services/askUserQuestionManager";
+import { delegatedToolCallManager } from "@/node/services/delegatedToolCallManager";
 import { log } from "@/node/services/log";
 import { AgentSession } from "@/node/services/agentSession";
 import type { HistoryService } from "@/node/services/historyService";
@@ -3843,6 +3844,16 @@ export class WorkspaceService extends EventEmitter {
         const errorMessage = getErrorMessage(innerError);
         return Err(errorMessage);
       }
+    }
+  }
+
+  answerDelegatedToolCall(workspaceId: string, toolCallId: string, result: unknown): Result<void> {
+    try {
+      delegatedToolCallManager.answer(workspaceId, toolCallId, result);
+      return Ok(undefined);
+    } catch (error) {
+      const errorMessage = getErrorMessage(error);
+      return Err(`Failed to answer delegated tool call: ${errorMessage}`);
     }
   }
 

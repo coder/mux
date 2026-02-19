@@ -18,6 +18,7 @@ import { StreamManager } from "./streamManager";
 import type { InitStateManager } from "./initStateManager";
 import type { SendMessageError } from "@/common/types/errors";
 import { getToolsForModel } from "@/common/utils/tools/tools";
+import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
@@ -36,6 +37,7 @@ import {
 import type { PostCompactionAttachment } from "@/common/types/attachment";
 
 import type { HistoryService } from "./historyService";
+import { delegatedToolCallManager } from "./delegatedToolCallManager";
 import { createErrorEvent } from "./utils/sendMessageError";
 import { createAssistantMessageId } from "./utils/messageIds";
 import type { SessionUsageService } from "./sessionUsageService";
@@ -87,6 +89,8 @@ export interface StreamMessageOptions {
   agentId?: string;
   /** ACP prompt correlation id used to match stream events to a specific request. */
   acpPromptId?: string;
+  /** Tool names that should be delegated back to ACP clients for this request. */
+  delegatedToolNames?: string[];
   recordFileState?: (filePath: string, state: FileState) => void;
   changedFileAttachments?: EditedFileAttachment[];
   postCompactionAttachments?: PostCompactionAttachment[] | null;
@@ -107,6 +111,26 @@ function safeClone<T>(value: T): T {
   return typeof structuredClone === "function"
     ? structuredClone(value)
     : (JSON.parse(JSON.stringify(value)) as T);
+}
+
+interface ToolExecutionContext {
+  toolCallId?: string;
+  abortSignal?: AbortSignal;
+}
+
+function isToolExecutionContext(value: unknown): value is ToolExecutionContext {
+  if (typeof value !== "object" || value == null || Array.isArray(value)) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  const toolCallId = record.toolCallId;
+  const abortSignal = record.abortSignal;
+
+  const validToolCallId = toolCallId == null || typeof toolCallId === "string";
+  const validAbortSignal = abortSignal == null || abortSignal instanceof AbortSignal;
+
+  return validToolCallId && validAbortSignal;
 }
 
 export class AIService extends EventEmitter {
@@ -340,6 +364,91 @@ export class AIService extends EventEmitter {
     return this.providerModelFactory.createModel(modelString, muxProviderOptions);
   }
 
+  private wrapToolsForDelegation(
+    workspaceId: string,
+    tools: Record<string, Tool>,
+    delegatedToolNames?: string[]
+  ): Record<string, Tool> {
+    const normalizedDelegatedTools =
+      delegatedToolNames
+        ?.map((toolName) => toolName.trim())
+        .filter((toolName) => toolName.length > 0) ?? [];
+
+    if (normalizedDelegatedTools.length === 0) {
+      return tools;
+    }
+
+    const delegatedToolSet = new Set(normalizedDelegatedTools);
+    const wrappedTools = { ...tools };
+
+    for (const [toolName, tool] of Object.entries(tools)) {
+      if (!delegatedToolSet.has(toolName)) {
+        continue;
+      }
+
+      const toolRecord = tool as Record<string, unknown>;
+      const execute = toolRecord.execute;
+      if (typeof execute !== "function") {
+        continue;
+      }
+
+      const wrappedTool = cloneToolPreservingDescriptors(tool);
+      const wrappedToolRecord = wrappedTool as Record<string, unknown>;
+
+      wrappedToolRecord.execute = async (_args: unknown, options: unknown) => {
+        const executionContext = isToolExecutionContext(options) ? options : undefined;
+        const toolCallId = executionContext?.toolCallId?.trim();
+
+        if (executionContext == null || toolCallId == null || toolCallId.length === 0) {
+          throw new Error(
+            `Delegated tool '${toolName}' requires a non-empty toolCallId in execute context`
+          );
+        }
+
+        const pendingResult = delegatedToolCallManager.registerPending(
+          workspaceId,
+          toolCallId,
+          toolName
+        );
+
+        const abortSignal = executionContext.abortSignal;
+        if (abortSignal == null) {
+          return pendingResult;
+        }
+
+        if (abortSignal.aborted) {
+          try {
+            delegatedToolCallManager.cancel(workspaceId, toolCallId, "Interrupted");
+          } catch {
+            // no-op: pending may already have resolved
+          }
+          throw new Error("Interrupted");
+        }
+
+        const abortPromise = new Promise<never>((_, reject) => {
+          abortSignal.addEventListener(
+            "abort",
+            () => {
+              try {
+                delegatedToolCallManager.cancel(workspaceId, toolCallId, "Interrupted");
+              } catch {
+                // no-op: pending may already have resolved
+              }
+              reject(new Error("Interrupted"));
+            },
+            { once: true }
+          );
+        });
+
+        return Promise.race([pendingResult, abortPromise]);
+      };
+
+      wrappedTools[toolName] = wrappedTool;
+    }
+
+    return wrappedTools;
+  }
+
   /** Stream a message conversation to the AI model. */
   async streamMessage(opts: StreamMessageOptions): Promise<Result<void, SendMessageError>> {
     const {
@@ -354,6 +463,7 @@ export class AIService extends EventEmitter {
       muxProviderOptions,
       agentId,
       acpPromptId,
+      delegatedToolNames,
       recordFileState,
       changedFileAttachments,
       postCompactionAttachments,
@@ -776,6 +886,11 @@ export class AIService extends EventEmitter {
         toolInstructions,
         mcpTools
       );
+      const toolsWithDelegation = this.wrapToolsForDelegation(
+        workspaceId,
+        allTools,
+        delegatedToolNames
+      );
 
       // Create assistant message ID early so the PTC callback closure captures it.
       // The placeholder is appended to history below (after abort check).
@@ -783,7 +898,7 @@ export class AIService extends EventEmitter {
 
       // Apply tool policy and PTC experiments (lazy-loads PTC dependencies only when needed).
       const tools = await applyToolPolicyAndExperiments({
-        allTools,
+        allTools: toolsWithDelegation,
         extraTools: this.extraTools,
         effectiveToolPolicy,
         experiments,

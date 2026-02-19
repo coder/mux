@@ -145,6 +145,7 @@ const SWITCH_AGENT_TARGET_UNAVAILABLE_ERROR =
 
 const PDF_MEDIA_TYPE = "application/pdf";
 const ACP_PROMPT_ID_METADATA_KEY = "acpPromptId";
+const ACP_DELEGATED_TOOLS_METADATA_KEY = "acpDelegatedTools";
 
 function normalizeMediaType(mediaType: string): string {
   return mediaType.toLowerCase().trim().split(";")[0];
@@ -176,6 +177,28 @@ function extractAcpPromptId(muxMetadata: unknown): string | undefined {
 
   const trimmed = candidate.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function extractAcpDelegatedTools(muxMetadata: unknown): string[] | undefined {
+  if (typeof muxMetadata !== "object" || muxMetadata == null || Array.isArray(muxMetadata)) {
+    return undefined;
+  }
+
+  const candidate = (muxMetadata as Record<string, unknown>)[ACP_DELEGATED_TOOLS_METADATA_KEY];
+  if (!Array.isArray(candidate)) {
+    return undefined;
+  }
+
+  const normalizedTools = candidate
+    .filter((toolName): toolName is string => typeof toolName === "string")
+    .map((toolName) => toolName.trim())
+    .filter((toolName) => toolName.length > 0);
+
+  if (normalizedTools.length === 0) {
+    return undefined;
+  }
+
+  return [...new Set(normalizedTools)];
 }
 function isCompactionRequestMetadata(meta: unknown): meta is CompactionRequestMetadata {
   if (typeof meta !== "object" || meta === null) return false;
@@ -2778,6 +2801,7 @@ export class AgentSession {
       muxProviderOptions: options?.providerOptions,
       agentId: options?.agentId,
       acpPromptId: extractAcpPromptId(options?.muxMetadata),
+      delegatedToolNames: extractAcpDelegatedTools(options?.muxMetadata),
       recordFileState,
       changedFileAttachments:
         changedFileAttachments.length > 0 ? changedFileAttachments : undefined,

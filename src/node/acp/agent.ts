@@ -52,6 +52,7 @@ import {
   type ParsedAcpSlashCommand,
 } from "./slashCommands";
 import { StreamTranslator } from "./streamTranslator";
+import { ToolRouter } from "./toolRouter";
 
 const DEFAULT_AGENT_ID = "exec";
 const DEFAULT_BRANCH_PREFIX = "acp";
@@ -62,6 +63,13 @@ const ON_CHAT_MODE_LIVE: OnChatMode = { type: "live" };
 const SESSION_LIST_PAGE_SIZE = 100;
 
 const ACP_PROMPT_CORRELATION_MUX_METADATA_KEY = "acpPromptId";
+const ACP_DELEGATED_TOOLS_MUX_METADATA_KEY = "acpDelegatedTools";
+const ACP_DELEGATION_CANDIDATE_TOOLS = [
+  "file_read",
+  "file_edit_replace_string",
+  "file_edit_insert",
+  "bash",
+] as const;
 const DEFAULT_DISCONNECT_CLEANUP_MAX_WAIT_MS = 10_000;
 
 interface MuxAgentOptions {
@@ -115,6 +123,7 @@ type WorkspaceActivityById = Awaited<
 export class MuxAgent implements Agent {
   private readonly sessionManager = new SessionManager();
   private readonly streamTranslator: StreamTranslator;
+  private readonly toolRouter: ToolRouter;
 
   private negotiatedCapabilities: NegotiatedCapabilities | null = null;
   private initialized = false;
@@ -162,6 +171,7 @@ export class MuxAgent implements Agent {
       configuredDisconnectCleanupMaxWaitMs ?? DEFAULT_DISCONNECT_CLEANUP_MAX_WAIT_MS;
 
     this.streamTranslator = new StreamTranslator(connection);
+    this.toolRouter = new ToolRouter(connection);
   }
 
   initialize(params: InitializeRequest): Promise<InitializeResponse> {
@@ -189,6 +199,7 @@ export class MuxAgent implements Agent {
 
     const negotiated = negotiateCapabilities(params.clientCapabilities);
     this.negotiatedCapabilities = negotiated;
+    this.toolRouter.setEditorCapabilities(negotiated);
     this.initialized = true;
 
     return Promise.resolve({
@@ -254,6 +265,8 @@ export class MuxAgent implements Agent {
         this.negotiatedCapabilities ?? undefined
       );
 
+      this.toolRouter.registerSession(sessionId, runtimeMode);
+
       const agentId = meta.agentId ?? workspace.agentId ?? DEFAULT_AGENT_ID;
       const aiSettings = await resolveAgentAiSettings(this.server.client, agentId, workspaceId);
       await this.persistAiSettings(workspaceId, agentId, aiSettings);
@@ -307,6 +320,8 @@ export class MuxAgent implements Agent {
       agentId: resumed.agentId,
       aiSettings: resumed.aiSettings,
     });
+
+    this.toolRouter.registerSession(resumed.sessionId, resumed.runtimeMode);
 
     await this.ensureChatSubscription(resumed.sessionId, resumed.workspaceId, ON_CHAT_MODE_FULL);
 
@@ -386,6 +401,8 @@ export class MuxAgent implements Agent {
       aiSettings: resumed.aiSettings,
     });
 
+    this.toolRouter.registerSession(resumed.sessionId, resumed.runtimeMode);
+
     // ACP resume semantics require "continue from now" without replaying prior
     // transcript. Use onChat live mode (new backend capability) to follow only
     // active/future stream events.
@@ -422,6 +439,8 @@ export class MuxAgent implements Agent {
       agentId: forked.agentId,
       aiSettings: forked.aiSettings,
     });
+
+    this.toolRouter.registerSession(forked.sessionId, forked.runtimeMode);
 
     await this.ensureChatSubscription(forked.sessionId, forked.workspaceId, ON_CHAT_MODE_FULL);
 
@@ -547,9 +566,11 @@ export class MuxAgent implements Agent {
 
     const promptCorrelationId = randomUUID();
     const turnPromise = this.beginTurn(args.sessionId, promptCorrelationId);
+    const delegatedToolNames = this.getDelegatedToolNames(args.sessionId);
     const optionsWithPromptCorrelation = this.attachPromptCorrelationToSendOptions(
       args.options,
-      promptCorrelationId
+      promptCorrelationId,
+      delegatedToolNames
     );
 
     try {
@@ -587,7 +608,8 @@ export class MuxAgent implements Agent {
 
   private attachPromptCorrelationToSendOptions(
     options: SendMessageOptions,
-    promptCorrelationId: string
+    promptCorrelationId: string,
+    delegatedToolNames: readonly string[]
   ): SendMessageOptions {
     assert(
       promptCorrelationId.trim().length > 0,
@@ -595,13 +617,33 @@ export class MuxAgent implements Agent {
     );
 
     const existingMuxMetadata = isRecord(options.muxMetadata) ? options.muxMetadata : {};
+    const muxMetadata: Record<string, unknown> = {
+      ...existingMuxMetadata,
+      [ACP_PROMPT_CORRELATION_MUX_METADATA_KEY]: promptCorrelationId,
+    };
+
+    if (delegatedToolNames.length > 0) {
+      muxMetadata[ACP_DELEGATED_TOOLS_MUX_METADATA_KEY] = [...delegatedToolNames];
+    } else {
+      delete muxMetadata[ACP_DELEGATED_TOOLS_MUX_METADATA_KEY];
+    }
+
     return {
       ...options,
-      muxMetadata: {
-        ...existingMuxMetadata,
-        [ACP_PROMPT_CORRELATION_MUX_METADATA_KEY]: promptCorrelationId,
-      },
+      muxMetadata,
     };
+  }
+
+  private getDelegatedToolNames(sessionId: string): string[] {
+    const delegatedToolNames: string[] = [];
+
+    for (const toolName of ACP_DELEGATION_CANDIDATE_TOOLS) {
+      if (this.toolRouter.shouldDelegateToEditor(sessionId, toolName)) {
+        delegatedToolNames.push(toolName);
+      }
+    }
+
+    return delegatedToolNames;
   }
   private async tryHandleSlashCommand(
     sessionId: string,
@@ -1146,6 +1188,17 @@ export class MuxAgent implements Agent {
       return;
     }
 
+    if (event.type === "tool-call-start") {
+      if (isReplayEvent || !this.isActiveTurnMessage(sessionId, event.messageId)) {
+        return;
+      }
+
+      void this.maybeDelegateToolCallToEditor(sessionId, event).catch((error) => {
+        console.error("[acp] Failed to delegate tool call to editor", error);
+      });
+      return;
+    }
+
     if (event.type === "stream-end") {
       if (isReplayEvent) {
         return;
@@ -1192,6 +1245,48 @@ export class MuxAgent implements Agent {
         return;
       }
       this.rejectTurn(sessionId, new Error(`prompt stream failed: ${event.error}`));
+    }
+  }
+
+  private async maybeDelegateToolCallToEditor(
+    sessionId: string,
+    event: Extract<WorkspaceChatMessage, { type: "tool-call-start" }>
+  ): Promise<void> {
+    if (!this.toolRouter.shouldDelegateToEditor(sessionId, event.toolName)) {
+      return;
+    }
+
+    const workspaceId = this.sessionManager.getWorkspaceId(sessionId);
+
+    let delegatedResult: unknown;
+    try {
+      if (!isRecord(event.args)) {
+        throw new Error("tool-call-start args must be an object to delegate");
+      }
+
+      delegatedResult = await this.toolRouter.delegateToEditor(
+        sessionId,
+        event.toolName,
+        event.args
+      );
+    } catch (error) {
+      delegatedResult = {
+        success: false,
+        error: `Editor delegation failed for ${event.toolName}: ${stringifyUnknown(error)}`,
+      };
+    }
+
+    const answerResult = await this.server.client.workspace.answerDelegatedToolCall({
+      workspaceId,
+      toolCallId: event.toolCallId,
+      result: delegatedResult,
+    });
+
+    if (!answerResult.success) {
+      // No-op when the server wasn't waiting for this call (e.g., non-delegated replay).
+      console.error(
+        `[acp] Failed to deliver delegated tool result for ${event.toolCallId}: ${stringifyUnknown(answerResult.error)}`
+      );
     }
   }
 

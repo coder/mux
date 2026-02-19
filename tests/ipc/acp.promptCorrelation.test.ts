@@ -12,6 +12,11 @@ interface Harness {
     message: string;
     options: Record<string, unknown>;
   }>;
+  delegatedToolAnswers: Array<{
+    workspaceId: string;
+    toolCallId: string;
+    result: unknown;
+  }>;
   pushChatEvent: (event: WorkspaceChatMessage) => void;
   closeConnection: () => void;
   connectionClosed: Promise<void>;
@@ -113,6 +118,11 @@ function createHarness(): Harness {
     message: string;
     options: Record<string, unknown>;
   }> = [];
+  const delegatedToolAnswers: Array<{
+    workspaceId: string;
+    toolCallId: string;
+    result: unknown;
+  }> = [];
   const chatStream = createControlledChatStream();
 
   const client = {
@@ -173,6 +183,14 @@ function createHarness(): Harness {
         sendMessageCalls.push(input);
         return { success: true as const, data: {} };
       },
+      answerDelegatedToolCall: async (input: {
+        workspaceId: string;
+        toolCallId: string;
+        result: unknown;
+      }) => {
+        delegatedToolAnswers.push(input);
+        return { success: true as const, data: undefined };
+      },
       interruptStream: async () => ({ success: true as const, data: undefined }),
       updateModeAISettings: async () => ({ success: true as const, data: undefined }),
       updateAgentAISettings: async () => ({ success: true as const, data: undefined }),
@@ -201,6 +219,7 @@ function createHarness(): Harness {
   return {
     agent: agentInstance,
     sendMessageCalls,
+    delegatedToolAnswers,
     pushChatEvent: chatStream.push,
     closeConnection: closeInput,
     connectionClosed: connection.closed,
@@ -290,6 +309,179 @@ describe("ACP prompt stream correlation", () => {
       startTime: Date.now(),
       acpPromptId: promptCorrelationId,
     } as WorkspaceChatMessage);
+
+    harness.pushChatEvent({
+      type: "stream-end",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-target",
+      metadata: {
+        model: "anthropic:claude-sonnet-4-5",
+      },
+      parts: [],
+    } as WorkspaceChatMessage);
+
+    await expect(promptPromise).resolves.toEqual({
+      stopReason: "end_turn",
+      usage: undefined,
+    });
+
+    harness.closeConnection();
+    await harness.connectionClosed;
+  });
+
+  it("attaches delegated tool metadata when local runtime and editor capabilities allow delegation", async () => {
+    const harness = createHarness();
+    await harness.agent.initialize({
+      protocolVersion: PROTOCOL_VERSION,
+      clientCapabilities: {
+        fs: { readTextFile: true, writeTextFile: true },
+        terminal: true,
+      },
+    });
+
+    const newSessionResponse = await harness.agent.newSession({
+      cwd: "/repo/acp-go-sdk",
+      mcpServers: [],
+      _meta: {
+        trunkBranch: "main",
+      },
+    });
+
+    const promptPromise = harness.agent.prompt({
+      sessionId: newSessionResponse.sessionId,
+      prompt: [{ type: "text", text: "hello" }],
+    });
+
+    await waitForCondition(() => harness.sendMessageCalls.length === 1);
+
+    const firstSend = harness.sendMessageCalls[0];
+    const muxMetadata = firstSend.options["muxMetadata"];
+    if (!isRecord(muxMetadata)) {
+      throw new Error("Expected prompt send options to include muxMetadata record");
+    }
+
+    expect(muxMetadata["acpDelegatedTools"]).toEqual([
+      "file_read",
+      "file_edit_replace_string",
+      "file_edit_insert",
+      "bash",
+    ]);
+
+    const promptCorrelationId = muxMetadata["acpPromptId"];
+    if (typeof promptCorrelationId !== "string") {
+      throw new Error("Expected prompt send options to include acpPromptId");
+    }
+
+    harness.pushChatEvent({
+      type: "stream-start",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-target",
+      model: "anthropic:claude-sonnet-4-5",
+      historySequence: 3,
+      startTime: Date.now(),
+      acpPromptId: promptCorrelationId,
+    } as WorkspaceChatMessage);
+
+    harness.pushChatEvent({
+      type: "stream-end",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-target",
+      metadata: {
+        model: "anthropic:claude-sonnet-4-5",
+      },
+      parts: [],
+    } as WorkspaceChatMessage);
+
+    await expect(promptPromise).resolves.toEqual({
+      stopReason: "end_turn",
+      usage: undefined,
+    });
+
+    harness.closeConnection();
+    await harness.connectionClosed;
+  });
+
+  it("answers delegated tool calls back to the server for the active prompt turn", async () => {
+    const harness = createHarness();
+    await harness.agent.initialize({
+      protocolVersion: PROTOCOL_VERSION,
+      clientCapabilities: {
+        fs: { readTextFile: true, writeTextFile: true },
+        terminal: true,
+      },
+    });
+
+    const newSessionResponse = await harness.agent.newSession({
+      cwd: "/repo/acp-go-sdk",
+      mcpServers: [],
+      _meta: {
+        trunkBranch: "main",
+      },
+    });
+
+    const toolRouter = (
+      harness.agent as unknown as {
+        toolRouter: {
+          shouldDelegateToEditor: (sessionId: string, toolName: string) => boolean;
+          delegateToEditor: (
+            sessionId: string,
+            toolName: string,
+            params: Record<string, unknown>
+          ) => Promise<unknown>;
+        };
+      }
+    ).toolRouter;
+
+    toolRouter.shouldDelegateToEditor = (_sessionId, toolName) => toolName === "bash";
+    toolRouter.delegateToEditor = async (_sessionId, _toolName, _params) => ({
+      terminalId: "term-1",
+    });
+
+    const promptPromise = harness.agent.prompt({
+      sessionId: newSessionResponse.sessionId,
+      prompt: [{ type: "text", text: "hello" }],
+    });
+
+    await waitForCondition(() => harness.sendMessageCalls.length === 1);
+
+    const firstSend = harness.sendMessageCalls[0];
+    const muxMetadata = firstSend.options["muxMetadata"];
+    if (!isRecord(muxMetadata)) {
+      throw new Error("Expected prompt send options to include muxMetadata record");
+    }
+
+    const promptCorrelationId = muxMetadata["acpPromptId"];
+    if (typeof promptCorrelationId !== "string") {
+      throw new Error("Expected prompt send options to include acpPromptId");
+    }
+
+    harness.pushChatEvent({
+      type: "stream-start",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-target",
+      model: "anthropic:claude-sonnet-4-5",
+      historySequence: 4,
+      startTime: Date.now(),
+      acpPromptId: promptCorrelationId,
+    } as WorkspaceChatMessage);
+
+    harness.pushChatEvent({
+      type: "tool-call-start",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-target",
+      toolCallId: "tool-bash",
+      toolName: "bash",
+      args: { script: "echo hi" },
+      tokens: 1,
+      timestamp: Date.now(),
+    } as WorkspaceChatMessage);
+
+    await waitForCondition(() => harness.delegatedToolAnswers.length === 1);
+    expect(harness.delegatedToolAnswers[0]).toEqual({
+      workspaceId: newSessionResponse.sessionId,
+      toolCallId: "tool-bash",
+      result: { terminalId: "term-1" },
+    });
 
     harness.pushChatEvent({
       type: "stream-end",

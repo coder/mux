@@ -922,6 +922,16 @@ export const workspace = {
       .strict(),
     output: ResultSchema(z.void(), z.string()),
   },
+  answerDelegatedToolCall: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+        toolCallId: z.string(),
+        result: z.unknown(),
+      })
+      .strict(),
+    output: ResultSchema(z.void(), z.string()),
+  },
   resumeStream: {
     input: z.object({
       workspaceId: z.string(),
