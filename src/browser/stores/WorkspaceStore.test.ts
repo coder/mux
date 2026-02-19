@@ -503,9 +503,12 @@ describe("WorkspaceStore", () => {
       store.setActiveWorkspaceId(metadata1.id);
       store.syncWorkspaces(workspaceMap);
 
-      // addWorkspace triggers async onChat subscription setup; flush a tick so
-      // assertions don't race new startup threshold sync work.
-      await Promise.resolve();
+      // addWorkspace triggers async onChat subscription setup; wait until the
+      // subscription attempt runs so startup threshold sync RPCs do not race this assertion.
+      const deadline = Date.now() + 1_000;
+      while (mockOnChat.mock.calls.length === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
 
       expect(mockOnChat).toHaveBeenCalledWith({ workspaceId: "workspace-1" }, expect.anything());
     });
