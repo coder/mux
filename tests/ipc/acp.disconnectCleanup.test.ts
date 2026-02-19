@@ -7,6 +7,7 @@ type WorkspaceInfo = NonNullable<Awaited<ReturnType<ORPCClient["workspace"]["get
 
 interface HarnessOptions {
   getReplayEvents?: (workspaceId: string) => WorkspaceChatMessage[];
+  beforeCreateResolves?: Promise<void>;
 }
 
 interface Harness {
@@ -70,6 +71,25 @@ async function* createChatStream(
   }
 }
 
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+
+  return {
+    promise,
+    resolve,
+    reject,
+  };
+}
+
 function createHarness(options?: HarnessOptions): Harness {
   const workspacesById = new Map<string, WorkspaceInfo>();
   const createdWorkspaceIds: string[] = [];
@@ -108,6 +128,10 @@ function createHarness(options?: HarnessOptions): Harness {
         runtimeConfig?: WorkspaceInfo["runtimeConfig"];
       }) => {
         const workspaceId = `ws-${workspacesById.size + 1}`;
+        if (options?.beforeCreateResolves != null) {
+          await options.beforeCreateResolves;
+        }
+
         const metadata = createWorkspaceInfo({
           id: workspaceId,
           name: input.branchName,
@@ -236,5 +260,40 @@ describe("ACP disconnect cleanup for untouched session/new workspaces", () => {
     await waitForCondition(() => harness.replayChecks.length === 1);
     expect(harness.replayChecks).toEqual([newSessionResponse.sessionId]);
     expect(harness.removeCalls).toEqual([]);
+  });
+
+  it("drains late-registered newSession workspaces during disconnect cleanup", async () => {
+    const createDeferredResult = createDeferred<void>();
+    const harness = createHarness({
+      beforeCreateResolves: createDeferredResult.promise,
+    });
+
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    const newSessionPromise = harness.agent.newSession({
+      cwd: "/repo/acp-go-sdk",
+      mcpServers: [],
+      _meta: {
+        trunkBranch: "main",
+      },
+    });
+
+    // Don't fail the test if the in-flight request rejects after disconnect;
+    // this scenario is about cleanup side effects, not RPC completion semantics.
+    void newSessionPromise.catch(() => undefined);
+
+    harness.closeConnection();
+    await harness.connectionClosed;
+
+    createDeferredResult.resolve();
+
+    await waitForCondition(() => harness.createdWorkspaceIds.length === 1);
+    const createdWorkspaceId = harness.createdWorkspaceIds[0];
+    expect(createdWorkspaceId).toBeDefined();
+    if (createdWorkspaceId == null) {
+      throw new Error("Expected delayed workspace creation to complete");
+    }
+
+    await waitForCondition(() => harness.removeCalls.includes(createdWorkspaceId));
   });
 });

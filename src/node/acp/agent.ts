@@ -134,6 +134,7 @@ export class MuxAgent implements Agent {
    * to a freshly queued (but not yet identified) turn.
    */
   private readonly lastStreamMessageIdBySession = new Map<string, string>();
+  private inFlightNewSessionCount = 0;
   private disconnectCleanupPromise: Promise<void> | null = null;
 
   constructor(
@@ -193,70 +194,79 @@ export class MuxAgent implements Agent {
   async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
     this.assertInitialized("newSession");
 
-    const meta = parseMuxMeta(params._meta);
-    const projectPath = meta.projectPath ?? params.cwd.trim();
-    assert(projectPath.length > 0, "newSession: projectPath/cwd must be non-empty");
+    this.inFlightNewSessionCount += 1;
+    try {
+      const meta = parseMuxMeta(params._meta);
+      const projectPath = meta.projectPath ?? params.cwd.trim();
+      assert(projectPath.length > 0, "newSession: projectPath/cwd must be non-empty");
 
-    // When the ACP client doesn't supply a trunk branch (typical — editors only
-    // send `cwd`, not mux-specific `_meta`), derive it from the project's git
-    // repo.  Worktree/SSH runtimes require a trunk branch for workspace creation.
-    let trunkBranch = meta.trunkBranch;
-    if (trunkBranch == null || trunkBranch.trim().length === 0) {
-      const branchInfo = await this.server.client.projects.listBranches({ projectPath });
-      trunkBranch = branchInfo.recommendedTrunk ?? DEFAULT_TRUNK_BRANCH;
+      // When the ACP client doesn't supply a trunk branch (typical — editors only
+      // send `cwd`, not mux-specific `_meta`), derive it from the project's git
+      // repo.  Worktree/SSH runtimes require a trunk branch for workspace creation.
+      let trunkBranch = meta.trunkBranch;
+      if (trunkBranch == null || trunkBranch.trim().length === 0) {
+        const branchInfo = await this.server.client.projects.listBranches({ projectPath });
+        trunkBranch = branchInfo.recommendedTrunk ?? DEFAULT_TRUNK_BRANCH;
+      }
+
+      const createResult = await this.server.client.workspace.create({
+        projectPath,
+        branchName: meta.branchName ?? generateDefaultBranchName(),
+        trunkBranch,
+        title: meta.title,
+        runtimeConfig: meta.runtimeConfig,
+      });
+
+      if (!createResult.success) {
+        throw new Error(`newSession: workspace.create failed: ${createResult.error}`);
+      }
+
+      const workspace = createResult.metadata;
+      const sessionId = workspace.id;
+      const workspaceId = workspace.id;
+      this.newSessionWorkspaceLifecycleById.set(workspaceId, {
+        hasPromptActivity: false,
+      });
+
+      const runtimeMode = runtimeModeFromConfig(workspace.runtimeConfig);
+
+      this.sessionManager.registerSession(
+        sessionId,
+        workspaceId,
+        runtimeMode,
+        this.negotiatedCapabilities ?? undefined
+      );
+
+      const agentId = meta.agentId ?? workspace.agentId ?? DEFAULT_AGENT_ID;
+      const aiSettings = await resolveAgentAiSettings(this.server.client, agentId, workspaceId);
+      await this.persistAiSettings(workspaceId, agentId, aiSettings);
+
+      this.sessionStateById.set(sessionId, {
+        workspaceId,
+        runtimeMode,
+        agentId,
+        aiSettings,
+      });
+
+      await this.ensureChatSubscription(sessionId, workspaceId, ON_CHAT_MODE_FULL);
+
+      const response = {
+        sessionId,
+        configOptions: await buildConfigOptions(this.server.client, workspaceId, {
+          activeAgentId: agentId,
+        }),
+      };
+
+      this.scheduleSessionCommandsRefresh(sessionId, workspaceId);
+
+      return response;
+    } finally {
+      this.inFlightNewSessionCount -= 1;
+      assert(
+        this.inFlightNewSessionCount >= 0,
+        "newSession: inFlightNewSessionCount should never be negative"
+      );
     }
-
-    const createResult = await this.server.client.workspace.create({
-      projectPath,
-      branchName: meta.branchName ?? generateDefaultBranchName(),
-      trunkBranch,
-      title: meta.title,
-      runtimeConfig: meta.runtimeConfig,
-    });
-
-    if (!createResult.success) {
-      throw new Error(`newSession: workspace.create failed: ${createResult.error}`);
-    }
-
-    const workspace = createResult.metadata;
-    const sessionId = workspace.id;
-    const workspaceId = workspace.id;
-    this.newSessionWorkspaceLifecycleById.set(workspaceId, {
-      hasPromptActivity: false,
-    });
-
-    const runtimeMode = runtimeModeFromConfig(workspace.runtimeConfig);
-
-    this.sessionManager.registerSession(
-      sessionId,
-      workspaceId,
-      runtimeMode,
-      this.negotiatedCapabilities ?? undefined
-    );
-
-    const agentId = meta.agentId ?? workspace.agentId ?? DEFAULT_AGENT_ID;
-    const aiSettings = await resolveAgentAiSettings(this.server.client, agentId, workspaceId);
-    await this.persistAiSettings(workspaceId, agentId, aiSettings);
-
-    this.sessionStateById.set(sessionId, {
-      workspaceId,
-      runtimeMode,
-      agentId,
-      aiSettings,
-    });
-
-    await this.ensureChatSubscription(sessionId, workspaceId, ON_CHAT_MODE_FULL);
-
-    const response = {
-      sessionId,
-      configOptions: await buildConfigOptions(this.server.client, workspaceId, {
-        activeAgentId: agentId,
-      }),
-    };
-
-    this.scheduleSessionCommandsRefresh(sessionId, workspaceId);
-
-    return response;
   }
 
   async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
@@ -856,13 +866,26 @@ export class MuxAgent implements Agent {
   }
 
   private async cleanupNewSessionWorkspacesOnDisconnect(): Promise<void> {
-    const candidates = Array.from(this.newSessionWorkspaceLifecycleById.entries());
+    while (true) {
+      const nextEntry = this.newSessionWorkspaceLifecycleById.entries().next();
+      if (nextEntry.done) {
+        // Disconnect can race in-flight session/new requests that haven't yet
+        // registered their workspace lifecycle entry. Keep draining until all
+        // in-flight creations settle so late registrations are still cleaned up.
+        if (this.inFlightNewSessionCount === 0) {
+          return;
+        }
 
-    for (const [workspaceId, lifecycle] of candidates) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        continue;
+      }
+
+      const [workspaceId, lifecycle] = nextEntry.value;
+      this.newSessionWorkspaceLifecycleById.delete(workspaceId);
+
       // If this ACP connection attempted any prompt in the workspace, keep it.
       // Users can intentionally prepare a workspace and disconnect mid-turn.
       if (lifecycle.hasPromptActivity) {
-        this.newSessionWorkspaceLifecycleById.delete(workspaceId);
         continue;
       }
 
@@ -886,8 +909,6 @@ export class MuxAgent implements Agent {
           `[acp] Failed to cleanup untouched ACP workspace ${workspaceId} on disconnect`,
           error
         );
-      } finally {
-        this.newSessionWorkspaceLifecycleById.delete(workspaceId);
       }
     }
   }
