@@ -153,6 +153,17 @@ describe("ACP slash command support", () => {
     expect(parsed.startMessage).toBe("start with step 1");
   });
 
+  it("parses /new with numeric workspace name", () => {
+    const parsed = parseAcpSlashCommand("/new 123", mapSkillsByName(skills));
+
+    expect(parsed?.kind).toBe("new");
+    if (parsed == null || parsed.kind !== "new") {
+      throw new Error("Expected numeric workspace name in /new to parse");
+    }
+
+    expect(parsed.workspaceName).toBe("123");
+  });
+
   it("maps skill slash commands to formatted prompts", () => {
     const skillsByName = mapSkillsByName(skills);
 

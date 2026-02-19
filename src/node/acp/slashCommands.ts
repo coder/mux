@@ -353,8 +353,15 @@ function parseNewCommand(rawInput: string): ParsedAcpSlashCommand {
     };
   }
 
-  const workspaceNameToken = parsed._[0];
-  if (typeof workspaceNameToken !== "string" || workspaceNameToken.trim().length === 0) {
+  const workspaceNameToken = coercePositionalTokenToText(parsed._[0], NEW_USAGE);
+  if (workspaceNameToken.error != null) {
+    return {
+      kind: "invalid",
+      message: workspaceNameToken.error,
+    };
+  }
+
+  if (workspaceNameToken.text == null) {
     return {
       kind: "invalid",
       message: `Missing workspace name. Usage: ${NEW_USAGE}`,
@@ -369,7 +376,7 @@ function parseNewCommand(rawInput: string): ParsedAcpSlashCommand {
     };
   }
 
-  const workspaceName = workspaceNameToken.trim();
+  const workspaceName = workspaceNameToken.text;
   const trunkBranch =
     typeof parsed.t === "string" && parsed.t.trim().length > 0 ? parsed.t.trim() : undefined;
 
@@ -496,6 +503,64 @@ function parseMultilineCommand(rawInput: string): ParsedMultilineCommand {
   };
 }
 
+function formatUnexpectedPositionalToken(token: unknown): string {
+  if (token === undefined) {
+    return "undefined";
+  }
+
+  if (token === null) {
+    return "null";
+  }
+
+  if (
+    typeof token === "string" ||
+    typeof token === "number" ||
+    typeof token === "boolean" ||
+    typeof token === "bigint" ||
+    typeof token === "symbol"
+  ) {
+    return String(token);
+  }
+
+  return `<${typeof token}>`;
+}
+
+function coercePositionalTokenToText(
+  token: unknown,
+  usage: string
+): { text?: string; error?: string } {
+  assert(usage.trim().length > 0, "coercePositionalTokenToText: usage must be non-empty");
+
+  if (token == null) {
+    return {};
+  }
+
+  let tokenText: string;
+  if (typeof token === "string") {
+    tokenText = token;
+  } else if (typeof token === "number") {
+    if (!Number.isFinite(token)) {
+      return {
+        error: `Unexpected argument "${formatUnexpectedPositionalToken(token)}". Usage: ${usage}`,
+      };
+    }
+    tokenText = String(token);
+  } else if (typeof token === "boolean" || typeof token === "bigint") {
+    tokenText = String(token);
+  } else {
+    return {
+      error: `Unexpected argument "${formatUnexpectedPositionalToken(token)}". Usage: ${usage}`,
+    };
+  }
+
+  const trimmedToken = tokenText.trim();
+  if (trimmedToken.length === 0) {
+    return {};
+  }
+
+  return { text: trimmedToken };
+}
+
 function joinPositionalMessageTokens(
   tokens: unknown[],
   usage: string
@@ -509,30 +574,16 @@ function joinPositionalMessageTokens(
 
   const normalizedTokens: string[] = [];
   for (const token of tokens) {
-    let tokenText: string;
-    if (typeof token === "string") {
-      tokenText = token;
-    } else if (typeof token === "number") {
-      if (!Number.isFinite(token)) {
-        return {
-          error: `Unexpected argument "${String(token)}". Usage: ${usage}`,
-        };
-      }
-      tokenText = String(token);
-    } else if (typeof token === "boolean" || typeof token === "bigint") {
-      tokenText = String(token);
-    } else {
-      return {
-        error: `Unexpected argument "${String(token)}". Usage: ${usage}`,
-      };
+    const normalizedToken = coercePositionalTokenToText(token, usage);
+    if (normalizedToken.error != null) {
+      return { error: normalizedToken.error };
     }
 
-    const trimmedToken = tokenText.trim();
-    if (trimmedToken.length === 0) {
+    if (normalizedToken.text == null) {
       continue;
     }
 
-    normalizedTokens.push(trimmedToken);
+    normalizedTokens.push(normalizedToken.text);
   }
 
   if (normalizedTokens.length === 0) {
