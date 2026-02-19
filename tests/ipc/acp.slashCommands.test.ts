@@ -69,6 +69,21 @@ describe("ACP slash command support", () => {
     expect(parsed.continueMessage).toBe("Continue with focused tests");
   });
 
+  it("parses /compact flags and one-line follow-up", () => {
+    const parsed = parseAcpSlashCommand(
+      "/compact -t 1200 Continue with focused tests",
+      mapSkillsByName(skills)
+    );
+
+    expect(parsed?.kind).toBe("compact");
+    if (parsed == null || parsed.kind !== "compact") {
+      throw new Error("Expected one-line /compact command to parse");
+    }
+
+    expect(parsed.maxOutputTokens).toBe(1200);
+    expect(parsed.continueMessage).toBe("Continue with focused tests");
+  });
+
   it("rejects invalid /new runtime arguments", () => {
     const invalid = parseAcpSlashCommand("/new feature-branch -r ssh", mapSkillsByName(skills));
     expect(invalid?.kind).toBe("invalid");
@@ -90,6 +105,23 @@ describe("ACP slash command support", () => {
       expect(parsed.runtimeConfig.host).toBe("user@example.com");
     }
     expect(parsed.startMessage).toBe("Start by summarizing the branch");
+  });
+
+  it("parses /new with one-line start message", () => {
+    const parsed = parseAcpSlashCommand(
+      '/new feature-branch -t main -r "ssh user@example.com" start by summarizing the branch',
+      mapSkillsByName(skills)
+    );
+
+    expect(parsed?.kind).toBe("new");
+    if (parsed == null || parsed.kind !== "new") {
+      throw new Error("Expected one-line /new command to parse");
+    }
+
+    expect(parsed.workspaceName).toBe("feature-branch");
+    expect(parsed.trunkBranch).toBe("main");
+    expect(parsed.runtimeConfig?.type).toBe("ssh");
+    expect(parsed.startMessage).toBe("start by summarizing the branch");
   });
 
   it("maps skill slash commands to formatted prompts", () => {

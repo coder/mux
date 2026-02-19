@@ -224,11 +224,7 @@ function parseTruncateCommand(remainingTokens: string[]): ParsedAcpSlashCommand 
 }
 
 function parseCompactCommand(rawInput: string, rawCommand: string): ParsedAcpSlashCommand {
-  const {
-    tokens: firstLineTokens,
-    message: multilineMessage,
-    hasMultiline,
-  } = parseMultilineCommand(rawInput);
+  const { tokens: firstLineTokens, message: multilineMessage } = parseMultilineCommand(rawInput);
 
   const parsed = minimist(firstLineTokens, {
     string: ["t", "m", "c"],
@@ -250,10 +246,11 @@ function parseCompactCommand(rawInput: string, rawCommand: string): ParsedAcpSla
     };
   }
 
-  if (parsed._.length > 0 && !hasMultiline) {
+  const inlineContinueMessage = joinPositionalMessageTokens(parsed._, COMPACT_USAGE);
+  if (inlineContinueMessage.error != null) {
     return {
       kind: "invalid",
-      message: `Unexpected argument "${String(parsed._[0])}". Usage: ${COMPACT_USAGE}`,
+      message: inlineContinueMessage.error,
     };
   }
 
@@ -307,8 +304,12 @@ function parseCompactCommand(rawInput: string, rawCommand: string): ParsedAcpSla
   let continueMessage: string | undefined;
   if (typeof parsed.c === "string" && parsed.c.trim().length > 0) {
     continueMessage = parsed.c.trim();
-  } else if (multilineMessage != null && multilineMessage.length > 0) {
-    continueMessage = multilineMessage;
+  } else {
+    const combinedMessage = joinMultilineAndInlineMessage(
+      multilineMessage,
+      inlineContinueMessage.message
+    );
+    continueMessage = combinedMessage;
   }
 
   return {
@@ -330,11 +331,7 @@ function parseForkCommand(rawInput: string): ParsedAcpSlashCommand {
 }
 
 function parseNewCommand(rawInput: string): ParsedAcpSlashCommand {
-  const {
-    tokens: firstLineTokens,
-    message: multilineMessage,
-    hasMultiline,
-  } = parseMultilineCommand(rawInput);
+  const { tokens: firstLineTokens, message: multilineMessage } = parseMultilineCommand(rawInput);
 
   const parsed = minimist(firstLineTokens, {
     string: ["t", "r"],
@@ -364,10 +361,11 @@ function parseNewCommand(rawInput: string): ParsedAcpSlashCommand {
     };
   }
 
-  if (parsed._.length > 1 && !hasMultiline) {
+  const inlineStartMessage = joinPositionalMessageTokens(parsed._.slice(1), NEW_USAGE);
+  if (inlineStartMessage.error != null) {
     return {
       kind: "invalid",
-      message: `Unexpected argument "${String(parsed._[1])}". Usage: ${NEW_USAGE}`,
+      message: inlineStartMessage.error,
     };
   }
 
@@ -400,7 +398,7 @@ function parseNewCommand(rawInput: string): ParsedAcpSlashCommand {
     workspaceName,
     trunkBranch,
     runtimeConfig,
-    startMessage: multilineMessage,
+    startMessage: joinMultilineAndInlineMessage(multilineMessage, inlineStartMessage.message),
   };
 }
 
@@ -496,6 +494,58 @@ function parseMultilineCommand(rawInput: string): ParsedMultilineCommand {
     message: remainingLines.length > 0 ? remainingLines : undefined,
     hasMultiline,
   };
+}
+
+function joinPositionalMessageTokens(
+  tokens: unknown[],
+  usage: string
+): { message?: string; error?: string } {
+  assert(Array.isArray(tokens), "joinPositionalMessageTokens: tokens must be an array");
+  assert(usage.trim().length > 0, "joinPositionalMessageTokens: usage must be non-empty");
+
+  if (tokens.length === 0) {
+    return {};
+  }
+
+  const normalizedTokens: string[] = [];
+  for (const token of tokens) {
+    if (typeof token !== "string") {
+      return {
+        error: `Unexpected argument "${String(token)}". Usage: ${usage}`,
+      };
+    }
+
+    const trimmedToken = token.trim();
+    if (trimmedToken.length === 0) {
+      continue;
+    }
+
+    normalizedTokens.push(trimmedToken);
+  }
+
+  if (normalizedTokens.length === 0) {
+    return {};
+  }
+
+  return { message: normalizedTokens.join(" ") };
+}
+
+function joinMultilineAndInlineMessage(
+  multilineMessage: string | undefined,
+  inlineMessage: string | undefined
+): string | undefined {
+  const normalizedMultiline = multilineMessage?.trim();
+  const normalizedInline = inlineMessage?.trim();
+
+  const parts = [normalizedInline, normalizedMultiline].filter(
+    (part): part is string => part != null && part.length > 0
+  );
+
+  if (parts.length === 0) {
+    return undefined;
+  }
+
+  return parts.join("\n");
 }
 
 function tokenize(input: string): string[] {
