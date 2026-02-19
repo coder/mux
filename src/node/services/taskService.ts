@@ -2365,7 +2365,12 @@ export class TaskService {
       // global per-agent defaults, else inherit the plan task's active model.
       const latestCfg = this.config.loadConfigOrDefault();
       const globalDefault = latestCfg.agentAiDefaults?.[targetAgentId];
-      const parentActiveModel = args.entry.workspace.taskModelString ?? defaultModel;
+      const parentActiveModelCandidate =
+        typeof args.entry.workspace.taskModelString === "string"
+          ? args.entry.workspace.taskModelString.trim()
+          : "";
+      const parentActiveModel =
+        parentActiveModelCandidate.length > 0 ? parentActiveModelCandidate : defaultModel;
 
       const configuredModel = globalDefault?.modelString?.trim();
       const preferredModel =

@@ -34,12 +34,16 @@ import {
   getModelKey,
   getPlanContentKey,
   getThinkingLevelKey,
+  getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
-import { resolveWorkspaceAiSettingsForAgent } from "@/browser/utils/workspaceModeAi";
+import {
+  resolveWorkspaceAiSettingsForAgent,
+  type WorkspaceAISettingsCache,
+} from "@/browser/utils/workspaceModeAi";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import {
@@ -384,10 +388,15 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     const existingModel = readPersistedState<string>(modelKey, fallbackModel);
     const existingThinking = readPersistedState<ThinkingLevel>(thinkingKey, "off");
     const agentAiDefaults = readPersistedState<AgentAiDefaults>(AGENT_AI_DEFAULTS_KEY, {});
+    const workspaceByAgent = readPersistedState<WorkspaceAISettingsCache>(
+      getWorkspaceAISettingsByAgentKey(args.workspaceId),
+      {}
+    );
 
     const { resolvedModel, resolvedThinking } = resolveWorkspaceAiSettingsForAgent({
       agentId: args.targetAgentId,
       agentAiDefaults,
+      workspaceByAgent,
       fallbackModel,
       existingModel,
       existingThinking,
