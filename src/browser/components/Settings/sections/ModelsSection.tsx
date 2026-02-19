@@ -116,7 +116,7 @@ export function ModelsSection() {
   const selectableProviders = visibleProviders.filter(
     (provider) => !HIDDEN_PROVIDERS.has(provider)
   );
-  const { defaultModel, setDefaultModel, hiddenModels, hideModel, unhideModel, codexOauthSet } =
+  const { defaultModel, setDefaultModel, hiddenModels, hideModel, unhideModel } =
     useModelsFromSettings();
   const gateway = useGateway();
   const { has1MContext, toggle1MContext } = useProviderOptions();
@@ -144,7 +144,9 @@ export function ModelsSection() {
     [api, setCompactionModel]
   );
 
-  const codexOauthConfigured = codexOauthSet === true;
+  // Read OAuth state from this component's provider config source to avoid
+  // cross-hook timing mismatches while settings are loading/refetching.
+  const codexOauthConfigured = config?.openai?.codexOauthSet === true;
 
   // All models (including hidden) for the settings dropdowns.
   // PolicyService enforces model access on the backend, but we also filter here so users can't
