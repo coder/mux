@@ -91,6 +91,10 @@ export interface System1MemoryWriterRunResult {
 const MEMORY_TOOL_POLICY_REMINDER =
   "Reminder: You MUST call memory_write to persist updates, or call no_new_memories when no memory update is needed. Do not output prose.";
 
+// CAS memory_write calls include full old/new file contents, so responses need
+// enough token budget for moderate memory files.
+const SYSTEM1_MEMORY_WRITER_MAX_OUTPUT_TOKENS = 3_000;
+
 function sanitizeDebugFilenameComponent(value: string): string {
   return value.replace(/[^a-zA-Z0-9_.-]+/g, "_");
 }
@@ -522,7 +526,7 @@ export async function runSystem1WriteProjectMemories(
           abortSignal: system1AbortController.signal,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
           providerOptions: params.providerOptions as any,
-          maxOutputTokens: 300,
+          maxOutputTokens: SYSTEM1_MEMORY_WRITER_MAX_OUTPUT_TOKENS,
           maxRetries: 0,
           onStepFinish: (stepResult) => {
             stepResults.push(sanitizeStepResultForDebug(stepResult));

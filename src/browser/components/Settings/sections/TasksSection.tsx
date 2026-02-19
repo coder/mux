@@ -118,6 +118,14 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     base: "exec",
   },
   {
+    id: "system1_memory_writer",
+    scope: "built-in",
+    name: "System1 Memory Writer",
+    description: "Background project memory writing (internal)",
+    uiSelectable: false,
+    subagentRunnable: false,
+  },
+  {
     id: "system1_bash",
     scope: "built-in",
     name: "System1 Bash",
