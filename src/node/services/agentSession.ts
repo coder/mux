@@ -701,10 +701,11 @@ export class AgentSession {
     abortReason: StreamAbortReason | undefined,
     userMessageId?: string
   ): Promise<void> {
-    // "system" aborts come from backend-orchestrated flows (for example,
-    // mid-stream auto-compaction). They are not user intent and must not poison
-    // startup recovery with a persisted non-retryable "aborted" marker.
-    if (abortReason === "system") {
+    // "system" and "startup" aborts come from backend-orchestrated flows
+    // (for example, mid-stream auto-compaction or canceling a pending startup).
+    // They are not user intent and must not poison startup recovery with a
+    // persisted non-retryable "aborted" marker.
+    if (abortReason === "system" || abortReason === "startup") {
       return;
     }
 

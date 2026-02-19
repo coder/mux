@@ -759,7 +759,7 @@ describe("AgentSession startup auto-retry recovery", () => {
     session.dispose();
   });
 
-  test("skips persisting startup abandon marker for system aborts", async () => {
+  test("skips persisting startup abandon marker for non-user abort reasons", async () => {
     const workspaceId = "startup-retry-system-abort-skip";
     const { session, cleanup } = await createSessionBundle(workspaceId);
     cleanups.push(cleanup);
