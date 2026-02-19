@@ -1,6 +1,7 @@
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { describe, expect, test } from "bun:test";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { CompactionMonitor, type CompactionStatusEvent } from "./compactionMonitor";
 
@@ -122,6 +123,26 @@ describe("CompactionMonitor", () => {
         usage: createMidStreamUsage(210_000),
         use1MContext: false,
         providersConfig: null,
+      })
+    ).toBe(false);
+    expect(statusEvents).toHaveLength(0);
+  });
+
+  test("checkMidStream ignores malformed non-positive context limits", () => {
+    const { monitor, statusEvents } = createMonitor();
+
+    const malformedProvidersConfig = {
+      openai: {
+        models: [{ id: "gpt-4o", contextWindowTokens: -1 }],
+      },
+    } as unknown as ProvidersConfigMap;
+
+    expect(
+      monitor.checkMidStream({
+        model: "openai:gpt-4o",
+        usage: createMidStreamUsage(42),
+        use1MContext: false,
+        providersConfig: malformedProvidersConfig,
       })
     ).toBe(false);
     expect(statusEvents).toHaveLength(0);

@@ -103,13 +103,11 @@ export class CompactionMonitor {
       params.use1MContext,
       params.providersConfig
     );
-    if (!contextLimit) {
+    // Defensive: malformed provider overrides can yield invalid/non-positive limits.
+    // Treat those as "no compaction signal" instead of throwing inside usage-delta handlers.
+    if (!contextLimit || contextLimit <= 0) {
       return false;
     }
-    assert(
-      contextLimit > 0,
-      `CompactionMonitor(${this.workspaceId}): effective context limit must be positive`
-    );
 
     // AI SDK v6 reports inputTokens as the full prompt context (including cache reads),
     // so adding cachedInputTokens here double-counts prompt-cached requests.
