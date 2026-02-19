@@ -1859,7 +1859,13 @@ export class AgentSession {
         providersConfig: providersConfigForCompaction,
       });
 
-      if (compactionResult.shouldForceCompact) {
+      // On-send compaction uses the configured threshold directly so we compact
+      // before dispatching a risky user turn near the context limit.
+      // `shouldForceCompact` remains a stricter (threshold + buffer) signal for
+      // mid-stream forcing where we want to avoid abrupt interruptions too early.
+      const shouldCompactBeforeSend =
+        compactionResult.usagePercentage >= compactionResult.thresholdPercentage;
+      if (shouldCompactBeforeSend) {
         const followUpFileParts = effectiveFileParts?.map((part) => ({
           url: part.url,
           mediaType: part.mediaType,

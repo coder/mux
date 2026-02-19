@@ -139,6 +139,80 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     session.dispose();
   });
 
+  test("triggers on-send compaction at threshold even before force buffer", async () => {
+    const workspaceId = "ws-auto-compaction-on-send-threshold";
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const aiEmitter = new EventEmitter();
+    const streamRequests: unknown[] = [];
+    const streamMessage = mock((request: unknown) => {
+      streamRequests.push(request);
+      return Promise.resolve(Ok(undefined));
+    });
+    const aiService = Object.assign(aiEmitter, {
+      isStreaming: mock((_workspaceId: string) => false),
+      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
+      streamMessage: streamMessage as unknown as (
+        ...args: Parameters<AIService["streamMessage"]>
+      ) => Promise<unknown>,
+    }) as unknown as AIService;
+
+    const initStateManager = new EventEmitter() as unknown as InitStateManager;
+
+    const backgroundProcessManager = {
+      cleanup: mock((_workspaceId: string) => Promise.resolve()),
+      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
+        void _queued;
+      }),
+    } as unknown as BackgroundProcessManager;
+
+    const config = {
+      srcDir: "/tmp",
+      getSessionDir: (_workspaceId: string) => "/tmp",
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    (session as unknown as { compactionMonitor: CompactionMonitor }).compactionMonitor = {
+      checkBeforeSend: mock(() => ({
+        shouldShowWarning: true,
+        shouldForceCompact: false,
+        usagePercentage: 72,
+        thresholdPercentage: 70,
+      })),
+      checkMidStream: mock(() => false),
+      resetForNewStream: mock(() => undefined),
+      setThreshold: mock(() => undefined),
+      getThreshold: mock(() => 0.7),
+    } as unknown as CompactionMonitor;
+
+    const result = await session.sendMessage("hello", {
+      model: "openai:gpt-4o",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(true);
+    expect(streamMessage).toHaveBeenCalledTimes(1);
+
+    const firstRequest = streamRequests[0] as { messages?: MuxMessage[] } | undefined;
+    const requestMessages = Array.isArray(firstRequest?.messages) ? firstRequest.messages : [];
+    const hasCompactionRequest = requestMessages.some(
+      (message) => message.metadata?.muxMetadata?.type === "compaction-request"
+    );
+    expect(hasCompactionRequest).toBe(true);
+
+    session.dispose();
+  });
+
   test("threads providers config into pre-send and mid-stream compaction checks", async () => {
     const workspaceId = "ws-auto-compaction-providers-config";
 
