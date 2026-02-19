@@ -115,7 +115,19 @@ function createControlledChatStream(): {
   return { stream, push };
 }
 
-function createHarness(): Harness {
+interface HarnessOptions {
+  onChat?: (input: {
+    workspaceId: string;
+    mode?: OnChatMode;
+  }) => Promise<AsyncIterable<WorkspaceChatMessage>>;
+  sendMessage?: (input: {
+    workspaceId: string;
+    message: string;
+    options: Record<string, unknown>;
+  }) => Promise<{ success: boolean; data?: unknown; error?: unknown }>;
+}
+
+function createHarness(options?: HarnessOptions): Harness {
   const workspacesById = new Map<string, WorkspaceInfo>();
   const sendMessageCalls: Array<{
     workspaceId: string;
@@ -182,13 +194,17 @@ function createHarness(): Harness {
       },
       getInfo: async ({ workspaceId }: { workspaceId: string }) =>
         workspacesById.get(workspaceId) ?? null,
-      onChat: async (_input: { workspaceId: string; mode?: OnChatMode }) => chatStream.stream,
+      onChat: async (input: { workspaceId: string; mode?: OnChatMode }) =>
+        (await options?.onChat?.(input)) ?? chatStream.stream,
       sendMessage: async (input: {
         workspaceId: string;
         message: string;
         options: Record<string, unknown>;
       }) => {
         sendMessageCalls.push(input);
+        if (options?.sendMessage != null) {
+          return await options.sendMessage(input);
+        }
         return { success: true as const, data: {} };
       },
       answerDelegatedToolCall: async (input: {
@@ -555,6 +571,55 @@ describe("ACP prompt stream correlation", () => {
       },
     });
 
+    await harness.connectionClosed;
+  });
+
+  it("rejects promptly when chat subscription drops before terminal events", async () => {
+    const endedChatStream: AsyncIterable<WorkspaceChatMessage> = {
+      [Symbol.asyncIterator]() {
+        return {
+          next: async () => ({ done: true, value: undefined }),
+        };
+      },
+    };
+
+    const harness = createHarness({
+      onChat: async () => endedChatStream,
+    });
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    const newSessionResponse = await harness.agent.newSession({
+      cwd: "/repo/acp-go-sdk",
+      mcpServers: [],
+      _meta: {
+        trunkBranch: "main",
+      },
+    });
+
+    const promptResult = await Promise.race<Error | "timed_out" | "resolved">([
+      harness.agent
+        .prompt({
+          sessionId: newSessionResponse.sessionId,
+          prompt: [{ type: "text", text: "hello" }],
+        })
+        .then(() => "resolved" as const)
+        .catch((error: unknown) =>
+          error instanceof Error ? error : new Error(`prompt rejected: ${String(error)}`)
+        ),
+      new Promise<"timed_out">((resolve) => {
+        setTimeout(() => resolve("timed_out"), 500);
+      }),
+    ]);
+
+    expect(promptResult).not.toBe("timed_out");
+    expect(promptResult).not.toBe("resolved");
+    if (promptResult === "timed_out" || promptResult === "resolved") {
+      throw new Error("Expected prompt to reject when chat stream ends before terminal events");
+    }
+
+    expect(promptResult.message).toContain("Chat stream ended unexpectedly");
+
+    harness.closeConnection();
     await harness.connectionClosed;
   });
 

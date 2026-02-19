@@ -560,25 +560,26 @@ export class MuxAgent implements Agent {
 
     this.markNewSessionWorkspacePromptActivity(args.workspaceId);
 
-    // Re-establish chat subscription if a prior one dropped (e.g., transient
-    // websocket interruption). Without a live subscription, stream-end events
-    // never arrive and the turn promise hangs indefinitely.
-    await this.ensureChatSubscription(
-      args.sessionId,
-      args.workspaceId,
-      this.getSessionOnChatMode(args.sessionId)
-    );
-
     const promptCorrelationId = randomUUID();
     const turnPromise = this.beginTurn(args.sessionId, promptCorrelationId);
-    const delegatedToolNames = this.getDelegatedToolNames(args.sessionId);
-    const optionsWithPromptCorrelation = this.attachPromptCorrelationToSendOptions(
-      args.options,
-      promptCorrelationId,
-      delegatedToolNames
-    );
 
     try {
+      // Re-establish chat subscription if a prior one dropped (e.g., transient
+      // websocket interruption). Register the turn first so subscription
+      // failures can reject it instead of leaving prompt() hanging.
+      await this.ensureChatSubscription(
+        args.sessionId,
+        args.workspaceId,
+        this.getSessionOnChatMode(args.sessionId)
+      );
+
+      const delegatedToolNames = this.getDelegatedToolNames(args.sessionId);
+      const optionsWithPromptCorrelation = this.attachPromptCorrelationToSendOptions(
+        args.options,
+        promptCorrelationId,
+        delegatedToolNames
+      );
+
       const sendResult = await this.server.client.workspace.sendMessage({
         workspaceId: args.workspaceId,
         message: args.message,
@@ -604,9 +605,11 @@ export class MuxAgent implements Agent {
         usage,
       };
     } catch (error) {
-      // workspace.sendMessage failures happen before stream events can settle the turn promise.
-      // Clear turn state without rejecting to avoid detached/unhandled promise rejections.
+      // workspace.sendMessage / subscription failures can happen before stream
+      // events settle the turn promise. Clear state and attach a sink handler
+      // so rejected turns never surface as unhandled rejections.
       this.turnCompletions.delete(args.sessionId);
+      void turnPromise.catch(() => undefined);
       throw error;
     }
   }
