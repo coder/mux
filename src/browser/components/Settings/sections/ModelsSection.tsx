@@ -17,6 +17,7 @@ import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { SearchableModelSelect } from "../components/SearchableModelSelect";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { isCodexOauthRequiredModelId } from "@/common/constants/codexOAuth";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { supports1MContext } from "@/common/utils/ai/models";
 import { getAllowedProvidersForUi, isModelAllowedByPolicy } from "@/browser/utils/policyUi";
@@ -84,6 +85,12 @@ function buildProviderModelEntry(
   return { id: modelId, contextWindowTokens };
 }
 
+export function shouldShowModelInSettings(modelId: string, codexOauthConfigured: boolean): boolean {
+  // Keep OAuth-required OpenAI models out of Settings until OAuth is connected,
+  // so users don't pick defaults that fail at send time.
+  return codexOauthConfigured || !isCodexOauthRequiredModelId(modelId);
+}
+
 export function ModelsSection() {
   const policyState = usePolicy();
   const effectivePolicy =
@@ -103,7 +110,7 @@ export function ModelsSection() {
   const selectableProviders = visibleProviders.filter(
     (provider) => !HIDDEN_PROVIDERS.has(provider)
   );
-  const { defaultModel, setDefaultModel, hiddenModels, hideModel, unhideModel } =
+  const { defaultModel, setDefaultModel, hiddenModels, hideModel, unhideModel, codexOauthSet } =
     useModelsFromSettings();
   const gateway = useGateway();
   const { has1MContext, toggle1MContext } = useProviderOptions();
@@ -131,10 +138,14 @@ export function ModelsSection() {
     [api, setCompactionModel]
   );
 
+  const codexOauthConfigured = codexOauthSet === true;
+
   // All models (including hidden) for the settings dropdowns.
   // PolicyService enforces model access on the backend, but we also filter here so users can't
   // select models that will be denied at send time.
-  const allModels = getSuggestedModels(config);
+  const allModels = getSuggestedModels(config).filter((model) =>
+    shouldShowModelInSettings(model, codexOauthConfigured)
+  );
   const selectableModels = effectivePolicy
     ? allModels.filter((model) => isModelAllowedByPolicy(effectivePolicy, model))
     : allModels;
@@ -337,6 +348,7 @@ export function ModelsSection() {
       fullId: model.id,
       aliases: model.aliases,
     }))
+    .filter((model) => shouldShowModelInSettings(model.fullId, codexOauthConfigured))
     .filter((model) => isModelAllowedByPolicy(effectivePolicy, model.fullId));
 
   const customModels = getCustomModels();
