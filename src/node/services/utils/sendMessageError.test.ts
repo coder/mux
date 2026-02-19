@@ -18,6 +18,21 @@ describe("buildStreamErrorEventData", () => {
     expect(result.errorType).toBe("authentication");
     expect(result.error).toContain("OpenAI");
     expect(result.messageId).toMatch(/^assistant-/);
+    expect(result.acpPromptId).toBeUndefined();
+  });
+
+  test("preserves ACP prompt correlation id when provided", () => {
+    const result = buildStreamErrorEventData(
+      {
+        type: "unknown",
+        raw: "network failure",
+      },
+      {
+        acpPromptId: "acp-prompt-123",
+      }
+    );
+
+    expect(result.acpPromptId).toBe("acp-prompt-123");
   });
 });
 describe("createStreamErrorMessage", () => {

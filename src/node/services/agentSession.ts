@@ -2815,7 +2815,9 @@ export class AgentSession {
         await this.updateStartupAutoRetryAbandonFromFailure(failureType, failedUserMessageId);
       } else {
         this.activeStreamFailureHandled = true;
-        const streamError = buildStreamErrorEventData(streamResult.error);
+        const streamError = buildStreamErrorEventData(streamResult.error, {
+          acpPromptId: extractAcpPromptId(options?.muxMetadata),
+        });
         await this.handleStreamError(streamError);
       }
     }
