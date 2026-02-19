@@ -397,6 +397,8 @@ export class WorkspaceStore {
   private client: RouterClient<AppRouter> | null = null;
   private clientChangeController = new AbortController();
   private providersConfig: ProvidersConfigMap | null = null;
+  /** Monotonic version counter for serializing provider config refreshes (latest wins). */
+  private providersConfigVersion = 0;
   // Workspaces that need a clean history replay once a new iterator is established.
   // We keep the existing UI visible until the replay can actually start.
   private pendingReplayReset = new Set<string>();
@@ -789,17 +791,27 @@ export class WorkspaceStore {
   }
 
   private async refreshProvidersConfig(client: RouterClient<AppRouter>): Promise<void> {
+    // Bump version before the async call so later invocations get a higher number.
+    // If a slower request finishes after a faster one, it will see its version is stale and bail.
+    const version = ++this.providersConfigVersion;
     try {
       const config = await client.providers.getConfig();
-      if (this.client !== client || this.clientChangeController.signal.aborted) {
+      if (
+        this.client !== client ||
+        this.clientChangeController.signal.aborted ||
+        version !== this.providersConfigVersion
+      ) {
         return;
       }
 
       this.providersConfig = config;
       this.bumpAllUsageStoreEntries();
-      // Invalidate consumer token stats cache so mapped-model changes
-      // take effect on next access (triggers recalculation with new metadata).
+      // Invalidate consumer token stats — both in-memory and persisted —
+      // so mapped-model changes take effect on next access.
       this.consumerManager.invalidateAll();
+      for (const [, usage] of this.sessionUsage) {
+        usage.tokenStatsCache = undefined;
+      }
     } catch {
       // Ignore provider config fetch errors.
     }
