@@ -170,7 +170,7 @@ Freely make breaking changes, and reorganize / cleanup IPC as needed.
 - Do not add UX flourishes (auto-dismiss, animations, tooltips, etc.) unless requested. Ship the simplest behavior that meets requirements.
 - Enforce DRY: if you repeat code/strings, factor a shared helper/constant (search first; if cross-layer, move to `src/constants/` or `src/types/`).
 - Hooks that detect a condition should handle it directly when they already have the data—avoid unnecessary callback hop chains.
-- Every operation must have a keyboard shortcut, and UI controls with shortcuts should surface them in hover tooltips.
+- Every operation must have a keyboard shortcut. The keyboard shortcut should not be visible on mobile views.
 
 ## Logging
 
