@@ -66,6 +66,10 @@ interface SessionState {
   aiSettings: ResolvedAiSettings;
 }
 
+interface NewSessionWorkspaceLifecycle {
+  hasPromptActivity: boolean;
+}
+
 interface TurnResult {
   stopReason: PromptResponse["stopReason"];
   usage?: Usage;
@@ -105,6 +109,14 @@ export class MuxAgent implements Agent {
   private initialized = false;
 
   private readonly sessionStateById = new Map<string, SessionState>();
+  /**
+   * Tracks workspaces created by ACP session/new so disconnect cleanup can remove
+   * untouched placeholders (no prompts/messages sent).
+   */
+  private readonly newSessionWorkspaceLifecycleById = new Map<
+    string,
+    NewSessionWorkspaceLifecycle
+  >();
   private readonly sessionSkillsById = new Map<string, Map<string, AgentSkillDescriptor>>();
   /**
    * Persist each session's desired onChat mode so prompt() can recover dropped
@@ -144,6 +156,8 @@ export class MuxAgent implements Agent {
         for (const [sessionId] of this.turnCompletions) {
           this.rejectTurn(sessionId, disconnectError);
         }
+
+        void this.cleanupNewSessionWorkspacesOnDisconnect();
       },
       { once: true }
     );
@@ -202,6 +216,10 @@ export class MuxAgent implements Agent {
     const workspace = createResult.metadata;
     const sessionId = workspace.id;
     const workspaceId = workspace.id;
+    this.newSessionWorkspaceLifecycleById.set(workspaceId, {
+      hasPromptActivity: false,
+    });
+
     const runtimeMode = runtimeModeFromConfig(workspace.runtimeConfig);
 
     this.sessionManager.registerSession(
@@ -483,6 +501,8 @@ export class MuxAgent implements Agent {
       "sendWorkspaceMessageAndAwaitTurn: workspaceId required"
     );
     assert(args.message.trim().length > 0, "sendWorkspaceMessageAndAwaitTurn: message required");
+
+    this.markNewSessionWorkspacePromptActivity(args.workspaceId);
 
     // Re-establish chat subscription if a prior one dropped (e.g., transient
     // websocket interruption). Without a live subscription, stream-end events
@@ -819,6 +839,52 @@ export class MuxAgent implements Agent {
     return {
       stopReason: DEFAULT_COMMAND_STOP_REASON,
     };
+  }
+
+  private markNewSessionWorkspacePromptActivity(workspaceId: string): void {
+    const lifecycle = this.newSessionWorkspaceLifecycleById.get(workspaceId);
+    if (lifecycle == null) {
+      return;
+    }
+
+    lifecycle.hasPromptActivity = true;
+  }
+
+  private async cleanupNewSessionWorkspacesOnDisconnect(): Promise<void> {
+    const candidates = Array.from(this.newSessionWorkspaceLifecycleById.entries());
+
+    for (const [workspaceId, lifecycle] of candidates) {
+      // If this ACP connection attempted any prompt in the workspace, keep it.
+      // Users can intentionally prepare a workspace and disconnect mid-turn.
+      if (lifecycle.hasPromptActivity) {
+        this.newSessionWorkspaceLifecycleById.delete(workspaceId);
+        continue;
+      }
+
+      try {
+        const replay = await this.server.client.workspace.getFullReplay({ workspaceId });
+        if (!isWorkspaceConversationEmpty(replay)) {
+          continue;
+        }
+
+        const removeResult = await this.server.client.workspace.remove({
+          workspaceId,
+          options: { force: false },
+        });
+        if (!removeResult.success) {
+          console.error(
+            `[acp] Failed to remove untouched ACP workspace ${workspaceId} on disconnect: ${stringifyUnknown(removeResult.error)}`
+          );
+        }
+      } catch (error) {
+        console.error(
+          `[acp] Failed to cleanup untouched ACP workspace ${workspaceId} on disconnect`,
+          error
+        );
+      } finally {
+        this.newSessionWorkspaceLifecycleById.delete(workspaceId);
+      }
+    }
   }
 
   private scheduleSessionCommandsRefresh(sessionId: string, workspaceId: string): void {
@@ -1242,6 +1308,12 @@ function parseSessionListCursor(cursor: string | null | undefined): number {
   const parsed = Number(trimmed);
   assert(Number.isSafeInteger(parsed), `unstable_listSessions: invalid cursor '${cursor}'`);
   return parsed;
+}
+
+function isWorkspaceConversationEmpty(events: WorkspaceChatMessage[]): boolean {
+  return !events.some(
+    (event) => event.type === "message" && (event.role === "assistant" || event.role === "user")
+  );
 }
 
 function dedupeWorkspacesById(workspaces: WorkspaceInfo[]): WorkspaceInfo[] {
