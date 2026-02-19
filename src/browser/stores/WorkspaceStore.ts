@@ -2584,6 +2584,7 @@ export class WorkspaceStore {
     this.chatTransientState.clear();
     this.workspaceMetadata.clear();
     this.workspaceActivity.clear();
+    this.activityStreamingStartRecency.clear();
     this.workspaceStats.clear();
     this.statsStore.clear();
     this.statsListenerCounts.clear();

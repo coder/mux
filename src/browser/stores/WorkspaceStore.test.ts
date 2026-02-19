@@ -1033,6 +1033,20 @@ describe("WorkspaceStore", () => {
 
       expect(onResponseComplete).not.toHaveBeenCalled();
     });
+    it("clears activity stream-start recency cache on dispose", () => {
+      const workspaceId = "dispose-clears-activity-recency";
+      const internalStore = store as unknown as {
+        activityStreamingStartRecency: Map<string, number>;
+      };
+
+      internalStore.activityStreamingStartRecency.set(workspaceId, Date.now());
+      expect(internalStore.activityStreamingStartRecency.has(workspaceId)).toBe(true);
+
+      store.dispose();
+
+      expect(internalStore.activityStreamingStartRecency.size).toBe(0);
+    });
+
     it("opens activity subscription before listing snapshots", async () => {
       store.dispose();
       store = new WorkspaceStore(mockOnModelUsed);
