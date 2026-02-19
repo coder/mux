@@ -225,12 +225,16 @@ export async function resolveAgentForStream(
   // Caller policy then narrows further if needed.
   // Auto must be able to call switch_agent on its first turn even before metadata persistence.
   const shouldEnableAgentSwitchTool = enableAgentSwitchTool || agentDefinition.id === "auto";
+  // Only force toolChoice=require in top-level workspaces where switch_agent can actually run.
+  // Corrupted/stale subagent metadata may still point at auto; that should degrade safely.
+  const shouldRequireSwitchAgentTool =
+    agentDefinition.id === "auto" && shouldEnableAgentSwitchTool && !isSubagentWorkspace;
   const agentToolPolicy = resolveToolPolicyForAgent({
     agents: agentsForInheritance,
     isSubagent: isSubagentWorkspace,
     disableTaskToolsForDepth: shouldDisableTaskToolsForDepth,
     enableAgentSwitchTool: shouldEnableAgentSwitchTool,
-    requireSwitchAgentTool: agentDefinition.id === "auto",
+    requireSwitchAgentTool: shouldRequireSwitchAgentTool,
   });
 
   // The Chat with Mux system workspace must remain sandboxed regardless of caller-supplied

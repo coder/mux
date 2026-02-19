@@ -106,28 +106,38 @@ describe("resolveToolPolicyForAgent", () => {
     ]);
   });
 
-  test("requireSwitchAgentTool rejects invalid runtime combinations", () => {
+  test("requireSwitchAgentTool degrades safely for invalid runtime combinations", () => {
     const agents: AgentLikeForPolicy[] = [{ tools: { add: ["file_read"] } }];
 
-    expect(() =>
-      resolveToolPolicyForAgent({
-        agents,
-        isSubagent: false,
-        disableTaskToolsForDepth: false,
-        enableAgentSwitchTool: false,
-        requireSwitchAgentTool: true,
-      })
-    ).toThrow("Invalid tool policy options");
+    const withoutSwitchEnablement = resolveToolPolicyForAgent({
+      agents,
+      isSubagent: false,
+      disableTaskToolsForDepth: false,
+      enableAgentSwitchTool: false,
+      requireSwitchAgentTool: true,
+    });
+    expect(withoutSwitchEnablement).toEqual([
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "file_read", action: "enable" },
+      { regex_match: "switch_agent", action: "disable" },
+    ]);
 
-    expect(() =>
-      resolveToolPolicyForAgent({
-        agents,
-        isSubagent: true,
-        disableTaskToolsForDepth: false,
-        enableAgentSwitchTool: true,
-        requireSwitchAgentTool: true,
-      })
-    ).toThrow("Invalid tool policy options");
+    const subagentPolicy = resolveToolPolicyForAgent({
+      agents,
+      isSubagent: true,
+      disableTaskToolsForDepth: false,
+      enableAgentSwitchTool: true,
+      requireSwitchAgentTool: true,
+    });
+    expect(subagentPolicy).toEqual([
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "file_read", action: "enable" },
+      { regex_match: "switch_agent", action: "disable" },
+      { regex_match: "ask_user_question", action: "disable" },
+      { regex_match: "switch_agent", action: "disable" },
+      { regex_match: "propose_plan", action: "disable" },
+      { regex_match: "agent_report", action: "enable" },
+    ]);
   });
 
   test("subagents still hard-deny switch_agent even when auto switch is enabled", () => {

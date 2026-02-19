@@ -68,12 +68,11 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
     requireSwitchAgentTool = false,
   } = options;
 
-  // Defensive validation: forcing switch_agent only makes sense when the tool can be enabled.
-  if (requireSwitchAgentTool && (!enableAgentSwitchTool || isSubagent)) {
-    throw new Error(
-      "Invalid tool policy options: requireSwitchAgentTool needs a top-level workspace with agent switching enabled."
-    );
-  }
+  // Defensive normalization: requiring switch_agent is only valid when the tool can be enabled.
+  // Invalid combinations (e.g. stale subagent metadata pointing at Auto) degrade safely
+  // to the default disabled policy instead of throwing and bricking the workspace.
+  const shouldRequireSwitchAgentTool =
+    requireSwitchAgentTool && enableAgentSwitchTool && !isSubagent;
 
   // Start with deny-all baseline
   const agentPolicy: ToolPolicy = [{ regex_match: ".*", action: "disable" }];
@@ -116,7 +115,7 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
     runtimePolicy.push({ regex_match: "switch_agent", action: "enable" });
 
     // Auto is a strict router: force a switch_agent tool call before producing prose.
-    if (requireSwitchAgentTool) {
+    if (shouldRequireSwitchAgentTool) {
       runtimePolicy.push({ regex_match: "switch_agent", action: "require" });
     }
   }
