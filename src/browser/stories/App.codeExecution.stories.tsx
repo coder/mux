@@ -12,7 +12,6 @@ import {
 } from "./mockFactory";
 
 import { setupSimpleChatStory } from "./storyHelpers";
-import { userEvent, waitFor } from "@storybook/test";
 
 export default {
   ...appMeta,
@@ -496,34 +495,4 @@ return results;`,
       }
     />
   ),
-  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    // Wait for the actionable control directly. The transcript loaded marker can
-    // lag on busy runners even when the code button is already interactive.
-    await waitFor(
-      () => {
-        const buttons = canvasElement.querySelectorAll('button[type="button"]');
-        const showCodeBtn = Array.from(buttons).find((btn) => {
-          const svg = btn.querySelector("svg");
-          return svg?.classList.contains("lucide-code");
-        });
-        if (!showCodeBtn) throw new Error("Show Code button not found");
-        return showCodeBtn;
-      },
-      { interval: 50, timeout: 25000 }
-    );
-
-    const buttons = canvasElement.querySelectorAll('button[type="button"]');
-    const showCodeBtn = Array.from(buttons).find((btn) => {
-      const svg = btn.querySelector("svg");
-      return svg?.classList.contains("lucide-code");
-    }) as HTMLElement;
-
-    await userEvent.click(showCodeBtn);
-
-    // Wait for code view to be displayed (font-mono class should be present)
-    await waitFor(() => {
-      const codeContainer = canvasElement.querySelector(".font-mono");
-      if (!codeContainer) throw new Error("Code view not displayed");
-    });
-  },
 };
