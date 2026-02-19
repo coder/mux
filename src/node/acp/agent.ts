@@ -1234,6 +1234,7 @@ export class MuxAgent implements Agent {
       if (drainFinished) {
         await drainPromise;
       } else {
+        // eslint-disable-next-line @typescript-eslint/no-empty-function -- Suppress unhandled rejection; drain self-terminates when chatStream closes.
         drainPromise.catch(() => {});
       }
     }
