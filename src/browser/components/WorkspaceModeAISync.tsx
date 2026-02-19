@@ -8,15 +8,11 @@ import {
 import {
   getModelKey,
   getThinkingLevelKey,
-  getWorkspaceAISettingsByAgentKey,
   AGENT_AI_DEFAULTS_KEY,
 } from "@/common/constants/storage";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
-import {
-  resolveWorkspaceAiSettingsForAgent,
-  type WorkspaceAISettingsCache,
-} from "@/browser/utils/workspaceModeAi";
+import { resolveWorkspaceAiSettingsForAgent } from "@/browser/utils/workspaceModeAi";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 
@@ -29,11 +25,7 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
     {},
     { listener: true }
   );
-  const [workspaceByAgent] = usePersistedState<WorkspaceAISettingsCache>(
-    getWorkspaceAISettingsByAgentKey(workspaceId),
-    {},
-    { listener: true }
-  );
+
   // User request: this effect runs on mount and during background sync (defaults/config).
   // Only treat *real* agentId changes as explicit (origin "agent"); everything else is "sync"
   // so we don't show context-switch warnings on workspace entry.
@@ -65,8 +57,6 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
     const { resolvedModel, resolvedThinking } = resolveWorkspaceAiSettingsForAgent({
       agentId: normalizedAgentId,
       agentAiDefaults,
-      workspaceByAgent,
-      useWorkspaceByAgentFallback: true,
       fallbackModel,
       existingModel,
       existingThinking,
@@ -83,7 +73,7 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
     if (existingThinking !== resolvedThinking) {
       updatePersistedState(thinkingKey, resolvedThinking);
     }
-  }, [agentAiDefaults, agentId, workspaceByAgent, workspaceId]);
+  }, [agentAiDefaults, agentId, workspaceId]);
 
   return null;
 }
