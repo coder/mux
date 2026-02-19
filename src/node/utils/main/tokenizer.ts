@@ -200,12 +200,16 @@ export function loadTokenizerModules(
   );
 }
 
-export async function getTokenizerForModel(modelString: string): Promise<Tokenizer> {
+export async function getTokenizerForModel(
+  modelString: string,
+  metadataModelOverride?: string
+): Promise<Tokenizer> {
   if (shouldUseApproxTokenizer()) {
     return getApproxTokenizer();
   }
 
-  const modelName = resolveModelName(modelString);
+  const resolvedModel = metadataModelOverride ?? modelString;
+  const modelName = resolveModelName(resolvedModel);
   const encodingName = await resolveEncoding(modelName);
 
   return {

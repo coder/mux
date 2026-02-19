@@ -18,7 +18,8 @@ import type { ChatUsageDisplay } from "./usageAggregator";
 export function createDisplayUsage(
   usage: LanguageModelV2Usage | undefined,
   model: string,
-  providerMetadata?: Record<string, unknown>
+  providerMetadata?: Record<string, unknown>,
+  metadataModelOverride?: string
 ): ChatUsageDisplay | undefined {
   if (!usage) return undefined;
 
@@ -51,7 +52,7 @@ export function createDisplayUsage(
   const outputWithoutReasoning = Math.max(0, (usage.outputTokens ?? 0) - reasoningTokens);
 
   // Get model stats for cost calculation
-  const modelStats = getModelStats(model);
+  const modelStats = getModelStats(metadataModelOverride ?? model);
 
   const costsIncluded =
     (providerMetadata?.mux as { costsIncluded?: boolean } | undefined)?.costsIncluded === true;

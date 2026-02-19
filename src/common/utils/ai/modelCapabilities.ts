@@ -1,3 +1,5 @@
+import type { ProvidersConfigMap } from "@/common/orpc/types";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import modelsData from "../tokens/models.json";
 import { modelsExtra } from "../tokens/models-extra";
 import { normalizeGatewayModel } from "./models";
@@ -88,6 +90,14 @@ export function getModelCapabilities(modelString: string): ModelCapabilities | n
   }
 
   return null;
+}
+
+export function getModelCapabilitiesResolved(
+  modelString: string,
+  providersConfig: ProvidersConfigMap | null
+): ModelCapabilities | null {
+  const metadataModel = resolveModelForMetadata(modelString, providersConfig);
+  return getModelCapabilities(metadataModel);
 }
 
 export function getSupportedInputMediaTypes(
