@@ -7,7 +7,6 @@ import type {
 } from "@agentclientprotocol/sdk";
 import type { RuntimeMode } from "../../common/types/runtime";
 import { handleStringReplace } from "../services/tools/file_edit_replace_shared";
-import { toBashTaskId } from "../services/tools/taskId";
 
 // Defined locally while ACP capability negotiation modules are developed.
 interface NegotiatedCapabilities {
@@ -22,6 +21,18 @@ interface SessionRouting {
   editorHandlesFsRead: boolean;
   editorHandlesFsWrite: boolean;
   editorHandlesTerminal: boolean;
+}
+
+type DelegatedTerminalHandle = Awaited<ReturnType<AgentSideConnection["createTerminal"]>>;
+
+class TerminalWaitTimeoutError extends Error {
+  readonly timeoutSecs: number;
+
+  constructor(timeoutSecs: number) {
+    super(`Terminal command timed out after ${timeoutSecs} seconds`);
+    this.name = "TerminalWaitTimeoutError";
+    this.timeoutSecs = timeoutSecs;
+  }
 }
 
 const FILE_READ_TOOL_NAMES = new Set([
@@ -184,6 +195,10 @@ export class ToolRouter {
 
     if (isTerminalTool(normalizedToolName)) {
       const startedAt = Date.now();
+      const bashTimeoutSecs =
+        normalizedToolName === "bash"
+          ? getOptionalNumber(params, "timeout_secs", toolName)
+          : undefined;
       const runInBackground =
         normalizedToolName === "bash" &&
         (getOptionalBoolean(params, "run_in_background", toolName) ?? false);
@@ -195,21 +210,38 @@ export class ToolRouter {
         const processId = terminal.id.trim();
         assert(processId.length > 0, "delegateToEditor: terminal id must be non-empty");
 
-        // Keep the terminal handle alive for background execution.
-        // Disposing it here would kill the child process immediately.
         if (runInBackground) {
+          detachBackgroundTerminal(terminal, bashTimeoutSecs);
           return {
             success: true,
             output: `Background process started with ID: ${processId}`,
             exitCode: 0,
             wall_duration_ms: Date.now() - startedAt,
-            taskId: toBashTaskId(processId),
-            backgroundProcessId: processId,
+            note: "ACP delegated background terminals cannot be managed via task_await/task_terminate yet.",
           };
         }
 
         await using foregroundTerminal = terminal;
-        const exitStatus = await foregroundTerminal.waitForExit();
+
+        let exitStatus: Awaited<ReturnType<DelegatedTerminalHandle["waitForExit"]>>;
+        try {
+          exitStatus = await waitForTerminalExitWithTimeout(foregroundTerminal, bashTimeoutSecs);
+        } catch (error) {
+          if (!(error instanceof TerminalWaitTimeoutError)) {
+            throw error;
+          }
+
+          await safeKillTerminal(foregroundTerminal);
+          const timeoutOutput = await readTerminalOutputSafely(foregroundTerminal);
+          return {
+            success: false,
+            output: timeoutOutput,
+            exitCode: -1,
+            error: buildBashTimeoutErrorMessage(error.timeoutSecs),
+            wall_duration_ms: Date.now() - startedAt,
+          };
+        }
+
         const currentOutput = await foregroundTerminal.currentOutput();
 
         const wallDurationMs = Date.now() - startedAt;
@@ -668,6 +700,96 @@ function getOptionalEnvVariables(
   throw new Error(
     `ToolRouter: ${toolName} parameter '${key}' must be an array of entries or object map when provided`
   );
+}
+
+function buildBashTimeoutErrorMessage(timeoutSecs: number): string {
+  assert(Number.isFinite(timeoutSecs) && timeoutSecs > 0, "timeoutSecs must be > 0");
+
+  return `Command exceeded timeout of ${timeoutSecs} seconds. You can increase the timeout by setting the \`timeout_secs\` parameter on the tool call. Do not use the \`timeout\` bash command to increase the timeout.`;
+}
+
+async function waitForTerminalExitWithTimeout(
+  terminal: DelegatedTerminalHandle,
+  timeoutSecs: number | undefined
+): Promise<Awaited<ReturnType<DelegatedTerminalHandle["waitForExit"]>>> {
+  if (timeoutSecs == null) {
+    return terminal.waitForExit();
+  }
+
+  assert(Number.isFinite(timeoutSecs) && timeoutSecs > 0, "wait timeoutSecs must be > 0");
+
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(new TerminalWaitTimeoutError(timeoutSecs));
+    }, timeoutSecs * 1000);
+    timeoutHandle.unref?.();
+  });
+
+  try {
+    return await Promise.race([terminal.waitForExit(), timeoutPromise]);
+  } finally {
+    if (timeoutHandle != null) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+}
+
+function detachBackgroundTerminal(
+  terminal: DelegatedTerminalHandle,
+  timeoutSecs: number | undefined
+): void {
+  if (timeoutSecs != null) {
+    assert(Number.isFinite(timeoutSecs) && timeoutSecs > 0, "background timeoutSecs must be > 0");
+  }
+
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  if (timeoutSecs != null) {
+    timeoutHandle = setTimeout(() => {
+      void safeKillTerminal(terminal);
+    }, timeoutSecs * 1000);
+    timeoutHandle.unref?.();
+  }
+
+  void terminal
+    .waitForExit()
+    .catch(() => undefined)
+    .finally(async () => {
+      if (timeoutHandle != null) {
+        clearTimeout(timeoutHandle);
+      }
+      await safeReleaseTerminal(terminal);
+    });
+}
+
+async function safeKillTerminal(terminal: DelegatedTerminalHandle): Promise<void> {
+  const maybeKill = (terminal as { kill?: (() => Promise<unknown>) | undefined }).kill;
+  if (typeof maybeKill !== "function") {
+    return;
+  }
+
+  try {
+    await maybeKill.call(terminal);
+  } catch {
+    // no-op: best-effort kill during timeout/cleanup paths.
+  }
+}
+
+async function readTerminalOutputSafely(terminal: DelegatedTerminalHandle): Promise<string> {
+  try {
+    const output = await terminal.currentOutput();
+    return output.output;
+  } catch {
+    return "";
+  }
+}
+
+async function safeReleaseTerminal(terminal: DelegatedTerminalHandle): Promise<void> {
+  try {
+    await terminal.release();
+  } catch {
+    // no-op: release is best-effort in detached background flows.
+  }
 }
 
 function stringifyError(error: unknown): string {

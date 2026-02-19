@@ -8,6 +8,7 @@ function createRouter(overrides?: {
     id: string;
     currentOutput: () => Promise<{ output: string; truncated: boolean }>;
     waitForExit: () => Promise<{ exitCode?: number | null; signal?: string | null }>;
+    kill?: () => Promise<unknown>;
     release: () => Promise<void>;
     [Symbol.asyncDispose]: () => Promise<void>;
   }>;
@@ -37,6 +38,7 @@ function createRouter(overrides?: {
           id: "term-1",
           currentOutput: async () => ({ output: "", truncated: false }),
           waitForExit: async () => ({ exitCode: 0 }),
+          kill: async () => undefined,
           release: async () => undefined,
           [Symbol.asyncDispose]: async () => undefined,
         };
@@ -76,6 +78,7 @@ describe("ACP ToolRouter", () => {
         id: "term-1",
         currentOutput: async () => ({ output: "hello\n", truncated: false }),
         waitForExit: async () => ({ exitCode: 0 }),
+        kill: async () => undefined,
         release: async () => undefined,
         [Symbol.asyncDispose]: async () => undefined,
       }),
@@ -133,9 +136,50 @@ describe("ACP ToolRouter", () => {
     expect(callOrder).toEqual(["waitForExit", "currentOutput"]);
   });
 
+  it("honors timeout_secs for delegated foreground bash calls", async () => {
+    let killCalls = 0;
+
+    const { router } = createRouter({
+      createTerminal: async () => ({
+        id: "timeout-term",
+        currentOutput: async () => ({ output: "partial\n", truncated: false }),
+        waitForExit: async () => await new Promise(() => undefined),
+        kill: async () => {
+          killCalls += 1;
+          return undefined;
+        },
+        release: async () => undefined,
+        [Symbol.asyncDispose]: async () => undefined,
+      }),
+    });
+
+    const result = await router.delegateToEditor("session-1", "bash", {
+      script: "tail -f /tmp/log",
+      timeout_secs: 0.02,
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      output: "partial\n",
+      exitCode: -1,
+      error: expect.stringContaining("Command exceeded timeout of 0.02 seconds"),
+    });
+    expect(killCalls).toBe(1);
+  });
+
   it("honors run_in_background for delegated bash calls", async () => {
     let waitForExitCalls = 0;
     let currentOutputCalls = 0;
+    let resolveBackgroundExit: (exit: {
+      exitCode?: number | null;
+      signal?: string | null;
+    }) => void = () => undefined;
+
+    const backgroundExit = new Promise<{ exitCode?: number | null; signal?: string | null }>(
+      (resolve) => {
+        resolveBackgroundExit = resolve;
+      }
+    );
 
     const { router } = createRouter({
       createTerminal: async () => ({
@@ -146,8 +190,9 @@ describe("ACP ToolRouter", () => {
         },
         waitForExit: async () => {
           waitForExitCalls += 1;
-          return { exitCode: 0 };
+          return await backgroundExit;
         },
+        kill: async () => undefined,
         release: async () => undefined,
         [Symbol.asyncDispose]: async () => undefined,
       }),
@@ -155,6 +200,7 @@ describe("ACP ToolRouter", () => {
 
     const result = await router.delegateToEditor("session-1", "bash", {
       script: "bun run dev",
+      timeout_secs: 60,
       run_in_background: true,
     });
 
@@ -162,11 +208,15 @@ describe("ACP ToolRouter", () => {
       success: true,
       output: "Background process started with ID: bg-123",
       exitCode: 0,
-      taskId: "bash:bg-123",
-      backgroundProcessId: "bg-123",
+      note: "ACP delegated background terminals cannot be managed via task_await/task_terminate yet.",
     });
-    expect(waitForExitCalls).toBe(0);
+    expect("taskId" in (result as Record<string, unknown>)).toBe(false);
+    expect("backgroundProcessId" in (result as Record<string, unknown>)).toBe(false);
+    expect(waitForExitCalls).toBe(1);
     expect(currentOutputCalls).toBe(0);
+
+    resolveBackgroundExit({ exitCode: 0 });
+    await Promise.resolve();
   });
 
   it("delegates file_edit_replace_string through editor fs read/write", async () => {
