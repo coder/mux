@@ -2412,6 +2412,8 @@ export class AgentSession {
       return;
     }
 
+    const interruptedUserMessageId = this.activeStreamUserMessageId;
+
     this.midStreamCompactionPending = true;
     try {
       const stopResult = await this.aiService.stopStream(this.workspaceId, {
@@ -2456,6 +2458,31 @@ export class AgentSession {
           workspaceId: this.workspaceId,
           error: sendResult.error,
         });
+
+        const failureType = sendResult.error.type;
+        const handledByNestedSend = this.activeStreamFailureHandled;
+
+        if (!handledByNestedSend) {
+          this.retryManager.handleStreamFailure({
+            type: failureType,
+            message: this.extractRetryFailureMessage(sendResult.error),
+          });
+          await this.updateStartupAutoRetryAbandonFromFailure(
+            failureType,
+            interruptedUserMessageId
+          );
+        }
+
+        if (
+          !handledByNestedSend ||
+          failureType === "runtime_not_ready" ||
+          failureType === "runtime_start_failed"
+        ) {
+          // Mid-stream compaction already interrupted the original turn. Surface the
+          // nested dispatch failure so the user gets an explicit retry/error affordance.
+          const streamError = buildStreamErrorEventData(sendResult.error);
+          this.emitChatEvent(createStreamErrorMessage(streamError));
+        }
       }
     } finally {
       this.midStreamCompactionPending = false;

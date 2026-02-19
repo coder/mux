@@ -2260,10 +2260,19 @@ export class WorkspaceStore {
       metadata?.aiSettingsByAgent?.exec?.model ??
       metadata?.aiSettings?.model;
     const thresholdKey = getAutoCompactionThresholdKey(pendingModel ?? "default");
-    const thresholdPercent = readPersistedState<number>(
+    const persistedThreshold = readPersistedState<unknown>(
       thresholdKey,
       DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT
     );
+    const thresholdPercent =
+      typeof persistedThreshold === "number" && Number.isFinite(persistedThreshold)
+        ? persistedThreshold
+        : DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT;
+
+    if (thresholdPercent !== persistedThreshold) {
+      // Self-heal malformed localStorage so future startup syncs remain valid.
+      updatePersistedState<number>(thresholdKey, DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT);
+    }
 
     return Math.max(0.1, Math.min(1, thresholdPercent / 100));
   }

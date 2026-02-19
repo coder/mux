@@ -3,7 +3,7 @@ import { EventEmitter } from "events";
 
 import type { ProvidersConfigMap, WorkspaceChatMessage } from "@/common/orpc/types";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
-import { Ok } from "@/common/types/result";
+import { Ok, Err } from "@/common/types/result";
 import type { Config } from "@/node/config";
 import type { AIService } from "@/node/services/aiService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
@@ -513,6 +513,147 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
 
     expect(result.success).toBe(true);
     expect(checkBeforeSend).toHaveBeenCalledTimes(1);
+
+    session.dispose();
+  });
+
+  test("surfaces nested dispatch failures after mid-stream compaction interrupt", async () => {
+    const workspaceId = "ws-auto-compaction-mid-stream-dispatch-failure";
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const aiEmitter = new EventEmitter();
+    let streamCallCount = 0;
+    const streamMessage = mock((_request: unknown) => {
+      streamCallCount += 1;
+      if (streamCallCount === 1) {
+        const usage = {
+          inputTokens: 42,
+          outputTokens: 1,
+          totalTokens: 43,
+        };
+
+        aiEmitter.emit("stream-start", {
+          type: "stream-start",
+          workspaceId,
+          messageId: "assistant-mid-stream",
+          model: "openai:gpt-4o",
+          historySequence: 1,
+          startTime: Date.now(),
+        });
+
+        aiEmitter.emit("usage-delta", {
+          type: "usage-delta",
+          workspaceId,
+          messageId: "assistant-mid-stream",
+          usage,
+          cumulativeUsage: usage,
+        });
+      }
+
+      return Promise.resolve(Ok(undefined));
+    });
+
+    const stopStream = mock((_workspaceId: string) => {
+      aiEmitter.emit("stream-abort", {
+        type: "stream-abort",
+        workspaceId,
+        messageId: "assistant-mid-stream",
+        abortReason: "system",
+      });
+
+      return Promise.resolve(Ok(undefined));
+    });
+
+    const aiService = Object.assign(aiEmitter, {
+      isStreaming: mock((_workspaceId: string) => false),
+      stopStream,
+      streamMessage: streamMessage as unknown as (
+        ...args: Parameters<AIService["streamMessage"]>
+      ) => Promise<unknown>,
+    }) as unknown as AIService;
+
+    const initStateManager = new EventEmitter() as unknown as InitStateManager;
+
+    const backgroundProcessManager = {
+      cleanup: mock((_workspaceId: string) => Promise.resolve()),
+      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
+        void _queued;
+      }),
+    } as unknown as BackgroundProcessManager;
+
+    const config = {
+      srcDir: "/tmp",
+      getSessionDir: (_workspaceId: string) => "/tmp",
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const internals = session as unknown as {
+      compactionMonitor: CompactionMonitor;
+      sendMessage: AgentSession["sendMessage"];
+    };
+
+    let midStreamChecks = 0;
+    internals.compactionMonitor = {
+      checkBeforeSend: mock(() => ({
+        shouldShowWarning: false,
+        shouldForceCompact: false,
+        usagePercentage: 0,
+        thresholdPercentage: 85,
+      })),
+      checkMidStream: mock((_params: unknown) => {
+        midStreamChecks += 1;
+        return midStreamChecks === 1;
+      }),
+      resetForNewStream: mock(() => undefined),
+      setThreshold: mock(() => undefined),
+      getThreshold: mock(() => 0.85),
+    } as unknown as CompactionMonitor;
+
+    const originalSendMessage = session.sendMessage.bind(session);
+    let sendCallCount = 0;
+    internals.sendMessage = (async (...args: Parameters<AgentSession["sendMessage"]>) => {
+      sendCallCount += 1;
+      if (sendCallCount === 1) {
+        return originalSendMessage(...args);
+      }
+
+      return Err({ type: "unknown", raw: "mid-stream compaction dispatch failed" });
+    }) as AgentSession["sendMessage"];
+
+    const events: WorkspaceChatMessage[] = [];
+    session.onChatEvent(({ message }) => {
+      events.push(message);
+    });
+
+    const result = await internals.sendMessage("hello", {
+      model: "openai:gpt-4o",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(true);
+
+    const deadline = Date.now() + 1500;
+    while (!events.some((event) => event.type === "stream-error") && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    const streamError = events.find(
+      (event): event is Extract<WorkspaceChatMessage, { type: "stream-error" }> =>
+        event.type === "stream-error"
+    );
+    expect(streamError).toBeDefined();
+    expect(streamError?.error).toContain("mid-stream compaction dispatch failed");
+    expect(stopStream).toHaveBeenCalledTimes(1);
 
     session.dispose();
   });

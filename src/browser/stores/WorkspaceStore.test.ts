@@ -3,6 +3,8 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { StreamStartEvent, ToolCallStartEvent } from "@/common/types/stream";
 import type { WorkspaceActivitySnapshot, WorkspaceChatMessage } from "@/common/orpc/types";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
+import { DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT } from "@/common/constants/ui";
+import { getAutoCompactionThresholdKey } from "@/common/constants/storage";
 import { WorkspaceStore } from "./WorkspaceStore";
 
 interface LoadMoreResponse {
@@ -55,6 +57,11 @@ const mockActivitySubscribe = mock(async function* (
   });
 });
 
+const mockSetAutoCompactionThreshold = mock(() =>
+  Promise.resolve({ success: true, data: undefined })
+);
+const mockGetStartupAutoRetryModel = mock(() => Promise.resolve({ success: true, data: null }));
+
 const mockClient = {
   workspace: {
     onChat: mockOnChat,
@@ -66,10 +73,35 @@ const mockClient = {
       list: mockActivityList,
       subscribe: mockActivitySubscribe,
     },
+    setAutoCompactionThreshold: mockSetAutoCompactionThreshold,
+    getStartupAutoRetryModel: mockGetStartupAutoRetryModel,
+  },
+};
+
+const localStorageBacking = new Map<string, string>();
+const mockLocalStorage: Storage = {
+  get length() {
+    return localStorageBacking.size;
+  },
+  clear() {
+    localStorageBacking.clear();
+  },
+  getItem(key: string) {
+    return localStorageBacking.get(key) ?? null;
+  },
+  key(index: number) {
+    return Array.from(localStorageBacking.keys())[index] ?? null;
+  },
+  removeItem(key: string) {
+    localStorageBacking.delete(key);
+  },
+  setItem(key: string, value: string) {
+    localStorageBacking.set(key, value);
   },
 };
 
 const mockWindow = {
+  localStorage: mockLocalStorage,
   api: {
     workspace: {
       onChat: mock((_workspaceId, _callback) => {
@@ -140,6 +172,9 @@ describe("WorkspaceStore", () => {
     mockHistoryLoadMore.mockClear();
     mockActivityList.mockClear();
     mockActivitySubscribe.mockClear();
+    mockSetAutoCompactionThreshold.mockClear();
+    mockGetStartupAutoRetryModel.mockClear();
+    global.window.localStorage?.clear?.();
     mockHistoryLoadMore.mockResolvedValue({
       messages: [],
       nextCursor: null,
@@ -511,6 +546,28 @@ describe("WorkspaceStore", () => {
       }
 
       expect(mockOnChat).toHaveBeenCalledWith({ workspaceId: "workspace-1" }, expect.anything());
+    });
+
+    it("sanitizes malformed startup threshold values before backend sync", async () => {
+      const workspaceId = "workspace-threshold-sanitize";
+      const thresholdKey = getAutoCompactionThresholdKey("default");
+      global.window.localStorage.setItem(thresholdKey, JSON.stringify("not-a-number"));
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const deadline = Date.now() + 1_000;
+      while (mockSetAutoCompactionThreshold.mock.calls.length === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      expect(mockSetAutoCompactionThreshold).toHaveBeenCalledWith({
+        workspaceId,
+        threshold: DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT / 100,
+      });
+
+      expect(global.window.localStorage.getItem(thresholdKey)).toBe(
+        JSON.stringify(DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT)
+      );
     });
 
     it("should remove deleted workspaces", () => {
