@@ -138,6 +138,25 @@ describe("ACP slash command support", () => {
     expect(parsed.startMessage).toBe("start by summarizing the branch");
   });
 
+  it("parses /new with unquoted two-token runtime and one-line start message", () => {
+    const parsed = parseAcpSlashCommand(
+      "/new feature-branch -r ssh user@example.com start by summarizing the branch",
+      mapSkillsByName(skills)
+    );
+
+    expect(parsed?.kind).toBe("new");
+    if (parsed == null || parsed.kind !== "new") {
+      throw new Error("Expected unquoted two-token /new runtime to parse");
+    }
+
+    expect(parsed.workspaceName).toBe("feature-branch");
+    expect(parsed.runtimeConfig?.type).toBe("ssh");
+    if (parsed.runtimeConfig?.type === "ssh") {
+      expect(parsed.runtimeConfig.host).toBe("user@example.com");
+    }
+    expect(parsed.startMessage).toBe("start by summarizing the branch");
+  });
+
   it("parses /new one-line start message containing numbers", () => {
     const parsed = parseAcpSlashCommand(
       "/new feature-branch start with step 1",

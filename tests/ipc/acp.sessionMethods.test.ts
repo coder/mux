@@ -194,7 +194,7 @@ describe("ACP unstable session support", () => {
     await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
 
     const firstPage = await harness.agent.unstable_listSessions({
-      cwd: "/repo/a",
+      cwd: "/repo/a/",
     });
 
     expect(firstPage.nextCursor).toBeUndefined();
@@ -206,7 +206,7 @@ describe("ACP unstable session support", () => {
     ]);
 
     const secondPage = await harness.agent.unstable_listSessions({
-      cwd: "/repo/a",
+      cwd: "/repo/a/",
       cursor: "1",
     });
 

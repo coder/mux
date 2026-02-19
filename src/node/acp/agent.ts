@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import type {
   Agent,
   AgentSideConnection,
@@ -1394,7 +1395,31 @@ function normalizeOptionalPath(value: string | null | undefined): string | undef
   }
 
   const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  return normalizePathForWorkspaceMatch(trimmed);
+}
+
+function normalizePathForWorkspaceMatch(value: string): string {
+  const resolved = path.normalize(path.resolve(value));
+  const stripped = stripTrailingPathSeparators(resolved);
+  return process.platform === "win32" ? stripped.toLowerCase() : stripped;
+}
+
+function stripTrailingPathSeparators(value: string): string {
+  const root = path.parse(value).root;
+  let normalized = value;
+
+  while (
+    normalized.length > root.length &&
+    (normalized.endsWith(path.posix.sep) || normalized.endsWith(path.win32.sep))
+  ) {
+    normalized = normalized.slice(0, -1);
+  }
+
+  return normalized;
 }
 
 function parseSessionListCursor(cursor: string | null | undefined): number {
@@ -1433,7 +1458,9 @@ function dedupeWorkspacesById(workspaces: WorkspaceInfo[]): WorkspaceInfo[] {
 function workspaceMatchesCwd(workspace: WorkspaceInfo, cwd: string): boolean {
   // Match both projectPath and concrete workspace path so clients can filter by
   // either the original project root or the runtime-specific working directory.
-  return workspace.projectPath === cwd || workspace.namedWorkspacePath === cwd;
+  const normalizedProjectPath = normalizePathForWorkspaceMatch(workspace.projectPath);
+  const normalizedWorkspacePath = normalizePathForWorkspaceMatch(workspace.namedWorkspacePath);
+  return normalizedProjectPath === cwd || normalizedWorkspacePath === cwd;
 }
 
 function compareSessionRecency(

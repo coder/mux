@@ -368,18 +368,11 @@ function parseNewCommand(rawInput: string): ParsedAcpSlashCommand {
     };
   }
 
-  const inlineStartMessage = joinPositionalMessageTokens(parsed._.slice(1), NEW_USAGE);
-  if (inlineStartMessage.error != null) {
-    return {
-      kind: "invalid",
-      message: inlineStartMessage.error,
-    };
-  }
-
   const workspaceName = workspaceNameToken.text;
   const trunkBranch =
     typeof parsed.t === "string" && parsed.t.trim().length > 0 ? parsed.t.trim() : undefined;
 
+  let startMessageTokens = parsed._.slice(1);
   let runtimeConfig: RuntimeConfig | undefined;
   if (parsed.r != null) {
     if (typeof parsed.r !== "string" || parsed.r.trim().length === 0) {
@@ -389,7 +382,22 @@ function parseNewCommand(rawInput: string): ParsedAcpSlashCommand {
       };
     }
 
-    const parsedRuntime = parseRuntimeInput(parsed.r.trim());
+    const runtimeInput = parsed.r.trim();
+    let parsedRuntime = parseRuntimeInput(runtimeInput);
+
+    // Allow unquoted two-token runtime values (e.g., `-r ssh user@host`).
+    // minimist captures only the first token for `-r`, so consume the first
+    // positional token as a runtime suffix when doing so resolves parsing.
+    const runtimeSuffixToken = coercePositionalTokenToText(startMessageTokens[0], NEW_USAGE);
+    if (parsedRuntime.error != null && runtimeSuffixToken.text != null) {
+      const combinedRuntimeInput = `${runtimeInput} ${runtimeSuffixToken.text}`;
+      const combinedParsedRuntime = parseRuntimeInput(combinedRuntimeInput);
+      if (combinedParsedRuntime.error == null) {
+        parsedRuntime = combinedParsedRuntime;
+        startMessageTokens = startMessageTokens.slice(1);
+      }
+    }
+
     if (parsedRuntime.error != null) {
       return {
         kind: "invalid",
@@ -398,6 +406,14 @@ function parseNewCommand(rawInput: string): ParsedAcpSlashCommand {
     }
 
     runtimeConfig = parsedRuntime.runtimeConfig;
+  }
+
+  const inlineStartMessage = joinPositionalMessageTokens(startMessageTokens, NEW_USAGE);
+  if (inlineStartMessage.error != null) {
+    return {
+      kind: "invalid",
+      message: inlineStartMessage.error,
+    };
   }
 
   return {
