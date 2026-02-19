@@ -314,12 +314,19 @@ describe("ACP tool call terminal state translation", () => {
 
     expect(completionUpdate.toolCallId).toBe("tool-pending");
     expect(completionUpdate.status).toBe("completed");
-    expect(completionUpdate.content).toEqual([
-      {
-        type: "content",
-        content: { type: "text", text: JSON.stringify({ exitCode: 0 }) },
-      },
-    ]);
+
+    const completionContent = completionUpdate.content?.[0];
+    expect(completionContent).toBeDefined();
+    if (completionContent == null || completionContent.type !== "content") {
+      throw new Error("Expected replayed tool completion to include text output content");
+    }
+
+    const contentBody = completionContent.content;
+    if (contentBody.type !== "text") {
+      throw new Error("Expected replayed tool completion content to be text");
+    }
+
+    expect(JSON.parse(contentBody.text)).toEqual({ exitCode: 0 });
   });
 });
 
