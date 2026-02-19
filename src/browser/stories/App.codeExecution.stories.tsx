@@ -442,7 +442,12 @@ export const Interrupted: AppStory = {
   ),
 };
 
-/** Code execution showing the code view (monospace font test) */
+/**
+ * Code execution showing the code view (monospace font test).
+ *
+ * No play step is needed here: when execution completes without nested tool calls,
+ * CodeExecutionToolCall auto-switches from "tools" to "code" view.
+ */
 export const ShowCodeView: AppStory = {
   render: () => (
     <AppWithMocks
