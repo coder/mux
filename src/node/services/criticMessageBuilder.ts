@@ -1,5 +1,6 @@
 import type { CompletedMessagePart } from "@/common/types/stream";
 import type { MessageSource, MuxMessage } from "@/common/types/message";
+import { stripToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 
 export const CRITIC_DONE_SENTINEL = "/done";
 
@@ -58,7 +59,9 @@ function serializeMessageParts(message: MuxMessage): string {
       };
 
       if (part.state === "output-available") {
-        toolPayload.output = part.output;
+        // Apply the same UI-only output stripping the normal request pipeline uses
+        // (applyToolOutputRedaction) so large/UI-only payloads don't bloat critic context.
+        toolPayload.output = stripToolOutputUiOnly(part.output);
       }
 
       if (part.state === "output-redacted") {

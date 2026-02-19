@@ -3316,8 +3316,35 @@ export class WorkspaceService extends EventEmitter {
     options: SendMessageOptions
   ): Promise<Result<void, SendMessageError>> {
     try {
+      // Apply the same lifecycle guards as sendMessage/resumeStream so critic loops
+      // cannot race workspace rename/remove or bypass task-slot scheduling.
+      if (this.renamingWorkspaces.has(workspaceId)) {
+        return Err({
+          type: "unknown",
+          raw: "Workspace is being renamed. Please wait and try again.",
+        });
+      }
+      if (this.removingWorkspaces.has(workspaceId)) {
+        return Err({
+          type: "unknown",
+          raw: "Workspace is being deleted. Please wait and try again.",
+        });
+      }
       if (!this.config.findWorkspace(workspaceId)) {
         return Err({ type: "unknown", raw: "Workspace not found." });
+      }
+
+      const config = this.config.loadConfigOrDefault();
+      for (const [_projectPath, project] of config.projects) {
+        const ws = project.workspaces.find((w) => w.id === workspaceId);
+        if (!ws) continue;
+        if (ws.parentWorkspaceId && ws.taskStatus === "queued") {
+          return Err({
+            type: "unknown",
+            raw: "This agent task is queued and cannot start yet. Wait for a slot to free.",
+          });
+        }
+        break;
       }
 
       const session = this.getOrCreateSession(workspaceId);
