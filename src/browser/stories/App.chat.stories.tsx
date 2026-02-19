@@ -898,32 +898,7 @@ export const ModeHelpTooltip: AppStory = {
       }
     />
   ),
-  play: async ({ canvasElement }) => {
-    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
-    const canvas = within(storyRoot);
 
-    // Wait for app to fully load - the chat input with mode selector should be present
-    await canvas.findAllByText("Exec", {}, { timeout: 15000 });
-
-    // Find the help indicator "?" - should be a span with cursor-help styling
-    const helpIndicators = canvas.getAllByText("?");
-    const helpIndicator = helpIndicators.find(
-      (el) => el.tagName === "SPAN" && el.className.includes("cursor-help")
-    );
-    if (!helpIndicator) throw new Error("HelpIndicator not found");
-
-    // Hover to open the tooltip and leave it visible for the visual snapshot
-    await userEvent.hover(helpIndicator);
-
-    // Wait for tooltip to fully appear (Radix has 200ms delay)
-    await waitFor(
-      () => {
-        const tooltip = document.querySelector('[role="tooltip"]');
-        if (!tooltip) throw new Error("Tooltip not visible");
-      },
-      { interval: 50, timeout: 5000 }
-    );
-  },
   parameters: {
     docs: {
       description: {

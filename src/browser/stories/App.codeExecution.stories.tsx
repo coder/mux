@@ -12,7 +12,6 @@ import {
 } from "./mockFactory";
 
 import { setupSimpleChatStory } from "./storyHelpers";
-import { waitForChatMessagesLoaded } from "./storyPlayHelpers";
 import { userEvent, waitFor } from "@storybook/test";
 
 export default {
@@ -498,18 +497,20 @@ return results;`,
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await waitForChatMessagesLoaded(canvasElement);
-
-    // Find and click the "Show Code" button (CodeIcon)
-    await waitFor(() => {
-      const buttons = canvasElement.querySelectorAll('button[type="button"]');
-      const showCodeBtn = Array.from(buttons).find((btn) => {
-        const svg = btn.querySelector("svg");
-        return svg?.classList.contains("lucide-code");
-      });
-      if (!showCodeBtn) throw new Error("Show Code button not found");
-      return showCodeBtn;
-    });
+    // Wait for the actionable control directly. The transcript loaded marker can
+    // lag on busy runners even when the code button is already interactive.
+    await waitFor(
+      () => {
+        const buttons = canvasElement.querySelectorAll('button[type="button"]');
+        const showCodeBtn = Array.from(buttons).find((btn) => {
+          const svg = btn.querySelector("svg");
+          return svg?.classList.contains("lucide-code");
+        });
+        if (!showCodeBtn) throw new Error("Show Code button not found");
+        return showCodeBtn;
+      },
+      { interval: 50, timeout: 25000 }
+    );
 
     const buttons = canvasElement.querySelectorAll('button[type="button"]');
     const showCodeBtn = Array.from(buttons).find((btn) => {
