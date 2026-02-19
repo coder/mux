@@ -1839,6 +1839,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         if (!api || !workspaceId || !messageText || isStreamActive) {
           if (isStreamActive) {
             pushToast({ type: "error", message: "Wait for the current response to finish" });
+          } else if (!messageText) {
+            pushToast({ type: "error", message: "Enter critic instructions to start the loop" });
           }
           return;
         }
