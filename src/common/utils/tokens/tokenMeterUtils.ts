@@ -124,7 +124,3 @@ export function formatTokens(tokens: number): string {
   }
   return tokens.toLocaleString();
 }
-
-export function getSegmentLabel(type: TokenSegment["type"]): string {
-  return SEGMENT_DEFS.find((def) => def.type === type)?.label ?? type;
-}
