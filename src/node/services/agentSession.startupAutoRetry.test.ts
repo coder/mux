@@ -715,7 +715,19 @@ describe("AgentSession startup auto-retry recovery", () => {
       metadata: {},
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+      const start = Date.now();
+      while (Date.now() - start < timeoutMs) {
+        if (condition()) {
+          return true;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      return false;
+    };
+
+    const abandonPersisted = await waitUntil(() => privateSession.startupAutoRetryAbandon !== null);
+    expect(abandonPersisted).toBe(true);
 
     expect(privateSession.startupAutoRetryAbandon).toEqual({
       reason: "aborted",
@@ -723,6 +735,19 @@ describe("AgentSession startup auto-retry recovery", () => {
     });
 
     const preferencePath = privateSession.getAutoRetryPreferencePath();
+    const waitForPreferenceFile = async (timeoutMs = 2000): Promise<boolean> => {
+      const start = Date.now();
+      while (Date.now() - start < timeoutMs) {
+        if (await Bun.file(preferencePath).exists()) {
+          return true;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      return false;
+    };
+
+    expect(await waitForPreferenceFile()).toBe(true);
+
     const persisted = JSON.parse(await Bun.file(preferencePath).text()) as {
       startupAutoRetryAbandon?: { reason?: string; userMessageId?: string };
     };
