@@ -270,18 +270,10 @@ export class StreamTranslator {
           `translateReplayMessage: unexpected dynamic-tool state '${part.state}'`
         );
 
-        // Historical replay can include interrupted tool calls that never produced
-        // output. Close them immediately so ACP clients don't render stale
-        // in-progress calls forever after session load.
-        this.unregisterToolCall(part.toolCallId);
-        updates.push({
-          sessionUpdate: "tool_call_update",
-          toolCallId: part.toolCallId,
-          title: part.toolName,
-          kind: inferToolKind(part.toolName),
-          status: "failed",
-          content: [textToolContent("Interrupted before completion.")],
-        });
+        // Keep replayed pending tools in-progress. Reconnect replay can include
+        // active tool calls from an in-flight stream; emitting a terminal failure
+        // here would race the subsequent live tool-call-end update.
+        continue;
       }
 
       return updates;

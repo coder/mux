@@ -271,7 +271,7 @@ describe("ACP unstable session support", () => {
 
     const response = await harness.agent.unstable_resumeSession({
       sessionId: "ws-resume",
-      cwd: "/repo/resume",
+      cwd: "/repo/resume/",
       mcpServers: [],
     });
 

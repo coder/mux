@@ -281,7 +281,7 @@ describe("ACP tool call terminal state translation", () => {
     }
   });
 
-  it("closes replayed input-available tool calls as failed", async () => {
+  it("keeps replayed input-available tool calls in progress until terminal events", async () => {
     const { translator, sessionUpdates } = createHarness();
 
     const replayMessage: WorkspaceChatMessage = {
@@ -301,23 +301,23 @@ describe("ACP tool call terminal state translation", () => {
 
     await forwardEvents(translator, [
       replayMessage,
-      makeStreamError("assistant-pending", "late replay error", "api_error"),
+      makeToolCallEnd("tool-pending", "bash", { exitCode: 0 }, "assistant-pending"),
     ]);
 
     expect(getUpdateKinds(sessionUpdates)).toEqual(["tool_call", "tool_call_update"]);
 
-    const terminalUpdate = sessionUpdates[1]?.update;
-    expect(terminalUpdate).toBeDefined();
-    if (terminalUpdate == null || terminalUpdate.sessionUpdate !== "tool_call_update") {
+    const completionUpdate = sessionUpdates[1]?.update;
+    expect(completionUpdate).toBeDefined();
+    if (completionUpdate == null || completionUpdate.sessionUpdate !== "tool_call_update") {
       throw new Error("Expected replayed pending tool call to emit terminal tool_call_update");
     }
 
-    expect(terminalUpdate.toolCallId).toBe("tool-pending");
-    expect(terminalUpdate.status).toBe("failed");
-    expect(terminalUpdate.content).toEqual([
+    expect(completionUpdate.toolCallId).toBe("tool-pending");
+    expect(completionUpdate.status).toBe("completed");
+    expect(completionUpdate.content).toEqual([
       {
         type: "content",
-        content: { type: "text", text: "Interrupted before completion." },
+        content: { type: "text", text: JSON.stringify({ exitCode: 0 }) },
       },
     ]);
   });

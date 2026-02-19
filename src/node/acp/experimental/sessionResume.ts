@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import path from "node:path";
+import { realpath } from "node:fs/promises";
 import type { LoadSessionRequest, LoadSessionResponse } from "@agentclientprotocol/sdk";
 import { isWorktreeRuntime, type RuntimeMode } from "@/common/types/runtime";
 import type { NegotiatedCapabilities } from "../capabilities";
@@ -41,6 +43,42 @@ function resolveRuntimeMode(workspace: WorkspaceInfo): RuntimeMode {
   return workspace.runtimeConfig.type;
 }
 
+function stripTrailingPathSeparators(value: string): string {
+  const root = path.parse(value).root;
+  let normalized = value;
+
+  while (
+    normalized.length > root.length &&
+    (normalized.endsWith(path.posix.sep) || normalized.endsWith(path.win32.sep))
+  ) {
+    normalized = normalized.slice(0, -1);
+  }
+
+  return normalized;
+}
+
+function normalizePathCasingForComparison(value: string): string {
+  return process.platform === "win32" ? value.toLowerCase() : value;
+}
+
+async function canonicalizePathForWorkspaceMatch(value: string): Promise<string> {
+  const trimmed = value.trim();
+  assert(trimmed.length > 0, "canonicalizePathForWorkspaceMatch: value must be non-empty");
+
+  const resolvedPath = stripTrailingPathSeparators(path.normalize(path.resolve(trimmed)));
+
+  try {
+    const realPathValue = await realpath(resolvedPath);
+    return normalizePathCasingForComparison(
+      stripTrailingPathSeparators(path.normalize(realPathValue))
+    );
+  } catch {
+    // Best-effort canonicalization: unresolved paths (e.g., stale workspaces or
+    // platform-specific virtualization) still compare via normalized absolute form.
+    return normalizePathCasingForComparison(resolvedPath);
+  }
+}
+
 export async function loadSessionFromWorkspace(
   params: LoadSessionRequest,
   deps: SessionResumeDependencies
@@ -56,8 +94,15 @@ export async function loadSessionFromWorkspace(
     throw new Error(`loadSessionFromWorkspace: workspace '${requestedSessionId}' was not found`);
   }
 
+  const [canonicalRequestedCwd, canonicalProjectPath, canonicalWorkspacePath] = await Promise.all([
+    canonicalizePathForWorkspaceMatch(requestedCwd),
+    canonicalizePathForWorkspaceMatch(workspace.projectPath),
+    canonicalizePathForWorkspaceMatch(workspace.namedWorkspacePath),
+  ]);
+
   const cwdMatchesWorkspace =
-    workspace.projectPath === requestedCwd || workspace.namedWorkspacePath === requestedCwd;
+    canonicalProjectPath === canonicalRequestedCwd ||
+    canonicalWorkspacePath === canonicalRequestedCwd;
   assert(
     cwdMatchesWorkspace,
     `loadSessionFromWorkspace: workspace '${requestedSessionId}' is not in cwd '${requestedCwd}'`
