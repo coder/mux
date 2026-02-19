@@ -2,6 +2,7 @@ import React from "react";
 import type { GitStatus } from "@/common/types/workspace";
 import type { GitCommit, GitBranchHeader } from "@/common/utils/git/parseGitLog";
 import { cn } from "@/common/lib/utils";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { BaseSelectorPopover } from "./RightSidebar/CodeReview/BaseSelectorPopover";
@@ -349,6 +350,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
           isRefreshing && "animate-pulse"
         )}
         aria-label="View git divergence details"
+        onKeyDown={stopKeyboardPropagation}
         onClick={(e) => {
           e.stopPropagation();
           onOpenChange(true);
