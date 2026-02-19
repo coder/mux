@@ -22,6 +22,11 @@ export interface ResolveToolPolicyOptions {
   isSubagent: boolean;
   disableTaskToolsForDepth: boolean;
   enableAgentSwitchTool: boolean;
+  /**
+   * Force switch_agent as the only required tool for this turn.
+   * Used by Auto so routing always happens before prose output.
+   */
+  requireSwitchAgentTool?: boolean;
 }
 
 // Runtime restrictions that cannot be overridden by agent definitions.
@@ -55,7 +60,20 @@ const DEPTH_HARD_DENY: ToolPolicy = [
  * - non-plan subagents: disable `propose_plan`, enable `agent_report`
  */
 export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): ToolPolicy {
-  const { agents, isSubagent, disableTaskToolsForDepth, enableAgentSwitchTool } = options;
+  const {
+    agents,
+    isSubagent,
+    disableTaskToolsForDepth,
+    enableAgentSwitchTool,
+    requireSwitchAgentTool = false,
+  } = options;
+
+  // Defensive validation: forcing switch_agent only makes sense when the tool can be enabled.
+  if (requireSwitchAgentTool && (!enableAgentSwitchTool || isSubagent)) {
+    throw new Error(
+      "Invalid tool policy options: requireSwitchAgentTool needs a top-level workspace with agent switching enabled."
+    );
+  }
 
   // Start with deny-all baseline
   const agentPolicy: ToolPolicy = [{ regex_match: ".*", action: "disable" }];
@@ -96,6 +114,11 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
   runtimePolicy.push({ regex_match: "switch_agent", action: "disable" });
   if (enableAgentSwitchTool && !isSubagent) {
     runtimePolicy.push({ regex_match: "switch_agent", action: "enable" });
+
+    // Auto is a strict router: force a switch_agent tool call before producing prose.
+    if (requireSwitchAgentTool) {
+      runtimePolicy.push({ regex_match: "switch_agent", action: "require" });
+    }
   }
 
   if (isSubagent) {

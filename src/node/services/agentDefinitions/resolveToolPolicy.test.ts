@@ -87,6 +87,49 @@ describe("resolveToolPolicyForAgent", () => {
     ]);
   });
 
+  test("requireSwitchAgentTool forces switch_agent for strict auto routing", () => {
+    const agents: AgentLikeForPolicy[] = [{ tools: { add: ["file_read"] } }];
+    const policy = resolveToolPolicyForAgent({
+      agents,
+      isSubagent: false,
+      disableTaskToolsForDepth: false,
+      enableAgentSwitchTool: true,
+      requireSwitchAgentTool: true,
+    });
+
+    expect(policy).toEqual([
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "file_read", action: "enable" },
+      { regex_match: "switch_agent", action: "disable" },
+      { regex_match: "switch_agent", action: "enable" },
+      { regex_match: "switch_agent", action: "require" },
+    ]);
+  });
+
+  test("requireSwitchAgentTool rejects invalid runtime combinations", () => {
+    const agents: AgentLikeForPolicy[] = [{ tools: { add: ["file_read"] } }];
+
+    expect(() =>
+      resolveToolPolicyForAgent({
+        agents,
+        isSubagent: false,
+        disableTaskToolsForDepth: false,
+        enableAgentSwitchTool: false,
+        requireSwitchAgentTool: true,
+      })
+    ).toThrow("Invalid tool policy options");
+
+    expect(() =>
+      resolveToolPolicyForAgent({
+        agents,
+        isSubagent: true,
+        disableTaskToolsForDepth: false,
+        enableAgentSwitchTool: true,
+        requireSwitchAgentTool: true,
+      })
+    ).toThrow("Invalid tool policy options");
+  });
+
   test("subagents still hard-deny switch_agent even when auto switch is enabled", () => {
     const agents: AgentLikeForPolicy[] = [{ tools: { add: ["file_read"] } }];
     const policy = resolveToolPolicyForAgent({

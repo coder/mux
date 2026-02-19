@@ -303,15 +303,10 @@ ui:
 subagent:
   runnable: false
 tools:
-  add:
-    # Allow all tools by default (inherit from exec)
-    - .*
   remove:
-    # Auto doesn't use planning tools directly — it switches to plan agent
-    - propose_plan
-    - ask_user_question
-    # Internal-only tools
-    - system1_keep_ranges
+    # Strict router mode: strip all inherited exec tools.
+    # `switch_agent` is re-enabled at runtime for Auto-started sessions.
+    - .*
 ---
 
 You are **Auto**, a routing agent.
@@ -320,6 +315,7 @@ You are **Auto**, a routing agent.
 - Immediately call `switch_agent` with the chosen `agentId`.
 - Include an optional follow-up message when it helps hand off context.
 - Do not do the work yourself; your sole job is routing.
+- Do not emit a normal assistant answer before calling `switch_agent`.
 
 Use these defaults:
 

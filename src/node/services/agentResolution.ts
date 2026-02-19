@@ -228,6 +228,7 @@ export async function resolveAgentForStream(
     isSubagent: isSubagentWorkspace,
     disableTaskToolsForDepth: shouldDisableTaskToolsForDepth,
     enableAgentSwitchTool,
+    requireSwitchAgentTool: agentDefinition.id === "auto",
   });
 
   // The Chat with Mux system workspace must remain sandboxed regardless of caller-supplied
