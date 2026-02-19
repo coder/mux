@@ -13,6 +13,7 @@ export function SearchableModelSelect(props: {
   models: string[];
   placeholder?: string;
   emptyOption?: { value: string; label: string };
+  compact?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -114,7 +115,12 @@ export function SearchableModelSelect(props: {
   return (
     <Popover open={isOpen} onOpenChange={setIsOpen} modal>
       <PopoverTrigger asChild>
-        <button className="bg-background-secondary border-border-medium focus:border-accent flex h-8 w-full items-center justify-between rounded border px-2 text-xs">
+        <button
+          className={cn(
+            "bg-background-secondary border-border-medium focus:border-accent flex w-full items-center justify-between rounded border px-2 text-xs",
+            props.compact ? "py-0.5" : "h-8"
+          )}
+        >
           <span
             className={cn(
               "flex items-center gap-1.5 truncate",

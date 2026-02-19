@@ -45,7 +45,7 @@ function ModelsTableHeader() {
     <thead>
       <tr className="border-border-medium bg-background-secondary/50 border-b">
         <th className={`${headerCellBase} pl-2 text-left md:pl-3`}>Provider</th>
-        <th className={`${headerCellBase} text-left`}>Model</th>
+        <th className={`${headerCellBase} text-left`}>Model (short name)</th>
         <th className={`${headerCellBase} w-16 text-right md:w-20`}>Context</th>
         <th className={`${headerCellBase} w-28 text-right md:w-32 md:pr-3`}>Actions</th>
       </tr>

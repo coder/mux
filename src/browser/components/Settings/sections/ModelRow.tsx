@@ -4,7 +4,7 @@ import { GatewayToggleButton } from "@/browser/components/GatewayToggleButton";
 import { SearchableModelSelect } from "@/browser/components/Settings/components/SearchableModelSelect";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
 import { Button } from "@/browser/components/ui/button";
-import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
+import { ProviderIcon, ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 import { cn } from "@/common/lib/utils";
 import { getModelStats, type ModelStats } from "@/common/utils/tokens/modelStats";
@@ -199,6 +199,7 @@ export function ModelRow(props: ModelRowProps) {
   const stats = getModelStats(props.mappedToModel ?? props.fullId);
 
   const contextBaseTokens = props.customContextWindowTokens ?? stats?.max_input_tokens ?? null;
+  const mappedProvider = props.mappedToModel ? props.mappedToModel.split(":")[0] || null : null;
   const mappedModelDisplayName = props.mappedToModel
     ? formatModelDisplayName(props.mappedToModel.split(":")[1] || props.mappedToModel)
     : null;
@@ -270,6 +271,7 @@ export function ModelRow(props: ModelRowProps) {
                   models={props.allModels}
                   placeholder="Select model..."
                   emptyOption={{ value: "", label: "None (use own metadata)" }}
+                  compact
                 />
               </div>
             )}
@@ -303,7 +305,13 @@ export function ModelRow(props: ModelRowProps) {
             {props.modelId}
           </span>
           {mappedModelDisplayName && (
-            <span className="text-muted ml-1 shrink-0 text-[10px]">→ {mappedModelDisplayName}</span>
+            <span className="text-muted ml-1 flex shrink-0 items-center gap-1 text-[10px]">
+              →
+              {mappedProvider && (
+                <ProviderIcon provider={mappedProvider} className="text-muted h-3 w-3" />
+              )}
+              {mappedModelDisplayName}
+            </span>
           )}
           {props.aliases && props.aliases.length > 0 && (
             <span className="text-muted-light shrink-0 text-xs">({props.aliases[0]})</span>
