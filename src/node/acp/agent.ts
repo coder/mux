@@ -182,15 +182,19 @@ export class MuxAgent implements Agent {
       "abort",
       () => {
         const disconnectError = new Error("Mux ACP connection closed");
-        for (const [sessionId] of this.turnCompletions) {
+        const activeTurnSessionIds = [...this.turnCompletions.keys()];
+        for (const sessionId of activeTurnSessionIds) {
           this.rejectTurn(sessionId, disconnectError);
         }
 
-        this.disconnectCleanupPromise = this.cleanupNewSessionWorkspacesOnDisconnect().catch(
-          (cleanupError) => {
+        const interruptPromise = this.interruptActiveTurnStreamsOnDisconnect(activeTurnSessionIds);
+        const cleanupPromise = this.cleanupNewSessionWorkspacesOnDisconnect();
+
+        this.disconnectCleanupPromise = Promise.all([interruptPromise, cleanupPromise])
+          .then(() => undefined)
+          .catch((cleanupError) => {
             console.error("[acp] Failed during disconnect workspace cleanup", cleanupError);
-          }
-        );
+          });
       },
       { once: true }
     );
@@ -945,6 +949,33 @@ export class MuxAgent implements Agent {
     }
 
     lifecycle.hasPromptActivity = true;
+  }
+
+  private async interruptActiveTurnStreamsOnDisconnect(
+    sessionIds: readonly string[]
+  ): Promise<void> {
+    for (const sessionId of sessionIds) {
+      let workspaceId: string;
+      try {
+        workspaceId = this.sessionManager.getWorkspaceId(sessionId);
+      } catch {
+        continue;
+      }
+
+      try {
+        await this.server.client.workspace.interruptStream({
+          workspaceId,
+          options: {
+            abandonPartial: true,
+          },
+        });
+      } catch (error) {
+        console.error(
+          `[acp] Failed to interrupt active stream for session ${sessionId} during disconnect`,
+          error
+        );
+      }
+    }
   }
 
   private async cleanupNewSessionWorkspacesOnDisconnect(): Promise<void> {

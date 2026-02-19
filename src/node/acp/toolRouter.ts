@@ -6,6 +6,7 @@ import type {
   RequestPermissionOutcome,
 } from "@agentclientprotocol/sdk";
 import type { RuntimeMode } from "../../common/types/runtime";
+import { handleStringReplace } from "../services/tools/file_edit_replace_shared";
 
 // Defined locally while ACP capability negotiation modules are developed.
 interface NegotiatedCapabilities {
@@ -40,6 +41,8 @@ const FILE_WRITE_TOOL_NAMES = new Set([
   "fs/write_text_file",
 ]);
 
+const FILE_EDIT_REPLACE_STRING_TOOL_NAMES = new Set(["file_edit_replace_string"]);
+const FILE_EDIT_INSERT_TOOL_NAMES = new Set(["file_edit_insert"]);
 const TERMINAL_TOOL_NAMES = new Set(["bash", "terminal/create", "terminal.run", "terminal_run"]);
 
 export class ToolRouter {
@@ -110,9 +113,16 @@ export class ToolRouter {
     if (isTypedWriteTool(normalizedToolName)) {
       return routing.editorHandlesFsWrite;
     }
-    if (isFilesystemTool(normalizedToolName)) {
-      // Unknown fs tool — require both capabilities
+    if (isFileEditReplaceStringTool(normalizedToolName)) {
       return routing.editorHandlesFsRead && routing.editorHandlesFsWrite;
+    }
+    if (isFileEditInsertTool(normalizedToolName)) {
+      return routing.editorHandlesFsRead && routing.editorHandlesFsWrite;
+    }
+    if (isFilesystemTool(normalizedToolName)) {
+      // Unknown fs tool names are not delegated: standard ACP clients only expose
+      // typed read/write methods and cannot satisfy arbitrary fs extension methods.
+      return false;
     }
 
     if (isTerminalTool(normalizedToolName)) {
@@ -154,6 +164,20 @@ export class ToolRouter {
     if (isTypedWriteTool(normalizedToolName)) {
       return this.connection.writeTextFile(
         this.buildWriteTextFileRequest(sessionId, params, toolName)
+      );
+    }
+
+    if (isFileEditReplaceStringTool(normalizedToolName)) {
+      return this.delegateFileEditReplaceString(sessionId, params, toolName);
+    }
+
+    if (isFileEditInsertTool(normalizedToolName)) {
+      return this.delegateFileEditInsert(sessionId, params, toolName);
+    }
+
+    if (isFilesystemTool(normalizedToolName)) {
+      throw new Error(
+        `ToolRouter: ${toolName} is a filesystem tool without a supported ACP delegation handler`
       );
     }
 
@@ -206,6 +230,118 @@ export class ToolRouter {
     });
 
     return this.isPermissionAllowed(response.outcome);
+  }
+
+  private async delegateFileEditReplaceString(
+    sessionId: string,
+    params: Record<string, unknown>,
+    toolName: string
+  ): Promise<unknown> {
+    const path = getRequiredString(params, "path", toolName);
+    const oldString = getRequiredString(params, "old_string", toolName);
+    const newString = getRequiredString(params, "new_string", toolName);
+    const replaceCount = getOptionalNumber(params, "replace_count", toolName);
+
+    const readResponse = await this.connection.readTextFile({ sessionId, path });
+    const replaceResult = handleStringReplace(
+      {
+        path,
+        old_string: oldString,
+        new_string: newString,
+        ...(replaceCount != null ? { replace_count: replaceCount } : {}),
+      },
+      readResponse.content
+    );
+
+    if (!replaceResult.success) {
+      return {
+        success: false,
+        error: replaceResult.error,
+      };
+    }
+
+    await this.connection.writeTextFile({
+      sessionId,
+      path,
+      content: replaceResult.newContent,
+    });
+
+    return {
+      success: true,
+      edits_applied: replaceResult.metadata.edits_applied,
+    };
+  }
+
+  private async delegateFileEditInsert(
+    sessionId: string,
+    params: Record<string, unknown>,
+    toolName: string
+  ): Promise<unknown> {
+    const path = getRequiredString(params, "path", toolName);
+    const content = getRequiredString(params, "content", toolName);
+    const insertBefore = getOptionalString(params, "insert_before", toolName);
+    const insertAfter = getOptionalString(params, "insert_after", toolName);
+
+    let existingContent: string;
+    try {
+      const readResponse = await this.connection.readTextFile({ sessionId, path });
+      existingContent = readResponse.content;
+    } catch {
+      if (insertBefore != null || insertAfter != null) {
+        return {
+          success: false,
+          error: "Guard mismatch: unable to find insert anchor in a missing file.",
+        };
+      }
+
+      await this.connection.writeTextFile({ sessionId, path, content });
+      return { success: true };
+    }
+
+    if (insertBefore != null && insertAfter != null) {
+      return {
+        success: false,
+        error: "Provide only one of insert_before or insert_after (not both).",
+      };
+    }
+
+    if (insertBefore == null && insertAfter == null) {
+      return {
+        success: false,
+        error: "Provide either insert_before or insert_after guard when editing existing files.",
+      };
+    }
+
+    const anchor = insertBefore ?? insertAfter;
+    assert(anchor != null, "delegateFileEditInsert: anchor must be present");
+
+    const firstIndex = existingContent.indexOf(anchor);
+    if (firstIndex === -1) {
+      return {
+        success: false,
+        error: "Guard mismatch: unable to find insert anchor in the current file.",
+      };
+    }
+
+    const secondIndex = existingContent.indexOf(anchor, firstIndex + anchor.length);
+    if (secondIndex !== -1) {
+      return {
+        success: false,
+        error: "Guard mismatch: insert anchor matched multiple times.",
+      };
+    }
+
+    const insertIndex = insertBefore != null ? firstIndex : firstIndex + anchor.length;
+    const updatedContent =
+      existingContent.slice(0, insertIndex) + content + existingContent.slice(insertIndex);
+
+    await this.connection.writeTextFile({
+      sessionId,
+      path,
+      content: updatedContent,
+    });
+
+    return { success: true };
   }
 
   private buildReadTextFileRequest(
@@ -317,6 +453,14 @@ function isTypedReadTool(normalizedToolName: string): boolean {
 
 function isTypedWriteTool(normalizedToolName: string): boolean {
   return FILE_WRITE_TOOL_NAMES.has(normalizedToolName);
+}
+
+function isFileEditReplaceStringTool(normalizedToolName: string): boolean {
+  return FILE_EDIT_REPLACE_STRING_TOOL_NAMES.has(normalizedToolName);
+}
+
+function isFileEditInsertTool(normalizedToolName: string): boolean {
+  return FILE_EDIT_INSERT_TOOL_NAMES.has(normalizedToolName);
 }
 
 function getScriptFromParams(params: Record<string, unknown>, toolName: string): string {

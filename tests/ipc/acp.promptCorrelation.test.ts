@@ -17,6 +17,10 @@ interface Harness {
     toolCallId: string;
     result: unknown;
   }>;
+  interruptCalls: Array<{
+    workspaceId: string;
+    options?: Record<string, unknown>;
+  }>;
   pushChatEvent: (event: WorkspaceChatMessage) => void;
   closeConnection: () => void;
   connectionClosed: Promise<void>;
@@ -123,6 +127,10 @@ function createHarness(): Harness {
     toolCallId: string;
     result: unknown;
   }> = [];
+  const interruptCalls: Array<{
+    workspaceId: string;
+    options?: Record<string, unknown>;
+  }> = [];
   const chatStream = createControlledChatStream();
 
   const client = {
@@ -191,7 +199,13 @@ function createHarness(): Harness {
         delegatedToolAnswers.push(input);
         return { success: true as const, data: undefined };
       },
-      interruptStream: async () => ({ success: true as const, data: undefined }),
+      interruptStream: async (input: {
+        workspaceId: string;
+        options?: Record<string, unknown>;
+      }) => {
+        interruptCalls.push(input);
+        return { success: true as const, data: undefined };
+      },
       updateModeAISettings: async () => ({ success: true as const, data: undefined }),
       updateAgentAISettings: async () => ({ success: true as const, data: undefined }),
     },
@@ -220,6 +234,7 @@ function createHarness(): Harness {
     agent: agentInstance,
     sendMessageCalls,
     delegatedToolAnswers,
+    interruptCalls,
     pushChatEvent: chatStream.push,
     closeConnection: closeInput,
     connectionClosed: connection.closed,
@@ -499,6 +514,46 @@ describe("ACP prompt stream correlation", () => {
     });
 
     harness.closeConnection();
+    await harness.connectionClosed;
+  });
+
+  it("interrupts active turns on ACP disconnect to unblock delegated tool waits", async () => {
+    const harness = createHarness();
+    await harness.agent.initialize({
+      protocolVersion: PROTOCOL_VERSION,
+      clientCapabilities: {
+        fs: { readTextFile: true, writeTextFile: true },
+        terminal: true,
+      },
+    });
+
+    const newSessionResponse = await harness.agent.newSession({
+      cwd: "/repo/acp-go-sdk",
+      mcpServers: [],
+      _meta: {
+        trunkBranch: "main",
+      },
+    });
+
+    const promptPromise = harness.agent.prompt({
+      sessionId: newSessionResponse.sessionId,
+      prompt: [{ type: "text", text: "hello" }],
+    });
+
+    await waitForCondition(() => harness.sendMessageCalls.length === 1);
+
+    harness.closeConnection();
+
+    await expect(promptPromise).rejects.toThrow("Mux ACP connection closed");
+    await waitForCondition(() => harness.interruptCalls.length === 1);
+
+    expect(harness.interruptCalls[0]).toEqual({
+      workspaceId: newSessionResponse.sessionId,
+      options: {
+        abandonPartial: true,
+      },
+    });
+
     await harness.connectionClosed;
   });
 
