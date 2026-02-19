@@ -2260,6 +2260,31 @@ export class AgentSession {
     return followUp;
   }
 
+  private getPreferredCompactionModel(): string | null {
+    try {
+      const maybeConfig = this.config as Config & {
+        loadConfigOrDefault?: () => { preferredCompactionModel?: string } | null;
+      };
+      if (typeof maybeConfig.loadConfigOrDefault !== "function") {
+        return null;
+      }
+
+      const preferredCompactionModel = maybeConfig.loadConfigOrDefault()?.preferredCompactionModel;
+      if (typeof preferredCompactionModel !== "string") {
+        return null;
+      }
+
+      const normalized = normalizeGatewayModel(preferredCompactionModel.trim());
+      if (!isValidModelFormat(normalized)) {
+        return null;
+      }
+
+      return normalized;
+    } catch {
+      return null;
+    }
+  }
+
   private buildAutoCompactionRequest(params: {
     followUpContent: CompactionFollowUpRequest;
     baseOptions: SendMessageOptions;
@@ -2269,7 +2294,7 @@ export class AgentSession {
     metadata: MuxMessageMetadata;
     sendOptions: SendMessageOptions;
   } {
-    const compactionModel = params.baseOptions.model;
+    const compactionModel = this.getPreferredCompactionModel() ?? params.baseOptions.model;
     assert(
       typeof compactionModel === "string" && compactionModel.trim().length > 0,
       "auto-compaction requires a non-empty model"
