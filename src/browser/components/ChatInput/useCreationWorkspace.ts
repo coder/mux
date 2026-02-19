@@ -588,6 +588,7 @@ export function useCreationWorkspace({
       draftId,
       promoteWorkspaceDraft,
       deleteWorkspaceDraft,
+      providersConfig,
     ]
   );
 
