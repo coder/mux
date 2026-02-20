@@ -88,8 +88,10 @@ jobs:
 
             echo "Release $RELEASE_TAG is incomplete (missing: ${MISSING_ASSETS[*]})"
             echo "Deleting $RELEASE_TAG so this run can rebuild desktop artifacts"
-            # Use checkout-free deletion so release cleanup never depends on local git state.
-            gh release delete "$RELEASE_TAG" --yes
+            # Use API-only deletion so release cleanup never depends on local git state.
+            if release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$RELEASE_TAG" --jq '.id' 2>/dev/null); then
+              gh api --silent -X DELETE "repos/${GITHUB_REPOSITORY}/releases/$release_id"
+            fi
             gh api --silent -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/$RELEASE_TAG" || true
           fi
 
@@ -141,8 +143,9 @@ jobs:
               continue
             fi
             echo "Deleting old nightly release $tag"
-            # Keep this cleanup job checkout-free: `--cleanup-tag` shells out to git
-            # and fails on runners without a local repository clone.
-            gh release delete "$tag" --yes
+            # Keep this cleanup job checkout-free: use API-only deletion (no local git).
+            if release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$tag" --jq '.id' 2>/dev/null); then
+              gh api --silent -X DELETE "repos/${GITHUB_REPOSITORY}/releases/$release_id"
+            fi
             gh api --silent -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/$tag" || true
           done
