@@ -1381,7 +1381,6 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                   oldStart={1}
                   newStart={1}
                   fontSize="11px"
-                  lineHeight={1.3}
                   maxHeight="none"
                   className="rounded-none border-0 [&>div]:overflow-x-visible"
                   onReviewNote={handleReviewNoteSubmit}

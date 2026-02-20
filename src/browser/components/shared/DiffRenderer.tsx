@@ -311,14 +311,13 @@ export const DiffContainer: React.FC<
   React.PropsWithChildren<{
     fontSize?: string;
     maxHeight?: string;
-    lineHeight?: number | string;
     className?: string;
     /** Type of the first line in the diff (for top padding background) */
     firstLineType?: DiffLineType;
     /** Type of the last line in the diff (for bottom padding background) */
     lastLineType?: DiffLineType;
   }>
-> = ({ children, fontSize, maxHeight, lineHeight, className, firstLineType, lastLineType }) => {
+> = ({ children, fontSize, maxHeight, className, firstLineType, lastLineType }) => {
   const resolvedMaxHeight = maxHeight ?? "400px";
   const [isExpanded, setIsExpanded] = React.useState(false);
   const contentRef = React.useRef<HTMLDivElement>(null);
@@ -367,7 +366,7 @@ export const DiffContainer: React.FC<
         )}
         style={{
           fontSize: fontSize ?? "12px",
-          lineHeight: lineHeight ?? 1.4,
+          lineHeight: 1.4,
           maxHeight: clampContent ? resolvedMaxHeight : undefined,
           // CSS Grid columns: [gutter] auto | [indicator] 1rem | [code] 1fr
           gridTemplateColumns: "auto 1rem 1fr",
@@ -412,8 +411,6 @@ interface DiffRendererProps {
   filePath?: string;
   /** Font size for diff content (default: "12px") */
   fontSize?: string;
-  /** Line height for diff rows (default: 1.4) */
-  lineHeight?: number | string;
   /** Max height for diff container (default: "400px", use "none" for no limit) */
   maxHeight?: string;
   /** Additional className for container (e.g., "rounded-none" to remove rounding) */
@@ -539,12 +536,6 @@ function useHighlightedDiff(
   return cachedResult ?? chunks;
 }
 
-function normalizeHighlightedLineHtml(html: string): string {
-  // Some highlighters can emit hard line breaks in per-line HTML fragments.
-  // Strip CR/LF so each diff row remains a single visual row.
-  return html.replace(/\r?\n/g, "");
-}
-
 /**
  * DiffRenderer - Renders diff content with consistent styling
  *
@@ -562,7 +553,6 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
   newStart = 1,
   filePath,
   fontSize,
-  lineHeight,
   maxHeight,
   className,
 }) => {
@@ -596,7 +586,6 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
   return (
     <DiffContainer
       fontSize={fontSize}
-      lineHeight={lineHeight}
       maxHeight={maxHeight}
       className={className}
       firstLineType={firstLineType}
@@ -623,7 +612,7 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
                   background: codeBg,
                   color: getLineContentColor(chunk.type),
                 }}
-                dangerouslySetInnerHTML={{ __html: normalizeHighlightedLineHtml(line.html) }}
+                dangerouslySetInnerHTML={{ __html: line.html }}
               />
             </React.Fragment>
           );
@@ -951,7 +940,6 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     filePath,
     inlineReviews,
     fontSize,
-    lineHeight,
     maxHeight,
     className,
     onReviewNote,
@@ -1079,7 +1067,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
             type: chunk.type,
             oldLineNum: line.oldLineNumber,
             newLineNum: line.newLineNumber,
-            html: normalizeHighlightedLineHtml(line.html),
+            html: line.html,
             raw: rawLines[line.originalIndex] ?? "",
           });
         });
@@ -1255,7 +1243,6 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     return (
       <DiffContainer
         fontSize={fontSize}
-        lineHeight={lineHeight}
         maxHeight={maxHeight}
         className={className}
         firstLineType={firstLineType}
@@ -1284,7 +1271,8 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
             lineShadows.push(activeLineHighlight);
           }
 
-          // Each line renders as 3 CSS Grid cells: gutter | indicator | code.
+          // Each line renders as 3 CSS Grid cells: gutter | indicator | code
+          // Use display:contents wrapper for selection state + group hover behavior
           return (
             <React.Fragment key={displayIndex}>
               <div
@@ -1331,7 +1319,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                   reviewButton={
                     onReviewNote && (
                       <button
-                        className="pointer-events-none absolute inset-0 m-0 flex appearance-none items-center justify-center border-0 bg-transparent p-0 leading-none text-[var(--color-review-accent)]/60 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:text-[var(--color-review-accent)] active:scale-90"
+                        className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:text-[var(--color-review-accent)] active:scale-90"
                         onClick={(e) => {
                           e.stopPropagation();
                           handleCommentButtonClick(displayIndex, e.shiftKey);
