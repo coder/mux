@@ -113,6 +113,11 @@ interface TurnCompletion {
   promptCorrelationId: string;
   /** Monotonic wall-clock when prompt() registered this turn. */
   startedAtMs: number;
+  /**
+   * Wall-clock when workspace.sendMessage was dispatched for this turn.
+   * Used to avoid binding fallback stream-start events emitted before prompt dispatch.
+   */
+  dispatchedAtMs?: number;
   /** Inactivity timer so idle prompt turns cannot hang forever. */
   timeoutHandle: ReturnType<typeof setTimeout>;
   /** Set after stream-start; only this message id may resolve/reject the turn. */
@@ -654,6 +659,8 @@ export class MuxAgent implements Agent {
         args.workspaceId,
         this.getSessionOnChatMode(args.sessionId)
       );
+
+      this.markTurnDispatched(args.sessionId, promptCorrelationId);
 
       const delegatedToolNames = this.getDelegatedToolNames(args.sessionId);
       const optionsWithPromptCorrelation = this.attachPromptCorrelationToSendOptions(
@@ -1652,8 +1659,32 @@ export class MuxAgent implements Agent {
       }
 
       const hasMatchingCorrelation = event.acpPromptId === completion.promptCorrelationId;
-      if (!hasMatchingCorrelation) {
+      const canFallbackToUncorrelatedStart =
+        completion.messageId == null &&
+        completion.dispatchedAtMs != null &&
+        !isReplayEvent &&
+        event.acpPromptId == null &&
+        Number.isFinite(event.startTime) &&
+        event.startTime >= completion.dispatchedAtMs;
+
+      if (!hasMatchingCorrelation && !canFallbackToUncorrelatedStart) {
         return;
+      }
+
+      if (canFallbackToUncorrelatedStart) {
+        console.warn(
+          `[acp] stream-start missing acpPromptId after prompt dispatch; using best-effort fallback for session ${sessionId}`,
+          {
+            promptCorrelationId: completion.promptCorrelationId,
+            messageId: event.messageId,
+            eventStartTime: event.startTime,
+            turnDispatchedAtMs: completion.dispatchedAtMs,
+          }
+        );
+        // Fallback stream-start lacks acpPromptId, so generic correlation
+        // refresh cannot observe it. Refresh timeout explicitly when we
+        // accept this start event for the active prompt.
+        this.resetTurnInactivityTimeout(sessionId);
       }
 
       completion.messageId = event.messageId;
@@ -1855,6 +1886,17 @@ export class MuxAgent implements Agent {
       });
     });
   }
+  private markTurnDispatched(sessionId: string, promptCorrelationId: string): void {
+    const completion = this.turnCompletions.get(sessionId);
+    if (completion?.promptCorrelationId !== promptCorrelationId) {
+      return;
+    }
+
+    const dispatchedAtMs = Date.now();
+    assert(Number.isFinite(dispatchedAtMs), "markTurnDispatched: dispatchedAtMs must be finite");
+    completion.dispatchedAtMs = dispatchedAtMs;
+  }
+
   /**
    * Check if a stream event's messageId matches the active turn.  Before
    * `stream-start` sets the turn's messageId, terminal events (stream-end,

@@ -688,6 +688,73 @@ describe("ACP prompt stream correlation", () => {
     await harness.connectionClosed;
   });
 
+  it("completes prompt turns from live stream events when acpPromptId is missing", async () => {
+    const harness = createHarness({
+      agentOptions: {
+        turnCorrelationTimeoutMs: 100,
+      },
+    });
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    const newSessionResponse = await harness.agent.newSession({
+      cwd: "/repo/acp-go-sdk",
+      mcpServers: [],
+      _meta: {
+        trunkBranch: "main",
+      },
+    });
+
+    const promptPromise = harness.agent.prompt({
+      sessionId: newSessionResponse.sessionId,
+      prompt: [{ type: "text", text: "hello" }],
+    });
+
+    await waitForCondition(() => harness.sendMessageCalls.length === 1);
+
+    harness.pushChatEvent({
+      type: "stream-start",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-target",
+      model: "anthropic:claude-sonnet-4-5",
+      historySequence: 3,
+      startTime: Date.now(),
+      // Simulate runtimes that omit correlation metadata on live stream events.
+    } as WorkspaceChatMessage);
+
+    // Keep the stream active longer than turnCorrelationTimeoutMs to prove the
+    // fallback stream-start binding refreshes inactivity while acpPromptId is missing.
+    for (let i = 0; i < 4; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      harness.pushChatEvent({
+        type: "stream-delta",
+        workspaceId: newSessionResponse.sessionId,
+        messageId: "assistant-target",
+        delta: `chunk-${i} `,
+        tokens: 1,
+        timestamp: Date.now(),
+      } as WorkspaceChatMessage);
+    }
+
+    harness.pushChatEvent({
+      type: "stream-end",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-target",
+      metadata: {
+        model: "anthropic:claude-sonnet-4-5",
+      },
+      parts: [],
+      // Terminal event may also omit acpPromptId in older runtimes.
+    } as WorkspaceChatMessage);
+
+    await expect(promptPromise).resolves.toEqual({
+      stopReason: "end_turn",
+      usage: undefined,
+    });
+
+    harness.closeConnection();
+    await harness.connectionClosed;
+  });
+
   it("ignores stale uncorrelated stream-start events older than the active prompt", async () => {
     const harness = createHarness();
     await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
