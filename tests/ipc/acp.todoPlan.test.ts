@@ -489,10 +489,18 @@ describe("ACP user message translation for agent skills", () => {
     expect(getUserTextChunks(sessionUpdates)).toEqual(["/mux-docs what is mux?"]);
   });
 
-  it("keeps forwarding normal user text messages", async () => {
+  it("suppresses live plain user text to avoid duplicating session/prompt input", async () => {
     const { translator, sessionUpdates } = createHarness();
 
-    await forwardEvents(translator, [makeUserMessage("plain user message")]);
+    await forwardEvents(translator, [makeCaughtUp("live"), makeUserMessage("plain user message")]);
+
+    expect(getUpdateKinds(sessionUpdates)).toEqual([]);
+  });
+
+  it("keeps forwarding replayed normal user text messages", async () => {
+    const { translator, sessionUpdates } = createHarness();
+
+    await forwardEvents(translator, [makeUserMessage("plain user message", { replay: true })]);
 
     expect(getUpdateKinds(sessionUpdates)).toEqual(["user_message_chunk"]);
     expect(getUserTextChunks(sessionUpdates)).toEqual(["plain user message"]);

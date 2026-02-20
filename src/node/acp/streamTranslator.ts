@@ -341,18 +341,16 @@ export class StreamTranslator {
       return { kind: "suppress" };
     }
 
+    const isReplayEvent = (event as { replay?: boolean }).replay === true || isReplayPhase;
+    if (!isReplayEvent) {
+      // The ACP client already owns the prompt text it just sent in session/prompt.
+      // Re-emitting live user text as user_message_chunk duplicates the prompt.
+      return { kind: "suppress" };
+    }
+
     const agentSkillCommand = extractAgentSkillRawCommand(event.metadata);
     if (agentSkillCommand == null) {
       return { kind: "parts" };
-    }
-
-    const isReplayEvent = (event as { replay?: boolean }).replay === true || isReplayPhase;
-
-    if (!isReplayEvent) {
-      // Live slash-command sends already include the user's original /skill prompt
-      // on the client side. Suppress transformed backend text like
-      // "Using skill ..." to avoid awkward implementation-detail echoes.
-      return { kind: "suppress" };
     }
 
     // For history replay, emit the original slash command instead of the

@@ -197,6 +197,8 @@ build: node_modules/.installed src/version.ts build-renderer build-main build-pr
 
 build-main: node_modules/.installed dist/cli/index.js dist/cli/api.mjs ## Build main process
 
+dist-main: build-main ## Build main process CLI artifacts (compat alias)
+
 BUILTIN_AGENTS_GENERATED := src/node/services/agentDefinitions/builtInAgentContent.generated.ts
 BUILTIN_SKILLS_GENERATED := src/node/services/agentSkills/builtInSkillContent.generated.ts
 

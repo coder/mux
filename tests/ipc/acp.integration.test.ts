@@ -30,6 +30,10 @@ type AgentMessageChunkUpdate = Extract<
   schema.SessionUpdate,
   { sessionUpdate: "agent_message_chunk" }
 >;
+type UserMessageChunkUpdate = Extract<
+  schema.SessionUpdate,
+  { sessionUpdate: "user_message_chunk" }
+>;
 
 interface AcpTestClient {
   client: ClientSideConnection;
@@ -116,7 +120,7 @@ async function ensureMainCliBuilt(): Promise<void> {
     // Build the real CLI artifact once so this test catches missing tsconfig entries
     // and runtime transport/framing regressions in dist output.
     buildMainPromise = (async () => {
-      await runCommand("make", ["build-main"]);
+      await runCommand("make", ["dist-main"]);
       await fs.access(path.join(process.cwd(), "dist/cli/index.js"));
       await fs.access(path.join(process.cwd(), "dist/cli/acp.js"));
     })();
@@ -294,6 +298,12 @@ function isAgentMessageChunk(
   return notification.update.sessionUpdate === "agent_message_chunk";
 }
 
+function isUserMessageChunk(
+  notification: schema.SessionNotification
+): notification is schema.SessionNotification & { update: UserMessageChunkUpdate } {
+  return notification.update.sessionUpdate === "user_message_chunk";
+}
+
 function extractTextChunks(notifications: Array<schema.SessionNotification>): string {
   return notifications
     .filter(isAgentMessageChunk)
@@ -370,7 +380,7 @@ describeIntegration("ACP built CLI integration", () => {
   );
 
   test(
-    "prompt completes and streams session updates while reading README.md",
+    "prompt completes with usage and no duplicate user chunks while reading README.md",
     async () => {
       assert(repoPath.length > 0, "Temporary git repo path must be set");
 
@@ -420,10 +430,19 @@ describeIntegration("ACP built CLI integration", () => {
         );
 
         expect(promptResponse.stopReason).toBe("end_turn");
+        if (promptResponse.usage == null) {
+          throw new Error(
+            `Expected prompt response usage to be defined.\n\nACP stderr:\n${acpClient.getStderr()}`
+          );
+        }
+        expect(promptResponse.usage.totalTokens).toBeGreaterThan(0);
 
         const updatesForSession = acpClient.sessionUpdates.filter(
           (notification) => notification.sessionId === sessionId
         );
+        const userMessageChunks = updatesForSession.filter(isUserMessageChunk);
+        expect(userMessageChunks).toHaveLength(0);
+
         const agentMessageChunks = updatesForSession.filter(isAgentMessageChunk);
         expect(agentMessageChunks.length).toBeGreaterThan(0);
 

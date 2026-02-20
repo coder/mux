@@ -1273,12 +1273,12 @@ export class MuxAgent implements Agent {
     // has queued the new prompt behind a still-running stream.
     if (event.type === "stream-start") {
       const completion = this.turnCompletions.get(sessionId);
-      // Reconnect replay can emit a prior message's stream-start while a new
-      // prompt is pending. Only bind starts that carry this turn's correlation id.
+      // Bind the turn to any stream-start carrying this prompt correlation id,
+      // even if the event is replayed before caught-up. Some reconnect/full
+      // subscriptions can surface the matching start in replay mode first.
       if (
-        !isReplayEvent &&
         completion != null &&
-        completion.messageId == null &&
+        event.messageId.trim().length > 0 &&
         event.acpPromptId === completion.promptCorrelationId
       ) {
         completion.messageId = event.messageId;
@@ -1298,12 +1298,14 @@ export class MuxAgent implements Agent {
     }
 
     if (event.type === "stream-end") {
-      if (isReplayEvent) {
-        return;
-      }
       // stream-end is a normal completion. Prefer exact message-id matching
       // once stream-start identifies the turn, but also allow correlation-id
       // fallback while pending so a dropped stream-start cannot hang prompt().
+      //
+      // Do not blanket-drop replay events here: during initial full replay,
+      // a newly queued prompt can receive correlated stream terminal events
+      // before caught-up. Correlation gates below ensure only the active turn
+      // can complete.
       if (!this.isActiveTurnMessageOrPending(sessionId, event.messageId, event.acpPromptId)) {
         return;
       }
@@ -1316,9 +1318,6 @@ export class MuxAgent implements Agent {
     }
 
     if (event.type === "stream-abort") {
-      if (isReplayEvent) {
-        return;
-      }
       // stream-abort can arrive before stream-start when the user cancels
       // immediately.  Always honour abort for any pending turn so prompt()
       // doesn't hang forever.
@@ -1334,9 +1333,6 @@ export class MuxAgent implements Agent {
     }
 
     if (event.type === "stream-error" || event.type === "error") {
-      if (isReplayEvent) {
-        return;
-      }
       // Like abort, errors must be propagated even before stream-start to
       // prevent hanging turns.
       if (!this.isActiveTurnMessageOrPending(sessionId, event.messageId, event.acpPromptId)) {
