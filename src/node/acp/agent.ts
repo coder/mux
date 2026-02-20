@@ -1466,6 +1466,7 @@ export class MuxAgent implements Agent {
     const { push, iterate, end } = createAsyncMessageQueue<WorkspaceChatMessage>();
     let queuedEventCount = 0;
     let droppedNonTerminalEventCount = 0;
+    let hasCaughtUp = onChatMode.type !== "full";
 
     const isTerminalStreamEvent = (event: WorkspaceChatMessage): boolean =>
       event.type === "stream-end" ||
@@ -1473,17 +1474,24 @@ export class MuxAgent implements Agent {
       event.type === "stream-error" ||
       event.type === "error";
 
-    const isDroppableUnderBackpressure = (event: WorkspaceChatMessage): boolean =>
-      event.type === "stream-delta" ||
-      event.type === "reasoning-delta" ||
-      event.type === "tool-call-delta" ||
-      event.type === "usage-delta" ||
-      event.type === "session-usage-delta" ||
-      event.type === "bash-output" ||
-      event.type === "init-output" ||
-      // Drop replay history messages under saturation, but keep live message
-      // events so ACP clients do not miss real-time conversation updates.
-      (event.type === "message" && (event as { replay?: boolean }).replay === true);
+    const isDroppableUnderBackpressure = (event: WorkspaceChatMessage): boolean => {
+      const isReplayMessageEvent =
+        event.type === "message" &&
+        ((event as { replay?: boolean }).replay === true || !hasCaughtUp);
+
+      return (
+        event.type === "stream-delta" ||
+        event.type === "reasoning-delta" ||
+        event.type === "tool-call-delta" ||
+        event.type === "usage-delta" ||
+        event.type === "session-usage-delta" ||
+        event.type === "bash-output" ||
+        event.type === "init-output" ||
+        // Drop replay history messages under saturation, but keep live message
+        // events so ACP clients do not miss real-time conversation updates.
+        isReplayMessageEvent
+      );
+    };
 
     // Drain the oRPC stream: observe events for turn resolution, buffer
     // for translation. push() is non-blocking so handleStreamEvent always
@@ -1504,6 +1512,9 @@ export class MuxAgent implements Agent {
       try {
         for await (const event of chatIterable) {
           this.handleStreamEvent(sessionId, event);
+          if (event.type === "caught-up") {
+            hasCaughtUp = true;
+          }
           // Skip heartbeats from the queue: they produce no sessionUpdate
           // output and are emitted periodically, so they would accumulate
           // unboundedly if the consumer is blocked on stdout backpressure.
