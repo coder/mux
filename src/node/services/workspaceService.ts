@@ -4350,10 +4350,6 @@ export class WorkspaceService extends EventEmitter {
       );
     }
 
-    // Notify listeners before awaiting sendMessage so UI can reflect that
-    // backend idle compaction has started while the compaction stream runs.
-    this.emitIdleCompactionStarted(workspaceId);
-
     const sendResult = await this.sendMessage(
       workspaceId,
       buildCompactionMessageText({}),
@@ -4386,6 +4382,9 @@ export class WorkspaceService extends EventEmitter {
           : String(rawError);
       throw new Error(`Failed to execute idle compaction: ${formattedError}`);
     }
+
+    // Notify listeners only after dispatch succeeds so UI state reflects real work.
+    this.emitIdleCompactionStarted(workspaceId);
   }
 
   private async buildIdleCompactionSendOptions(workspaceId: string): Promise<SendMessageOptions> {

@@ -223,7 +223,7 @@ describe("WorkspaceService idle compaction dispatch", () => {
     await cleanupHistory();
   });
 
-  test("marks idle compaction send as synthetic", async () => {
+  test("marks idle compaction send as synthetic and emits started after dispatch", async () => {
     const workspaceId = "idle-ws";
     const sendMessage = mock(() => Promise.resolve(Ok(undefined)));
     const buildIdleCompactionSendOptions = mock(() =>
@@ -266,9 +266,10 @@ describe("WorkspaceService idle compaction dispatch", () => {
         requireIdle: true,
       })
     );
+    expect(emitIdleCompactionStarted).toHaveBeenCalledTimes(1);
   });
 
-  test("emits idle-compaction-started before busy-skip result is returned", async () => {
+  test("does not emit idle-compaction-started when busy-skip result is returned", async () => {
     const workspaceId = "idle-busy-ws";
     const sendMessage = mock(() =>
       Promise.resolve(
@@ -318,7 +319,7 @@ describe("WorkspaceService idle compaction dispatch", () => {
     }
     expect(executionError.message).toContain("idle-only send was skipped");
 
-    expect(emitIdleCompactionStarted).toHaveBeenCalledTimes(1);
+    expect(emitIdleCompactionStarted).toHaveBeenCalledTimes(0);
   });
 });
 
