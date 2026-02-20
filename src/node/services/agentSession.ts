@@ -1205,14 +1205,17 @@ export class AgentSession {
     // This handles the case where the app crashed after compaction completed
     // but before the follow-up was sent.
     this.startupRecoveryPromise = this.dispatchPendingFollowUp()
+      .then(() => {
+        this.startupRecoveryScheduled = true;
+      })
       .catch((error) => {
+        this.startupRecoveryScheduled = false;
         log.warn("Failed to dispatch pending follow-up during startup recovery", {
           workspaceId: this.workspaceId,
           error: getErrorMessage(error),
         });
       })
       .finally(() => {
-        this.startupRecoveryScheduled = true;
         this.startupRecoveryPromise = null;
         this.ensureStartupAutoRetryCheck();
       });
@@ -4278,7 +4281,11 @@ export class AgentSession {
     // before sendQueuedMessages() runs, preventing race conditions.
     // Mark as synthetic so recovery/background dispatches do not implicitly
     // re-enable auto-retry after a user explicitly opted out.
-    await this.sendMessage(finalText, options, { synthetic: true });
+    const sendResult = await this.sendMessage(finalText, options, { synthetic: true });
+    if (!sendResult.success) {
+      const message = this.extractRetryFailureMessage(sendResult.error) ?? sendResult.error.type;
+      throw new Error(`Failed to dispatch pending follow-up: ${message}`);
+    }
   }
 
   /**
