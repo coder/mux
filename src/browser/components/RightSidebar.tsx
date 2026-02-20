@@ -863,7 +863,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       e.preventDefault();
       setCollapsed(false);
       selectOrOpenReviewTab();
-      setIsReviewImmersive(!isReviewImmersive);
+      setIsReviewImmersive((prev) => !prev);
     };
 
     window.addEventListener("keydown", handleKeyDown);
