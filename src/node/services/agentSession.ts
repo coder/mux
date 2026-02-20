@@ -531,6 +531,13 @@ export class AgentSession {
     const result = await this.resumeStream(options);
     if (result.success) {
       if (!result.data.started) {
+        // resumeStream can defer when a turn is still PREPARING/COMPLETING.
+        // Treat this as retriable so auto-retry keeps progressing instead of
+        // stalling after the "auto-retry-starting" status event.
+        await this.handleStreamFailureForAutoRetry({
+          type: "unknown",
+          message: "retry_deferred_busy",
+        });
         return;
       }
 

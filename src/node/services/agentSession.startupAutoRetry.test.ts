@@ -699,6 +699,43 @@ describe("AgentSession startup auto-retry recovery", () => {
     session.dispose();
   });
 
+  test("reschedules retry when resumeStream defers without starting a stream", async () => {
+    const workspaceId = "startup-retry-resume-deferred";
+    const { session, events, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const privateSession = session as unknown as {
+      retryActiveStream: () => Promise<void>;
+      lastAutoRetryOptions?: SendMessageOptions;
+      resumeStream: (
+        options: SendMessageOptions
+      ) => Promise<{ success: true; data: { started: boolean } }>;
+    };
+
+    privateSession.lastAutoRetryOptions = {
+      model: "anthropic:claude-sonnet-4-5",
+      agentId: "exec",
+    };
+
+    const resumeStreamMock = mock((_options: SendMessageOptions) =>
+      Promise.resolve({
+        success: true as const,
+        data: { started: false },
+      })
+    );
+    privateSession.resumeStream = resumeStreamMock;
+
+    const scheduledBefore = events.filter((event) => event.type === "auto-retry-scheduled").length;
+
+    await privateSession.retryActiveStream();
+
+    const scheduledAfter = events.filter((event) => event.type === "auto-retry-scheduled").length;
+    expect(resumeStreamMock).toHaveBeenCalledTimes(1);
+    expect(scheduledAfter).toBe(scheduledBefore + 1);
+
+    session.dispose();
+  });
+
   test("does not re-process retry failures already handled by resumeStream", async () => {
     const workspaceId = "startup-retry-no-double-process-failure";
     const { session, events, cleanup } = await createSessionBundle(workspaceId);
