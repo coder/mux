@@ -1455,10 +1455,34 @@ export class MuxAgent implements Agent {
     // a blocked sessionUpdate write, preventing resolveTurn from firing
     // and causing prompt() to hang indefinitely.
     //
-    // Keep a hard memory ceiling so a stalled ACP client cannot accumulate an
-    // unbounded in-memory backlog under stdout backpressure.
+    // Keep memory bounded while applying upstream backpressure instead of
+    // hard-failing the subscription. Throwing on a fixed queue threshold can
+    // reject otherwise healthy long streams; waiting here naturally slows the
+    // onChat reader until the ACP client catches up.
     const { push, iterate, end } = createAsyncMessageQueue<WorkspaceChatMessage>();
     let queuedEventCount = 0;
+    let stopBackpressureWait = false;
+    let queueCapacityWaiters: Array<() => void> = [];
+
+    const releaseQueueCapacityWaiters = (): void => {
+      if (queueCapacityWaiters.length === 0) {
+        return;
+      }
+
+      const waiters = queueCapacityWaiters;
+      queueCapacityWaiters = [];
+      for (const resolve of waiters) {
+        resolve();
+      }
+    };
+
+    const waitForQueueCapacity = async (): Promise<void> => {
+      while (!stopBackpressureWait && queuedEventCount >= MAX_BUFFERED_CHAT_EVENTS) {
+        await new Promise<void>((resolve) => {
+          queueCapacityWaiters.push(resolve);
+        });
+      }
+    };
 
     // Drain the oRPC stream: observe events for turn resolution, buffer
     // for translation. push() is non-blocking so handleStreamEvent always
@@ -1483,12 +1507,11 @@ export class MuxAgent implements Agent {
           // output and are emitted periodically, so they would accumulate
           // unboundedly if the consumer is blocked on stdout backpressure.
           if (event.type !== "heartbeat") {
-            queuedEventCount += 1;
-            if (queuedEventCount > MAX_BUFFERED_CHAT_EVENTS) {
-              throw new Error(
-                `onChat buffer exceeded ${MAX_BUFFERED_CHAT_EVENTS} events for session ${sessionId}; likely ACP client backpressure`
-              );
+            await waitForQueueCapacity();
+            if (stopBackpressureWait) {
+              break;
             }
+            queuedEventCount += 1;
             push(event);
           }
         }
@@ -1503,6 +1526,9 @@ export class MuxAgent implements Agent {
       async *[Symbol.asyncIterator](): AsyncGenerator<WorkspaceChatMessage> {
         for await (const queuedEvent of iterate()) {
           queuedEventCount = Math.max(queuedEventCount - 1, 0);
+          if (queuedEventCount < MAX_BUFFERED_CHAT_EVENTS) {
+            releaseQueueCapacityWaiters();
+          }
           yield queuedEvent;
         }
       },
@@ -1511,6 +1537,10 @@ export class MuxAgent implements Agent {
     try {
       await this.streamTranslator.consumeAndForward(sessionId, forwardingIterable);
     } finally {
+      // Stop any pending backpressure wait immediately during teardown so
+      // await drainPromise cannot deadlock behind a saturated queue.
+      stopBackpressureWait = true;
+      releaseQueueCapacityWaiters();
       // Signal the drain loop to stop producing events (idempotent if
       // already ended).
       end();
