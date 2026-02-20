@@ -79,6 +79,13 @@ import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
 import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
 import { getErrorMessage } from "@/common/utils/errors";
 
+import {
+  buildActorRequestHistoryWithCriticFeedback,
+  buildCriticAdditionalInstructions,
+  buildCriticRequestHistory,
+  isCriticDoneResponse,
+} from "./criticMessageBuilder";
+
 /**
  * Tracked file state for detecting external edits.
  * Uses timestamp-based polling with diff injection.
@@ -133,6 +140,10 @@ function isCompactionRequestMetadata(meta: unknown): meta is CompactionRequestMe
 }
 
 const MAX_AGENT_SKILL_SNAPSHOT_CHARS = 50_000;
+
+const CRITIC_TOOL_POLICY: NonNullable<SendMessageOptions["toolPolicy"]> = [
+  { regex_match: ".*", action: "disable" },
+];
 
 export interface AgentSessionChatEvent {
   workspaceId: string;
@@ -240,6 +251,12 @@ export class AgentSession {
   private activeStreamContext?: {
     modelString: string;
     options?: SendMessageOptions;
+    openaiTruncationModeOverride?: "auto" | "disabled";
+  };
+
+  private criticLoopState?: {
+    modelString: string;
+    actorOptions: SendMessageOptions;
     openaiTruncationModeOverride?: "auto" | "disabled";
   };
 
@@ -775,6 +792,10 @@ export class AgentSession {
     const fileParts = options?.fileParts;
     const editMessageId = options?.editMessageId;
 
+    if (options?.isCriticTurn !== true && options?.criticEnabled !== true) {
+      this.clearCriticLoopState();
+    }
+
     // Edits are implemented as truncate+replace. If the frontend omits fileParts,
     // preserve the original message's attachments.
     // Only search the current compaction epoch — edits of pre-boundary messages are
@@ -1211,9 +1232,11 @@ export class AgentSession {
     this.ackPendingPostCompactionStateOnStreamEnd = false;
     this.activeStreamHadAnyDelta = false;
     this.activeStreamHadPostCompactionInjection = false;
+
+    let effectiveOptions = options;
     this.activeStreamContext = {
       modelString,
-      options,
+      options: effectiveOptions,
       openaiTruncationModeOverride,
     };
     this.activeStreamUserMessageId = undefined;
@@ -1223,7 +1246,7 @@ export class AgentSession {
       return Err(createUnknownSendMessageError(commitResult.error));
     }
 
-    let historyResult = await this.historyService.getHistoryFromLatestBoundary(this.workspaceId);
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(this.workspaceId);
     if (!historyResult.success) {
       return Err(createUnknownSendMessageError(historyResult.error));
     }
@@ -1236,36 +1259,79 @@ export class AgentSession {
       );
     }
 
-    // Structural invariant: API requests must not end with a non-partial assistant message.
-    // Partial assistants are handled by addInterruptedSentinel at transform time.
-    // Non-partial trailing assistants indicate a missing user message upstream — inject a
-    // [CONTINUE] sentinel so the model has a valid conversation to respond to. This is
-    // defense-in-depth; callers should prefer sendMessage() which persists a real user message.
-    const lastMsg = historyResult.data[historyResult.data.length - 1];
-    if (lastMsg?.role === "assistant" && !lastMsg.metadata?.partial) {
-      log.warn("streamWithHistory: trailing non-partial assistant detected, injecting [CONTINUE]", {
-        workspaceId: this.workspaceId,
-        messageId: lastMsg.id,
-      });
-      const sentinelMessage = createMuxMessage(createUserMessageId(), "user", "[CONTINUE]", {
-        timestamp: Date.now(),
-        synthetic: true,
-      });
-      await this.historyService.appendToHistory(this.workspaceId, sentinelMessage);
-      const refreshed = await this.historyService.getHistoryFromLatestBoundary(this.workspaceId);
-      if (refreshed.success) {
-        historyResult = refreshed;
+    const shouldInferCriticTurn =
+      effectiveOptions?.isCriticTurn == null &&
+      effectiveOptions?.criticEnabled === true &&
+      this.shouldResumeAsCriticTurn(historyResult.data);
+
+    if (shouldInferCriticTurn && effectiveOptions) {
+      effectiveOptions = {
+        ...effectiveOptions,
+        isCriticTurn: true,
+      };
+
+      if (this.activeStreamContext) {
+        this.activeStreamContext.options = this.cloneSendMessageOptions(effectiveOptions);
       }
     }
 
+    // Ensure critic guardrails (tool policy + system instructions) are applied on
+    // resumed critic turns. The frontend resume path only sets isCriticTurn/criticEnabled
+    // but doesn't include the critic-specific tool policy or system instructions.
+    // The automatic loop path (maybeContinueActorCriticLoop → buildCriticTurnOptions)
+    // already sets these, so this is idempotent for that path.
+    if (effectiveOptions?.isCriticTurn === true) {
+      // Recover actor-era options from criticLoopState (preserved across aborts).
+      // The frontend resume only sends isCriticTurn/criticEnabled, so we need
+      // criticLoopState for the original actor instructions and critic prompt.
+      const sourceActorOptions = this.criticLoopState?.actorOptions;
+      effectiveOptions = {
+        ...effectiveOptions,
+        toolPolicy: CRITIC_TOOL_POLICY,
+        additionalSystemInstructions: buildCriticAdditionalInstructions({
+          actorAdditionalInstructions: sourceActorOptions?.additionalSystemInstructions,
+          criticPrompt: effectiveOptions.criticPrompt ?? sourceActorOptions?.criticPrompt,
+        }),
+      };
+
+      if (this.activeStreamContext) {
+        this.activeStreamContext.options = this.cloneSendMessageOptions(effectiveOptions);
+      }
+    }
+
+    let requestHistory = historyResult.data;
+    if (effectiveOptions?.isCriticTurn === true) {
+      requestHistory = buildCriticRequestHistory(historyResult.data);
+    } else if (effectiveOptions?.criticEnabled === true) {
+      requestHistory = buildActorRequestHistoryWithCriticFeedback(historyResult.data);
+    }
+
+    // Structural invariant: provider requests must not end with a non-partial assistant message.
+    // For critic mode we transform history at request-build time, so this sentinel is request-only.
+    const lastRequestMessage = requestHistory[requestHistory.length - 1];
+    if (lastRequestMessage?.role === "assistant" && !lastRequestMessage.metadata?.partial) {
+      log.warn("streamWithHistory: trailing non-partial assistant detected, injecting [CONTINUE]", {
+        workspaceId: this.workspaceId,
+        messageId: lastRequestMessage.id,
+      });
+
+      requestHistory = [
+        ...requestHistory,
+        createMuxMessage(createUserMessageId(), "user", "[CONTINUE]", {
+          timestamp: Date.now(),
+          synthetic: true,
+        }),
+      ];
+    }
+
     // Capture the current user message id so retries are stable across assistant message ids.
-    const lastUserMessage = [...historyResult.data].reverse().find((m) => m.role === "user");
+    const lastUserMessage = [...requestHistory].reverse().find((m) => m.role === "user");
     this.activeStreamUserMessageId = lastUserMessage?.id;
 
     this.activeCompactionRequest = this.resolveCompactionRequest(
       historyResult.data,
       modelString,
-      options
+      effectiveOptions
     );
 
     // Check for external file edits (timestamp-based polling)
@@ -1281,33 +1347,36 @@ export class AgentSession {
 
     // Enforce thinking policy for the specified model (single source of truth)
     // This ensures model-specific requirements are met regardless of where the request originates
-    const effectiveThinkingLevel = options?.thinkingLevel
-      ? enforceThinkingPolicy(modelString, options.thinkingLevel)
+    const effectiveThinkingLevel = effectiveOptions?.thinkingLevel
+      ? enforceThinkingPolicy(modelString, effectiveOptions.thinkingLevel)
       : undefined;
 
     // Bind recordFileState to this session for the propose_plan tool
     const recordFileState = this.fileChangeTracker.record.bind(this.fileChangeTracker);
 
     const streamResult = await this.aiService.streamMessage({
-      messages: historyResult.data,
+      messages: requestHistory,
       workspaceId: this.workspaceId,
       modelString,
       thinkingLevel: effectiveThinkingLevel,
-      toolPolicy: options?.toolPolicy,
-      additionalSystemInstructions: options?.additionalSystemInstructions,
-      maxOutputTokens: options?.maxOutputTokens,
-      muxProviderOptions: options?.providerOptions,
-      agentId: options?.agentId,
+      toolPolicy: effectiveOptions?.toolPolicy,
+      additionalSystemInstructions: effectiveOptions?.additionalSystemInstructions,
+      maxOutputTokens: effectiveOptions?.maxOutputTokens,
+      muxProviderOptions: effectiveOptions?.providerOptions,
+      agentId: effectiveOptions?.agentId,
       recordFileState,
       changedFileAttachments:
         changedFileAttachments.length > 0 ? changedFileAttachments : undefined,
       postCompactionAttachments,
-      experiments: options?.experiments,
-      system1Model: options?.system1Model,
-      system1ThinkingLevel: options?.system1ThinkingLevel,
-      disableWorkspaceAgents: options?.disableWorkspaceAgents,
+      experiments: effectiveOptions?.experiments,
+      system1Model: effectiveOptions?.system1Model,
+      system1ThinkingLevel: effectiveOptions?.system1ThinkingLevel,
+      disableWorkspaceAgents: effectiveOptions?.disableWorkspaceAgents,
       hasQueuedMessage: () => !this.messageQueue.isEmpty(),
       openaiTruncationModeOverride,
+      criticEnabled: effectiveOptions?.criticEnabled,
+      criticPrompt: effectiveOptions?.criticPrompt,
+      isCriticTurn: effectiveOptions?.isCriticTurn,
     });
 
     if (!streamResult.success) {
@@ -1325,6 +1394,15 @@ export class AgentSession {
     }
 
     return streamResult;
+  }
+
+  private shouldResumeAsCriticTurn(history: MuxMessage[]): boolean {
+    const lastMessage = history[history.length - 1];
+    return (
+      lastMessage?.role === "assistant" &&
+      lastMessage.metadata?.partial === true &&
+      lastMessage.metadata?.messageSource === "critic"
+    );
   }
 
   private resolveCompactionRequest(
@@ -1889,6 +1967,257 @@ export class AgentSession {
     return true;
   }
 
+  private cloneSendMessageOptions(options: SendMessageOptions): SendMessageOptions {
+    return typeof structuredClone === "function"
+      ? structuredClone(options)
+      : (JSON.parse(JSON.stringify(options)) as SendMessageOptions);
+  }
+
+  private clearCriticLoopState(): void {
+    this.criticLoopState = undefined;
+  }
+
+  private buildCriticTurnOptions(actorOptions: SendMessageOptions): SendMessageOptions {
+    const criticInstructions = buildCriticAdditionalInstructions({
+      actorAdditionalInstructions: actorOptions.additionalSystemInstructions,
+      criticPrompt: actorOptions.criticPrompt,
+    });
+
+    return {
+      ...this.cloneSendMessageOptions(actorOptions),
+      criticEnabled: true,
+      isCriticTurn: true,
+      additionalSystemInstructions: criticInstructions,
+      toolPolicy: CRITIC_TOOL_POLICY,
+    };
+  }
+
+  private buildActorTurnOptionsFromCriticState(
+    currentCriticOptions?: SendMessageOptions
+  ): SendMessageOptions | undefined {
+    if (this.criticLoopState?.actorOptions) {
+      return this.cloneSendMessageOptions(this.criticLoopState.actorOptions);
+    }
+
+    if (!currentCriticOptions) {
+      return undefined;
+    }
+
+    // Fallback when criticLoopState is unavailable (e.g., app restart during critic turn).
+    // We don't have the original actor-era options, so clear critic-specific overrides
+    // (disabled-all tool policy, critic system instructions) and fall back to defaults.
+    // This is lossy but safe — actor-era toolPolicy/instructions are not recoverable here.
+    return {
+      ...this.cloneSendMessageOptions(currentCriticOptions),
+      isCriticTurn: false,
+      toolPolicy: undefined,
+      additionalSystemInstructions: undefined,
+    };
+  }
+
+  /**
+   * Start a critic loop without sending a user message. The critic evaluates the
+   * existing conversation history using the provided options as the "actor baseline"
+   * for the loop. After the critic turn, maybeContinueActorCriticLoop takes over.
+   */
+  async startCriticLoop(options: SendMessageOptions): Promise<Result<void, SendMessageError>> {
+    this.assertNotDisposed("startCriticLoop");
+
+    // Reject if a stream is already in flight — starting a new critic loop would
+    // cancel the active stream via StreamManager.startStream, losing in-progress output.
+    if (this.isBusy()) {
+      return Err({
+        type: "unknown" as const,
+        raw: "Cannot start critic loop while a response is in progress.",
+      });
+    }
+
+    const historyCheck = await this.historyService.getHistoryFromLatestBoundary(this.workspaceId);
+    if (!historyCheck.success) {
+      return Err(createUnknownSendMessageError(historyCheck.error));
+    }
+    const isEmptyHistory = historyCheck.data.length === 0;
+
+    // Build actor-equivalent options (the "baseline" the loop will use for actor turns)
+    const actorOptions = this.cloneSendMessageOptions({
+      ...options,
+      criticEnabled: true,
+      isCriticTurn: false,
+    });
+
+    // Save as criticLoopState so maybeContinueActorCriticLoop can build actor turns
+    this.criticLoopState = {
+      modelString: options.model,
+      actorOptions,
+    };
+
+    // When history is empty, seed the critic prompt as a user message and start
+    // an actor turn first. The actor works on the task, then
+    // maybeContinueActorCriticLoop fires the critic evaluation automatically.
+    let streamOptions: SendMessageOptions;
+    // Track seeded message for rollback if stream fails to start
+    let seededMessage: MuxMessage | undefined;
+    if (isEmptyHistory) {
+      const promptText = options.criticPrompt?.trim();
+      if (!promptText) {
+        return Err({
+          type: "unknown" as const,
+          raw: "Provide critic instructions to start from scratch.",
+        });
+      }
+
+      // Don't mark as synthetic — the prompt is user-authored content that downstream
+      // recovery logic (e.g. maybeRetryExecSubagentHardRestart) should treat as replayable.
+      const userMessage = createMuxMessage(createUserMessageId(), "user", promptText, {
+        timestamp: Date.now(),
+      });
+      const appendResult = await this.historyService.appendToHistory(this.workspaceId, userMessage);
+      if (!appendResult.success) {
+        return Err(createUnknownSendMessageError(appendResult.error));
+      }
+      // appendToHistory mutates the message in place, setting historySequence
+      this.emitChatEvent({ ...userMessage, type: "message" });
+      seededMessage = userMessage;
+
+      streamOptions = actorOptions;
+    } else {
+      // If the latest message is from the user (e.g. after a failed send that never
+      // produced an actor response), start an actor turn so the pending request gets
+      // answered before the critic evaluates. Otherwise start a critic turn as normal.
+      const lastMessage = historyCheck.data[historyCheck.data.length - 1];
+      const needsActorFirst = lastMessage?.role === "user";
+      streamOptions = needsActorFirst ? actorOptions : this.buildCriticTurnOptions(actorOptions);
+    }
+
+    this.setTurnPhase(TurnPhase.PREPARING);
+    try {
+      const result = await this.streamWithHistory(options.model, streamOptions);
+      if (!result.success) {
+        // Roll back the seeded prompt so retries still see empty history and
+        // take the actor-first path instead of starting a critic turn against
+        // a transcript with no actor response. Also emit a delete event so the
+        // UI removes the ghost message that was emitted before the stream attempt.
+        if (seededMessage) {
+          const seq = seededMessage.metadata?.historySequence;
+          await this.historyService.deleteMessage(this.workspaceId, seededMessage.id);
+          if (seq != null) {
+            this.emitChatEvent({ type: "delete", historySequences: [seq] });
+          }
+        }
+        return result;
+      }
+      return Ok(undefined);
+    } finally {
+      if (this.turnPhase === TurnPhase.PREPARING) {
+        this.setTurnPhase(TurnPhase.IDLE);
+      }
+    }
+  }
+
+  private async startAutomaticCriticLoopTurn(
+    modelString: string,
+    options: SendMessageOptions,
+    openaiTruncationModeOverride?: "auto" | "disabled"
+  ): Promise<boolean> {
+    if (this.disposed) {
+      return false;
+    }
+
+    this.setTurnPhase(TurnPhase.PREPARING);
+    let result: Result<void, SendMessageError>;
+    try {
+      result = await this.streamWithHistory(modelString, options, openaiTruncationModeOverride);
+    } finally {
+      if (this.turnPhase === TurnPhase.PREPARING) {
+        this.setTurnPhase(TurnPhase.IDLE);
+      }
+    }
+
+    return result.success;
+  }
+
+  private async maybeContinueActorCriticLoop(
+    payload: StreamEndEvent,
+    completedContext:
+      | {
+          modelString: string;
+          options?: SendMessageOptions;
+          openaiTruncationModeOverride?: "auto" | "disabled";
+        }
+      | undefined,
+    handledByCompaction: boolean
+  ): Promise<boolean> {
+    if (handledByCompaction || this.disposed || !completedContext?.options) {
+      return false;
+    }
+
+    // Edits must truncate before any autonomous follow-up. When an edit is waiting,
+    // sendMessage() sets deferQueuedFlushUntilAfterEdit while waiting for IDLE;
+    // skip actor-critic continuation so stream-end can honor that precedence.
+    if (this.deferQueuedFlushUntilAfterEdit) {
+      this.clearCriticLoopState();
+      return false;
+    }
+
+    // Prioritize explicit user input over autonomous actor-critic continuation.
+    // If the user queued a follow-up while streaming, flush that queue first
+    // instead of starting another auto-loop turn from the just-finished output.
+    if (!this.messageQueue.isEmpty()) {
+      this.clearCriticLoopState();
+      return false;
+    }
+
+    const completedOptions = completedContext.options;
+
+    if (completedOptions.isCriticTurn === true) {
+      if (isCriticDoneResponse(payload.parts)) {
+        this.clearCriticLoopState();
+        return false;
+      }
+
+      const actorOptions = this.buildActorTurnOptionsFromCriticState(completedOptions);
+      if (!actorOptions) {
+        this.clearCriticLoopState();
+        return false;
+      }
+
+      actorOptions.criticEnabled = true;
+      actorOptions.criticPrompt = completedOptions.criticPrompt ?? actorOptions.criticPrompt;
+      actorOptions.isCriticTurn = false;
+
+      return this.startAutomaticCriticLoopTurn(
+        this.criticLoopState?.modelString ?? completedContext.modelString,
+        actorOptions,
+        this.criticLoopState?.openaiTruncationModeOverride ??
+          completedContext.openaiTruncationModeOverride
+      );
+    }
+
+    if (completedOptions.criticEnabled !== true) {
+      this.clearCriticLoopState();
+      return false;
+    }
+
+    const actorOptions = this.cloneSendMessageOptions({
+      ...completedOptions,
+      isCriticTurn: false,
+    });
+
+    this.criticLoopState = {
+      modelString: completedContext.modelString,
+      actorOptions,
+      openaiTruncationModeOverride: completedContext.openaiTruncationModeOverride,
+    };
+
+    const criticOptions = this.buildCriticTurnOptions(actorOptions);
+
+    return this.startAutomaticCriticLoopTurn(
+      completedContext.modelString,
+      criticOptions,
+      completedContext.openaiTruncationModeOverride
+    );
+  }
+
   private resetActiveStreamState(): void {
     this.activeStreamContext = undefined;
     this.activeStreamUserMessageId = undefined;
@@ -1931,6 +2260,7 @@ export class AgentSession {
     // Terminal error — no retry succeeded
     this.activeCompactionRequest = undefined;
     this.resetActiveStreamState();
+    this.clearCriticLoopState();
 
     if (hadCompactionRequest && !this.disposed) {
       this.clearQueue();
@@ -2019,8 +2349,19 @@ export class AgentSession {
 
       this.setTurnPhase(TurnPhase.COMPLETING);
       const hadCompactionRequest = this.activeCompactionRequest !== undefined;
+      const activeOptions = this.activeStreamContext?.options;
       this.activeCompactionRequest = undefined;
       this.resetActiveStreamState();
+
+      // Preserve critic loop state across aborts for critic-enabled turns so a resumed
+      // critic stream can continue using the original actor options (tool policy,
+      // additional instructions, etc.) captured when the loop started.
+      const shouldPreserveCriticLoopState =
+        activeOptions?.isCriticTurn === true || activeOptions?.criticEnabled === true;
+      if (!shouldPreserveCriticLoopState) {
+        this.clearCriticLoopState();
+      }
+
       if (hadCompactionRequest && !this.disposed) {
         this.clearQueue();
       }
@@ -2031,6 +2372,16 @@ export class AgentSession {
 
     forward("stream-end", async (payload) => {
       this.setTurnPhase(TurnPhase.COMPLETING);
+
+      const completedStreamContext = this.activeStreamContext
+        ? {
+            modelString: this.activeStreamContext.modelString,
+            options: this.activeStreamContext.options
+              ? this.cloneSendMessageOptions(this.activeStreamContext.options)
+              : undefined,
+            openaiTruncationModeOverride: this.activeStreamContext.openaiTruncationModeOverride,
+          }
+        : undefined;
 
       let emittedStreamEnd = false;
       try {
@@ -2067,6 +2418,16 @@ export class AgentSession {
         if (handled) {
           // Dispatch follow-up AFTER reset so it can set its own stream state.
           await this.dispatchPendingFollowUp();
+        }
+
+        const continuedActorCriticLoop = await this.maybeContinueActorCriticLoop(
+          payload as StreamEndEvent,
+          completedStreamContext,
+          handled
+        );
+
+        if (continuedActorCriticLoop) {
+          return;
         }
 
         // Stream end: auto-send queued messages (for user messages typed during streaming)

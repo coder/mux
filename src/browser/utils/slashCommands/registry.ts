@@ -247,6 +247,23 @@ const modelCommandDefinition: SlashCommandDefinition = {
   },
 };
 
+const criticCommandDefinition: SlashCommandDefinition = {
+  key: "critic",
+  description: "Toggle actor-critic mode for this workspace",
+  appendSpace: false,
+  handler: ({ cleanRemainingTokens }): ParsedCommand => {
+    if (cleanRemainingTokens.length > 0) {
+      return {
+        type: "unknown-command",
+        command: "critic",
+        subcommand: cleanRemainingTokens[0],
+      };
+    }
+
+    return { type: "critic-toggle" };
+  },
+};
+
 const vimCommandDefinition: SlashCommandDefinition = {
   key: "vim",
   description: "Toggle Vim mode for the chat input",
@@ -450,6 +467,7 @@ export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
 
   forkCommandDefinition,
   newCommandDefinition,
+  criticCommandDefinition,
   vimCommandDefinition,
   idleCommandDefinition,
   debugLlmRequestCommandDefinition,

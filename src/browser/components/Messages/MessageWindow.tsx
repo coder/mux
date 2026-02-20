@@ -28,6 +28,7 @@ interface MessageWindowProps {
   className?: string;
   rightLabel?: ReactNode;
   backgroundEffect?: ReactNode; // Optional background effect (e.g., animation)
+  messageSource?: "actor" | "critic";
 }
 
 export const MessageWindow: React.FC<MessageWindowProps> = ({
@@ -38,6 +39,7 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
   children,
   rightLabel,
   backgroundEffect,
+  messageSource,
 }) => {
   const [showJson, setShowJson] = useState(false);
 
@@ -77,12 +79,16 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
         isLastPartOfMessage && "mb-4"
       )}
       data-message-block
+      data-message-source={messageSource}
     >
       <div
         className={cn(
           variant === "user" &&
             "bg-[var(--color-user-surface)] border border-[var(--color-user-border)] rounded-lg px-3 py-2 overflow-x-auto shadow-sm",
-          variant === "assistant" && "px-1 py-1"
+          variant === "assistant" && "px-1 py-1",
+          variant === "assistant" &&
+            messageSource === "critic" &&
+            "rounded-md border border-[color:color-mix(in_srgb,var(--color-critic-mode)_40%,transparent)] bg-[color-mix(in_srgb,var(--color-critic-mode)_6%,transparent)] px-2"
         )}
       >
         {backgroundEffect}

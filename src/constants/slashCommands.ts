@@ -13,6 +13,7 @@ export const WORKSPACE_ONLY_COMMAND_KEYS: ReadonlySet<string> = new Set([
   "fork",
   "new",
   "plan",
+  "critic",
 ]);
 
 /**
@@ -26,4 +27,5 @@ export const WORKSPACE_ONLY_COMMAND_TYPES: ReadonlySet<string> = new Set([
   "new",
   "plan-show",
   "plan-open",
+  "critic-toggle",
 ]);

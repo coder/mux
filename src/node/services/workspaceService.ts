@@ -2589,6 +2589,41 @@ export class WorkspaceService extends EventEmitter {
     });
   }
 
+  /**
+   * Resolve experiment flags respecting userOverridable settings.
+   * Shared by sendMessage and startCriticLoop so both paths use identical flags.
+   */
+  private resolveExperimentFlags(options: SendMessageOptions): SendMessageOptions {
+    const system1Experiment = EXPERIMENTS[EXPERIMENT_IDS.SYSTEM_1];
+    const system1FrontendValue = options?.experiments?.system1;
+
+    let system1Enabled: boolean | undefined;
+    if (system1Experiment.userOverridable && system1FrontendValue !== undefined) {
+      system1Enabled = system1FrontendValue;
+    } else if (this.experimentsService?.isRemoteEvaluationEnabled() === true) {
+      system1Enabled = this.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.SYSTEM_1);
+    } else {
+      system1Enabled = system1FrontendValue;
+    }
+
+    const resolvedExperiments: Record<string, boolean> = {};
+    if (system1Enabled !== undefined) {
+      resolvedExperiments.system1 = system1Enabled;
+    }
+
+    if (Object.keys(resolvedExperiments).length === 0) {
+      return options;
+    }
+
+    return {
+      ...options,
+      experiments: {
+        ...(options.experiments ?? {}),
+        ...resolvedExperiments,
+      },
+    };
+  }
+
   private normalizeSendMessageAgentId(options: SendMessageOptions): SendMessageOptions {
     // agentId is required by the schema, so this just normalizes the value.
     const rawAgentId = options.agentId;
@@ -3115,41 +3150,7 @@ export class WorkspaceService extends EventEmitter {
         void this.updateRecencyTimestamp(workspaceId, messageTimestamp);
       }
 
-      // Experiments: resolve flags respecting userOverridable setting.
-      // - If userOverridable && frontend provides a value (explicit override) → use frontend value
-      // - Else if remote evaluation enabled → use PostHog assignment
-      // - Else → use frontend value (dev fallback) or default
-      const system1Experiment = EXPERIMENTS[EXPERIMENT_IDS.SYSTEM_1];
-      const system1FrontendValue = options?.experiments?.system1;
-
-      let system1Enabled: boolean | undefined;
-      if (system1Experiment.userOverridable && system1FrontendValue !== undefined) {
-        // User-overridable: trust frontend value (user's explicit choice)
-        system1Enabled = system1FrontendValue;
-      } else if (this.experimentsService?.isRemoteEvaluationEnabled() === true) {
-        // Remote evaluation: use PostHog assignment
-        system1Enabled = this.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.SYSTEM_1);
-      } else {
-        // Fallback to frontend value (dev mode or telemetry disabled)
-        system1Enabled = system1FrontendValue;
-      }
-
-      const resolvedExperiments: Record<string, boolean> = {};
-      if (system1Enabled !== undefined) {
-        resolvedExperiments.system1 = system1Enabled;
-      }
-
-      const resolvedOptions =
-        Object.keys(resolvedExperiments).length === 0
-          ? options
-          : {
-              ...options,
-              experiments: {
-                ...(options.experiments ?? {}),
-                ...resolvedExperiments,
-              },
-            };
-
+      const resolvedOptions = this.resolveExperimentFlags(options);
       const normalizedOptions = this.normalizeSendMessageAgentId(resolvedOptions);
 
       // Persist last-used model + thinking level for cross-device consistency.
@@ -3304,6 +3305,62 @@ export class WorkspaceService extends EventEmitter {
         raw: `Failed to resume stream: ${errorMessage}`,
       };
       return Err(sendError);
+    }
+  }
+
+  /**
+   * Start a critic loop without sending a user message. The critic evaluates the
+   * existing conversation history. Delegates to AgentSession.startCriticLoop.
+   */
+  async startCriticLoop(
+    workspaceId: string,
+    options: SendMessageOptions
+  ): Promise<Result<void, SendMessageError>> {
+    try {
+      // Apply the same lifecycle guards as sendMessage/resumeStream so critic loops
+      // cannot race workspace rename/remove or bypass task-slot scheduling.
+      if (this.renamingWorkspaces.has(workspaceId)) {
+        return Err({
+          type: "unknown",
+          raw: "Workspace is being renamed. Please wait and try again.",
+        });
+      }
+      if (this.removingWorkspaces.has(workspaceId)) {
+        return Err({
+          type: "unknown",
+          raw: "Workspace is being deleted. Please wait and try again.",
+        });
+      }
+      if (!this.config.findWorkspace(workspaceId)) {
+        return Err({ type: "unknown", raw: "Workspace not found." });
+      }
+
+      const config = this.config.loadConfigOrDefault();
+      for (const [_projectPath, project] of config.projects) {
+        const ws = project.workspaces.find((w) => w.id === workspaceId);
+        if (!ws) continue;
+        if (ws.parentWorkspaceId && ws.taskStatus === "queued") {
+          return Err({
+            type: "unknown",
+            raw: "This agent task is queued and cannot start yet. Wait for a slot to free.",
+          });
+        }
+        break;
+      }
+
+      const session = this.getOrCreateSession(workspaceId);
+      const resolvedOptions = this.resolveExperimentFlags(options);
+      const normalizedOptions = this.normalizeSendMessageAgentId(resolvedOptions);
+
+      // Mirror sendMessage bookkeeping: update recency + persist AI settings
+      void this.updateRecencyTimestamp(workspaceId);
+      await this.maybePersistAISettingsFromOptions(workspaceId, normalizedOptions, "send");
+
+      return await session.startCriticLoop(normalizedOptions);
+    } catch (error) {
+      const errorMessage = getErrorMessage(error);
+      log.error("Unexpected error in startCriticLoop:", error);
+      return Err({ type: "unknown", raw: `Failed to start critic loop: ${errorMessage}` });
     }
   }
 

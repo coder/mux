@@ -49,6 +49,12 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
 
   const content = message.content;
   const isStreaming = message.isStreaming;
+  const isCritic = message.messageSource === "critic";
+  const accentColorClass = isCritic ? "text-[var(--color-critic-mode)]" : "text-thinking-mode";
+  const surfaceClass = isCritic
+    ? "bg-[color-mix(in_srgb,var(--color-critic-mode)_5%,transparent)]"
+    : "bg-[color-mix(in_srgb,var(--color-thinking-mode)_5%,transparent)]";
+  const shimmerColor = isCritic ? "var(--color-critic-mode)" : "var(--color-thinking-mode)";
   const trimmedContent = content?.trim() ?? "";
   const hasContent = trimmedContent.length > 0;
   const summaryLineRaw = hasContent ? (trimmedContent.split(/\r?\n/)[0] ?? "") : "";
@@ -125,10 +131,8 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
 
   return (
     <div
-      className={cn(
-        "my-2 px-2 py-1 bg-[color-mix(in_srgb,var(--color-thinking-mode)_5%,transparent)] rounded relative",
-        className
-      )}
+      className={cn("my-2 px-2 py-1 rounded relative", surfaceClass, className)}
+      data-message-source={message.messageSource}
     >
       <div
         className={cn(
@@ -141,15 +145,22 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
         <div
           className={cn(
             "flex flex-1 items-center gap-1 min-w-0 text-xs opacity-80",
-            "text-thinking-mode"
+            accentColorClass
           )}
         >
           <span className="text-xs">
             <Lightbulb className={cn("size-3.5", isStreaming && "animate-pulse")} />
           </span>
           <div className="flex min-w-0 items-center gap-1 truncate">
+            {isCritic && (
+              <span className="inline-flex items-center rounded-sm bg-[color-mix(in_srgb,var(--color-critic-mode)_14%,transparent)] px-1 py-0.5 text-[10px] font-semibold tracking-wide text-[var(--color-critic-mode)] uppercase">
+                Critic
+              </span>
+            )}
             {isStreaming ? (
-              <Shimmer colorClass="var(--color-thinking-mode)">Thinking...</Shimmer>
+              <Shimmer colorClass={shimmerColor}>
+                {isCritic ? "Critic thinking..." : "Thinking..."}
+              </Shimmer>
             ) : hasContent ? (
               <span className={cn("truncate whitespace-nowrap text-text", REASONING_FONT_CLASSES)}>
                 {parsedLeadingBoldSummary ? (
@@ -161,6 +172,8 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
                   summaryLine
                 )}
               </span>
+            ) : isCritic ? (
+              "Critic thought"
             ) : (
               "Thought"
             )}
@@ -177,7 +190,8 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
         {isCollapsible && (
           <span
             className={cn(
-              "text-thinking-mode opacity-60 transition-transform duration-200 ease-in-out text-xs",
+              "opacity-60 transition-transform duration-200 ease-in-out text-xs",
+              accentColorClass,
               isExpanded ? "rotate-90" : "rotate-0"
             )}
           >

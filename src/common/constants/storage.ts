@@ -560,6 +560,22 @@ export function getReviewsKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for whether actor-critic mode is enabled per workspace.
+ * Format: "criticEnabled:{workspaceId}"
+ */
+export function getCriticEnabledKey(workspaceId: string): string {
+  return `criticEnabled:${workspaceId}`;
+}
+
+/**
+ * Get the localStorage key for user-provided critic instructions per workspace.
+ * Format: "criticPrompt:{workspaceId}"
+ */
+export function getCriticPromptKey(workspaceId: string): string {
+  return `criticPrompt:${workspaceId}`;
+}
+
+/**
  * Get the localStorage key for auto-compaction enabled preference per workspace
  * Format: "autoCompaction:enabled:{workspaceId}"
  */
@@ -597,6 +613,8 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getFileTreeExpandStateKey,
   getReviewSearchStateKey,
   getReviewsKey,
+  getCriticEnabledKey,
+  getCriticPromptKey,
   getAutoCompactionEnabledKey,
   getWorkspaceLastReadKey,
   getStatusStateKey,

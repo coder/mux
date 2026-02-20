@@ -147,7 +147,28 @@ export function buildMockStreamEventsFromReply(
     return events;
   }
 
-  const parts: CompletedMessagePart[] = [{ type: "text", text: reply.assistantText }];
+  const parts: CompletedMessagePart[] = [];
+
+  if (reply.reasoningDeltas && reply.reasoningDeltas.length > 0) {
+    for (const delta of reply.reasoningDeltas) {
+      parts.push({ type: "reasoning", text: delta });
+    }
+  }
+
+  if (reply.toolCalls && reply.toolCalls.length > 0) {
+    for (const toolCall of reply.toolCalls) {
+      parts.push({
+        type: "dynamic-tool",
+        toolCallId: toolCall.toolCallId,
+        toolName: toolCall.toolName,
+        state: "output-available",
+        input: toolCall.args,
+        output: toolCall.result,
+      });
+    }
+  }
+
+  parts.push({ type: "text", text: reply.assistantText });
 
   events.push({
     kind: "stream-end",

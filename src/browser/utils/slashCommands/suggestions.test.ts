@@ -13,6 +13,7 @@ describe("getSlashCommandSuggestions", () => {
 
     expect(labels).not.toContain("/clear");
     expect(labels).not.toContain("/plan");
+    expect(labels).not.toContain("/critic");
   });
 
   it("omits workspace-only subcommands in creation mode", () => {
@@ -25,6 +26,7 @@ describe("getSlashCommandSuggestions", () => {
 
     expect(labels).toContain("/clear");
     expect(labels).toContain("/model");
+    expect(labels).toContain("/critic");
   });
 
   it("includes agent skills when provided in context", () => {

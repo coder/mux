@@ -69,6 +69,10 @@
     --color-exec-mode-hover: hsl(268.56 94.04% 67%);
     --color-exec-mode-light: hsl(268.56 94.04% 78%);
 
+    --color-critic-mode: hsl(336 82% 66%);
+    --color-critic-mode-hover: hsl(336 82% 74%);
+    --color-critic-mode-light: hsl(336 82% 82%);
+
     /* Edit mode: amber/gold for editing warnings and barriers */
     --color-edit-mode: hsl(38 80% 45%);
     --color-edit-mode-hover: hsl(38 80% 55%);

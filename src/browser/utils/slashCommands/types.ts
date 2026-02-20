@@ -34,6 +34,7 @@ export type ParsedCommand =
       runtime?: string;
       startMessage?: string;
     }
+  | { type: "critic-toggle" }
   | { type: "vim-toggle" }
   | { type: "plan-show" }
   | { type: "plan-open" }

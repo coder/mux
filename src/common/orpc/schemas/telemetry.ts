@@ -42,6 +42,7 @@ const TelemetryCommandTypeSchema = z.enum([
   "model",
   "mode",
   "plan",
+  "critic",
   "providers",
 ]);
 

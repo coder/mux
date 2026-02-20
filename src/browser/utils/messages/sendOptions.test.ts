@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import {
+  getCriticEnabledKey,
+  getCriticPromptKey,
   getModelKey,
   PREFERRED_SYSTEM_1_MODEL_KEY,
   PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
@@ -60,6 +62,20 @@ describe("getSendOptionsFromStorage", () => {
     window.localStorage.setItem(PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY, JSON.stringify("high"));
     const withThinking = getSendOptionsFromStorage(workspaceId);
     expect(withThinking.system1ThinkingLevel).toBe("high");
+  });
+
+  test("includes critic settings when actor-critic mode is enabled", () => {
+    const workspaceId = "ws-critic";
+
+    window.localStorage.setItem(getCriticEnabledKey(workspaceId), JSON.stringify(true));
+    window.localStorage.setItem(
+      getCriticPromptKey(workspaceId),
+      JSON.stringify("Focus on correctness and edge cases")
+    );
+
+    const options = getSendOptionsFromStorage(workspaceId);
+    expect(options.criticEnabled).toBe(true);
+    expect(options.criticPrompt).toBe("Focus on correctness and edge cases");
   });
 
   test("includes Anthropic prompt cache TTL from persisted provider options", () => {

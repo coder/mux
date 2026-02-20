@@ -761,6 +761,7 @@ export class StreamManager extends EventEmitter {
         delta: part.text,
         tokens,
         timestamp,
+        messageSource: this.workspaceStreams.get(workspaceId)?.initialMetadata?.messageSource,
         signature: part.signature,
       });
     } else if (part.type === "dynamic-tool") {
@@ -1456,6 +1457,7 @@ export class StreamManager extends EventEmitter {
   ): void {
     const streamStartAgentId = streamInfo.initialMetadata?.agentId;
     const streamStartMode = this.getStreamMode(streamInfo.initialMetadata);
+    const streamStartMessageSource = streamInfo.initialMetadata?.messageSource;
     const canonicalModel = normalizeGatewayModel(streamInfo.model);
     const routedThroughGateway =
       streamInfo.initialMetadata?.routedThroughGateway ??
@@ -1473,6 +1475,7 @@ export class StreamManager extends EventEmitter {
       ...(streamStartAgentId && { agentId: streamStartAgentId }),
       ...(streamStartMode && { mode: streamStartMode }),
       ...(streamInfo.thinkingLevel && { thinkingLevel: streamInfo.thinkingLevel }),
+      ...(streamStartMessageSource && { messageSource: streamStartMessageSource }),
     } as StreamStartEvent);
   }
 
@@ -1614,6 +1617,7 @@ export class StreamManager extends EventEmitter {
                       delta: "",
                       tokens: 0,
                       timestamp: nextPartTimestamp(streamInfo),
+                      messageSource: streamInfo.initialMetadata?.messageSource,
                       signature,
                     });
                     void this.schedulePartialWrite(workspaceId, streamInfo);

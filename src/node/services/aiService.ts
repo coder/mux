@@ -56,6 +56,7 @@ import type { StreamAbortEvent, StreamAbortReason, StreamEndEvent } from "@/comm
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { PTCEventWithParent } from "@/node/services/tools/code_execution";
 import { MockAiStreamPlayer } from "./mock/mockAiStreamPlayer";
+import type { MockAiRouter } from "./mock/mockAiRouter";
 import { ProviderModelFactory, modelCostsIncluded } from "./providerModelFactory";
 import { wrapToolsWithSystem1 } from "./system1ToolWrapper";
 import { prepareMessagesForProvider } from "./messagePipeline";
@@ -94,6 +95,9 @@ export interface StreamMessageOptions {
   disableWorkspaceAgents?: boolean;
   hasQueuedMessage?: () => boolean;
   openaiTruncationModeOverride?: "auto" | "disabled";
+  criticEnabled?: boolean;
+  criticPrompt?: string | null;
+  isCriticTurn?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -277,6 +281,10 @@ export class AIService extends EventEmitter {
     this.mockAiStreamPlayer?.releaseStreamStartGate(workspaceId);
   }
 
+  getMockRouter(): MockAiRouter | null {
+    return this.mockAiStreamPlayer?.router ?? null;
+  }
+
   enableMockMode(): void {
     this.mockModeEnabled = true;
 
@@ -339,6 +347,8 @@ export class AIService extends EventEmitter {
       disableWorkspaceAgents,
       hasQueuedMessage,
       openaiTruncationModeOverride,
+      criticPrompt,
+      isCriticTurn,
     } = opts;
     // Support interrupts during startup (before StreamManager emits stream-start).
     // We register an AbortController up-front and let stopStream() abort it.
@@ -356,6 +366,7 @@ export class AIService extends EventEmitter {
     });
 
     const combinedAbortSignal = pendingAbortController.signal;
+    const messageSource = isCriticTurn ? "critic" : "actor";
 
     try {
       if (this.mockModeEnabled && this.mockAiStreamPlayer) {
@@ -366,6 +377,11 @@ export class AIService extends EventEmitter {
         return await this.mockAiStreamPlayer.play(messages, workspaceId, {
           model: modelString,
           abortSignal: combinedAbortSignal,
+          isCriticTurn,
+          criticPrompt,
+          additionalSystemInstructions,
+          toolPolicy,
+          thinkingLevel,
         });
       }
 
@@ -791,6 +807,7 @@ export class AIService extends EventEmitter {
         routedThroughGateway,
         systemMessageTokens,
         agentId: effectiveAgentId,
+        messageSource,
       });
 
       // Append to history to get historySequence assigned
@@ -949,6 +966,7 @@ export class AIService extends EventEmitter {
           systemMessageTokens,
           timestamp: Date.now(),
           agentId: effectiveAgentId,
+          messageSource,
           mode: effectiveMode,
           routedThroughGateway,
           ...(modelCostsIncluded(modelResult.data.model) ? { costsIncluded: true } : {}),

@@ -20,6 +20,8 @@ export interface SendMessageOptionsInput {
   system1Model?: string;
   system1ThinkingLevel?: ThinkingLevel;
   disableWorkspaceAgents?: boolean;
+  criticEnabled?: boolean;
+  criticPrompt?: string;
 }
 
 /** Normalize a preferred model string for routing (gateway migration + trimming). */
@@ -59,5 +61,7 @@ export function buildSendMessageOptions(input: SendMessageOptionsInput): SendMes
     providerOptions: input.providerOptions,
     experiments: { ...input.experiments },
     disableWorkspaceAgents: input.disableWorkspaceAgents ? true : undefined,
+    criticEnabled: input.criticEnabled ? true : undefined,
+    criticPrompt: input.criticPrompt?.trim().length ? input.criticPrompt : undefined,
   };
 }

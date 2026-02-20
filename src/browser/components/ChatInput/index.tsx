@@ -40,6 +40,8 @@ import {
   getModelKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
+  getCriticEnabledKey,
+  getCriticPromptKey,
   getInputKey,
   getInputAttachmentsKey,
   AGENT_AI_DEFAULTS_KEY,
@@ -175,6 +177,21 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [thinkingLevel] = useThinkingLevel();
   const atMentionProjectPath = variant === "creation" ? props.projectPath : null;
   const workspaceId = variant === "workspace" ? props.workspaceId : null;
+
+  const criticEnabledStorageKey =
+    workspaceId !== null ? getCriticEnabledKey(workspaceId) : "__critic-enabled__:creation";
+  const criticPromptStorageKey =
+    workspaceId !== null ? getCriticPromptKey(workspaceId) : "__critic-prompt__:creation";
+  const [criticEnabled, setCriticEnabled] = usePersistedState<boolean>(
+    criticEnabledStorageKey,
+    false,
+    {
+      listener: true,
+    }
+  );
+  const [, setCriticPrompt] = usePersistedState<string>(criticPromptStorageKey, "", {
+    listener: true,
+  });
 
   // Extract workspace-specific props with defaults
   const disabled = props.disabled ?? false;
@@ -1569,6 +1586,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       setToast,
       setPreferredModel,
       setVimEnabled,
+      criticEnabled: variant === "workspace" ? criticEnabled : undefined,
+      setCriticEnabled: variant === "workspace" ? setCriticEnabled : undefined,
+      isStreaming:
+        variant === "workspace"
+          ? Boolean((props.canInterrupt ?? false) || isStreamStarting)
+          : false,
       onTruncateHistory: variant === "workspace" ? props.onTruncateHistory : undefined,
       resetInputHeight: () => {
         if (inputRef.current) {
@@ -1801,6 +1824,58 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const modelOneShot = parsed?.type === "model-oneshot" ? parsed : null;
       const commandHandled = modelOneShot ? false : await executeParsedCommand(parsed, input);
       if (commandHandled) {
+        return;
+      }
+
+      // In critic mode, the textarea text is the critic prompt, not a user message.
+      // Save the prompt and start the critic loop against existing history.
+      // Guards: require non-empty prompt text, and don't start if a stream is already active
+      // (that would abort the in-progress output via StreamManager.startStream).
+      // Skip the critic-loop path when submitting a message edit — edits must go through
+      // the normal edit-send flow, not start a new critic loop.
+      const isCriticModeActive = variant === "workspace" && criticEnabled && !editingMessage;
+      if (isCriticModeActive) {
+        // In critic mode, ONLY allow /commands to fall through to normal handling.
+        // All other input is treated as critic instructions — never sent as user messages.
+        const isStreamActive = isStreamStarting || (props.canInterrupt ?? false);
+        if (!api || !workspaceId || !messageText || isStreamActive) {
+          if (isStreamActive) {
+            pushToast({ type: "error", message: "Wait for the current response to finish" });
+          } else if (!messageText) {
+            pushToast({ type: "error", message: "Enter critic instructions to start the loop" });
+          }
+          return;
+        }
+      }
+      if (isCriticModeActive && api && workspaceId) {
+        setCriticPrompt(messageText);
+        setInput("");
+        if (inputRef.current) {
+          inputRef.current.style.height = "";
+        }
+
+        const result = await api.workspace.startCriticLoop({
+          workspaceId,
+          options: {
+            ...sendMessageOptions,
+            criticEnabled: true,
+            criticPrompt: messageText,
+          },
+        });
+
+        if (!result.success) {
+          // Restore the user's prompt so they don't have to re-type it
+          setInput(messageText);
+          const errorDetail =
+            "raw" in result.error
+              ? result.error.raw
+              : "message" in result.error
+                ? result.error.message
+                : null;
+          pushToast({ type: "error", message: errorDetail ?? "Failed to start critic loop" });
+        } else {
+          props.onMessageSent?.();
+        }
         return;
       }
 
@@ -2057,6 +2132,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           rawThinkingOverride != null
             ? resolveThinkingInput(rawThinkingOverride, policyModel)
             : undefined;
+        // Note: critic mode is handled above with an early return — this path is
+        // only reached for normal (non-critic) sends.
         const sendOptions = {
           ...sendMessageOptions,
           ...compactionOptions,
@@ -2273,6 +2350,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return `Compacting... (${formatKeybind(interruptKeybind)} cancel | ${formatKeybind(KEYBINDS.SEND_MESSAGE)} to queue)`;
     }
 
+    // In critic mode, the main textarea IS the critic prompt input.
+    if (variant === "workspace" && criticEnabled) {
+      return "Critic instructions...";
+    }
+
     // Keep placeholder minimal; shortcut hints are rendered below the input.
     return "Type a message...";
   })();
@@ -2460,6 +2542,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           <ChatAttachments attachments={attachments} onRemove={handleRemoveAttachment} />
 
           <div className="flex flex-col gap-0.5" data-component="ChatModeToggles">
+            {variant === "workspace" && criticEnabled && (
+              <div
+                data-component="CriticBadge"
+                className="text-exec-mode bg-exec-mode/10 inline-flex items-center rounded-sm px-1.5 py-0.5 text-[11px] font-medium"
+              >
+                Critic mode active
+              </div>
+            )}
+
             {/* Editing indicator - workspace only */}
             {variant === "workspace" && editingMessage && (
               <div className="text-edit-mode text-[11px] font-medium">
@@ -2555,7 +2646,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       type="button"
                       onClick={() => void handleSend()}
                       disabled={!canSend}
-                      aria-label="Send message"
+                      aria-label={criticEnabled ? "Set critic prompt" : "Send message"}
                       size="xs"
                       variant="ghost"
                       className={cn(
@@ -2571,7 +2662,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent align="center">
-                    Send message{" "}
+                    {criticEnabled ? "Set critic prompt" : "Send message"}{" "}
                     <span className="mobile-hide-shortcut-hints">
                       ({formatKeybind(KEYBINDS.SEND_MESSAGE)})
                     </span>

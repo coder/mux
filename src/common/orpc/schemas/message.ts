@@ -131,6 +131,7 @@ export const MuxMessageSchema = z.object({
       compactionBoundary: z.boolean().optional(),
       toolPolicy: z.any().optional(),
       agentId: AgentIdSchema.optional().catch(undefined),
+      messageSource: z.enum(["actor", "critic"]).optional(),
       partial: z.boolean().optional(),
       synthetic: z.boolean().optional(),
       uiVisible: z.boolean().optional(),

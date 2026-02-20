@@ -138,6 +138,11 @@ export interface SlashCommandContext extends Omit<CommandHandlerContext, "worksp
   setPreferredModel: (model: string) => void;
   setVimEnabled: (cb: (prev: boolean) => boolean) => void;
 
+  // Critic mode actions (workspace variant)
+  criticEnabled?: boolean;
+  setCriticEnabled?: (enabled: boolean) => void;
+  isStreaming?: boolean;
+
   // Workspace Actions
   onTruncateHistory?: (percentage?: number) => Promise<void>;
   resetInputHeight: () => void;
@@ -384,6 +389,31 @@ export async function processSlashCommand(
           api: client,
           workspaceId: context.workspaceId,
         } as CommandHandlerContext);
+      case "critic-toggle": {
+        if (context.isStreaming) {
+          setToast({
+            id: Date.now().toString(),
+            type: "error",
+            message: "Cannot toggle critic mode while streaming",
+          });
+          return { clearInput: false, toastShown: true };
+        }
+
+        if (typeof context.setCriticEnabled !== "function" || !context.workspaceId) {
+          return { clearInput: false, toastShown: false };
+        }
+
+        const nextEnabled = context.criticEnabled !== true;
+        context.setInput("");
+        context.setCriticEnabled(nextEnabled);
+        trackCommandUsed("critic");
+        setToast({
+          id: Date.now().toString(),
+          type: "success",
+          message: nextEnabled ? "Critic mode enabled" : "Critic mode disabled",
+        });
+        return { clearInput: true, toastShown: true };
+      }
       case "plan-show":
         if (!context.workspaceId) throw new Error("Workspace ID required");
         if (!requireClient()) {

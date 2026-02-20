@@ -916,6 +916,13 @@ export const workspace = {
     }),
     output: ResultSchema(z.void(), SendMessageErrorSchema),
   },
+  startCriticLoop: {
+    input: z.object({
+      workspaceId: z.string(),
+      options: SendMessageOptionsSchema,
+    }),
+    output: ResultSchema(z.void(), SendMessageErrorSchema),
+  },
   interruptStream: {
     input: z.object({
       workspaceId: z.string(),

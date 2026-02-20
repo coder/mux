@@ -10,6 +10,8 @@ import {
 } from "@/browser/utils/messages/buildSendMessageOptions";
 import {
   DEFAULT_MODEL_KEY,
+  getCriticEnabledKey,
+  getCriticPromptKey,
   getModelKey,
   PREFERRED_SYSTEM_1_MODEL_KEY,
   PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
@@ -78,6 +80,13 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
   );
   const system1ThinkingLevel = normalizeSystem1ThinkingLevel(preferredSystem1ThinkingLevel);
 
+  const [criticEnabled] = usePersistedState<boolean>(getCriticEnabledKey(workspaceId), false, {
+    listener: true,
+  });
+  const [criticPrompt] = usePersistedState<string>(getCriticPromptKey(workspaceId), "", {
+    listener: true,
+  });
+
   // Compute base model (canonical format) for UI components
   const baseModel = normalizeModelPreference(preferredModel, defaultModel);
 
@@ -95,6 +104,8 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
     system1Model,
     system1ThinkingLevel,
     disableWorkspaceAgents,
+    criticEnabled,
+    criticPrompt,
   });
 
   return {

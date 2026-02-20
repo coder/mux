@@ -131,6 +131,18 @@ describe("commandParser", () => {
       });
     });
 
+    it("should parse /critic command", () => {
+      expectParse("/critic", { type: "critic-toggle" });
+    });
+
+    it("should reject /critic with arguments", () => {
+      expectParse("/critic on", {
+        type: "unknown-command",
+        command: "critic",
+        subcommand: "on",
+      });
+    });
+
     it("should parse /vim command", () => {
       expectParse("/vim", { type: "vim-toggle" });
     });

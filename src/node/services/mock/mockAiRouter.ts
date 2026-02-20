@@ -1,12 +1,26 @@
 import { getCompactionFollowUpContent } from "@/common/types/message";
 import type { CompactionFollowUpRequest, MuxMessage } from "@/common/types/message";
 import type { StreamErrorType } from "@/common/types/errors";
+import type { ThinkingLevel } from "@/common/types/thinking";
+import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 
 export interface MockAiRouterRequest {
   messages: MuxMessage[];
   latestUserMessage: MuxMessage;
   latestUserText: string;
+  /** Structured discriminant for actor-vs-critic test handlers. */
+  isCriticTurn?: boolean;
+  /** Optional per-workspace critic prompt forwarded by AIService mock mode. */
+  criticPrompt?: string | null;
+  /** Additional system instructions passed to this turn (used by critic prompt tests). */
+  additionalSystemInstructions?: string;
+  /** Tool policy effective for this turn. */
+  toolPolicy?: ToolPolicy;
+  /** Thinking level effective for this turn. */
+  thinkingLevel?: ThinkingLevel;
+  /** Model selected for this turn. */
+  model?: string;
 }
 
 export interface MockAiToolCall {
@@ -549,7 +563,12 @@ export class MockAiRouter {
   private readonly handlers: MockAiRouterHandler[];
 
   constructor(handlers: MockAiRouterHandler[] = defaultHandlers) {
-    this.handlers = handlers;
+    this.handlers = [...handlers];
+  }
+
+  /** Prepend handlers that should take priority over existing/default handlers. */
+  prependHandlers(handlers: MockAiRouterHandler[]): void {
+    this.handlers.unshift(...handlers);
   }
 
   route(request: MockAiRouterRequest): MockAiRouterReply {

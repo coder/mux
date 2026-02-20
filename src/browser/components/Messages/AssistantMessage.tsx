@@ -42,6 +42,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
   const isStreaming = message.isStreaming;
   const isCompacted = message.isCompacted;
   const isStreamingCompaction = isStreaming && isCompacting;
+  const isCritic = message.messageSource === "critic";
 
   // Use Start Here hook for final assistant messages
   const {
@@ -154,6 +155,11 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
 
     return (
       <div className="flex items-center gap-2">
+        {isCritic && (
+          <span className="inline-flex items-center rounded-sm bg-[color-mix(in_srgb,var(--color-critic-mode)_14%,transparent)] px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-[var(--color-critic-mode)] uppercase">
+            Critic
+          </span>
+        )}
         {modelName && (
           <ModelDisplay
             modelString={modelName}
@@ -183,6 +189,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
         buttons={buttons}
         className={className}
         backgroundEffect={isStreamingCompaction ? <CompactionBackground /> : undefined}
+        messageSource={message.messageSource}
       >
         {renderContent()}
       </MessageWindow>

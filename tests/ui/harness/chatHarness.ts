@@ -62,11 +62,13 @@ export class ChatHarness {
 
     const sendButton = await waitFor(
       () => {
-        const el = chatInputSection.querySelector(
-          'button[aria-label="Send message"]'
-        ) as HTMLButtonElement | null;
+        // In critic mode, the button label changes to "Set critic prompt"
+        const el = (chatInputSection.querySelector('button[aria-label="Send message"]') ??
+          chatInputSection.querySelector(
+            'button[aria-label="Set critic prompt"]'
+          )) as HTMLButtonElement | null;
         if (!el) {
-          throw new Error("Send button not found");
+          throw new Error("Send/Set button not found");
         }
         if (el.disabled) {
           throw new Error("Send button disabled");

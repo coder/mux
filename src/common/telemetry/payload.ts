@@ -296,6 +296,7 @@ export type TelemetryCommandType =
   | "model"
   | "mode"
   | "plan"
+  | "critic"
   | "providers";
 
 /**

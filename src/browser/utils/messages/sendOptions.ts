@@ -1,5 +1,7 @@
 import {
   getAgentIdKey,
+  getCriticEnabledKey,
+  getCriticPromptKey,
   getModelKey,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
@@ -84,6 +86,9 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
     false
   );
 
+  const criticEnabled = readPersistedState<boolean>(getCriticEnabledKey(workspaceId), false);
+  const criticPrompt = readPersistedState<string>(getCriticPromptKey(workspaceId), "");
+
   return buildSendMessageOptions({
     model: baseModel,
     system1Model,
@@ -92,6 +97,8 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
     thinkingLevel,
     providerOptions,
     disableWorkspaceAgents,
+    criticEnabled,
+    criticPrompt,
     experiments: {
       programmaticToolCalling: isExperimentEnabled(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING),
       programmaticToolCallingExclusive: isExperimentEnabled(

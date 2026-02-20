@@ -2584,6 +2584,23 @@ export const router = (authToken?: string) => {
           }
           return { success: true, data: undefined };
         }),
+      startCriticLoop: t
+        .input(schemas.workspace.startCriticLoop.input)
+        .output(schemas.workspace.startCriticLoop.output)
+        .handler(async ({ context, input }) => {
+          const result = await context.workspaceService.startCriticLoop(
+            input.workspaceId,
+            input.options
+          );
+          if (!result.success) {
+            const error =
+              typeof result.error === "string"
+                ? { type: "unknown" as const, raw: result.error }
+                : result.error;
+            return { success: false, error };
+          }
+          return { success: true, data: undefined };
+        }),
       interruptStream: t
         .input(schemas.workspace.interruptStream.input)
         .output(schemas.workspace.interruptStream.output)

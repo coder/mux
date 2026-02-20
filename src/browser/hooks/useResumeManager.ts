@@ -144,6 +144,30 @@ export function useResumeManager() {
     return true;
   };
 
+  const shouldResumeAsCriticTurn = (state: WorkspaceState): boolean => {
+    // Inspect only the latest partial assistant/reasoning message. Older partial critic
+    // entries can remain in state after later actor partials and must not force critic resume.
+    const latestPartialAssistantLike = [...state.messages].reverse().find((message) => {
+      if (message.type !== "assistant" && message.type !== "reasoning") {
+        return false;
+      }
+      return message.isPartial === true;
+    });
+
+    if (!latestPartialAssistantLike) {
+      return false;
+    }
+
+    if (
+      latestPartialAssistantLike.type !== "assistant" &&
+      latestPartialAssistantLike.type !== "reasoning"
+    ) {
+      return false;
+    }
+
+    return latestPartialAssistantLike.messageSource === "critic";
+  };
+
   /**
    * Attempt to resume a workspace stream
    * Polling will check eligibility every 1 second
@@ -186,6 +210,14 @@ export function useResumeManager() {
           // This ensures custom model/tokens are preserved across resume
           const parsedCompaction = lastUserMsg.compactionRequest.parsed;
           options = applyCompactionOverrides(options, parsedCompaction);
+        }
+
+        if (shouldResumeAsCriticTurn(state)) {
+          options = {
+            ...options,
+            criticEnabled: true,
+            isCriticTurn: true,
+          };
         }
       }
 

@@ -49,6 +49,8 @@ type PreservedSendOptions = Pick<
   | "providerOptions"
   | "experiments"
   | "disableWorkspaceAgents"
+  | "criticEnabled"
+  | "criticPrompt"
 >;
 
 /**
@@ -62,6 +64,8 @@ export function pickPreservedSendOptions(options: SendMessageOptions): Preserved
     providerOptions: options.providerOptions,
     experiments: options.experiments,
     disableWorkspaceAgents: options.disableWorkspaceAgents,
+    criticEnabled: options.criticEnabled,
+    criticPrompt: options.criticPrompt,
   };
 }
 
@@ -346,6 +350,8 @@ export function isCompactionSummaryMetadata(
   return metadata?.type === "compaction-summary";
 }
 
+export type MessageSource = "actor" | "critic";
+
 // Our custom metadata type
 export interface MuxMetadata {
   historySequence?: number; // Assigned by backend for global message ordering (required when writing to history)
@@ -400,6 +406,8 @@ export interface MuxMetadata {
   compactionBoundary?: boolean;
   toolPolicy?: ToolPolicy; // Tool policy active when this message was sent (user messages only)
   agentId?: string; // Agent id active when this message was sent (assistant messages only)
+  /** Source of assistant content in actor-critic mode. */
+  messageSource?: MessageSource;
   cmuxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
   muxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
   /**
@@ -527,6 +535,7 @@ export type DisplayedMessage =
       model?: string;
       routedThroughGateway?: boolean;
       agentId?: string; // Agent id active when this message was sent (assistant messages only)
+      messageSource?: MessageSource;
       /** @deprecated Legacy base mode derived from agent definition. */
       mode?: AgentMode;
       timestamp?: number;
@@ -571,6 +580,7 @@ export type DisplayedMessage =
       isStreaming: boolean;
       isPartial: boolean; // Whether the parent message was interrupted
       isLastPartOfMessage?: boolean; // True if this is the last part of a multi-part message
+      messageSource?: MessageSource;
       timestamp?: number;
       tokens?: number; // Reasoning tokens if available
       /** Presentation hint for smooth streaming — indicates if this is live or replayed content. */

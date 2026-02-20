@@ -5,6 +5,8 @@ import type { HistoryService } from "@/node/services/historyService";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { SendMessageError } from "@/common/types/errors";
+import type { ThinkingLevel } from "@/common/types/thinking";
+import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { AIService } from "@/node/services/aiService";
 import { createErrorEvent } from "@/node/services/utils/sendMessageError";
 import { log } from "@/node/services/log";
@@ -128,7 +130,7 @@ interface ActiveStream {
 export class MockAiStreamPlayer {
   private readonly streamStartGates = new Map<string, StreamStartGate>();
   private readonly releasedStreamStartGates = new Set<string>();
-  private readonly router = new MockAiRouter();
+  readonly router = new MockAiRouter();
   private readonly lastPromptByWorkspace = new Map<string, MuxMessage[]>();
   private readonly lastModelByWorkspace = new Map<string, string>();
   private readonly activeStreams = new Map<string, ActiveStream>();
@@ -240,9 +242,15 @@ export class MockAiStreamPlayer {
     options?: {
       model?: string;
       abortSignal?: AbortSignal;
+      isCriticTurn?: boolean;
+      criticPrompt?: string | null;
+      additionalSystemInstructions?: string;
+      toolPolicy?: ToolPolicy;
+      thinkingLevel?: ThinkingLevel;
     }
   ): Promise<Result<void, SendMessageError>> {
     const abortSignal = options?.abortSignal;
+    const messageSource = options?.isCriticTurn ? "critic" : "actor";
     if (abortSignal?.aborted) {
       return Ok(undefined);
     }
@@ -265,6 +273,12 @@ export class MockAiStreamPlayer {
       messages,
       latestUserMessage: latest,
       latestUserText: latestText,
+      isCriticTurn: options?.isCriticTurn,
+      criticPrompt: options?.criticPrompt,
+      additionalSystemInstructions: options?.additionalSystemInstructions,
+      toolPolicy: options?.toolPolicy,
+      thinkingLevel: options?.thinkingLevel,
+      model: options?.model,
     });
 
     const messageId = `msg-mock-${this.nextMockMessageId++}`;
@@ -324,6 +338,7 @@ export class MockAiStreamPlayer {
     const assistantMessage = createMuxMessage(messageId, "assistant", "", {
       timestamp: Date.now(),
       model: streamStart.model,
+      messageSource,
     });
 
     if (abortSignal?.aborted) {
@@ -355,7 +370,7 @@ export class MockAiStreamPlayer {
       this.stop(workspaceId);
     }
 
-    this.scheduleEvents(workspaceId, events, messageId, historySequence);
+    this.scheduleEvents(workspaceId, events, messageId, historySequence, messageSource);
 
     await streamStartPromise;
     if (abortSignal?.aborted) {
@@ -373,7 +388,8 @@ export class MockAiStreamPlayer {
     workspaceId: string,
     events: MockAssistantEvent[],
     messageId: string,
-    historySequence: number
+    historySequence: number,
+    messageSource: "actor" | "critic"
   ): void {
     const timers: Array<ReturnType<typeof setTimeout>> = [];
     this.activeStreams.set(workspaceId, {
@@ -387,7 +403,7 @@ export class MockAiStreamPlayer {
     for (const event of events) {
       const timer = setTimeout(() => {
         this.enqueueEvent(workspaceId, messageId, () =>
-          this.dispatchEvent(workspaceId, event, messageId, historySequence)
+          this.dispatchEvent(workspaceId, event, messageId, historySequence, messageSource)
         );
       }, event.delay);
       timers.push(timer);
@@ -426,7 +442,8 @@ export class MockAiStreamPlayer {
     workspaceId: string,
     event: MockAssistantEvent,
     messageId: string,
-    historySequence: number
+    historySequence: number,
+    messageSource: "actor" | "critic"
   ): Promise<void> {
     const active = this.activeStreams.get(workspaceId);
     if (!active || active.cancelled || active.messageId !== messageId) {
@@ -443,6 +460,7 @@ export class MockAiStreamPlayer {
           historySequence,
           startTime: Date.now(),
           ...(event.mode && { mode: event.mode }),
+          messageSource,
         };
         this.deps.aiService.emit("stream-start", payload);
         break;
@@ -458,6 +476,7 @@ export class MockAiStreamPlayer {
           delta: event.text,
           tokens,
           timestamp: Date.now(),
+          messageSource,
         };
         this.deps.aiService.emit("reasoning-delta", payload);
         break;
@@ -547,6 +566,7 @@ export class MockAiStreamPlayer {
           metadata: {
             model: event.metadata.model,
             systemMessageTokens: event.metadata.systemMessageTokens,
+            messageSource,
           },
           parts: event.parts,
         };
@@ -567,6 +587,7 @@ export class MockAiStreamPlayer {
                 ...existingMessage.metadata,
                 model: event.metadata.model,
                 systemMessageTokens: event.metadata.systemMessageTokens,
+                messageSource,
               },
             };
             const updateResult = await this.deps.historyService.updateHistory(

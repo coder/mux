@@ -101,6 +101,7 @@ export const DeleteMessageSchema = z.object({
 });
 
 const ThinkingLevelSchema = z.enum(THINKING_LEVELS);
+const MessageSourceSchema = z.enum(["actor", "critic"]);
 
 export const StreamStartEventSchema = z.object({
   type: z.literal("stream-start"),
@@ -126,6 +127,9 @@ export const StreamStartEventSchema = z.object({
   }),
   thinkingLevel: ThinkingLevelSchema.optional().meta({
     description: "Effective thinking level after model policy clamping",
+  }),
+  messageSource: MessageSourceSchema.optional().meta({
+    description: "Assistant source in actor-critic mode",
   }),
 });
 
@@ -185,6 +189,7 @@ export const StreamEndEventSchema = z.object({
       model: z.string(),
       agentId: AgentIdSchema.optional().catch(undefined),
       thinkingLevel: ThinkingLevelSchema.optional(),
+      messageSource: MessageSourceSchema.optional(),
       routedThroughGateway: z.boolean().optional(),
       // Total usage across all steps (for cost calculation)
       usage: LanguageModelV2UsageSchema.optional(),
@@ -328,6 +333,7 @@ export const ReasoningDeltaEventSchema = z.object({
   delta: z.string(),
   tokens: z.number().meta({ description: "Token count for this delta" }),
   timestamp: z.number().meta({ description: "When delta was received (Date.now())" }),
+  messageSource: MessageSourceSchema.optional(),
   signature: z
     .string()
     .optional()
@@ -529,6 +535,9 @@ export const SendMessageOptionsSchema = z.object({
   system1Model: z.string().optional(),
   toolPolicy: ToolPolicySchema.optional(),
   additionalSystemInstructions: z.string().optional(),
+  criticEnabled: z.boolean().optional(),
+  criticPrompt: z.string().nullish(),
+  isCriticTurn: z.boolean().optional(),
   maxOutputTokens: z.number().optional(),
   agentId: AgentIdSchema.meta({
     description: "Agent id for this request",
