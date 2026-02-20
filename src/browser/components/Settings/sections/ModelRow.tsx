@@ -200,9 +200,12 @@ export function ModelRow(props: ModelRowProps) {
 
   const contextBaseTokens = props.customContextWindowTokens ?? stats?.max_input_tokens ?? null;
   const mappedProvider = props.mappedToModel ? props.mappedToModel.split(":")[0] || null : null;
-  const mappedModelDisplayName = props.mappedToModel
-    ? formatModelDisplayName(props.mappedToModel.split(":")[1] || props.mappedToModel)
+  // Use slice after the first colon to preserve any additional colons in the model ID
+  // (e.g. "ollama:gpt-oss:20b" → "gpt-oss:20b", not "gpt-oss").
+  const mappedModelId = props.mappedToModel
+    ? props.mappedToModel.slice(props.mappedToModel.indexOf(":") + 1) || props.mappedToModel
     : null;
+  const mappedModelDisplayName = mappedModelId ? formatModelDisplayName(mappedModelId) : null;
 
   // Editing mode - render as a full-width row
   if (props.isEditing) {
