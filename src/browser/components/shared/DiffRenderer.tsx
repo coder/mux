@@ -539,6 +539,12 @@ function useHighlightedDiff(
   return cachedResult ?? chunks;
 }
 
+function normalizeHighlightedLineHtml(html: string): string {
+  // Some highlighters can emit hard line breaks in per-line HTML fragments.
+  // Strip CR/LF so each diff row remains a single visual row.
+  return html.replace(/\r?\n/g, "");
+}
+
 /**
  * DiffRenderer - Renders diff content with consistent styling
  *
@@ -612,14 +618,12 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
               />
               <DiffIndicator type={chunk.type} background={codeBg} />
               <span
-                className="block min-w-0 leading-[inherit] whitespace-pre [&_span:not(.search-highlight)]:!bg-transparent"
+                className="min-w-0 whitespace-pre [&_span:not(.search-highlight)]:!bg-transparent"
                 style={{
                   background: codeBg,
                   color: getLineContentColor(chunk.type),
-                  overflowWrap: "normal",
-                  wordBreak: "normal",
                 }}
-                dangerouslySetInnerHTML={{ __html: line.html }}
+                dangerouslySetInnerHTML={{ __html: normalizeHighlightedLineHtml(line.html) }}
               />
             </React.Fragment>
           );
@@ -1075,7 +1079,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
             type: chunk.type,
             oldLineNum: line.oldLineNumber,
             newLineNum: line.newLineNumber,
-            html: line.html,
+            html: normalizeHighlightedLineHtml(line.html),
             raw: rawLines[line.originalIndex] ?? "",
           });
         });
