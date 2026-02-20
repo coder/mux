@@ -83,7 +83,9 @@ interface ImmersiveOverlayData {
 }
 
 const LINE_JUMP_SIZE = 10;
-const MAX_HIGHLIGHTED_DIFF_LINES = 1600;
+// Keep syntax highlighting on for larger review files now that per-line tooltip overhead is gone,
+// but still cap it to avoid pathological DOM costs on extremely large diffs.
+const MAX_HIGHLIGHTED_DIFF_LINES = 4000;
 const ACTIVE_LINE_OUTLINE = "1px solid hsl(from var(--color-review-accent) h s l / 0.45)";
 const DISLIKE_NOTE_PREFIX = "I don't like this change";
 
