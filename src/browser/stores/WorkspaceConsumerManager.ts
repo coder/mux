@@ -12,8 +12,7 @@ const latestRequestByWorkspace = new Map<string, number>();
 async function calculateTokenStatsLatest(
   workspaceId: string,
   messages: MuxMessage[],
-  model: string,
-  providersConfigVersion: number
+  model: string
 ): Promise<ChatStats> {
   const orpcClient = window.__ORPC_CLIENT__;
   if (!orpcClient) {
@@ -28,7 +27,6 @@ async function calculateTokenStatsLatest(
       workspaceId,
       messages,
       model,
-      providersConfigVersion,
     });
     const latestRequestId = latestRequestByWorkspace.get(workspaceId);
     if (latestRequestId !== requestId) {
@@ -239,7 +237,7 @@ export class WorkspaceConsumerManager {
         });
 
         const fullStats = await Promise.race([
-          calculateTokenStatsLatest(workspaceId, messages, model, providersConfigFingerprint),
+          calculateTokenStatsLatest(workspaceId, messages, model),
           timeoutPromise,
         ]).finally(() => clearTimeout(timeoutId));
 

@@ -4,6 +4,7 @@ import type { MuxMessage } from "@/common/types/message";
 import type { ChatStats } from "@/common/types/chatStats";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import assert from "@/common/utils/assert";
+import { computeProvidersConfigFingerprint } from "@/common/utils/providers/configFingerprint";
 import type { SessionUsageService, SessionUsageTokenStatsCacheV1 } from "./sessionUsageService";
 import { log } from "./log";
 
@@ -65,8 +66,7 @@ export class TokenizerService {
     workspaceId: string,
     messages: MuxMessage[],
     model: string,
-    providersConfig: ProvidersConfigMap | null = null,
-    providersConfigVersion?: number
+    providersConfig: ProvidersConfigMap | null = null
   ): Promise<ChatStats> {
     assert(
       typeof workspaceId === "string" && workspaceId.length > 0,
@@ -92,7 +92,7 @@ export class TokenizerService {
     const cache: SessionUsageTokenStatsCacheV1 = {
       version: 1,
       computedAt: Date.now(),
-      ...(providersConfigVersion !== undefined ? { providersConfigVersion } : {}),
+      providersConfigVersion: computeProvidersConfigFingerprint(providersConfig),
       model: stats.model,
       tokenizerName: stats.tokenizerName,
       history: {

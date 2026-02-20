@@ -40,6 +40,7 @@ import type {
 import { MapStore } from "./MapStore";
 import { createDisplayUsage, recomputeUsageCosts } from "@/common/utils/tokens/displayUsage";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
+import { computeProvidersConfigFingerprint } from "@/common/utils/providers/configFingerprint";
 import { isDurableCompactionBoundaryMarker } from "@/common/utils/messages/compactionBoundary";
 import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
@@ -377,24 +378,6 @@ function getMaxHistorySequence(messages: MuxMessage[]): number | undefined {
   return max;
 }
 
-const PROVIDERS_CONFIG_FNV_OFFSET_BASIS = 0x811c9dc5;
-const PROVIDERS_CONFIG_FNV_PRIME = 0x01000193;
-
-function stableNormalizeProvidersConfig(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(stableNormalizeProvidersConfig);
-  }
-  if (value && typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-    return Object.fromEntries(
-      Object.keys(obj)
-        .sort()
-        .map((key) => [key, stableNormalizeProvidersConfig(obj[key])])
-    );
-  }
-  return value;
-}
-
 /**
  * Detect gateway-billed (costs-included) usage entries.
  * `createDisplayUsage` sets `costsIncluded: true` when
@@ -430,18 +413,6 @@ function repriceSessionUsage(
   }
 }
 
-function computeProvidersConfigFingerprint(config: ProvidersConfigMap | null): number {
-  const normalized = stableNormalizeProvidersConfig(config ?? {});
-  const serialized = JSON.stringify(normalized);
-
-  let hash = PROVIDERS_CONFIG_FNV_OFFSET_BASIS;
-  for (let i = 0; i < serialized.length; i += 1) {
-    hash ^= serialized.charCodeAt(i);
-    hash = Math.imul(hash, PROVIDERS_CONFIG_FNV_PRIME) >>> 0;
-  }
-
-  return hash >>> 0;
-}
 /**
  * External store for workspace aggregators and streaming state.
  *

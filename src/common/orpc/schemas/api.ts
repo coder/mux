@@ -108,7 +108,6 @@ export const tokenizer = {
       workspaceId: z.string(),
       messages: z.array(MuxMessageSchema),
       model: z.string(),
-      providersConfigVersion: z.number().optional(),
     }),
     output: ChatStatsSchema,
   },
