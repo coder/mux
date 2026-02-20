@@ -38,15 +38,13 @@ function getAgentTextColorClass(agentId: string): string {
   }
 }
 
-export const SwitchAgentToolCall: React.FC<SwitchAgentToolCallProps> = ({
-  args,
-  status = "pending",
-}) => {
+export const SwitchAgentToolCall: React.FC<SwitchAgentToolCallProps> = (props) => {
   const { expanded, toggleExpanded } = useToolExpansion(false);
-  const hasReason = typeof args.reason === "string" && args.reason.trim().length > 0;
+  const status = props.status ?? "pending";
+  const hasReason = typeof props.args.reason === "string" && props.args.reason.trim().length > 0;
   const statusDisplay = getStatusDisplay(status);
-  const targetAgentLabel = formatAgentIdLabel(args.agentId);
-  const targetAgentColorClass = getAgentTextColorClass(args.agentId);
+  const targetAgentLabel = formatAgentIdLabel(props.args.agentId);
+  const targetAgentColorClass = getAgentTextColorClass(props.args.agentId);
   const handoffLabel =
     status === "completed"
       ? "Switched to"
@@ -72,7 +70,7 @@ export const SwitchAgentToolCall: React.FC<SwitchAgentToolCallProps> = ({
           <DetailSection>
             <DetailLabel>Reason</DetailLabel>
             <DetailContent className="text-muted-foreground px-2 py-1.5 italic">
-              {args.reason}
+              {props.args.reason}
             </DetailContent>
           </DetailSection>
         </ToolDetails>
