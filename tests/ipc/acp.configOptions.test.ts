@@ -19,7 +19,57 @@ interface WorkspaceState {
 
 type WorkspaceInfo = NonNullable<Awaited<ReturnType<ORPCClient["workspace"]["getInfo"]>>>;
 
-function createHarness(initial: WorkspaceState): {
+type AgentDescriptor = Awaited<ReturnType<ORPCClient["agents"]["list"]>>[number];
+
+const DEFAULT_AGENT_DESCRIPTORS: Awaited<ReturnType<ORPCClient["agents"]["list"]>> = [
+  {
+    id: "exec",
+    scope: "built-in",
+    name: "Exec",
+    description: "Implement changes in the repository",
+    uiSelectable: true,
+    subagentRunnable: true,
+  },
+  {
+    id: "plan",
+    scope: "built-in",
+    name: "Plan",
+    description: "Create a plan before coding",
+    uiSelectable: true,
+    subagentRunnable: true,
+  },
+  {
+    id: "ask",
+    scope: "built-in",
+    name: "Ask",
+    description: "Delegate questions to Explore sub-agents and synthesize an answer.",
+    uiSelectable: true,
+    subagentRunnable: false,
+  },
+  {
+    id: "auto",
+    scope: "built-in",
+    name: "Auto",
+    description: "Automatically selects the best agent for your task",
+    uiSelectable: true,
+    subagentRunnable: false,
+  },
+  {
+    id: "explore",
+    scope: "built-in",
+    name: "Explore",
+    description: "Read-only exploration",
+    uiSelectable: false,
+    subagentRunnable: true,
+  },
+];
+
+function createHarness(
+  initial: WorkspaceState,
+  options?: {
+    agents?: AgentDescriptor[];
+  }
+): {
   client: ORPCClient;
   getWorkspaceState: () => WorkspaceState;
   updateModeCalls: Array<{
@@ -49,6 +99,8 @@ function createHarness(initial: WorkspaceState): {
     agentId: string;
     aiSettings: WorkspaceAiSettings;
   }> = [];
+
+  const availableAgents = options?.agents ?? DEFAULT_AGENT_DESCRIPTORS;
 
   const client = {
     workspace: {
@@ -102,6 +154,9 @@ function createHarness(initial: WorkspaceState): {
 
         return { success: true as const, data: undefined };
       },
+    },
+    agents: {
+      list: async () => availableAgents,
     },
   } as unknown as ORPCClient;
 
@@ -160,6 +215,10 @@ describe("ACP config options", () => {
     expect(agentModeEntries.find((entry) => entry.value === "plan")?.description).toBe(
       "Create a plan before coding"
     );
+    expect(agentModeEntries.find((entry) => entry.value === "auto")?.description).toBe(
+      "Automatically selects the best agent for your task"
+    );
+    expect(agentModeEntries.map((entry) => entry.value)).toEqual(["exec", "plan", "ask", "auto"]);
 
     const thinkingOption = getSelectConfigOption(options, "thinkingLevel");
     const thinkingEntries = flattenSelectOptions(thinkingOption);
