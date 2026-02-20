@@ -39,6 +39,7 @@ import type {
 } from "@/common/types/stream";
 import { MapStore } from "./MapStore";
 import { createDisplayUsage, recomputeUsageCosts } from "@/common/utils/tokens/displayUsage";
+import { getModelStats } from "@/common/utils/tokens/modelStats";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { computeProvidersConfigFingerprint } from "@/common/utils/providers/configFingerprint";
 import { isDurableCompactionBoundaryMarker } from "@/common/utils/messages/compactionBoundary";
@@ -385,7 +386,7 @@ function getMaxHistorySequence(messages: MuxMessage[]): number | undefined {
  * not be repriced when model mappings change because the provider
  * gateway already handles billing.
  */
-function isCostsIncludedEntry(usage: ChatUsageDisplay): boolean {
+function isCostsIncludedEntry(usage: ChatUsageDisplay, runtimeModelId: string): boolean {
   if (usage.costsIncluded === true) {
     return true;
   }
@@ -394,6 +395,20 @@ function isCostsIncludedEntry(usage: ChatUsageDisplay): boolean {
   // gateway-billed with all costs explicitly zeroed before the costsIncluded
   // marker was persisted. Treat those all-zero entries as costs-included so
   // repricing doesn't inflate historical gateway-billed totals after upgrade.
+  //
+  // Guardrail: only apply this legacy heuristic for models that have non-zero
+  // billable pricing in model stats. This avoids classifying intentionally
+  // zero-priced models (e.g. subscription-backed models) as gateway-billed.
+  const stats = getModelStats(runtimeModelId);
+  const hasBillableRates =
+    (stats?.input_cost_per_token ?? 0) > 0 ||
+    (stats?.output_cost_per_token ?? 0) > 0 ||
+    (stats?.cache_creation_input_token_cost ?? 0) > 0 ||
+    (stats?.cache_read_input_token_cost ?? 0) > 0;
+  if (!hasBillableRates) {
+    return false;
+  }
+
   const components = ["input", "cached", "cacheCreate", "output", "reasoning"] as const;
   let hasTokens = false;
   for (const key of components) {
@@ -423,11 +438,14 @@ function repriceSessionUsage(
 ): void {
   usage.tokenStatsCache = undefined;
   for (const [model, entry] of Object.entries(usage.byModel)) {
-    if (!model.includes(":") || isCostsIncludedEntry(entry)) continue;
+    if (!model.includes(":") || isCostsIncludedEntry(entry, model)) continue;
     const resolved = resolveModelForMetadata(model, config);
     usage.byModel[model] = recomputeUsageCosts(entry, resolved);
   }
-  if (usage.lastRequest && !isCostsIncludedEntry(usage.lastRequest.usage)) {
+  if (
+    usage.lastRequest &&
+    !isCostsIncludedEntry(usage.lastRequest.usage, usage.lastRequest.model)
+  ) {
     const resolved = resolveModelForMetadata(usage.lastRequest.model, config);
     usage.lastRequest.usage = recomputeUsageCosts(usage.lastRequest.usage, resolved);
   }
