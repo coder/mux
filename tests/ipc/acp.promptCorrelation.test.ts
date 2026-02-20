@@ -125,6 +125,10 @@ interface HarnessOptions {
     message: string;
     options: Record<string, unknown>;
   }) => Promise<{ success: boolean; data?: unknown; error?: unknown }>;
+  interruptStream?: (input: {
+    workspaceId: string;
+    options?: Record<string, unknown>;
+  }) => Promise<{ success: boolean; data?: unknown; error?: unknown }>;
   /** Custom output WritableStream for simulating stdout backpressure. */
   acpOutputStream?: WritableStream<Uint8Array>;
   agentOptions?: ConstructorParameters<typeof MuxAgent>[2];
@@ -132,6 +136,7 @@ interface HarnessOptions {
 
 function createHarness(options?: HarnessOptions): Harness {
   const workspacesById = new Map<string, WorkspaceInfo>();
+  let workspaceIdCounter = 0;
   const sendMessageCalls: Array<{
     workspaceId: string;
     message: string;
@@ -179,7 +184,8 @@ function createHarness(options?: HarnessOptions): Harness {
         title?: string;
         runtimeConfig?: WorkspaceInfo["runtimeConfig"];
       }) => {
-        const workspaceId = "ws-1";
+        workspaceIdCounter += 1;
+        const workspaceId = `ws-${workspaceIdCounter}`;
         const metadata = createWorkspaceInfo({
           id: workspaceId,
           name: input.branchName,
@@ -223,6 +229,9 @@ function createHarness(options?: HarnessOptions): Harness {
         options?: Record<string, unknown>;
       }) => {
         interruptCalls.push(input);
+        if (options?.interruptStream != null) {
+          return await options.interruptStream(input);
+        }
         return { success: true as const, data: undefined };
       },
       updateModeAISettings: async () => ({ success: true as const, data: undefined }),
@@ -1054,6 +1063,125 @@ describe("ACP prompt stream correlation", () => {
         abandonPartial: true,
       },
     });
+
+    await harness.connectionClosed;
+  });
+
+  it("interrupts every active turn before disconnect session eviction runs", async () => {
+    let releaseFirstInterrupt: (() => void) | undefined;
+    const firstInterruptGate = new Promise<void>((resolve) => {
+      releaseFirstInterrupt = resolve;
+    });
+    const interruptedWorkspaceIds: string[] = [];
+
+    const harness = createHarness({
+      interruptStream: async (input) => {
+        interruptedWorkspaceIds.push(input.workspaceId);
+        if (interruptedWorkspaceIds.length === 1) {
+          await firstInterruptGate;
+        }
+        return { success: true, data: undefined };
+      },
+    });
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    const firstSession = await harness.agent.newSession({
+      cwd: "/repo/acp-go-sdk",
+      mcpServers: [],
+      _meta: {
+        trunkBranch: "main",
+      },
+    });
+
+    const secondSession = await harness.agent.newSession({
+      cwd: "/repo/acp-go-sdk",
+      mcpServers: [],
+      _meta: {
+        trunkBranch: "main",
+      },
+    });
+
+    const firstPrompt = harness.agent
+      .prompt({
+        sessionId: firstSession.sessionId,
+        prompt: [{ type: "text", text: "hello from first turn" }],
+      })
+      .then(
+        () => new Error("first prompt unexpectedly resolved"),
+        (error: unknown) =>
+          error instanceof Error ? error : new Error(`first prompt rejected: ${String(error)}`)
+      );
+
+    const secondPrompt = harness.agent
+      .prompt({
+        sessionId: secondSession.sessionId,
+        prompt: [{ type: "text", text: "hello from second turn" }],
+      })
+      .then(
+        () => new Error("second prompt unexpectedly resolved"),
+        (error: unknown) =>
+          error instanceof Error ? error : new Error(`second prompt rejected: ${String(error)}`)
+      );
+
+    await waitForCondition(() => harness.sendMessageCalls.length === 2);
+
+    harness.closeConnection();
+
+    await waitForCondition(() => interruptedWorkspaceIds.length === 1);
+    if (releaseFirstInterrupt == null) {
+      throw new Error("Expected first interrupt gate resolver to be initialized");
+    }
+    releaseFirstInterrupt();
+
+    await waitForCondition(() => interruptedWorkspaceIds.length === 2);
+    expect([...interruptedWorkspaceIds].sort()).toEqual(
+      [firstSession.sessionId, secondSession.sessionId].sort()
+    );
+
+    const firstPromptResult = await firstPrompt;
+    const secondPromptResult = await secondPrompt;
+    expect(firstPromptResult.message).toContain("Mux ACP connection closed");
+    expect(secondPromptResult.message).toContain("Mux ACP connection closed");
+
+    await harness.connectionClosed;
+  });
+
+  it("continues disconnect cleanup when interruptStream reports backend failure", async () => {
+    const harness = createHarness({
+      interruptStream: async () => ({
+        success: false,
+        error: "interrupt failed",
+      }),
+    });
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    const newSessionResponse = await harness.agent.newSession({
+      cwd: "/repo/acp-go-sdk",
+      mcpServers: [],
+      _meta: {
+        trunkBranch: "main",
+      },
+    });
+
+    const promptPromise = harness.agent
+      .prompt({
+        sessionId: newSessionResponse.sessionId,
+        prompt: [{ type: "text", text: "hello" }],
+      })
+      .then(
+        () => new Error("prompt unexpectedly resolved"),
+        (error: unknown) =>
+          error instanceof Error ? error : new Error(`prompt rejected: ${String(error)}`)
+      );
+
+    await waitForCondition(() => harness.sendMessageCalls.length === 1);
+
+    harness.closeConnection();
+
+    const promptResult = await promptPromise;
+    expect(promptResult.message).toContain("Mux ACP connection closed");
+    await waitForCondition(() => harness.interruptCalls.length === 1);
+    await expect(harness.agent.waitForDisconnectCleanup()).resolves.toBeUndefined();
 
     await harness.connectionClosed;
   });

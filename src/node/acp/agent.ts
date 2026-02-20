@@ -244,19 +244,18 @@ export class MuxAgent implements Agent {
           this.rejectTurn(sessionId, disconnectError);
         }
 
-        const interruptPromise = this.interruptActiveTurnStreamsOnDisconnect(activeTurnSessionIds);
-        const cleanupPromise = this.cleanupNewSessionWorkspacesOnDisconnect();
-        const sessionCleanupPromise = this.cleanupTrackedSessionsOnDisconnect();
-
-        this.disconnectCleanupPromise = Promise.all([
-          interruptPromise,
-          cleanupPromise,
-          sessionCleanupPromise,
-        ])
-          .then(() => undefined)
-          .catch((cleanupError) => {
-            console.error("[acp] Failed during disconnect workspace cleanup", cleanupError);
-          });
+        this.disconnectCleanupPromise = (async () => {
+          // Interrupt active streams before evicting session mappings. Otherwise,
+          // session cleanup can remove workspace lookups that stream interruption
+          // still depends on, leaving backend turns running after disconnect.
+          await this.interruptActiveTurnStreamsOnDisconnect(activeTurnSessionIds);
+          await Promise.all([
+            this.cleanupNewSessionWorkspacesOnDisconnect(),
+            this.cleanupTrackedSessionsOnDisconnect(),
+          ]);
+        })().catch((cleanupError) => {
+          console.error("[acp] Failed during disconnect workspace cleanup", cleanupError);
+        });
       },
       { once: true }
     );
@@ -1065,12 +1064,17 @@ export class MuxAgent implements Agent {
       }
 
       try {
-        await this.server.client.workspace.interruptStream({
+        const interruptResult = await this.server.client.workspace.interruptStream({
           workspaceId,
           options: {
             abandonPartial: true,
           },
         });
+        if (!interruptResult.success) {
+          console.error(
+            `[acp] Failed to interrupt active stream for session ${sessionId} during disconnect: ${stringifyUnknown(interruptResult.error)}`
+          );
+        }
       } catch (error) {
         console.error(
           `[acp] Failed to interrupt active stream for session ${sessionId} during disconnect`,
