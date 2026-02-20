@@ -1473,11 +1473,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                   const isDislike = normalizedUserNote.startsWith(DISLIKE_NOTE_PREFIX);
                   const isLike = normalizedUserNote.startsWith(LIKE_NOTE_PREFIX);
                   const statusClasses = getReviewStatusSidebarClasses(review.status);
-                  const ReviewTypeIcon = isDislike
-                    ? ThumbsDown
-                    : isLike
-                      ? ThumbsUp
-                      : MessageSquare;
+                  const ReviewTypeIcon = isDislike ? ThumbsDown : isLike ? ThumbsUp : MessageSquare;
                   const isActiveFileReview = review.data.filePath === activeFilePath;
 
                   return (
