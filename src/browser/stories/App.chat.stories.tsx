@@ -422,6 +422,70 @@ export const WithAgentStatus: AppStory = {
   ),
 };
 
+/** switch_agent tool call rendered with custom handoff card UI */
+export const SwitchAgentHandoff: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-switch-agent",
+          messages: [
+            createUserMessage("msg-1", "Should we plan this migration before editing files?", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 100000,
+            }),
+            createAssistantMessage("msg-2", "I'll hand this off to the planning agent first.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 90000,
+              toolCalls: [
+                createGenericTool(
+                  "call-switch-agent-1",
+                  "switch_agent",
+                  {
+                    agentId: "plan",
+                    reason:
+                      "This requires a scoped rollout plan with risk assessment before making code edits.",
+                    followUp:
+                      "Draft a migration plan that lists dependencies, sequencing, and rollback steps.",
+                  },
+                  {
+                    ok: true,
+                    agentId: "plan",
+                  }
+                ),
+              ],
+            }),
+            createUserMessage(
+              "msg-3",
+              "Draft a migration plan that lists dependencies, sequencing, and rollback steps.",
+              {
+                historySequence: 3,
+                timestamp: STABLE_TIMESTAMP - 85000,
+                synthetic: true,
+              }
+            ),
+          ],
+        })
+      }
+    />
+  ),
+};
+
+/** Chromatic interaction variant that expands the switch_agent reason details. */
+export const SwitchAgentHandoffExpanded: AppStory = {
+  ...SwitchAgentHandoff,
+  play: async ({ canvasElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
+
+    // Expand the switch_agent tool card so reason text is captured in Chromatic.
+    const handoffLabel = await canvas.findByText("Plan", {}, { timeout: 8000 });
+    await userEvent.click(handoffLabel);
+
+    await canvas.findByText(/scoped rollout plan with risk assessment/i, {}, { timeout: 8000 });
+  },
+};
+
 /** Voice input button shows user education when OpenAI API key is not set */
 export const VoiceInputNoApiKey: AppStory = {
   render: () => (
