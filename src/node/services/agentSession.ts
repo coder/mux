@@ -2431,24 +2431,37 @@ export class AgentSession {
         continue;
       }
 
-      const parsedOutput = this.parseSwitchAgentOutput(part.output);
-      if (parsedOutput) {
-        return parsedOutput;
+      // Verify the tool succeeded. switch_agent intentionally returns a minimal
+      // output payload ({ ok: true }) to avoid duplicating args in context.
+      if (!this.isOkSwitchAgentOutput(part.output)) {
+        continue;
+      }
+
+      // Read switch details from tool input args instead of tool output.
+      const parsedInput = this.parseSwitchAgentInput(part.input);
+      if (parsedInput) {
+        return parsedInput;
       }
     }
 
     return undefined;
   }
 
-  private parseSwitchAgentOutput(output: unknown): SwitchAgentResult | undefined {
+  private isOkSwitchAgentOutput(output: unknown): boolean {
     if (typeof output !== "object" || output === null) {
-      return undefined;
+      return false;
     }
 
     const candidate = output as Record<string, unknown>;
-    if (candidate.ok !== true) {
+    return candidate.ok === true;
+  }
+
+  private parseSwitchAgentInput(input: unknown): SwitchAgentResult | undefined {
+    if (typeof input !== "object" || input === null) {
       return undefined;
     }
+
+    const candidate = input as Record<string, unknown>;
     if (typeof candidate.agentId !== "string") {
       return undefined;
     }

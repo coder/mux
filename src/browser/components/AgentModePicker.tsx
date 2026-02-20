@@ -45,7 +45,7 @@ interface AgentOption {
   subagentRunnable: boolean;
 }
 
-function formatAgentIdLabel(agentId: string): string {
+export function formatAgentIdLabel(agentId: string): string {
   if (!agentId) {
     return "Agent";
   }
