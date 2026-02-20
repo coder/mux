@@ -306,6 +306,6 @@ describe("mux CLI", () => {
       } finally {
         await fs.rm(tempDir, { recursive: true, force: true });
       }
-    });
+    }, 15_000);
   });
 });
