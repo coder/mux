@@ -3,7 +3,6 @@ import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { GatewayToggleButton } from "@/browser/components/GatewayToggleButton";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
-import { HoverClickPopover } from "@/browser/components/ui/hover-click-popover";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import { Button } from "@/browser/components/ui/button";
 import { getModelStats, type ModelStats } from "@/common/utils/tokens/modelStats";
@@ -332,26 +331,21 @@ export function ModelRow(props: ModelRowProps) {
       {/* Actions */}
       <td className="w-28 py-1.5 pr-2 md:w-32 md:pr-3">
         <div className="flex items-center justify-end gap-0.5">
-          {/*
-            Keep model context-window/pricing details in a dialog-style popover so
-            users can intentionally open and inspect it without hover timing.
-          */}
-          <HoverClickPopover
-            content={
+          {/* Info tooltip */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className="text-muted hover:text-foreground p-0.5 transition-colors"
+                aria-label="Model details"
+              >
+                <Info className="h-3.5 w-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" align="end" className="p-3">
               <ModelTooltipContent fullId={props.fullId} aliases={props.aliases} stats={stats} />
-            }
-            side="top"
-            align="end"
-            contentClassName="bg-modal-bg border-separator-light w-auto min-w-0 max-w-xs rounded px-[10px] py-[6px] text-[11px] font-normal shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
-          >
-            <button
-              type="button"
-              className="text-muted hover:text-foreground p-0.5 transition-colors"
-              aria-label="Model details"
-            >
-              <Info className="h-3.5 w-3.5" />
-            </button>
-          </HoverClickPopover>
+            </TooltipContent>
+          </Tooltip>
           {/* Visibility toggle button */}
           {props.onToggleVisibility && (
             <button
