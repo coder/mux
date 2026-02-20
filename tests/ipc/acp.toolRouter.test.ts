@@ -72,6 +72,14 @@ describe("ACP ToolRouter", () => {
     expect(router.shouldDelegateToEditor("session-1", "fs/custom_tool")).toBe(false);
   });
 
+  it("stops delegating tools after session cleanup", () => {
+    const { router } = createRouter();
+
+    expect(router.shouldDelegateToEditor("session-1", "file_read")).toBe(true);
+    router.removeSession("session-1");
+    expect(router.shouldDelegateToEditor("session-1", "file_read")).toBe(false);
+  });
+
   it("returns bash command output when delegating terminal calls", async () => {
     const { router } = createRouter({
       createTerminal: async () => ({
@@ -165,6 +173,19 @@ describe("ACP ToolRouter", () => {
       error: expect.stringContaining("Command exceeded timeout of 0.02 seconds"),
     });
     expect(killCalls).toBe(1);
+  });
+
+  it("honors timeout_secs for delegated file_read calls", async () => {
+    const { router } = createRouter({
+      readTextFile: async () => await new Promise(() => undefined),
+    });
+
+    await expect(
+      router.delegateToEditor("session-1", "file_read", {
+        path: "/repo/hanging.txt",
+        timeout_secs: 0.02,
+      })
+    ).rejects.toThrow("timed out after 0.02 seconds");
   });
 
   it("honors run_in_background for delegated bash calls", async () => {

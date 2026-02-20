@@ -581,6 +581,36 @@ export class StreamTranslator {
     this.activeToolCallsByMessageKey.delete(scopedMessageKey);
   }
 
+  clearSession(sessionId: string): void {
+    assert(sessionId.trim().length > 0, "clearSession: sessionId must be non-empty");
+
+    // ACP currently has no explicit session/close notification. When Mux evicts
+    // inactive sessions (idle timeout/LRU), proactively clear message/tool-call
+    // bookkeeping so long-lived editor connections cannot accumulate stale state.
+    const scopedPrefix = `${sessionId}${SESSION_SCOPED_TOOL_KEY_DELIMITER}`;
+
+    for (const scopedMessageKey of Array.from(this.activeToolCallsByMessageKey.keys())) {
+      if (!scopedMessageKey.startsWith(scopedPrefix)) {
+        continue;
+      }
+
+      const toolCallKeys = this.activeToolCallsByMessageKey.get(scopedMessageKey);
+      if (toolCallKeys != null) {
+        for (const scopedToolCallKey of toolCallKeys) {
+          this.toolCallsByKey.delete(scopedToolCallKey);
+        }
+      }
+
+      this.activeToolCallsByMessageKey.delete(scopedMessageKey);
+    }
+
+    for (const scopedToolCallKey of Array.from(this.toolCallsByKey.keys())) {
+      if (scopedToolCallKey.startsWith(scopedPrefix)) {
+        this.toolCallsByKey.delete(scopedToolCallKey);
+      }
+    }
+  }
+
   private hasNonEmptyMessageId(messageId: string): boolean {
     return messageId.trim().length > 0;
   }

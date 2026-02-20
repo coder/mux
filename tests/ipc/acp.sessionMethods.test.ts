@@ -12,6 +12,7 @@ interface HarnessOptions {
   workspaceActivity?: WorkspaceActivityById;
   onChatEvents?: WorkspaceChatMessage[];
   onChatStream?: AsyncIterable<WorkspaceChatMessage>;
+  agentOptions?: ConstructorParameters<typeof MuxAgent>[2];
 }
 
 interface Harness {
@@ -101,7 +102,7 @@ function createHarness(options?: HarnessOptions): Harness {
   // AgentSideConnection. This keeps the test harness type-safe and exercises
   // the same connection surface MuxAgent uses in production.
   const _connection = new AgentSideConnection((connectionToAgent) => {
-    const createdAgent = new MuxAgent(connectionToAgent, server);
+    const createdAgent = new MuxAgent(connectionToAgent, server, options?.agentOptions);
     agentInstance = createdAgent;
     return createdAgent;
   }, createInMemoryAcpStream());
@@ -135,9 +136,11 @@ function createNeverEndingChatStream(
         yield event;
       }
 
-      await new Promise<never>(() => {
-        // Keep stream open to simulate an existing active subscription.
-      });
+      while (true) {
+        // Keep stream open to simulate an existing active subscription while
+        // still yielding to iterator.return() shutdown in cleanup paths.
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
     },
   };
 }
@@ -334,6 +337,70 @@ describe("ACP unstable session support", () => {
     });
 
     expect(modeMap.get("ws-live-to-full")).toEqual({ type: "full" });
-    expect(harness.onChatCalls).toHaveLength(1);
+    expect(harness.onChatCalls).toHaveLength(2);
+    expect(harness.onChatCalls[0]).toEqual({
+      workspaceId: "ws-live-to-full",
+      mode: { type: "live" },
+    });
+    expect(harness.onChatCalls[1]).toEqual({
+      workspaceId: "ws-live-to-full",
+      mode: { type: "full" },
+    });
+  });
+
+  it("evicts least-recently-used idle sessions when tracked session cap is exceeded", async () => {
+    const workspaceA = createWorkspaceInfo({
+      id: "ws-a",
+      projectPath: "/repo/lru",
+      namedWorkspacePath: "/repo/lru/.mux/ws-a",
+    });
+    const workspaceB = createWorkspaceInfo({
+      id: "ws-b",
+      projectPath: "/repo/lru",
+      namedWorkspacePath: "/repo/lru/.mux/ws-b",
+    });
+    const workspaceC = createWorkspaceInfo({
+      id: "ws-c",
+      projectPath: "/repo/lru",
+      namedWorkspacePath: "/repo/lru/.mux/ws-c",
+    });
+
+    const harness = createHarness({
+      activeWorkspaces: [workspaceA, workspaceB, workspaceC],
+      onChatStream: createNeverEndingChatStream([{ type: "caught-up" } as WorkspaceChatMessage]),
+      agentOptions: {
+        maxTrackedSessions: 2,
+        sessionIdleTtlMs: 60_000,
+      },
+    });
+
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    await harness.agent.unstable_resumeSession({
+      sessionId: "ws-a",
+      cwd: "/repo/lru",
+      mcpServers: [],
+    });
+    await harness.agent.unstable_resumeSession({
+      sessionId: "ws-b",
+      cwd: "/repo/lru",
+      mcpServers: [],
+    });
+    await harness.agent.unstable_resumeSession({
+      sessionId: "ws-c",
+      cwd: "/repo/lru",
+      mcpServers: [],
+    });
+
+    const sessionStateMap = (
+      harness.agent as unknown as {
+        sessionStateById: Map<string, { workspaceId: string }>;
+      }
+    ).sessionStateById;
+
+    expect(sessionStateMap.has("ws-a")).toBe(false);
+    expect(sessionStateMap.has("ws-b")).toBe(true);
+    expect(sessionStateMap.has("ws-c")).toBe(true);
+    expect(harness.onChatCalls).toHaveLength(3);
   });
 });

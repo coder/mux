@@ -601,6 +601,14 @@ export const SendMessageOptionsSchema = z.object({
     description: "Legacy base mode (plan/exec/compact) for backend fallback",
   }),
   providerOptions: MuxProviderOptionsSchema.optional(),
+  acpPromptId: z
+    .string()
+    .optional()
+    .meta({ description: "ACP prompt correlation id for terminal stream matching" }),
+  delegatedToolNames: z
+    .array(z.string())
+    .optional()
+    .meta({ description: "Tool names delegated back to ACP clients for this request" }),
   muxMetadata: z.any().optional(), // Black box
   /**
    * When true, skip persisting AI settings (e.g., for one-shot or compaction sends).

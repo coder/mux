@@ -73,9 +73,21 @@ const ACP_DELEGATION_CANDIDATE_TOOLS = [
   "bash",
 ] as const;
 const DEFAULT_DISCONNECT_CLEANUP_MAX_WAIT_MS = 10_000;
+/**
+ * ACP currently has no session/close RPC. Keep idle sessions bounded so long-lived
+ * editor connections cannot leak subscriptions and per-session caches forever.
+ */
+const DEFAULT_SESSION_IDLE_TTL_MS = 30 * 60 * 1000;
+const DEFAULT_MAX_TRACKED_SESSIONS = 24;
+const DEFAULT_TURN_CORRELATION_TIMEOUT_MS = 30_000;
+
+const MAX_BUFFERED_CHAT_EVENTS = 5_000;
 
 interface MuxAgentOptions {
   disconnectCleanupMaxWaitMs?: number;
+  sessionIdleTtlMs?: number;
+  maxTrackedSessions?: number;
+  turnCorrelationTimeoutMs?: number;
 }
 
 interface SessionState {
@@ -101,6 +113,8 @@ interface TurnCompletion {
   promptCorrelationId: string;
   /** Monotonic wall-clock when prompt() registered this turn. */
   startedAtMs: number;
+  /** Guard timer so missing terminal events cannot hang a prompt forever. */
+  timeoutHandle: ReturnType<typeof setTimeout>;
   /** Set after stream-start; only this message id may resolve/reject the turn. */
   messageId?: string;
 }
@@ -150,11 +164,23 @@ export class MuxAgent implements Agent {
   private readonly chatSubscriptions = new Map<string, Promise<void>>();
   /** Resolves once `onChat` is connected for a session (shared across callers). */
   private readonly chatSubscriptionReady = new Map<string, Promise<void>>();
+  /** Mode used for the currently active/connecting onChat subscription per session. */
+  private readonly chatSubscriptionModeBySessionId = new Map<string, OnChatMode>();
+  /** Async iterators for active onChat streams so we can cancel on mode switch/eviction. */
+  private readonly chatIteratorsBySessionId = new Map<
+    string,
+    AsyncIterator<WorkspaceChatMessage>
+  >();
   private readonly turnCompletions = new Map<string, TurnCompletion>();
   private readonly latestUsageBySessionId = new Map<string, Usage>();
+  /** Last activity timestamp (Date.now) per session for idle eviction. */
+  private readonly sessionLastTouchedAtById = new Map<string, number>();
   private inFlightNewSessionCount = 0;
   private disconnectCleanupPromise: Promise<void> | null = null;
   private readonly disconnectCleanupMaxWaitMs: number;
+  private readonly sessionIdleTtlMs: number;
+  private readonly maxTrackedSessions: number;
+  private readonly turnCorrelationTimeoutMs: number;
 
   constructor(
     private readonly connection: AgentSideConnection,
@@ -171,8 +197,35 @@ export class MuxAgent implements Agent {
           configuredDisconnectCleanupMaxWaitMs >= 0),
       "MuxAgent: disconnectCleanupMaxWaitMs must be a finite non-negative number"
     );
+
+    const configuredSessionIdleTtlMs = options?.sessionIdleTtlMs;
+    assert(
+      configuredSessionIdleTtlMs == null ||
+        (Number.isFinite(configuredSessionIdleTtlMs) && configuredSessionIdleTtlMs > 0),
+      "MuxAgent: sessionIdleTtlMs must be a finite positive number"
+    );
+
+    const configuredMaxTrackedSessions = options?.maxTrackedSessions;
+    assert(
+      configuredMaxTrackedSessions == null ||
+        (Number.isInteger(configuredMaxTrackedSessions) && configuredMaxTrackedSessions > 0),
+      "MuxAgent: maxTrackedSessions must be a positive integer"
+    );
+
+    const configuredTurnCorrelationTimeoutMs = options?.turnCorrelationTimeoutMs;
+    assert(
+      configuredTurnCorrelationTimeoutMs == null ||
+        (Number.isFinite(configuredTurnCorrelationTimeoutMs) &&
+          configuredTurnCorrelationTimeoutMs > 0),
+      "MuxAgent: turnCorrelationTimeoutMs must be a finite positive number"
+    );
+
     this.disconnectCleanupMaxWaitMs =
       configuredDisconnectCleanupMaxWaitMs ?? DEFAULT_DISCONNECT_CLEANUP_MAX_WAIT_MS;
+    this.sessionIdleTtlMs = configuredSessionIdleTtlMs ?? DEFAULT_SESSION_IDLE_TTL_MS;
+    this.maxTrackedSessions = configuredMaxTrackedSessions ?? DEFAULT_MAX_TRACKED_SESSIONS;
+    this.turnCorrelationTimeoutMs =
+      configuredTurnCorrelationTimeoutMs ?? DEFAULT_TURN_CORRELATION_TIMEOUT_MS;
 
     this.streamTranslator = new StreamTranslator(connection);
     this.toolRouter = new ToolRouter(connection);
@@ -193,8 +246,13 @@ export class MuxAgent implements Agent {
 
         const interruptPromise = this.interruptActiveTurnStreamsOnDisconnect(activeTurnSessionIds);
         const cleanupPromise = this.cleanupNewSessionWorkspacesOnDisconnect();
+        const sessionCleanupPromise = this.cleanupTrackedSessionsOnDisconnect();
 
-        this.disconnectCleanupPromise = Promise.all([interruptPromise, cleanupPromise])
+        this.disconnectCleanupPromise = Promise.all([
+          interruptPromise,
+          cleanupPromise,
+          sessionCleanupPromise,
+        ])
           .then(() => undefined)
           .catch((cleanupError) => {
             console.error("[acp] Failed during disconnect workspace cleanup", cleanupError);
@@ -285,6 +343,7 @@ export class MuxAgent implements Agent {
         agentId,
         aiSettings,
       });
+      this.touchSession(sessionId);
 
       await this.ensureChatSubscription(sessionId, workspaceId, ON_CHAT_MODE_FULL);
 
@@ -328,6 +387,7 @@ export class MuxAgent implements Agent {
       agentId: resumed.agentId,
       aiSettings: resumed.aiSettings,
     });
+    this.touchSession(resumed.sessionId);
 
     this.toolRouter.registerSession(resumed.sessionId, resumed.runtimeMode);
 
@@ -408,6 +468,7 @@ export class MuxAgent implements Agent {
       agentId: resumed.agentId,
       aiSettings: resumed.aiSettings,
     });
+    this.touchSession(resumed.sessionId);
 
     this.toolRouter.registerSession(resumed.sessionId, resumed.runtimeMode);
 
@@ -447,6 +508,7 @@ export class MuxAgent implements Agent {
       agentId: forked.agentId,
       aiSettings: forked.aiSettings,
     });
+    this.touchSession(forked.sessionId);
 
     this.toolRouter.registerSession(forked.sessionId, forked.runtimeMode);
 
@@ -463,6 +525,7 @@ export class MuxAgent implements Agent {
     const sessionId = params.sessionId.trim();
     assert(sessionId.length > 0, "prompt: sessionId must be non-empty");
 
+    this.touchSession(sessionId);
     const workspaceId = this.sessionManager.getWorkspaceId(sessionId);
     const sessionState = await this.refreshSessionState(sessionId);
     const parsedPrompt = parsePromptBlocks(params.prompt);
@@ -496,6 +559,7 @@ export class MuxAgent implements Agent {
     const sessionId = params.sessionId.trim();
     assert(sessionId.length > 0, "cancel: sessionId must be non-empty");
 
+    this.touchSession(sessionId);
     const workspaceId = this.sessionManager.getWorkspaceId(sessionId);
     const interruptResult = await this.server.client.workspace.interruptStream({ workspaceId });
 
@@ -521,6 +585,7 @@ export class MuxAgent implements Agent {
     const sessionId = params.sessionId.trim();
     assert(sessionId.length > 0, "setSessionConfigOption: sessionId must be non-empty");
 
+    this.touchSession(sessionId);
     const workspaceId = this.sessionManager.getWorkspaceId(sessionId);
     const trimmedConfigId = params.configId.trim();
     assert(trimmedConfigId.length > 0, "setSessionConfigOption: configId must be non-empty");
@@ -623,7 +688,7 @@ export class MuxAgent implements Agent {
     } catch (error) {
       // workspace.sendMessage / subscription failures can happen before stream
       // events settle the turn promise. Clear turn state before rethrowing.
-      this.turnCompletions.delete(args.sessionId);
+      this.takeTurnCompletion(args.sessionId);
       throw error;
     }
   }
@@ -652,6 +717,8 @@ export class MuxAgent implements Agent {
 
     return {
       ...options,
+      acpPromptId: promptCorrelationId,
+      delegatedToolNames: delegatedToolNames.length > 0 ? [...delegatedToolNames] : undefined,
       muxMetadata,
     };
   }
@@ -969,6 +1036,23 @@ export class MuxAgent implements Agent {
     lifecycle.hasPromptActivity = true;
   }
 
+  private async cleanupTrackedSessionsOnDisconnect(): Promise<void> {
+    const sessionIds = new Set<string>([
+      ...this.sessionStateById.keys(),
+      ...this.sessionManager.getAllSessions().keys(),
+      ...this.sessionLastTouchedAtById.keys(),
+      ...this.chatSubscriptions.keys(),
+    ]);
+
+    for (const sessionId of sessionIds) {
+      if (this.turnCompletions.has(sessionId)) {
+        continue;
+      }
+
+      await this.evictSessionState(sessionId, "ACP connection closed");
+    }
+  }
+
   private async interruptActiveTurnStreamsOnDisconnect(
     sessionIds: readonly string[]
   ): Promise<void> {
@@ -1113,12 +1197,173 @@ export class MuxAgent implements Agent {
     return skillsByName;
   }
 
+  private touchSession(sessionId: string): void {
+    assert(sessionId.trim().length > 0, "touchSession: sessionId must be non-empty");
+
+    this.sessionLastTouchedAtById.set(sessionId, Date.now());
+  }
+
+  private async pruneTrackedSessionsIfNeeded(): Promise<void> {
+    const trackedCount = this.sessionLastTouchedAtById.size;
+    if (trackedCount === 0) {
+      return;
+    }
+
+    const now = Date.now();
+    const idleCandidates = Array.from(this.sessionLastTouchedAtById.entries())
+      .filter(([, touchedAt]) => now - touchedAt >= this.sessionIdleTtlMs)
+      .sort((left, right) => left[1] - right[1]);
+
+    for (const [sessionId] of idleCandidates) {
+      if (this.turnCompletions.has(sessionId)) {
+        continue;
+      }
+
+      await this.evictSessionState(
+        sessionId,
+        `idle timeout (${Math.round(this.sessionIdleTtlMs / 1000)}s)`
+      );
+    }
+
+    if (this.sessionLastTouchedAtById.size <= this.maxTrackedSessions) {
+      return;
+    }
+
+    const lruCandidates = Array.from(this.sessionLastTouchedAtById.entries()).sort(
+      (left, right) => left[1] - right[1]
+    );
+
+    for (const [sessionId] of lruCandidates) {
+      if (this.sessionLastTouchedAtById.size <= this.maxTrackedSessions) {
+        break;
+      }
+      if (this.turnCompletions.has(sessionId)) {
+        continue;
+      }
+
+      await this.evictSessionState(
+        sessionId,
+        `LRU cap (${this.maxTrackedSessions} sessions) exceeded`
+      );
+    }
+  }
+
+  private async evictSessionState(sessionId: string, reason: string): Promise<void> {
+    assert(sessionId.trim().length > 0, "evictSessionState: sessionId must be non-empty");
+
+    if (this.turnCompletions.has(sessionId)) {
+      return;
+    }
+
+    await this.stopChatSubscription(sessionId, reason);
+
+    const workspaceId =
+      this.sessionStateById.get(sessionId)?.workspaceId ??
+      this.sessionManager.getAllSessions().get(sessionId)?.workspaceId;
+
+    if (workspaceId != null) {
+      this.newSessionWorkspaceLifecycleById.delete(workspaceId);
+    }
+
+    this.sessionManager.removeSession(sessionId);
+    this.toolRouter.removeSession(sessionId);
+    this.sessionStateById.delete(sessionId);
+    this.sessionSkillsById.delete(sessionId);
+    this.onChatModeBySessionId.delete(sessionId);
+    this.chatSubscriptionModeBySessionId.delete(sessionId);
+    this.latestUsageBySessionId.delete(sessionId);
+    this.sessionLastTouchedAtById.delete(sessionId);
+
+    this.streamTranslator.clearSession(sessionId);
+  }
+
+  private shouldLogSubscriptionTeardownWarning(reason: string): boolean {
+    assert(
+      reason.trim().length > 0,
+      "shouldLogSubscriptionTeardownWarning: reason must be non-empty"
+    );
+
+    if (this.connection.signal.aborted) {
+      return false;
+    }
+
+    return !(
+      reason.startsWith("onChat mode switch") ||
+      reason.startsWith("LRU cap") ||
+      reason.startsWith("idle timeout")
+    );
+  }
+
+  private async stopChatSubscription(sessionId: string, reason: string): Promise<void> {
+    assert(sessionId.trim().length > 0, "stopChatSubscription: sessionId must be non-empty");
+
+    const waitWithTimeout = async (
+      promise: Promise<unknown>,
+      timeoutMs: number
+    ): Promise<"completed" | "timed_out"> => {
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<"timed_out">((resolve) => {
+        timeoutHandle = setTimeout(() => resolve("timed_out"), timeoutMs);
+        timeoutHandle.unref?.();
+      });
+
+      try {
+        return await Promise.race([promise.then(() => "completed" as const), timeoutPromise]);
+      } finally {
+        if (timeoutHandle != null) {
+          clearTimeout(timeoutHandle);
+        }
+      }
+    };
+
+    const iterator = this.chatIteratorsBySessionId.get(sessionId);
+    if (iterator != null) {
+      try {
+        const iteratorReturn = iterator.return?.();
+        if (iteratorReturn != null) {
+          const iteratorResult = await waitWithTimeout(iteratorReturn, 100);
+          if (iteratorResult === "timed_out" && this.shouldLogSubscriptionTeardownWarning(reason)) {
+            console.warn(`[acp] Timed out stopping onChat iterator for session ${sessionId}`, {
+              reason,
+            });
+          }
+        }
+      } catch (error) {
+        if (this.shouldLogSubscriptionTeardownWarning(reason)) {
+          console.warn(`[acp] Failed to stop onChat iterator for session ${sessionId}`, {
+            reason,
+            error,
+          });
+        }
+      }
+    }
+
+    const subscription = this.chatSubscriptions.get(sessionId);
+    if (subscription != null) {
+      const waitResult = await waitWithTimeout(
+        subscription.catch(() => undefined),
+        200
+      );
+      if (waitResult === "timed_out" && this.shouldLogSubscriptionTeardownWarning(reason)) {
+        console.warn(`[acp] Timed out waiting for onChat subscription shutdown`, {
+          sessionId,
+          reason,
+        });
+      }
+    }
+
+    this.chatIteratorsBySessionId.delete(sessionId);
+    this.chatSubscriptions.delete(sessionId);
+    this.chatSubscriptionReady.delete(sessionId);
+    this.chatSubscriptionModeBySessionId.delete(sessionId);
+  }
+
   private getSessionOnChatMode(sessionId: string): OnChatMode {
     return this.onChatModeBySessionId.get(sessionId) ?? ON_CHAT_MODE_FULL;
   }
 
   /**
-   * Ensure a chat subscription exists for the given session.  Returns a promise
+   * Ensure a chat subscription exists for the given session. Returns a promise
    * that resolves once the underlying `onChat` stream is connected (so callers
    * like `prompt()` can safely send messages without racing the subscription).
    */
@@ -1127,24 +1372,28 @@ export class MuxAgent implements Agent {
     workspaceId: string,
     onChatMode: OnChatMode
   ): Promise<void> {
-    // Always persist the latest desired replay mode, even when an existing
-    // subscription is already connected. Future reconnects should honor the
-    // most recent caller intent (e.g., loadSession full vs resumeSession live).
+    // Persist the latest desired replay mode so reconnects honor the caller's
+    // intent (e.g., loadSession full vs resumeSession live).
     this.onChatModeBySessionId.set(sessionId, onChatMode);
+    this.touchSession(sessionId);
 
-    // If a subscription is already being established, wait for it to become
-    // connected rather than returning immediately.  This prevents callers
-    // (e.g., prompt after session load) from racing ahead of the onChat attach.
     const existingReady = this.chatSubscriptionReady.get(sessionId);
+    const existingMode = this.chatSubscriptionModeBySessionId.get(sessionId);
     if (existingReady != null) {
-      await existingReady;
-      return;
+      if (existingMode != null && !areOnChatModesEqual(existingMode, onChatMode)) {
+        await this.stopChatSubscription(
+          sessionId,
+          `onChat mode switch (${existingMode.type} -> ${onChatMode.type})`
+        );
+      } else {
+        await existingReady;
+        return;
+      }
     }
 
     // `connectedPromise` resolves once `onChat` returns the async iterable,
-    // signalling the subscription is live.  If `onChat` fails before the
-    // stream is established, the promise is rejected so callers get a proper
-    // error instead of hanging indefinitely.
+    // signaling the subscription is live. If `onChat` fails before the stream
+    // is established, reject so callers get a proper error instead of hanging.
     let onConnected!: () => void;
     let onConnectFailed!: (reason: unknown) => void;
     const connectedPromise = new Promise<void>((resolve, reject) => {
@@ -1152,9 +1401,8 @@ export class MuxAgent implements Agent {
       onConnectFailed = reject;
     });
 
-    // Store the readiness promise *before* spawning the subscription so that
-    // concurrent callers will find and await it.
     this.chatSubscriptionReady.set(sessionId, connectedPromise);
+    this.chatSubscriptionModeBySessionId.set(sessionId, onChatMode);
 
     const subscription = this.runChatSubscription(sessionId, workspaceId, onConnected, onChatMode)
       .catch((error) => {
@@ -1169,12 +1417,23 @@ export class MuxAgent implements Agent {
         this.rejectTurn(sessionId, asError(error, "onChat subscription failed"));
       })
       .finally(() => {
-        this.chatSubscriptions.delete(sessionId);
-        this.chatSubscriptionReady.delete(sessionId);
+        if (this.chatSubscriptions.get(sessionId) === subscription) {
+          this.chatSubscriptions.delete(sessionId);
+        }
+        if (this.chatSubscriptionReady.get(sessionId) === connectedPromise) {
+          this.chatSubscriptionReady.delete(sessionId);
+        }
+        if (
+          this.chatSubscriptions.get(sessionId) == null &&
+          areOnChatModesEqual(this.chatSubscriptionModeBySessionId.get(sessionId), onChatMode)
+        ) {
+          this.chatSubscriptionModeBySessionId.delete(sessionId);
+        }
       });
 
     this.chatSubscriptions.set(sessionId, subscription);
     await connectedPromise;
+    await this.pruneTrackedSessionsIfNeeded();
   }
 
   private async runChatSubscription(
@@ -1188,6 +1447,7 @@ export class MuxAgent implements Agent {
       mode: onChatMode,
     });
     onConnected();
+    this.touchSession(sessionId);
 
     // Decouple turn resolution from sessionUpdate writes.
     // handleStreamEvent must fire for every event regardless of stdout
@@ -1195,12 +1455,10 @@ export class MuxAgent implements Agent {
     // a blocked sessionUpdate write, preventing resolveTurn from firing
     // and causing prompt() to hang indefinitely.
     //
-    // Queue size is bounded in practice: the drain loop can only outpace
-    // consumeAndForward by the number of events in the oRPC stream between
-    // forwarding ticks. A typical turn produces hundreds of small events
-    // (a few KB each), so the buffer stays well within acceptable memory
-    // even if the editor stalls momentarily.
+    // Keep a hard memory ceiling so a stalled ACP client cannot accumulate an
+    // unbounded in-memory backlog under stdout backpressure.
     const { push, iterate, end } = createAsyncMessageQueue<WorkspaceChatMessage>();
+    let queuedEventCount = 0;
 
     // Drain the oRPC stream: observe events for turn resolution, buffer
     // for translation. push() is non-blocking so handleStreamEvent always
@@ -1212,6 +1470,7 @@ export class MuxAgent implements Agent {
     // (potentially duplicating tool execution via tool-call-start) and leak
     // the oRPC subscription until the server eventually closes it.
     const chatIterator = chatStream[Symbol.asyncIterator]();
+    this.chatIteratorsBySessionId.set(sessionId, chatIterator);
     const chatIterable: AsyncIterable<WorkspaceChatMessage> = {
       [Symbol.asyncIterator]: () => chatIterator,
     };
@@ -1224,6 +1483,12 @@ export class MuxAgent implements Agent {
           // output and are emitted periodically, so they would accumulate
           // unboundedly if the consumer is blocked on stdout backpressure.
           if (event.type !== "heartbeat") {
+            queuedEventCount += 1;
+            if (queuedEventCount > MAX_BUFFERED_CHAT_EVENTS) {
+              throw new Error(
+                `onChat buffer exceeded ${MAX_BUFFERED_CHAT_EVENTS} events for session ${sessionId}; likely ACP client backpressure`
+              );
+            }
             push(event);
           }
         }
@@ -1234,8 +1499,17 @@ export class MuxAgent implements Agent {
 
     // Forward buffered events as ACP session updates (may block on
     // stdout backpressure — that's fine, the queue absorbs the gap).
+    const forwardingIterable: AsyncIterable<WorkspaceChatMessage> = {
+      async *[Symbol.asyncIterator](): AsyncGenerator<WorkspaceChatMessage> {
+        for await (const queuedEvent of iterate()) {
+          queuedEventCount = Math.max(queuedEventCount - 1, 0);
+          yield queuedEvent;
+        }
+      },
+    };
+
     try {
-      await this.streamTranslator.consumeAndForward(sessionId, iterate());
+      await this.streamTranslator.consumeAndForward(sessionId, forwardingIterable);
     } finally {
       // Signal the drain loop to stop producing events (idempotent if
       // already ended).
@@ -1246,6 +1520,9 @@ export class MuxAgent implements Agent {
       // breaking the for-await loop and running its finally block.
       await chatIterator.return?.();
       await drainPromise;
+      if (this.chatIteratorsBySessionId.get(sessionId) === chatIterator) {
+        this.chatIteratorsBySessionId.delete(sessionId);
+      }
     }
 
     // If the stream ends without a terminal event (e.g., transient transport
@@ -1258,6 +1535,7 @@ export class MuxAgent implements Agent {
 
   private handleStreamEvent(sessionId: string, event: WorkspaceChatMessage): void {
     const isReplayEvent = (event as { replay?: boolean }).replay === true;
+    this.touchSession(sessionId);
 
     if (event.type === "usage-delta") {
       if (!this.isActiveTurnMessage(sessionId, event.messageId)) {
@@ -1417,16 +1695,28 @@ export class MuxAgent implements Agent {
     // Replay events from loadSession can include historical usage deltas; clear stale usage before
     // starting a fresh turn so prompt responses only reflect the in-flight request.
     this.latestUsageBySessionId.delete(sessionId);
+    this.touchSession(sessionId);
 
     const startedAtMs = Date.now();
     assert(Number.isFinite(startedAtMs), "beginTurn: startedAtMs must be finite");
 
     return new Promise<TurnResult>((resolve, reject) => {
+      const timeoutHandle = setTimeout(() => {
+        this.rejectTurn(
+          sessionId,
+          new Error(
+            `prompt turn timed out after ${this.turnCorrelationTimeoutMs}ms while waiting for terminal stream events`
+          )
+        );
+      }, this.turnCorrelationTimeoutMs);
+      timeoutHandle.unref?.();
+
       this.turnCompletions.set(sessionId, {
         resolve,
         reject,
         promptCorrelationId,
         startedAtMs,
+        timeoutHandle,
       });
     });
   }
@@ -1488,23 +1778,32 @@ export class MuxAgent implements Agent {
     );
   }
 
-  private resolveTurn(sessionId: string, result: TurnResult): void {
+  private takeTurnCompletion(sessionId: string): TurnCompletion | undefined {
     const completion = this.turnCompletions.get(sessionId);
+    if (!completion) {
+      return undefined;
+    }
+
+    this.turnCompletions.delete(sessionId);
+    clearTimeout(completion.timeoutHandle);
+    return completion;
+  }
+
+  private resolveTurn(sessionId: string, result: TurnResult): void {
+    const completion = this.takeTurnCompletion(sessionId);
     if (!completion) {
       return;
     }
 
-    this.turnCompletions.delete(sessionId);
     completion.resolve(result);
   }
 
   private rejectTurn(sessionId: string, error: Error): void {
-    const completion = this.turnCompletions.get(sessionId);
+    const completion = this.takeTurnCompletion(sessionId);
     if (!completion) {
       return;
     }
 
-    this.turnCompletions.delete(sessionId);
     completion.reject(error);
   }
 
@@ -1788,6 +2087,24 @@ function generateDefaultBranchName(): string {
   const timestamp = Date.now().toString(36);
   const randomSuffix = Math.random().toString(36).slice(2, 8);
   return `${DEFAULT_BRANCH_PREFIX}-${timestamp}-${randomSuffix}`;
+}
+
+function areOnChatModesEqual(left: OnChatMode | undefined, right: OnChatMode | undefined): boolean {
+  if (left == null || right == null) {
+    return left === right;
+  }
+
+  if (left.type !== right.type) {
+    return false;
+  }
+
+  if (left.type !== "since") {
+    return true;
+  }
+
+  assert(right.type === "since", "areOnChatModesEqual: right mode must be 'since'");
+
+  return JSON.stringify(left.cursor) === JSON.stringify(right.cursor);
 }
 
 interface ParsedPrompt {

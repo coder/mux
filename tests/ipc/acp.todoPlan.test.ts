@@ -379,6 +379,32 @@ describe("ACP tool call terminal state translation", () => {
     ]);
   });
 
+  it("drops session-scoped tool state when a session is explicitly cleared", async () => {
+    const { translator, sessionUpdates } = createHarness();
+
+    await forwardEventsForSession(translator, "session-1", [
+      makeToolCallStart("tool-clear-1", "bash", { cmd: "echo stale" }, "msg-clear"),
+    ]);
+    await forwardEventsForSession(translator, "session-2", [
+      makeToolCallStart("tool-clear-2", "bash", { cmd: "echo active" }, "msg-clear"),
+    ]);
+
+    translator.clearSession("session-1");
+
+    await forwardEventsForSession(translator, "session-1", [
+      makeStreamError("msg-clear", "session-1 failed", "provider_error"),
+    ]);
+    await forwardEventsForSession(translator, "session-2", [
+      makeStreamError("msg-clear", "session-2 failed", "provider_error"),
+    ]);
+
+    const session1Updates = sessionUpdates.filter((update) => update.sessionId === "session-1");
+    const session2Updates = sessionUpdates.filter((update) => update.sessionId === "session-2");
+
+    expect(getUpdateKinds(session1Updates)).toEqual(["tool_call"]);
+    expect(getUpdateKinds(session2Updates)).toEqual(["tool_call", "tool_call_update"]);
+  });
+
   it("keeps replayed input-available tool calls in progress until terminal events", async () => {
     const { translator, sessionUpdates } = createHarness();
 

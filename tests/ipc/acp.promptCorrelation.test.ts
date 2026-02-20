@@ -127,6 +127,7 @@ interface HarnessOptions {
   }) => Promise<{ success: boolean; data?: unknown; error?: unknown }>;
   /** Custom output WritableStream for simulating stdout backpressure. */
   acpOutputStream?: WritableStream<Uint8Array>;
+  agentOptions?: ConstructorParameters<typeof MuxAgent>[2];
 }
 
 function createHarness(options?: HarnessOptions): Harness {
@@ -241,7 +242,7 @@ function createHarness(options?: HarnessOptions): Harness {
 
   let agentInstance: MuxAgent | null = null;
   const connection = new AgentSideConnection((connectionToAgent) => {
-    const createdAgent = new MuxAgent(connectionToAgent, server);
+    const createdAgent = new MuxAgent(connectionToAgent, server, options?.agentOptions);
     agentInstance = createdAgent;
     return createdAgent;
   }, stream);
@@ -433,6 +434,44 @@ describe("ACP prompt stream correlation", () => {
       stopReason: "end_turn",
       usage: undefined,
     });
+
+    harness.closeConnection();
+    await harness.connectionClosed;
+  });
+
+  it("rejects prompt turns when terminal stream events never arrive", async () => {
+    const harness = createHarness({
+      agentOptions: {
+        turnCorrelationTimeoutMs: 50,
+      },
+    });
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    const newSessionResponse = await harness.agent.newSession({
+      cwd: "/repo/acp-go-sdk",
+      mcpServers: [],
+      _meta: {
+        trunkBranch: "main",
+      },
+    });
+
+    const promptPromise = harness.agent.prompt({
+      sessionId: newSessionResponse.sessionId,
+      prompt: [{ type: "text", text: "hello" }],
+    });
+
+    await waitForCondition(() => harness.sendMessageCalls.length === 1);
+
+    const timeoutGuard = new Promise<never>((_, reject) => {
+      setTimeout(
+        () => reject(new Error("Expected prompt turn timeout but prompt stayed pending")),
+        1_000
+      );
+    });
+
+    await expect(Promise.race([promptPromise, timeoutGuard])).rejects.toThrow(
+      "prompt turn timed out"
+    );
 
     harness.closeConnection();
     await harness.connectionClosed;

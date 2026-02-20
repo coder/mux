@@ -35,6 +35,8 @@ class TerminalWaitTimeoutError extends Error {
   }
 }
 
+const DEFAULT_EDITOR_FILE_TOOL_TIMEOUT_SECS = 30;
+
 const FILE_READ_TOOL_NAMES = new Set([
   "file_read",
   "file-read",
@@ -109,6 +111,15 @@ export class ToolRouter {
     });
   }
 
+  removeSession(sessionId: string): void {
+    assert(
+      typeof sessionId === "string" && sessionId.trim().length > 0,
+      "removeSession: sessionId must be non-empty"
+    );
+
+    this.sessionRouting.delete(sessionId);
+  }
+
   shouldDelegateToEditor(sessionId: string, toolName: string): boolean {
     const routing = this.sessionRouting.get(sessionId);
     if (routing == null) {
@@ -166,25 +177,36 @@ export class ToolRouter {
     }
 
     const normalizedToolName = normalizeToolName(toolName);
+    const fileToolTimeoutSecs =
+      isFilesystemTool(normalizedToolName) ||
+      isFileEditReplaceStringTool(normalizedToolName) ||
+      isFileEditInsertTool(normalizedToolName)
+        ? (getOptionalNumber(params, "timeout_secs", toolName) ??
+          DEFAULT_EDITOR_FILE_TOOL_TIMEOUT_SECS)
+        : undefined;
 
     if (isTypedReadTool(normalizedToolName)) {
-      return this.connection.readTextFile(
-        this.buildReadTextFileRequest(sessionId, params, toolName)
+      return withToolTimeout(
+        this.connection.readTextFile(this.buildReadTextFileRequest(sessionId, params, toolName)),
+        fileToolTimeoutSecs,
+        toolName
       );
     }
 
     if (isTypedWriteTool(normalizedToolName)) {
-      return this.connection.writeTextFile(
-        this.buildWriteTextFileRequest(sessionId, params, toolName)
+      return withToolTimeout(
+        this.connection.writeTextFile(this.buildWriteTextFileRequest(sessionId, params, toolName)),
+        fileToolTimeoutSecs,
+        toolName
       );
     }
 
     if (isFileEditReplaceStringTool(normalizedToolName)) {
-      return this.delegateFileEditReplaceString(sessionId, params, toolName);
+      return this.delegateFileEditReplaceString(sessionId, params, toolName, fileToolTimeoutSecs);
     }
 
     if (isFileEditInsertTool(normalizedToolName)) {
-      return this.delegateFileEditInsert(sessionId, params, toolName);
+      return this.delegateFileEditInsert(sessionId, params, toolName, fileToolTimeoutSecs);
     }
 
     if (isFilesystemTool(normalizedToolName)) {
@@ -328,14 +350,19 @@ export class ToolRouter {
   private async delegateFileEditReplaceString(
     sessionId: string,
     params: Record<string, unknown>,
-    toolName: string
+    toolName: string,
+    timeoutSecs: number | undefined
   ): Promise<unknown> {
     const path = getRequiredString(params, "path", toolName);
     const oldString = getRequiredString(params, "old_string", toolName);
     const newString = getRequiredString(params, "new_string", toolName);
     const replaceCount = getOptionalNumber(params, "replace_count", toolName);
 
-    const readResponse = await this.connection.readTextFile({ sessionId, path });
+    const readResponse = await withToolTimeout(
+      this.connection.readTextFile({ sessionId, path }),
+      timeoutSecs,
+      toolName
+    );
     const replaceResult = handleStringReplace(
       {
         path,
@@ -353,11 +380,15 @@ export class ToolRouter {
       };
     }
 
-    await this.connection.writeTextFile({
-      sessionId,
-      path,
-      content: replaceResult.newContent,
-    });
+    await withToolTimeout(
+      this.connection.writeTextFile({
+        sessionId,
+        path,
+        content: replaceResult.newContent,
+      }),
+      timeoutSecs,
+      toolName
+    );
 
     return {
       success: true,
@@ -368,7 +399,8 @@ export class ToolRouter {
   private async delegateFileEditInsert(
     sessionId: string,
     params: Record<string, unknown>,
-    toolName: string
+    toolName: string,
+    timeoutSecs: number | undefined
   ): Promise<unknown> {
     const path = getRequiredString(params, "path", toolName);
     const content = getRequiredString(params, "content", toolName);
@@ -377,7 +409,11 @@ export class ToolRouter {
 
     let existingContent: string;
     try {
-      const readResponse = await this.connection.readTextFile({ sessionId, path });
+      const readResponse = await withToolTimeout(
+        this.connection.readTextFile({ sessionId, path }),
+        timeoutSecs,
+        toolName
+      );
       existingContent = readResponse.content;
     } catch {
       if (insertBefore != null || insertAfter != null) {
@@ -387,7 +423,11 @@ export class ToolRouter {
         };
       }
 
-      await this.connection.writeTextFile({ sessionId, path, content });
+      await withToolTimeout(
+        this.connection.writeTextFile({ sessionId, path, content }),
+        timeoutSecs,
+        toolName
+      );
       return { success: true };
     }
 
@@ -428,11 +468,15 @@ export class ToolRouter {
     const updatedContent =
       existingContent.slice(0, insertIndex) + content + existingContent.slice(insertIndex);
 
-    await this.connection.writeTextFile({
-      sessionId,
-      path,
-      content: updatedContent,
-    });
+    await withToolTimeout(
+      this.connection.writeTextFile({
+        sessionId,
+        path,
+        content: updatedContent,
+      }),
+      timeoutSecs,
+      toolName
+    );
 
     return { success: true };
   }
@@ -700,6 +744,34 @@ function getOptionalEnvVariables(
   throw new Error(
     `ToolRouter: ${toolName} parameter '${key}' must be an array of entries or object map when provided`
   );
+}
+
+async function withToolTimeout<T>(
+  operationPromise: Promise<T>,
+  timeoutSecs: number | undefined,
+  toolName: string
+): Promise<T> {
+  if (timeoutSecs == null) {
+    return operationPromise;
+  }
+
+  assert(Number.isFinite(timeoutSecs) && timeoutSecs > 0, "tool timeoutSecs must be > 0");
+
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(new Error(`ToolRouter: ${toolName} timed out after ${timeoutSecs} seconds`));
+    }, timeoutSecs * 1000);
+    timeoutHandle.unref?.();
+  });
+
+  try {
+    return await Promise.race([operationPromise, timeoutPromise]);
+  } finally {
+    if (timeoutHandle != null) {
+      clearTimeout(timeoutHandle);
+    }
+  }
 }
 
 function buildBashTimeoutErrorMessage(timeoutSecs: number): string {
