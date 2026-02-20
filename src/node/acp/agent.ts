@@ -1551,6 +1551,9 @@ export class MuxAgent implements Agent {
       [Symbol.asyncIterator]: () => chatIterator,
     };
 
+    const isCurrentSubscription = (): boolean =>
+      this.isActiveChatSubscriptionToken(sessionId, subscriptionToken);
+
     const drainPromise = (async () => {
       try {
         for await (const event of chatIterable) {
@@ -1558,7 +1561,7 @@ export class MuxAgent implements Agent {
           // time out waiting for the old iterator to unwind. Guard each event
           // so stale streams cannot mutate active turn state after mode-switch
           // or reconnect replacement.
-          if (!this.isActiveChatSubscriptionToken(sessionId, subscriptionToken)) {
+          if (!isCurrentSubscription()) {
             break;
           }
 
@@ -1607,6 +1610,15 @@ export class MuxAgent implements Agent {
       async *[Symbol.asyncIterator](): AsyncGenerator<WorkspaceChatMessage> {
         for await (const queuedEvent of iterate()) {
           queuedEventCount = Math.max(queuedEventCount - 1, 0);
+
+          // If this subscription has been replaced, drop any buffered backlog
+          // from the stale stream so old replay/tool events cannot continue
+          // draining into session updates after mode-switch/reconnect.
+          if (!isCurrentSubscription()) {
+            queuedEventCount = 0;
+            break;
+          }
+
           yield queuedEvent;
         }
       },
