@@ -3,6 +3,7 @@ import type { Result } from "@/common/types/result";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
 import { getErrorMessage } from "@/common/utils/errors";
 import type { Config } from "@/node/config";
+import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
 
 const OPENAI_TRANSCRIPTION_URL = "https://api.openai.com/v1/audio/transcriptions";
@@ -29,7 +30,8 @@ interface MuxGatewayTranscriptionConfig {
 export class VoiceService {
   constructor(
     private readonly config: Config,
-    private readonly providerService?: ProviderService
+    private readonly providerService?: ProviderService,
+    private readonly policyService?: PolicyService
   ) {}
 
   /**
@@ -46,9 +48,15 @@ export class VoiceService {
       const openaiConfig = providersConfig.openai as OpenAITranscriptionConfig | undefined;
 
       const gatewayToken = gatewayConfig?.couponCode ?? gatewayConfig?.voucher;
-      const gatewayAvailable = !isProviderDisabledInConfig(gatewayConfig ?? {}) && !!gatewayToken;
+      const gatewayAvailable =
+        !isProviderDisabledInConfig(gatewayConfig ?? {}) &&
+        !!gatewayToken &&
+        (this.policyService?.isProviderAllowed("mux-gateway") ?? true);
       const openaiApiKey = openaiConfig?.apiKey;
-      const openaiAvailable = !isProviderDisabledInConfig(openaiConfig ?? {}) && !!openaiApiKey;
+      const openaiAvailable =
+        !isProviderDisabledInConfig(openaiConfig ?? {}) &&
+        !!openaiApiKey &&
+        (this.policyService?.isProviderAllowed("openai") ?? true);
 
       if (gatewayAvailable) {
         return await this.transcribeWithGateway(audioBase64, gatewayToken, gatewayConfig);
@@ -82,7 +90,10 @@ export class VoiceService {
     couponCode: string,
     gatewayConfig: MuxGatewayTranscriptionConfig | undefined
   ): Promise<Result<string, string>> {
-    const gatewayBase = this.resolveGatewayBase(gatewayConfig?.baseURL ?? gatewayConfig?.baseUrl);
+    const forcedBaseUrl = this.policyService?.getForcedBaseUrl("mux-gateway");
+    const gatewayBase = this.resolveGatewayBase(
+      forcedBaseUrl ?? gatewayConfig?.baseURL ?? gatewayConfig?.baseUrl
+    );
     const response = await fetch(`${gatewayBase}${MUX_GATEWAY_TRANSCRIPTION_PATH}`, {
       method: "POST",
       headers: {
