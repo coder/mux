@@ -12,8 +12,7 @@ import type { VoiceInputState } from "@/browser/hooks/useVoiceInput";
 
 interface VoiceInputButtonProps {
   state: VoiceInputState;
-  isApiKeySet: boolean;
-  isProviderEnabled: boolean;
+  isAvailable: boolean;
   shouldShowUI: boolean;
   requiresSecureContext: boolean;
   onToggle: () => void;
@@ -33,19 +32,16 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
   if (!props.shouldShowUI) return null;
 
   // Allow stop/cancel controls while actively recording or transcribing,
-  // even if the provider was disabled mid-session (e.g. from another window).
+  // even if voice input became unavailable mid-session (e.g. from another window).
   const isActiveSession = props.state === "recording" || props.state === "transcribing";
   const needsHttps = props.requiresSecureContext;
-  const providerDisabled = !needsHttps && !props.isProviderEnabled;
-  const needsApiKey = !needsHttps && !providerDisabled && !props.isApiKeySet;
-  const isDisabled = !isActiveSession && (needsHttps || providerDisabled || needsApiKey);
+  const notConfigured = !needsHttps && !props.isAvailable;
+  const isDisabled = !isActiveSession && (needsHttps || notConfigured);
 
   const label = isDisabled
     ? needsHttps
       ? "Voice input (requires HTTPS)"
-      : providerDisabled
-        ? "Voice input (OpenAI provider disabled)"
-        : "Voice input (requires OpenAI API key)"
+      : "Voice input (not configured)"
     : props.state === "recording"
       ? "Stop recording"
       : props.state === "transcribing"
@@ -88,15 +84,9 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
             <br />
             Use HTTPS or access via localhost.
           </>
-        ) : providerDisabled ? (
+        ) : notConfigured ? (
           <>
-            Voice input is disabled because OpenAI provider is turned off.
-            <br />
-            Enable OpenAI in Settings → Providers.
-          </>
-        ) : needsApiKey ? (
-          <>
-            Voice input requires OpenAI API key.
+            Voice input requires a Mux Gateway login or an OpenAI API key.
             <br />
             Configure in Settings → Providers.
           </>

@@ -99,6 +99,35 @@ describe("VoiceService.transcribe", () => {
     });
   });
 
+  it("preserves reverse-proxy path prefix from gateway baseURL", async () => {
+    await withTempConfig(async (config, service) => {
+      config.saveProvidersConfig({
+        "mux-gateway": {
+          couponCode: "gateway-token",
+          baseURL: "https://proxy.example.com/gateway/api/v1/ai-gateway/v1/ai",
+        },
+      });
+
+      const fetchSpy = spyOn(globalThis, "fetch");
+      fetchSpy.mockResolvedValue(new Response("transcribed text"));
+
+      try {
+        const result = await service.transcribe("Zm9v");
+
+        expect(result).toEqual({ success: true, data: "transcribed text" });
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+        const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit | undefined];
+        expect(url).toBe("https://proxy.example.com/gateway/api/v1/openai/v1/audio/transcriptions");
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer gateway-token",
+        });
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+  });
+
   it("prefers gateway over OpenAI when both are configured", async () => {
     await withTempConfig(async (config, service) => {
       config.saveProvidersConfig({

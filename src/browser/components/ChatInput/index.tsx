@@ -2446,8 +2446,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 <div className="absolute right-2 bottom-2">
                   <VoiceInputButton
                     state={voiceInput.state}
-                    isApiKeySet={voiceInput.isAvailable}
-                    isProviderEnabled={voiceInput.isAvailable}
+                    isAvailable={voiceInput.isAvailable}
                     shouldShowUI={voiceInput.shouldShowUI}
                     requiresSecureContext={voiceInput.requiresSecureContext}
                     onToggle={voiceInput.toggle}

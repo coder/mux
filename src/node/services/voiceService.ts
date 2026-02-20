@@ -82,8 +82,8 @@ export class VoiceService {
     couponCode: string,
     gatewayConfig: MuxGatewayTranscriptionConfig | undefined
   ): Promise<Result<string, string>> {
-    const gatewayOrigin = this.resolveOrigin(gatewayConfig?.baseURL ?? gatewayConfig?.baseUrl);
-    const response = await fetch(`${gatewayOrigin}${MUX_GATEWAY_TRANSCRIPTION_PATH}`, {
+    const gatewayBase = this.resolveGatewayBase(gatewayConfig?.baseURL ?? gatewayConfig?.baseUrl);
+    const response = await fetch(`${gatewayBase}${MUX_GATEWAY_TRANSCRIPTION_PATH}`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${couponCode}`,
@@ -128,13 +128,20 @@ export class VoiceService {
     return { success: true, data: text };
   }
 
-  private resolveOrigin(baseURL: string | undefined): string {
+  private resolveGatewayBase(baseURL: string | undefined): string {
     if (!baseURL) {
       return MUX_GATEWAY_ORIGIN;
     }
 
     try {
-      return new URL(baseURL).origin;
+      const url = new URL(baseURL);
+      const apiIdx = url.pathname.indexOf("/api/v1/");
+      if (apiIdx > 0) {
+        // Preserve any reverse-proxy path prefix before /api/v1/.
+        return `${url.origin}${url.pathname.slice(0, apiIdx)}`;
+      }
+
+      return url.origin;
     } catch {
       return MUX_GATEWAY_ORIGIN;
     }
