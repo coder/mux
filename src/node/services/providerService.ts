@@ -60,7 +60,12 @@ export class ProviderService {
     return () => this.emitter.off("configChanged", callback);
   }
 
-  private emitConfigChanged(): void {
+  /**
+   * Notify subscribers that provider-relevant config has changed.
+   * Called internally on provider config edits, and externally when
+   * main config changes affect provider availability (e.g. muxGatewayEnabled).
+   */
+  notifyConfigChanged(): void {
     this.emitter.emit("configChanged");
   }
 
@@ -234,7 +239,7 @@ export class ProviderService {
 
       providersConfig[provider].models = normalizedModels;
       this.config.saveProvidersConfig(providersConfig);
-      this.emitConfigChanged();
+      this.notifyConfigChanged();
 
       return { success: true, data: undefined };
     } catch (error) {
@@ -301,7 +306,7 @@ export class ProviderService {
 
       // Save updated config
       this.config.saveProvidersConfig(providersConfig);
-      this.emitConfigChanged();
+      this.notifyConfigChanged();
 
       return { success: true, data: undefined };
     } catch (error) {
@@ -385,7 +390,7 @@ export class ProviderService {
 
       // Save updated config
       this.config.saveProvidersConfig(providersConfig);
-      this.emitConfigChanged();
+      this.notifyConfigChanged();
 
       return { success: true, data: undefined };
     } catch (error) {

@@ -615,6 +615,9 @@ export const router = (authToken?: string) => {
               muxGatewayModels: nextModels.length > 0 ? nextModels : undefined,
             };
           });
+          // Notify provider config subscribers so frontend updates
+          // voice input availability when gateway toggle changes.
+          context.providerService.notifyConfigChanged();
         }),
       updateModelPreferences: t
         .input(schemas.config.updateModelPreferences.input)
