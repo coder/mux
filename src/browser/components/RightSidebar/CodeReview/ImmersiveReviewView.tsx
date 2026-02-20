@@ -314,6 +314,7 @@ function findReviewHunkId(review: Review, fileHunks: DiffHunk[]): string | null 
 
 export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const notesSidebarRef = useRef<HTMLDivElement>(null);
   const hunkJumpRef = useRef(false);
   const { api } = useAPI();
 
@@ -504,11 +505,34 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const [scrollNonce, setScrollNonce] = useState(0);
   const [boundaryToast, setBoundaryToast] = useState<string | null>(null);
 
+  // Which panel has keyboard focus while in immersive mode.
+  const [focusedPanel, setFocusedPanel] = useState<"diff" | "notes">("diff");
+  const [focusedNoteIndex, setFocusedNoteIndex] = useState(0);
+
   useEffect(() => {
     if (!boundaryToast) return;
     const timer = setTimeout(() => setBoundaryToast(null), 2500);
     return () => clearTimeout(timer);
   }, [boundaryToast]);
+
+  useEffect(() => {
+    if (focusedNoteIndex < allReviews.length) {
+      return;
+    }
+
+    setFocusedNoteIndex(Math.max(0, allReviews.length - 1));
+  }, [allReviews.length, focusedNoteIndex]);
+
+  useEffect(() => {
+    if (focusedPanel !== "notes") {
+      return;
+    }
+
+    const noteEl = notesSidebarRef.current?.querySelector<HTMLElement>(
+      `[data-note-index="${focusedNoteIndex}"]`
+    );
+    noteEl?.scrollIntoView({ block: "nearest", behavior: "auto" });
+  }, [focusedPanel, focusedNoteIndex]);
 
   useEffect(() => {
     if (!inlineComposerRequest) {
@@ -762,6 +786,75 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   // --- Keyboard handler ---
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Tab: toggle between diff and notes panels.
+      if (matchesKeybind(e, KEYBINDS.REVIEW_FOCUS_NOTES)) {
+        e.preventDefault();
+        if (focusedPanel === "diff") {
+          if (allReviews.length > 0) {
+            setFocusedPanel("notes");
+          }
+        } else {
+          setFocusedPanel("diff");
+          containerRef.current?.focus();
+        }
+        return;
+      }
+
+      // --- Notes sidebar keyboard mode ---
+      if (focusedPanel === "notes") {
+        // Don't intercept when typing in editable elements.
+        if (isEditableElement(e.target)) return;
+
+        // Esc: return to diff panel (not exit immersive).
+        if (matchesKeybind(e, KEYBINDS.CANCEL)) {
+          e.preventDefault();
+          setFocusedPanel("diff");
+          containerRef.current?.focus();
+          return;
+        }
+
+        // J / ArrowDown: next note.
+        if (e.key === "j" || e.key === "ArrowDown") {
+          e.preventDefault();
+          const maxNoteIndex = Math.max(0, allReviews.length - 1);
+          setFocusedNoteIndex((previousIndex) => Math.min(maxNoteIndex, previousIndex + 1));
+          return;
+        }
+
+        // K / ArrowUp: previous note.
+        if (e.key === "k" || e.key === "ArrowUp") {
+          e.preventDefault();
+          setFocusedNoteIndex((previousIndex) => Math.max(0, previousIndex - 1));
+          return;
+        }
+
+        // Enter: navigate to focused note in diff and return to diff panel.
+        if (e.key === "Enter") {
+          e.preventDefault();
+          const note = allReviews[focusedNoteIndex];
+          if (note) {
+            navigateToReview(note);
+            setFocusedPanel("diff");
+            containerRef.current?.focus();
+          }
+          return;
+        }
+
+        // Backspace/Delete: delete focused note.
+        if (e.key === "Backspace" || e.key === "Delete") {
+          e.preventDefault();
+          const note = allReviews[focusedNoteIndex];
+          if (note && props.reviewActions?.onDelete) {
+            props.reviewActions.onDelete(note.id);
+          }
+          return;
+        }
+
+        // Swallow all other keys in notes mode so diff shortcuts do not fire.
+        return;
+      }
+
+      // --- Diff panel keyboard mode ---
       // Don't intercept when typing in editable elements
       if (isEditableElement(e.target)) return;
 
@@ -849,6 +942,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
+    focusedPanel,
+    allReviews,
+    focusedNoteIndex,
+    navigateToReview,
+    props.reviewActions,
     onExit,
     navigateFile,
     navigateHunk,
@@ -1081,13 +1179,20 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
         <aside className="border-border-light bg-dark flex w-[280px] min-w-[280px] flex-col border-l">
           <div className="border-border-light flex items-center justify-between border-b px-3 py-2">
-            <h2 className="text-foreground text-xs font-medium">Notes</h2>
+            <h2
+              className={cn(
+                "text-foreground text-xs font-medium",
+                focusedPanel === "notes" && "text-[var(--color-review-accent)]"
+              )}
+            >
+              Notes
+            </h2>
             <span className="bg-muted/20 text-muted rounded px-1.5 py-0.5 font-mono text-[10px]">
               {allReviews.length}
             </span>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+          <div ref={notesSidebarRef} className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
             {allReviews.length === 0 ? (
               <div className="text-muted flex h-full flex-col items-center justify-center text-center text-xs">
                 <p>No notes yet</p>
@@ -1095,7 +1200,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
               </div>
             ) : (
               <div className="space-y-1.5">
-                {allReviews.map((review) => {
+                {allReviews.map((review, noteIndex) => {
                   const isDislike = review.data.userNote
                     .trimStart()
                     .startsWith(DISLIKE_NOTE_PREFIX);
@@ -1108,9 +1213,13 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                       key={review.id}
                       role="button"
                       tabIndex={0}
+                      data-note-index={noteIndex}
                       className={cn(
                         "group/review-item border-border-light hover:bg-muted/10 focus-visible:ring-primary/40 flex w-full cursor-pointer overflow-hidden rounded border text-left outline-none transition-colors focus-visible:ring-2",
-                        isActiveFileReview && "bg-muted/10"
+                        isActiveFileReview && "bg-muted/10",
+                        focusedPanel === "notes" &&
+                          noteIndex === focusedNoteIndex &&
+                          "ring-2 ring-[var(--color-review-accent)]/40 bg-muted/10"
                       )}
                       onClick={() => navigateToReview(review)}
                       onKeyDown={(event) => {
@@ -1197,6 +1306,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         <KeycapGroup keys={["⇧C"]} label="comment" />
         <KeycapGroup keys={["⇧L", "⇧D"]} label="like / dislike" />
         <KeycapGroup keys={["Enter"]} label="submit" />
+        <KeycapGroup keys={["Tab"]} label="notes" />
       </div>
     </div>
   );

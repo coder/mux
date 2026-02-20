@@ -71,6 +71,7 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   REVIEW_QUICK_LIKE: "Quick like (immersive)",
   REVIEW_QUICK_DISLIKE: "Quick dislike (immersive)",
   REVIEW_COMMENT: "Add comment (immersive)",
+  REVIEW_FOCUS_NOTES: "Focus notes sidebar (immersive)",
   // Easter egg keybind; intentionally omitted from KEYBIND_GROUPS.
   TOGGLE_POWER_MODE: "",
 };
@@ -164,6 +165,7 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
       "REVIEW_QUICK_LIKE",
       "REVIEW_QUICK_DISLIKE",
       "REVIEW_COMMENT",
+      "REVIEW_FOCUS_NOTES",
     ],
   },
   {

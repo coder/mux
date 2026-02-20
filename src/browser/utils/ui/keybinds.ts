@@ -459,6 +459,9 @@ export const KEYBINDS = {
   /** Add comment in immersive review */
   REVIEW_COMMENT: { key: "c", shift: true },
 
+  /** Toggle focus between diff and notes sidebar in immersive review */
+  REVIEW_FOCUS_NOTES: { key: "Tab" },
+
   TOGGLE_POWER_MODE: { key: "F12", shift: true },
 } as const;
 
