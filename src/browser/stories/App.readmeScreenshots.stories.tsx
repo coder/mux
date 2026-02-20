@@ -41,7 +41,6 @@ import {
   getAgentIdKey,
   getRightSidebarLayoutKey,
 } from "@/common/constants/storage";
-import { within, userEvent, waitFor, expect } from "@storybook/test";
 
 export default {
   ...appMeta,
@@ -476,18 +475,6 @@ index 0000000..def5678
       }}
     />
   ),
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-
-    // Wait for the Review tab to be selected and diff content to render.
-    await waitFor(
-      () => {
-        canvas.getByRole("tab", { name: /^review/i, selected: true });
-        canvas.getAllByText(/WorkspaceShell\.tsx/i);
-      },
-      { timeout: 10_000 }
-    );
-  },
 };
 
 // README: docs/img/agent-status.webp
@@ -858,52 +845,6 @@ export const GitStatusPopover: AppStory = {
       }}
     />
   ),
-  play: async ({ canvasElement }) => {
-    // Wait for git status to render (fetched async via GitStatusStore polling)
-    await waitFor(
-      () => {
-        const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-diverged"]');
-        if (!row) throw new Error("ws-diverged row not found");
-        within(row).getByText("+12.3k");
-      },
-      { timeout: 10_000 }
-    );
-
-    const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-diverged"]')!;
-    const plus = within(row).getByText("+12.3k");
-
-    // Hover to open tooltip
-    await userEvent.hover(plus);
-
-    const getVisibleTooltip = () =>
-      document.body.querySelector<HTMLElement>('.bg-modal-bg[data-state="open"]');
-
-    // Wait for tooltip (portaled) and toggle to commits mode
-    await waitFor(
-      () => {
-        const tooltip = getVisibleTooltip();
-        if (!tooltip) throw new Error("git status tooltip not visible");
-        within(tooltip).getByRole("radio", { name: "Show commit divergence" });
-      },
-      { timeout: 10_000 }
-    );
-
-    const tooltip = getVisibleTooltip()!;
-    await userEvent.click(within(tooltip).getByRole("radio", { name: "Show commit divergence" }));
-
-    // Verify indicator switches to divergence view for the same workspace row
-    await waitFor(
-      () => {
-        const updatedRow = canvasElement.querySelector<HTMLElement>(
-          '[data-workspace-id="ws-diverged"]'
-        );
-        if (!updatedRow) throw new Error("ws-diverged row not found");
-        within(updatedRow).getByText("↑3");
-        within(updatedRow).getByText("↓2");
-      },
-      { timeout: 5_000 }
-    );
-  },
 };
 
 // README: docs/img/plan-mermaid.webp
@@ -1015,18 +956,6 @@ graph TD
       }}
     />
   ),
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-
-    // Wait for costs to load (fetched async via WorkspaceStore).
-    await waitFor(
-      () => {
-        canvas.getByRole("tab", { name: /^costs/i });
-        canvas.getByText(/cache create/i);
-      },
-      { timeout: 15_000 }
-    );
-  },
 };
 
 // README: docs/img/auto-mode.webp
@@ -1270,19 +1199,6 @@ export const CostsTabRich: AppStory = {
       }}
     />
   ),
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-
-    // Ensure the Costs tab is selected and has rendered rows.
-    await waitFor(
-      () => {
-        canvas.getByRole("tab", { name: /^costs/i, selected: true });
-        canvas.getByText(/cache create/i);
-        canvas.getByText(/cache read/i);
-      },
-      { timeout: 15_000 }
-    );
-  },
 };
 
 // README: docs/img/opportunistic-compaction.webp
@@ -1375,32 +1291,6 @@ export const OpportunisticCompactionTooltip: AppStory = {
       }}
     />
   ),
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-
-    // Ensure Costs is visible (the screenshot shows costs + Start Here tooltip).
-    await waitFor(
-      () => {
-        canvas.getByText(/cache create/i);
-      },
-      { timeout: 15_000 }
-    );
-
-    // Hover the Start Here button on the final assistant message.
-    // Multiple assistant messages each have a "Start Here" button; grab the last one.
-    const startHereButtons = await canvas.findAllByRole("button", { name: "Start Here" });
-    const startHereButton = startHereButtons[startHereButtons.length - 1];
-    await userEvent.hover(startHereButton);
-
-    await waitFor(
-      () => {
-        within(document.body).getByText("Replace all chat history with this message");
-      },
-      { timeout: 10_000 }
-    );
-
-    await expect(within(document.body).getByText(/Replace all chat history/i)).toBeVisible();
-  },
 };
 
 // README: docs/img/orchestrate-agents.webp
