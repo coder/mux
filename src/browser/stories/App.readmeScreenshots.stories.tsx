@@ -46,6 +46,9 @@ import { within, userEvent, waitFor, expect } from "@storybook/test";
 export default {
   ...appMeta,
   title: "Docs/README Screenshots",
+  // README screenshot stories are validated by the dedicated Playwright capture script.
+  // Skip Storybook interaction tests here to avoid portal/hover flake in cloud browsers.
+  tags: ["!test"],
   decorators: [
     (Story: () => JSX.Element) => (
       <div style={{ width: 1900, height: "100dvh", position: "relative" }}>
