@@ -1430,6 +1430,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
               fileTree={fileTree}
               hunks={filteredHunks}
               allHunks={hunks}
+              isLoading={diffState.status === "loading" || isLoadingTree}
               isRead={isRead}
               onToggleRead={handleToggleRead}
               selectedHunkId={selectedHunkId}

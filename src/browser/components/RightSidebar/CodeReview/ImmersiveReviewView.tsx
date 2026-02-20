@@ -43,6 +43,8 @@ interface ImmersiveReviewViewProps {
   hunks: DiffHunk[];
   /** All hunks (unfiltered, for context) */
   allHunks: DiffHunk[];
+  /** True while diff/tree payload for this workspace is still loading. */
+  isLoading?: boolean;
   isRead: (hunkId: string) => boolean;
   onToggleRead: (hunkId: string) => void;
   selectedHunkId: string | null;
@@ -692,6 +694,18 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     [getCurrentLineSelection, selectedHunk, selectedHunkRange]
   );
 
+  const handleReviewNoteSubmit = useCallback(
+    (data: ReviewNoteData) => {
+      onReviewNote?.(data);
+      // DiffRenderer clears its internal selection after submit, but immersive mode may
+      // still keep an external selection request active. Clear it to close the composer
+      // and prevent accidental duplicate submissions on repeated Enter presses.
+      setInlineComposerRequest(null);
+      containerRef.current?.focus();
+    },
+    [onReviewNote]
+  );
+
   const moveLineCursor = useCallback(
     (delta: number, extendRange: boolean) => {
       const lineCount = overlayData.lineHunkIds.length;
@@ -859,6 +873,14 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       highlightedLineElementRef.current = null;
     }
 
+    // When overlay content structure changes (fallback hunks -> full-file view),
+    // defer scrolling until the selected-hunk effect has recalculated activeLineIndex
+    // against the new line map. This prevents a transient jump to an old index.
+    if (contentChanged) {
+      hunkJumpRef.current = true;
+      return;
+    }
+
     if (activeLineIndex === null) {
       return;
     }
@@ -874,9 +896,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     lineElement.style.outlineOffset = "-1px";
     highlightedLineElementRef.current = lineElement;
 
-    // Re-center when content changes (e.g. full file content loaded after initial
-    // fallback-hunk render) to prevent the target hunk from jumping to the viewport edge.
-    const block = hunkJumpRef.current || contentChanged ? "center" : "nearest";
+    const block = hunkJumpRef.current ? "center" : "nearest";
     hunkJumpRef.current = false;
 
     lineElement.scrollIntoView({ behavior: "auto", block });
@@ -1027,7 +1047,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       {/* Unified whole-file diff with hunk overlays + notes sidebar */}
       <div className="flex min-h-0 flex-1">
         <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-3">
-          {currentFileHunks.length === 0 ? (
+          {props.isLoading && currentFileHunks.length === 0 ? (
+            <div className="text-muted flex items-center justify-center py-12 text-sm">
+              <span className="animate-pulse">Loading diff...</span>
+            </div>
+          ) : currentFileHunks.length === 0 ? (
             <div className="text-muted flex items-center justify-center py-12 text-sm">
               {activeFilePath ? "No hunks for this file" : "No files to review"}
             </div>
@@ -1044,7 +1068,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                 fontSize="11px"
                 maxHeight="none"
                 className="rounded-none border-0 [&>div]:overflow-x-visible"
-                onReviewNote={onReviewNote}
+                onReviewNote={handleReviewNoteSubmit}
                 reviewActions={props.reviewActions}
                 enableHighlighting={shouldEnableHighlighting}
                 selectedLineRange={selectedLineRange}
