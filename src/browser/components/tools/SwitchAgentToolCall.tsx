@@ -47,6 +47,12 @@ export const SwitchAgentToolCall: React.FC<SwitchAgentToolCallProps> = ({
   const statusDisplay = getStatusDisplay(status);
   const targetAgentLabel = formatAgentIdLabel(args.agentId);
   const targetAgentColorClass = getAgentTextColorClass(args.agentId);
+  const handoffLabel =
+    status === "completed"
+      ? "Switched to"
+      : status === "executing" || status === "pending"
+        ? "Delegating to"
+        : "Switch to";
 
   // followUp is intentionally omitted from this tool card because it is
   // already injected as the synthetic follow-up message in the transcript.
@@ -56,7 +62,7 @@ export const SwitchAgentToolCall: React.FC<SwitchAgentToolCallProps> = ({
         {hasReason && <ExpandIcon expanded={expanded}>▶</ExpandIcon>}
         <ToolIcon toolName="switch_agent" />
         <span className="text-muted-foreground italic">
-          → <span className={targetAgentColorClass}>{targetAgentLabel}</span>
+          {handoffLabel}: <span className={targetAgentColorClass}>{targetAgentLabel}</span>
         </span>
         <StatusIndicator status={status}>{statusDisplay}</StatusIndicator>
       </ToolHeader>
