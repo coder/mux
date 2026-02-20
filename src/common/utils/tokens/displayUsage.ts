@@ -103,3 +103,53 @@ export function createDisplayUsage(
     model, // Include model for display purposes
   };
 }
+
+/**
+ * Recompute cost_usd values in an existing ChatUsageDisplay using updated model pricing.
+ *
+ * Used when provider config changes (e.g., model mapping updated) to refresh
+ * persisted session cost aggregates without discarding the raw token counts.
+ */
+export function recomputeUsageCosts(
+  usage: ChatUsageDisplay,
+  metadataModel: string
+): ChatUsageDisplay {
+  const modelStats = getModelStats(metadataModel);
+
+  if (!modelStats) {
+    // Unknown model — strip costs and flag as unknown
+    return {
+      input: { tokens: usage.input.tokens },
+      cached: { tokens: usage.cached.tokens },
+      cacheCreate: { tokens: usage.cacheCreate.tokens },
+      output: { tokens: usage.output.tokens },
+      reasoning: { tokens: usage.reasoning.tokens },
+      model: usage.model,
+      hasUnknownCosts: true,
+    };
+  }
+
+  return {
+    input: {
+      tokens: usage.input.tokens,
+      cost_usd: usage.input.tokens * modelStats.input_cost_per_token,
+    },
+    cached: {
+      tokens: usage.cached.tokens,
+      cost_usd: usage.cached.tokens * (modelStats.cache_read_input_token_cost ?? 0),
+    },
+    cacheCreate: {
+      tokens: usage.cacheCreate.tokens,
+      cost_usd: usage.cacheCreate.tokens * (modelStats.cache_creation_input_token_cost ?? 0),
+    },
+    output: {
+      tokens: usage.output.tokens,
+      cost_usd: usage.output.tokens * modelStats.output_cost_per_token,
+    },
+    reasoning: {
+      tokens: usage.reasoning.tokens,
+      cost_usd: usage.reasoning.tokens * modelStats.output_cost_per_token,
+    },
+    model: usage.model,
+  };
+}

@@ -38,7 +38,7 @@ import type {
   RuntimeStatusEvent,
 } from "@/common/types/stream";
 import { MapStore } from "./MapStore";
-import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
+import { createDisplayUsage, recomputeUsageCosts } from "@/common/utils/tokens/displayUsage";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { isDurableCompactionBoundaryMarker } from "@/common/utils/messages/compactionBoundary";
 import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
@@ -856,6 +856,17 @@ export class WorkspaceStore {
         this.consumerManager.invalidateAll();
         for (const [, usage] of this.sessionUsage) {
           usage.tokenStatsCache = undefined;
+
+          // Recompute persisted cost aggregates so session totals and
+          // last-request costs reflect the new model mapping immediately.
+          for (const [model, entry] of Object.entries(usage.byModel)) {
+            const resolved = resolveModelForMetadata(model, config);
+            usage.byModel[model] = recomputeUsageCosts(entry, resolved);
+          }
+          if (usage.lastRequest) {
+            const resolved = resolveModelForMetadata(usage.lastRequest.model, config);
+            usage.lastRequest.usage = recomputeUsageCosts(usage.lastRequest.usage, resolved);
+          }
         }
       }
     } catch {
@@ -1899,7 +1910,15 @@ export class WorkspaceStore {
       return false;
     }
 
-    if (tokenStatsCache.providersConfigVersion !== this.providersConfigFingerprint) {
+    // Skip fingerprint validation until provider config has actually loaded.
+    // Before the first successful getConfig() call, the fingerprint is a hash of
+    // the empty/null config and would incorrectly reject valid on-disk caches.
+    // Once config loads, any fingerprint mismatch will trigger full invalidation
+    // in refreshProvidersConfig().
+    if (
+      this.providersConfig != null &&
+      tokenStatsCache.providersConfigVersion !== this.providersConfigFingerprint
+    ) {
       return false;
     }
 
