@@ -477,6 +477,84 @@ describe("ACP prompt stream correlation", () => {
     await harness.connectionClosed;
   });
 
+  it("keeps prompt turn alive while correlated stream activity continues", async () => {
+    const harness = createHarness({
+      agentOptions: {
+        turnCorrelationTimeoutMs: 100,
+      },
+    });
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    const newSessionResponse = await harness.agent.newSession({
+      cwd: "/repo/acp-go-sdk",
+      mcpServers: [],
+      _meta: {
+        trunkBranch: "main",
+      },
+    });
+
+    const promptPromise = harness.agent.prompt({
+      sessionId: newSessionResponse.sessionId,
+      prompt: [{ type: "text", text: "hello" }],
+    });
+
+    await waitForCondition(() => harness.sendMessageCalls.length === 1);
+
+    const firstSend = harness.sendMessageCalls[0];
+    const muxMetadata = firstSend.options["muxMetadata"];
+    if (!isRecord(muxMetadata)) {
+      throw new Error("Expected prompt send options to include muxMetadata record");
+    }
+
+    const promptCorrelationId = muxMetadata["acpPromptId"];
+    if (typeof promptCorrelationId !== "string") {
+      throw new Error("Expected prompt send options to include acpPromptId");
+    }
+
+    harness.pushChatEvent({
+      type: "stream-start",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-target",
+      model: "anthropic:claude-sonnet-4-5",
+      historySequence: 3,
+      startTime: Date.now(),
+      acpPromptId: promptCorrelationId,
+    } as WorkspaceChatMessage);
+
+    // Keep the stream active for longer than turnCorrelationTimeoutMs to prove
+    // timeout is inactivity-based (not a fixed wall-clock timer).
+    for (let i = 0; i < 4; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      harness.pushChatEvent({
+        type: "stream-delta",
+        workspaceId: newSessionResponse.sessionId,
+        messageId: "assistant-target",
+        delta: `chunk-${i} `,
+        tokens: 1,
+        timestamp: Date.now(),
+      } as WorkspaceChatMessage);
+    }
+
+    harness.pushChatEvent({
+      type: "stream-end",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-target",
+      acpPromptId: promptCorrelationId,
+      metadata: {
+        model: "anthropic:claude-sonnet-4-5",
+      },
+      parts: [],
+    } as WorkspaceChatMessage);
+
+    await expect(promptPromise).resolves.toEqual({
+      stopReason: "end_turn",
+      usage: undefined,
+    });
+
+    harness.closeConnection();
+    await harness.connectionClosed;
+  });
+
   it("completes prompt turns from live stream events when acpPromptId is missing", async () => {
     const harness = createHarness();
     await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });

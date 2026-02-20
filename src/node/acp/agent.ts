@@ -113,7 +113,7 @@ interface TurnCompletion {
   promptCorrelationId: string;
   /** Monotonic wall-clock when prompt() registered this turn. */
   startedAtMs: number;
-  /** Guard timer so missing terminal events cannot hang a prompt forever. */
+  /** Inactivity timer so idle prompt turns cannot hang forever. */
   timeoutHandle: ReturnType<typeof setTimeout>;
   /** Set after stream-start; only this message id may resolve/reject the turn. */
   messageId?: string;
@@ -1579,6 +1579,8 @@ export class MuxAgent implements Agent {
     const isReplayEvent = (event as { replay?: boolean }).replay === true;
     this.touchSession(sessionId);
 
+    this.refreshTurnInactivityTimeoutFromEvent(sessionId, event);
+
     if (event.type === "usage-delta") {
       if (!this.isActiveTurnMessage(sessionId, event.messageId)) {
         return;
@@ -1615,6 +1617,10 @@ export class MuxAgent implements Agent {
               turnStartedAtMs: completion.startedAtMs,
             }
           );
+          // Fallback stream-start lacks acpPromptId, so generic correlation
+          // refresh cannot observe it. Refresh timeout explicitly when we
+          // accept this start event for the active prompt.
+          this.resetTurnInactivityTimeout(sessionId);
         }
 
         // Fallback rationale: some runtimes can occasionally omit acpPromptId on
@@ -1724,6 +1730,73 @@ export class MuxAgent implements Agent {
     }
   }
 
+  private createTurnInactivityTimeoutHandle(
+    sessionId: string,
+    promptCorrelationId: string
+  ): ReturnType<typeof setTimeout> {
+    const timeoutHandle = setTimeout(() => {
+      const completion = this.turnCompletions.get(sessionId);
+      if (completion?.promptCorrelationId !== promptCorrelationId) {
+        return;
+      }
+
+      const timeoutPhase =
+        completion.messageId == null ? "before stream correlation" : "after stream correlation";
+      this.rejectTurn(
+        sessionId,
+        new Error(
+          `prompt turn timed out after ${this.turnCorrelationTimeoutMs}ms of inactivity (${timeoutPhase})`
+        )
+      );
+    }, this.turnCorrelationTimeoutMs);
+    timeoutHandle.unref?.();
+    return timeoutHandle;
+  }
+
+  private resetTurnInactivityTimeout(sessionId: string): void {
+    const completion = this.turnCompletions.get(sessionId);
+    if (completion == null) {
+      return;
+    }
+
+    clearTimeout(completion.timeoutHandle);
+    completion.timeoutHandle = this.createTurnInactivityTimeoutHandle(
+      sessionId,
+      completion.promptCorrelationId
+    );
+  }
+
+  private refreshTurnInactivityTimeoutFromEvent(
+    sessionId: string,
+    event: WorkspaceChatMessage
+  ): void {
+    const completion = this.turnCompletions.get(sessionId);
+    if (completion == null) {
+      return;
+    }
+
+    const maybeMessageId = (event as { messageId?: unknown }).messageId;
+    const eventMessageId = typeof maybeMessageId === "string" ? maybeMessageId : undefined;
+    const maybePromptCorrelationId = (event as { acpPromptId?: unknown }).acpPromptId;
+    const eventPromptCorrelationId =
+      typeof maybePromptCorrelationId === "string" ? maybePromptCorrelationId : undefined;
+
+    if (completion.messageId != null) {
+      const hasMatchingMessageId = eventMessageId === completion.messageId;
+      const hasEmptyMessageIdWithMatchingCorrelation =
+        (eventMessageId?.trim().length ?? -1) === 0 &&
+        eventPromptCorrelationId === completion.promptCorrelationId;
+      if (hasMatchingMessageId || hasEmptyMessageIdWithMatchingCorrelation) {
+        this.resetTurnInactivityTimeout(sessionId);
+      }
+      return;
+    }
+
+    if (eventPromptCorrelationId === completion.promptCorrelationId) {
+      this.resetTurnInactivityTimeout(sessionId);
+    }
+  }
+
   private beginTurn(sessionId: string, promptCorrelationId: string): Promise<TurnResult> {
     assert(
       !this.turnCompletions.has(sessionId),
@@ -1743,15 +1816,7 @@ export class MuxAgent implements Agent {
     assert(Number.isFinite(startedAtMs), "beginTurn: startedAtMs must be finite");
 
     return new Promise<TurnResult>((resolve, reject) => {
-      const timeoutHandle = setTimeout(() => {
-        this.rejectTurn(
-          sessionId,
-          new Error(
-            `prompt turn timed out after ${this.turnCorrelationTimeoutMs}ms while waiting for terminal stream events`
-          )
-        );
-      }, this.turnCorrelationTimeoutMs);
-      timeoutHandle.unref?.();
+      const timeoutHandle = this.createTurnInactivityTimeoutHandle(sessionId, promptCorrelationId);
 
       this.turnCompletions.set(sessionId, {
         resolve,
