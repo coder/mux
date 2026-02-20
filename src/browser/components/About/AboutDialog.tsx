@@ -154,7 +154,11 @@ export function AboutDialog() {
     }
 
     setPendingAction("check");
-    api.update.check({ source: "manual" }).catch(() => setPendingAction(null));
+    api.update
+      .check({ source: "manual" })
+      .catch(console.error)
+      // Clear pending if the backend no-ops (e.g. already downloaded) and emits no status event.
+      .finally(() => setPendingAction((prev) => (prev === "check" ? null : prev)));
   };
 
   const handleDownload = () => {
@@ -163,7 +167,10 @@ export function AboutDialog() {
     }
 
     setPendingAction("download");
-    api.update.download(undefined).catch(() => setPendingAction(null));
+    api.update
+      .download(undefined)
+      .catch(console.error)
+      .finally(() => setPendingAction((prev) => (prev === "download" ? null : prev)));
   };
 
   const handleInstall = () => {
@@ -172,7 +179,10 @@ export function AboutDialog() {
     }
 
     setPendingAction("install");
-    api.update.install(undefined).catch(() => setPendingAction(null));
+    api.update
+      .install(undefined)
+      .catch(console.error)
+      .finally(() => setPendingAction((prev) => (prev === "install" ? null : prev)));
   };
 
   return (
