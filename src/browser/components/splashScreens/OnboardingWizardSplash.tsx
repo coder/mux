@@ -314,10 +314,14 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
             }
 
             const eligibleModels = getEligibleGatewayModels(latestConfig);
+            // Preserve the user's existing enabled preference (defaults to true
+            // for fresh installs). Hardcoding true would silently re-enable
+            // gateway routing for users who intentionally disabled it.
+            const currentEnabled = latestConfig?.["mux-gateway"]?.isEnabled ?? true;
             // Persist gateway models via backend config (no localStorage)
             api?.config
               .updateMuxGatewayPrefs({
-                muxGatewayEnabled: true,
+                muxGatewayEnabled: currentEnabled,
                 muxGatewayModels: eligibleModels,
               })
               .catch(() => {
@@ -423,10 +427,14 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
           const applyLatest = (latestConfig: ProvidersConfigMap | null) => {
             if (muxGatewayLoginAttemptRef.current !== attempt) return;
             const eligibleModels = getEligibleGatewayModels(latestConfig);
+            // Preserve the user's existing enabled preference (defaults to true
+            // for fresh installs). Hardcoding true would silently re-enable
+            // gateway routing for users who intentionally disabled it.
+            const currentEnabled = latestConfig?.["mux-gateway"]?.isEnabled ?? true;
             // Persist gateway models via backend config (no localStorage)
             api?.config
               .updateMuxGatewayPrefs({
-                muxGatewayEnabled: true,
+                muxGatewayEnabled: currentEnabled,
                 muxGatewayModels: eligibleModels,
               })
               .catch(() => {
