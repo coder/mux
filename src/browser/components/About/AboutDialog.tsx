@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Download, Loader2, RefreshCw } from "lucide-react";
 import { VERSION } from "@/version";
 import type { UpdateStatus } from "@/common/orpc/types";
+import type { UpdateChannel } from "@/common/types/project";
 import MuxLogoDark from "@/browser/assets/logos/mux-logo-dark.svg?react";
 import MuxLogoLight from "@/browser/assets/logos/mux-logo-light.svg?react";
 import { useTheme } from "@/browser/contexts/ThemeContext";
@@ -66,7 +67,7 @@ export function AboutDialog() {
   const MuxLogo = theme === "dark" || theme.endsWith("-dark") ? MuxLogoDark : MuxLogoLight;
   const { gitDescribe, buildTime } = parseVersionInfo(VERSION satisfies unknown);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
-  const [channel, setChannel] = useState<"stable" | "nightly" | null>(null);
+  const [channel, setChannel] = useState<UpdateChannel | null>(null);
   const [channelLoading, setChannelLoading] = useState(false);
   const [pendingAction, setPendingAction] = useState<"check" | "download" | "install" | null>(null);
   const channelRequestTokenRef = useRef(0);
@@ -133,7 +134,7 @@ export function AboutDialog() {
       updateStatus.type === "downloading" ||
       pendingAction === "check");
 
-  const handleChannelChange = (next: "stable" | "nightly") => {
+  const handleChannelChange = (next: UpdateChannel) => {
     if (!api || next === channel || channelLoading) {
       return;
     }
