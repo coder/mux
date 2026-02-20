@@ -218,6 +218,13 @@ export function mapNameGenerationError(error: unknown, modelString: string): Nam
     }
   }
 
+  if (NoObjectGeneratedError.isInstance(error)) {
+    return {
+      type: "unknown",
+      raw: "The model returned an unexpected format while generating a workspace name.",
+    };
+  }
+
   if (error instanceof TypeError && error.message.toLowerCase().includes("fetch")) {
     return { type: "network", raw: error.message };
   }
@@ -416,18 +423,134 @@ export function extractIdentityFromText(text: string): { name: string; title: st
     return validateExtracted(jsonMatchReverse[2], jsonMatchReverse[1]);
   }
 
-  // Try markdown/prose patterns: **name:** `value` or name: "value"
-  // In bold markdown the colon sits inside the stars: **name:**
-  const nameMatch =
-    /\*?\*?name:\*?\*?\s*`([^`]+)`/i.exec(text) ?? /\bname:\s*"([^"]+)"/i.exec(text);
-  const titleMatch =
-    /\*?\*?title:\*?\*?\s*`([^`]+)`/i.exec(text) ?? /\btitle:\s*"([^"]+)"/i.exec(text);
+  // Try markdown/prose patterns (supports both **name:** and **name**: forms).
+  const name = extractLabeledValue(text, "name");
+  const title = extractLabeledValue(text, "title");
 
-  if (nameMatch && titleMatch) {
-    return validateExtracted(nameMatch[1], titleMatch[1]);
+  if (name && title) {
+    return validateExtracted(name, title);
   }
 
   return null;
+}
+
+function extractLabeledValue(text: string, label: "name" | "title"): string | null {
+  const emphasizedLabelPrefixes = [
+    `(?:^|[^a-z0-9_])\\s*\\*{1,2}${label}\\*{1,2}\\s*:\\*{0,2}\\s*`, // **name**:
+    `(?:^|[^a-z0-9_])\\s*\\*{1,2}${label}\\s*:\\*{1,2}\\s*`, // **name:**
+  ];
+  const anyLabelPrefix = `(?:^|[^a-z0-9_])\\s*\\*{0,2}${label}\\*{0,2}\\s*:\\*{0,2}\\s*`;
+
+  // Prefer emphasized labels (e.g. **name:** or **name**:) to avoid capturing
+  // earlier guidance prose like "name: should be lowercase".
+  for (const prefix of emphasizedLabelPrefixes) {
+    const value = findFirstUsableLabeledValue(text, label, prefix);
+    if (value) {
+      return value;
+    }
+  }
+
+  return findFirstUsableLabeledValue(text, label, anyLabelPrefix);
+}
+
+function findFirstUsableLabeledValue(
+  text: string,
+  label: "name" | "title",
+  labelPrefix: string
+): string | null {
+  const structuredPattern = new RegExp(
+    `${labelPrefix}(?:\`([^\`\\n\\r]+)\`|"([^"\\n\\r]+)"|'([^'\\n\\r]+)')`,
+    "gi"
+  );
+
+  // Prefer explicit quoted/backticked values over free-form captures.
+  for (const match of text.matchAll(structuredPattern)) {
+    const value = cleanExtractedValue(match[1] ?? match[2] ?? match[3] ?? "");
+    if (!isUsableExtractedValue(label, value, "structured")) {
+      continue;
+    }
+    return value;
+  }
+
+  const barePattern = new RegExp(`${labelPrefix}([^\\n\\r]+)`, "gi");
+  for (const match of text.matchAll(barePattern)) {
+    const value = cleanExtractedValue(match[1] ?? "");
+    if (!isUsableExtractedValue(label, value, "bare")) {
+      continue;
+    }
+    return value;
+  }
+
+  return null;
+}
+
+function isUsableExtractedValue(
+  label: "name" | "title",
+  value: string | null,
+  source: "structured" | "bare"
+): value is string {
+  if (!value) {
+    return false;
+  }
+
+  if (looksLikeGuidanceInstruction(value)) {
+    return false;
+  }
+
+  if (label === "title" && source === "bare" && looksLikeTitleRequirement(value)) {
+    return false;
+  }
+
+  if (label === "name") {
+    const normalizedName = value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .replace(/-+/g, "-");
+    if (!/^[a-z0-9-]{2,20}$/.test(normalizedName)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function looksLikeGuidanceInstruction(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (/^(?:should|must)\s+be\b/.test(normalized)) {
+    return true;
+  }
+
+  return /^(?:be\s+)?(?:lowercase(?: and short)?|verb-noun format|sentence case)$/.test(normalized);
+}
+
+function looksLikeTitleRequirement(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (/^\d+\s*-\s*\d+\s*words?(?:[,.;:].*)?$/.test(normalized)) {
+    return true;
+  }
+
+  return /\b\d+\s*-\s*\d+\s*words?\b/.test(normalized) && /\bverb-noun format\b/.test(normalized);
+}
+function cleanExtractedValue(rawValue: string): string | null {
+  const trimmed = rawValue.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  // If both fields are emitted on one line, keep only this field's value.
+  const nextFieldBoundary = /\s+[•*-]\s+\*{0,2}(?:name|title)\*{0,2}\s*:\*{0,2}.*$/i;
+  const cleaned = trimmed.replace(nextFieldBoundary, "").trim();
+  if (cleaned.length === 0) {
+    return null;
+  }
+
+  // Bare-label extraction can capture surrounding delimiters from values that
+  // were already seen in structured form (e.g. "sentence case"). Remove one
+  // matching wrapper pair so guidance detection remains effective.
+  const wrappedMatch = /^([`"'])([\s\S]*)\1$/.exec(cleaned);
+  const normalized = wrappedMatch ? wrappedMatch[2].trim() : cleaned;
+  return normalized.length > 0 ? normalized : null;
 }
 
 /** Validate extracted values against the same constraints as the schema. */

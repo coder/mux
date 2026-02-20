@@ -1,4 +1,4 @@
-import { APICallError, RetryError } from "ai";
+import { APICallError, NoObjectGeneratedError, RetryError } from "ai";
 import { describe, expect, test } from "bun:test";
 import {
   buildWorkspaceIdentityPrompt,
@@ -63,6 +63,106 @@ describe("extractIdentityFromText", () => {
     expect(result).toEqual({ name: "config", title: "Refactor config loading" });
   });
 
+  test("extracts from punctuation-delimited prose values", () => {
+    const text = 'Suggested fields (name: "config", title: "Refactor config loading")';
+    const result = extractIdentityFromText(text);
+    expect(result).toEqual({ name: "config", title: "Refactor config loading" });
+  });
+
+  test("ignores snake_case metadata keys and uses standalone name/title labels", () => {
+    const text = [
+      'branch_name: "metadata-branch"',
+      'workspace_title: "Metadata title"',
+      'name: "auth"',
+      'title: "Fix login flow"',
+    ].join("\n");
+
+    const result = extractIdentityFromText(text);
+    expect(result).toEqual({ name: "auth", title: "Fix login flow" });
+  });
+
+  test("allows valid titles that include words like format", () => {
+    const text = 'Output fields: name: "config" and title: "Format config output"';
+    const result = extractIdentityFromText(text);
+    expect(result).toEqual({ name: "config", title: "Format config output" });
+  });
+
+  test("prefers structured fields over earlier free-form guidance text", () => {
+    const text = [
+      "Naming guidance: name: should be lowercase and short",
+      "",
+      "Suggested output:",
+      "**name:** `auth`",
+      "**title:** `Fix login`",
+    ].join("\n");
+
+    const result = extractIdentityFromText(text);
+    expect(result).toEqual({ name: "auth", title: "Fix login" });
+  });
+
+  test("skips emphasized bare guidance values before later usable bare labels", () => {
+    const text = [
+      "**name:** should be lowercase and short",
+      "**title:** should be verb-noun format",
+      "",
+      "**name:** auth",
+      "**title:** Fix login flow",
+    ].join("\n");
+
+    const result = extractIdentityFromText(text);
+    expect(result).toEqual({ name: "auth", title: "Fix login flow" });
+  });
+
+  test("skips structured quoted guidance before later structured values", () => {
+    const text = [
+      '**name:** "should be lowercase and short"',
+      '**title:** "should be verb-noun format"',
+      "",
+      "**name:** `auth`",
+      "**title:** `Fix login flow`",
+    ].join("\n");
+
+    const result = extractIdentityFromText(text);
+    expect(result).toEqual({ name: "auth", title: "Fix login flow" });
+  });
+
+  test("does not re-accept quoted guidance when bare fallback re-scans labels", () => {
+    const text = [
+      "**name:** auth",
+      '**title:** "sentence case"',
+      "",
+      "**title:** Fix login flow",
+    ].join("\n");
+
+    const result = extractIdentityFromText(text);
+    expect(result).toEqual({ name: "auth", title: "Fix login flow" });
+  });
+
+  test("skips bare echoed title requirements before later usable titles", () => {
+    const text = [
+      'name: "auth"',
+      "title: 2-5 words, verb-noun format",
+      "title: Fix login flow",
+    ].join("\n");
+
+    const result = extractIdentityFromText(text);
+    expect(result).toEqual({ name: "auth", title: "Fix login flow" });
+  });
+
+  test("skips quoted guidance and continues scanning structured matches", () => {
+    const text = [
+      'Naming guidance: name: "should be lowercase and short"',
+      'Title guidance: title: "verb-noun format"',
+      "",
+      "Suggested output:",
+      "**name:** `auth`",
+      "**title:** `Fix login flow`",
+    ].join("\n");
+
+    const result = extractIdentityFromText(text);
+    expect(result).toEqual({ name: "auth", title: "Fix login flow" });
+  });
+
   test("sanitizes name to be git-safe", () => {
     const text = ["**name:** `My Feature`", "**title:** `Add cool feature`"].join("\n");
     const result = extractIdentityFromText(text);
@@ -116,6 +216,20 @@ describe("extractIdentityFromText", () => {
 
     const result = extractIdentityFromText(text);
     expect(result).toEqual({ name: "testing", title: "Improve test coverage" });
+  });
+
+  test("extracts from prose bullets when markdown uses **name**: style", () => {
+    const text =
+      "Based on the issue, this task involves encryption work. - **name**: `db-encrypt` - **title**: `Encrypt git SSH private keys`.";
+
+    const result = extractIdentityFromText(text);
+    expect(result).toEqual({ name: "db-encrypt", title: "Encrypt git SSH private keys" });
+  });
+
+  test("extracts from single-quoted prose values", () => {
+    const text = "Suggested fields: name: 'config' and title: 'Refactor config loading'";
+    const result = extractIdentityFromText(text);
+    expect(result).toEqual({ name: "config", title: "Refactor config loading" });
   });
 });
 
@@ -262,6 +376,39 @@ describe("workspaceTitleGenerator error mappers", () => {
       expect(mapNameGenerationError(retryError, "openai:gpt-4.1-mini")).toMatchObject({
         type: "authentication",
         authKind: "invalid_credentials",
+      });
+    });
+
+    test("maps NoObjectGeneratedError to a sanitized unknown message", () => {
+      const parseFailure = new NoObjectGeneratedError({
+        message:
+          "No object generated: could not parse the response. [cause: JSON parsing failed: Text: Based on ...]",
+        text: "Based on the issue, **name**: `db-encrypt`, **title**: `Encrypt git SSH private keys`",
+        response: {
+          id: "resp_123",
+          timestamp: new Date("2026-01-01T00:00:00Z"),
+          modelId: "gpt-4o-mini",
+        },
+        usage: {
+          inputTokens: undefined,
+          inputTokenDetails: {
+            noCacheTokens: undefined,
+            cacheReadTokens: undefined,
+            cacheWriteTokens: undefined,
+          },
+          outputTokens: undefined,
+          outputTokenDetails: {
+            textTokens: undefined,
+            reasoningTokens: undefined,
+          },
+          totalTokens: undefined,
+        },
+        finishReason: "stop",
+      });
+
+      expect(mapNameGenerationError(parseFailure, "openai:gpt-4.1-mini")).toEqual({
+        type: "unknown",
+        raw: "The model returned an unexpected format while generating a workspace name.",
       });
     });
 
