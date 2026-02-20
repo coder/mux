@@ -218,11 +218,13 @@ export class WorkspaceConsumerManager {
 
         const providersConfigFingerprint = this.getProvidersConfigVersion();
         // Skip calculation until provider config has loaded — we don't know
-        // which tokenizer/pricing to use yet. The calculation will be retried
-        // when the config arrives and triggers a recalculation.
+        // which tokenizer/pricing to use yet. When config arrives,
+        // refreshProvidersConfig() calls invalidateAll() which clears the cache,
+        // and the next component access will naturally re-schedule calculation.
+        // Don't set needsRecalc or throw — that would create an infinite retry
+        // loop since the finally block re-schedules from needsRecalc.
         if (providersConfigFingerprint == null) {
-          this.needsRecalc.set(workspaceId, aggregator);
-          throw new Error(TOKENIZER_CANCELLED_MESSAGE);
+          return;
         }
 
         // Calculate in piscina pool with timeout protection.
