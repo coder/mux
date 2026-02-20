@@ -86,14 +86,15 @@ export class WorkspaceConsumerManager {
   // Callback to bump the store when calculation completes
   private readonly onCalculationComplete: (workspaceId: string) => void;
   // Stable provider-config fingerprint to stamp persisted token stats cache entries.
-  private readonly getProvidersConfigVersion: () => number;
+  // Returns null before the first config fetch completes (blocks calculation).
+  private readonly getProvidersConfigVersion: () => number | null;
 
   // Track pending store notifications to avoid duplicate bumps within the same tick
   private pendingNotifications = new Set<string>();
 
   constructor(
     onCalculationComplete: (workspaceId: string) => void,
-    getProvidersConfigVersion: () => number
+    getProvidersConfigVersion: () => number | null
   ) {
     this.onCalculationComplete = onCalculationComplete;
     this.getProvidersConfigVersion = getProvidersConfigVersion;
@@ -221,6 +222,14 @@ export class WorkspaceConsumerManager {
         );
 
         const providersConfigFingerprint = this.getProvidersConfigVersion();
+        // Skip calculation until provider config has loaded — we don't know
+        // which tokenizer/pricing to use yet. The calculation will be retried
+        // when the config arrives and triggers a recalculation.
+        if (providersConfigFingerprint == null) {
+          this.needsRecalc.set(workspaceId, aggregator);
+          throw new Error(TOKENIZER_CANCELLED_MESSAGE);
+        }
+
         const fullStats = await Promise.race([
           calculateTokenStatsLatest(workspaceId, messages, model, providersConfigFingerprint),
           timeoutPromise,

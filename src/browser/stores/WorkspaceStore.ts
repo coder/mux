@@ -438,8 +438,10 @@ export class WorkspaceStore {
   private client: RouterClient<AppRouter> | null = null;
   private clientChangeController = new AbortController();
   private providersConfig: ProvidersConfigMap | null = null;
-  /** Stable fingerprint for cache freshness checks across reconnects/app restarts. */
-  private providersConfigFingerprint = computeProvidersConfigFingerprint(null);
+  /** Stable fingerprint for cache freshness checks across reconnects/app restarts.
+   * `null` until the first successful config fetch — prevents hydrating stale caches
+   * and blocks tokenization until we know the real configuration. */
+  private providersConfigFingerprint: number | null = null;
   /** Monotonic request counter for serializing provider config refreshes (latest wins). */
   private providersConfigVersion = 0;
   /** Version of the last successfully applied provider config (prevents stale overwrites). */
@@ -1925,13 +1927,11 @@ export class WorkspaceStore {
       return false;
     }
 
-    // Skip fingerprint validation until provider config has actually loaded.
-    // Before the first successful getConfig() call, the fingerprint is a hash of
-    // the empty/null config and would incorrectly reject valid on-disk caches.
-    // Once config loads, any fingerprint mismatch will trigger full invalidation
-    // in refreshProvidersConfig().
+    // Reject hydration if provider config hasn't loaded yet (fingerprint is null)
+    // or if the cached fingerprint doesn't match the current config. This prevents
+    // stale caches from being served before we know the real configuration.
     if (
-      this.providersConfig != null &&
+      this.providersConfigFingerprint == null ||
       tokenStatsCache.providersConfigVersion !== this.providersConfigFingerprint
     ) {
       return false;
