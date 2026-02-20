@@ -1554,6 +1554,14 @@ export class MuxAgent implements Agent {
     const drainPromise = (async () => {
       try {
         for await (const event of chatIterable) {
+          // Subscription replacement is best-effort; stopChatSubscription can
+          // time out waiting for the old iterator to unwind. Guard each event
+          // so stale streams cannot mutate active turn state after mode-switch
+          // or reconnect replacement.
+          if (!this.isActiveChatSubscriptionToken(sessionId, subscriptionToken)) {
+            break;
+          }
+
           this.handleStreamEvent(sessionId, event);
           if (event.type === "caught-up") {
             hasCaughtUp = true;

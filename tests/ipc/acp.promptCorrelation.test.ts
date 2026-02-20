@@ -179,6 +179,96 @@ function createDelayedTeardownChatStream(): {
   };
 }
 
+function createLingeringTeardownChatStream(): {
+  stream: AsyncIterable<WorkspaceChatMessage>;
+  push: (event: WorkspaceChatMessage) => void;
+  returnCalled: Promise<void>;
+  releaseTeardown: () => void;
+  returnCompleted: Promise<void>;
+} {
+  const pendingEvents: WorkspaceChatMessage[] = [];
+  let pendingResolve: ((result: IteratorResult<WorkspaceChatMessage>) => void) | null = null;
+  let isClosed = false;
+
+  let resolveReturnCalled!: () => void;
+  const returnCalled = new Promise<void>((resolve) => {
+    resolveReturnCalled = resolve;
+  });
+
+  let releaseTeardown!: () => void;
+  const teardownGate = new Promise<void>((resolve) => {
+    releaseTeardown = resolve;
+  });
+
+  let resolveReturnCompleted!: () => void;
+  const returnCompleted = new Promise<void>((resolve) => {
+    resolveReturnCompleted = resolve;
+  });
+
+  const closeIterator = () => {
+    isClosed = true;
+    if (pendingResolve != null) {
+      const resolve = pendingResolve;
+      pendingResolve = null;
+      resolve({ done: true, value: undefined });
+    }
+  };
+
+  const push = (event: WorkspaceChatMessage) => {
+    if (isClosed) {
+      return;
+    }
+
+    if (pendingResolve != null) {
+      const resolve = pendingResolve;
+      pendingResolve = null;
+      resolve({ done: false, value: event });
+      return;
+    }
+
+    pendingEvents.push(event);
+  };
+
+  const stream: AsyncIterable<WorkspaceChatMessage> = {
+    [Symbol.asyncIterator]() {
+      return {
+        next: async (): Promise<IteratorResult<WorkspaceChatMessage>> => {
+          if (isClosed) {
+            return { done: true, value: undefined };
+          }
+
+          if (pendingEvents.length > 0) {
+            const next = pendingEvents.shift();
+            if (next == null) {
+              return { done: true, value: undefined };
+            }
+            return { done: false, value: next };
+          }
+
+          return await new Promise<IteratorResult<WorkspaceChatMessage>>((resolve) => {
+            pendingResolve = resolve;
+          });
+        },
+        return: async (): Promise<IteratorResult<WorkspaceChatMessage>> => {
+          resolveReturnCalled();
+          await teardownGate;
+          closeIterator();
+          resolveReturnCompleted();
+          return { done: true, value: undefined };
+        },
+      };
+    },
+  };
+
+  return {
+    stream,
+    push,
+    returnCalled,
+    releaseTeardown,
+    returnCompleted,
+  };
+}
+
 interface HarnessOptions {
   onChat?: (input: {
     workspaceId: string;
@@ -1552,6 +1642,130 @@ describe("ACP prompt stream correlation", () => {
       stopReason: "end_turn",
       usage: undefined,
     });
+
+    harness.closeConnection();
+    await harness.connectionClosed;
+  });
+
+  it("ignores stale stream events after mode-switch replacement when old teardown times out", async () => {
+    const staleSubscription = createLingeringTeardownChatStream();
+    const replacementSubscription = createControlledChatStream();
+    let onChatCallCount = 0;
+
+    const harness = createHarness({
+      agentOptions: {
+        turnCorrelationTimeoutMs: 250,
+      },
+      onChat: async () => {
+        onChatCallCount += 1;
+        return onChatCallCount === 1 ? staleSubscription.stream : replacementSubscription.stream;
+      },
+    });
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    const newSessionResponse = await harness.agent.newSession({
+      cwd: "/repo/acp-go-sdk",
+      mcpServers: [],
+      _meta: {
+        trunkBranch: "main",
+      },
+    });
+
+    const privateAgent = harness.agent as unknown as {
+      ensureChatSubscription: (
+        sessionId: string,
+        workspaceId: string,
+        onChatMode: OnChatMode
+      ) => Promise<void>;
+    };
+
+    await privateAgent.ensureChatSubscription(
+      newSessionResponse.sessionId,
+      newSessionResponse.sessionId,
+      { type: "live" }
+    );
+    await staleSubscription.returnCalled;
+
+    const promptPromise = harness.agent.prompt({
+      sessionId: newSessionResponse.sessionId,
+      prompt: [{ type: "text", text: "hello" }],
+    });
+
+    await waitForCondition(() => harness.sendMessageCalls.length === 1);
+
+    const firstSend = harness.sendMessageCalls[0];
+    const muxMetadata = firstSend.options["muxMetadata"];
+    if (!isRecord(muxMetadata)) {
+      throw new Error("Expected prompt send options to include muxMetadata record");
+    }
+
+    const promptCorrelationId = muxMetadata["acpPromptId"];
+    if (typeof promptCorrelationId !== "string") {
+      throw new Error("Expected prompt send options to include acpPromptId");
+    }
+
+    let promptSettled = false;
+    void promptPromise.then(
+      () => {
+        promptSettled = true;
+      },
+      () => {
+        promptSettled = true;
+      }
+    );
+
+    // These stale events would previously correlate via stream-start fallback
+    // and incorrectly resolve the active turn after mode-switch replacement.
+    staleSubscription.push({
+      type: "stream-start",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-stale",
+      model: "anthropic:claude-sonnet-4-5",
+      historySequence: 3,
+      startTime: Date.now(),
+    } as WorkspaceChatMessage);
+
+    staleSubscription.push({
+      type: "stream-end",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-stale",
+      metadata: {
+        model: "anthropic:claude-sonnet-4-5",
+      },
+      parts: [],
+    } as WorkspaceChatMessage);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(promptSettled).toBe(false);
+
+    replacementSubscription.push({
+      type: "stream-start",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-target",
+      model: "anthropic:claude-sonnet-4-5",
+      historySequence: 4,
+      startTime: Date.now(),
+      acpPromptId: promptCorrelationId,
+    } as WorkspaceChatMessage);
+
+    replacementSubscription.push({
+      type: "stream-end",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-target",
+      acpPromptId: promptCorrelationId,
+      metadata: {
+        model: "anthropic:claude-sonnet-4-5",
+      },
+      parts: [],
+    } as WorkspaceChatMessage);
+
+    await expect(promptPromise).resolves.toEqual({
+      stopReason: "end_turn",
+      usage: undefined,
+    });
+
+    staleSubscription.releaseTeardown();
+    await staleSubscription.returnCompleted;
 
     harness.closeConnection();
     await harness.connectionClosed;
