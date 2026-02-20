@@ -406,6 +406,30 @@ function isCostsIncludedEntry(usage: ChatUsageDisplay): boolean {
   return usage.costsIncluded === true;
 }
 
+/**
+ * Recompute cost aggregates for a single session-usage entry so session totals
+ * and last-request costs reflect the current model mapping.
+ *
+ * Skips non-model aggregate buckets (e.g. "historical" from legacy compaction
+ * summaries) and costs-included entries (gateway-billed requests where cost_usd
+ * was explicitly zeroed).
+ */
+function repriceSessionUsage(
+  usage: z.infer<typeof SessionUsageFileSchema>,
+  config: ProvidersConfigMap
+): void {
+  usage.tokenStatsCache = undefined;
+  for (const [model, entry] of Object.entries(usage.byModel)) {
+    if (!model.includes(":") || isCostsIncludedEntry(entry)) continue;
+    const resolved = resolveModelForMetadata(model, config);
+    usage.byModel[model] = recomputeUsageCosts(entry, resolved);
+  }
+  if (usage.lastRequest && !isCostsIncludedEntry(usage.lastRequest.usage)) {
+    const resolved = resolveModelForMetadata(usage.lastRequest.model, config);
+    usage.lastRequest.usage = recomputeUsageCosts(usage.lastRequest.usage, resolved);
+  }
+}
+
 function computeProvidersConfigFingerprint(config: ProvidersConfigMap | null): number {
   const normalized = stableNormalizeProvidersConfig(config ?? {});
   const serialized = JSON.stringify(normalized);
@@ -872,22 +896,7 @@ export class WorkspaceStore {
         this.consumerManager.invalidateAll();
 
         for (const [, usage] of this.sessionUsage) {
-          usage.tokenStatsCache = undefined;
-
-          // Recompute persisted cost aggregates so session totals and
-          // last-request costs reflect the new model mapping immediately.
-          // Skip non-model aggregate buckets (e.g. "historical" from legacy
-          // compaction summaries) and costs-included entries (gateway-billed
-          // requests where cost_usd was explicitly zeroed).
-          for (const [model, entry] of Object.entries(usage.byModel)) {
-            if (!model.includes(":") || isCostsIncludedEntry(entry)) continue;
-            const resolved = resolveModelForMetadata(model, config);
-            usage.byModel[model] = recomputeUsageCosts(entry, resolved);
-          }
-          if (usage.lastRequest && !isCostsIncludedEntry(usage.lastRequest.usage)) {
-            const resolved = resolveModelForMetadata(usage.lastRequest.model, config);
-            usage.lastRequest.usage = recomputeUsageCosts(usage.lastRequest.usage, resolved);
-          }
+          repriceSessionUsage(usage, config);
         }
       }
     } catch {
@@ -2787,6 +2796,13 @@ export class WorkspaceStore {
       .getSessionUsage({ workspaceId })
       .then((data) => {
         if (data) {
+          // If provider config is already loaded, reprice the hydrated usage
+          // so costs reflect the current model mapping. This handles workspaces
+          // loaded after the initial config refresh (e.g., delayed hydration,
+          // app restart with many workspaces).
+          if (this.providersConfig) {
+            repriceSessionUsage(data, this.providersConfig);
+          }
           this.sessionUsage.set(workspaceId, data);
           this.usageStore.bump(workspaceId);
         }

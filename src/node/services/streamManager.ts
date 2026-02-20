@@ -990,7 +990,7 @@ export class StreamManager extends EventEmitter {
   private buildStreamRequestConfig(
     model: LanguageModel,
     modelString: string,
-    metadataModel: string,
+    _metadataModel: string,
     messages: ModelMessage[],
     system: string,
     tools?: Record<string, Tool>,
@@ -1062,11 +1062,14 @@ export class StreamManager extends EventEmitter {
       finalTools = applyCacheControlToTools(tools, modelString, anthropicCacheTtl);
     }
 
-    // Use model's max_output_tokens if available and caller didn't specify.
-    // If no metadata exists for the model, omit the parameter entirely to let
-    // the provider use its default (Anthropic requires this but has low defaults).
-    const modelStats = getModelStats(metadataModel);
-    const effectiveMaxOutputTokens = maxOutputTokens ?? modelStats?.max_output_tokens;
+    // Use the runtime model's max_output_tokens if available and caller didn't
+    // specify. This must be the runtime model (not the mapped metadata model)
+    // because max_output_tokens is a request parameter sent to the provider —
+    // a custom model's provider may not support the mapped model's output cap.
+    // If no metadata exists, omit the parameter to let the provider use its
+    // default (Anthropic requires this but has low defaults).
+    const runtimeModelStats = getModelStats(modelString);
+    const effectiveMaxOutputTokens = maxOutputTokens ?? runtimeModelStats?.max_output_tokens;
 
     return {
       model,
