@@ -397,27 +397,13 @@ function stableNormalizeProvidersConfig(value: unknown): unknown {
 
 /**
  * Detect gateway-billed (costs-included) usage entries.
- * `createDisplayUsage` sets all cost_usd to 0 when `providerMetadata.mux.costsIncluded`
- * is true. Since ChatUsageDisplay doesn't persist the flag, we infer it: all cost_usd
- * exactly 0 with at least some tokens means the entry was costs-included and should
- * not be repriced on mapping changes.
+ * `createDisplayUsage` sets `costsIncluded: true` when
+ * `providerMetadata.mux.costsIncluded` is true. These entries should
+ * not be repriced when model mappings change because the provider
+ * gateway already handles billing.
  */
 function isCostsIncludedEntry(usage: ChatUsageDisplay): boolean {
-  const hasTokens =
-    usage.input.tokens > 0 ||
-    usage.cached.tokens > 0 ||
-    usage.cacheCreate.tokens > 0 ||
-    usage.output.tokens > 0 ||
-    usage.reasoning.tokens > 0;
-  if (!hasTokens) return false;
-
-  return (
-    usage.input.cost_usd === 0 &&
-    usage.cached.cost_usd === 0 &&
-    usage.cacheCreate.cost_usd === 0 &&
-    usage.output.cost_usd === 0 &&
-    usage.reasoning.cost_usd === 0
-  );
+  return usage.costsIncluded === true;
 }
 
 function computeProvidersConfigFingerprint(config: ProvidersConfigMap | null): number {

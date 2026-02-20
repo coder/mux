@@ -79,7 +79,9 @@ export function createDisplayUsage(
     outputCost = 0;
     reasoningCost = 0;
   }
+
   return {
+    ...(costsIncluded ? { costsIncluded: true } : {}),
     input: {
       tokens: inputTokens,
       cost_usd: inputCost,

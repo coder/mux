@@ -32,6 +32,11 @@ export interface ChatUsageDisplay {
 
   // True if any model in the sum had unknown pricing (costs are partial/incomplete)
   hasUnknownCosts?: boolean;
+
+  // True when costs were explicitly zeroed because the provider gateway includes
+  // billing (providerMetadata.mux.costsIncluded). These entries should not be
+  // repriced when model mappings change.
+  costsIncluded?: boolean;
 }
 
 /**
@@ -43,6 +48,8 @@ export function sumUsageHistory(usageHistory: ChatUsageDisplay[]): ChatUsageDisp
 
   // Track if any costs are undefined (model pricing unknown)
   let hasUndefinedCosts = false;
+  // Track if all entries are gateway-billed (costs explicitly zeroed)
+  let allCostsIncluded = true;
 
   const sum: ChatUsageDisplay = {
     input: { tokens: 0, cost_usd: 0 },
@@ -53,6 +60,7 @@ export function sumUsageHistory(usageHistory: ChatUsageDisplay[]): ChatUsageDisp
   };
 
   for (const usage of usageHistory) {
+    if (!usage.costsIncluded) allCostsIncluded = false;
     // Iterate over each component and sum tokens and costs
     const componentKeys: Array<"input" | "cached" | "cacheCreate" | "output" | "reasoning"> = [
       "input",
@@ -74,6 +82,10 @@ export function sumUsageHistory(usageHistory: ChatUsageDisplay[]): ChatUsageDisp
   // Flag if any costs were undefined (partial/incomplete total)
   if (hasUndefinedCosts) {
     sum.hasUnknownCosts = true;
+  }
+  // Preserve costsIncluded only when every entry in the sum was gateway-billed
+  if (allCostsIncluded) {
+    sum.costsIncluded = true;
   }
 
   return sum;
