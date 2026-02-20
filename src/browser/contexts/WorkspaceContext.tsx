@@ -115,6 +115,38 @@ function migrateLocalModelPrefsToBackend(
 }
 
 /**
+ * One-time best-effort migration for gateway preferences.
+ * Users upgrading from builds that only stored gateway state in localStorage
+ * (keys: "gateway-enabled", "gateway-models") need their preferences migrated
+ * to config.json so they aren't lost when localStorage is no longer read.
+ */
+function migrateLocalGatewayPrefsToBackend(
+  api: APIClient,
+  cfg: { muxGatewayEnabled?: boolean; muxGatewayModels?: string[] }
+): void {
+  // Only migrate if the backend doesn't have these values yet
+  if (cfg.muxGatewayEnabled !== undefined && cfg.muxGatewayModels !== undefined) return;
+
+  // Read legacy localStorage keys (inline strings — these constants were removed from storage.ts)
+  const localEnabled = readPersistedState<boolean>("gateway-enabled", true);
+  const localModels = readPersistedState<string[]>("gateway-models", []);
+
+  const shouldMigrateEnabled = cfg.muxGatewayEnabled === undefined && localEnabled === false;
+  const shouldMigrateModels = cfg.muxGatewayModels === undefined && localModels.length > 0;
+
+  if (shouldMigrateEnabled || shouldMigrateModels) {
+    api.config
+      .updateMuxGatewayPrefs({
+        muxGatewayEnabled: cfg.muxGatewayEnabled ?? localEnabled,
+        muxGatewayModels: cfg.muxGatewayModels ?? localModels,
+      })
+      .catch(() => {
+        // Best-effort only.
+      });
+  }
+}
+
+/**
  * Seed per-workspace localStorage from backend workspace metadata.
  *
  * This keeps a workspace's model/thinking consistent across devices/browsers.
@@ -480,6 +512,11 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         // One-time best-effort migration: if the backend doesn't have model prefs yet,
         // persist non-default localStorage values so future port changes keep them.
         migrateLocalModelPrefsToBackend(api, cfg);
+
+        // One-time gateway pref migration: if the backend doesn't have gateway prefs yet,
+        // check if the user had non-default values in the old localStorage keys.
+        // This covers users upgrading from builds that only stored gateway state locally.
+        migrateLocalGatewayPrefsToBackend(api, cfg);
       })
       .catch(() => {
         // Best-effort only.

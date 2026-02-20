@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { useProvidersConfig } from "./useProvidersConfig";
 import {
@@ -14,6 +14,11 @@ import type { ProvidersConfigMap } from "@/common/orpc/types";
 // effect after provider config loads. Using a Set deduplicates repeated calls.
 // Exported for testing only.
 export const pendingGatewayEnrollments = new Set<string>();
+
+// Lightweight signal event dispatched when migrateGatewayModel enqueues items.
+// The useGateway hook listens for this to bump a version counter, ensuring the
+// drain effect re-runs even for late enrollments (after the hook has mounted).
+const ENROLLMENT_PENDING_EVENT = "mux:gatewayEnrollmentPending";
 
 // ============================================================================
 // Pure utility functions (no side effects, used for message sending)
@@ -52,9 +57,9 @@ export function isGatewayFormat(modelId: string): boolean {
  * Converts "mux-gateway:provider/model" to "provider:model".
  *
  * This provides forward compatibility for users who have directly specified
- * mux-gateway models in their config. When a migration occurs, dispatches
- * MUX_GATEWAY_ENROLL_MODEL so the useGateway hook can persist gateway
- * enrollment for the canonical model ID (preserving routing intent).
+ * mux-gateway models in their config. When a migration occurs, the canonical
+ * model is queued for gateway enrollment so the useGateway hook can persist it
+ * in muxGatewayModels (preserving routing intent).
  */
 export function migrateGatewayModel(modelId: string): string {
   if (!isGatewayFormat(modelId)) {
@@ -77,6 +82,17 @@ export function migrateGatewayModel(modelId: string): string {
   // persisting the model in muxGatewayModels so gateway routing continues
   // to work after the format migration.
   pendingGatewayEnrollments.add(canonicalId);
+
+  // Signal the hook to re-run the drain effect. Deferred via queueMicrotask
+  // because migrateGatewayModel can be called during render; dispatching
+  // synchronously during render would be a React anti-pattern.
+  if (typeof window !== "undefined") {
+    queueMicrotask(() => {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event(ENROLLMENT_PENDING_EVENT));
+      }
+    });
+  }
 
   return canonicalId;
 }
@@ -160,6 +176,15 @@ export function useGateway(): GatewayState {
   const enabledModels = useMemo(() => gwConfig?.gatewayModels ?? [], [gwConfig?.gatewayModels]);
   const isActive = isConfigured && isEnabled;
 
+  // Bump a version counter when migrateGatewayModel enqueues items so the drain
+  // effect re-runs for late enrollments (after the hook has already mounted).
+  const [enrollVersion, setEnrollVersion] = useState(0);
+  useEffect(() => {
+    const handler = () => setEnrollVersion((v) => v + 1);
+    window.addEventListener(ENROLLMENT_PENDING_EVENT, handler);
+    return () => window.removeEventListener(ENROLLMENT_PENDING_EVENT, handler);
+  }, []);
+
   // When gateway session expires (detected by stream error or account status check),
   // optimistically mark as unconfigured so routing stops immediately.
   // The MUX_GATEWAY_SESSION_EXPIRED event is dispatched by the chat event aggregator
@@ -224,7 +249,7 @@ export function useGateway(): GatewayState {
         // a retry rather than silently dropping the enrollment intent.
         for (const id of newModels) pendingGatewayEnrollments.add(id);
       });
-  }, [gwConfig, enabledModels, isEnabled, api, updateOptimistically]);
+  }, [gwConfig, enabledModels, isEnabled, api, updateOptimistically, enrollVersion]);
 
   const toggleEnabled = useCallback(() => {
     const nextEnabled = !isEnabled;
