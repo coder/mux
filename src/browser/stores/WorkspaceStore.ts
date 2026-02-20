@@ -442,6 +442,8 @@ export class WorkspaceStore {
    * `null` until the first successful config fetch — prevents hydrating stale caches
    * and blocks tokenization until we know the real configuration. */
   private providersConfigFingerprint: number | null = null;
+  /** Last-known fingerprint from previous session (loaded from localStorage). */
+  private lastPersistedFingerprint: number | null;
   /** Monotonic request counter for serializing provider config refreshes (latest wins). */
   private providersConfigVersion = 0;
   /** Version of the last successfully applied provider config (prevents stale overwrites). */
@@ -818,6 +820,10 @@ export class WorkspaceStore {
 
   constructor(onModelUsed?: (model: string) => void) {
     this.onModelUsed = onModelUsed;
+    this.lastPersistedFingerprint = readPersistedState<number | null>(
+      "providers-config-fingerprint",
+      null
+    );
 
     // Initialize consumer calculation manager
     this.consumerManager = new WorkspaceConsumerManager(
@@ -871,11 +877,18 @@ export class WorkspaceStore {
         // so mapped-model changes take effect on next access.
         this.consumerManager.invalidateAll();
 
-        // Only reprice historical session costs on actual config changes
-        // (not initial load). Legacy session-usage.json may lack the
-        // costsIncluded marker, so repricing on first load would inflate
-        // totals for gateway-billed users.
-        if (previousFingerprint != null) {
+        // Determine whether to reprice historical costs:
+        // - Live config change (previousFingerprint != null): always reprice
+        // - Initial load (previousFingerprint == null): only reprice if the
+        //   persisted fingerprint from the previous session differs (config
+        //   changed while the app was closed). Skip if no persisted fingerprint
+        //   (protects legacy session-usage entries that lack costsIncluded).
+        const shouldReprice =
+          previousFingerprint != null ||
+          (this.lastPersistedFingerprint != null &&
+            this.lastPersistedFingerprint !== nextFingerprint);
+
+        if (shouldReprice) {
           for (const [, usage] of this.sessionUsage) {
             usage.tokenStatsCache = undefined;
 
@@ -895,6 +908,9 @@ export class WorkspaceStore {
             }
           }
         }
+
+        this.lastPersistedFingerprint = nextFingerprint;
+        updatePersistedState("providers-config-fingerprint", nextFingerprint);
       }
     } catch {
       // Existing providersConfig is preserved so metadata resolution
