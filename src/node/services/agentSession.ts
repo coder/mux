@@ -172,6 +172,8 @@ function isCompactionRequestMetadata(meta: unknown): meta is CompactionRequestMe
 
 const MAX_AGENT_SKILL_SNAPSHOT_CHARS = 50_000;
 const AUTO_RETRY_PREFERENCE_FILE = "auto-retry-preference.json";
+const STARTUP_AUTO_RETRY_HISTORY_FAILURE_BASE_DELAY_MS = 1_000;
+const STARTUP_AUTO_RETRY_HISTORY_FAILURE_MAX_DELAY_MS = 30_000;
 
 export interface AgentSessionChatEvent {
   workspaceId: string;
@@ -248,6 +250,8 @@ export class AgentSession {
   private startupRecoveryPromise: Promise<void> | null = null;
   private startupAutoRetryCheckScheduled = false;
   private startupAutoRetryCheckPromise: Promise<void> | null = null;
+  private startupAutoRetryHistoryReadFailureCount = 0;
+  private startupAutoRetryDeferredRetryDelayMs = 0;
   private autoRetryEnabledPreference: boolean | null = null;
   private legacyAutoRetryEnabledHint: boolean | null = null;
   private startupAutoRetryAbandon: { reason: string; userMessageId?: string } | null = null;
@@ -1028,13 +1032,32 @@ export class AgentSession {
     return retryOptions?.model ?? null;
   }
 
+  private resetStartupAutoRetryHistoryReadBackoff(): void {
+    this.startupAutoRetryHistoryReadFailureCount = 0;
+    this.startupAutoRetryDeferredRetryDelayMs = 0;
+  }
+
+  private markStartupAutoRetryHistoryReadFailure(): void {
+    this.startupAutoRetryHistoryReadFailureCount += 1;
+    const attempt = this.startupAutoRetryHistoryReadFailureCount - 1;
+    const exponentialDelay =
+      STARTUP_AUTO_RETRY_HISTORY_FAILURE_BASE_DELAY_MS * 2 ** Math.max(0, attempt);
+    this.startupAutoRetryDeferredRetryDelayMs = Math.min(
+      exponentialDelay,
+      STARTUP_AUTO_RETRY_HISTORY_FAILURE_MAX_DELAY_MS
+    );
+  }
+
   private async scheduleStartupAutoRetryIfNeeded(): Promise<StartupAutoRetryCheckOutcome> {
     if (this.disposed || this.isBusy() || this.isAiStreaming()) {
+      // Busy/streaming deferrals are state-driven; do not carry history-error backoff.
+      this.startupAutoRetryDeferredRetryDelayMs = 0;
       return "deferred";
     }
 
     const autoRetryEnabled = await this.loadAutoRetryEnabledPreference();
     if (!autoRetryEnabled) {
+      this.resetStartupAutoRetryHistoryReadBackoff();
       return "completed";
     }
 
@@ -1044,12 +1067,17 @@ export class AgentSession {
     ]);
 
     if (!historyResult.success) {
+      this.markStartupAutoRetryHistoryReadFailure();
       log.warn("Failed to inspect history for startup auto-retry", {
         workspaceId: this.workspaceId,
         error: historyResult.error,
+        retryDelayMs: this.startupAutoRetryDeferredRetryDelayMs,
+        consecutiveHistoryReadFailures: this.startupAutoRetryHistoryReadFailureCount,
       });
       return "deferred";
     }
+
+    this.resetStartupAutoRetryHistoryReadBackoff();
 
     if (partial && this.isPendingAskUserQuestion(partial)) {
       return "completed";
@@ -1104,6 +1132,7 @@ export class AgentSession {
     // Disk reads above may race with user actions; retry once the current work settles
     // instead of permanently suppressing startup auto-retry for this session.
     if (this.disposed || this.isBusy() || this.isAiStreaming()) {
+      this.startupAutoRetryDeferredRetryDelayMs = 0;
       return "deferred";
     }
 
@@ -1115,7 +1144,15 @@ export class AgentSession {
     return "completed";
   }
 
-  private async waitForStartupAutoRetryRerunWindow(): Promise<void> {
+  private async waitForStartupAutoRetryRerunWindow(retryDelayMs = 0): Promise<void> {
+    const delayMs = Math.max(0, Math.trunc(retryDelayMs));
+    if (delayMs > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      if (this.disposed) {
+        return;
+      }
+    }
+
     while (!this.disposed) {
       await this.waitForIdle();
       if (!this.isAiStreaming()) {
@@ -1187,7 +1224,10 @@ export class AgentSession {
           return;
         }
 
-        void this.waitForStartupAutoRetryRerunWindow().then(() => {
+        const rerunDelayMs = this.startupAutoRetryDeferredRetryDelayMs;
+        this.startupAutoRetryDeferredRetryDelayMs = 0;
+
+        void this.waitForStartupAutoRetryRerunWindow(rerunDelayMs).then(() => {
           if (!this.disposed) {
             this.ensureStartupAutoRetryCheck();
           }

@@ -235,7 +235,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     expect(getLastMessagesCalls).toBeGreaterThanOrEqual(1);
 
-    const deadline = Date.now() + 1500;
+    const deadline = Date.now() + 3000;
     while (
       !events.some((event) => event.type === "auto-retry-scheduled") &&
       Date.now() < deadline
@@ -246,6 +246,50 @@ describe("AgentSession startup auto-retry recovery", () => {
     expect(getLastMessagesCalls).toBeGreaterThanOrEqual(2);
     expect(events.some((event) => event.type === "auto-retry-scheduled")).toBe(true);
     expect(privateSession.startupAutoRetryCheckScheduled).toBe(true);
+
+    session.dispose();
+  });
+
+  test("backs off reruns after repeated startup history read failures", async () => {
+    const workspaceId = "startup-retry-history-read-backoff";
+    const { session, historyService, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const appendResult = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-1", "user", "Interrupted while history is unavailable", {
+        timestamp: Date.now(),
+      })
+    );
+    expect(appendResult.success).toBe(true);
+
+    let getLastMessagesCalls = 0;
+    historyService.getLastMessages = mock(() => {
+      getLastMessagesCalls += 1;
+      return Promise.resolve({
+        success: false as const,
+        error: "persistent history read failure",
+      });
+    }) as unknown as HistoryService["getLastMessages"];
+
+    const privateSession = session as unknown as {
+      startupAutoRetryCheckPromise: Promise<void> | null;
+    };
+
+    session.ensureStartupAutoRetryCheck();
+    await privateSession.startupAutoRetryCheckPromise;
+
+    expect(getLastMessagesCalls).toBe(1);
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(getLastMessagesCalls).toBe(1);
+
+    const deadline = Date.now() + 2500;
+    while (getLastMessagesCalls < 2 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    expect(getLastMessagesCalls).toBeGreaterThanOrEqual(2);
 
     session.dispose();
   });
