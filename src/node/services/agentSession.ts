@@ -3551,7 +3551,7 @@ export class AgentSession {
       this.retryManager.handleStreamSuccess();
       await this.clearStartupAutoRetryAbandon();
 
-      const streamEndPayload = payload as StreamEndEvent;
+      const streamEndPayload = payload;
       const activeStreamOptions = this.activeStreamContext?.options;
 
       let emittedStreamEnd = false;
