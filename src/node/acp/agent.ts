@@ -1481,7 +1481,9 @@ export class MuxAgent implements Agent {
       event.type === "session-usage-delta" ||
       event.type === "bash-output" ||
       event.type === "init-output" ||
-      event.type === "message";
+      // Drop replay history messages under saturation, but keep live message
+      // events so ACP clients do not miss real-time conversation updates.
+      (event.type === "message" && (event as { replay?: boolean }).replay === true);
 
     // Drain the oRPC stream: observe events for turn resolution, buffer
     // for translation. push() is non-blocking so handleStreamEvent always
