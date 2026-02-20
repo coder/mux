@@ -40,7 +40,7 @@ const domCache = new LRUCache<number, Document>({
 /**
  * Escape special regex characters for literal string matching
  */
-function escapeRegex(str: string): string {
+export function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 

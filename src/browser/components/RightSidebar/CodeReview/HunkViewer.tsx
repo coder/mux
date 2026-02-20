@@ -8,7 +8,10 @@ import { Check, Circle } from "lucide-react";
 import type { DiffHunk, Review, ReviewNoteData } from "@/common/types/review";
 import { SelectableDiffRenderer } from "../../shared/DiffRenderer";
 import type { ReviewActionCallbacks } from "../../shared/InlineReviewNote";
-import { type SearchHighlightConfig } from "@/browser/utils/highlighting/highlightSearchTerms";
+import {
+  type SearchHighlightConfig,
+  escapeRegex,
+} from "@/browser/utils/highlighting/highlightSearchTerms";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../../ui/tooltip";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getReviewExpandStateKey } from "@/common/constants/storage";
@@ -45,10 +48,6 @@ interface HunkViewerProps {
   onOpenFile?: (relativePath: string) => void;
 }
 
-function escapeRegexForHighlight(term: string): string {
-  return term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function renderHighlightedFilePath(
   filePath: string,
   searchConfig?: SearchHighlightConfig
@@ -62,7 +61,7 @@ function renderHighlightedFilePath(
   try {
     pattern = searchConfig.useRegex
       ? new RegExp(searchConfig.searchTerm, flags)
-      : new RegExp(escapeRegexForHighlight(searchConfig.searchTerm), flags);
+      : new RegExp(escapeRegex(searchConfig.searchTerm), flags);
   } catch {
     return filePath;
   }
