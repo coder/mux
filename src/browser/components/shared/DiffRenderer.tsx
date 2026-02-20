@@ -311,13 +311,14 @@ export const DiffContainer: React.FC<
   React.PropsWithChildren<{
     fontSize?: string;
     maxHeight?: string;
+    lineHeight?: number | string;
     className?: string;
     /** Type of the first line in the diff (for top padding background) */
     firstLineType?: DiffLineType;
     /** Type of the last line in the diff (for bottom padding background) */
     lastLineType?: DiffLineType;
   }>
-> = ({ children, fontSize, maxHeight, className, firstLineType, lastLineType }) => {
+> = ({ children, fontSize, maxHeight, lineHeight, className, firstLineType, lastLineType }) => {
   const resolvedMaxHeight = maxHeight ?? "400px";
   const [isExpanded, setIsExpanded] = React.useState(false);
   const contentRef = React.useRef<HTMLDivElement>(null);
@@ -366,7 +367,7 @@ export const DiffContainer: React.FC<
         )}
         style={{
           fontSize: fontSize ?? "12px",
-          lineHeight: 1.4,
+          lineHeight: lineHeight ?? 1.4,
           maxHeight: clampContent ? resolvedMaxHeight : undefined,
           // CSS Grid columns: [gutter] auto | [indicator] 1rem | [code] 1fr
           gridTemplateColumns: "auto 1rem 1fr",
@@ -411,6 +412,8 @@ interface DiffRendererProps {
   filePath?: string;
   /** Font size for diff content (default: "12px") */
   fontSize?: string;
+  /** Line height for diff rows (default: 1.4) */
+  lineHeight?: number | string;
   /** Max height for diff container (default: "400px", use "none" for no limit) */
   maxHeight?: string;
   /** Additional className for container (e.g., "rounded-none" to remove rounding) */
@@ -553,6 +556,7 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
   newStart = 1,
   filePath,
   fontSize,
+  lineHeight,
   maxHeight,
   className,
 }) => {
@@ -586,6 +590,7 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
   return (
     <DiffContainer
       fontSize={fontSize}
+      lineHeight={lineHeight}
       maxHeight={maxHeight}
       className={className}
       firstLineType={firstLineType}
@@ -940,6 +945,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     filePath,
     inlineReviews,
     fontSize,
+    lineHeight,
     maxHeight,
     className,
     onReviewNote,
@@ -1243,6 +1249,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     return (
       <DiffContainer
         fontSize={fontSize}
+        lineHeight={lineHeight}
         maxHeight={maxHeight}
         className={className}
         firstLineType={firstLineType}

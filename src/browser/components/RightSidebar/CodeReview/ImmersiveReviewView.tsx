@@ -427,6 +427,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     isSettled: true,
   });
 
+  // Hold diff reveal during file switches until loading + initial scroll are complete.
+  const [pendingRevealFilePath, setPendingRevealFilePath] = useState<string | null>(null);
+  const revealAnimationFrameRef = useRef<number | null>(null);
+
   // Load full file content so immersive mode can render one coherent file with hunk overlays.
   // Keep a per-file loading state so switches can show a splash until loading settles,
   // which avoids a visible fallback-overlay -> full-content jump.
@@ -508,15 +512,16 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     };
   }, [api, props.workspaceId, activeFilePath]);
 
-  const resolvedActiveFileContent =
-    activeFileContentState.filePath === activeFilePath && activeFileContentState.isSettled
-      ? activeFileContentState.content
-      : null;
+  const isActiveFileContentSettled =
+    !activeFilePath ||
+    (activeFileContentState.filePath === activeFilePath && activeFileContentState.isSettled);
+
+  const resolvedActiveFileContent = isActiveFileContentSettled
+    ? activeFileContentState.content
+    : null;
 
   const isActiveFileContentLoading = Boolean(
-    activeFilePath &&
-    currentFileHunks.length > 0 &&
-    (activeFileContentState.filePath !== activeFilePath || !activeFileContentState.isSettled)
+    activeFilePath && currentFileHunks.length > 0 && !isActiveFileContentSettled
   );
 
   const overlayData = useMemo<ImmersiveOverlayData>(() => {
@@ -573,6 +578,53 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   // Which panel has keyboard focus while in immersive mode.
   const [focusedPanel, setFocusedPanel] = useState<"diff" | "notes">("diff");
   const [focusedNoteIndex, setFocusedNoteIndex] = useState(0);
+
+  useEffect(() => {
+    if (revealAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(revealAnimationFrameRef.current);
+      revealAnimationFrameRef.current = null;
+    }
+
+    if (!activeFilePath) {
+      setPendingRevealFilePath(null);
+      return;
+    }
+
+    // Keep the splash visible for each file switch until we have scrolled to the target hunk.
+    setPendingRevealFilePath(activeFilePath);
+    hunkJumpRef.current = true;
+  }, [activeFilePath]);
+
+  useEffect(() => {
+    return () => {
+      if (revealAnimationFrameRef.current !== null) {
+        cancelAnimationFrame(revealAnimationFrameRef.current);
+      }
+    };
+  }, []);
+
+  const revealTargetLineIndex =
+    activeLineIndex ??
+    selectedHunkRange?.firstModifiedIndex ??
+    selectedHunkRange?.startIndex ??
+    null;
+  const isActiveFileRevealPending = pendingRevealFilePath === activeFilePath;
+
+  useEffect(() => {
+    if (!isActiveFileRevealPending || !isActiveFileContentSettled) {
+      return;
+    }
+
+    // Fail open so the UI cannot get stuck if a file has no hunk/line target.
+    if (currentFileHunks.length === 0 || revealTargetLineIndex === null) {
+      setPendingRevealFilePath(null);
+    }
+  }, [
+    currentFileHunks.length,
+    revealTargetLineIndex,
+    isActiveFileRevealPending,
+    isActiveFileContentSettled,
+  ]);
 
   useEffect(() => {
     if (!boundaryToast) return;
@@ -1062,33 +1114,66 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     }
 
     // When overlay content structure changes (fallback hunks -> full-file view),
-    // defer scrolling until the selected-hunk effect has recalculated activeLineIndex
-    // against the new line map. This prevents a transient jump to an old index.
+    // defer regular scrolling until the selected-hunk effect has recalculated
+    // activeLineIndex. During a file-switch reveal gate we still need one initial
+    // scroll so the diff appears already positioned at the selected hunk.
     if (contentChanged) {
       hunkJumpRef.current = true;
+      if (!isActiveFileRevealPending) {
+        return;
+      }
+    }
+
+    if (isActiveFileRevealPending && !isActiveFileContentSettled) {
       return;
     }
 
-    if (activeLineIndex === null) {
+    const lineIndexForScroll = isActiveFileRevealPending ? revealTargetLineIndex : activeLineIndex;
+    if (lineIndexForScroll === null) {
       return;
     }
 
     const lineElement = containerRef.current?.querySelector<HTMLElement>(
-      `[data-line-index="${activeLineIndex}"]`
+      `[data-line-index="${lineIndexForScroll}"]`
     );
     if (!lineElement) {
       return;
     }
 
-    lineElement.style.outline = ACTIVE_LINE_OUTLINE;
-    lineElement.style.outlineOffset = "-1px";
-    highlightedLineElementRef.current = lineElement;
+    if (activeLineIndex !== null && lineIndexForScroll === activeLineIndex) {
+      lineElement.style.outline = ACTIVE_LINE_OUTLINE;
+      lineElement.style.outlineOffset = "-1px";
+      highlightedLineElementRef.current = lineElement;
+    }
 
     const block = hunkJumpRef.current ? "center" : "nearest";
     hunkJumpRef.current = false;
-
     lineElement.scrollIntoView({ behavior: "auto", block });
-  }, [activeLineIndex, overlayData.content, scrollNonce]);
+
+    if (!isActiveFileRevealPending || !activeFilePath) {
+      return;
+    }
+
+    if (revealAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(revealAnimationFrameRef.current);
+    }
+
+    const revealFilePath = activeFilePath;
+    revealAnimationFrameRef.current = window.requestAnimationFrame(() => {
+      setPendingRevealFilePath((pendingFilePath) =>
+        pendingFilePath === revealFilePath ? null : pendingFilePath
+      );
+      revealAnimationFrameRef.current = null;
+    });
+  }, [
+    activeFilePath,
+    activeLineIndex,
+    isActiveFileContentSettled,
+    isActiveFileRevealPending,
+    overlayData.content,
+    revealTargetLineIndex,
+    scrollNonce,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -1144,6 +1229,9 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   }, [inlineComposerRequest, selectedHunk, selectedHunkRange]);
 
   const shouldEnableHighlighting = overlayData.lineHunkIds.length <= MAX_HIGHLIGHTED_DIFF_LINES;
+
+  const shouldShowFileTransitionSplash =
+    currentFileHunks.length > 0 && (isActiveFileContentLoading || isActiveFileRevealPending);
 
   return (
     <div
@@ -1243,30 +1331,34 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
             <div className="text-muted flex items-center justify-center py-12 text-sm">
               {activeFilePath ? "No hunks for this file" : "No files to review"}
             </div>
-          ) : isActiveFileContentLoading ? (
-            <div className="text-muted flex items-center justify-center py-12 text-sm">
-              <span className="animate-pulse">Loading file...</span>
-            </div>
           ) : (
-            <div className="border-border-light bg-dark overflow-hidden rounded border">
-              <SelectableDiffRenderer
-                content={overlayData.content}
-                filePath={activeFilePath ?? currentFileHunks[0].filePath}
-                inlineReviews={
-                  activeFilePath ? props.reviewsByFilePath.get(activeFilePath) : undefined
-                }
-                oldStart={1}
-                newStart={1}
-                fontSize="11px"
-                maxHeight="none"
-                className="rounded-none border-0 [&>div]:overflow-x-visible"
-                onReviewNote={handleReviewNoteSubmit}
-                reviewActions={props.reviewActions}
-                enableHighlighting={shouldEnableHighlighting}
-                selectedLineRange={selectedLineRange}
-                onLineIndexSelect={handleLineIndexSelect}
-                externalSelectionRequest={externalComposerSelectionRequest}
-              />
+            <div className="border-border-light bg-dark relative overflow-hidden rounded border">
+              {shouldShowFileTransitionSplash && (
+                <div className="bg-dark/95 text-muted absolute inset-0 z-10 flex items-center justify-center text-sm">
+                  <span className="animate-pulse">Loading file...</span>
+                </div>
+              )}
+              <div className={cn(shouldShowFileTransitionSplash && "invisible")}>
+                <SelectableDiffRenderer
+                  content={overlayData.content}
+                  filePath={activeFilePath ?? currentFileHunks[0].filePath}
+                  inlineReviews={
+                    activeFilePath ? props.reviewsByFilePath.get(activeFilePath) : undefined
+                  }
+                  oldStart={1}
+                  newStart={1}
+                  fontSize="11px"
+                  lineHeight={1.3}
+                  maxHeight="none"
+                  className="rounded-none border-0 [&>div]:overflow-x-visible"
+                  onReviewNote={handleReviewNoteSubmit}
+                  reviewActions={props.reviewActions}
+                  enableHighlighting={shouldEnableHighlighting}
+                  selectedLineRange={selectedLineRange}
+                  onLineIndexSelect={handleLineIndexSelect}
+                  externalSelectionRequest={externalComposerSelectionRequest}
+                />
+              </div>
             </div>
           )}
         </div>
