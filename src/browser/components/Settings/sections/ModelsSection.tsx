@@ -159,19 +159,15 @@ export function ModelsSection() {
   // cross-hook timing mismatches while settings are loading/refetching.
   const codexOauthConfigured = config?.openai?.codexOauthSet === true;
 
-  const allModelIds = useMemo(() => {
-    const ids = new Set<string>(Object.values(KNOWN_MODELS).map((model) => model.id));
-
-    if (config) {
-      for (const [provider, providerInfo] of Object.entries(config)) {
-        for (const entry of providerInfo.models ?? []) {
-          ids.add(`${provider}:${getProviderModelEntryId(entry)}`);
-        }
-      }
-    }
-
-    return Array.from(ids).sort();
-  }, [config]);
+  // "Treat as" dropdown should only list known models — custom models don't have
+  // the metadata (pricing, context window, tokenizer) that mapping inherits.
+  const knownModelIds = useMemo(
+    () =>
+      Object.values(KNOWN_MODELS)
+        .map((model) => model.id)
+        .sort(),
+    []
+  );
 
   // All models (including hidden) for the settings dropdowns.
   // PolicyService enforces model access on the backend, but we also filter here so users can't
@@ -526,7 +522,7 @@ export function ModelsSection() {
                       editMappedToModel={isModelEditing ? editing.mappedToModel : undefined}
                       editAutofocus={isModelEditing ? editing.focus : undefined}
                       customContextWindowTokens={model.contextWindowTokens}
-                      allModels={allModelIds}
+                      allModels={knownModelIds}
                       editError={isModelEditing ? error : undefined}
                       saving={false}
                       hasActiveEdit={editing !== null}

@@ -887,8 +887,23 @@ export class WorkspaceStore {
         }
       }
     } catch {
-      // Silently ignore — existing providersConfig is preserved so
-      // metadata resolution continues using the last successful snapshot.
+      // Existing providersConfig is preserved so metadata resolution
+      // continues using the last successful snapshot. However, if config
+      // has never been loaded (fingerprint is still null), consumer
+      // tokenization is blocked. Retry with exponential backoff to
+      // recover from transient IPC/backend errors at startup.
+      if (
+        this.providersConfigFingerprint == null &&
+        this.client === client &&
+        !this.clientChangeController.signal.aborted
+      ) {
+        const retryDelay = Math.min(1000 * 2 ** (version - 1), 30_000);
+        setTimeout(() => {
+          if (this.client === client && !this.clientChangeController.signal.aborted) {
+            void this.refreshProvidersConfig(client);
+          }
+        }, retryDelay);
+      }
     }
   }
 
