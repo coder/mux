@@ -7,7 +7,7 @@ import { linkAbortSignal } from "@/node/utils/abort";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
-import type { SendMessageOptions } from "@/common/orpc/types";
+import type { SendMessageOptions, ProvidersConfigMap } from "@/common/orpc/types";
 
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 
@@ -184,6 +184,10 @@ export class AIService extends EventEmitter {
 
   setTaskService(taskService: TaskService): void {
     this.taskService = taskService;
+  }
+
+  getProvidersConfig(): ProvidersConfigMap | null {
+    return this.providerService.getConfig();
   }
 
   /**

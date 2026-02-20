@@ -1886,7 +1886,10 @@ export class AgentSession {
       );
 
       if (pdfParts.length > 0) {
-        const caps = getModelCapabilitiesResolved(options.model, null);
+        const caps = getModelCapabilitiesResolved(
+          options.model,
+          this.aiService.getProvidersConfig()
+        );
 
         if (caps && !caps.supportsPdfInput) {
           return Err(
