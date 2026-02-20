@@ -4205,9 +4205,18 @@ export class AgentSession {
       return;
     }
 
-    // Read the last message from history — only need 1 message, avoid full-file read
+    // Read the last message from history — only need 1 message, avoid full-file read.
+    // Startup recovery must retry on transient read failures, so bubble errors.
     const historyResult = await this.historyService.getLastMessages(this.workspaceId, 1);
-    if (!historyResult.success || historyResult.data.length === 0) {
+    if (!historyResult.success) {
+      const historyError =
+        typeof historyResult.error === "string"
+          ? historyResult.error
+          : getErrorMessage(historyResult.error);
+      throw new Error(`Failed to read history for startup follow-up recovery: ${historyError}`);
+    }
+
+    if (historyResult.data.length === 0) {
       return;
     }
 

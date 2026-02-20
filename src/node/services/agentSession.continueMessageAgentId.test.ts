@@ -136,6 +136,84 @@ describe("AgentSession continue-message agentId fallback", () => {
     session.dispose();
   });
 
+  test("dispatchPendingFollowUp throws when history read fails", async () => {
+    const aiService: AIService = {
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+      isStreaming: () => false,
+      stopStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
+    } as unknown as AIService;
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const initStateManager: InitStateManager = {
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      cleanup: mock(() => Promise.resolve()),
+      setMessageQueued: mock(() => undefined),
+    } as unknown as BackgroundProcessManager;
+
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => "/tmp"),
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId: "ws",
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const internals = session as unknown as SessionInternals & {
+      historyService: {
+        getLastMessages: (
+          workspaceId: string,
+          count: number
+        ) => Promise<{
+          success: boolean;
+          error?: string;
+          data: MuxMessage[];
+        }>;
+      };
+    };
+
+    internals.historyService.getLastMessages = mock(() =>
+      Promise.resolve({ success: false, error: "temporary history read failure", data: [] })
+    );
+
+    let dispatchError: unknown;
+    try {
+      await internals.dispatchPendingFollowUp();
+    } catch (error) {
+      dispatchError = error;
+    }
+
+    expect(dispatchError).toBeInstanceOf(Error);
+    if (!(dispatchError instanceof Error)) {
+      throw new Error("Expected dispatchPendingFollowUp to throw on history read failures");
+    }
+    expect(dispatchError.message).toContain(
+      "Failed to read history for startup follow-up recovery"
+    );
+
+    session.dispose();
+  });
+
   test("startup recovery dispatches pending follow-up only once", async () => {
     let sendCount = 0;
 
