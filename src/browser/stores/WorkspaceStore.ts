@@ -386,7 +386,27 @@ function getMaxHistorySequence(messages: MuxMessage[]): number | undefined {
  * gateway already handles billing.
  */
 function isCostsIncludedEntry(usage: ChatUsageDisplay): boolean {
-  return usage.costsIncluded === true;
+  if (usage.costsIncluded === true) {
+    return true;
+  }
+
+  // Backward-compatibility: older session-usage.json entries may have been
+  // gateway-billed with all costs explicitly zeroed before the costsIncluded
+  // marker was persisted. Treat those all-zero entries as costs-included so
+  // repricing doesn't inflate historical gateway-billed totals after upgrade.
+  const components = ["input", "cached", "cacheCreate", "output", "reasoning"] as const;
+  let hasTokens = false;
+  for (const key of components) {
+    const component = usage[key];
+    if (component.tokens > 0) {
+      hasTokens = true;
+    }
+    if (component.cost_usd !== 0) {
+      return false;
+    }
+  }
+
+  return hasTokens;
 }
 
 /**

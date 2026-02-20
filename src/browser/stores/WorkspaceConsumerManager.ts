@@ -222,6 +222,11 @@ export class WorkspaceConsumerManager {
         // Don't set needsRecalc or throw — that would create an infinite retry
         // loop since the finally block re-schedules from needsRecalc.
         if (providersConfigFingerprint == null) {
+          // Reset "calculating" UI state for config-gated skips. We already
+          // notified start before entering executeCalculation(); without a
+          // completion notify, subscribers can remain stuck in calculating
+          // until an unrelated render path runs.
+          this.notifyStoreAsync(workspaceId);
           return;
         }
 
