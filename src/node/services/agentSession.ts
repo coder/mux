@@ -561,7 +561,7 @@ export class AgentSession {
           }
         }
 
-        if (streamCursor && streamInfo && streamCursor.messageId === streamInfo.messageId) {
+        if (streamCursor && streamCursor.messageId === streamInfo?.messageId) {
           // Stream cursor is advisory: only apply it when the same stream is still active.
           // If the stream ended or rotated while offline, keep since-mode history replay
           // and skip stream filtering by leaving afterTimestamp undefined.
