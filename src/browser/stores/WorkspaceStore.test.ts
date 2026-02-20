@@ -4,7 +4,7 @@ import type { StreamStartEvent, ToolCallStartEvent } from "@/common/types/stream
 import type { WorkspaceActivitySnapshot, WorkspaceChatMessage } from "@/common/orpc/types";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT } from "@/common/constants/ui";
-import { getAutoCompactionThresholdKey } from "@/common/constants/storage";
+import { getAutoCompactionThresholdKey, getAutoRetryKey } from "@/common/constants/storage";
 import { WorkspaceStore } from "./WorkspaceStore";
 
 interface LoadMoreResponse {
@@ -568,6 +568,29 @@ describe("WorkspaceStore", () => {
       expect(global.window.localStorage.getItem(thresholdKey)).toBe(
         JSON.stringify(DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT)
       );
+    });
+
+    it("sanitizes malformed legacy auto-retry values before subscribing", async () => {
+      const workspaceId = "workspace-auto-retry-sanitize";
+      const autoRetryKey = getAutoRetryKey(workspaceId);
+      global.window.localStorage.setItem(autoRetryKey, JSON.stringify("invalid-legacy-value"));
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const deadline = Date.now() + 1_000;
+      while (mockOnChat.mock.calls.length === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      expect(mockOnChat.mock.calls.length).toBeGreaterThan(0);
+      const onChatInput = mockOnChat.mock.calls[0]?.[0] as {
+        workspaceId?: string;
+        legacyAutoRetryEnabled?: unknown;
+      };
+
+      expect(onChatInput.workspaceId).toBe(workspaceId);
+      expect("legacyAutoRetryEnabled" in onChatInput).toBe(false);
+      expect(global.window.localStorage.getItem(autoRetryKey)).toBeNull();
     });
 
     it("should remove deleted workspaces", () => {

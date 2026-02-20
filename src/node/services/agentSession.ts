@@ -1679,18 +1679,6 @@ export class AgentSession {
   ): Promise<Result<void, SendMessageError>> {
     this.assertNotDisposed("sendMessage");
 
-    // Only explicit user sends should reset auto-retry intent.
-    // Synthetic/system sends (mid-stream compaction, task recovery prompts, etc.)
-    // must not silently opt users back into auto-retry after they've disabled it.
-    if (internal?.synthetic !== true) {
-      // A fresh user send supersedes any persisted startup-abandon classification
-      // from previous turns.
-      await this.clearStartupAutoRetryAbandon();
-      this.retryManager.cancel();
-      this.retryManager.setEnabled(true);
-      await this.persistAutoRetryEnabledPreference(true);
-    }
-
     assert(typeof message === "string", "sendMessage requires a string message");
     // Real user sends break any synthetic switch chain.
     if (!internal?.synthetic) {
@@ -2112,6 +2100,19 @@ export class AgentSession {
       this.emitChatEvent({ ...autoCompactionMessage, type: "message" });
     } else {
       this.emitChatEvent({ ...userMessage, type: "message" });
+    }
+
+    // Only explicit user sends should reset auto-retry intent, and only after the
+    // send has passed validation + been accepted into history.
+    // Synthetic/system sends (mid-stream compaction, task recovery prompts, etc.)
+    // must not silently opt users back into auto-retry after they've disabled it.
+    if (internal?.synthetic !== true) {
+      // A fresh accepted user send supersedes any persisted startup-abandon
+      // classification from previous turns.
+      await this.clearStartupAutoRetryAbandon();
+      this.retryManager.cancel();
+      this.retryManager.setEnabled(true);
+      await this.persistAutoRetryEnabledPreference(true);
     }
 
     this.setTurnPhase(TurnPhase.PREPARING);

@@ -120,7 +120,7 @@ describe("AgentSession disposal race conditions", () => {
     ).not.toThrow();
   });
 
-  test("does not reset auto-retry intent for synthetic sends", async () => {
+  test("does not reset auto-retry intent for synthetic or rejected sends", async () => {
     const aiService: AIService = {
       on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
         return this;
@@ -191,9 +191,8 @@ describe("AgentSession disposal race conditions", () => {
 
     const userResult = await session.sendMessage("", options);
     expect(userResult.success).toBe(false);
-    expect(cancel).toHaveBeenCalledTimes(1);
-    expect(setEnabled).toHaveBeenCalledTimes(1);
-    expect(setEnabled).toHaveBeenCalledWith(true);
+    expect(cancel).toHaveBeenCalledTimes(0);
+    expect(setEnabled).toHaveBeenCalledTimes(0);
   });
 
   test("preserves synthetic flag when flushing queued messages", () => {

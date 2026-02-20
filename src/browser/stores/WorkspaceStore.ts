@@ -2363,10 +2363,16 @@ export class WorkspaceStore {
 
         await this.syncAutoCompactionThresholdAtStartup(client, workspaceId);
 
-        const legacyAutoRetryEnabled = readPersistedState<boolean | undefined>(
-          getAutoRetryKey(workspaceId),
-          undefined
-        );
+        const autoRetryKey = getAutoRetryKey(workspaceId);
+        const legacyAutoRetryEnabledRaw = readPersistedState<unknown>(autoRetryKey, undefined);
+        const legacyAutoRetryEnabled =
+          typeof legacyAutoRetryEnabledRaw === "boolean" ? legacyAutoRetryEnabledRaw : undefined;
+
+        if (legacyAutoRetryEnabledRaw !== undefined && legacyAutoRetryEnabled === undefined) {
+          // Self-heal malformed legacy values so onChat subscription retries do not
+          // keep failing schema validation on every reconnect attempt.
+          updatePersistedState<boolean | undefined>(autoRetryKey, undefined);
+        }
 
         const onChatInput =
           legacyAutoRetryEnabled === undefined
@@ -2381,7 +2387,7 @@ export class WorkspaceStore {
           // One-way migration: once we have successfully forwarded the legacy value
           // to the backend, clear the renderer key so future sessions rely solely
           // on backend persistence.
-          updatePersistedState<boolean | undefined>(getAutoRetryKey(workspaceId), undefined);
+          updatePersistedState<boolean | undefined>(autoRetryKey, undefined);
         }
 
         // Full replay: clear stale derived/transient state now that the subscription
