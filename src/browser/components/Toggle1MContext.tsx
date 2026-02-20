@@ -1,9 +1,7 @@
 import React from "react";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
-import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { cn } from "@/common/lib/utils";
 import { supports1MContext } from "@/common/utils/ai/models";
-import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 
 interface Toggle1MContextProps {
   /** Model ID to check/toggle 1M context for */
@@ -19,10 +17,10 @@ interface Toggle1MContextProps {
  */
 export const Toggle1MContext: React.FC<Toggle1MContextProps> = (props) => {
   const { has1MContext, toggle1MContext } = useProviderOptions();
-  const { config: providersConfig } = useProvidersConfig();
-  const metadataModel = resolveModelForMetadata(props.model, providersConfig);
 
-  if (!supports1MContext(metadataModel)) return null;
+  // 1M context is a provider-level capability (Anthropic/Gemini), gated on
+  // the runtime model — not inherited through "Treat as" model mapping.
+  if (!supports1MContext(props.model)) return null;
 
   const label = props.label ?? "1M context";
   const enabled = has1MContext(props.model);

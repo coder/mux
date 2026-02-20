@@ -22,7 +22,7 @@ describe("getEffectiveContextLimit", () => {
     expect(limit).toBe(mappedStats?.max_input_tokens ?? null);
   });
 
-  test("applies 1M toggle for mapped models that support 1M context", () => {
+  test("does not inherit 1M toggle from mapped model (provider-level capability)", () => {
     const config: ProvidersConfigMap = {
       ollama: {
         apiKeySet: false,
@@ -32,8 +32,12 @@ describe("getEffectiveContextLimit", () => {
       },
     };
 
+    // 1M context is a provider-level capability (Anthropic/Gemini), not
+    // inherited through model mapping. ollama:custom should use the mapped
+    // model's base context limit, not 1M.
+    const mappedStats = getModelStats(KNOWN_MODELS.SONNET.id);
     const limit = getEffectiveContextLimit("ollama:custom", true, config);
-    expect(limit).toBe(1_000_000);
+    expect(limit).toBe(mappedStats?.max_input_tokens ?? null);
   });
 
   test("prefers custom context overrides over mapped model stats", () => {

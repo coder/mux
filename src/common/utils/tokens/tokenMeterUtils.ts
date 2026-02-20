@@ -73,7 +73,7 @@ export function calculateTokenMeterData(
   const modelStats = getModelStats(metadataModel);
   const customContextWindow = getModelContextWindowOverride(model, providersConfig);
   const maxTokens =
-    use1M && supports1MContext(metadataModel)
+    use1M && supports1MContext(model)
       ? 1_000_000
       : (customContextWindow ?? modelStats?.max_input_tokens);
 
