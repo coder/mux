@@ -37,6 +37,11 @@ export interface StartServerOptions {
   router?: AppRouter;
   /** Whether to serve static files */
   serveStatic?: boolean;
+  /**
+   * Allow HTTPS browser origins when a TLS-terminating proxy forwards
+   * X-Forwarded-Proto=http to mux. Disabled by default.
+   */
+  allowHttpOrigin?: boolean;
 }
 
 type NetworkInterfaces = NodeJS.Dict<os.NetworkInterfaceInfo[]>;
@@ -243,6 +248,7 @@ export class ServerService {
       router: options.router,
       serveStatic,
       staticDir,
+      allowHttpOrigin: options.allowHttpOrigin,
     };
 
     const server = await createOrpcServer(serverOptions);

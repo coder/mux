@@ -23,6 +23,10 @@ program
   .option("--auth-token <token>", "bearer token for HTTP/WS auth (default: auto-generated)")
   .option("--no-auth", "disable authentication (server is open to anyone who can reach it)")
   .option("--print-auth-token", "always print the auth token on startup")
+  .option(
+    "--allow-http-origin",
+    "allow HTTPS origins when TLS is terminated by a proxy that forwards X-Forwarded-Proto=http"
+  )
   .option("--ssh-host <host>", "SSH hostname/alias for editor deep links (e.g., devbox)")
   .option("--add-project <path>", "add and open project at the specified path (idempotent)")
   .parse(process.argv, getParseOptions());
@@ -36,6 +40,8 @@ const resolved = resolveServerAuthToken({
   envToken: process.env.MUX_SERVER_AUTH_TOKEN,
 });
 const ADD_PROJECT_PATH = options.addProject as string | undefined;
+// HTTPS-terminating proxy compatibility is opt-in so local/default deployments stay strict.
+const ALLOW_HTTP_ORIGIN = options.allowHttpOrigin === true;
 // SSH host for editor deep links (CLI flag > env var > config file, resolved later)
 const CLI_SSH_HOST = options.sshHost as string | undefined;
 
@@ -106,6 +112,7 @@ const mockWindow: BrowserWindow = {
     port: PORT,
     authToken: resolved.token,
     serveStatic: true,
+    allowHttpOrigin: ALLOW_HTTP_ORIGIN,
   });
 
   // Server is now listening - clear the startup keepalive since httpServer keeps the loop alive
@@ -160,6 +167,13 @@ const mockWindow: BrowserWindow = {
     }
   }
   console.log(""); // blank line
+
+  if (ALLOW_HTTP_ORIGIN) {
+    console.warn(
+      "NOTE: --allow-http-origin is enabled. Use it only when HTTPS is terminated by an upstream proxy that forwards X-Forwarded-Proto=http."
+    );
+    console.log(""); // blank line
+  }
 
   // Cleanup on shutdown
   let cleanupInProgress = false;

@@ -113,8 +113,11 @@ Options:
 - `--auth-token <token>` - Bearer token for HTTP/WS auth
 - `--no-auth` - Disable authentication entirely
 - `--print-auth-token` - Always print the auth token on startup
+- `--allow-http-origin` - Accept HTTPS browser origins when a TLS-terminating proxy forwards `X-Forwarded-Proto=http`
 - `--ssh-host <host>` - SSH hostname/alias used for editor deep links in browser mode
 - `--add-project <path>` - Add and open project at the specified path
+
+Use `--allow-http-origin` only when HTTPS is terminated by an upstream reverse proxy and mux receives rewritten `X-Forwarded-Proto=http` headers. This compatibility mode is disabled by default.
 
 Auth token precedence:
 

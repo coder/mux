@@ -244,6 +244,7 @@ describe("mux CLI", () => {
       expect(result.stdout).toContain("--auth-token");
       expect(result.stdout).toContain("--no-auth");
       expect(result.stdout).toContain("--print-auth-token");
+      expect(result.stdout).toContain("--allow-http-origin");
       expect(result.stdout).toContain("--add-project");
     });
   });

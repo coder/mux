@@ -52,6 +52,11 @@ export interface OrpcServerOptions {
   authToken?: string;
   /** Optional pre-created router (if not provided, creates router(authToken)) */
   router?: AppRouter;
+  /**
+   * Allow HTTPS browser origins when reverse proxies forward X-Forwarded-Proto=http.
+   * Keep disabled by default and only enable when TLS is terminated before mux.
+   */
+  allowHttpOrigin?: boolean;
 }
 
 export interface OrpcServer {
@@ -232,39 +237,45 @@ function getClientFacingProtocol(req: OriginValidationRequest): "http" | "https"
   return getFirstForwardedProtocol(req) ?? inferProtocol(req);
 }
 
-function getExpectedProtocols(req: OriginValidationRequest): Array<"http" | "https"> {
+function getExpectedProtocols(
+  req: OriginValidationRequest,
+  allowHttpOrigin = false
+): Array<"http" | "https"> {
   const clientFacingProtocol = getClientFacingProtocol(req);
   const originProtocol = getOriginProtocolOnExpectedHost(req);
 
   // Compatibility path: some reverse proxies overwrite X-Forwarded-Proto to http
   // even when the browser-facing request is https. In that specific case, trust the
-  // validated origin protocol for host-matched requests.
-  if (clientFacingProtocol === "http" && originProtocol === "https") {
+  // validated origin protocol for host-matched requests only when explicitly enabled.
+  if (allowHttpOrigin && clientFacingProtocol === "http" && originProtocol === "https") {
     return ["https"];
   }
 
   return [clientFacingProtocol];
 }
 
-function getPreferredPublicProtocol(req: OriginValidationRequest): "http" | "https" {
+function getPreferredPublicProtocol(
+  req: OriginValidationRequest,
+  allowHttpOrigin = false
+): "http" | "https" {
   const clientFacingProtocol = getClientFacingProtocol(req);
   const originProtocol = getOriginProtocolOnExpectedHost(req);
 
-  if (clientFacingProtocol === "http" && originProtocol === "https") {
+  if (allowHttpOrigin && clientFacingProtocol === "http" && originProtocol === "https") {
     return "https";
   }
 
   return clientFacingProtocol;
 }
 
-function getExpectedOrigins(req: OriginValidationRequest): string[] {
+function getExpectedOrigins(req: OriginValidationRequest, allowHttpOrigin = false): string[] {
   const hosts = getExpectedHosts(req);
 
   if (hosts.length === 0) {
     return [];
   }
 
-  const protocols = getExpectedProtocols(req);
+  const protocols = getExpectedProtocols(req, allowHttpOrigin);
 
   const expectedOrigins: string[] = [];
   for (const protocol of protocols) {
@@ -432,6 +443,7 @@ export async function createOrpcServer({
   authToken,
   context,
   serveStatic = false,
+  allowHttpOrigin = false,
   // From dist/node/orpc/, go up 2 levels to reach dist/ where index.html lives
   staticDir = path.join(__dirname, "../.."),
   onOrpcError = (error, options) => {
@@ -468,7 +480,7 @@ export async function createOrpcServer({
     }
 
     const normalizedOrigin = normalizeOrigin(originHeader);
-    const expectedOrigins = getExpectedOrigins(req);
+    const expectedOrigins = getExpectedOrigins(req, allowHttpOrigin);
     const allowedOrigin = isOriginAllowed(req, expectedOrigins) ? normalizedOrigin : null;
     const oauthCallbackNavigationRequest = isOAuthCallbackNavigationRequest(req);
 
@@ -565,7 +577,7 @@ export async function createOrpcServer({
   }
 
   function isSecureRequest(req: OriginValidationRequest): boolean {
-    return getPreferredPublicProtocol(req) === "https";
+    return getPreferredPublicProtocol(req, allowHttpOrigin) === "https";
   }
 
   function parsePathnameFromRequestValue(value: string | null | undefined): string | null {
@@ -801,7 +813,7 @@ export async function createOrpcServer({
     // Keep callback scheme selection aligned with origin compatibility handling.
     // Some proxy chains overwrite X-Forwarded-Proto to http on the final hop
     // even when the browser-visible origin is https.
-    const protocol = getPreferredPublicProtocol(req);
+    const protocol = getPreferredPublicProtocol(req, allowHttpOrigin);
     const callbackHost = normalizeHostForProtocol(host, protocol) ?? host;
     const redirectUri = `${protocol}://${callbackHost}/auth/mux-gateway/callback`;
     const { authorizeUrl, state } = context.muxGatewayOauthService.startServerFlow({ redirectUri });
@@ -950,7 +962,7 @@ export async function createOrpcServer({
       return;
     }
 
-    const protocol = getPreferredPublicProtocol(req);
+    const protocol = getPreferredPublicProtocol(req, allowHttpOrigin);
     const callbackHost = normalizeHostForProtocol(host, protocol) ?? host;
     const redirectUri = `${protocol}://${callbackHost}/auth/mux-governor/callback`;
     const result = context.muxGovernorOauthService.startServerFlow({
@@ -1357,7 +1369,7 @@ export async function createOrpcServer({
       return;
     }
 
-    const expectedOrigins = getExpectedOrigins(req);
+    const expectedOrigins = getExpectedOrigins(req, allowHttpOrigin);
     if (!isOriginAllowed(req, expectedOrigins)) {
       log.warn("Blocked cross-origin WebSocket upgrade request", {
         origin: getFirstHeaderValue(req, "origin"),
