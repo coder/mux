@@ -76,7 +76,7 @@ import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/r
 import { MessageQueue } from "./messageQueue";
 import type { StreamEndEvent, StreamStartEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
-import { RetryManager, type RetryStatusEvent } from "./retryManager";
+import { RetryManager, type RetryFailureError, type RetryStatusEvent } from "./retryManager";
 import type { TelemetryService } from "./telemetryService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 
@@ -497,6 +497,18 @@ export class AgentSession {
     this.emitChatEvent(event);
   }
 
+  private async handleStreamFailureForAutoRetry(error: RetryFailureError): Promise<void> {
+    assert(
+      typeof error.type === "string" && error.type.length > 0,
+      "handleStreamFailureForAutoRetry requires a non-empty error.type"
+    );
+
+    // Load persisted preference before scheduling retries so an on-disk opt-out is
+    // honored even when the first failure happens before startup recovery runs.
+    await this.loadAutoRetryEnabledPreference();
+    this.retryManager.handleStreamFailure(error);
+  }
+
   private extractRetryFailureMessage(error: SendMessageError): string | undefined {
     if ("message" in error && typeof error.message === "string") {
       return error.message;
@@ -538,7 +550,7 @@ export class AgentSession {
     // Fallback: resumeStream() can fail before stream error handlers run
     // (for example commitPartial/history read failures). Handle those here so
     // auto-retry continues instead of stalling after auto-retry-starting.
-    this.retryManager.handleStreamFailure({
+    await this.handleStreamFailureForAutoRetry({
       type: result.error.type,
       message: this.extractRetryFailureMessage(result.error),
     });
@@ -1137,7 +1149,7 @@ export class AgentSession {
     }
 
     this.lastAutoRetryOptions = retryOptions;
-    this.retryManager.handleStreamFailure({
+    await this.handleStreamFailureForAutoRetry({
       type: "unknown",
       message: "startup_interrupted_stream",
     });
@@ -2506,7 +2518,7 @@ export class AgentSession {
         const handledByNestedSend = this.activeStreamFailureHandled;
 
         if (!handledByNestedSend) {
-          this.retryManager.handleStreamFailure({
+          await this.handleStreamFailureForAutoRetry({
             type: failureType,
             message: this.extractRetryFailureMessage(sendResult.error),
           });
@@ -2769,7 +2781,7 @@ export class AgentSession {
         const failedUserMessageId = this.activeStreamUserMessageId;
         this.activeCompactionRequest = undefined;
         this.resetActiveStreamState();
-        this.retryManager.handleStreamFailure({
+        await this.handleStreamFailureForAutoRetry({
           type: failureType,
           message: this.extractRetryFailureMessage(streamResult.error),
         });
@@ -3405,7 +3417,7 @@ export class AgentSession {
       this.clearQueue();
     }
 
-    this.retryManager.handleStreamFailure({
+    await this.handleStreamFailureForAutoRetry({
       type: failureType,
       message: data.error,
     });
@@ -3574,7 +3586,7 @@ export class AgentSession {
       }
       this.pendingAgentSwitchingSync = undefined;
       const abortReason = "abortReason" in payload ? payload.abortReason : undefined;
-      this.retryManager.handleStreamFailure({
+      await this.handleStreamFailureForAutoRetry({
         type: "aborted",
         message: abortReason,
       });
