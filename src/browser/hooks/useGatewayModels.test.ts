@@ -203,7 +203,7 @@ describe("useGateway", () => {
       muxGatewayModels: ["anthropic:claude-opus-4-5", "openai:gpt-5.2"],
     });
   });
-  test("retries enrollment on IPC failure by rolling back and re-draining", async () => {
+  test("keeps optimistic enrollment on IPC failure (best-effort persistence)", async () => {
     mockConfig = {
       "mux-gateway": {
         couponCodeSet: true,
@@ -212,29 +212,29 @@ describe("useGateway", () => {
       },
     };
 
-    // First call fails; subsequent calls succeed (retry)
+    // Make persist call fail
     updateMuxGatewayPrefsMock.mockImplementationOnce(() => Promise.reject(new Error("IPC failed")));
 
     pendingGatewayEnrollments.add("anthropic:claude-opus-4-5");
 
     renderHook(() => useGateway());
 
-    // First drain attempted IPC
+    // Should have attempted persistence
     expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(1);
+    // Optimistic update was applied (model appears enrolled in UI)
+    const enrollUpdate = optimisticUpdates.find((u) => u.updates.gatewayModels != null);
+    expect(enrollUpdate).toBeDefined();
+    expect(enrollUpdate!.updates.gatewayModels).toEqual(["anthropic:claude-opus-4-5"]);
 
-    // Let the rejection + rollback + retry cycle settle
+    // Let the rejection handler settle (should not throw or trigger tight retry loop)
     await act(async () => {
       await new Promise((r) => setTimeout(r, 50));
     });
 
-    // Retry should have succeeded: 2 IPC calls (first fails, second succeeds)
-    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(2);
-    // Retry call should target the same model
-    const retryCall = updateMuxGatewayPrefsMock.mock.calls[1] as unknown[];
-    expect(retryCall[0]).toEqual({
-      muxGatewayEnabled: true,
-      muxGatewayModels: ["anthropic:claude-opus-4-5"],
-    });
+    // No retry — only 1 IPC call (avoids tight loops during backend disconnects)
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(1);
+    // Queue fully drained (no re-enqueue)
+    expect(pendingGatewayEnrollments.size).toBe(0);
   });
 });
 
