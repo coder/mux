@@ -43,35 +43,6 @@ export function createFreshRetryState<TError = SendMessageError>(): RetryState<T
 }
 
 /**
- * Create retry state for manual retry (user-initiated).
- *
- * Makes the retry immediately eligible while allowing callers to choose whether
- * the attempt counter should be preserved or reset.
- *
- * Preserving the attempt keeps exponential backoff progression if the retry
- * fails again. Resetting the attempt is useful when the user explicitly stopped
- * auto-retry and wants a fresh retry cycle.
- *
- * @param currentAttempt - Current attempt count
- * @param options.resetBackoff - When true, reset attempt to 0 for a fresh cycle
- */
-export function createManualRetryState<TError = SendMessageError>(
-  currentAttempt: number,
-  options?: { resetBackoff?: boolean }
-): RetryState<TError> {
-  assert(
-    Number.isInteger(currentAttempt) && currentAttempt >= 0,
-    "createManualRetryState: currentAttempt must be >= 0"
-  );
-
-  return {
-    attempt: options?.resetBackoff ? 0 : currentAttempt,
-    retryStartTime: Date.now() - INITIAL_DELAY, // Make immediately eligible
-    lastError: undefined, // Clear error (user is manually retrying)
-  };
-}
-
-/**
  * Create retry state after a failed attempt.
  *
  * Increments attempt counter and records the error for display.
