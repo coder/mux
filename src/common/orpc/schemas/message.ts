@@ -122,6 +122,8 @@ export const MuxMessageSchema = z.object({
       systemMessageTokens: z.number().optional(),
       muxMetadata: z.any().optional(),
       cmuxMetadata: z.any().optional(), // Legacy field for backward compatibility
+      // ACP prompt correlation id for reconnect/diagnostic continuity.
+      acpPromptId: z.string().optional(),
       // Compaction source: "user" (manual), "idle" (auto), or legacy boolean (true)
       compacted: z.union([z.literal("user"), z.literal("idle"), z.boolean()]).optional(),
       // Monotonic compaction epoch id. Incremented whenever compaction succeeds.

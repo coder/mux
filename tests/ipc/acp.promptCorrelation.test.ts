@@ -486,6 +486,86 @@ describe("ACP prompt stream correlation", () => {
     await harness.connectionClosed;
   });
 
+  it("ignores stale uncorrelated stream-start events older than the active prompt", async () => {
+    const harness = createHarness();
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    const newSessionResponse = await harness.agent.newSession({
+      cwd: "/repo/acp-go-sdk",
+      mcpServers: [],
+      _meta: {
+        trunkBranch: "main",
+      },
+    });
+
+    const promptPromise = harness.agent.prompt({
+      sessionId: newSessionResponse.sessionId,
+      prompt: [{ type: "text", text: "hello" }],
+    });
+
+    await waitForCondition(() => harness.sendMessageCalls.length === 1);
+
+    let promptSettled = false;
+    void promptPromise.then(
+      () => {
+        promptSettled = true;
+      },
+      () => {
+        promptSettled = true;
+      }
+    );
+
+    harness.pushChatEvent({
+      type: "stream-start",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-stale",
+      model: "anthropic:claude-sonnet-4-5",
+      historySequence: 1,
+      // Simulate a stale stream-start from before this prompt began.
+      startTime: 1,
+    } as WorkspaceChatMessage);
+
+    harness.pushChatEvent({
+      type: "stream-end",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-stale",
+      metadata: {
+        model: "anthropic:claude-sonnet-4-5",
+      },
+      parts: [],
+    } as WorkspaceChatMessage);
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(promptSettled).toBe(false);
+
+    harness.pushChatEvent({
+      type: "stream-start",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-target",
+      model: "anthropic:claude-sonnet-4-5",
+      historySequence: 3,
+      startTime: Date.now(),
+    } as WorkspaceChatMessage);
+
+    harness.pushChatEvent({
+      type: "stream-end",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-target",
+      metadata: {
+        model: "anthropic:claude-sonnet-4-5",
+      },
+      parts: [],
+    } as WorkspaceChatMessage);
+
+    await expect(promptPromise).resolves.toEqual({
+      stopReason: "end_turn",
+      usage: undefined,
+    });
+
+    harness.closeConnection();
+    await harness.connectionClosed;
+  });
+
   it("completes prompt turns from replay-flagged correlated stream events", async () => {
     const harness = createHarness();
     await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });

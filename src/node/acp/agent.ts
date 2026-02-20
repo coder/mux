@@ -99,6 +99,8 @@ interface TurnCompletion {
   reject: (error: Error) => void;
   /** Stable per-prompt correlation id injected into send options and stream events. */
   promptCorrelationId: string;
+  /** Monotonic wall-clock when prompt() registered this turn. */
+  startedAtMs: number;
   /** Set after stream-start; only this message id may resolve/reject the turn. */
   messageId?: string;
 }
@@ -1276,9 +1278,25 @@ export class MuxAgent implements Agent {
 
       const hasMatchingCorrelation = event.acpPromptId === completion.promptCorrelationId;
       const canFallbackToUncorrelatedStart =
-        completion.messageId == null && !isReplayEvent && event.acpPromptId == null;
+        completion.messageId == null &&
+        !isReplayEvent &&
+        event.acpPromptId == null &&
+        Number.isFinite(event.startTime) &&
+        event.startTime >= completion.startedAtMs;
 
       if (hasMatchingCorrelation || canFallbackToUncorrelatedStart) {
+        if (!hasMatchingCorrelation) {
+          console.warn(
+            `[acp] stream-start missing acpPromptId for active prompt; using live fallback for session ${sessionId}`,
+            {
+              promptCorrelationId: completion.promptCorrelationId,
+              messageId: event.messageId,
+              eventStartTime: event.startTime,
+              turnStartedAtMs: completion.startedAtMs,
+            }
+          );
+        }
+
         // Fallback rationale: some runtimes can occasionally omit acpPromptId on
         // live stream-start events even though the prompt originated from ACP.
         // Latching the first live uncorrelated start avoids hanging prompt()
@@ -1400,8 +1418,16 @@ export class MuxAgent implements Agent {
     // starting a fresh turn so prompt responses only reflect the in-flight request.
     this.latestUsageBySessionId.delete(sessionId);
 
+    const startedAtMs = Date.now();
+    assert(Number.isFinite(startedAtMs), "beginTurn: startedAtMs must be finite");
+
     return new Promise<TurnResult>((resolve, reject) => {
-      this.turnCompletions.set(sessionId, { resolve, reject, promptCorrelationId });
+      this.turnCompletions.set(sessionId, {
+        resolve,
+        reject,
+        promptCorrelationId,
+        startedAtMs,
+      });
     });
   }
   /**

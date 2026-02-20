@@ -1886,6 +1886,7 @@ export class AgentSession {
     const typedToolPolicy = options?.toolPolicy;
     // muxMetadata is z.any() in schema - cast to proper type
     const typedMuxMetadata = options?.muxMetadata as MuxMessageMetadata | undefined;
+    const acpPromptId = extractAcpPromptId(typedMuxMetadata);
     const isCompactionRequest = isCompactionRequestMetadata(typedMuxMetadata);
 
     // Validate model BEFORE persisting message to prevent orphaned messages on invalid model
@@ -1970,6 +1971,7 @@ export class AgentSession {
         disableWorkspaceAgents: options?.disableWorkspaceAgents,
         retrySendOptions: pickStartupRetrySendOptions(optionsForStream),
         muxMetadata: typedMuxMetadata, // Pass through frontend metadata as black-box
+        ...(acpPromptId != null ? { acpPromptId } : {}),
         // Auto-resume and other system-generated messages are synthetic + UI-visible
         ...(internal?.synthetic && { synthetic: true, uiVisible: true }),
       },
