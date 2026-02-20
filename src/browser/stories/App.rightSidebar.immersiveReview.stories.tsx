@@ -43,6 +43,46 @@ index 1111111..2222222 100644
 
 const IMMERSIVE_LINE_HEIGHT_NUMSTAT = "7\t2\tsrc/utils/formatPrice.ts";
 
+const HIGHLIGHT_VS_PLAIN_WORKSPACE_ID = "ws-review-immersive-highlight-vs-plain";
+const HIGHLIGHT_FALLBACK_THRESHOLD_BYTES = 32 * 1024;
+const HIGHLIGHT_FALLBACK_BUFFER_BYTES = 1024;
+const HIGHLIGHT_VS_PLAIN_NUMSTAT = "3\t2\tsrc/review/lineHeightProbe.ts";
+
+function buildHighlightVsPlainDiffOutput(): string {
+  const oversizedContextLines: string[] = [];
+  let contextBytes = 0;
+  let lineIndex = 0;
+
+  // Keep adding context lines until this single context chunk exceeds the
+  // 32kb highlight limit, forcing plain/fallback rendering for those rows.
+  while (contextBytes <= HIGHLIGHT_FALLBACK_THRESHOLD_BYTES + HIGHLIGHT_FALLBACK_BUFFER_BYTES) {
+    const contextLine =
+      `const fallbackProbe${lineIndex.toString().padStart(4, "0")} = createProbeEntry(` +
+      `"fallback-${lineIndex}", { index: ${lineIndex}, mode: "plain-context-chunk" });`;
+    oversizedContextLines.push(` ${contextLine}`);
+    contextBytes += contextLine.length + 1;
+    lineIndex += 1;
+  }
+
+  return [
+    "diff --git a/src/review/lineHeightProbe.ts b/src/review/lineHeightProbe.ts",
+    "index abcdef1..1234567 100644",
+    "--- a/src/review/lineHeightProbe.ts",
+    "+++ b/src/review/lineHeightProbe.ts",
+    "@@ -1,8 +1,9 @@",
+    "-export const BASE_ROW_HEIGHT = 20;",
+    "+export const BASE_ROW_HEIGHT = 22;",
+    '+export const ROW_HEIGHT_MODE = "immersive";',
+    " export function resolveRowHeight(scale = 1): number {",
+    "   return BASE_ROW_HEIGHT * scale;",
+    " }",
+    ...oversizedContextLines,
+    '-export const ROW_HEIGHT_LABEL = "compact";',
+    '+export const ROW_HEIGHT_LABEL = "immersive";',
+    "",
+  ].join("\n");
+}
+
 export default {
   ...appMeta,
   title: "App/RightSidebar",
@@ -89,6 +129,56 @@ export const ReviewTabImmersiveLineHeightDebug: AppStory = {
           gitDiff: {
             diffOutput: IMMERSIVE_LINE_HEIGHT_DIFF,
             numstatOutput: IMMERSIVE_LINE_HEIGHT_NUMSTAT,
+          },
+        });
+
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await waitFor(
+      () => {
+        canvas.getByTestId("immersive-review-view");
+        canvas.getByRole("button", { name: /exit immersive review/i });
+      },
+      { timeout: 10_000 }
+    );
+  },
+};
+
+export const ReviewTabImmersiveHighlightVsPlainHeight: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "760");
+        localStorage.removeItem(getRightSidebarLayoutKey(HIGHLIGHT_VS_PLAIN_WORKSPACE_ID));
+        updatePersistedState(getReviewImmersiveKey(HIGHLIGHT_VS_PLAIN_WORKSPACE_ID), true);
+
+        const diffOutput = buildHighlightVsPlainDiffOutput();
+        const client = setupSimpleChatStory({
+          workspaceId: HIGHLIGHT_VS_PLAIN_WORKSPACE_ID,
+          workspaceName: "feature/immersive-highlight-vs-plain",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Can you compare highlight and plain line heights?", {
+              historySequence: 1,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "I generated a mixed diff where one oversized context chunk falls back to plain text.",
+              {
+                historySequence: 2,
+              }
+            ),
+          ],
+          gitDiff: {
+            diffOutput,
+            numstatOutput: HIGHLIGHT_VS_PLAIN_NUMSTAT,
           },
         });
 
