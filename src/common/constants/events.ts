@@ -53,14 +53,6 @@ export const CUSTOM_EVENTS = {
   MUX_GATEWAY_SESSION_EXPIRED: "mux:muxGatewaySessionExpired",
 
   /**
-   * Event emitted when migrateGatewayModel converts a legacy mux-gateway:provider/model
-   * string to canonical form. The useGateway hook listens for this to persist the
-   * model's gateway enrollment (replacing the old localStorage side-effect).
-   * Detail: { modelId: string }
-   */
-  MUX_GATEWAY_ENROLL_MODEL: "mux:muxGatewayEnrollModel",
-
-  /**
    * Event to switch to a different workspace after fork
    * Detail: { workspaceId: string, projectPath: string, projectName: string, workspacePath: string, branch: string }
    */
@@ -116,7 +108,6 @@ export interface CustomEventPayloads {
   [CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED]: never; // No payload
   [CUSTOM_EVENTS.OPEN_MODEL_SELECTOR]: never; // No payload
   [CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED]: never; // No payload
-  [CUSTOM_EVENTS.MUX_GATEWAY_ENROLL_MODEL]: { modelId: string };
   [CUSTOM_EVENTS.WORKSPACE_FORK_SWITCH]: {
     workspaceId: string;
     projectPath: string;

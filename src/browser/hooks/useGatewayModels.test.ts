@@ -13,10 +13,10 @@ import {
   isGatewayFormat,
   isProviderSupported,
   migrateGatewayModel,
+  pendingGatewayEnrollments,
   toGatewayModel,
   useGateway,
 } from "./useGatewayModels";
-import { CUSTOM_EVENTS } from "@/common/constants/events";
 
 // Tracks optimistic updates applied to provider config
 let optimisticUpdates: Array<{ provider: string; updates: Record<string, unknown> }> = [];
@@ -134,7 +134,7 @@ describe("useGateway", () => {
     expect(result.current.modelUsesGateway("openai:gpt-4")).toBe(false);
   });
 
-  test("enrollment event from migrateGatewayModel persists gateway opt-in", () => {
+  test("drains pending enrollments from migrateGatewayModel after config loads", () => {
     mockConfig = {
       "mux-gateway": {
         couponCodeSet: true,
@@ -143,16 +143,10 @@ describe("useGateway", () => {
       },
     };
 
-    renderHook(() => useGateway());
+    // Simulate migrateGatewayModel queuing a model during render
+    pendingGatewayEnrollments.add("anthropic:claude-opus-4-5");
 
-    // Dispatch the enrollment event (simulates migrateGatewayModel detecting a legacy model)
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_ENROLL_MODEL, {
-          detail: { modelId: "anthropic:claude-opus-4-5" },
-        })
-      );
-    });
+    renderHook(() => useGateway());
 
     // Should optimistically add the model and persist via IPC
     const enrollUpdate = optimisticUpdates.find((u) => u.updates.gatewayModels != null);
@@ -162,9 +156,11 @@ describe("useGateway", () => {
       muxGatewayEnabled: true,
       muxGatewayModels: ["anthropic:claude-opus-4-5"],
     });
+    // Queue should be drained
+    expect(pendingGatewayEnrollments.size).toBe(0);
   });
 
-  test("enrollment event is no-op when model is already enrolled", () => {
+  test("skips enrollment for already-enrolled models", () => {
     mockConfig = {
       "mux-gateway": {
         couponCodeSet: true,
@@ -173,19 +169,69 @@ describe("useGateway", () => {
       },
     };
 
-    renderHook(() => useGateway());
+    // Queue model that's already enrolled
+    pendingGatewayEnrollments.add("anthropic:claude-opus-4-5");
 
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_ENROLL_MODEL, {
-          detail: { modelId: "anthropic:claude-opus-4-5" },
-        })
-      );
-    });
+    renderHook(() => useGateway());
 
     // No optimistic update or IPC call — model already enrolled
     expect(optimisticUpdates).toHaveLength(0);
     expect(updateMuxGatewayPrefsMock).not.toHaveBeenCalled();
+    // Queue should still be drained
+    expect(pendingGatewayEnrollments.size).toBe(0);
+  });
+
+  test("batches multiple pending enrollments together", () => {
+    mockConfig = {
+      "mux-gateway": {
+        couponCodeSet: true,
+        isEnabled: true,
+        gatewayModels: [],
+      },
+    };
+
+    // Queue two models simultaneously
+    pendingGatewayEnrollments.add("anthropic:claude-opus-4-5");
+    pendingGatewayEnrollments.add("openai:gpt-5.2");
+
+    renderHook(() => useGateway());
+
+    // Both should be enrolled in a single IPC call
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(1);
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledWith({
+      muxGatewayEnabled: true,
+      muxGatewayModels: ["anthropic:claude-opus-4-5", "openai:gpt-5.2"],
+    });
+  });
+  test("re-enqueues pending enrollments when IPC persistence fails", async () => {
+    mockConfig = {
+      "mux-gateway": {
+        couponCodeSet: true,
+        isEnabled: true,
+        gatewayModels: [],
+      },
+    };
+
+    // Make persist call fail
+    updateMuxGatewayPrefsMock.mockImplementationOnce(() => Promise.reject(new Error("IPC failed")));
+
+    pendingGatewayEnrollments.add("anthropic:claude-opus-4-5");
+
+    renderHook(() => useGateway());
+
+    // Should have attempted persistence
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(1);
+    expect(pendingGatewayEnrollments.size).toBe(0); // cleared optimistically
+
+    // Let the rejection handler run
+    await new Promise((r) => setTimeout(r, 10));
+
+    // After failure, model should be re-enqueued for retry
+    expect(pendingGatewayEnrollments.size).toBe(1);
+    expect(pendingGatewayEnrollments.has("anthropic:claude-opus-4-5")).toBe(true);
+
+    // Clean up for other tests
+    pendingGatewayEnrollments.clear();
   });
 });
 

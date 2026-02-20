@@ -6,13 +6,14 @@ import {
   isValidProvider,
   type ProviderName,
 } from "@/common/constants/providers";
-import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
+import { CUSTOM_EVENTS } from "@/common/constants/events";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 
-// Models confirmed enrolled by the useGateway handler. Once confirmed,
-// migrateGatewayModel stops dispatching for that model. Set is only populated
-// after the handler verifies config is loaded and persists the enrollment.
-const confirmedEnrollments = new Set<string>();
+// Queue of canonical model IDs needing gateway enrollment. Populated by
+// migrateGatewayModel (called during render); drained by the useGateway hook
+// effect after provider config loads. Using a Set deduplicates repeated calls.
+// Exported for testing only.
+export const pendingGatewayEnrollments = new Set<string>();
 
 // ============================================================================
 // Pure utility functions (no side effects, used for message sending)
@@ -71,25 +72,11 @@ export function migrateGatewayModel(modelId: string): string {
   const model = inner.slice(slashIndex + 1);
   const canonicalId = `${provider}:${model}`;
 
-  // Preserve gateway routing intent: dispatch enrollment event so the
-  // useGateway hook persists this model in muxGatewayModels.
-  // Deferred via setTimeout: migrateGatewayModel runs during render,
-  // before the useGateway effect listener subscribes. Deferring ensures
-  // the event reaches the listener after React commits and runs effects.
-  // We keep dispatching until the handler confirms enrollment
-  // (confirmedEnrollments). If the handler skips because config isn't
-  // loaded yet, the model stays unconfirmed and retries on the next render.
-  if (!confirmedEnrollments.has(canonicalId) && typeof window !== "undefined") {
-    setTimeout(() => {
-      // Re-check: window may have been torn down between render and timeout
-      // (e.g., during test cleanup)
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(
-          createCustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_ENROLL_MODEL, { modelId: canonicalId })
-        );
-      }
-    }, 0);
-  }
+  // Preserve gateway routing intent: queue the canonical model for enrollment.
+  // The useGateway hook drains this queue after provider config loads,
+  // persisting the model in muxGatewayModels so gateway routing continues
+  // to work after the format migration.
+  pendingGatewayEnrollments.add(canonicalId);
 
   return canonicalId;
 }
@@ -199,27 +186,41 @@ export function useGateway(): GatewayState {
     [api]
   );
 
-  // When migrateGatewayModel converts a legacy mux-gateway: model string,
-  // it dispatches this event so we can persist the model's gateway enrollment.
-  // This preserves the user's routing intent during the format migration.
-  // We skip enrollment until provider config is loaded (gwConfig non-null) to
-  // avoid overwriting existing backend models with an empty array.
+  // Drain pending gateway enrollments from migrateGatewayModel.
+  // migrateGatewayModel queues models during render; this effect runs after
+  // render to persist them. We wait until gwConfig is loaded to avoid
+  // overwriting existing backend models, and batch all pending items together
+  // so back-to-back migrations don't overwrite each other.
+  //
+  // Durability: items are cleared from the queue optimistically, but re-enqueued
+  // if the IPC persist call fails. This ensures transient backend failures don't
+  // silently drop the user's gateway-routing intent — the next render cycle
+  // (triggered by config refresh) will retry.
   useEffect(() => {
-    const handler = (e: CustomEvent<{ modelId: string }>) => {
-      if (!gwConfig) return; // Config not loaded yet; will retry on next render
-      const { modelId } = e.detail;
-      // Mark confirmed so migrateGatewayModel stops dispatching for this model
-      confirmedEnrollments.add(modelId);
-      if (!enabledModels.includes(modelId)) {
-        const nextModels = [...enabledModels, modelId];
-        updateOptimistically("mux-gateway", { gatewayModels: nextModels });
-        persistGatewayPrefs(isEnabled, nextModels);
-      }
-    };
-    window.addEventListener(CUSTOM_EVENTS.MUX_GATEWAY_ENROLL_MODEL, handler as EventListener);
-    return () =>
-      window.removeEventListener(CUSTOM_EVENTS.MUX_GATEWAY_ENROLL_MODEL, handler as EventListener);
-  }, [gwConfig, enabledModels, isEnabled, persistGatewayPrefs, updateOptimistically]);
+    if (!gwConfig || pendingGatewayEnrollments.size === 0) return;
+
+    const batch = [...pendingGatewayEnrollments];
+    const newModels = batch.filter((id) => !enabledModels.includes(id));
+
+    // Clear the queue — items already enrolled don't need retry, and new items
+    // get optimistic + IPC treatment below (with re-enqueue on failure).
+    pendingGatewayEnrollments.clear();
+
+    if (newModels.length === 0) return;
+
+    const nextModels = [...enabledModels, ...newModels];
+    updateOptimistically("mux-gateway", { gatewayModels: nextModels });
+    api?.config
+      .updateMuxGatewayPrefs({
+        muxGatewayEnabled: isEnabled,
+        muxGatewayModels: nextModels,
+      })
+      .catch(() => {
+        // Persistence failed — re-enqueue so the next config refresh triggers
+        // a retry rather than silently dropping the enrollment intent.
+        for (const id of newModels) pendingGatewayEnrollments.add(id);
+      });
+  }, [gwConfig, enabledModels, isEnabled, api, updateOptimistically]);
 
   const toggleEnabled = useCallback(() => {
     const nextEnabled = !isEnabled;
