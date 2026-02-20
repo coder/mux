@@ -263,9 +263,13 @@ export function useGateway(): GatewayState {
         muxGatewayModels: nextModels,
       })
       .catch(() => {
-        // Persistence failed — re-enqueue so the next config refresh triggers
-        // a retry rather than silently dropping the enrollment intent.
+        // Persistence failed — re-enqueue so the next drain attempt retries.
         for (const id of newModels) pendingGatewayEnrollments.add(id);
+        // Roll back the optimistic gatewayModels to the pre-drain state.
+        // Without this, the retry drain would see the models as already in
+        // enabledModels (from the optimistic update above) and skip them,
+        // leaving them optimistically enrolled but never persisted.
+        updateOptimistically("mux-gateway", { gatewayModels: enabledModels });
         // Signal the drain effect to re-run for the re-enqueued items
         window.dispatchEvent(new Event(ENROLLMENT_PENDING_EVENT));
       });

@@ -203,7 +203,7 @@ describe("useGateway", () => {
       muxGatewayModels: ["anthropic:claude-opus-4-5", "openai:gpt-5.2"],
     });
   });
-  test("enrollment IPC failure doesn't crash and optimistic state is preserved", async () => {
+  test("retries enrollment on IPC failure by rolling back and re-draining", async () => {
     mockConfig = {
       "mux-gateway": {
         couponCodeSet: true,
@@ -212,27 +212,29 @@ describe("useGateway", () => {
       },
     };
 
-    // Make persist call fail
+    // First call fails; subsequent calls succeed (retry)
     updateMuxGatewayPrefsMock.mockImplementationOnce(() => Promise.reject(new Error("IPC failed")));
 
     pendingGatewayEnrollments.add("anthropic:claude-opus-4-5");
 
-    const { result } = renderHook(() => useGateway());
+    renderHook(() => useGateway());
 
-    // Should have attempted persistence and applied optimistic update
+    // First drain attempted IPC
     expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(1);
-    const enrollUpdate = optimisticUpdates.find((u) => u.updates.gatewayModels != null);
-    expect(enrollUpdate).toBeDefined();
-    expect(enrollUpdate!.updates.gatewayModels).toEqual(["anthropic:claude-opus-4-5"]);
 
-    // Let the rejection handler settle (shouldn't throw or break the hook)
+    // Let the rejection + rollback + retry cycle settle
     await act(async () => {
       await new Promise((r) => setTimeout(r, 50));
     });
 
-    // Hook remains functional — optimistic state shows model as enrolled
-    expect(result.current.modelUsesGateway("anthropic:claude-opus-4-5")).toBe(true);
-    pendingGatewayEnrollments.clear();
+    // Retry should have succeeded: 2 IPC calls (first fails, second succeeds)
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(2);
+    // Retry call should target the same model
+    const retryCall = updateMuxGatewayPrefsMock.mock.calls[1] as unknown[];
+    expect(retryCall[0]).toEqual({
+      muxGatewayEnabled: true,
+      muxGatewayModels: ["anthropic:claude-opus-4-5"],
+    });
   });
 });
 
