@@ -1460,8 +1460,9 @@ export class MuxAgent implements Agent {
     // If stdout backpressure saturates the forwarding queue and we block the
     // drain loop, stream-end/stream-abort can be delayed behind thousands of
     // queued deltas, making prompt() appear hung. Instead, once saturated we
-    // drop non-terminal events but continue draining so turn-completion events
-    // are still observed promptly.
+    // drop only high-volume chunk/replay events while preserving lifecycle/
+    // control events (caught-up, tool-call-end, etc.) so turn-completion and
+    // translator state remain correct.
     const { push, iterate, end } = createAsyncMessageQueue<WorkspaceChatMessage>();
     let queuedEventCount = 0;
     let droppedNonTerminalEventCount = 0;
@@ -1471,6 +1472,16 @@ export class MuxAgent implements Agent {
       event.type === "stream-abort" ||
       event.type === "stream-error" ||
       event.type === "error";
+
+    const isDroppableUnderBackpressure = (event: WorkspaceChatMessage): boolean =>
+      event.type === "stream-delta" ||
+      event.type === "reasoning-delta" ||
+      event.type === "tool-call-delta" ||
+      event.type === "usage-delta" ||
+      event.type === "session-usage-delta" ||
+      event.type === "bash-output" ||
+      event.type === "init-output" ||
+      event.type === "message";
 
     // Drain the oRPC stream: observe events for turn resolution, buffer
     // for translation. push() is non-blocking so handleStreamEvent always
@@ -1496,7 +1507,9 @@ export class MuxAgent implements Agent {
           // unboundedly if the consumer is blocked on stdout backpressure.
           if (event.type !== "heartbeat") {
             const shouldDropForBackpressure =
-              queuedEventCount >= MAX_BUFFERED_CHAT_EVENTS && !isTerminalStreamEvent(event);
+              queuedEventCount >= MAX_BUFFERED_CHAT_EVENTS &&
+              !isTerminalStreamEvent(event) &&
+              isDroppableUnderBackpressure(event);
             if (shouldDropForBackpressure) {
               droppedNonTerminalEventCount += 1;
               if (
@@ -1504,7 +1517,7 @@ export class MuxAgent implements Agent {
                 droppedNonTerminalEventCount % 1_000 === 0
               ) {
                 console.warn(
-                  `[acp] Dropping non-terminal onChat events under stdout backpressure for session ${sessionId}`,
+                  `[acp] Dropping high-volume onChat events under stdout backpressure for session ${sessionId}`,
                   {
                     droppedNonTerminalEventCount,
                     bufferedEvents: queuedEventCount,
