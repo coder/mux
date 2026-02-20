@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { useProvidersConfig } from "./useProvidersConfig";
 import {
@@ -185,17 +185,35 @@ export function useGateway(): GatewayState {
     return () => window.removeEventListener(ENROLLMENT_PENDING_EVENT, handler);
   }, []);
 
+  // Track whether a session-expired event arrived before config was hydrated.
+  // updateOptimistically is a no-op when config is null, so we defer and apply
+  // the update once gwConfig becomes available (see effect below).
+  const sessionExpiredBeforeHydrationRef = useRef(false);
+
   // When gateway session expires (detected by stream error or account status check),
   // optimistically mark as unconfigured so routing stops immediately.
   // The MUX_GATEWAY_SESSION_EXPIRED event is dispatched by the chat event aggregator
   // and the account status hook; we handle it here to update provider config state.
   useEffect(() => {
     const handler = () => {
-      updateOptimistically("mux-gateway", { couponCodeSet: false });
+      if (config) {
+        updateOptimistically("mux-gateway", { couponCodeSet: false });
+      } else {
+        // Config not loaded yet — defer so we apply it once hydrated
+        sessionExpiredBeforeHydrationRef.current = true;
+      }
     };
     window.addEventListener(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED, handler);
     return () => window.removeEventListener(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED, handler);
-  }, [updateOptimistically]);
+  }, [config, updateOptimistically]);
+
+  // Apply deferred session-expired signal once config is hydrated.
+  useEffect(() => {
+    if (gwConfig && sessionExpiredBeforeHydrationRef.current) {
+      sessionExpiredBeforeHydrationRef.current = false;
+      updateOptimistically("mux-gateway", { couponCodeSet: false });
+    }
+  }, [gwConfig, updateOptimistically]);
 
   const persistGatewayPrefs = useCallback(
     (nextEnabled: boolean, nextModels: string[]) => {
@@ -248,6 +266,8 @@ export function useGateway(): GatewayState {
         // Persistence failed — re-enqueue so the next config refresh triggers
         // a retry rather than silently dropping the enrollment intent.
         for (const id of newModels) pendingGatewayEnrollments.add(id);
+        // Signal the drain effect to re-run for the re-enqueued items
+        window.dispatchEvent(new Event(ENROLLMENT_PENDING_EVENT));
       });
   }, [gwConfig, enabledModels, isEnabled, api, updateOptimistically, enrollVersion]);
 

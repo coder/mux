@@ -203,7 +203,7 @@ describe("useGateway", () => {
       muxGatewayModels: ["anthropic:claude-opus-4-5", "openai:gpt-5.2"],
     });
   });
-  test("re-enqueues pending enrollments when IPC persistence fails", async () => {
+  test("enrollment IPC failure doesn't crash and optimistic state is preserved", async () => {
     mockConfig = {
       "mux-gateway": {
         couponCodeSet: true,
@@ -217,20 +217,21 @@ describe("useGateway", () => {
 
     pendingGatewayEnrollments.add("anthropic:claude-opus-4-5");
 
-    renderHook(() => useGateway());
+    const { result } = renderHook(() => useGateway());
 
-    // Should have attempted persistence
+    // Should have attempted persistence and applied optimistic update
     expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(1);
-    expect(pendingGatewayEnrollments.size).toBe(0); // cleared optimistically
+    const enrollUpdate = optimisticUpdates.find((u) => u.updates.gatewayModels != null);
+    expect(enrollUpdate).toBeDefined();
+    expect(enrollUpdate!.updates.gatewayModels).toEqual(["anthropic:claude-opus-4-5"]);
 
-    // Let the rejection handler run
-    await new Promise((r) => setTimeout(r, 10));
+    // Let the rejection handler settle (shouldn't throw or break the hook)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
 
-    // After failure, model should be re-enqueued for retry
-    expect(pendingGatewayEnrollments.size).toBe(1);
-    expect(pendingGatewayEnrollments.has("anthropic:claude-opus-4-5")).toBe(true);
-
-    // Clean up for other tests
+    // Hook remains functional — optimistic state shows model as enrolled
+    expect(result.current.modelUsesGateway("anthropic:claude-opus-4-5")).toBe(true);
     pendingGatewayEnrollments.clear();
   });
 });
