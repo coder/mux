@@ -173,6 +173,47 @@ function inferProtocol(req: OriginValidationRequest): "http" | "https" {
   return (req.socket as { encrypted?: boolean }).encrypted ? "https" : "http";
 }
 
+function getForwardedProtocols(req: OriginValidationRequest): Array<"http" | "https"> {
+  const rawHeader = req.headers["x-forwarded-proto"];
+  const rawValues = Array.isArray(rawHeader) ? rawHeader : [rawHeader];
+  const protocols: Array<"http" | "https"> = [];
+
+  for (const rawValue of rawValues) {
+    if (typeof rawValue !== "string") {
+      continue;
+    }
+
+    for (const part of rawValue.split(",")) {
+      const normalized = normalizeProtocol(part);
+      if (!normalized || protocols.includes(normalized)) {
+        continue;
+      }
+
+      protocols.push(normalized);
+    }
+  }
+
+  return protocols;
+}
+
+function getExpectedProtocols(req: OriginValidationRequest): Array<"http" | "https"> {
+  const forwardedProtocols = getForwardedProtocols(req);
+  if (forwardedProtocols.length === 0) {
+    return [inferProtocol(req)];
+  }
+
+  // Any forwarded HTTPS hop means the public request chain included TLS, so keep
+  // rejecting downgraded HTTP origins in that case.
+  if (forwardedProtocols.includes("https")) {
+    return ["https"];
+  }
+
+  // Some reverse proxies overwrite X-Forwarded-Proto with their immediate upstream
+  // transport (http) even when the browser-facing origin is https. Allow both schemes
+  // for host-matched origins so those deployments can still connect.
+  return ["http", "https"];
+}
+
 function getExpectedOrigins(req: OriginValidationRequest): string[] {
   const hosts = [
     getFirstHeaderValue(req, "x-forwarded-host"),
@@ -185,10 +226,7 @@ function getExpectedOrigins(req: OriginValidationRequest): string[] {
     return [];
   }
 
-  // Trust only the first X-Forwarded-Proto hop. Falling back to inferred protocol is
-  // only safe when the header is absent or invalid.
-  const forwardedProtocol = normalizeProtocol(getFirstHeaderValue(req, "x-forwarded-proto") ?? "");
-  const protocols = forwardedProtocol === null ? [inferProtocol(req)] : [forwardedProtocol];
+  const protocols = getExpectedProtocols(req);
 
   const expectedOrigins: string[] = [];
   for (const protocol of protocols) {
@@ -334,6 +372,14 @@ function isOAuthCallbackNavigationRequest(req: Pick<express.Request, "method" | 
   );
 }
 
+function shouldEnforceOriginValidation(req: Pick<express.Request, "path">): boolean {
+  // User rationale: static HTML/CSS/JS must keep loading even when intermediaries rewrite
+  // Origin/forwarded headers, while API and auth endpoints retain strict same-origin checks.
+  return (
+    req.path.startsWith("/orpc") || req.path.startsWith("/api") || req.path.startsWith("/auth/")
+  );
+}
+
 /**
  * Create an oRPC server with HTTP and WebSocket endpoints.
  *
@@ -371,6 +417,11 @@ export async function createOrpcServer({
   // Express app setup
   const app = express();
   app.use((req, res, next) => {
+    if (!shouldEnforceOriginValidation(req)) {
+      next();
+      return;
+    }
+
     const originHeader = getFirstHeaderValue(req, "origin");
 
     if (!originHeader) {
@@ -476,9 +527,9 @@ export async function createOrpcServer({
   }
 
   function isSecureRequest(req: OriginValidationRequest): boolean {
-    const forwardedProto = getFirstHeaderValue(req, "x-forwarded-proto");
-    if (forwardedProto) {
-      return normalizeProtocol(forwardedProto) === "https";
+    const forwardedProtocols = getForwardedProtocols(req);
+    if (forwardedProtocols.length > 0) {
+      return forwardedProtocols.includes("https");
     }
 
     if (typeof req.protocol === "string") {
