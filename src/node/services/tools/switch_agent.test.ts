@@ -28,6 +28,7 @@ describe("switch_agent tool", () => {
 
     expect(result).toEqual({
       ok: true,
+      agentId: "plan",
     });
   });
 
@@ -49,6 +50,7 @@ describe("switch_agent tool", () => {
 
     expect(result).toEqual({
       ok: true,
+      agentId: "exec",
     });
   });
 });

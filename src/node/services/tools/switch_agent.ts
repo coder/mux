@@ -6,13 +6,17 @@ export const createSwitchAgentTool: ToolFactory = (_config: ToolConfiguration) =
   return tool({
     description: TOOL_DEFINITIONS.switch_agent.description,
     inputSchema: TOOL_DEFINITIONS.switch_agent.schema,
-    execute: () => {
+    execute: (args) => {
       // Validation of whether the target agent is UI-selectable happens in the
       // AgentSession follow-up handler, not here. This tool is a signal tool:
       // StreamManager stops the stream on success, and AgentSession reads
       // switch details from the tool input before enqueueing a follow-up.
+      //
+      // Defensive fallback: include the target agentId in output so handoff can
+      // still be recovered when degraded streams lose tool input metadata.
       return {
         ok: true,
+        agentId: args.agentId,
       };
     },
   });

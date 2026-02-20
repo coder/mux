@@ -2431,16 +2431,22 @@ export class AgentSession {
         continue;
       }
 
-      // Verify the tool succeeded. switch_agent intentionally returns a minimal
-      // output payload ({ ok: true }) to avoid duplicating args in context.
+      // Verify the tool succeeded.
       if (!this.isOkSwitchAgentOutput(part.output)) {
         continue;
       }
 
-      // Read switch details from tool input args instead of tool output.
+      // Primary path: read switch details from tool input args.
       const parsedInput = this.parseSwitchAgentInput(part.input);
       if (parsedInput) {
         return parsedInput;
+      }
+
+      // Defensive fallback: degraded streams can lose input metadata (input=null)
+      // when tool-call correlation fails. Recover from output if possible.
+      const parsedOutput = this.parseSwitchAgentOutput(part.output);
+      if (parsedOutput) {
+        return parsedOutput;
       }
     }
 
@@ -2457,11 +2463,19 @@ export class AgentSession {
   }
 
   private parseSwitchAgentInput(input: unknown): SwitchAgentResult | undefined {
-    if (typeof input !== "object" || input === null) {
+    return this.parseSwitchAgentCandidate(input);
+  }
+
+  private parseSwitchAgentOutput(output: unknown): SwitchAgentResult | undefined {
+    return this.parseSwitchAgentCandidate(output);
+  }
+
+  private parseSwitchAgentCandidate(value: unknown): SwitchAgentResult | undefined {
+    if (typeof value !== "object" || value === null) {
       return undefined;
     }
 
-    const candidate = input as Record<string, unknown>;
+    const candidate = value as Record<string, unknown>;
     if (typeof candidate.agentId !== "string") {
       return undefined;
     }
