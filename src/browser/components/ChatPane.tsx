@@ -586,14 +586,18 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       )
     : null;
 
+  const hasInterruptedStream = interruption?.hasInterruptedStream ?? false;
   const showRetryBarrier = workspaceState
-    ? !workspaceState.canInterrupt && (interruption?.hasInterruptedStream ?? false)
+    ? !workspaceState.canInterrupt && hasInterruptedStream
     : false;
 
   const lastActionableMessage = getLastNonDecorativeMessage(workspaceState.messages);
   const suppressRetryBarrier =
     lastActionableMessage?.type === "stream-error" &&
     lastActionableMessage.errorType === "context_exceeded";
+  // Keep RetryBarrier mounted (but visually hidden) while a resumed stream is in flight
+  // so its temporary auto-retry rollback effect can observe terminal stream outcomes.
+  const shouldMountRetryBarrier = hasInterruptedStream && !suppressRetryBarrier;
   const showRetryBarrierUI = showRetryBarrier && !suppressRetryBarrier;
 
   const handleLoadOlderHistory = useCallback(() => {
@@ -836,7 +840,12 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                         );
                       })}
                       {/* Show RetryBarrier after the last message if needed */}
-                      {showRetryBarrierUI && <RetryBarrier workspaceId={workspaceId} />}
+                      {shouldMountRetryBarrier && (
+                        <RetryBarrier
+                          workspaceId={workspaceId}
+                          className={!showRetryBarrierUI ? "hidden" : undefined}
+                        />
+                      )}
                     </>
                   </MessageListProvider>
                 )}
