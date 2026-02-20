@@ -880,13 +880,13 @@ export const GitStatusPopover: AppStory = {
       () => {
         const tooltip = getVisibleTooltip();
         if (!tooltip) throw new Error("git status tooltip not visible");
-        within(tooltip).getByText("Commits");
+        within(tooltip).getByRole("radio", { name: "Show commit divergence" });
       },
       { timeout: 10_000 }
     );
 
     const tooltip = getVisibleTooltip()!;
-    await userEvent.click(within(tooltip).getByText("Commits"));
+    await userEvent.click(within(tooltip).getByRole("radio", { name: "Show commit divergence" }));
 
     // Verify indicator switches to divergence view for the same workspace row
     await waitFor(
