@@ -43,6 +43,10 @@ interface AcpTestClient {
   close: () => Promise<void>;
 }
 
+interface CreateAcpClientOptions {
+  logFilePath?: string;
+}
+
 let buildMainPromise: Promise<void> | null = null;
 
 function appendWithLimit(current: string, chunk: string, limit: number): string {
@@ -164,7 +168,7 @@ async function waitForChildExit(
   });
 }
 
-async function createAcpClient(): Promise<AcpTestClient> {
+async function createAcpClient(options: CreateAcpClientOptions = {}): Promise<AcpTestClient> {
   await ensureMainCliBuilt();
 
   const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
@@ -174,7 +178,12 @@ async function createAcpClient(): Promise<AcpTestClient> {
   );
 
   const muxRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mux-acp-test-root-"));
-  const child = spawn(process.execPath, ["dist/cli/index.js", "acp"], {
+  const acpArgs = ["dist/cli/index.js", "acp"];
+  if (options.logFilePath != null) {
+    acpArgs.push("--log-file", options.logFilePath);
+  }
+
+  const child = spawn(process.execPath, acpArgs, {
     cwd: process.cwd(),
     env: {
       ...process.env,
@@ -374,6 +383,58 @@ describeIntegration("ACP built CLI integration", () => {
         expect(sessionResponse.sessionId.length).toBeGreaterThan(0);
       } finally {
         await acpClient.close();
+      }
+    },
+    ACP_TEST_TIMEOUT_MS
+  );
+
+  test(
+    "--log-file writes ACP logs while stdio RPC remains functional",
+    async () => {
+      assert(repoPath.length > 0, "Temporary git repo path must be set");
+
+      const logDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-acp-log-file-"));
+      const logFilePath = path.join(logDir, "acp.log");
+
+      try {
+        let acpClient: AcpTestClient | undefined;
+        try {
+          acpClient = await createAcpClient({ logFilePath });
+
+          await acpClient.runRpc(
+            "initialize",
+            acpClient.client.initialize({
+              protocolVersion: PROTOCOL_VERSION,
+            })
+          );
+
+          const sessionResponse = await acpClient.runRpc(
+            "newSession",
+            acpClient.client.newSession({
+              cwd: repoPath,
+              mcpServers: [],
+              _meta: {
+                trunkBranch: ACP_TEST_TRUNK_BRANCH,
+              },
+            })
+          );
+
+          // Verifies ACP protocol traffic still flows over stdio when logs are
+          // redirected to a file instead of stderr.
+          expect(sessionResponse.sessionId.length).toBeGreaterThan(0);
+
+          expect(acpClient.getStderr()).not.toContain("[acp]");
+        } finally {
+          if (acpClient != null) {
+            await acpClient.close();
+          }
+        }
+
+        const logContents = await fs.readFile(logFilePath, "utf8");
+        expect(logContents).toContain("[acp] Logging redirected to");
+        expect(logContents).toContain("[acp] Starting ACP adapter — reading stdin");
+      } finally {
+        await fs.rm(logDir, { recursive: true, force: true });
       }
     },
     ACP_TEST_TIMEOUT_MS
