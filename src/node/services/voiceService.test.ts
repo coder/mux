@@ -198,6 +198,36 @@ describe("VoiceService.transcribe", () => {
     });
   });
 
+  it("returns error when muxGatewayEnabled is false in main config", async () => {
+    await withTempConfig(async (config, service) => {
+      config.saveProvidersConfig({
+        "mux-gateway": {
+          couponCode: "gateway-token",
+        },
+      });
+      await config.saveConfig({
+        ...config.loadConfigOrDefault(),
+        muxGatewayEnabled: false,
+      });
+
+      const fetchSpy = spyOn(globalThis, "fetch");
+      fetchSpy.mockResolvedValue(new Response("transcribed text"));
+
+      try {
+        const result = await service.transcribe("Zm9v");
+
+        expect(result).toEqual({
+          success: false,
+          error:
+            "Voice input requires a Mux Gateway login or an OpenAI API key. Configure in Settings → Providers.",
+        });
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+  });
+
   it("falls back to OpenAI when policy disallows mux-gateway", async () => {
     await withTempConfig(async (config, service, _providerService, policyService) => {
       config.saveProvidersConfig({

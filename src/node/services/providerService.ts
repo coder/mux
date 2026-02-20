@@ -84,6 +84,7 @@ export class ProviderService {
    */
   public getConfig(): ProvidersConfigMap {
     const providersConfig = this.config.loadProvidersConfig() ?? {};
+    const mainConfig = this.config.loadConfigOrDefault();
     const result: ProvidersConfigMap = {};
 
     for (const provider of this.list()) {
@@ -122,7 +123,10 @@ export class ProviderService {
 
       const codexOauthSet =
         provider === "openai" && parseCodexOauthAuth(config.codexOauth) !== null;
-      const isEnabled = !isProviderDisabledInConfig(config);
+      let isEnabled = !isProviderDisabledInConfig(config);
+      if (provider === "mux-gateway" && mainConfig.muxGatewayEnabled === false) {
+        isEnabled = false;
+      }
 
       const providerInfo: ProviderConfigInfo = {
         apiKeySet: !!config.apiKey,

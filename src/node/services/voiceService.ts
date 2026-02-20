@@ -46,9 +46,11 @@ export class VoiceService {
         | MuxGatewayTranscriptionConfig
         | undefined;
       const openaiConfig = providersConfig.openai as OpenAITranscriptionConfig | undefined;
+      const mainConfig = this.config.loadConfigOrDefault();
 
       const gatewayToken = gatewayConfig?.couponCode ?? gatewayConfig?.voucher;
       const gatewayAvailable =
+        mainConfig.muxGatewayEnabled !== false &&
         !isProviderDisabledInConfig(gatewayConfig ?? {}) &&
         !!gatewayToken &&
         (this.policyService?.isProviderAllowed("mux-gateway") ?? true);

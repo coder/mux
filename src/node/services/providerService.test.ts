@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -69,6 +69,33 @@ describe("ProviderService.getConfig", () => {
       expect(cfg.openai.apiKeySet).toBe(true);
       expect(cfg.openai.isEnabled).toBe(false);
       expect(cfg.openai.isConfigured).toBe(false);
+    });
+  });
+
+  it("marks mux-gateway disabled when muxGatewayEnabled is false in main config", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        "mux-gateway": {
+          couponCode: "gateway-token",
+        },
+      });
+
+      const defaultMainConfig = config.loadConfigOrDefault();
+      const loadConfigSpy = spyOn(config, "loadConfigOrDefault");
+      loadConfigSpy.mockReturnValue({
+        ...defaultMainConfig,
+        muxGatewayEnabled: false,
+      });
+
+      try {
+        const cfg = service.getConfig();
+
+        expect(cfg["mux-gateway"].couponCodeSet).toBe(true);
+        expect(cfg["mux-gateway"].isEnabled).toBe(false);
+        expect(cfg["mux-gateway"].isConfigured).toBe(false);
+      } finally {
+        loadConfigSpy.mockRestore();
+      }
     });
   });
 
