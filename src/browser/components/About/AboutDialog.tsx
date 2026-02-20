@@ -68,6 +68,7 @@ export function AboutDialog() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
   const [channel, setChannel] = useState<"stable" | "nightly" | null>(null);
   const [channelLoading, setChannelLoading] = useState(false);
+  const [pendingAction, setPendingAction] = useState<"check" | "download" | "install" | null>(null);
   const channelRequestTokenRef = useRef(0);
 
   const isDesktop = typeof window !== "undefined" && Boolean(window.api);
@@ -88,6 +89,7 @@ export function AboutDialog() {
             break;
           }
           setUpdateStatus(status);
+          setPendingAction(null);
         }
       } catch (error) {
         if (!signal.aborted) {
@@ -126,7 +128,10 @@ export function AboutDialog() {
 
   const canUseUpdateApi = isDesktop && Boolean(api);
   const isChecking =
-    canUseUpdateApi && (updateStatus.type === "checking" || updateStatus.type === "downloading");
+    canUseUpdateApi &&
+    (updateStatus.type === "checking" ||
+      updateStatus.type === "downloading" ||
+      pendingAction === "check");
 
   const handleChannelChange = (next: "stable" | "nightly") => {
     if (!api || next === channel || channelLoading) {
@@ -148,7 +153,8 @@ export function AboutDialog() {
       return;
     }
 
-    api.update.check({ source: "manual" }).catch(console.error);
+    setPendingAction("check");
+    api.update.check({ source: "manual" }).catch(() => setPendingAction(null));
   };
 
   const handleDownload = () => {
@@ -156,7 +162,8 @@ export function AboutDialog() {
       return;
     }
 
-    api.update.download(undefined).catch(console.error);
+    setPendingAction("download");
+    api.update.download(undefined).catch(() => setPendingAction(null));
   };
 
   const handleInstall = () => {
@@ -164,7 +171,8 @@ export function AboutDialog() {
       return;
     }
 
-    api.update.install(undefined).catch(console.error);
+    setPendingAction("install");
+    api.update.install(undefined).catch(() => setPendingAction(null));
   };
 
   return (
@@ -253,8 +261,16 @@ export function AboutDialog() {
                   <div className="text-foreground text-xs">
                     Update available: <span className="font-mono">{updateStatus.info.version}</span>
                   </div>
-                  <Button size="sm" onClick={handleDownload}>
-                    <Download className="h-3.5 w-3.5" />
+                  <Button
+                    size="sm"
+                    onClick={handleDownload}
+                    disabled={pendingAction === "download"}
+                  >
+                    {pendingAction === "download" ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Download className="h-3.5 w-3.5" />
+                    )}
                     Download
                   </Button>
                 </div>
@@ -271,9 +287,13 @@ export function AboutDialog() {
                   <div className="text-foreground text-xs">
                     Ready to install: <span className="font-mono">{updateStatus.info.version}</span>
                   </div>
-                  <Button size="sm" onClick={handleInstall}>
-                    <RefreshCw className="h-3.5 w-3.5" />
-                    Install & restart
+                  <Button size="sm" onClick={handleInstall} disabled={pendingAction === "install"}>
+                    {pendingAction === "install" ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    )}
+                    {pendingAction === "install" ? "Installing…" : "Install & restart"}
                   </Button>
                 </div>
               )}
@@ -297,18 +317,40 @@ export function AboutDialog() {
                   </div>
                   <div className="flex items-center gap-2">
                     {updateStatus.phase === "download" && (
-                      <Button size="sm" onClick={handleDownload}>
-                        <Download className="h-3.5 w-3.5" />
+                      <Button
+                        size="sm"
+                        onClick={handleDownload}
+                        disabled={pendingAction === "download"}
+                      >
+                        {pendingAction === "download" ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Download className="h-3.5 w-3.5" />
+                        )}
                         Retry download
                       </Button>
                     )}
                     {updateStatus.phase === "install" && (
-                      <Button size="sm" onClick={handleInstall}>
-                        <RefreshCw className="h-3.5 w-3.5" />
+                      <Button
+                        size="sm"
+                        onClick={handleInstall}
+                        disabled={pendingAction === "install"}
+                      >
+                        {pendingAction === "install" ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        )}
                         Try install again
                       </Button>
                     )}
-                    <Button variant="outline" size="sm" onClick={handleCheckForUpdates}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleCheckForUpdates}
+                      disabled={isChecking}
+                    >
+                      {isChecking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                       {updateStatus.phase === "check" ? "Try again" : "Check again"}
                     </Button>
                   </div>
