@@ -222,10 +222,16 @@ export class WorkspaceConsumerManager {
         // Don't set needsRecalc or throw — that would create an infinite retry
         // loop since the finally block re-schedules from needsRecalc.
         if (providersConfigFingerprint == null) {
-          // Reset "calculating" UI state for config-gated skips. We already
-          // notified start before entering executeCalculation(); without a
-          // completion notify, subscribers can remain stuck in calculating
-          // until an unrelated render path runs.
+          // Config not ready yet. Cache a stable "blocked" state so repeated
+          // getWorkspaceConsumers() reads don't continuously requeue work while
+          // fingerprint is null. WorkspaceStore.invalidateAll() clears this
+          // cache when config changes so tokenization retries naturally.
+          this.cache.set(workspaceId, {
+            consumers: [],
+            tokenizerName: "",
+            totalTokens: 0,
+            isCalculating: false,
+          });
           this.notifyStoreAsync(workspaceId);
           return;
         }

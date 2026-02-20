@@ -2929,6 +2929,10 @@ export class WorkspaceStore {
       this.activityAbortController = null;
     }
 
+    // Abort client-scoped subscriptions (providers.onConfigChanged, stats, etc.)
+    // so async iterators/timers cannot mutate cleared state after disposal.
+    this.clientChangeController.abort();
+
     this.activeWorkspaceId = null;
     this.activeOnChatWorkspaceId = null;
     this.pendingReplayReset.clear();
