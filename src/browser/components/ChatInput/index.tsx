@@ -1087,7 +1087,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return;
     }
 
-    const cursor = inputRef.current?.selectionStart ?? input.length;
+    const cursor = Math.min(inputRef.current?.selectionStart ?? input.length, input.length);
     const match = findAtMentionAtCursor(input, cursor);
 
     if (!match) {
@@ -1672,7 +1672,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   const handleAtMentionSelect = useCallback(
     (suggestion: SlashSuggestion) => {
-      const cursor = inputRef.current?.selectionStart ?? input.length;
+      const cursor = Math.min(inputRef.current?.selectionStart ?? input.length, input.length);
       const match = findAtMentionAtCursor(input, cursor);
       if (!match) {
         return;

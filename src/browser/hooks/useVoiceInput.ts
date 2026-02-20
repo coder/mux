@@ -372,7 +372,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
   return {
     state,
     isSupported: HAS_MEDIA_RECORDER && HAS_GET_USER_MEDIA,
-    isAvailable: callbacksRef.current.isTranscriptionAvailable,
+    isAvailable: options.isTranscriptionAvailable,
     shouldShowUI: HAS_MEDIA_RECORDER && !HAS_TOUCH_DICTATION,
     requiresSecureContext: HAS_MEDIA_RECORDER && !HAS_GET_USER_MEDIA,
     mediaRecorder,
