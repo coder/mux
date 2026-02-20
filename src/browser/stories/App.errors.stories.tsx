@@ -489,6 +489,9 @@ export const LargeDiff: AppStory = {
  * The play function hovers the project and clicks the remove button to trigger the error.
  */
 export const ProjectRemovalError: AppStory = {
+  // This scenario intentionally exercises an expected remove-project failure path, which logs
+  // a frontend console error. Skip Storybook test-runner to avoid false negatives in Chromatic.
+  tags: ["!test"],
   render: () => (
     <AppWithMocks
       setup={() => {
