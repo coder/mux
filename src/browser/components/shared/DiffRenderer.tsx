@@ -1319,7 +1319,9 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                   reviewButton={
                     onReviewNote && (
                       <button
+                        type="button"
                         className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:text-[var(--color-review-accent)] active:scale-90"
+                        style={{ position: "absolute", inset: 0 }}
                         onClick={(e) => {
                           e.stopPropagation();
                           handleCommentButtonClick(displayIndex, e.shiftKey);
