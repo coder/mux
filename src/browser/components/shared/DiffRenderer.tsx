@@ -652,6 +652,11 @@ interface SelectableDiffRendererProps extends Omit<DiffRendererProps, "filePath"
     selection: LineSelection;
     initialNoteText?: string;
   } | null;
+  /** External request to open an existing inline review note in edit mode */
+  externalEditRequest?: {
+    requestId: number;
+    reviewId: string;
+  } | null;
 }
 
 interface LineSelection {
@@ -887,10 +892,20 @@ interface InlineReviewNoteRowProps {
   lineNumberWidths: LineNumberWidths;
   /** Optional action callbacks for review actions */
   reviewActions?: ReviewActionCallbacks;
+  /** Request id that should trigger this note to enter edit mode */
+  editRequestId?: number | null;
 }
 
 const InlineReviewNoteRow: React.FC<InlineReviewNoteRowProps> = React.memo(
-  ({ review, lineType, showLineNumbers, lineNumberMode, lineNumberWidths, reviewActions }) => {
+  ({
+    review,
+    lineType,
+    showLineNumbers,
+    lineNumberMode,
+    lineNumberWidths,
+    reviewActions,
+    editRequestId,
+  }) => {
     const codeBg = getDiffLineBackground(lineType);
     const { showOld, showNew } = getLineNumberModeFlags(lineNumberMode);
 
@@ -921,7 +936,12 @@ const InlineReviewNoteRow: React.FC<InlineReviewNoteRowProps> = React.memo(
         <span style={{ background: codeBg }} />
         {/* Inline note using shared component */}
         <div className="min-w-0 py-0.5 pr-3" style={{ background: codeBg }}>
-          <InlineReviewNote review={review} showFilePath={false} actions={reviewActions} />
+          <InlineReviewNote
+            review={review}
+            showFilePath={false}
+            actions={reviewActions}
+            editRequestId={editRequestId}
+          />
         </div>
       </div>
     );
@@ -952,6 +972,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     selectedLineRange,
     onLineIndexSelect,
     externalSelectionRequest,
+    externalEditRequest,
   }) => {
     const dragAnchorRef = React.useRef<number | null>(null);
     const [isDragging, setIsDragging] = React.useState(false);
@@ -1371,6 +1392,11 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                   lineNumberMode={lineNumberMode}
                   lineNumberWidths={lineNumberWidths}
                   reviewActions={reviewActions}
+                  editRequestId={
+                    externalEditRequest?.reviewId === review.id
+                      ? externalEditRequest.requestId
+                      : null
+                  }
                 />
               ))}
             </React.Fragment>

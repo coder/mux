@@ -43,6 +43,8 @@ export interface InlineReviewNoteProps {
   actions?: ReviewActionCallbacks;
   /** Additional className for the container */
   className?: string;
+  /** Request id that should put this note into edit mode */
+  editRequestId?: number | null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -58,12 +60,14 @@ export const InlineReviewNote: React.FC<InlineReviewNoteProps> = ({
   showFilePath = false,
   actions,
   className,
+  editRequestId,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(review.data.userNote);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isEditingRef = useRef(false);
   const actionsRef = useRef(actions);
+  const handledEditRequestIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     actionsRef.current = actions;
@@ -84,6 +88,19 @@ export const InlineReviewNote: React.FC<InlineReviewNoteProps> = ({
     actions?.onEditingChange?.(review.id, true);
     setTimeout(() => textareaRef.current?.focus(), 0);
   }, [review.data.userNote, review.id, actions]);
+
+  useEffect(() => {
+    if (editRequestId == null || !actions?.onEditComment) {
+      return;
+    }
+
+    if (handledEditRequestIdRef.current === editRequestId) {
+      return;
+    }
+
+    handledEditRequestIdRef.current = editRequestId;
+    handleStartEdit();
+  }, [actions?.onEditComment, editRequestId, handleStartEdit]);
 
   const handleSaveEdit = useCallback(() => {
     if (actions?.onEditComment && editValue.trim() !== review.data.userNote) {

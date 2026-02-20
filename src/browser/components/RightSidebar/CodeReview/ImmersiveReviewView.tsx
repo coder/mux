@@ -13,6 +13,7 @@ import {
   Circle,
   MessageSquare,
   ThumbsDown,
+  ThumbsUp,
   Trash2,
 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
@@ -65,6 +66,11 @@ interface InlineComposerRequest {
   endOffset: number;
 }
 
+interface InlineReviewEditRequest {
+  requestId: number;
+  reviewId: string;
+}
+
 interface SelectedLineRange {
   startIndex: number;
   endIndex: number;
@@ -87,6 +93,7 @@ const LINE_JUMP_SIZE = 10;
 // but still cap it to avoid pathological DOM costs on extremely large diffs.
 const MAX_HIGHLIGHTED_DIFF_LINES = 4000;
 const ACTIVE_LINE_OUTLINE = "1px solid hsl(from var(--color-review-accent) h s l / 0.45)";
+const LIKE_NOTE_PREFIX = "I like this change";
 const DISLIKE_NOTE_PREFIX = "I don't like this change";
 
 function getFileBaseName(filePath: string): string {
@@ -571,7 +578,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const [inlineComposerRequest, setInlineComposerRequest] = useState<InlineComposerRequest | null>(
     null
   );
+  const [inlineReviewEditRequest, setInlineReviewEditRequest] =
+    useState<InlineReviewEditRequest | null>(null);
   const nextComposerRequestIdRef = useRef(0);
+  const nextInlineReviewEditRequestIdRef = useRef(0);
 
   // Keyboard line cursor state within the whole rendered file.
   const [activeLineIndex, setActiveLineIndex] = useState<number | null>(null);
@@ -793,7 +803,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   );
 
   const navigateToReview = useCallback(
-    (review: Review) => {
+    (review: Review, options?: { startEditing?: boolean }) => {
       const fileHunks = sortHunksInFileOrder(getFileHunks(allHunks, review.data.filePath));
       if (fileHunks.length === 0) {
         return;
@@ -805,9 +815,35 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       // Force scroll effect to re-fire even when activeLineIndex is unchanged
       // (for example when the cursor is already inside the selected hunk).
       setScrollNonce((previousNonce) => previousNonce + 1);
+
+      if (options?.startEditing && props.reviewActions?.onEditComment) {
+        nextInlineReviewEditRequestIdRef.current += 1;
+        setInlineReviewEditRequest({
+          requestId: nextInlineReviewEditRequestIdRef.current,
+          reviewId: review.id,
+        });
+      }
     },
-    [allHunks, onSelectHunk]
+    [allHunks, onSelectHunk, props.reviewActions?.onEditComment]
   );
+
+  const diffReviewActions = useMemo<ReviewActionCallbacks | undefined>(() => {
+    if (!props.reviewActions) {
+      return undefined;
+    }
+
+    return {
+      ...props.reviewActions,
+      onEditingChange: (reviewId: string, isEditing: boolean) => {
+        props.reviewActions?.onEditingChange?.(reviewId, isEditing);
+        if (isEditing) {
+          setInlineReviewEditRequest((currentRequest) =>
+            currentRequest?.reviewId === reviewId ? null : currentRequest
+          );
+        }
+      },
+    };
+  }, [props.reviewActions]);
 
   const getCurrentLineSelection = useCallback((): SelectedLineRange | null => {
     if (activeLineIndex === null) {
@@ -1000,6 +1036,19 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
           return;
         }
 
+        if (e.key === "e" || e.key === "E") {
+          e.preventDefault();
+          const note = allReviews[focusedNoteIndex];
+          if (note) {
+            // Keep note triage keyboard-first: jump directly from notes list into
+            // editing the exact inline note comment in the diff pane.
+            navigateToReview(note, { startEditing: true });
+            setFocusedPanel("diff");
+            containerRef.current?.focus();
+          }
+          return;
+        }
+
         // Backspace/Delete: delete focused note.
         if (e.key === "Backspace" || e.key === "Delete") {
           e.preventDefault();
@@ -1081,14 +1130,14 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       // Shift+L: quick like
       if (matchesKeybind(e, KEYBINDS.REVIEW_QUICK_LIKE)) {
         e.preventDefault();
-        openComposer("I like this change");
+        openComposer(LIKE_NOTE_PREFIX);
         return;
       }
 
       // Shift+D: quick dislike
       if (matchesKeybind(e, KEYBINDS.REVIEW_QUICK_DISLIKE)) {
         e.preventDefault();
-        openComposer("I don't like this change");
+        openComposer(DISLIKE_NOTE_PREFIX);
         return;
       }
 
@@ -1384,11 +1433,12 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                   maxHeight="none"
                   className="rounded-none border-0 [&>div]:overflow-x-visible"
                   onReviewNote={handleReviewNoteSubmit}
-                  reviewActions={props.reviewActions}
+                  reviewActions={diffReviewActions}
                   enableHighlighting={shouldEnableHighlighting}
                   selectedLineRange={selectedLineRange}
                   onLineIndexSelect={handleLineIndexSelect}
                   externalSelectionRequest={externalComposerSelectionRequest}
+                  externalEditRequest={inlineReviewEditRequest}
                 />
               </div>
             </div>
@@ -1419,11 +1469,15 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
             ) : (
               <div className="space-y-1.5">
                 {allReviews.map((review, noteIndex) => {
-                  const isDislike = review.data.userNote
-                    .trimStart()
-                    .startsWith(DISLIKE_NOTE_PREFIX);
+                  const normalizedUserNote = review.data.userNote.trimStart();
+                  const isDislike = normalizedUserNote.startsWith(DISLIKE_NOTE_PREFIX);
+                  const isLike = normalizedUserNote.startsWith(LIKE_NOTE_PREFIX);
                   const statusClasses = getReviewStatusSidebarClasses(review.status);
-                  const ReviewTypeIcon = isDislike ? ThumbsDown : MessageSquare;
+                  const ReviewTypeIcon = isDislike
+                    ? ThumbsDown
+                    : isLike
+                      ? ThumbsUp
+                      : MessageSquare;
                   const isActiveFileReview = review.data.filePath === activeFilePath;
 
                   return (
