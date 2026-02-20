@@ -394,10 +394,21 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     registerTerminalSession(session);
   }
 
-  let terminalSessionCounter = 0;
+  let terminalSessionCounter = initialTerminalSessions.reduce((max, session) => {
+    const match = /^mock-terminal-(\d+)$/.exec(session.sessionId);
+    if (!match) {
+      return max;
+    }
+    const parsed = Number.parseInt(match[1] ?? "", 10);
+    return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
+  }, 0);
   const allocTerminalSessionId = () => {
-    terminalSessionCounter += 1;
-    return `mock-terminal-${terminalSessionCounter}`;
+    let nextSessionId = "";
+    do {
+      terminalSessionCounter += 1;
+      nextSessionId = `mock-terminal-${terminalSessionCounter}`;
+    } while (terminalSessionsById.has(nextSessionId));
+    return nextSessionId;
   };
 
   let createdWorkspaceCounter = 0;
