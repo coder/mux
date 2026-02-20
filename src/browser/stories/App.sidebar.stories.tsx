@@ -545,14 +545,15 @@ export const WorkspaceTitleHoverCard: AppStory = {
     const titleSpan = within(row).getByText("Implement new feature with detailed description");
     await userEvent.hover(titleSpan);
 
-    await waitFor(() => {
-      const hoverCard = document.body.querySelector<HTMLElement>(
-        "[data-radix-popper-content-wrapper] .bg-modal-bg"
-      );
-      if (hoverCard) {
-        throw new Error("Workspace title hover preview should not be visible");
-      }
-    });
+    // Wait past the prior HoverCard openDelay window to prove no delayed preview appears.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    const hoverCard = document.body.querySelector<HTMLElement>(
+      "[data-radix-popper-content-wrapper] .bg-modal-bg"
+    );
+    if (hoverCard) {
+      throw new Error("Workspace title hover preview should not be visible");
+    }
   },
 };
 
