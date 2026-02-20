@@ -888,15 +888,11 @@ export class WorkspaceStore {
       }
     } catch {
       // Existing providersConfig is preserved so metadata resolution
-      // continues using the last successful snapshot. However, if config
-      // has never been loaded (fingerprint is still null), consumer
-      // tokenization is blocked. Retry with exponential backoff to
-      // recover from transient IPC/backend errors at startup.
-      if (
-        this.providersConfigFingerprint == null &&
-        this.client === client &&
-        !this.clientChangeController.signal.aborted
-      ) {
+      // continues using the last successful snapshot. Retry with
+      // exponential backoff to recover from transient errors — both
+      // at startup (fingerprint still null, tokenization blocked) and
+      // after onConfigChanged notifications where the fetch failed.
+      if (this.client === client && !this.clientChangeController.signal.aborted) {
         const retryDelay = Math.min(1000 * 2 ** (version - 1), 30_000);
         setTimeout(() => {
           if (this.client === client && !this.clientChangeController.signal.aborted) {
@@ -933,9 +929,19 @@ export class WorkspaceStore {
           void this.refreshProvidersConfig(client);
         }
       } catch {
-        // Ignore provider config subscription errors.
+        // Subscription stream failed — fall through to retry below.
       } finally {
         void iterator?.return?.();
+      }
+
+      // Stream ended or errored. Re-subscribe after a delay unless the
+      // client changed or the controller was aborted (intentional teardown).
+      if (!signal.aborted && this.client === client) {
+        setTimeout(() => {
+          if (!signal.aborted && this.client === client) {
+            this.subscribeToProvidersConfig(client);
+          }
+        }, 5_000);
       }
     })();
   }
