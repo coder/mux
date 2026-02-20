@@ -281,4 +281,66 @@ describe("ACP ToolRouter", () => {
       },
     ]);
   });
+
+  it("creates a file when file_edit_insert read fails with explicit not-found", async () => {
+    const { router, writeCalls } = createRouter({
+      readTextFile: async () => {
+        const error = new Error("ENOENT: no such file or directory");
+        (error as Error & { code?: string }).code = "ENOENT";
+        throw error;
+      },
+    });
+
+    const result = await router.delegateToEditor("session-1", "file_edit_insert", {
+      path: "/repo/new-file.txt",
+      content: "hello",
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(writeCalls).toEqual([
+      {
+        sessionId: "session-1",
+        path: "/repo/new-file.txt",
+        content: "hello",
+      },
+    ]);
+  });
+
+  it("returns guard mismatch for missing files when file_edit_insert has anchors", async () => {
+    const { router, writeCalls } = createRouter({
+      readTextFile: async () => {
+        const error = new Error("File not found");
+        (error as Error & { code?: string }).code = "NOT_FOUND";
+        throw error;
+      },
+    });
+
+    const result = await router.delegateToEditor("session-1", "file_edit_insert", {
+      path: "/repo/new-file.txt",
+      content: "hello",
+      insert_before: "anchor",
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: "Guard mismatch: unable to find insert anchor in a missing file.",
+    });
+    expect(writeCalls).toEqual([]);
+  });
+
+  it("does not create files when file_edit_insert read fails for non-not-found errors", async () => {
+    const { router, writeCalls } = createRouter({
+      readTextFile: async () => {
+        throw new Error("editor fs unavailable");
+      },
+    });
+
+    await expect(
+      router.delegateToEditor("session-1", "file_edit_insert", {
+        path: "/repo/existing-file.txt",
+        content: "hello",
+      })
+    ).rejects.toThrow("editor fs unavailable");
+    expect(writeCalls).toEqual([]);
+  });
 });

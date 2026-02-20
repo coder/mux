@@ -425,22 +425,27 @@ export class AIService extends EventEmitter {
           throw new Error("Interrupted");
         }
 
+        let abortListener: (() => void) | undefined;
         const abortPromise = new Promise<never>((_, reject) => {
-          abortSignal.addEventListener(
-            "abort",
-            () => {
-              try {
-                delegatedToolCallManager.cancel(workspaceId, toolCallId, "Interrupted");
-              } catch {
-                // no-op: pending may already have resolved
-              }
-              reject(new Error("Interrupted"));
-            },
-            { once: true }
-          );
+          abortListener = () => {
+            try {
+              delegatedToolCallManager.cancel(workspaceId, toolCallId, "Interrupted");
+            } catch {
+              // no-op: pending may already have resolved
+            }
+            reject(new Error("Interrupted"));
+          };
+
+          abortSignal.addEventListener("abort", abortListener, { once: true });
         });
 
-        return Promise.race([pendingResult, abortPromise]);
+        try {
+          return await Promise.race([pendingResult, abortPromise]);
+        } finally {
+          if (abortListener != null) {
+            abortSignal.removeEventListener("abort", abortListener);
+          }
+        }
       };
 
       wrappedTools[toolName] = wrappedTool;

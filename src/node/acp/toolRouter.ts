@@ -415,7 +415,11 @@ export class ToolRouter {
         toolName
       );
       existingContent = readResponse.content;
-    } catch {
+    } catch (error) {
+      if (!isFileNotFoundError(error)) {
+        throw error;
+      }
+
       if (insertBefore != null || insertAfter != null) {
         return {
           success: false,
@@ -743,6 +747,36 @@ function getOptionalEnvVariables(
 
   throw new Error(
     `ToolRouter: ${toolName} parameter '${key}' must be an array of entries or object map when provided`
+  );
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  if (isPlainObject(error)) {
+    const code = error.code;
+    if (
+      code === "ENOENT" ||
+      code === "NOT_FOUND" ||
+      code === "ERR_FILE_NOT_FOUND" ||
+      code === "FILE_NOT_FOUND"
+    ) {
+      return true;
+    }
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  const normalizedMessage = message.toLowerCase();
+  const includesNotFound = normalizedMessage.includes("not found");
+  const referencesFileOrPath =
+    normalizedMessage.includes("file") ||
+    normalizedMessage.includes("path") ||
+    normalizedMessage.includes("enoent");
+
+  return (
+    normalizedMessage.includes("no such file") ||
+    normalizedMessage.includes("file not found") ||
+    normalizedMessage.includes("path not found") ||
+    normalizedMessage.includes("enoent") ||
+    (includesNotFound && referencesFileOrPath)
   );
 }
 
