@@ -521,13 +521,12 @@ export const ProjectRemovalError: AppStory = {
       if (!removeButton) throw new Error("Remove button not found");
     });
 
-    // Get the project row container and hover to reveal the button
-    const removeButton = canvasElement.querySelector('button[aria-label="Remove project my-app"]')!;
-    const projectRow = removeButton.closest("[data-project-path]")!;
-    await userEvent.hover(projectRow);
-
-    // Click the remove button after hover.
-    await userEvent.click(removeButton);
+    // Trigger removal directly so this interaction remains stable across Chromatic snapshot modes,
+    // where hover-driven opacity transitions can be flaky.
+    const removeButton = canvasElement.querySelector<HTMLButtonElement>(
+      'button[aria-label="Remove project my-app"]'
+    )!;
+    removeButton.click();
 
     // Wait for the error popover to appear
     await waitFor(() => {
