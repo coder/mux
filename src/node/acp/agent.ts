@@ -1799,12 +1799,17 @@ export class MuxAgent implements Agent {
         return;
       }
 
-      const timeoutPhase =
-        completion.messageId == null ? "before stream correlation" : "after stream correlation";
+      // Only guard the pre-correlation phase. Once stream-start binds a
+      // messageId, long quiet stretches (e.g., tool execution) are valid and
+      // must not be failed locally by a fixed inactivity watchdog.
+      if (completion.messageId != null) {
+        return;
+      }
+
       this.rejectTurn(
         sessionId,
         new Error(
-          `prompt turn timed out after ${this.turnCorrelationTimeoutMs}ms of inactivity (${timeoutPhase})`
+          `prompt turn timed out after ${this.turnCorrelationTimeoutMs}ms of inactivity (before stream correlation)`
         )
       );
     }, this.turnCorrelationTimeoutMs);
