@@ -1915,13 +1915,11 @@ export class AgentSession {
 
     // Preserve explicit mux-gateway prefixes from legacy clients so backend routing can
     // honor the opt-in even before muxGatewayModels has synchronized.
-    const modelForStream = rawModelString.startsWith("mux-gateway:")
-      ? rawModelString
-      : options.model;
+    let modelForStream = rawModelString.startsWith("mux-gateway:") ? rawModelString : options.model;
     const baseOptionsForStream = rawSystem1Model?.startsWith("mux-gateway:")
       ? { ...options, system1Model: rawSystem1Model }
       : options;
-    const optionsForStream: SendMessageOptions = {
+    let optionsForStream: SendMessageOptions = {
       ...baseOptionsForStream,
       ...(acpPromptId != null ? { acpPromptId } : {}),
       ...(delegatedToolNames != null ? { delegatedToolNames } : {}),
