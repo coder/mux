@@ -564,7 +564,7 @@ describe("ACP prompt stream correlation", () => {
     await harness.connectionClosed;
   });
 
-  it("completes prompt turns from live stream events when acpPromptId is missing", async () => {
+  it("completes prompt turns when stream-start omits acpPromptId but terminal event is correlated", async () => {
     const harness = createHarness();
     await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
 
@@ -583,6 +583,17 @@ describe("ACP prompt stream correlation", () => {
 
     await waitForCondition(() => harness.sendMessageCalls.length === 1);
 
+    const firstSend = harness.sendMessageCalls[0];
+    const muxMetadata = firstSend.options["muxMetadata"];
+    if (!isRecord(muxMetadata)) {
+      throw new Error("Expected prompt send options to include muxMetadata record");
+    }
+
+    const promptCorrelationId = muxMetadata["acpPromptId"];
+    if (typeof promptCorrelationId !== "string") {
+      throw new Error("Expected prompt send options to include acpPromptId");
+    }
+
     harness.pushChatEvent({
       type: "stream-start",
       workspaceId: newSessionResponse.sessionId,
@@ -590,13 +601,14 @@ describe("ACP prompt stream correlation", () => {
       model: "anthropic:claude-sonnet-4-5",
       historySequence: 3,
       startTime: Date.now(),
-      // Simulate runtimes that omit correlation metadata on live stream events.
+      // Simulate runtimes that omit correlation metadata on live stream-start.
     } as WorkspaceChatMessage);
 
     harness.pushChatEvent({
       type: "stream-end",
       workspaceId: newSessionResponse.sessionId,
       messageId: "assistant-target",
+      acpPromptId: promptCorrelationId,
       metadata: {
         model: "anthropic:claude-sonnet-4-5",
       },
@@ -630,6 +642,17 @@ describe("ACP prompt stream correlation", () => {
     });
 
     await waitForCondition(() => harness.sendMessageCalls.length === 1);
+
+    const firstSend = harness.sendMessageCalls[0];
+    const muxMetadata = firstSend.options["muxMetadata"];
+    if (!isRecord(muxMetadata)) {
+      throw new Error("Expected prompt send options to include muxMetadata record");
+    }
+
+    const promptCorrelationId = muxMetadata["acpPromptId"];
+    if (typeof promptCorrelationId !== "string") {
+      throw new Error("Expected prompt send options to include acpPromptId");
+    }
 
     let promptSettled = false;
     void promptPromise.then(
@@ -671,12 +694,14 @@ describe("ACP prompt stream correlation", () => {
       model: "anthropic:claude-sonnet-4-5",
       historySequence: 3,
       startTime: Date.now(),
+      acpPromptId: promptCorrelationId,
     } as WorkspaceChatMessage);
 
     harness.pushChatEvent({
       type: "stream-end",
       workspaceId: newSessionResponse.sessionId,
       messageId: "assistant-target",
+      acpPromptId: promptCorrelationId,
       metadata: {
         model: "anthropic:claude-sonnet-4-5",
       },

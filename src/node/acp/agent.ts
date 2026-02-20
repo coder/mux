@@ -1614,36 +1614,11 @@ export class MuxAgent implements Agent {
       }
 
       const hasMatchingCorrelation = event.acpPromptId === completion.promptCorrelationId;
-      const canFallbackToUncorrelatedStart =
-        completion.messageId == null &&
-        !isReplayEvent &&
-        event.acpPromptId == null &&
-        Number.isFinite(event.startTime) &&
-        event.startTime >= completion.startedAtMs;
-
-      if (hasMatchingCorrelation || canFallbackToUncorrelatedStart) {
-        if (!hasMatchingCorrelation) {
-          console.warn(
-            `[acp] stream-start missing acpPromptId for active prompt; using live fallback for session ${sessionId}`,
-            {
-              promptCorrelationId: completion.promptCorrelationId,
-              messageId: event.messageId,
-              eventStartTime: event.startTime,
-              turnStartedAtMs: completion.startedAtMs,
-            }
-          );
-          // Fallback stream-start lacks acpPromptId, so generic correlation
-          // refresh cannot observe it. Refresh timeout explicitly when we
-          // accept this start event for the active prompt.
-          this.resetTurnInactivityTimeout(sessionId);
-        }
-
-        // Fallback rationale: some runtimes can occasionally omit acpPromptId on
-        // live stream-start events even though the prompt originated from ACP.
-        // Latching the first live uncorrelated start avoids hanging prompt()
-        // forever in that case while still avoiding replay-history starts.
-        completion.messageId = event.messageId;
+      if (!hasMatchingCorrelation) {
+        return;
       }
+
+      completion.messageId = event.messageId;
       return;
     }
 
