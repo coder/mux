@@ -395,6 +395,31 @@ function stableNormalizeProvidersConfig(value: unknown): unknown {
   return value;
 }
 
+/**
+ * Detect gateway-billed (costs-included) usage entries.
+ * `createDisplayUsage` sets all cost_usd to 0 when `providerMetadata.mux.costsIncluded`
+ * is true. Since ChatUsageDisplay doesn't persist the flag, we infer it: all cost_usd
+ * exactly 0 with at least some tokens means the entry was costs-included and should
+ * not be repriced on mapping changes.
+ */
+function isCostsIncludedEntry(usage: ChatUsageDisplay): boolean {
+  const hasTokens =
+    usage.input.tokens > 0 ||
+    usage.cached.tokens > 0 ||
+    usage.cacheCreate.tokens > 0 ||
+    usage.output.tokens > 0 ||
+    usage.reasoning.tokens > 0;
+  if (!hasTokens) return false;
+
+  return (
+    usage.input.cost_usd === 0 &&
+    usage.cached.cost_usd === 0 &&
+    usage.cacheCreate.cost_usd === 0 &&
+    usage.output.cost_usd === 0 &&
+    usage.reasoning.cost_usd === 0
+  );
+}
+
 function computeProvidersConfigFingerprint(config: ProvidersConfigMap | null): number {
   const normalized = stableNormalizeProvidersConfig(config ?? {});
   const serialized = JSON.stringify(normalized);
@@ -859,11 +884,15 @@ export class WorkspaceStore {
 
           // Recompute persisted cost aggregates so session totals and
           // last-request costs reflect the new model mapping immediately.
+          // Skip non-model aggregate buckets (e.g. "historical" from legacy
+          // compaction summaries) and costs-included entries (gateway-billed
+          // requests where cost_usd was explicitly zeroed).
           for (const [model, entry] of Object.entries(usage.byModel)) {
+            if (!model.includes(":") || isCostsIncludedEntry(entry)) continue;
             const resolved = resolveModelForMetadata(model, config);
             usage.byModel[model] = recomputeUsageCosts(entry, resolved);
           }
-          if (usage.lastRequest) {
+          if (usage.lastRequest && !isCostsIncludedEntry(usage.lastRequest.usage)) {
             const resolved = resolveModelForMetadata(usage.lastRequest.model, config);
             usage.lastRequest.usage = recomputeUsageCosts(usage.lastRequest.usage, resolved);
           }
