@@ -1279,4 +1279,104 @@ describe("ACP prompt stream correlation", () => {
     harness.closeConnection();
     await harness.connectionClosed;
   });
+
+  it("resolves prompt turn when queue saturation drops deltas but preserves terminal events", async () => {
+    let writesUnblocked = false;
+    let releaseBlockedWrites: (() => void) | undefined;
+    const blockedWritesGate = new Promise<void>((resolve) => {
+      releaseBlockedWrites = resolve;
+    });
+
+    const blockedOutput = new WritableStream<Uint8Array>({
+      async write() {
+        if (writesUnblocked) {
+          return;
+        }
+
+        await blockedWritesGate;
+      },
+    });
+
+    const harness = createHarness({ acpOutputStream: blockedOutput });
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    const session = await harness.agent.newSession({
+      cwd: "/repo/backpressure-saturation-test",
+      mcpServers: [],
+      _meta: { trunkBranch: "main" },
+    });
+
+    const promptPromise = harness.agent.prompt({
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "hello" }],
+    });
+
+    await waitForCondition(() => harness.sendMessageCalls.length === 1);
+
+    const firstSend = harness.sendMessageCalls[0];
+    const muxMetadata = firstSend.options["muxMetadata"];
+    if (!isRecord(muxMetadata)) {
+      throw new Error("Expected prompt send options to include muxMetadata record");
+    }
+
+    const promptCorrelationId = muxMetadata["acpPromptId"];
+    if (typeof promptCorrelationId !== "string") {
+      throw new Error("Expected prompt send options to include acpPromptId");
+    }
+
+    harness.pushChatEvent({
+      type: "stream-start",
+      workspaceId: session.sessionId,
+      messageId: "assistant-saturated",
+      model: "anthropic:claude-sonnet-4-5",
+      historySequence: 2,
+      startTime: Date.now(),
+      acpPromptId: promptCorrelationId,
+    } as WorkspaceChatMessage);
+
+    // Emit far more events than MAX_BUFFERED_CHAT_EVENTS. The drain loop must
+    // still read through to stream-end (resolving prompt()) even while
+    // forwarding is blocked and non-terminal deltas are being dropped.
+    for (let i = 0; i < 6_000; i++) {
+      harness.pushChatEvent({
+        type: "stream-delta",
+        workspaceId: session.sessionId,
+        messageId: "assistant-saturated",
+        delta: `chunk-${i} `,
+        tokens: 1,
+        timestamp: Date.now(),
+      } as WorkspaceChatMessage);
+    }
+
+    harness.pushChatEvent({
+      type: "stream-end",
+      workspaceId: session.sessionId,
+      messageId: "assistant-saturated",
+      metadata: { model: "anthropic:claude-sonnet-4-5" },
+      parts: [],
+      acpPromptId: promptCorrelationId,
+    } as WorkspaceChatMessage);
+
+    const result = await Promise.race([
+      promptPromise,
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(new Error("prompt() hung when onChat queue saturated before terminal event")),
+          2_000
+        )
+      ),
+    ]);
+
+    expect(result).toBeDefined();
+    expect(result.stopReason).toBe("end_turn");
+
+    writesUnblocked = true;
+    if (releaseBlockedWrites == null) {
+      throw new Error("Expected blocked output stream to expose release callback");
+    }
+    releaseBlockedWrites();
+    harness.closeConnection();
+    await harness.connectionClosed;
+  }, 15_000);
 });

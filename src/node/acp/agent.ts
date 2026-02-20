@@ -1455,34 +1455,22 @@ export class MuxAgent implements Agent {
     // a blocked sessionUpdate write, preventing resolveTurn from firing
     // and causing prompt() to hang indefinitely.
     //
-    // Keep memory bounded while applying upstream backpressure instead of
-    // hard-failing the subscription. Throwing on a fixed queue threshold can
-    // reject otherwise healthy long streams; waiting here naturally slows the
-    // onChat reader until the ACP client catches up.
+    // Keep memory bounded without stalling terminal-event observation.
+    //
+    // If stdout backpressure saturates the forwarding queue and we block the
+    // drain loop, stream-end/stream-abort can be delayed behind thousands of
+    // queued deltas, making prompt() appear hung. Instead, once saturated we
+    // drop non-terminal events but continue draining so turn-completion events
+    // are still observed promptly.
     const { push, iterate, end } = createAsyncMessageQueue<WorkspaceChatMessage>();
     let queuedEventCount = 0;
-    let stopBackpressureWait = false;
-    let queueCapacityWaiters: Array<() => void> = [];
+    let droppedNonTerminalEventCount = 0;
 
-    const releaseQueueCapacityWaiters = (): void => {
-      if (queueCapacityWaiters.length === 0) {
-        return;
-      }
-
-      const waiters = queueCapacityWaiters;
-      queueCapacityWaiters = [];
-      for (const resolve of waiters) {
-        resolve();
-      }
-    };
-
-    const waitForQueueCapacity = async (): Promise<void> => {
-      while (!stopBackpressureWait && queuedEventCount >= MAX_BUFFERED_CHAT_EVENTS) {
-        await new Promise<void>((resolve) => {
-          queueCapacityWaiters.push(resolve);
-        });
-      }
-    };
+    const isTerminalStreamEvent = (event: WorkspaceChatMessage): boolean =>
+      event.type === "stream-end" ||
+      event.type === "stream-abort" ||
+      event.type === "stream-error" ||
+      event.type === "error";
 
     // Drain the oRPC stream: observe events for turn resolution, buffer
     // for translation. push() is non-blocking so handleStreamEvent always
@@ -1507,10 +1495,26 @@ export class MuxAgent implements Agent {
           // output and are emitted periodically, so they would accumulate
           // unboundedly if the consumer is blocked on stdout backpressure.
           if (event.type !== "heartbeat") {
-            await waitForQueueCapacity();
-            if (stopBackpressureWait) {
-              break;
+            const shouldDropForBackpressure =
+              queuedEventCount >= MAX_BUFFERED_CHAT_EVENTS && !isTerminalStreamEvent(event);
+            if (shouldDropForBackpressure) {
+              droppedNonTerminalEventCount += 1;
+              if (
+                droppedNonTerminalEventCount === 1 ||
+                droppedNonTerminalEventCount % 1_000 === 0
+              ) {
+                console.warn(
+                  `[acp] Dropping non-terminal onChat events under stdout backpressure for session ${sessionId}`,
+                  {
+                    droppedNonTerminalEventCount,
+                    bufferedEvents: queuedEventCount,
+                    lastDroppedEventType: event.type,
+                  }
+                );
+              }
+              continue;
             }
+
             queuedEventCount += 1;
             push(event);
           }
@@ -1526,9 +1530,6 @@ export class MuxAgent implements Agent {
       async *[Symbol.asyncIterator](): AsyncGenerator<WorkspaceChatMessage> {
         for await (const queuedEvent of iterate()) {
           queuedEventCount = Math.max(queuedEventCount - 1, 0);
-          if (queuedEventCount < MAX_BUFFERED_CHAT_EVENTS) {
-            releaseQueueCapacityWaiters();
-          }
           yield queuedEvent;
         }
       },
@@ -1537,10 +1538,6 @@ export class MuxAgent implements Agent {
     try {
       await this.streamTranslator.consumeAndForward(sessionId, forwardingIterable);
     } finally {
-      // Stop any pending backpressure wait immediately during teardown so
-      // await drainPromise cannot deadlock behind a saturated queue.
-      stopBackpressureWait = true;
-      releaseQueueCapacityWaiters();
       // Signal the drain loop to stop producing events (idempotent if
       // already ended).
       end();
