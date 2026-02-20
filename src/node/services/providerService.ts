@@ -192,8 +192,11 @@ export class ProviderService {
 
       // Compute isConfigured using shared utility (checks config + env vars).
       // Disabled providers intentionally surface as not configured in the UI.
+      // Use providerInfo.isEnabled (not the local `isEnabled`) because gateway
+      // overrides it from global config — using the providers.jsonc value would
+      // make a disabled gateway appear configured.
       providerInfo.isConfigured =
-        isEnabled && checkProviderConfigured(provider, config).isConfigured;
+        providerInfo.isEnabled && checkProviderConfigured(provider, config).isConfigured;
 
       if (provider === "openai" && isEnabled && codexOauthSet) {
         providerInfo.isConfigured = true;
