@@ -117,7 +117,7 @@ Options:
 - `--ssh-host <host>` - SSH hostname/alias used for editor deep links in browser mode
 - `--add-project <path>` - Add and open project at the specified path
 
-Use `--allow-http-origin` only when HTTPS is terminated by an upstream reverse proxy and mux receives rewritten `X-Forwarded-Proto=http` headers. This compatibility mode is disabled by default.
+Use `--allow-http-origin` only when HTTPS is terminated by an upstream reverse proxy and mux receives rewritten `X-Forwarded-Proto=http` headers. This compatibility mode is disabled by default. For non-CLI server starts (for example desktop/browser mode), set `MUX_SERVER_ALLOW_HTTP_ORIGIN=1` to opt in.
 
 Auth token precedence:
 
