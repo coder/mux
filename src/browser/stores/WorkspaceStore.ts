@@ -859,7 +859,6 @@ export class WorkspaceStore {
       this.providersConfigFailureStreak = 0;
       this.providersConfig = config;
       this.providersConfigFingerprint = nextFingerprint;
-      this.bumpAllUsageStoreEntries();
 
       if (previousFingerprint !== nextFingerprint) {
         // Invalidate consumer token stats — both in-memory and persisted —
@@ -870,6 +869,11 @@ export class WorkspaceStore {
           repriceSessionUsage(usage, config);
         }
       }
+
+      // Bump usage-store subscribers AFTER repricing so observers see
+      // updated cost totals. Must happen on every successful apply (not
+      // just fingerprint changes) to unblock initial hydration.
+      this.bumpAllUsageStoreEntries();
     } catch {
       // Existing providersConfig is preserved so metadata resolution
       // continues using the last successful snapshot. Retry with
