@@ -128,6 +128,20 @@ Auth token precedence:
 
 GitHub owner login for browser sessions is configured separately via `MUX_SERVER_AUTH_GITHUB_OWNER` or `serverAuthGithubOwner` in `~/.mux/config.json`. See [Server Access](/config/server-access).
 
+## `mux acp`
+
+Start the ACP (Agent-Client Protocol) stdio bridge used by editor integrations:
+
+```bash
+mux acp
+```
+
+Options:
+
+- `--server-url <url>` - URL of a running mux server
+- `--auth-token <token>` - Optional bearer token for authenticated server connections
+- `--log-file <path>` - Write ACP logs to a file instead of console stderr (helpful when your editor hides subprocess logs)
+
 ## `mux desktop`
 
 Launch the desktop app. This is automatically invoked when running the packaged app or via `electron .`:
