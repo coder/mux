@@ -84,6 +84,15 @@ function deriveProjectName(projectPath: string): string {
   return segments[segments.length - 1] ?? projectPath;
 }
 
+const PROJECT_REMOVE_ACTIVE_WORKSPACES_ERROR_PREFIX =
+  "Cannot remove project with active workspaces";
+
+function isExpectedProjectRemovalValidationError(error: string | undefined): boolean {
+  return (
+    typeof error === "string" && error.startsWith(PROJECT_REMOVE_ACTIVE_WORKSPACES_ERROR_PREFIX)
+  );
+}
+
 export function ProjectProvider(props: { children: ReactNode }) {
   const { api } = useAPI();
   const [projects, setProjects] = useState<Map<string, ProjectConfig>>(new Map());
@@ -193,9 +202,13 @@ export function ProjectProvider(props: { children: ReactNode }) {
 
           return { success: true };
         } else {
-          // Expected user-facing validation failures (for example, active workspaces still present)
-          // should surface in UI without polluting error-level console output.
-          console.warn("Failed to remove project:", result.error);
+          if (isExpectedProjectRemovalValidationError(result.error)) {
+            // Expected user-facing validation failures (for example, active workspaces still present)
+            // should surface in UI without polluting error-level console output.
+            console.warn("Failed to remove project:", result.error);
+          } else {
+            console.error("Failed to remove project:", result.error);
+          }
           return { success: false, error: result.error };
         }
       } catch (error) {
