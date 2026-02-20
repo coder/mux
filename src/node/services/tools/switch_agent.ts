@@ -12,13 +12,12 @@ export const createSwitchAgentTool: ToolFactory = (_config: ToolConfiguration) =
       // StreamManager stops the stream on success, and AgentSession reads
       // switch details from the tool input before enqueueing a follow-up.
       //
-      // Defensive fallback: include handoff fields in output so degraded streams
-      // that lose input metadata can still recover the intended task context.
+      // Defensive fallback: include target agentId in output so degraded streams
+      // that lose input metadata can still recover the destination agent without
+      // repeating follow-up payload in context.
       return {
         ok: true,
         agentId: args.agentId,
-        reason: args.reason ?? undefined,
-        followUp: args.followUp ?? undefined,
       };
     },
   });

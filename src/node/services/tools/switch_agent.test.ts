@@ -29,8 +29,6 @@ describe("switch_agent tool", () => {
     expect(result).toEqual({
       ok: true,
       agentId: "plan",
-      reason: "needs planning",
-      followUp: "Create a plan.",
     });
   });
 
@@ -53,8 +51,6 @@ describe("switch_agent tool", () => {
     expect(result).toEqual({
       ok: true,
       agentId: "exec",
-      reason: undefined,
-      followUp: undefined,
     });
   });
 });
