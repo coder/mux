@@ -417,15 +417,29 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     }
   }, [currentFileHunks, selectedHunkId, onSelectHunk]);
 
-  const [activeFileContent, setActiveFileContent] = useState<string | null>(null);
+  const [activeFileContentState, setActiveFileContentState] = useState<{
+    filePath: string | null;
+    content: string | null;
+    isSettled: boolean;
+  }>({
+    filePath: null,
+    content: null,
+    isSettled: true,
+  });
 
   // Load full file content so immersive mode can render one coherent file with hunk overlays.
+  // Keep a per-file loading state so switches can show a splash until loading settles,
+  // which avoids a visible fallback-overlay -> full-content jump.
   useEffect(() => {
     const apiClient = api;
     const filePath = activeFilePath;
 
     if (!filePath || !apiClient) {
-      setActiveFileContent(null);
+      setActiveFileContentState({
+        filePath: filePath ?? null,
+        content: null,
+        isSettled: true,
+      });
       return;
     }
 
@@ -433,7 +447,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     const resolvedFilePath: string = filePath;
 
     let cancelled = false;
-    setActiveFileContent(null);
+    setActiveFileContentState({
+      filePath: resolvedFilePath,
+      content: null,
+      isSettled: false,
+    });
 
     async function loadActiveFileContent() {
       try {
@@ -447,22 +465,38 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         }
 
         if (!fileResult.success) {
-          setActiveFileContent(null);
+          setActiveFileContentState({
+            filePath: resolvedFilePath,
+            content: null,
+            isSettled: true,
+          });
           return;
         }
 
         const bashResult = fileResult.data;
 
         if (!bashResult.success && !bashResult.output) {
-          setActiveFileContent(null);
+          setActiveFileContentState({
+            filePath: resolvedFilePath,
+            content: null,
+            isSettled: true,
+          });
           return;
         }
 
         const data = processFileContents(bashResult.output ?? "", bashResult.exitCode);
-        setActiveFileContent(data.type === "text" ? data.content : null);
+        setActiveFileContentState({
+          filePath: resolvedFilePath,
+          content: data.type === "text" ? data.content : null,
+          isSettled: true,
+        });
       } catch {
         if (!cancelled) {
-          setActiveFileContent(null);
+          setActiveFileContentState({
+            filePath: resolvedFilePath,
+            content: null,
+            isSettled: true,
+          });
         }
       }
     }
@@ -474,6 +508,17 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     };
   }, [api, props.workspaceId, activeFilePath]);
 
+  const resolvedActiveFileContent =
+    activeFileContentState.filePath === activeFilePath && activeFileContentState.isSettled
+      ? activeFileContentState.content
+      : null;
+
+  const isActiveFileContentLoading = Boolean(
+    activeFilePath &&
+    currentFileHunks.length > 0 &&
+    (activeFileContentState.filePath !== activeFilePath || !activeFileContentState.isSettled)
+  );
+
   const overlayData = useMemo<ImmersiveOverlayData>(() => {
     if (currentFileHunks.length === 0) {
       return {
@@ -483,12 +528,12 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       };
     }
 
-    if (activeFileContent != null) {
-      return buildOverlayFromFileContent(activeFileContent, currentFileHunks);
+    if (resolvedActiveFileContent != null) {
+      return buildOverlayFromFileContent(resolvedActiveFileContent, currentFileHunks);
     }
 
     return buildOverlayFromHunks(currentFileHunks);
-  }, [activeFileContent, currentFileHunks]);
+  }, [resolvedActiveFileContent, currentFileHunks]);
 
   const selectedHunkRange = useMemo(
     () => (selectedHunk ? (overlayData.hunkLineRanges.get(selectedHunk.id) ?? null) : null),
@@ -1197,6 +1242,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
           ) : currentFileHunks.length === 0 ? (
             <div className="text-muted flex items-center justify-center py-12 text-sm">
               {activeFilePath ? "No hunks for this file" : "No files to review"}
+            </div>
+          ) : isActiveFileContentLoading ? (
+            <div className="text-muted flex items-center justify-center py-12 text-sm">
+              <span className="animate-pulse">Loading file...</span>
             </div>
           ) : (
             <div className="border-border-light bg-dark overflow-hidden rounded border">
