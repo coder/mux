@@ -48,8 +48,11 @@ export function sumUsageHistory(usageHistory: ChatUsageDisplay[]): ChatUsageDisp
 
   // Track if any costs are undefined (model pricing unknown)
   let hasUndefinedCosts = false;
-  // Track if all entries are gateway-billed (costs explicitly zeroed)
-  let allCostsIncluded = true;
+  // Track if any entry is gateway-billed (costs explicitly zeroed).
+  // If even one entry was costsIncluded, the aggregated bucket should not be
+  // repriced during mapping changes — we can't separate which tokens were billed
+  // by the gateway vs. which were priced from model metadata.
+  let anyCostsIncluded = false;
 
   const sum: ChatUsageDisplay = {
     input: { tokens: 0, cost_usd: 0 },
@@ -60,7 +63,7 @@ export function sumUsageHistory(usageHistory: ChatUsageDisplay[]): ChatUsageDisp
   };
 
   for (const usage of usageHistory) {
-    if (!usage.costsIncluded) allCostsIncluded = false;
+    if (usage.costsIncluded) anyCostsIncluded = true;
     // Iterate over each component and sum tokens and costs
     const componentKeys: Array<"input" | "cached" | "cacheCreate" | "output" | "reasoning"> = [
       "input",
@@ -83,8 +86,10 @@ export function sumUsageHistory(usageHistory: ChatUsageDisplay[]): ChatUsageDisp
   if (hasUndefinedCosts) {
     sum.hasUnknownCosts = true;
   }
-  // Preserve costsIncluded only when every entry in the sum was gateway-billed
-  if (allCostsIncluded) {
+  // Preserve costsIncluded when any entry in the sum was gateway-billed.
+  // Mixed buckets (some costsIncluded, some not) cannot be safely repriced
+  // because we can't separate which tokens were billed by the gateway.
+  if (anyCostsIncluded) {
     sum.costsIncluded = true;
   }
 
