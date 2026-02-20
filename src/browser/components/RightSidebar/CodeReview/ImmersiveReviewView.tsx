@@ -997,6 +997,8 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     const handleKeyDown = (e: KeyboardEvent) => {
       // Tab: toggle between diff and notes panels.
       if (matchesKeybind(e, KEYBINDS.REVIEW_FOCUS_NOTES)) {
+        // Keep normal tab behavior when typing in inline note editors.
+        if (isEditableElement(e.target)) return;
         e.preventDefault();
         if (focusedPanel === "diff") {
           if (allReviews.length > 0) {
