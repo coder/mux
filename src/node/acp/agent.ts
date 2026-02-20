@@ -162,6 +162,8 @@ export class MuxAgent implements Agent {
    */
   private readonly onChatModeBySessionId = new Map<string, OnChatMode>();
   private readonly chatSubscriptions = new Map<string, Promise<void>>();
+  /** Identity token for the currently active onChat subscription per session. */
+  private readonly chatSubscriptionTokenBySessionId = new Map<string, symbol>();
   /** Resolves once `onChat` is connected for a session (shared across callers). */
   private readonly chatSubscriptionReady = new Map<string, Promise<void>>();
   /** Mode used for the currently active/connecting onChat subscription per session. */
@@ -1359,11 +1361,21 @@ export class MuxAgent implements Agent {
     this.chatIteratorsBySessionId.delete(sessionId);
     this.chatSubscriptions.delete(sessionId);
     this.chatSubscriptionReady.delete(sessionId);
+    this.chatSubscriptionTokenBySessionId.delete(sessionId);
     this.chatSubscriptionModeBySessionId.delete(sessionId);
   }
 
   private getSessionOnChatMode(sessionId: string): OnChatMode {
     return this.onChatModeBySessionId.get(sessionId) ?? ON_CHAT_MODE_FULL;
+  }
+
+  private isActiveChatSubscriptionToken(sessionId: string, subscriptionToken: symbol): boolean {
+    assert(
+      sessionId.trim().length > 0,
+      "isActiveChatSubscriptionToken: sessionId must be non-empty"
+    );
+
+    return this.chatSubscriptionTokenBySessionId.get(sessionId) === subscriptionToken;
   }
 
   /**
@@ -1405,16 +1417,28 @@ export class MuxAgent implements Agent {
       onConnectFailed = reject;
     });
 
+    const subscriptionToken = Symbol(`onChat-subscription:${sessionId}`);
     this.chatSubscriptionReady.set(sessionId, connectedPromise);
+    this.chatSubscriptionTokenBySessionId.set(sessionId, subscriptionToken);
     this.chatSubscriptionModeBySessionId.set(sessionId, onChatMode);
 
-    const subscription = this.runChatSubscription(sessionId, workspaceId, onConnected, onChatMode)
+    const subscription = this.runChatSubscription(
+      sessionId,
+      workspaceId,
+      onConnected,
+      onChatMode,
+      subscriptionToken
+    )
       .catch((error) => {
         // Reject the connected promise in case it hasn't been settled yet
         // (e.g., `onChat` itself threw before calling `onConnected`).
         onConnectFailed(error);
 
         if (this.connection.signal.aborted) {
+          return;
+        }
+
+        if (!this.isActiveChatSubscriptionToken(sessionId, subscriptionToken)) {
           return;
         }
 
@@ -1427,11 +1451,18 @@ export class MuxAgent implements Agent {
         if (this.chatSubscriptionReady.get(sessionId) === connectedPromise) {
           this.chatSubscriptionReady.delete(sessionId);
         }
-        if (
+
+        const subscriptionWasCurrent =
           this.chatSubscriptions.get(sessionId) == null &&
+          this.isActiveChatSubscriptionToken(sessionId, subscriptionToken);
+        if (
+          subscriptionWasCurrent &&
           areOnChatModesEqual(this.chatSubscriptionModeBySessionId.get(sessionId), onChatMode)
         ) {
           this.chatSubscriptionModeBySessionId.delete(sessionId);
+        }
+        if (subscriptionWasCurrent) {
+          this.chatSubscriptionTokenBySessionId.delete(sessionId);
         }
       });
 
@@ -1444,7 +1475,8 @@ export class MuxAgent implements Agent {
     sessionId: string,
     workspaceId: string,
     onConnected: () => void,
-    onChatMode: OnChatMode
+    onChatMode: OnChatMode,
+    subscriptionToken: symbol
   ): Promise<void> {
     const chatStream = await this.server.client.workspace.onChat({
       workspaceId,
@@ -1584,10 +1616,16 @@ export class MuxAgent implements Agent {
 
     // If the stream ends without a terminal event (e.g., transient transport
     // closure), reject any pending turn so `prompt()` doesn't hang forever.
-    this.rejectTurn(
-      sessionId,
-      new Error("Chat stream ended unexpectedly without a terminal event")
-    );
+    //
+    // Guard by subscription token so a stale teardown from an older onChat
+    // loop cannot reject a newer turn that already moved to a replacement
+    // subscription.
+    if (this.isActiveChatSubscriptionToken(sessionId, subscriptionToken)) {
+      this.rejectTurn(
+        sessionId,
+        new Error("Chat stream ended unexpectedly without a terminal event")
+      );
+    }
   }
 
   private handleStreamEvent(sessionId: string, event: WorkspaceChatMessage): void {

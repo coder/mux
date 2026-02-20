@@ -115,6 +115,70 @@ function createControlledChatStream(): {
   return { stream, push };
 }
 
+function createDelayedTeardownChatStream(): {
+  stream: AsyncIterable<WorkspaceChatMessage>;
+  returnCalled: Promise<void>;
+  releaseTeardown: () => void;
+  returnCompleted: Promise<void>;
+} {
+  let pendingResolve: ((result: IteratorResult<WorkspaceChatMessage>) => void) | null = null;
+  let isClosed = false;
+
+  let resolveReturnCalled!: () => void;
+  const returnCalled = new Promise<void>((resolve) => {
+    resolveReturnCalled = resolve;
+  });
+
+  let releaseTeardown!: () => void;
+  const teardownGate = new Promise<void>((resolve) => {
+    releaseTeardown = resolve;
+  });
+
+  let resolveReturnCompleted!: () => void;
+  const returnCompleted = new Promise<void>((resolve) => {
+    resolveReturnCompleted = resolve;
+  });
+
+  const closeIterator = () => {
+    isClosed = true;
+    if (pendingResolve != null) {
+      const resolve = pendingResolve;
+      pendingResolve = null;
+      resolve({ done: true, value: undefined });
+    }
+  };
+
+  const stream: AsyncIterable<WorkspaceChatMessage> = {
+    [Symbol.asyncIterator]() {
+      return {
+        next: async (): Promise<IteratorResult<WorkspaceChatMessage>> => {
+          if (isClosed) {
+            return { done: true, value: undefined };
+          }
+
+          return await new Promise<IteratorResult<WorkspaceChatMessage>>((resolve) => {
+            pendingResolve = resolve;
+          });
+        },
+        return: async (): Promise<IteratorResult<WorkspaceChatMessage>> => {
+          closeIterator();
+          resolveReturnCalled();
+          await teardownGate;
+          resolveReturnCompleted();
+          return { done: true, value: undefined };
+        },
+      };
+    },
+  };
+
+  return {
+    stream,
+    returnCalled,
+    releaseTeardown,
+    returnCompleted,
+  };
+}
+
 interface HarnessOptions {
   onChat?: (input: {
     workspaceId: string;
@@ -1255,6 +1319,94 @@ describe("ACP prompt stream correlation", () => {
     }
 
     expect(promptResult.message).toContain("Chat stream ended unexpectedly");
+
+    harness.closeConnection();
+    await harness.connectionClosed;
+  });
+
+  it("does not let stale onChat teardown reject the active prompt after mode-switch replacement", async () => {
+    const staleSubscription = createDelayedTeardownChatStream();
+    const replacementSubscription = createControlledChatStream();
+    let onChatCallCount = 0;
+
+    const harness = createHarness({
+      onChat: async () => {
+        onChatCallCount += 1;
+        return onChatCallCount === 1 ? staleSubscription.stream : replacementSubscription.stream;
+      },
+    });
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    const newSessionResponse = await harness.agent.newSession({
+      cwd: "/repo/acp-go-sdk",
+      mcpServers: [],
+      _meta: {
+        trunkBranch: "main",
+      },
+    });
+
+    const privateAgent = harness.agent as unknown as {
+      ensureChatSubscription: (
+        sessionId: string,
+        workspaceId: string,
+        onChatMode: OnChatMode
+      ) => Promise<void>;
+    };
+
+    await privateAgent.ensureChatSubscription(
+      newSessionResponse.sessionId,
+      newSessionResponse.sessionId,
+      { type: "live" }
+    );
+    await staleSubscription.returnCalled;
+
+    const promptPromise = harness.agent.prompt({
+      sessionId: newSessionResponse.sessionId,
+      prompt: [{ type: "text", text: "hello" }],
+    });
+
+    await waitForCondition(() => harness.sendMessageCalls.length === 1);
+
+    const firstSend = harness.sendMessageCalls[0];
+    const muxMetadata = firstSend.options["muxMetadata"];
+    if (!isRecord(muxMetadata)) {
+      throw new Error("Expected prompt send options to include muxMetadata record");
+    }
+
+    const promptCorrelationId = muxMetadata["acpPromptId"];
+    if (typeof promptCorrelationId !== "string") {
+      throw new Error("Expected prompt send options to include acpPromptId");
+    }
+
+    staleSubscription.releaseTeardown();
+    await staleSubscription.returnCompleted;
+    await Promise.resolve();
+
+    replacementSubscription.push({
+      type: "stream-start",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-target",
+      model: "anthropic:claude-sonnet-4-5",
+      historySequence: 3,
+      startTime: Date.now(),
+      acpPromptId: promptCorrelationId,
+    } as WorkspaceChatMessage);
+
+    replacementSubscription.push({
+      type: "stream-end",
+      workspaceId: newSessionResponse.sessionId,
+      messageId: "assistant-target",
+      acpPromptId: promptCorrelationId,
+      metadata: {
+        model: "anthropic:claude-sonnet-4-5",
+      },
+      parts: [],
+    } as WorkspaceChatMessage);
+
+    await expect(promptPromise).resolves.toEqual({
+      stopReason: "end_turn",
+      usage: undefined,
+    });
 
     harness.closeConnection();
     await harness.connectionClosed;
