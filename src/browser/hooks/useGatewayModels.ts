@@ -197,7 +197,11 @@ export function useGateway(): GatewayState {
   // silently drop the user's gateway-routing intent — the next render cycle
   // (triggered by config refresh) will retry.
   useEffect(() => {
-    if (!gwConfig || pendingGatewayEnrollments.size === 0) return;
+    // Wait for both provider config and API client before draining.
+    // During reconnect/auth transitions api can be null while gwConfig is
+    // populated — draining without an API client would clear the queue with
+    // no way to persist or re-enqueue.
+    if (!gwConfig || !api || pendingGatewayEnrollments.size === 0) return;
 
     const batch = [...pendingGatewayEnrollments];
     const newModels = batch.filter((id) => !enabledModels.includes(id));
@@ -210,7 +214,7 @@ export function useGateway(): GatewayState {
 
     const nextModels = [...enabledModels, ...newModels];
     updateOptimistically("mux-gateway", { gatewayModels: nextModels });
-    api?.config
+    api.config
       .updateMuxGatewayPrefs({
         muxGatewayEnabled: isEnabled,
         muxGatewayModels: nextModels,
