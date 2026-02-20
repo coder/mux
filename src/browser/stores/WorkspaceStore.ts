@@ -2767,11 +2767,15 @@ export class WorkspaceStore {
       .getSessionUsage({ workspaceId })
       .then((data) => {
         if (data) {
-          // If provider config is already loaded, reprice the hydrated usage
-          // so costs reflect the current model mapping. This handles workspaces
-          // loaded after the initial config refresh (e.g., delayed hydration,
-          // app restart with many workspaces).
-          if (this.providersConfig) {
+          // If provider config is already loaded AND the config has changed
+          // since the cached data was written, reprice the hydrated usage so
+          // costs reflect the current model mapping. Skip when fingerprints
+          // match to avoid discarding a valid tokenStatsCache (which would
+          // force expensive re-tokenization for large histories).
+          if (
+            this.providersConfig &&
+            data.tokenStatsCache?.providersConfigVersion !== this.providersConfigFingerprint
+          ) {
             repriceSessionUsage(data, this.providersConfig);
           }
           this.sessionUsage.set(workspaceId, data);
