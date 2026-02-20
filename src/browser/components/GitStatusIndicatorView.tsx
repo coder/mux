@@ -359,9 +359,10 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
         {triggerContent}
       </button>
       <DialogContent
-        maxWidth="680px"
+        // Give divergence details a bit more room before falling back to horizontal scroll.
+        maxWidth="860px"
         maxHeight="80vh"
-        className="bg-modal-bg text-foreground border-separator-light z-[10000] min-w-0 overflow-auto px-3 py-2 font-mono text-[11px] whitespace-pre shadow-[0_4px_12px_rgba(0,0,0,0.5)]"
+        className="bg-modal-bg text-foreground border-separator-light z-[10000] w-[min(92vw,860px)] min-w-0 overflow-auto px-3 py-2 font-mono text-[11px] whitespace-pre shadow-[0_4px_12px_rgba(0,0,0,0.5)]"
       >
         <DialogHeader className="mb-1">
           <DialogTitle className="text-foreground text-sm">Git divergence details</DialogTitle>
