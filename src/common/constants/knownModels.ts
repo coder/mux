@@ -73,13 +73,6 @@ const MODEL_DEFINITIONS = {
     warm: true,
     tokenizerOverride: "openai/gpt-5",
   },
-  GPT_CODEX: {
-    provider: "openai",
-    providerModelId: "gpt-5.1-codex",
-    aliases: ["codex-5.1"],
-    warm: true,
-    tokenizerOverride: "openai/gpt-5",
-  },
   GPT_MINI: {
     provider: "openai",
     providerModelId: "gpt-5.1-codex-mini",
@@ -92,16 +85,17 @@ const MODEL_DEFINITIONS = {
     warm: true,
     tokenizerOverride: "openai/gpt-5",
   },
-  GEMINI_3_PRO: {
+  // Gemini 3.1 Pro supersedes Gemini 3 Pro; keep bare aliases pointed at the latest Pro tier.
+  GEMINI_31_PRO: {
     provider: "google",
-    providerModelId: "gemini-3-pro-preview",
-    aliases: ["gemini", "gemini-3", "gemini-3-pro"],
+    providerModelId: "gemini-3.1-pro-preview",
+    aliases: ["gemini", "gemini-pro"],
     tokenizerOverride: "google/gemini-2.5-pro",
   },
   GEMINI_3_FLASH: {
     provider: "google",
     providerModelId: "gemini-3-flash-preview",
-    aliases: ["gemini-3-flash"],
+    aliases: ["gemini-flash"],
     tokenizerOverride: "google/gemini-2.5-pro",
   },
   GROK_4_1: {

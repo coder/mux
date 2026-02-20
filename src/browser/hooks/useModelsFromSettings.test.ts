@@ -133,7 +133,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
     const { result } = renderHook(() => useModelsFromSettings());
 
     expect(result.current.models).toContain("openai:gpt-5.2");
-    expect(result.current.models).toContain("openai:gpt-5.1-codex");
+    expect(result.current.models).toContain("openai:gpt-5.2-codex");
     expect(result.current.models).not.toContain("openai:gpt-5.2-pro");
   });
 
@@ -145,7 +145,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
     const { result } = renderHook(() => useModelsFromSettings());
 
     expect(result.current.models).toContain("openai:gpt-5.2-pro");
-    expect(result.current.models).toContain("openai:gpt-5.1-codex");
+    expect(result.current.models).toContain("openai:gpt-5.2-codex");
     expect(result.current.models).not.toContain("openai:gpt-5.3-codex");
   });
 
@@ -157,7 +157,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
     const { result } = renderHook(() => useModelsFromSettings());
 
     expect(result.current.models).toContain("openai:gpt-5.2-pro");
-    expect(result.current.models).toContain("openai:gpt-5.1-codex");
+    expect(result.current.models).toContain("openai:gpt-5.2-codex");
     expect(result.current.models).toContain("openai:gpt-5.3-codex");
   });
 
@@ -169,7 +169,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
     const { result } = renderHook(() => useModelsFromSettings());
 
     expect(result.current.models).toContain("openai:gpt-5.2-pro");
-    expect(result.current.models).toContain("openai:gpt-5.1-codex");
+    expect(result.current.models).toContain("openai:gpt-5.2-codex");
     expect(result.current.models).not.toContain("openai:gpt-5.3-codex");
   });
 

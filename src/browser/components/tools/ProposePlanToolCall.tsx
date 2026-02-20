@@ -24,7 +24,6 @@ import { createMuxMessage } from "@/common/types/message";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { cn } from "@/common/lib/utils";
 import { useAPI } from "@/browser/contexts/API";
-import { useAgent } from "@/browser/contexts/AgentContext";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
@@ -165,7 +164,6 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const isImplementingRef = useRef(false);
   const isMountedRef = useRef(true);
   const { api } = useAPI();
-  const { agents } = useAgent();
   const openInEditor = useOpenInEditor();
   const workspaceContext = useOptionalWorkspaceContext();
   const editorError = usePopoverError();
@@ -397,9 +395,11 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
 
     const { resolvedModel, resolvedThinking } = resolveWorkspaceAiSettingsForAgent({
       agentId: args.targetAgentId,
-      agents,
       agentAiDefaults,
+      // Propose-plan actions are explicit mode switches; honor any per-agent
+      // workspace override before inheriting the previously active plan settings.
       workspaceByAgent,
+      useWorkspaceByAgentFallback: true,
       fallbackModel,
       existingModel,
       existingThinking,

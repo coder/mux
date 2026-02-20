@@ -766,7 +766,7 @@ export function createStaticChatHandler(messages: ChatMuxMessage[]): ChatHandler
       for (const msg of messages) {
         callback(msg);
       }
-      callback({ type: "caught-up" });
+      callback({ type: "caught-up", hasOlderHistory: false });
     }, 50);
     // eslint-disable-next-line @typescript-eslint/no-empty-function
     return () => {};
@@ -788,7 +788,7 @@ export function createStreamingChatHandler(opts: {
       for (const msg of opts.messages) {
         callback(msg);
       }
-      callback({ type: "caught-up" });
+      callback({ type: "caught-up", hasOlderHistory: false });
 
       // Start streaming
       callback({

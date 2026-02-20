@@ -219,8 +219,8 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
-  test("returns low/high for Gemini 3 Pro", () => {
-    expect(getThinkingPolicyForModel("google:gemini-3-pro-preview")).toEqual(["low", "high"]);
+  test("returns low/high for Gemini 3.1 Pro", () => {
+    expect(getThinkingPolicyForModel("google:gemini-3.1-pro-preview")).toEqual(["low", "high"]);
   });
 
   test("returns off/low/medium/high for Gemini 3 Flash", () => {

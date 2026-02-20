@@ -2,7 +2,6 @@ import type { Config, ProjectConfig } from "@/node/config";
 import type { SectionConfig } from "@/common/types/project";
 import { DEFAULT_SECTION_COLOR } from "@/common/constants/ui";
 import { sortSectionsByLinkedList } from "@/common/utils/sections";
-import { isWorkspaceArchived } from "@/common/utils/archive";
 import { spawn } from "child_process";
 import { randomBytes } from "crypto";
 import { validateProjectPath, isGitRepository } from "@/node/utils/pathUtils";
@@ -996,8 +995,7 @@ export class ProjectService {
   }
 
   /**
-   * Remove a section. Only archived workspaces can remain in the section;
-   * active workspaces block removal. Archived workspaces become unsectioned.
+   * Remove a section and unsection any workspaces assigned to it.
    */
   async removeSection(projectPath: string, sectionId: string): Promise<Result<void>> {
     try {
@@ -1015,20 +1013,9 @@ export class ProjectService {
         return Err(`Section not found: ${sectionId}`);
       }
 
-      // Check for active (non-archived) workspaces in this section
       const workspacesInSection = project.workspaces.filter((w) => w.sectionId === sectionId);
-      const activeWorkspaces = workspacesInSection.filter(
-        (w) => !isWorkspaceArchived(w.archivedAt, w.unarchivedAt)
-      );
 
-      if (activeWorkspaces.length > 0) {
-        return Err(
-          `Cannot remove section: ${activeWorkspaces.length} active workspace(s) still assigned. ` +
-            `Archive or move workspaces first.`
-        );
-      }
-
-      // Remove sectionId from archived workspaces in this section
+      // Unsection all workspaces in this section
       for (const workspace of workspacesInSection) {
         workspace.sectionId = undefined;
       }

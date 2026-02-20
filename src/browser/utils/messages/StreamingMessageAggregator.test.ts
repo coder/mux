@@ -853,7 +853,7 @@ describe("StreamingMessageAggregator", () => {
       type: "message" as const,
     });
 
-    test("does not prune on first compaction (no penultimate boundary exists)", () => {
+    test("prunes older messages on first compaction and keeps the new boundary", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
       // Simulate messages accumulated during a live session (no prior compaction)
@@ -873,7 +873,6 @@ describe("StreamingMessageAggregator", () => {
       aggregator.handleMessage(msg1);
       aggregator.handleMessage(msg2);
 
-      // First compaction boundary arrives — no penultimate boundary to prune to
       const summary = asChatMessage(
         createMuxMessage("summary-1", "assistant", "Compacted summary", {
           historySequence: 2,
@@ -885,12 +884,14 @@ describe("StreamingMessageAggregator", () => {
       );
       aggregator.handleMessage(summary);
 
-      // All messages retained (first compaction, no penultimate boundary)
+      // Existing messages with sequence < incoming boundary (2) are pruned.
+      // The incoming boundary itself is appended after pruning and remains visible.
       const remaining = aggregator.getAllMessages();
-      expect(remaining).toHaveLength(3);
+      expect(remaining).toHaveLength(1);
+      expect(remaining.map((m) => m.id)).toEqual(["summary-1"]);
     });
 
-    test("prunes pre-penultimate messages on second compaction", () => {
+    test("keeps only the latest boundary epoch start on subsequent compactions", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
       // Epoch 0 messages (before any compaction)
@@ -923,10 +924,11 @@ describe("StreamingMessageAggregator", () => {
       );
       aggregator.handleMessage(epoch1Msg);
 
-      // All 3 messages visible before second compaction
-      expect(aggregator.getAllMessages()).toHaveLength(3);
+      // First boundary already pruned epoch 0; boundary-1 + epoch1-user remain.
+      expect(aggregator.getAllMessages()).toHaveLength(2);
 
-      // Second compaction boundary (epoch 2) — should prune everything before boundary-1
+      // Second compaction boundary (epoch 2): existing messages with sequence < 3
+      // are pruned, then boundary-2 is appended.
       const boundary2 = asChatMessage(
         createMuxMessage("boundary-2", "assistant", "Summary epoch 2", {
           historySequence: 3,
@@ -938,11 +940,46 @@ describe("StreamingMessageAggregator", () => {
       );
       aggregator.handleMessage(boundary2);
 
-      // epoch0-user (seq 0) is before penultimate boundary (seq 1), so it's pruned.
-      // Remaining: boundary-1 (seq 1), epoch1-user (seq 2), boundary-2 (seq 3)
       const remaining = aggregator.getAllMessages();
-      expect(remaining).toHaveLength(3);
-      expect(remaining.map((m) => m.id)).toEqual(["boundary-1", "epoch1-user", "boundary-2"]);
+      expect(remaining).toHaveLength(1);
+      expect(remaining.map((m) => m.id)).toEqual(["boundary-2"]);
+    });
+
+    test("updates reconnect cursor floor when a live compaction boundary arrives", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      // Simulate initial replay window starting at historySequence 40.
+      aggregator.loadHistoricalMessages(
+        [
+          createMuxMessage("history-40", "user", "Historical user", {
+            historySequence: 40,
+            timestamp: 40,
+          }),
+          createMuxMessage("history-41", "assistant", "Historical assistant", {
+            historySequence: 41,
+            timestamp: 41,
+          }),
+        ],
+        false,
+        { mode: "replace" }
+      );
+
+      const beforeCompactionCursor = aggregator.getOnChatCursor();
+      expect(beforeCompactionCursor?.history?.oldestHistorySequence).toBe(40);
+
+      const boundary = asChatMessage(
+        createMuxMessage("boundary-60", "assistant", "Summary epoch 60", {
+          historySequence: 60,
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 60,
+          muxMetadata: { type: "compaction-summary" },
+        })
+      );
+      aggregator.handleMessage(boundary);
+
+      const afterCompactionCursor = aggregator.getOnChatCursor();
+      expect(afterCompactionCursor?.history?.oldestHistorySequence).toBe(60);
     });
 
     test("does not prune messages when a non-boundary message arrives", () => {

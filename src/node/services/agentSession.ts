@@ -34,6 +34,7 @@ import {
   type StreamErrorPayload,
 } from "@/node/services/utils/sendMessageError";
 import {
+  createAssistantMessageId,
   createUserMessageId,
   createFileSnapshotMessageId,
   createAgentSkillSnapshotMessageId,
@@ -58,11 +59,16 @@ import {
 } from "@/common/types/message";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
+import { hasNonEmptyPlanFile } from "@/node/utils/runtime/helpers";
 import { isExecLikeEditingCapableInResolvedChain } from "@/common/utils/agentTools";
-import { readAgentDefinition } from "@/node/services/agentDefinitions/agentDefinitionsService";
+import {
+  readAgentDefinition,
+  resolveAgentFrontmatter,
+} from "@/node/services/agentDefinitions/agentDefinitionsService";
+import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import { MessageQueue } from "./messageQueue";
-import type { StreamEndEvent } from "@/common/types/stream";
+import type { StreamEndEvent, StreamStartEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
 import type { TelemetryService } from "./telemetryService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
@@ -104,6 +110,18 @@ interface CompactionRequestMetadata {
     };
   };
 }
+
+interface SwitchAgentResult {
+  agentId: string;
+  reason?: string;
+  followUp?: string;
+}
+
+const MAX_CONSECUTIVE_AGENT_SWITCHES = 3;
+
+const SAFE_AGENT_SWITCH_FALLBACK_CANDIDATES = ["exec", "ask", "plan"] as const;
+const SWITCH_AGENT_TARGET_UNAVAILABLE_ERROR =
+  "Agent handoff failed because the requested target is unavailable. Please retry or choose a different mode.";
 
 const PDF_MEDIA_TYPE = "application/pdf";
 
@@ -186,6 +204,15 @@ export class AgentSession {
   private turnPhase: TurnPhase = TurnPhase.IDLE;
   // When true, stream-end skips auto-flushing queued messages so an edit can truncate first.
   private deferQueuedFlushUntilAfterEdit = false;
+  /**
+   * Tracks in-flight persistence for agentSwitchingEnabled that starts at stream-start.
+   * Stream-end awaits this before dispatching switch follow-ups to avoid metadata races.
+   */
+  private pendingAgentSwitchingSync?: Promise<void>;
+
+  /** Guardrail against synthetic switch_agent ping-pong loops. */
+  private consecutiveAgentSwitches = 0;
+
   private idleWaiters: Array<() => void> = [];
   private readonly messageQueue = new MessageQueue();
   private readonly compactionHandler: CompactionHandler;
@@ -398,6 +425,7 @@ export class AgentSession {
     mode?: OnChatMode
   ): Promise<void> {
     let replayMode: "full" | "since" | "live" = "full";
+    let hasOlderHistory: boolean | undefined;
     let serverCursor: OnChatCursor | undefined;
     let emittedReplayMessages = false;
 
@@ -467,13 +495,11 @@ export class AgentSession {
       const partial = await this.historyService.readPartial(this.workspaceId);
       const partialHistorySequence = partial?.metadata?.historySequence;
 
-      // Load chat history from the penultimate compaction boundary onward
-      // (skip=1) so the user sees the previous epoch plus the current epoch.
-      // This provides context for what was summarized in the latest compaction.
-      // TODO: support paginated history loading so users can view older epochs on demand.
+      // Load chat history from the latest compaction boundary onward (skip=0).
+      // Older compaction epochs are fetched on demand through workspace.history.loadMore.
       const historyResult = await this.historyService.getHistoryFromLatestBoundary(
         this.workspaceId,
-        1
+        0
       );
 
       let sinceHistorySequence: number | undefined;
@@ -556,6 +582,18 @@ export class AgentSession {
         } else {
           sinceHistorySequence = undefined;
           afterTimestamp = undefined;
+        }
+
+        if (replayMode === "full") {
+          if (oldestHistorySequence === undefined) {
+            // Empty full replay means there is no older page to request.
+            hasOlderHistory = false;
+          } else {
+            hasOlderHistory = await this.historyService.hasHistoryBeforeSequence(
+              this.workspaceId,
+              oldestHistorySequence
+            );
+          }
         }
 
         for (const message of history) {
@@ -676,6 +714,7 @@ export class AgentSession {
         message: {
           type: "caught-up",
           replay: replayMode,
+          ...(hasOlderHistory !== undefined ? { hasOlderHistory } : {}),
           cursor: serverCursor,
         },
       });
@@ -771,6 +810,11 @@ export class AgentSession {
     this.assertNotDisposed("sendMessage");
 
     assert(typeof message === "string", "sendMessage requires a string message");
+    // Real user sends break any synthetic switch chain.
+    if (!internal?.synthetic) {
+      this.consecutiveAgentSwitches = 0;
+    }
+
     const trimmedMessage = message.trim();
     const fileParts = options?.fileParts;
     const editMessageId = options?.editMessageId;
@@ -1195,6 +1239,61 @@ export class AgentSession {
     }
 
     return Ok(undefined);
+  }
+
+  private async syncAgentSwitchingForResolvedAgent(
+    requestedAgentId: string | undefined,
+    resolvedAgentId: string | undefined
+  ): Promise<void> {
+    assert(
+      typeof requestedAgentId === "string" || requestedAgentId === undefined,
+      "syncAgentSwitchingForResolvedAgent requestedAgentId must be string|undefined"
+    );
+    assert(
+      typeof resolvedAgentId === "string" || resolvedAgentId === undefined,
+      "syncAgentSwitchingForResolvedAgent resolvedAgentId must be string|undefined"
+    );
+
+    const normalizedRequestedAgentId = requestedAgentId?.trim().toLowerCase();
+    if (normalizedRequestedAgentId !== "auto") {
+      return;
+    }
+
+    const normalizedResolvedAgentId = resolvedAgentId?.trim().toLowerCase();
+    const shouldEnableAgentSwitching = normalizedResolvedAgentId === "auto";
+
+    // Guard for test mocks that may not implement getWorkspaceMetadata.
+    if (typeof this.aiService.getWorkspaceMetadata !== "function") {
+      return;
+    }
+
+    try {
+      const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
+      if (!metadataResult.success) {
+        log.warn("Failed to read workspace metadata while syncing agent switching", {
+          workspaceId: this.workspaceId,
+          requestedAgentId: normalizedRequestedAgentId,
+          resolvedAgentId: normalizedResolvedAgentId,
+          error: metadataResult.error,
+        });
+        return;
+      }
+
+      if (metadataResult.data.agentSwitchingEnabled === shouldEnableAgentSwitching) {
+        return;
+      }
+
+      await this.config.updateWorkspaceMetadata(this.workspaceId, {
+        agentSwitchingEnabled: shouldEnableAgentSwitching,
+      });
+    } catch (error) {
+      log.warn("Failed to persist agent switching metadata flag", {
+        workspaceId: this.workspaceId,
+        requestedAgentId: normalizedRequestedAgentId,
+        resolvedAgentId: normalizedResolvedAgentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private async streamWithHistory(
@@ -1964,6 +2063,18 @@ export class AgentSession {
     forward("stream-start", (payload) => {
       this.setTurnPhase(TurnPhase.STREAMING);
       this.emitChatEvent(payload);
+
+      // Persist agent-switch enablement based on the resolved stream agent, not just the request.
+      // This avoids leaving switch_agent enabled when an "auto" request falls back to exec.
+      const streamStartPayload = payload as StreamStartEvent;
+      if (streamStartPayload.replay) {
+        return;
+      }
+
+      this.pendingAgentSwitchingSync = this.syncAgentSwitchingForResolvedAgent(
+        this.activeStreamContext?.options?.agentId,
+        streamStartPayload.agentId
+      );
     });
     forward("stream-delta", (payload) => {
       this.activeStreamHadAnyDelta = true;
@@ -2024,6 +2135,7 @@ export class AgentSession {
       if (hadCompactionRequest && !this.disposed) {
         this.clearQueue();
       }
+      this.pendingAgentSwitchingSync = undefined;
       this.emitChatEvent(payload);
       this.setTurnPhase(TurnPhase.IDLE);
     });
@@ -2032,10 +2144,13 @@ export class AgentSession {
     forward("stream-end", async (payload) => {
       this.setTurnPhase(TurnPhase.COMPLETING);
 
+      const streamEndPayload = payload as StreamEndEvent;
+      const activeStreamOptions = this.activeStreamContext?.options;
+
       let emittedStreamEnd = false;
       try {
         this.activeCompactionRequest = undefined;
-        const handled = await this.compactionHandler.handleCompletion(payload as StreamEndEvent);
+        const handled = await this.compactionHandler.handleCompletion(streamEndPayload);
 
         if (!handled) {
           this.emitChatEvent(payload);
@@ -2069,6 +2184,24 @@ export class AgentSession {
           await this.dispatchPendingFollowUp();
         }
 
+        const pendingAgentSwitchingSync = this.pendingAgentSwitchingSync;
+        this.pendingAgentSwitchingSync = undefined;
+        if (pendingAgentSwitchingSync) {
+          await pendingAgentSwitchingSync;
+        }
+
+        const switchResult = this.extractSwitchAgentResult(streamEndPayload);
+        if (switchResult) {
+          const dispatchedSwitchFollowUp = await this.dispatchAgentSwitch(
+            switchResult,
+            activeStreamOptions,
+            streamEndPayload.metadata.model
+          );
+          if (dispatchedSwitchFollowUp) {
+            return;
+          }
+        }
+
         // Stream end: auto-send queued messages (for user messages typed during streaming)
         // P2: if an edit is waiting, skip the queue flush so the edit truncates first.
         if (this.deferQueuedFlushUntilAfterEdit) {
@@ -2093,7 +2226,8 @@ export class AgentSession {
         }
       } finally {
         // Only clean up if we're still in COMPLETING — a new turn started by
-        // dispatchPendingFollowUp() or sendQueuedMessages() owns the stream state now.
+        // dispatchPendingFollowUp(), dispatchAgentSwitch(), or sendQueuedMessages()
+        // owns the stream state now.
         if (this.turnPhase === TurnPhase.COMPLETING) {
           this.resetActiveStreamState();
           this.setTurnPhase(TurnPhase.IDLE);
@@ -2284,6 +2418,342 @@ export class AgentSession {
           }
         });
     }
+  }
+
+  /** Extract a successful switch_agent tool result from stream-end parts (latest wins). */
+  private extractSwitchAgentResult(payload: StreamEndEvent): SwitchAgentResult | undefined {
+    for (let index = payload.parts.length - 1; index >= 0; index -= 1) {
+      const part = payload.parts[index];
+      if (part.type !== "dynamic-tool") {
+        continue;
+      }
+      if (part.state !== "output-available" || part.toolName !== "switch_agent") {
+        continue;
+      }
+
+      const parsedOutput = this.parseSwitchAgentOutput(part.output);
+      if (parsedOutput) {
+        return parsedOutput;
+      }
+    }
+
+    return undefined;
+  }
+
+  private parseSwitchAgentOutput(output: unknown): SwitchAgentResult | undefined {
+    if (typeof output !== "object" || output === null) {
+      return undefined;
+    }
+
+    const candidate = output as Record<string, unknown>;
+    if (candidate.ok !== true) {
+      return undefined;
+    }
+    if (typeof candidate.agentId !== "string") {
+      return undefined;
+    }
+
+    const agentId = candidate.agentId.trim();
+    if (agentId.length === 0) {
+      return undefined;
+    }
+
+    return {
+      agentId,
+      reason: typeof candidate.reason === "string" ? candidate.reason : undefined,
+      followUp: typeof candidate.followUp === "string" ? candidate.followUp : undefined,
+    };
+  }
+
+  private async isAgentSwitchTargetValid(
+    agentId: string,
+    disableWorkspaceAgents?: boolean
+  ): Promise<boolean> {
+    assert(
+      typeof agentId === "string" && agentId.trim().length > 0,
+      "isAgentSwitchTargetValid requires a non-empty agentId"
+    );
+
+    const normalizedAgentId = agentId.trim();
+    const parsedAgentId = AgentIdSchema.safeParse(normalizedAgentId);
+    if (!parsedAgentId.success) {
+      log.warn("switch_agent target has invalid agentId format; skipping synthetic follow-up", {
+        workspaceId: this.workspaceId,
+        targetAgentId: normalizedAgentId,
+      });
+      return false;
+    }
+
+    if (typeof this.aiService.getWorkspaceMetadata !== "function") {
+      log.warn("Cannot validate switch_agent target: workspace metadata API unavailable", {
+        workspaceId: this.workspaceId,
+        targetAgentId: parsedAgentId.data,
+      });
+      return false;
+    }
+
+    const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
+    if (!metadataResult.success) {
+      log.warn("Cannot validate switch_agent target: workspace metadata unavailable", {
+        workspaceId: this.workspaceId,
+        targetAgentId: parsedAgentId.data,
+        error: metadataResult.error,
+      });
+      return false;
+    }
+
+    const metadata = metadataResult.data;
+    const runtime = createRuntimeForWorkspace(metadata);
+
+    // In-place workspaces (CLI/benchmarks) have projectPath === name.
+    // Use the path directly instead of reconstructing via getWorkspacePath.
+    const isInPlace = metadata.projectPath === metadata.name;
+    const workspacePath = isInPlace
+      ? metadata.projectPath
+      : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+
+    // When disableWorkspaceAgents is active, use project path for discovery
+    // (only built-in/global agents). Mirrors resolveAgentForStream behavior.
+    const discoveryPath = disableWorkspaceAgents ? metadata.projectPath : workspacePath;
+
+    try {
+      const resolvedFrontmatter = await resolveAgentFrontmatter(
+        runtime,
+        discoveryPath,
+        parsedAgentId.data
+      );
+      const cfg = this.config.loadConfigOrDefault();
+      const effectivelyDisabled = isAgentEffectivelyDisabled({
+        cfg,
+        agentId: parsedAgentId.data,
+        resolvedFrontmatter,
+      });
+
+      if (effectivelyDisabled) {
+        log.warn("switch_agent target is disabled; skipping synthetic follow-up", {
+          workspaceId: this.workspaceId,
+          targetAgentId: parsedAgentId.data,
+        });
+        return false;
+      }
+
+      // NOTE: hidden is opt-out. selectable is legacy opt-in.
+      // Mirrors the same logic in agents.list (src/node/orpc/router.ts).
+      const uiSelectableBase =
+        typeof resolvedFrontmatter.ui?.hidden === "boolean"
+          ? !resolvedFrontmatter.ui.hidden
+          : typeof resolvedFrontmatter.ui?.selectable === "boolean"
+            ? resolvedFrontmatter.ui.selectable
+            : true;
+
+      if (!uiSelectableBase) {
+        log.warn("switch_agent target is not UI-selectable; skipping synthetic follow-up", {
+          workspaceId: this.workspaceId,
+          targetAgentId: parsedAgentId.data,
+        });
+        return false;
+      }
+
+      // Check ui.requires gating (e.g., orchestrator requires a plan file).
+      // This matches the router's `requiresPlan && !planReady` check.
+      const requiresPlan = resolvedFrontmatter.ui?.requires?.includes("plan") ?? false;
+      if (requiresPlan) {
+        // Fail closed: if plan state cannot be determined, treat as not ready.
+        let planReady = false;
+        try {
+          planReady = await hasNonEmptyPlanFile(
+            runtime,
+            metadata.name,
+            metadata.projectName,
+            this.workspaceId
+          );
+        } catch {
+          planReady = false;
+        }
+        if (!planReady) {
+          log.warn(
+            "switch_agent target requires a plan but no plan file exists; skipping synthetic follow-up",
+            {
+              workspaceId: this.workspaceId,
+              targetAgentId: parsedAgentId.data,
+            }
+          );
+          return false;
+        }
+      }
+
+      return true;
+    } catch (error) {
+      log.warn("switch_agent target could not be resolved; skipping synthetic follow-up", {
+        workspaceId: this.workspaceId,
+        targetAgentId: parsedAgentId.data,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+  }
+
+  private async resolveAgentSwitchFallbackTarget(
+    currentOptions: SendMessageOptions | undefined
+  ): Promise<string | undefined> {
+    const preferredAgentId = currentOptions?.agentId?.trim();
+    const disableWorkspaceAgents = currentOptions?.disableWorkspaceAgents;
+
+    const candidates: string[] = [];
+    // Prefer returning to the caller's previous non-auto agent when possible.
+    if (preferredAgentId != null && preferredAgentId.length > 0 && preferredAgentId !== "auto") {
+      candidates.push(preferredAgentId);
+    }
+
+    for (const candidate of SAFE_AGENT_SWITCH_FALLBACK_CANDIDATES) {
+      candidates.push(candidate);
+    }
+
+    const seen = new Set<string>();
+    for (const candidate of candidates) {
+      assert(candidate.trim().length > 0, "Fallback candidate agent IDs must be non-empty");
+      if (seen.has(candidate)) {
+        continue;
+      }
+      seen.add(candidate);
+
+      if (await this.isAgentSwitchTargetValid(candidate, disableWorkspaceAgents)) {
+        return candidate;
+      }
+    }
+
+    return undefined;
+  }
+
+  private buildAgentSwitchFallbackFollowUp(switchResult: SwitchAgentResult): string {
+    const normalizedReason = switchResult.reason?.trim();
+    const lines = [
+      `Agent handoff failed: target "${switchResult.agentId}" is unavailable in this workspace.`,
+      "Continue assisting the user's latest request using this mode.",
+    ];
+
+    if (normalizedReason != null && normalizedReason.length > 0) {
+      lines.splice(1, 0, `Router rationale: ${normalizedReason}`);
+    }
+
+    return lines.join("\n");
+  }
+
+  /** Dispatch follow-up message after switch_agent and guard against ping-pong loops. */
+  private async dispatchAgentSwitch(
+    switchResult: SwitchAgentResult,
+    currentOptions: SendMessageOptions | undefined,
+    fallbackModel: string
+  ): Promise<boolean> {
+    assert(
+      typeof switchResult.agentId === "string" && switchResult.agentId.trim().length > 0,
+      "dispatchAgentSwitch requires a non-empty switchResult.agentId"
+    );
+    assert(
+      typeof fallbackModel === "string" && fallbackModel.trim().length > 0,
+      "dispatchAgentSwitch requires a non-empty fallbackModel"
+    );
+
+    this.consecutiveAgentSwitches += 1;
+    if (this.consecutiveAgentSwitches > MAX_CONSECUTIVE_AGENT_SWITCHES) {
+      log.warn("switch_agent loop guard triggered; skipping synthetic follow-up", {
+        workspaceId: this.workspaceId,
+        count: this.consecutiveAgentSwitches,
+        limit: MAX_CONSECUTIVE_AGENT_SWITCHES,
+        targetAgentId: switchResult.agentId,
+      });
+      return false;
+    }
+
+    let targetAgentId = switchResult.agentId;
+
+    const targetValid = await this.isAgentSwitchTargetValid(
+      targetAgentId,
+      currentOptions?.disableWorkspaceAgents
+    );
+    if (!targetValid) {
+      const fallbackAgentId = await this.resolveAgentSwitchFallbackTarget(currentOptions);
+      if (fallbackAgentId == null) {
+        log.warn("switch_agent target invalid and no safe fallback agent is available", {
+          workspaceId: this.workspaceId,
+          requestedTargetAgentId: switchResult.agentId,
+        });
+        this.emitChatEvent(
+          createStreamErrorMessage({
+            messageId: createAssistantMessageId(),
+            error: `${SWITCH_AGENT_TARGET_UNAVAILABLE_ERROR} Requested target: "${switchResult.agentId}".`,
+            errorType: "unknown",
+          })
+        );
+        return false;
+      }
+
+      log.warn("switch_agent target invalid; routing synthetic follow-up to fallback agent", {
+        workspaceId: this.workspaceId,
+        requestedTargetAgentId: switchResult.agentId,
+        fallbackAgentId,
+      });
+      targetAgentId = fallbackAgentId;
+    }
+
+    // Fall back to "Continue." for nullish, empty, or whitespace-only followUp strings.
+    const trimmedFollowUp = switchResult.followUp?.trim();
+    const followUpText =
+      targetAgentId === switchResult.agentId
+        ? trimmedFollowUp != null && trimmedFollowUp.length > 0
+          ? trimmedFollowUp
+          : "Continue."
+        : this.buildAgentSwitchFallbackFollowUp(switchResult);
+    const normalizedOptionModel = currentOptions?.model?.trim();
+    const effectiveModel =
+      normalizedOptionModel && normalizedOptionModel.length > 0
+        ? normalizedOptionModel
+        : fallbackModel.trim();
+
+    // Build follow-up options from an explicit allowlist.
+    // Exclude edit-only fields (editMessageId) to prevent the synthetic
+    // follow-up from entering edit/truncation logic.
+    const followUpOptions: SendMessageOptions = {
+      model: effectiveModel,
+      agentId: targetAgentId,
+      // Preserve relevant settings from the original request
+      ...(currentOptions?.thinkingLevel != null && { thinkingLevel: currentOptions.thinkingLevel }),
+      ...(currentOptions?.system1ThinkingLevel != null && {
+        system1ThinkingLevel: currentOptions.system1ThinkingLevel,
+      }),
+      ...(currentOptions?.system1Model != null && { system1Model: currentOptions.system1Model }),
+      ...(currentOptions?.providerOptions != null && {
+        providerOptions: currentOptions.providerOptions,
+      }),
+      ...(currentOptions?.experiments != null && { experiments: currentOptions.experiments }),
+      ...(currentOptions?.maxOutputTokens != null && {
+        maxOutputTokens: currentOptions.maxOutputTokens,
+      }),
+      ...(currentOptions?.disableWorkspaceAgents != null && {
+        disableWorkspaceAgents: currentOptions.disableWorkspaceAgents,
+      }),
+      ...(currentOptions?.toolPolicy != null && { toolPolicy: currentOptions.toolPolicy }),
+      ...(currentOptions?.additionalSystemInstructions != null && {
+        additionalSystemInstructions: currentOptions.additionalSystemInstructions,
+      }),
+      skipAiSettingsPersistence: true,
+    };
+
+    const sendResult = await this.sendMessage(followUpText, followUpOptions, {
+      synthetic: true,
+    });
+
+    if (!sendResult.success) {
+      log.warn("Failed to dispatch switch_agent follow-up", {
+        workspaceId: this.workspaceId,
+        requestedTargetAgentId: switchResult.agentId,
+        dispatchedTargetAgentId: targetAgentId,
+        error: sendResult.error,
+      });
+      return false;
+    }
+
+    return true;
   }
 
   /**

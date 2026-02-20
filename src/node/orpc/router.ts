@@ -3070,6 +3070,14 @@ export const router = (authToken?: string) => {
             }
           }),
       },
+      history: {
+        loadMore: t
+          .input(schemas.workspace.history.loadMore.input)
+          .output(schemas.workspace.history.loadMore.output)
+          .handler(async ({ context, input }) => {
+            return context.workspaceService.getHistoryLoadMore(input.workspaceId, input.cursor);
+          }),
+      },
       getPlanContent: t
         .input(schemas.workspace.getPlanContent.input)
         .output(schemas.workspace.getPlanContent.output)

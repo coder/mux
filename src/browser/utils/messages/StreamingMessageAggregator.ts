@@ -268,6 +268,11 @@ export class StreamingMessageAggregator {
   private recencyTimestamp: number | null = null;
   private lastResponseCompletedAt: number | null = null;
 
+  /** Oldest historySequence from the server's last replay window.
+   *  Used for reconnect cursors instead of the absolute minimum (which
+   *  includes user-loaded older pages via loadOlderHistory). */
+  private establishedOldestHistorySequence: number | null = null;
+
   // Delta history for token counting and TPS calculation
   private deltaHistory = new Map<string, DeltaRecordStorage>();
 
@@ -841,11 +846,12 @@ export class StreamingMessageAggregator {
    * @param messages - Historical messages to load
    * @param hasActiveStream - Whether there's an active stream in buffered events (for reconnection scenario)
    * @param opts.mode - "replace" clears existing state first, "append" merges into existing state
+   * @param opts.skipDerivedState - Skip replaying messages into derived state when appending older history
    */
   loadHistoricalMessages(
     messages: MuxMessage[],
     hasActiveStream = false,
-    opts?: { mode?: "replace" | "append" }
+    opts?: { mode?: "replace" | "append"; skipDerivedState?: boolean }
   ): void {
     const mode = opts?.mode ?? "replace";
 
@@ -861,6 +867,16 @@ export class StreamingMessageAggregator {
       this.skillLoadErrors.clear();
       this.skillLoadErrorsCache = [];
       this.lastResponseCompletedAt = null;
+
+      // Track the replay window's oldest sequence for reconnect cursors.
+      let minSeq: number | null = null;
+      for (const msg of messages) {
+        const seq = msg.metadata?.historySequence;
+        if (typeof seq === "number" && (minSeq === null || seq < minSeq)) {
+          minSeq = seq;
+        }
+      }
+      this.establishedOldestHistorySequence = minSeq;
     }
 
     const overwrittenMessageIds: string[] = [];
@@ -905,22 +921,24 @@ export class StreamingMessageAggregator {
       (a, b) => (a.metadata?.historySequence ?? 0) - (b.metadata?.historySequence ?? 0)
     );
 
-    // Replay historical messages in order to reconstruct derived state
-    for (const message of chronologicalMessages) {
-      this.maybeTrackLoadedSkillFromAgentSkillSnapshot(message.metadata?.agentSkillSnapshot);
+    if (!opts?.skipDerivedState) {
+      // Replay historical messages in order to reconstruct derived state
+      for (const message of chronologicalMessages) {
+        this.maybeTrackLoadedSkillFromAgentSkillSnapshot(message.metadata?.agentSkillSnapshot);
 
-      if (message.role === "user") {
-        // Mirror live behavior: clear stream-scoped state on new user turn
-        // but keep persisted status for fallback on reload.
-        this.currentTodos = [];
-        this.agentStatus = undefined;
-        continue;
-      }
+        if (message.role === "user") {
+          // Mirror live behavior: clear stream-scoped state on new user turn
+          // but keep persisted status for fallback on reload.
+          this.currentTodos = [];
+          this.agentStatus = undefined;
+          continue;
+        }
 
-      if (message.role === "assistant") {
-        for (const part of message.parts) {
-          if (isDynamicToolPart(part) && part.state === "output-available") {
-            this.processToolResult(part.toolName, part.input, part.output, context);
+        if (message.role === "assistant") {
+          for (const part of message.parts) {
+            if (isDynamicToolPart(part) && part.state === "output-available") {
+              this.processToolResult(part.toolName, part.input, part.output, context);
+            }
           }
         }
       }
@@ -936,6 +954,10 @@ export class StreamingMessageAggregator {
     }
 
     this.invalidateCache();
+  }
+
+  setEstablishedOldestHistorySequence(sequence: number | null): void {
+    this.establishedOldestHistorySequence = sequence;
   }
 
   getAllMessages(): MuxMessage[] {
@@ -980,16 +1002,32 @@ export class StreamingMessageAggregator {
       return undefined;
     }
 
+    const allMessages = this.getAllMessages();
+    const establishedOldestHistorySequence = this.establishedOldestHistorySequence;
+    const fingerprintMessages =
+      establishedOldestHistorySequence != null
+        ? allMessages.filter(
+            (message) =>
+              (message.metadata?.historySequence ?? Number.POSITIVE_INFINITY) >=
+              establishedOldestHistorySequence
+          )
+        : allMessages;
+
+    // Scope fingerprint input to the established replay window. The server computes
+    // priorHistoryFingerprint from getHistoryFromLatestBoundary(skip=0), so client-
+    // paginated rows from older compaction epochs must be excluded to avoid false
+    // mismatches that force unnecessary full replay on reconnect.
     const priorHistoryFingerprint = computePriorHistoryFingerprint(
-      this.getAllMessages(),
+      fingerprintMessages,
       maxHistorySequence
     );
+    const oldestHistorySequence = establishedOldestHistorySequence ?? minHistorySequence;
 
     const cursor: OnChatCursor = {
       history: {
         messageId: maxHistoryMessageId,
         historySequence: maxHistorySequence,
-        oldestHistorySequence: minHistorySequence,
+        oldestHistorySequence,
         ...(priorHistoryFingerprint !== undefined ? { priorHistoryFingerprint } : {}),
       },
     };
@@ -1367,6 +1405,7 @@ export class StreamingMessageAggregator {
     this.interruptingMessageId = null;
     this.lastAbortReason = null;
     this.lastResponseCompletedAt = null;
+    this.establishedOldestHistorySequence = null;
     this.invalidateCache();
   }
 
@@ -2146,13 +2185,12 @@ export class StreamingMessageAggregator {
       }
 
       // When a compaction boundary arrives during a live session, prune messages
-      // older than the penultimate boundary so the UI matches what a fresh load
-      // would show (emitHistoricalEvents reads from skip=1, the penultimate boundary).
-      // The user sees the previous epoch + current epoch; older epochs are pruned.
-      // Without this, all pre-boundary messages persist until the next page refresh.
-      // TODO: support paginated history loading so users can view older epochs on demand.
+      // older than the incoming boundary sequence so the UI matches a fresh load
+      // (emitHistoricalEvents now reads from skip=0, the latest boundary only).
+      // This keeps only the current epoch visible in-session; older epochs remain
+      // available via Load More history pagination.
       if (this.isCompactionBoundarySummaryMessage(incomingMessage)) {
-        this.pruneBeforePenultimateBoundary(incomingMessage);
+        this.pruneBeforeLatestBoundary(incomingMessage);
       }
 
       // Now add the new message
@@ -2204,37 +2242,33 @@ export class StreamingMessageAggregator {
   }
 
   /**
-   * Keep the previous epoch visible: when the new (Nth) boundary arrives,
-   * find the penultimate (N-1) boundary among existing messages and prune
-   * everything before it. This matches the backend's getHistoryFromLatestBoundary
-   * which reads from the n-1 boundary.
+   * Keep only the latest epoch visible during a live session.
    *
-   * If only one boundary exists (the incoming one), nothing is pruned — the
-   * user sees their full first-epoch history.
+   * When a new boundary arrives, existing messages still represent older epochs.
+   * Prune every existing message with a lower sequence than the incoming boundary
+   * so once the incoming boundary is appended, the transcript matches fresh loads
+   * from getHistoryFromLatestBoundary(skip=0). Older epochs remain accessible via
+   * Load More.
    */
-  private pruneBeforePenultimateBoundary(_incomingBoundary: MuxMessage): void {
-    // Find the penultimate boundary among the *existing* messages (before adding
-    // the incoming one). With the incoming boundary about to become the latest,
-    // the existing latest boundary becomes the penultimate one.
-    let penultimateBoundarySeq: number | undefined;
-    for (const [, msg] of this.messages.entries()) {
-      if (!this.isCompactionBoundarySummaryMessage(msg)) continue;
-      const seq = msg.metadata?.historySequence;
-      if (seq === undefined) continue;
-      // The highest-sequence boundary in existing messages is the one that
-      // will become the penultimate once the incoming boundary is added.
-      if (penultimateBoundarySeq === undefined || seq > penultimateBoundarySeq) {
-        penultimateBoundarySeq = seq;
-      }
-    }
+  private pruneBeforeLatestBoundary(incomingBoundary: MuxMessage): void {
+    const incomingBoundarySequence = incomingBoundary.metadata?.historySequence;
+    // Self-healing guard: malformed boundary metadata should not crash live sessions.
+    if (incomingBoundarySequence === undefined) return;
 
-    // No existing boundary → this is the first compaction, nothing to prune
-    if (penultimateBoundarySeq === undefined) return;
+    // Live compaction advances the replay window floor to the incoming boundary.
+    // Keep reconnect cursors aligned with the server's latest-boundary replay window
+    // so incremental reconnects remain eligible after compaction.
+    if (
+      this.establishedOldestHistorySequence === null ||
+      incomingBoundarySequence > this.establishedOldestHistorySequence
+    ) {
+      this.establishedOldestHistorySequence = incomingBoundarySequence;
+    }
 
     const toRemove: string[] = [];
     for (const [id, msg] of this.messages.entries()) {
       const seq = msg.metadata?.historySequence;
-      if (seq !== undefined && seq < penultimateBoundarySeq) {
+      if (seq !== undefined && seq < incomingBoundarySequence) {
         toRemove.push(id);
       }
     }

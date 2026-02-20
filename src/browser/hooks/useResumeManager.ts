@@ -36,7 +36,8 @@ export interface RetryState {
  * Why this matters:
  * - Consistency: All retries use the same backoff, state management, eligibility checks
  * - Maintainability: One place to update retry logic
- * - Background operation: Works for all workspaces, even non-visible ones
+ * - Safety-first operation: Auto-retry only runs for the workspace with an active
+ *   onChat subscription (manual retry still works when the workspace is opened)
  * - Idempotency: Safe to emit events multiple times, hook silently ignores invalid requests
  *
  * autoRetry State Semantics (Explicit Transitions Only):
@@ -54,7 +55,7 @@ export interface RetryState {
  * - Polling-based: Checks all workspaces every 1 second
  * - Event-driven: Also reacts to RESUME_CHECK_REQUESTED events for fast path
  * - Idempotent: Safe to call multiple times, silently ignores invalid requests
- * - Background operation: Works for all workspaces, visible or not
+ * - Conservative eligibility: Background workspaces skip auto-retry until active
  * - Exponential backoff: 1s → 2s → 4s → 8s → ... → 60s (max)
  *
  * Checks happen on:
@@ -99,6 +100,13 @@ export function useResumeManager() {
   const isEligibleForResume = (workspaceId: string): boolean => {
     const state = workspaceStatesRef.current.get(workspaceId);
     if (!state) {
+      return false;
+    }
+
+    // Only the active onChat workspace receives authoritative stream-error/abort
+    // transcript updates. Inactive workspaces only get activity snapshots, which
+    // are insufficient to classify retryability safely.
+    if (!store.isOnChatSubscriptionActive(workspaceId)) {
       return false;
     }
 

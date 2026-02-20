@@ -12,8 +12,6 @@ import {
 } from "./mockFactory";
 
 import { setupSimpleChatStory } from "./storyHelpers";
-import { waitForChatMessagesLoaded } from "./storyPlayHelpers";
-import { userEvent, waitFor } from "@storybook/test";
 
 export default {
   ...appMeta,
@@ -444,7 +442,12 @@ export const Interrupted: AppStory = {
   ),
 };
 
-/** Code execution showing the code view (monospace font test) */
+/**
+ * Code execution showing the code view (monospace font test).
+ *
+ * No play step is needed here: when execution completes without nested tool calls,
+ * CodeExecutionToolCall auto-switches from "tools" to "code" view.
+ */
 export const ShowCodeView: AppStory = {
   render: () => (
     <AppWithMocks
@@ -497,32 +500,4 @@ return results;`,
       }
     />
   ),
-  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await waitForChatMessagesLoaded(canvasElement);
-
-    // Find and click the "Show Code" button (CodeIcon)
-    await waitFor(() => {
-      const buttons = canvasElement.querySelectorAll('button[type="button"]');
-      const showCodeBtn = Array.from(buttons).find((btn) => {
-        const svg = btn.querySelector("svg");
-        return svg?.classList.contains("lucide-code");
-      });
-      if (!showCodeBtn) throw new Error("Show Code button not found");
-      return showCodeBtn;
-    });
-
-    const buttons = canvasElement.querySelectorAll('button[type="button"]');
-    const showCodeBtn = Array.from(buttons).find((btn) => {
-      const svg = btn.querySelector("svg");
-      return svg?.classList.contains("lucide-code");
-    }) as HTMLElement;
-
-    await userEvent.click(showCodeBtn);
-
-    // Wait for code view to be displayed (font-mono class should be present)
-    await waitFor(() => {
-      const codeContainer = canvasElement.querySelector(".font-mono");
-      if (!codeContainer) throw new Error("Code view not displayed");
-    });
-  },
 };

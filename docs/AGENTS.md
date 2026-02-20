@@ -108,6 +108,13 @@ HistoryService is pure local disk I/O with a single dependency (`getSessionDir`)
 - If a new emoji appears in tool output, extend `EmojiIcon` to map it to an SVG icon.
 - Colors defined in `src/browser/styles/globals.css` (`:root @theme` block). Reference via CSS variables (e.g., `var(--color-plan-mode)`), never hardcode hex values.
 
+## Security: Renderer HTML & XSS
+
+- Treat repo-controlled strings (file paths, diff content, branch names, commit messages) as attacker-controlled input.
+- Never render attacker-controlled data through `dangerouslySetInnerHTML`, `innerHTML`, `outerHTML`, or `insertAdjacentHTML`.
+- Prefer React element trees for highlighting (split + `<mark>` nodes) so React escaping stays in effect.
+- If raw HTML/SVG rendering is unavoidable (e.g., Shiki/Mermaid), require explicit sanitization/hardening and document the trust boundary with a `SECURITY AUDIT` comment at the sink.
+
 ## TypeScript Discipline
 
 - Ban `as any`; rely on discriminated unions, type guards, or authored interfaces.

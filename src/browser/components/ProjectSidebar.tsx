@@ -55,6 +55,7 @@ import type { Secret } from "@/common/types/secrets";
 import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { TitleEditProvider, useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
+import { useConfirmDialog } from "@/browser/contexts/ConfirmDialogContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { ChevronRight, CircleHelp, KeyRound } from "lucide-react";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
@@ -446,6 +447,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const workspaceStore = useWorkspaceStoreRaw();
   const { navigateToProject } = useRouter();
   const { api } = useAPI();
+  const { confirm: confirmDialog } = useConfirmDialog();
 
   // Get project state and operations from context
   const {
@@ -754,6 +756,24 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     sectionId: string,
     buttonElement: HTMLElement
   ) => {
+    // removeSection unsections every workspace in the project (including archived),
+    // so confirmation needs to count from the full project config.
+    const workspacesInSection = (projects.get(projectPath)?.workspaces ?? []).filter(
+      (workspace) => workspace.sectionId === sectionId
+    );
+
+    if (workspacesInSection.length > 0) {
+      const ok = await confirmDialog({
+        title: "Delete section?",
+        description: `${workspacesInSection.length} workspace(s) in this section will be moved to unsectioned.`,
+        confirmLabel: "Delete",
+        confirmVariant: "destructive",
+      });
+      if (!ok) {
+        return;
+      }
+    }
+
     const result = await removeSection(projectPath, sectionId);
     if (!result.success) {
       const error = result.error ?? "Failed to remove section";

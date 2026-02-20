@@ -444,11 +444,31 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
 
     ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
 
+    const workspacePath = "/tmp/proj/ws";
+    const projectPath = "/tmp/proj";
     const mockConfig: Partial<Config> = {
       srcDir: "/tmp/test",
       getSessionDir: mock(() => "/tmp/test/sessions"),
       generateStableId: mock(() => "test-id"),
-      findWorkspace: mock(() => null),
+      findWorkspace: mock((workspaceId: string) =>
+        workspaceId === "ws" ? { projectPath, workspacePath } : null
+      ),
+      loadConfigOrDefault: mock(() => ({
+        projects: new Map([
+          [
+            projectPath,
+            {
+              workspaces: [
+                {
+                  id: "ws",
+                  path: workspacePath,
+                  name: "ws",
+                },
+              ],
+            },
+          ],
+        ]),
+      })),
     };
     const mockInitStateManager: Partial<InitStateManager> = {
       on: mock(() => undefined as unknown as InitStateManager),
@@ -527,6 +547,71 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
     );
 
     expect(persistSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test("persists AI settings for sub-agent workspaces so auto-resume can use latest model", async () => {
+    const persistSpy = mock(() => Promise.resolve({ success: true as const, data: true }));
+
+    interface WorkspaceServiceTestAccess {
+      maybePersistAISettingsFromOptions: (
+        workspaceId: string,
+        options: unknown,
+        context: "send" | "resume"
+      ) => Promise<void>;
+      persistWorkspaceAISettingsForAgent: (...args: unknown[]) => unknown;
+      config: {
+        findWorkspace: (
+          workspaceId: string
+        ) => { projectPath: string; workspacePath: string } | null;
+        loadConfigOrDefault: () => {
+          projects: Map<string, { workspaces: Array<Record<string, unknown>> }>;
+        };
+      };
+    }
+
+    const svc = workspaceService as unknown as WorkspaceServiceTestAccess;
+    svc.persistWorkspaceAISettingsForAgent = persistSpy;
+
+    const projectPath = "/tmp/proj";
+    const workspacePath = "/tmp/proj/ws";
+    svc.config.findWorkspace = mock((workspaceId: string) =>
+      workspaceId === "ws" ? { projectPath, workspacePath } : null
+    );
+    svc.config.loadConfigOrDefault = mock(() => ({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                id: "ws",
+                path: workspacePath,
+                name: "ws",
+                parentWorkspaceId: "parent-ws",
+              },
+            ],
+          },
+        ],
+      ]),
+    }));
+
+    await svc.maybePersistAISettingsFromOptions(
+      "ws",
+      {
+        agentId: "exec",
+        model: "openai:gpt-4o-mini",
+        thinkingLevel: "off",
+      },
+      "send"
+    );
+
+    expect(persistSpy).toHaveBeenCalledTimes(1);
+    expect(persistSpy).toHaveBeenCalledWith(
+      "ws",
+      "exec",
+      { model: "openai:gpt-4o-mini", thinkingLevel: "off" },
+      { emitMetadata: false }
+    );
   });
 });
 describe("WorkspaceService remove timing rollup", () => {

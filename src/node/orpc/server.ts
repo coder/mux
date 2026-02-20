@@ -334,6 +334,14 @@ function isOAuthCallbackNavigationRequest(req: Pick<express.Request, "method" | 
   );
 }
 
+function shouldEnforceOriginValidation(req: Pick<express.Request, "path">): boolean {
+  // User rationale: static HTML/CSS/JS must keep loading even when intermediaries rewrite
+  // Origin/forwarded headers, while API and auth endpoints retain strict same-origin checks.
+  return (
+    req.path.startsWith("/orpc") || req.path.startsWith("/api") || req.path.startsWith("/auth/")
+  );
+}
+
 /**
  * Create an oRPC server with HTTP and WebSocket endpoints.
  *
@@ -371,6 +379,11 @@ export async function createOrpcServer({
   // Express app setup
   const app = express();
   app.use((req, res, next) => {
+    if (!shouldEnforceOriginValidation(req)) {
+      next();
+      return;
+    }
+
     const originHeader = getFirstHeaderValue(req, "origin");
 
     if (!originHeader) {

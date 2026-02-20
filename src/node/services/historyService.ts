@@ -649,6 +649,126 @@ export class HistoryService {
     }
   }
 
+  private getOldestHistorySequence(messages: readonly MuxMessage[]): number | undefined {
+    let oldest: number | undefined;
+
+    for (const message of messages) {
+      const sequence = message.metadata?.historySequence;
+      if (!isNonNegativeInteger(sequence)) {
+        continue;
+      }
+
+      if (oldest === undefined || sequence < oldest) {
+        oldest = sequence;
+      }
+    }
+
+    return oldest;
+  }
+
+  async hasHistoryBeforeSequence(
+    workspaceId: string,
+    beforeHistorySequence: number
+  ): Promise<boolean> {
+    assert(
+      typeof workspaceId === "string" && workspaceId.trim().length > 0,
+      "workspaceId is required"
+    );
+    assert(
+      isNonNegativeInteger(beforeHistorySequence),
+      "hasHistoryBeforeSequence requires a non-negative integer"
+    );
+
+    let hasOlder = false;
+    await this.iterateBackward(workspaceId, (messages) => {
+      for (const message of messages) {
+        const sequence = message.metadata?.historySequence;
+        if (!isNonNegativeInteger(sequence)) {
+          continue;
+        }
+
+        if (sequence < beforeHistorySequence) {
+          hasOlder = true;
+          return false;
+        }
+      }
+    });
+
+    return hasOlder;
+  }
+
+  /**
+   * Read one compaction-epoch history window older than `beforeHistorySequence`.
+   *
+   * Returns messages whose historySequence is strictly less than `beforeHistorySequence`
+   * and belong to the nearest-older boundary window.
+   */
+  async getHistoryBoundaryWindow(
+    workspaceId: string,
+    beforeHistorySequence: number
+  ): Promise<Result<{ messages: MuxMessage[]; hasOlder: boolean }>> {
+    assert(
+      typeof workspaceId === "string" && workspaceId.trim().length > 0,
+      "workspaceId is required"
+    );
+    assert(
+      isNonNegativeInteger(beforeHistorySequence),
+      "getHistoryBoundaryWindow requires beforeHistorySequence to be a non-negative integer"
+    );
+
+    try {
+      // Scan boundaries newest→oldest and pick the first window that has rows older than the cursor.
+      for (let skip = 0; ; skip++) {
+        const boundaryOffset = await this.findLastBoundaryByteOffset(workspaceId, skip);
+        if (boundaryOffset === null) {
+          break;
+        }
+
+        const tailMessages = await this.readHistoryFromOffset(workspaceId, boundaryOffset);
+        const windowMessages = tailMessages.filter((message) => {
+          const sequence = message.metadata?.historySequence;
+          return isNonNegativeInteger(sequence) && sequence < beforeHistorySequence;
+        });
+
+        if (windowMessages.length === 0) {
+          continue;
+        }
+
+        const oldestWindowSequence = this.getOldestHistorySequence(windowMessages);
+        assert(
+          oldestWindowSequence !== undefined,
+          "window messages filtered by historySequence must include a sequence"
+        );
+
+        const hasOlder = await this.hasHistoryBeforeSequence(workspaceId, oldestWindowSequence);
+        return Ok({ messages: windowMessages, hasOlder });
+      }
+
+      // No older boundary window found. Fall back to pre-boundary rows (or empty on uncompacted history).
+      const allMessages = await this.readChatHistory(workspaceId);
+      const preBoundaryMessages = allMessages.filter((message) => {
+        const sequence = message.metadata?.historySequence;
+        return isNonNegativeInteger(sequence) && sequence < beforeHistorySequence;
+      });
+
+      if (preBoundaryMessages.length === 0) {
+        return Ok({ messages: [], hasOlder: false });
+      }
+
+      const oldestWindowSequence = this.getOldestHistorySequence(preBoundaryMessages);
+      assert(
+        oldestWindowSequence !== undefined,
+        "pre-boundary messages filtered by historySequence must include a sequence"
+      );
+
+      const hasOlder = await this.hasHistoryBeforeSequence(workspaceId, oldestWindowSequence);
+      return Ok({ messages: preBoundaryMessages, hasOlder });
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to read history boundary window: ${message}`);
+    }
+  }
+
   /**
    * Read messages from a compaction boundary onward.
    * Falls back to full history if no boundary exists (new/uncompacted workspace).

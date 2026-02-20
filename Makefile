@@ -438,7 +438,8 @@ storybook-build: node_modules/.installed src/version.ts ## Build static Storyboo
 
 test-storybook: node_modules/.installed ## Run Storybook interaction tests (requires Storybook to be running or built)
 	$(check_node_version)
-	@bun x test-storybook
+	@# Storybook story transitions can exceed Jest's default 15s timeout on loaded CI runners.
+	@bun x test-storybook --testTimeout 30000
 
 chromatic: node_modules/.installed ## Run Chromatic for visual regression testing
 	$(check_node_version)

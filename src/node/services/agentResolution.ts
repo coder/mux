@@ -51,6 +51,8 @@ export interface ResolveAgentOptions {
   requestedAgentId: string | undefined;
   /** When true, skip workspace-specific agents (for "unbricking" broken agent files). */
   disableWorkspaceAgents: boolean;
+  /** Enable switch_agent tool for sessions that were started from the Auto agent. */
+  enableAgentSwitchTool: boolean;
   modelString: string;
   /** Caller-supplied tool policy (applied AFTER agent policy for further restriction). */
   callerToolPolicy: ToolPolicy | undefined;
@@ -102,6 +104,7 @@ export async function resolveAgentForStream(
     workspacePath,
     requestedAgentId: rawAgentId,
     disableWorkspaceAgents,
+    enableAgentSwitchTool,
     modelString,
     callerToolPolicy,
     cfg,
@@ -220,10 +223,18 @@ export async function resolveAgentForStream(
   // --- Tool policy composition ---
   // Agent policy establishes baseline (deny-all + enable whitelist + runtime restrictions).
   // Caller policy then narrows further if needed.
+  // Auto must be able to call switch_agent on its first turn even before metadata persistence.
+  const shouldEnableAgentSwitchTool = enableAgentSwitchTool || agentDefinition.id === "auto";
+  // Only force toolChoice=require in top-level workspaces where switch_agent can actually run.
+  // Corrupted/stale subagent metadata may still point at auto; that should degrade safely.
+  const shouldRequireSwitchAgentTool =
+    agentDefinition.id === "auto" && shouldEnableAgentSwitchTool && !isSubagentWorkspace;
   const agentToolPolicy = resolveToolPolicyForAgent({
     agents: agentsForInheritance,
     isSubagent: isSubagentWorkspace,
     disableTaskToolsForDepth: shouldDisableTaskToolsForDepth,
+    enableAgentSwitchTool: shouldEnableAgentSwitchTool,
+    requireSwitchAgentTool: shouldRequireSwitchAgentTool,
   });
 
   // The Chat with Mux system workspace must remain sandboxed regardless of caller-supplied

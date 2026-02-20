@@ -322,8 +322,9 @@ export function createOnChatAdapter(chatHandlers: Map<string, ChatHandler>) {
     if (handler) {
       return handler(emit);
     }
-    // Default: emit caught-up immediately
-    queueMicrotask(() => emit({ type: "caught-up" }));
+    // Default: emit caught-up immediately. Modern backends include hasOlderHistory
+    // on full replays; default to false in stories to avoid phantom pagination UI.
+    queueMicrotask(() => emit({ type: "caught-up", hasOlderHistory: false }));
     return undefined;
   };
 }

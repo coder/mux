@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -532,6 +533,18 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   } = useRouter();
 
   const workspaceStore = useWorkspaceStoreRaw();
+
+  useLayoutEffect(() => {
+    // When the user navigates to settings, currentWorkspaceId becomes null
+    // (URL is /settings/...). Preserve the active workspace subscription so
+    // chat messages aren't cleared. Only null it out when truly leaving a
+    // workspace context (e.g., navigating to Home).
+    if (currentWorkspaceId) {
+      workspaceStore.setActiveWorkspaceId(currentWorkspaceId);
+    } else if (!currentSettingsSection) {
+      workspaceStore.setActiveWorkspaceId(null);
+    }
+  }, [workspaceStore, currentWorkspaceId, currentSettingsSection]);
   const [workspaceMetadata, setWorkspaceMetadataState] = useState<
     Map<string, FrontendWorkspaceMetadata>
   >(new Map());

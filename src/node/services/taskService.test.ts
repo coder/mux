@@ -16,6 +16,7 @@ import type { WorkspaceForkParams } from "@/node/runtime/Runtime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { Ok, Err, type Result } from "@/common/types/result";
+import { defaultModel } from "@/common/utils/ai/models";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { StreamEndEvent } from "@/common/types/stream";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
@@ -932,6 +933,8 @@ describe("TaskService", () => {
       agentType: "explore",
       prompt: "run task from local workspace",
       title: "Test task",
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "medium",
     });
     expect(created.success).toBe(true);
     if (!created.success) return;
@@ -948,7 +951,7 @@ describe("TaskService", () => {
     expect(childEntry?.taskThinkingLevel).toBe("medium");
   }, 20_000);
 
-  test("applies subagentAiDefaults model + thinking overrides on task create", async () => {
+  test("inherits parent model + thinking when target agent has no global defaults", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
 
@@ -967,17 +970,15 @@ describe("TaskService", () => {
                 name: "parent",
                 createdAt: new Date().toISOString(),
                 runtimeConfig: { type: "local" },
-                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "high" },
+                aiSettings: { model: "anthropic:claude-opus-4-6", thinkingLevel: "high" },
               },
             ],
           },
         ],
       ]),
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-      subagentAiDefaults: {
-        explore: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
-      },
     });
+
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
@@ -985,16 +986,18 @@ describe("TaskService", () => {
       parentWorkspaceId: parentId,
       kind: "agent",
       agentType: "explore",
-      prompt: "run task with overrides",
+      prompt: "run task with inherited model",
       title: "Test task",
+      modelString: "openai:gpt-5.3-codex",
+      thinkingLevel: "xhigh",
     });
     expect(created.success).toBe(true);
     if (!created.success) return;
 
-    expect(sendMessage).toHaveBeenCalledWith(created.data.taskId, "run task with overrides", {
-      model: "anthropic:claude-haiku-4-5",
+    expect(sendMessage).toHaveBeenCalledWith(created.data.taskId, "run task with inherited model", {
+      model: "openai:gpt-5.3-codex",
       agentId: "explore",
-      thinkingLevel: "off",
+      thinkingLevel: "xhigh",
       experiments: undefined,
     });
 
@@ -1004,11 +1007,72 @@ describe("TaskService", () => {
       .find((w) => w.id === created.data.taskId);
     expect(childEntry).toBeTruthy();
     expect(childEntry?.aiSettings).toEqual({
-      model: "anthropic:claude-haiku-4-5",
-      thinkingLevel: "off",
+      model: "openai:gpt-5.3-codex",
+      thinkingLevel: "xhigh",
     });
-    expect(childEntry?.taskModelString).toBe("anthropic:claude-haiku-4-5");
-    expect(childEntry?.taskThinkingLevel).toBe("off");
+    expect(childEntry?.taskModelString).toBe("openai:gpt-5.3-codex");
+    expect(childEntry?.taskThinkingLevel).toBe("xhigh");
+  }, 20_000);
+
+  test("inherits parent workspace model + thinking when create args omit model and thinking", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+
+    const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
+
+    const parentId = "1111111111";
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: projectPath,
+                id: parentId,
+                name: "parent",
+                createdAt: new Date().toISOString(),
+                runtimeConfig: { type: "local" },
+                aiSettings: { model: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const created = await taskService.create({
+      parentWorkspaceId: parentId,
+      kind: "agent",
+      agentType: "explore",
+      prompt: "run task inheriting parent settings",
+      title: "Test task",
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      created.data.taskId,
+      "run task inheriting parent settings",
+      {
+        model: "openai:gpt-5.3-codex",
+        agentId: "explore",
+        thinkingLevel: "xhigh",
+        experiments: undefined,
+      }
+    );
+
+    const postCfg = config.loadConfigOrDefault();
+    const childEntry = Array.from(postCfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === created.data.taskId);
+    expect(childEntry).toBeTruthy();
+    expect(childEntry?.taskModelString).toBe("openai:gpt-5.3-codex");
+    expect(childEntry?.taskThinkingLevel).toBe("xhigh");
   }, 20_000);
 
   test("agentAiDefaults outrank workspace aiSettingsByAgent for same agent", async () => {
@@ -1082,7 +1146,7 @@ describe("TaskService", () => {
     expect(childEntry?.taskThinkingLevel).toBe("off");
   }, 20_000);
 
-  test("inherits agentAiDefaults from base chain on task create", async () => {
+  test("does not inherit base-chain defaults when target agent has no global defaults", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
 
@@ -1110,7 +1174,7 @@ describe("TaskService", () => {
                 name: "parent",
                 createdAt: new Date().toISOString(),
                 runtimeConfig: { type: "local" },
-                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "high" },
+                aiSettings: { model: "anthropic:claude-opus-4-6", thinkingLevel: "high" },
               },
             ],
           },
@@ -1131,14 +1195,16 @@ describe("TaskService", () => {
       agentType: "custom",
       prompt: "run task with custom agent",
       title: "Test task",
+      modelString: "openai:gpt-5.3-codex",
+      thinkingLevel: "xhigh",
     });
     expect(created.success).toBe(true);
     if (!created.success) return;
 
     expect(sendMessage).toHaveBeenCalledWith(created.data.taskId, "run task with custom agent", {
-      model: "anthropic:claude-haiku-4-5",
+      model: "openai:gpt-5.3-codex",
       agentId: "custom",
-      thinkingLevel: "off",
+      thinkingLevel: "xhigh",
       experiments: undefined,
     });
 
@@ -1148,14 +1214,14 @@ describe("TaskService", () => {
       .find((w) => w.id === created.data.taskId);
     expect(childEntry).toBeTruthy();
     expect(childEntry?.aiSettings).toEqual({
-      model: "anthropic:claude-haiku-4-5",
-      thinkingLevel: "off",
+      model: "openai:gpt-5.3-codex",
+      thinkingLevel: "xhigh",
     });
-    expect(childEntry?.taskModelString).toBe("anthropic:claude-haiku-4-5");
-    expect(childEntry?.taskThinkingLevel).toBe("off");
+    expect(childEntry?.taskModelString).toBe("openai:gpt-5.3-codex");
+    expect(childEntry?.taskThinkingLevel).toBe("xhigh");
   }, 20_000);
 
-  test("does not apply agentAiDefaults base fallback when workspace overrides exist", async () => {
+  test("agentAiDefaults override inherited parent model on task create", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
 
@@ -1183,10 +1249,7 @@ describe("TaskService", () => {
                 name: "parent",
                 createdAt: new Date().toISOString(),
                 runtimeConfig: { type: "local" },
-                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "high" },
-                aiSettingsByAgent: {
-                  custom: { model: "openai:gpt-5.2-pro", thinkingLevel: "medium" },
-                },
+                aiSettings: { model: "anthropic:claude-opus-4-6", thinkingLevel: "high" },
               },
             ],
           },
@@ -1194,7 +1257,7 @@ describe("TaskService", () => {
       ]),
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
       agentAiDefaults: {
-        exec: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
+        custom: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
       },
     });
 
@@ -1207,14 +1270,16 @@ describe("TaskService", () => {
       agentType: "custom",
       prompt: "run task with custom agent",
       title: "Test task",
+      modelString: "openai:gpt-4o-mini",
+      thinkingLevel: "off",
     });
     expect(created.success).toBe(true);
     if (!created.success) return;
 
     expect(sendMessage).toHaveBeenCalledWith(created.data.taskId, "run task with custom agent", {
-      model: "openai:gpt-5.2-pro",
+      model: "openai:gpt-5.3-codex",
       agentId: "custom",
-      thinkingLevel: "medium",
+      thinkingLevel: "xhigh",
       experiments: undefined,
     });
   }, 20_000);
@@ -3286,7 +3351,11 @@ describe("TaskService", () => {
     expect(sendMessage).toHaveBeenCalledWith(
       childId,
       expect.stringContaining("Implement the plan"),
-      expect.objectContaining({ agentId: "exec" }),
+      expect.objectContaining({
+        agentId: "exec",
+        model: "openai:gpt-4o-mini",
+        thinkingLevel: "off",
+      }),
       expect.objectContaining({ synthetic: true })
     );
 
@@ -3303,11 +3372,17 @@ describe("TaskService", () => {
     expect(updatedTask?.taskStatus).toBe("running");
   });
 
-  test("stream-end with propose_plan success uses parent workspace exec defaults for handoff", async () => {
+  test("stream-end with propose_plan success uses global exec defaults for handoff", async () => {
     const { config, childId, sendMessage, internal } = await setupPlanModeStreamEndHarness({
       parentAiSettingsByAgent: {
         exec: {
-          model: "openai:gpt-5.3-codex",
+          model: "anthropic:claude-sonnet-4-5",
+          thinkingLevel: "low",
+        },
+      },
+      agentAiDefaults: {
+        exec: {
+          modelString: "openai:gpt-5.3-codex",
           thinkingLevel: "xhigh",
         },
       },
@@ -3335,6 +3410,40 @@ describe("TaskService", () => {
     expect(updatedTask?.agentId).toBe("exec");
     expect(updatedTask?.taskModelString).toBe("openai:gpt-5.3-codex");
     expect(updatedTask?.taskThinkingLevel).toBe("xhigh");
+  });
+
+  test("stream-end handoff falls back to default model when inherited task model is whitespace", async () => {
+    const { config, childId, sendMessage, internal } = await setupPlanModeStreamEndHarness();
+
+    const preCfg = config.loadConfigOrDefault();
+    const childEntry = Array.from(preCfg.projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === childId);
+    expect(childEntry).toBeTruthy();
+    if (!childEntry) return;
+
+    childEntry.taskModelString = "   ";
+    await config.saveConfig(preCfg);
+
+    await internal.handleStreamEnd(makeSuccessfulProposePlanStreamEndEvent(childId));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      childId,
+      expect.stringContaining("Implement the plan"),
+      expect.objectContaining({
+        agentId: "exec",
+        model: defaultModel,
+      }),
+      expect.objectContaining({ synthetic: true })
+    );
+
+    const postCfg = config.loadConfigOrDefault();
+    const updatedTask = Array.from(postCfg.projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === childId);
+
+    expect(updatedTask?.taskModelString).toBe(defaultModel);
   });
 
   test("stream-end with propose_plan success triggers handoff for custom plan-like agents", async () => {
@@ -3424,7 +3533,7 @@ describe("TaskService", () => {
     expect(updatedTask?.taskStatus).toBe("running");
   });
 
-  test("orchestrator handoff uses exec defaults via base-agent fallback when orchestrator defaults are unset", async () => {
+  test("orchestrator handoff inherits parent model when orchestrator defaults are unset", async () => {
     const { config, childId, sendMessage, internal } = await setupPlanModeStreamEndHarness({
       planSubagentDefaultsToOrchestrator: true,
       agentAiDefaults: {
@@ -3443,8 +3552,8 @@ describe("TaskService", () => {
       expect.stringContaining("orchestrating"),
       expect.objectContaining({
         agentId: "orchestrator",
-        model: "openai:gpt-5.3-codex",
-        thinkingLevel: "xhigh",
+        model: "openai:gpt-4o-mini",
+        thinkingLevel: "off",
       }),
       expect.objectContaining({ synthetic: true })
     );
@@ -3455,8 +3564,8 @@ describe("TaskService", () => {
       .find((workspace) => workspace.id === childId);
 
     expect(updatedTask?.agentId).toBe("orchestrator");
-    expect(updatedTask?.taskModelString).toBe("openai:gpt-5.3-codex");
-    expect(updatedTask?.taskThinkingLevel).toBe("xhigh");
+    expect(updatedTask?.taskModelString).toBe("openai:gpt-4o-mini");
+    expect(updatedTask?.taskThinkingLevel).toBe("off");
   });
 
   test("stream-end with propose_plan success falls back to exec when orchestrator is disabled", async () => {

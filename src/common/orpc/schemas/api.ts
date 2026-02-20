@@ -977,6 +977,29 @@ export const workspace = {
     input: z.object({ workspaceId: z.string() }),
     output: z.array(WorkspaceChatMessageSchema),
   },
+  history: {
+    loadMore: {
+      input: z.object({
+        workspaceId: z.string(),
+        cursor: z
+          .object({
+            beforeHistorySequence: z.number(),
+            beforeMessageId: z.string().nullish(),
+          })
+          .nullish(),
+      }),
+      output: z.object({
+        messages: z.array(WorkspaceChatMessageSchema),
+        nextCursor: z
+          .object({
+            beforeHistorySequence: z.number(),
+            beforeMessageId: z.string().nullish(),
+          })
+          .nullable(),
+        hasOlder: z.boolean(),
+      }),
+    },
+  },
   /**
    * Load an archived subagent transcript (chat.jsonl + optional partial.json) from this workspace's
    * session dir.

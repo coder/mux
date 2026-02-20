@@ -374,7 +374,7 @@ export class ProviderService {
             "anthropic/claude-sonnet-4-6",
             "anthropic/claude-opus-4-6",
             "openai/gpt-5.2",
-            "openai/gpt-5.1-codex",
+            "openai/gpt-5.2-codex",
           ];
         }
       }

@@ -950,6 +950,77 @@ describe("HistoryService", () => {
     });
   });
 
+  describe("getHistoryBoundaryWindow", () => {
+    it("returns one older boundary window at a time and reports hasOlder", async () => {
+      const workspaceId = "ws-boundary-window";
+      const workspaceDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(workspaceDir, { recursive: true });
+
+      const lines: string[] = [];
+      let seq = 0;
+
+      lines.push(
+        JSON.stringify({
+          ...createMuxMessage("e1-user", "user", "epoch 1 user", { historySequence: seq++ }),
+          workspaceId,
+        })
+      );
+      lines.push(
+        JSON.stringify({
+          ...createMuxMessage("e1-boundary", "assistant", "summary 1", {
+            historySequence: seq++,
+            compactionBoundary: true,
+            compacted: "user",
+            compactionEpoch: 1,
+          }),
+          workspaceId,
+        })
+      );
+      lines.push(
+        JSON.stringify({
+          ...createMuxMessage("e2-user", "user", "epoch 2 user", { historySequence: seq++ }),
+          workspaceId,
+        })
+      );
+      lines.push(
+        JSON.stringify({
+          ...createMuxMessage("e2-boundary", "assistant", "summary 2", {
+            historySequence: seq++,
+            compactionBoundary: true,
+            compacted: "idle",
+            compactionEpoch: 2,
+          }),
+          workspaceId,
+        })
+      );
+      lines.push(
+        JSON.stringify({
+          ...createMuxMessage("post-e2", "user", "latest message", { historySequence: seq++ }),
+          workspaceId,
+        })
+      );
+
+      await fs.writeFile(path.join(workspaceDir, "chat.jsonl"), lines.join("\n") + "\n");
+
+      const firstWindow = await service.getHistoryBoundaryWindow(workspaceId, 3);
+      expect(firstWindow.success).toBe(true);
+      if (firstWindow.success) {
+        expect(firstWindow.data.messages.map((message) => message.id)).toEqual([
+          "e1-boundary",
+          "e2-user",
+        ]);
+        expect(firstWindow.data.hasOlder).toBe(true);
+      }
+
+      const secondWindow = await service.getHistoryBoundaryWindow(workspaceId, 1);
+      expect(secondWindow.success).toBe(true);
+      if (secondWindow.success) {
+        expect(secondWindow.data.messages.map((message) => message.id)).toEqual(["e1-user"]);
+        expect(secondWindow.data.hasOlder).toBe(false);
+      }
+    });
+  });
+
   describe("getLastMessages", () => {
     it("should return empty array when no history exists", async () => {
       const result = await service.getLastMessages("nonexistent", 5);

@@ -74,6 +74,13 @@ describe("WorkspaceContext", () => {
     const ctx = await setup();
 
     await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(1));
+
+    // Activate the workspace so onChat subscription starts (required after the
+    // refactor that scoped onChat to the active workspace only).
+    act(() => {
+      getWorkspaceStoreRaw().setActiveWorkspaceId("ws-sync-load");
+    });
+
     await waitFor(() =>
       expect(
         workspaceApi.onChat.mock.calls.some(

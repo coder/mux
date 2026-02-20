@@ -1,7 +1,7 @@
 import React from "react";
 import { Hourglass } from "lucide-react";
-import { HoverClickPopover } from "./ui/hover-click-popover";
 import { TokenMeter } from "./RightSidebar/TokenMeter";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "./ui/dialog";
 import {
   HorizontalThresholdSlider,
   type AutoCompactionConfig,
@@ -10,30 +10,6 @@ import { Switch } from "./ui/switch";
 import { formatTokens, type TokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 import { cn } from "@/common/lib/utils";
 import { Toggle1MContext } from "./Toggle1MContext";
-
-// Selector for Radix portal wrappers - used to detect when clicks/interactions
-// originate from nested Radix components (like Tooltip inside the slider)
-const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
-
-/**
- * Prevents Popover from dismissing when interaction occurs within a nested
- * Radix portal (e.g., Tooltip inside the slider). Without this, clicking the
- * slider's drag handle triggers onPointerDownOutside because the Tooltip
- * renders to a separate portal outside the Popover's DOM tree.
- */
-function preventDismissForRadixPortals(e: {
-  target: EventTarget | null;
-  preventDefault: () => void;
-}) {
-  const target = e.target;
-  if (target instanceof HTMLElement && target.closest(RADIX_PORTAL_WRAPPER_SELECTOR)) {
-    e.preventDefault();
-  }
-}
-
-const CONTEXT_USAGE_POPOVER_CONTENT_PROPS = {
-  onPointerDownOutside: preventDismissForRadixPortals,
-};
 
 /** Compact threshold tick mark for the button view */
 const CompactThresholdIndicator: React.FC<{ threshold: number }> = ({ threshold }) => {
@@ -230,68 +206,72 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
     : formatTokens(data.totalTokens);
 
   return (
-    <HoverClickPopover
-      content={
+    <Dialog>
+      <DialogTrigger asChild>
+        <button
+          aria-label={ariaLabel}
+          aria-haspopup="dialog"
+          className="hover:bg-sidebar-hover flex cursor-pointer items-center rounded py-0.5"
+          type="button"
+        >
+          {/* Idle compaction indicator */}
+          {isIdleCompactionEnabled && (
+            <span
+              title={`Auto-compact after ${idleHours}h idle`}
+              className="mr-1.5 [@container(max-width:420px)]:hidden"
+            >
+              <Hourglass className="text-muted h-3 w-3" />
+            </span>
+          )}
+
+          {/* Full meter when there's room; fall back to a compact percentage label on narrow layouts. */}
+          {data.totalTokens > 0 ? (
+            <div
+              data-context-usage-meter
+              className="relative h-3 w-14 [@container(max-width:420px)]:hidden"
+            >
+              <TokenMeter
+                segments={data.segments}
+                orientation="horizontal"
+                className="h-3"
+                trackClassName="bg-dark"
+              />
+              {isAutoCompactionEnabled && (
+                <CompactThresholdIndicator threshold={autoCompaction.threshold} />
+              )}
+            </div>
+          ) : (
+            /* Empty meter placeholder - allows access to settings with no usage */
+            <div
+              data-context-usage-meter
+              className="bg-dark relative h-3 w-14 rounded-full [@container(max-width:420px)]:hidden"
+            />
+          )}
+
+          <span
+            data-context-usage-percent
+            className="text-muted hidden text-[10px] font-medium tabular-nums [@container(max-width:420px)]:block"
+          >
+            {compactLabel}
+          </span>
+        </button>
+      </DialogTrigger>
+
+      {/*
+        Keep compaction controls in a dialog so auto + idle settings stay open
+        while users adjust sliders/toggles, instead of depending on hover timing.
+      */}
+      <DialogContent maxWidth="380px" className="gap-3 p-3">
+        <DialogHeader className="space-y-0">
+          <DialogTitle className="text-sm">Compaction settings</DialogTitle>
+        </DialogHeader>
         <AutoCompactSettings
           data={data}
           usageConfig={autoCompaction}
           idleConfig={idleCompaction}
           model={model}
         />
-      }
-      side="bottom"
-      align="end"
-      interactiveContent
-      contentClassName="bg-modal-bg border-separator-light w-80 rounded px-[10px] py-[6px] text-[11px] font-normal shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
-      contentProps={CONTEXT_USAGE_POPOVER_CONTENT_PROPS}
-    >
-      <button
-        aria-label={ariaLabel}
-        aria-haspopup="dialog"
-        className="hover:bg-sidebar-hover flex cursor-pointer items-center rounded py-0.5"
-        type="button"
-      >
-        {/* Idle compaction indicator */}
-        {isIdleCompactionEnabled && (
-          <span
-            title={`Auto-compact after ${idleHours}h idle`}
-            className="mr-1.5 [@container(max-width:420px)]:hidden"
-          >
-            <Hourglass className="text-muted h-3 w-3" />
-          </span>
-        )}
-
-        {/* Full meter when there's room; fall back to a compact percentage label on narrow layouts. */}
-        {data.totalTokens > 0 ? (
-          <div
-            data-context-usage-meter
-            className="relative h-3 w-14 [@container(max-width:420px)]:hidden"
-          >
-            <TokenMeter
-              segments={data.segments}
-              orientation="horizontal"
-              className="h-3"
-              trackClassName="bg-dark"
-            />
-            {isAutoCompactionEnabled && (
-              <CompactThresholdIndicator threshold={autoCompaction.threshold} />
-            )}
-          </div>
-        ) : (
-          /* Empty meter placeholder - allows access to settings with no usage */
-          <div
-            data-context-usage-meter
-            className="bg-dark relative h-3 w-14 rounded-full [@container(max-width:420px)]:hidden"
-          />
-        )}
-
-        <span
-          data-context-usage-percent
-          className="text-muted hidden text-[10px] font-medium tabular-nums [@container(max-width:420px)]:block"
-        >
-          {compactLabel}
-        </span>
-      </button>
-    </HoverClickPopover>
+      </DialogContent>
+    </Dialog>
   );
 };

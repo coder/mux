@@ -299,6 +299,9 @@ export const KEYBINDS = {
   /** Jump to bottom of chat */
   JUMP_TO_BOTTOM: { key: "G", shift: true },
 
+  /** Load older transcript messages when pagination is available */
+  LOAD_OLDER_MESSAGES: { key: "h", shift: true },
+
   /** Navigate to next workspace in current project */
   NEXT_WORKSPACE: { key: "j", ctrl: true },
 

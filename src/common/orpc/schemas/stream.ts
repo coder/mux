@@ -65,6 +65,11 @@ export const CaughtUpMessageSchema = z.object({
   type: z.literal("caught-up"),
   /** Which replay strategy the server actually used. */
   replay: z.enum(["full", "since", "live"]).optional(),
+  /**
+   * Authoritative pagination signal for full replays.
+   * Omitted for since/live replays so the client can preserve existing pagination state.
+   */
+  hasOlderHistory: z.boolean().optional(),
   /** Server's cursor at end of replay (client should use this for next reconnect). */
   cursor: OnChatCursorSchema.optional(),
 });

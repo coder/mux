@@ -148,6 +148,62 @@ describe("createOrpcServer", () => {
     }
   });
 
+  test("does not apply origin validation to static and SPA fallback routes", async () => {
+    // Static app shell must remain reachable even if proxy/header rewriting makes
+    // request Origin values unexpected. API/WS/auth routes are validated separately.
+    const stubContext: Partial<ORPCContext> = {};
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-static-origin-"));
+    const indexHtml =
+      "<!doctype html><html><head><title>mux</title></head><body><div>ok</div></body></html>";
+    const mainJs = "console.log('ok');";
+    const mainCss = "body { color: #fff; }";
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+
+    try {
+      await fs.writeFile(path.join(tempDir, "index.html"), indexHtml, "utf-8");
+      await fs.writeFile(path.join(tempDir, "main.js"), mainJs, "utf-8");
+      await fs.writeFile(path.join(tempDir, "main.css"), mainCss, "utf-8");
+
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+        authToken: "test-token",
+        serveStatic: true,
+        staticDir: tempDir,
+      });
+
+      const directIndexResponse = await fetch(`${server.baseUrl}/`, {
+        headers: { Origin: "https://evil.example.com" },
+      });
+      expect(directIndexResponse.status).toBe(200);
+      expect(directIndexResponse.headers.get("access-control-allow-origin")).toBeNull();
+
+      const staticJsResponse = await fetch(`${server.baseUrl}/main.js`, {
+        headers: { Origin: "https://evil.example.com" },
+      });
+      expect(staticJsResponse.status).toBe(200);
+      expect(staticJsResponse.headers.get("access-control-allow-origin")).toBeNull();
+
+      const staticCssResponse = await fetch(`${server.baseUrl}/main.css`, {
+        headers: { Origin: "https://evil.example.com" },
+      });
+      expect(staticCssResponse.status).toBe(200);
+      expect(staticCssResponse.headers.get("access-control-allow-origin")).toBeNull();
+
+      const fallbackRouteResponse = await fetch(`${server.baseUrl}/some/spa/route`, {
+        headers: { Origin: "https://evil.example.com" },
+      });
+      expect(fallbackRouteResponse.status).toBe(200);
+      expect(fallbackRouteResponse.headers.get("access-control-allow-origin")).toBeNull();
+    } finally {
+      await server?.close();
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("reports whether GitHub device-flow login is enabled", async () => {
     async function runCase(enabled: boolean): Promise<void> {
       const stubContext: Partial<ORPCContext> = {
@@ -440,7 +496,7 @@ describe("createOrpcServer", () => {
         context: stubContext as ORPCContext,
       });
 
-      const response = await fetch(`${server.baseUrl}/health`, {
+      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
         headers: { Origin: "https://evil.example.com" },
       });
 
@@ -461,7 +517,7 @@ describe("createOrpcServer", () => {
         context: stubContext as ORPCContext,
       });
 
-      const response = await fetch(`${server.baseUrl}/health`, {
+      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
         headers: { Origin: server.baseUrl },
       });
 
@@ -484,7 +540,7 @@ describe("createOrpcServer", () => {
         context: stubContext as ORPCContext,
       });
 
-      const response = await fetch(`${server.baseUrl}/health`, {
+      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
         headers: {
           Origin: server.baseUrl,
           "X-Forwarded-Host": "internal.proxy.local",
@@ -511,7 +567,7 @@ describe("createOrpcServer", () => {
       });
 
       const forwardedOrigin = server.baseUrl.replace(/^http:/, "https:");
-      const response = await fetch(`${server.baseUrl}/health`, {
+      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
         headers: {
           Origin: forwardedOrigin,
           "X-Forwarded-Proto": "https",
@@ -537,7 +593,7 @@ describe("createOrpcServer", () => {
         context: stubContext as ORPCContext,
       });
 
-      const response = await fetch(`${server.baseUrl}/health`, {
+      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
         headers: {
           Origin: server.baseUrl,
           "X-Forwarded-Proto": "https",
@@ -561,7 +617,7 @@ describe("createOrpcServer", () => {
         context: stubContext as ORPCContext,
       });
 
-      const response = await fetch(`${server.baseUrl}/health`, {
+      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
         headers: {
           Origin: server.baseUrl,
           "X-Forwarded-Proto": "https,http",
@@ -585,7 +641,7 @@ describe("createOrpcServer", () => {
         context: stubContext as ORPCContext,
       });
 
-      const response = await fetch(`${server.baseUrl}/health`);
+      const response = await fetch(`${server.baseUrl}/api/spec.json`);
 
       expect(response.status).toBe(200);
       expect(response.headers.get("access-control-allow-origin")).toBeNull();
@@ -661,6 +717,36 @@ describe("createOrpcServer", () => {
         headers: {
           origin: server.baseUrl,
           "x-forwarded-host": "internal.proxy.local",
+        },
+      });
+
+      await waitForWebSocketOpen(ws);
+      await closeWebSocket(ws);
+      ws = null;
+    } finally {
+      ws?.terminate();
+      await server?.close();
+    }
+  });
+
+  test("accepts proxied HTTPS WebSocket origins when forwarded headers describe public app URL", async () => {
+    const stubContext: Partial<ORPCContext> = {};
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+    let ws: WebSocket | null = null;
+
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+      });
+
+      ws = new WebSocket(server.wsUrl, {
+        headers: {
+          origin: "https://mux-public.example.com",
+          "x-forwarded-host": "mux-public.example.com",
+          "x-forwarded-proto": "https",
         },
       });
 
@@ -762,7 +848,7 @@ describe("createOrpcServer", () => {
         context: stubContext as ORPCContext,
       });
 
-      const response = await fetch(`${server.baseUrl}/health`, {
+      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
         method: "OPTIONS",
         headers: {
           Origin: server.baseUrl,
@@ -797,7 +883,7 @@ describe("createOrpcServer", () => {
         context: stubContext as ORPCContext,
       });
 
-      const response = await fetch(`${server.baseUrl}/health`, {
+      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
         method: "OPTIONS",
         headers: {
           Origin: "https://evil.example.com",

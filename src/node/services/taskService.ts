@@ -707,21 +707,30 @@ export class TaskService {
       );
     }
 
+    // User-requested precedence: use global per-agent defaults when configured;
+    // otherwise inherit the parent workspace's active model/thinking.
     const parentAiSettings = this.resolveWorkspaceAISettings(parentMeta, agentId);
+    const inheritedModelCandidate =
+      typeof args.modelString === "string" && args.modelString.trim().length > 0
+        ? args.modelString
+        : parentAiSettings?.model;
+    const parentActiveModel =
+      typeof inheritedModelCandidate === "string" && inheritedModelCandidate.trim().length > 0
+        ? inheritedModelCandidate.trim()
+        : defaultModel;
+    const globalDefault = cfg.agentAiDefaults?.[agentId];
+    const configuredModel = globalDefault?.modelString?.trim();
+    const taskModelString =
+      configuredModel && configuredModel.length > 0 ? configuredModel : parentActiveModel;
+    const canonicalModel = normalizeGatewayModel(taskModelString).trim();
+    assert(canonicalModel.length > 0, "Task.create: resolved model must be non-empty");
 
-    // If the parent workspace has an explicit per-agent override for this agentId,
-    // prefer it over the model/thinking inherited from the calling workspace.
-    const hasWorkspaceOverrideForAgent = Boolean(parentMeta.aiSettingsByAgent?.[agentId]);
-
-    const inheritedModelString = hasWorkspaceOverrideForAgent
-      ? (parentAiSettings?.model ?? defaultModel)
-      : typeof args.modelString === "string" && args.modelString.trim().length > 0
-        ? args.modelString.trim()
-        : (parentAiSettings?.model ?? defaultModel);
-
-    const inheritedThinkingLevel: ThinkingLevel = hasWorkspaceOverrideForAgent
-      ? (parentAiSettings?.thinkingLevel ?? "off")
-      : (args.thinkingLevel ?? parentAiSettings?.thinkingLevel ?? "off");
+    const requestedThinkingLevel: ThinkingLevel =
+      globalDefault?.thinkingLevel ??
+      args.thinkingLevel ??
+      parentAiSettings?.thinkingLevel ??
+      "off";
+    const effectiveThinkingLevel = enforceThinkingPolicy(canonicalModel, requestedThinkingLevel);
 
     const parentRuntimeConfig = parentMeta.runtimeConfig;
     const taskRuntimeConfig: RuntimeConfig = parentRuntimeConfig;
@@ -737,43 +746,6 @@ export class TaskService {
     const parentWorkspacePath = isInPlace
       ? parentMeta.projectPath
       : runtime.getWorkspacePath(parentMeta.projectPath, parentMeta.name);
-
-    let subagentDefaults = cfg.agentAiDefaults?.[agentId] ?? cfg.subagentAiDefaults?.[agentId];
-
-    // Base fallback: if the selected agent has no explicit defaults, inherit cfg.agentAiDefaults
-    // from its base chain (e.g. `base: exec` → agentAiDefaults.exec).
-    //
-    // IMPORTANT: Only apply base fallback when the parent workspace hasn't explicitly overridden
-    // AI settings for this agentId, so workspace-specific overrides keep winning.
-    if (!subagentDefaults && !hasWorkspaceOverrideForAgent) {
-      try {
-        const agentDefinition = await readAgentDefinition(runtime, parentWorkspacePath, agentId);
-        const chain = await resolveAgentInheritanceChain({
-          runtime,
-          workspacePath: parentWorkspacePath,
-          agentId,
-          agentDefinition,
-          workspaceId: parentWorkspaceId,
-        });
-
-        const inheritedDefaults = chain
-          .slice(1)
-          .map((entry) => cfg.agentAiDefaults?.[entry.id])
-          .find((entry) => entry !== undefined);
-
-        if (inheritedDefaults) {
-          subagentDefaults = inheritedDefaults;
-        }
-      } catch {
-        // Ignore: base fallback is best-effort. Validation happens below.
-      }
-    }
-
-    const taskModelString = subagentDefaults?.modelString ?? inheritedModelString;
-    const canonicalModel = normalizeGatewayModel(taskModelString).trim();
-
-    const requestedThinkingLevel = subagentDefaults?.thinkingLevel ?? inheritedThinkingLevel;
-    const effectiveThinkingLevel = enforceThinkingPolicy(canonicalModel, requestedThinkingLevel);
 
     // Helper to build error hint with all available runnable agents.
     // NOTE: This resolves frontmatter inheritance so same-name overrides (e.g. project exec.md
@@ -2397,108 +2369,29 @@ export class TaskService {
         });
       }
 
+      // Handoff resolution follows the same precedence as Task.create:
+      // global per-agent defaults, else inherit the plan task's active model.
       const latestCfg = this.config.loadConfigOrDefault();
-      const normalizedTargetAgentId = targetAgentId.trim().toLowerCase();
+      const globalDefault = latestCfg.agentAiDefaults?.[targetAgentId];
+      const parentActiveModelCandidate =
+        typeof args.entry.workspace.taskModelString === "string"
+          ? args.entry.workspace.taskModelString.trim()
+          : "";
+      const parentActiveModel =
+        parentActiveModelCandidate.length > 0 ? parentActiveModelCandidate : defaultModel;
 
-      // Use agent-specific overrides for handoff target selection. Do NOT fall back to
-      // workspace.aiSettings here, otherwise plan-mode legacy settings can incorrectly
-      // bleed into exec handoff model selection.
-      const childWorkspaceOverride =
-        args.entry.workspace.aiSettingsByAgent?.[normalizedTargetAgentId];
-
-      const parentWorkspaceId = coerceNonEmptyString(args.entry.workspace.parentWorkspaceId);
-      const parentEntry = parentWorkspaceId
-        ? findWorkspaceEntry(latestCfg, parentWorkspaceId)
-        : undefined;
-      const parentAgentSpecificOverride =
-        parentEntry?.workspace.aiSettingsByAgent?.[normalizedTargetAgentId];
-      const parentCurrentAgentId = coerceNonEmptyString(
-        parentEntry?.workspace.agentId ?? parentEntry?.workspace.agentType
-      )
-        ?.trim()
-        .toLowerCase();
-      const parentLegacyCurrentModeOverride =
-        parentCurrentAgentId === normalizedTargetAgentId
-          ? parentEntry?.workspace.aiSettings
-          : undefined;
-
-      let globalDefaults =
-        latestCfg.agentAiDefaults?.[targetAgentId] ?? latestCfg.subagentAiDefaults?.[targetAgentId];
-
-      const hasExplicitTargetWorkspaceOverride = Boolean(
-        childWorkspaceOverride ?? parentAgentSpecificOverride
-      );
-
-      // Match Task.create behavior: if target agent has no direct defaults, inherit
-      // from the base-agent chain (e.g. orchestrator -> exec) before falling back
-      // to the current task model. Skip this when either workspace already has an
-      // explicit target-agent override.
-      if (!globalDefaults && !hasExplicitTargetWorkspaceOverride) {
-        const workspaceName =
-          coerceNonEmptyString(args.entry.workspace.name) ?? args.entry.workspace.id;
-        const workspacePath = coerceNonEmptyString(args.entry.workspace.path);
-
-        if (workspaceName && workspacePath) {
-          try {
-            const runtime = createRuntimeForWorkspace({
-              runtimeConfig: args.entry.workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
-              projectPath: args.entry.projectPath,
-              name: workspaceName,
-            });
-
-            const agentDefinition = await readAgentDefinition(
-              runtime,
-              workspacePath,
-              targetAgentId
-            );
-            const chain = await resolveAgentInheritanceChain({
-              runtime,
-              workspacePath,
-              agentId: agentDefinition.id,
-              agentDefinition,
-              workspaceId: args.workspaceId,
-            });
-
-            const inheritedDefaults = chain
-              .slice(1)
-              .map((entry) => latestCfg.agentAiDefaults?.[entry.id])
-              .find((entry) => entry !== undefined);
-
-            if (inheritedDefaults) {
-              globalDefaults = inheritedDefaults;
-            }
-          } catch (error: unknown) {
-            log.debug("Failed to resolve base-agent defaults for plan-task auto-handoff target", {
-              workspaceId: args.workspaceId,
-              targetAgentId,
-              error: getErrorMessage(error),
-            });
-          }
-        }
-      }
-
-      // Keep handoff model selection aligned with sub-agent creation precedence so switching
-      // from plan → exec/orchestrator uses the same configured defaults users expect:
-      // child target-agent override → parent target-agent override → parent current-mode legacy
-      // override (for older configs) → global defaults → current task model fallback.
-      const preferredModel = (
-        childWorkspaceOverride?.model ??
-        parentAgentSpecificOverride?.model ??
-        parentLegacyCurrentModeOverride?.model ??
-        globalDefaults?.modelString ??
-        args.entry.workspace.taskModelString ??
-        defaultModel
-      ).trim();
+      const configuredModel = globalDefault?.modelString?.trim();
+      const preferredModel =
+        configuredModel && configuredModel.length > 0 ? configuredModel : parentActiveModel;
       const resolvedModel = normalizeGatewayModel(
         preferredModel.length > 0 ? preferredModel : defaultModel
       );
-      const requestedThinking =
-        childWorkspaceOverride?.thinkingLevel ??
-        parentAgentSpecificOverride?.thinkingLevel ??
-        parentLegacyCurrentModeOverride?.thinkingLevel ??
-        globalDefaults?.thinkingLevel ??
-        args.entry.workspace.taskThinkingLevel ??
-        "off";
+      assert(
+        resolvedModel.trim().length > 0,
+        "handleSuccessfulProposePlanAutoHandoff: resolved model must be non-empty"
+      );
+      const requestedThinking: ThinkingLevel =
+        globalDefault?.thinkingLevel ?? args.entry.workspace.taskThinkingLevel ?? "off";
       const resolvedThinking = enforceThinkingPolicy(resolvedModel, requestedThinking);
 
       await this.editWorkspaceEntry(args.workspaceId, (workspace) => {

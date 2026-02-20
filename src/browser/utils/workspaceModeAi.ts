@@ -1,4 +1,3 @@
-import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 
@@ -16,69 +15,44 @@ function normalizeAgentId(agentId: string): string {
 // (like propose_plan Implement / Start Orchestrator) resolve the same settings as sync effects.
 export function resolveWorkspaceAiSettingsForAgent(args: {
   agentId: string;
-  agents: AgentDefinitionDescriptor[];
   agentAiDefaults: AgentAiDefaults;
-  workspaceByAgent: WorkspaceAISettingsCache;
+  workspaceByAgent?: WorkspaceAISettingsCache;
+  useWorkspaceByAgentFallback?: boolean;
   fallbackModel: string;
   existingModel: string;
   existingThinking: ThinkingLevel;
 }): { resolvedModel: string; resolvedThinking: ThinkingLevel } {
   const normalizedAgentId = normalizeAgentId(args.agentId);
+  const globalDefault = args.agentAiDefaults[normalizedAgentId];
+  const workspaceOverride = args.workspaceByAgent?.[normalizedAgentId];
 
-  const activeDescriptor = args.agents.find((entry) => entry.id === normalizedAgentId);
-  const fallbackAgentId =
-    activeDescriptor?.base ?? (normalizedAgentId === "plan" ? "plan" : "exec");
-  const fallbackIds =
-    fallbackAgentId && fallbackAgentId !== normalizedAgentId
-      ? [normalizedAgentId, fallbackAgentId]
-      : [normalizedAgentId];
-
-  const hasWorkspaceOverrideForAgent = args.workspaceByAgent[normalizedAgentId] !== undefined;
-
-  const configuredDefaults = args.agentAiDefaults[normalizedAgentId];
-  const inheritedConfiguredDefaults =
-    hasWorkspaceOverrideForAgent || configuredDefaults !== undefined
-      ? undefined
-      : fallbackIds
-          .slice(1)
-          .map((id) => args.agentAiDefaults[id])
-          .find((entry) => entry !== undefined);
-  const descriptorDefaults = fallbackIds
-    .map((id) => args.agents.find((entry) => entry.id === id)?.aiDefaults)
-    .find((entry) => entry !== undefined);
-
-  const configuredModelDefault =
-    configuredDefaults?.modelString ?? inheritedConfiguredDefaults?.modelString;
-  const configuredThinkingDefault =
-    configuredDefaults?.thinkingLevel ?? inheritedConfiguredDefaults?.thinkingLevel;
-  const descriptorModelDefault = descriptorDefaults?.model;
-  const descriptorThinkingDefault = descriptorDefaults?.thinkingLevel;
-
-  // Precedence: explicit Settings override -> workspace by-agent value -> descriptor default
-  // -> current workspace value. "Inherit" removes the explicit override, so it falls through.
-  // For derived agents, inherited (base) Settings defaults are only considered when this agent
-  // has neither a workspace override nor its own Settings entry, matching task creation precedence.
-  const candidateModel =
-    configuredModelDefault ??
-    fallbackIds
-      .map((id) => args.workspaceByAgent[id]?.model)
-      .find((entry) => entry !== undefined) ??
-    descriptorModelDefault ??
-    args.existingModel;
+  const configuredModelCandidate = globalDefault?.modelString;
+  const configuredModel =
+    typeof configuredModelCandidate === "string" ? configuredModelCandidate.trim() : undefined;
+  const workspaceOverrideModel =
+    args.useWorkspaceByAgentFallback && typeof workspaceOverride?.model === "string"
+      ? workspaceOverride.model
+      : undefined;
+  const inheritedModelCandidate =
+    workspaceOverrideModel ??
+    (typeof args.existingModel === "string" ? args.existingModel : undefined) ??
+    "";
+  const inheritedModel = inheritedModelCandidate.trim();
   const resolvedModel =
-    typeof candidateModel === "string" && candidateModel.trim().length > 0
-      ? candidateModel
-      : args.fallbackModel;
+    configuredModel && configuredModel.length > 0
+      ? configuredModel
+      : inheritedModel.length > 0
+        ? inheritedModel
+        : args.fallbackModel;
 
-  const candidateThinking =
-    configuredThinkingDefault ??
-    fallbackIds
-      .map((id) => args.workspaceByAgent[id]?.thinkingLevel)
-      .find((entry) => entry !== undefined) ??
-    descriptorThinkingDefault ??
-    args.existingThinking ??
-    "off";
-  const resolvedThinking = coerceThinkingLevel(candidateThinking) ?? "off";
+  // Persisted workspace settings can be stale/corrupt; re-validate inherited values
+  // so mode sync keeps self-healing behavior instead of propagating invalid options.
+  const workspaceOverrideThinking = args.useWorkspaceByAgentFallback
+    ? coerceThinkingLevel(workspaceOverride?.thinkingLevel)
+    : undefined;
+  const inheritedThinking = workspaceOverrideThinking ?? coerceThinkingLevel(args.existingThinking);
+  const resolvedThinking =
+    coerceThinkingLevel(globalDefault?.thinkingLevel) ?? inheritedThinking ?? "off";
 
   return { resolvedModel, resolvedThinking };
 }

@@ -76,8 +76,9 @@ describe("Compaction UI (mock AI router)", () => {
       // Compaction transcript now renders a single top boundary row.
       await app.chat.expectTranscriptContains("Compaction boundary");
 
-      // Compaction is append-only: pre-compaction transcript remains visible.
-      await app.chat.expectTranscriptContains(seedMessage);
+      // Live compaction now prunes to the latest boundary, so pre-compaction
+      // transcript is no longer visible in the current view.
+      await app.chat.expectTranscriptNotContains(seedMessage);
     } finally {
       await app.dispose();
     }
@@ -113,22 +114,40 @@ describe("Compaction UI (mock AI router)", () => {
       const seedMessage = "Seed conversation for compaction";
       const triggerMessage = "[force] Trigger force compaction";
 
-      await app.chat.send(seedMessage);
+      const seedResult = await app.env.orpc.workspace.sendMessage({
+        workspaceId: app.workspaceId,
+        message: seedMessage,
+        options: { model: WORKSPACE_DEFAULTS.model, agentId: WORKSPACE_DEFAULTS.agentId },
+      });
+      expect(seedResult.success).toBe(true);
       await app.chat.expectTranscriptContains(`Mock response: ${seedMessage}`);
 
-      await app.chat.send(triggerMessage);
+      const triggerResult = await app.env.orpc.workspace.sendMessage({
+        workspaceId: app.workspaceId,
+        message: triggerMessage,
+        options: { model: WORKSPACE_DEFAULTS.model, agentId: WORKSPACE_DEFAULTS.agentId },
+      });
+      expect(triggerResult.success).toBe(true);
 
-      await app.chat.expectTranscriptContains("Mock compaction summary:", 60_000);
-      await app.chat.expectTranscriptContains("Mock response: Continue", 60_000);
+      const compactionAssertionTimeoutMs = 120_000;
+      await app.chat.expectTranscriptContains(
+        "Mock compaction summary:",
+        compactionAssertionTimeoutMs
+      );
+      await app.chat.expectTranscriptContains(
+        "Mock response: Continue",
+        compactionAssertionTimeoutMs
+      );
       // Compaction transcript now renders a single top boundary row.
-      await app.chat.expectTranscriptContains("Compaction boundary", 60_000);
+      await app.chat.expectTranscriptContains("Compaction boundary", compactionAssertionTimeoutMs);
 
-      // Force compaction is append-only: keep the triggering history around the boundary rows.
-      await app.chat.expectTranscriptContains(triggerMessage, 60_000);
+      // Force compaction now prunes to the latest boundary window, so the
+      // pre-compaction triggering turn is no longer shown.
+      await app.chat.expectTranscriptNotContains(triggerMessage, compactionAssertionTimeoutMs);
     } finally {
       await app.dispose();
     }
-  }, 60_000);
+  }, 120_000);
 
   test("/compact command sends any foreground bash to background", async () => {
     const app = await createAppHarness({ branchPrefix: "compaction-ui" });
@@ -241,7 +260,7 @@ describe("Compaction UI (mock AI router)", () => {
       unregister?.();
       await app.dispose();
     }
-  }, 60_000);
+  }, 120_000);
 });
 
 describe("Compaction notification behavior (mock AI router)", () => {

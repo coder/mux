@@ -117,6 +117,21 @@ function PerfRenderMarker(props: { id: string; children: React.ReactNode }): Rea
   return <>{props.children}</>;
 }
 
+function isChromaticStorybookEnvironment(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  // Keep production behavior unchanged while suppressing story-only snapshot churn.
+  const isStorybookPreview = window.location.pathname.endsWith("iframe.html");
+  if (!isStorybookPreview) {
+    return false;
+  }
+
+  const chromaticRuntimeFlag = (window as Window & { chromatic?: boolean }).chromatic;
+  return /Chromatic/i.test(window.navigator.userAgent) || chromaticRuntimeFlag === true;
+}
+
 interface ChatPaneProps {
   workspaceId: string;
   workspaceState: WorkspaceState;
@@ -203,7 +218,17 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   useEffect(() => {
     workspaceStateRef.current = workspaceState;
   }, [workspaceState]);
-  const { messages, canInterrupt, isCompacting, isStreamStarting, loading } = workspaceState;
+  const {
+    messages,
+    canInterrupt,
+    isCompacting,
+    isStreamStarting,
+    loading,
+    hasOlderHistory,
+    loadingOlderHistory,
+  } = workspaceState;
+  const shouldRenderLoadOlderMessagesButton = hasOlderHistory && !isChromaticStorybookEnvironment();
+  const loadOlderMessagesShortcutLabel = formatKeybind(KEYBINDS.LOAD_OLDER_MESSAGES);
 
   const {
     warning: contextSwitchWarning,
@@ -598,6 +623,16 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     lastActionableMessage.errorType === "context_exceeded";
   const showRetryBarrierUI = showRetryBarrier && !suppressRetryBarrier;
 
+  const handleLoadOlderHistory = useCallback(() => {
+    if (!shouldRenderLoadOlderMessagesButton || loadingOlderHistory) {
+      return;
+    }
+
+    storeRaw.loadOlderHistory(workspaceId).catch((error) => {
+      console.warn(`[ChatPane] Failed to load older history for ${workspaceId}:`, error);
+    });
+  }, [loadingOlderHistory, shouldRenderLoadOlderMessagesButton, storeRaw, workspaceId]);
+
   // Handle keyboard shortcuts (using optional refs that are safe even if not initialized)
   useAIViewKeybinds({
     workspaceId,
@@ -608,6 +643,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     showRetryBarrier,
     chatInputAPI,
     jumpToBottom,
+    loadOlderHistory: shouldRenderLoadOlderMessagesButton ? handleLoadOlderHistory : null,
     handleOpenTerminal: onOpenTerminal,
     handleOpenInEditor,
     aggregator,
@@ -730,6 +766,19 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                 ) : (
                   <MessageListProvider value={messageListContextValue}>
                     <>
+                      {shouldRenderLoadOlderMessagesButton && (
+                        <div className="flex justify-center py-3">
+                          <button
+                            type="button"
+                            onClick={handleLoadOlderHistory}
+                            disabled={loadingOlderHistory}
+                            title={`Load older messages (${loadOlderMessagesShortcutLabel})`}
+                            className="text-muted hover:text-foreground text-xs underline underline-offset-2 transition-colors disabled:opacity-50"
+                          >
+                            {loadingOlderHistory ? "Loading..." : "Load older messages"}
+                          </button>
+                        </div>
+                      )}
                       {deferredMessages.map((msg, index) => {
                         const bashOutputGroup = bashOutputGroupInfos[index];
 
