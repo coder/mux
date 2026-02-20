@@ -446,6 +446,8 @@ export class WorkspaceStore {
   private providersConfigVersion = 0;
   /** Version of the last successfully applied provider config (prevents stale overwrites). */
   private providersConfigAppliedVersion = 0;
+  /** Consecutive provider-config subscription/refresh failures (used for exponential backoff). */
+  private providersConfigFailureStreak = 0;
   // Workspaces that need a clean history replay once a new iterator is established.
   // We keep the existing UI visible until the replay can actually start.
   private pendingReplayReset = new Set<string>();
@@ -859,6 +861,7 @@ export class WorkspaceStore {
       const nextFingerprint = computeProvidersConfigFingerprint(config);
 
       this.providersConfigAppliedVersion = version;
+      this.providersConfigFailureStreak = 0;
       this.providersConfig = config;
       this.providersConfigFingerprint = nextFingerprint;
       this.bumpAllUsageStoreEntries();
@@ -893,7 +896,8 @@ export class WorkspaceStore {
       // at startup (fingerprint still null, tokenization blocked) and
       // after onConfigChanged notifications where the fetch failed.
       if (this.client === client && !this.clientChangeController.signal.aborted) {
-        const retryDelay = Math.min(1000 * 2 ** (version - 1), 30_000);
+        this.providersConfigFailureStreak++;
+        const retryDelay = Math.min(1000 * 2 ** (this.providersConfigFailureStreak - 1), 30_000);
         setTimeout(() => {
           if (this.client === client && !this.clientChangeController.signal.aborted) {
             void this.refreshProvidersConfig(client);
@@ -926,6 +930,7 @@ export class WorkspaceStore {
             break;
           }
 
+          this.providersConfigFailureStreak = 0;
           void this.refreshProvidersConfig(client);
         }
       } catch {
@@ -937,11 +942,13 @@ export class WorkspaceStore {
       // Stream ended or errored. Re-subscribe after a delay unless the
       // client changed or the controller was aborted (intentional teardown).
       if (!signal.aborted && this.client === client) {
+        this.providersConfigFailureStreak++;
+        const resubDelay = Math.min(1000 * 2 ** (this.providersConfigFailureStreak - 1), 30_000);
         setTimeout(() => {
           if (!signal.aborted && this.client === client) {
             this.subscribeToProvidersConfig(client);
           }
-        }, 5_000);
+        }, resubDelay);
       }
     })();
   }
