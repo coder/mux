@@ -193,7 +193,9 @@ export function ProjectProvider(props: { children: ReactNode }) {
 
           return { success: true };
         } else {
-          console.error("Failed to remove project:", result.error);
+          // Expected user-facing validation failures (for example, active workspaces still present)
+          // should surface in UI without polluting error-level console output.
+          console.warn("Failed to remove project:", result.error);
           return { success: false, error: result.error };
         }
       } catch (error) {

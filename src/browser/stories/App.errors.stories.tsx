@@ -515,4 +515,30 @@ export const ProjectRemovalError: AppStory = {
       }}
     />
   ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    // Wait for the remove button to exist in DOM
+    await waitFor(() => {
+      const removeButton = canvasElement.querySelector(
+        'button[aria-label="Remove project my-app"]'
+      );
+      if (!removeButton) throw new Error("Remove button not found");
+    });
+
+    // Get the project row container and hover to reveal the button
+    const removeButton = canvasElement.querySelector('button[aria-label="Remove project my-app"]')!;
+    const projectRow = removeButton.closest("[data-project-path]")!;
+    await userEvent.hover(projectRow);
+
+    // Small delay for hover state to apply
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Click the remove button
+    await userEvent.click(removeButton);
+
+    // Wait for the error popover to appear
+    await waitFor(() => {
+      const errorPopover = document.querySelector('[role="alert"]');
+      if (!errorPopover) throw new Error("Error popover not found");
+    });
+  },
 };
