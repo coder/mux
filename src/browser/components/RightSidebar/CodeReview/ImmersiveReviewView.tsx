@@ -274,6 +274,24 @@ function isSelectionInsideRange(selection: SelectedLineRange, range: HunkLineRan
   return start >= range.startIndex && end <= range.endIndex;
 }
 
+/** Resolve the hunk that contains a given overlay line index using the lineHunkIds lookup. */
+function findHunkAtLine(
+  lineIndex: number,
+  overlayData: ImmersiveOverlayData,
+  fileHunks: DiffHunk[]
+): { hunk: DiffHunk; range: HunkLineRange } | null {
+  const hunkId = overlayData.lineHunkIds[lineIndex];
+  if (!hunkId) {
+    return null;
+  }
+  const hunk = fileHunks.find((h) => h.id === hunkId);
+  const range = overlayData.hunkLineRanges.get(hunkId);
+  if (!hunk || !range) {
+    return null;
+  }
+  return { hunk, range };
+}
+
 function getLineSpan(start: number, lineCount: number): { start: number; end: number } | null {
   if (lineCount <= 0) {
     return null;
@@ -693,29 +711,54 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
   const openComposer = useCallback(
     (prefill: string) => {
-      if (!selectedHunk || !selectedHunkRange) {
+      const selection = getCurrentLineSelection();
+
+      // Resolve which hunk to attach the composer to. If the cursor has moved
+      // into a different hunk (e.g. via arrow-key line navigation), look it up
+      // from the overlay's lineHunkIds rather than using the stale selectedHunk.
+      let targetHunk = selectedHunk;
+      let targetRange = selectedHunkRange;
+
+      if (selection && (!targetRange || !isSelectionInsideRange(selection, targetRange))) {
+        const resolved = findHunkAtLine(selection.endIndex, overlayData, currentFileHunks);
+        if (resolved) {
+          targetHunk = resolved.hunk;
+          targetRange = resolved.range;
+          // Keep the selected-hunk state in sync so the externalComposerSelectionRequest
+          // memo (which checks inlineComposerRequest.hunkId === selectedHunk.id) works.
+          onSelectHunk(resolved.hunk.id);
+        }
+      }
+
+      if (!targetHunk || !targetRange) {
         return;
       }
 
-      const selection = getCurrentLineSelection();
       const effectiveSelection =
-        selection && isSelectionInsideRange(selection, selectedHunkRange)
+        selection && isSelectionInsideRange(selection, targetRange)
           ? selection
           : {
-              startIndex: selectedHunkRange.startIndex,
-              endIndex: selectedHunkRange.startIndex,
+              startIndex: targetRange.startIndex,
+              endIndex: targetRange.startIndex,
             };
 
       nextComposerRequestIdRef.current += 1;
       setInlineComposerRequest({
         requestId: nextComposerRequestIdRef.current,
         prefill,
-        hunkId: selectedHunk.id,
-        startOffset: effectiveSelection.startIndex - selectedHunkRange.startIndex,
-        endOffset: effectiveSelection.endIndex - selectedHunkRange.startIndex,
+        hunkId: targetHunk.id,
+        startOffset: effectiveSelection.startIndex - targetRange.startIndex,
+        endOffset: effectiveSelection.endIndex - targetRange.startIndex,
       });
     },
-    [getCurrentLineSelection, selectedHunk, selectedHunkRange]
+    [
+      getCurrentLineSelection,
+      selectedHunk,
+      selectedHunkRange,
+      overlayData,
+      currentFileHunks,
+      onSelectHunk,
+    ]
   );
 
   const handleReviewNoteSubmit = useCallback(
