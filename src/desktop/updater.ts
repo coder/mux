@@ -35,6 +35,13 @@ function getGitHubRepo(): { owner: string; repo: string } {
   return { owner: "coder", repo: "mux" };
 }
 
+// Nightly releases are published in phases, so latest-*.yml can briefly 404.
+// Keep manual checks actionable with a friendly retry message instead of
+// exposing low-level electron-updater stack traces in the About dialog.
+const MISSING_UPDATE_METADATA_MESSAGE =
+  "Update metadata isn't available yet. The latest release may still be publishing; please try again in a few minutes.";
+const MAX_USER_VISIBLE_UPDATE_ERROR_LENGTH = 240;
+
 /**
  * Detect transient errors that should trigger silent backoff rather than
  * surfacing an error to the user. Covers:
@@ -51,6 +58,32 @@ function isTransientUpdateError(error: Error): boolean {
     /network|socket hang up/i.test(msg) ||
     /rate limit/i.test(msg)
   );
+}
+
+function isMissingLatestManifestError(error: Error): boolean {
+  const msg = error.message;
+  return /404|Not Found/i.test(msg) && /latest-[^\s"']+\.yml/i.test(msg);
+}
+
+function sanitizeUpdateCheckErrorMessage(message: string): string {
+  const firstLine = message.split(/\r?\n/)[0]?.trim() ?? "";
+  if (!firstLine) {
+    return "Unknown error";
+  }
+
+  if (firstLine.length <= MAX_USER_VISIBLE_UPDATE_ERROR_LENGTH) {
+    return firstLine;
+  }
+
+  return `${firstLine.slice(0, MAX_USER_VISIBLE_UPDATE_ERROR_LENGTH - 1)}…`;
+}
+
+function getUserVisibleCheckErrorMessage(error: Error): string {
+  if (isMissingLatestManifestError(error)) {
+    return MISSING_UPDATE_METADATA_MESSAGE;
+  }
+
+  return sanitizeUpdateCheckErrorMessage(error.message);
 }
 
 // Backend UpdateStatus type (uses full UpdateInfo from electron-updater)
@@ -203,7 +236,7 @@ export class UpdaterService {
             this.updateStatus = {
               type: "error",
               phase: "check",
-              message: error.message,
+              message: getUserVisibleCheckErrorMessage(error),
             };
             this.notifyRenderer();
             return;
@@ -219,7 +252,7 @@ export class UpdaterService {
         this.updateStatus = {
           type: "error",
           phase: "check",
-          message: error.message,
+          message: getUserVisibleCheckErrorMessage(error),
         };
         this.notifyRenderer();
         return;
@@ -360,7 +393,7 @@ export class UpdaterService {
             this.updateStatus = {
               type: "error",
               phase: "check",
-              message: err.message,
+              message: getUserVisibleCheckErrorMessage(err),
             };
           } else {
             log.debug(
@@ -373,14 +406,22 @@ export class UpdaterService {
           return;
         }
         log.error("Update check failed:", err.message);
-        this.updateStatus = { type: "error", phase: "check", message: err.message };
+        this.updateStatus = {
+          type: "error",
+          phase: "check",
+          message: getUserVisibleCheckErrorMessage(err),
+        };
         this.notifyRenderer();
       });
     } catch (error) {
       this.clearCheckTimeout();
-      const message = error instanceof Error ? error.message : "Unknown error";
-      log.error("Update check error:", message);
-      this.updateStatus = { type: "error", phase: "check", message };
+      const err = error instanceof Error ? error : new Error("Unknown error");
+      log.error("Update check error:", err.message);
+      this.updateStatus = {
+        type: "error",
+        phase: "check",
+        message: getUserVisibleCheckErrorMessage(err),
+      };
       this.notifyRenderer();
     }
   }

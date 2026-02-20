@@ -19,10 +19,14 @@ interface DesktopUpdaterService {
 export class UpdateService {
   private impl: DesktopUpdaterService | null = null;
   private currentStatus: UpdateStatus = { type: "idle" };
+  // Keep the user's stable/nightly preference loaded from config at startup so
+  // the About dialog and updater initialization share the same persisted value.
+  private currentChannel: UpdateChannel;
   private subscribers = new Set<(status: UpdateStatus) => void>();
   private readonly ready: Promise<void>;
 
   constructor(private readonly config: Config) {
+    this.currentChannel = this.config.getUpdateChannel();
     this.ready = this.initialize().catch((err) => {
       log.error("Failed to initialize UpdateService:", err);
     });
@@ -35,8 +39,7 @@ export class UpdateService {
         // Dynamic import to avoid loading electron-updater in CLI
         // eslint-disable-next-line no-restricted-syntax
         const { UpdaterService: DesktopUpdater } = await import("@/desktop/updater");
-        const channel = this.config.getUpdateChannel();
-        this.impl = new DesktopUpdater(channel);
+        this.impl = new DesktopUpdater(this.currentChannel);
 
         // Forward updates
         this.impl.subscribe((status: UpdateStatus) => {
@@ -103,7 +106,7 @@ export class UpdateService {
       return this.impl.getChannel();
     }
 
-    return this.config.getUpdateChannel();
+    return this.currentChannel;
   }
 
   async setChannel(channel: UpdateChannel): Promise<void> {
@@ -115,6 +118,7 @@ export class UpdateService {
       this.impl.setChannel(channel);
     }
     await this.config.setUpdateChannel(channel);
+    this.currentChannel = channel;
   }
 
   onStatus(callback: (status: UpdateStatus) => void): () => void {

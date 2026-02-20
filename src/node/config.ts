@@ -444,9 +444,9 @@ export class Config {
         data.terminalDefaultShell = terminalDefaultShell;
       }
 
-      // Stable is default: only persist non-default channel values.
-      if (config.updateChannel === "nightly") {
-        data.updateChannel = "nightly";
+      const updateChannel = parseUpdateChannel(config.updateChannel);
+      if (updateChannel) {
+        data.updateChannel = updateChannel;
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
@@ -472,11 +472,7 @@ export class Config {
 
   async setUpdateChannel(channel: UpdateChannel): Promise<void> {
     await this.editConfig((config) => {
-      if (channel === "stable") {
-        delete config.updateChannel;
-      } else {
-        config.updateChannel = channel;
-      }
+      config.updateChannel = channel;
       return config;
     });
   }

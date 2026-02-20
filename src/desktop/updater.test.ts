@@ -426,6 +426,11 @@ describe("UpdaterService", () => {
   });
 
   describe("transient error backoff", () => {
+    const missingNightlyManifestError =
+      'Cannot find latest-mac.yml in the latest release artifacts (https://github.com/coder/mux/releases/download/v0.18.1-nightly.16/latest-mac.yml): HttpError: 404 "method: GET url: https://github.com/coder/mux/releases/download/v0.18.1-nightly.16/latest-mac.yml\n\nPlease double check that your authentication token is correct.\n" Headers: { ... }\n    at createHttpError (/path/httpExecutor.ts:31:10)';
+    const nightlyManifestPendingMessage =
+      "Update metadata isn't available yet. The latest release may still be publishing; please try again in a few minutes.";
+
     it("should silently back off on 404 (latest.yml missing) for auto checks", async () => {
       mockAutoUpdater.checkForUpdates.mockImplementation(() => {
         setImmediate(() => {
@@ -461,6 +466,26 @@ describe("UpdaterService", () => {
         type: "error",
         phase: "check",
         message: "HttpError: 404 Not Found",
+      });
+    });
+
+    it("should show a friendly message for missing nightly update metadata", async () => {
+      mockAutoUpdater.checkForUpdates.mockImplementation(() => {
+        setImmediate(() => {
+          mockAutoUpdater.emit("error", new Error(missingNightlyManifestError));
+        });
+        return new Promise(() => {
+          // Never resolves — events drive state
+        });
+      });
+
+      service.checkForUpdates({ source: "manual" });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(statusUpdates[statusUpdates.length - 1]).toEqual({
+        type: "error",
+        phase: "check",
+        message: nightlyManifestPendingMessage,
       });
     });
 
@@ -604,6 +629,21 @@ describe("UpdaterService", () => {
       const lastStatus = statusUpdates[statusUpdates.length - 1];
       expect(lastStatus).toEqual({ type: "idle" });
       expect(statusUpdates.find((s) => s.type === "error")).toBeUndefined();
+    });
+
+    it("should show a friendly message when promise rejects for missing nightly metadata", async () => {
+      mockAutoUpdater.checkForUpdates.mockImplementation(() => {
+        return Promise.reject(new Error(missingNightlyManifestError));
+      });
+
+      service.checkForUpdates({ source: "manual" });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(statusUpdates[statusUpdates.length - 1]).toEqual({
+        type: "error",
+        phase: "check",
+        message: nightlyManifestPendingMessage,
+      });
     });
   });
 
