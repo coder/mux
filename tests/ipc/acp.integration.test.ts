@@ -120,7 +120,7 @@ async function ensureMainCliBuilt(): Promise<void> {
     // Build the real CLI artifact once so this test catches missing tsconfig entries
     // and runtime transport/framing regressions in dist output.
     buildMainPromise = (async () => {
-      await runCommand("make", ["dist-main"]);
+      await runCommand("make", ["build-main"]);
       await fs.access(path.join(process.cwd(), "dist/cli/index.js"));
       await fs.access(path.join(process.cwd(), "dist/cli/acp.js"));
     })();

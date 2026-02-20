@@ -1266,21 +1266,23 @@ export class MuxAgent implements Agent {
       return;
     }
 
-    // Correlate the turn with the correct message.  `stream-start` is emitted
-    // exactly once per new assistant message and carries the definitive
-    // messageId.  We latch on `stream-start` (rather than the first arbitrary
-    // event) to avoid binding to a stale in-flight message when the workspace
-    // has queued the new prompt behind a still-running stream.
+    // Correlate the turn with the correct message. `stream-start` is emitted
+    // once per assistant message and carries the definitive messageId.
     if (event.type === "stream-start") {
       const completion = this.turnCompletions.get(sessionId);
-      // Bind the turn to any stream-start carrying this prompt correlation id,
-      // even if the event is replayed before caught-up. Some reconnect/full
-      // subscriptions can surface the matching start in replay mode first.
-      if (
-        completion != null &&
-        event.messageId.trim().length > 0 &&
-        event.acpPromptId === completion.promptCorrelationId
-      ) {
+      if (completion == null || event.messageId.trim().length === 0) {
+        return;
+      }
+
+      const hasMatchingCorrelation = event.acpPromptId === completion.promptCorrelationId;
+      const canFallbackToUncorrelatedStart =
+        completion.messageId == null && !isReplayEvent && event.acpPromptId == null;
+
+      if (hasMatchingCorrelation || canFallbackToUncorrelatedStart) {
+        // Fallback rationale: some runtimes can occasionally omit acpPromptId on
+        // live stream-start events even though the prompt originated from ACP.
+        // Latching the first live uncorrelated start avoids hanging prompt()
+        // forever in that case while still avoiding replay-history starts.
         completion.messageId = event.messageId;
       }
       return;
