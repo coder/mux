@@ -125,7 +125,8 @@ export class VoiceService {
     apiKey: string,
     openaiConfig: OpenAITranscriptionConfig | undefined
   ): Promise<Result<string, string>> {
-    const response = await fetch(this.resolveOpenAITranscriptionUrl(openaiConfig), {
+    const forcedBaseUrl = this.policyService?.getForcedBaseUrl("openai");
+    const response = await fetch(this.resolveOpenAITranscriptionUrl(openaiConfig, forcedBaseUrl), {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -161,9 +162,11 @@ export class VoiceService {
   }
 
   private resolveOpenAITranscriptionUrl(
-    openaiConfig: OpenAITranscriptionConfig | undefined
+    openaiConfig: OpenAITranscriptionConfig | undefined,
+    forcedBaseUrl?: string
   ): string {
-    const baseURL = openaiConfig?.baseUrl ?? openaiConfig?.baseURL;
+    // Policy-forced base URL takes precedence over user config.
+    const baseURL = forcedBaseUrl ?? openaiConfig?.baseUrl ?? openaiConfig?.baseURL;
     if (!baseURL) {
       return OPENAI_TRANSCRIPTION_URL;
     }
