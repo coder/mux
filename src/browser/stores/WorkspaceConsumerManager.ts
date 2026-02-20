@@ -216,11 +216,6 @@ export class WorkspaceConsumerManager {
         const messages = sliceMessagesFromLatestCompactionBoundary(aggregator.getAllMessages());
         const model = aggregator.getCurrentModel() ?? "unknown";
 
-        // Calculate in piscina pool with timeout protection
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Calculation timeout")), CALCULATION_TIMEOUT_MS)
-        );
-
         const providersConfigFingerprint = this.getProvidersConfigVersion();
         // Skip calculation until provider config has loaded — we don't know
         // which tokenizer/pricing to use yet. The calculation will be retried
@@ -230,10 +225,21 @@ export class WorkspaceConsumerManager {
           throw new Error(TOKENIZER_CANCELLED_MESSAGE);
         }
 
+        // Calculate in piscina pool with timeout protection.
+        // Store the timer ID so we can clear it on early exit to prevent
+        // unhandled promise rejections from orphaned timeout callbacks.
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error("Calculation timeout")),
+            CALCULATION_TIMEOUT_MS
+          );
+        });
+
         const fullStats = await Promise.race([
           calculateTokenStatsLatest(workspaceId, messages, model, providersConfigFingerprint),
           timeoutPromise,
-        ]);
+        ]).finally(() => clearTimeout(timeoutId));
 
         // Provider mappings may change while tokenization is in flight.
         // Drop outdated results instead of repopulating cache with stale tokenizer metadata.
