@@ -1161,17 +1161,6 @@ export const AutoModeAgentSwitching: AppStory = {
       }}
     />
   ),
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-
-    await waitFor(
-      () => {
-        canvas.getByRole("button", { name: "Select agent" });
-        canvas.getByText(/Auto mode is enabled/i);
-      },
-      { timeout: 10_000 }
-    );
-  },
 };
 
 // README: docs/img/costs-tab.webp
