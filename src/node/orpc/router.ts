@@ -616,8 +616,8 @@ export const router = (authToken?: string) => {
               muxGatewayModels: nextModels.length > 0 ? nextModels : undefined,
             };
           });
-          // Notify provider config subscribers so frontend updates
-          // voice input availability when gateway toggle changes.
+          // Notify subscribers (useProvidersConfig) so the frontend picks up the
+          // new gateway enabled/models state without needing localStorage.
           context.providerService.notifyConfigChanged();
         }),
       updateModelPreferences: t

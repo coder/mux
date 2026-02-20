@@ -14,12 +14,7 @@ import { isValidProvider } from "@/common/constants/providers";
 import { isModelAllowedByPolicy } from "@/browser/utils/policyUi";
 import { getModelProvider } from "@/common/utils/ai/models";
 import type { ProviderModelEntry, ProvidersConfigMap } from "@/common/orpc/types";
-import {
-  DEFAULT_MODEL_KEY,
-  GATEWAY_ENABLED_KEY,
-  GATEWAY_MODELS_KEY,
-  HIDDEN_MODELS_KEY,
-} from "@/common/constants/storage";
+import { DEFAULT_MODEL_KEY, HIDDEN_MODELS_KEY } from "@/common/constants/storage";
 
 import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
 
@@ -160,13 +155,10 @@ export function useModelsFromSettings() {
     listener: true,
   });
 
-  const [gatewayEnabled] = usePersistedState<boolean>(GATEWAY_ENABLED_KEY, true, {
-    listener: true,
-  });
-  const [gatewayModels] = usePersistedState<string[]>(GATEWAY_MODELS_KEY, [], {
-    listener: true,
-  });
-  const gatewayActive = config?.["mux-gateway"]?.couponCodeSet === true && gatewayEnabled;
+  // Gateway state comes from provider config (backend config.json, no localStorage)
+  const gwConfig = config?.["mux-gateway"];
+  const gatewayActive = gwConfig?.couponCodeSet === true && (gwConfig?.isEnabled ?? true);
+  const gatewayModels = useMemo(() => gwConfig?.gatewayModels ?? [], [gwConfig?.gatewayModels]);
   const gatewayModelSet = useMemo(() => new Set(gatewayModels), [gatewayModels]);
 
   const customModels = useMemo(() => {

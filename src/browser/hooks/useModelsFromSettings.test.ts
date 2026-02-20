@@ -8,11 +8,7 @@ import {
 } from "./useModelsFromSettings";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
-import {
-  GATEWAY_ENABLED_KEY,
-  GATEWAY_MODELS_KEY,
-  HIDDEN_MODELS_KEY,
-} from "@/common/constants/storage";
+import { HIDDEN_MODELS_KEY } from "@/common/constants/storage";
 
 function countOccurrences(haystack: string[], needle: string): number {
   return haystack.filter((v) => v === needle).length;
@@ -243,15 +239,10 @@ describe("useModelsFromSettings provider availability gating", () => {
         isEnabled: true,
         isConfigured: true,
         couponCodeSet: true,
+        // Only OPUS is opted-in to gateway routing (via backend config, not localStorage)
+        gatewayModels: [KNOWN_MODELS.OPUS.id],
       },
     };
-
-    globalThis.window.localStorage.setItem(GATEWAY_ENABLED_KEY, JSON.stringify(true));
-    // Only OPUS is opted-in to gateway routing
-    globalThis.window.localStorage.setItem(
-      GATEWAY_MODELS_KEY,
-      JSON.stringify([KNOWN_MODELS.OPUS.id])
-    );
 
     const { result } = renderHook(() => useModelsFromSettings());
 

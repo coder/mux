@@ -55,7 +55,6 @@ function getServerAuthToken(): string | null {
   return urlToken?.length ? urlToken : getStoredAuthToken();
 }
 
-const GATEWAY_MODELS_KEY = "gateway-models";
 const KBD_CLASSNAME =
   "bg-background-secondary text-foreground border-border-medium rounded border px-2 py-0.5 font-mono text-xs";
 
@@ -314,7 +313,16 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
               return;
             }
 
-            updatePersistedState(GATEWAY_MODELS_KEY, getEligibleGatewayModels(latestConfig));
+            const eligibleModels = getEligibleGatewayModels(latestConfig);
+            // Persist gateway models via backend config (no localStorage)
+            api?.config
+              .updateMuxGatewayPrefs({
+                muxGatewayEnabled: true,
+                muxGatewayModels: eligibleModels,
+              })
+              .catch(() => {
+                // Best-effort only.
+              });
             muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
           }
 
@@ -414,7 +422,16 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
 
           const applyLatest = (latestConfig: ProvidersConfigMap | null) => {
             if (muxGatewayLoginAttemptRef.current !== attempt) return;
-            updatePersistedState(GATEWAY_MODELS_KEY, getEligibleGatewayModels(latestConfig));
+            const eligibleModels = getEligibleGatewayModels(latestConfig);
+            // Persist gateway models via backend config (no localStorage)
+            api?.config
+              .updateMuxGatewayPrefs({
+                muxGatewayEnabled: true,
+                muxGatewayModels: eligibleModels,
+              })
+              .catch(() => {
+                // Best-effort only.
+              });
           };
 
           if (api) {

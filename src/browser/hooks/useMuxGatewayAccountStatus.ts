@@ -1,8 +1,6 @@
 import { useCallback, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import { GATEWAY_CONFIGURED_KEY } from "@/common/constants/storage";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 import { formatCostWithDollar } from "@/common/utils/tokens/usageAggregator";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -42,7 +40,8 @@ export function useMuxGatewayAccountStatus() {
       }
 
       if (result.error === MUX_GATEWAY_SESSION_EXPIRED_MESSAGE) {
-        updatePersistedState(GATEWAY_CONFIGURED_KEY, false);
+        // Dispatch session-expired event; useGateway() listens for it and
+        // optimistically marks the gateway as unconfigured to stop routing.
         window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED));
 
         setData(null);

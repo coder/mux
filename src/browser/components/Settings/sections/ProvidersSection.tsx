@@ -21,7 +21,6 @@ import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
 import { useAPI } from "@/browser/contexts/API";
 import { useSettings } from "@/browser/contexts/SettingsContext";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import {
   formatMuxGatewayBalance,
@@ -69,7 +68,6 @@ function getServerAuthToken(): string | null {
   const urlToken = new URLSearchParams(window.location.search).get("token")?.trim();
   return urlToken?.length ? urlToken : getStoredAuthToken();
 }
-const GATEWAY_MODELS_KEY = "gateway-models";
 
 interface FieldConfig {
   key: string;
@@ -175,9 +173,8 @@ export function ProvidersSection() {
 
   const gateway = useGateway();
 
-  const [gatewayModels, setGatewayModels] = usePersistedState<string[]>(GATEWAY_MODELS_KEY, [], {
-    listener: true,
-  });
+  // Gateway models come from the provider config (source of truth is backend config.json).
+  const gatewayModels = useMemo(() => config?.["mux-gateway"]?.gatewayModels ?? [], [config]);
 
   const eligibleGatewayModels = useMemo(() => getEligibleGatewayModels(config), [config]);
 
@@ -208,10 +205,10 @@ export function ProvidersSection() {
 
   const applyGatewayModels = useCallback(
     (nextModels: string[]) => {
-      setGatewayModels(nextModels);
+      updateOptimistically("mux-gateway", { gatewayModels: nextModels });
       persistGatewayModels(nextModels);
     },
-    [persistGatewayModels, setGatewayModels]
+    [persistGatewayModels, updateOptimistically]
   );
 
   const enableGatewayForAllModels = useCallback(() => {
@@ -565,7 +562,7 @@ export function ProvidersSection() {
     const attempt = ++muxGatewayLoginAttemptRef.current;
 
     // Enable Mux Gateway for all eligible models after the *first* successful login.
-    // (If config isn't loaded yet, fall back to the persisted gateway-available state.)
+    // (If config isn't loaded yet, fall back to the gateway hook's isConfigured state.)
     const isLoggedIn = config?.["mux-gateway"]?.couponCodeSet ?? gateway.isConfigured;
     muxGatewayApplyDefaultModelsOnSuccessRef.current = !isLoggedIn;
 

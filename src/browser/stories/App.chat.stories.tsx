@@ -1025,9 +1025,6 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
 
         // Ensure the gateway indicator is active (so the regression would reproduce).
         updatePersistedState(getModelKey(workspaceId), baseModel);
-        updatePersistedState("gateway-enabled", true);
-        updatePersistedState("gateway-available", true);
-        updatePersistedState("gateway-models", [baseModel]);
 
         return setupSimpleChatStory({
           workspaceId,
@@ -1038,6 +1035,7 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
               isEnabled: true,
               couponCodeSet: true,
               isConfigured: true,
+              gatewayModels: [baseModel],
             },
           },
         });

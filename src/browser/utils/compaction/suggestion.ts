@@ -46,7 +46,7 @@ export function getExplicitCompactionSuggestion(options: {
 
   // "Configured" is intentionally fuzzy: we require either provider credentials,
   // or gateway routing enabled for that model (avoids suggesting unusable models).
-  const routesThroughGateway = isGatewayFormat(toGatewayModel(modelId));
+  const routesThroughGateway = isGatewayFormat(toGatewayModel(modelId, options.providersConfig));
   if (!isProviderConfigured && !routesThroughGateway) {
     return null;
   }
@@ -95,7 +95,7 @@ export function getHigherContextCompactionSuggestion(options: {
     // "Configured" is intentionally fuzzy: we require either provider credentials,
     // or gateway routing enabled for that model (avoids suggesting unusable models).
     const isProviderConfigured = options.providersConfig?.[known.provider]?.isConfigured === true;
-    const routesThroughGateway = isGatewayFormat(toGatewayModel(known.id));
+    const routesThroughGateway = isGatewayFormat(toGatewayModel(known.id, options.providersConfig));
     if (!isProviderConfigured && !routesThroughGateway) {
       continue;
     }

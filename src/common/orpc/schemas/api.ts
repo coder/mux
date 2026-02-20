@@ -157,6 +157,8 @@ export const ProviderConfigInfoSchema = z.object({
   aws: AWSCredentialStatusSchema.optional(),
   /** Mux Gateway-specific fields */
   couponCodeSet: z.boolean().optional(),
+  /** Mux Gateway-specific: which models are enabled for gateway routing */
+  gatewayModels: z.array(z.string()).optional(),
 });
 
 export const ProvidersConfigMapSchema = z.record(z.string(), ProviderConfigInfoSchema);
