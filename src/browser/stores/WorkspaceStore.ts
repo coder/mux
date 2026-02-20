@@ -870,22 +870,29 @@ export class WorkspaceStore {
         // Invalidate consumer token stats — both in-memory and persisted —
         // so mapped-model changes take effect on next access.
         this.consumerManager.invalidateAll();
-        for (const [, usage] of this.sessionUsage) {
-          usage.tokenStatsCache = undefined;
 
-          // Recompute persisted cost aggregates so session totals and
-          // last-request costs reflect the new model mapping immediately.
-          // Skip non-model aggregate buckets (e.g. "historical" from legacy
-          // compaction summaries) and costs-included entries (gateway-billed
-          // requests where cost_usd was explicitly zeroed).
-          for (const [model, entry] of Object.entries(usage.byModel)) {
-            if (!model.includes(":") || isCostsIncludedEntry(entry)) continue;
-            const resolved = resolveModelForMetadata(model, config);
-            usage.byModel[model] = recomputeUsageCosts(entry, resolved);
-          }
-          if (usage.lastRequest && !isCostsIncludedEntry(usage.lastRequest.usage)) {
-            const resolved = resolveModelForMetadata(usage.lastRequest.model, config);
-            usage.lastRequest.usage = recomputeUsageCosts(usage.lastRequest.usage, resolved);
+        // Only reprice historical session costs on actual config changes
+        // (not initial load). Legacy session-usage.json may lack the
+        // costsIncluded marker, so repricing on first load would inflate
+        // totals for gateway-billed users.
+        if (previousFingerprint != null) {
+          for (const [, usage] of this.sessionUsage) {
+            usage.tokenStatsCache = undefined;
+
+            // Recompute persisted cost aggregates so session totals and
+            // last-request costs reflect the new model mapping immediately.
+            // Skip non-model aggregate buckets (e.g. "historical" from legacy
+            // compaction summaries) and costs-included entries (gateway-billed
+            // requests where cost_usd was explicitly zeroed).
+            for (const [model, entry] of Object.entries(usage.byModel)) {
+              if (!model.includes(":") || isCostsIncludedEntry(entry)) continue;
+              const resolved = resolveModelForMetadata(model, config);
+              usage.byModel[model] = recomputeUsageCosts(entry, resolved);
+            }
+            if (usage.lastRequest && !isCostsIncludedEntry(usage.lastRequest.usage)) {
+              const resolved = resolveModelForMetadata(usage.lastRequest.model, config);
+              usage.lastRequest.usage = recomputeUsageCosts(usage.lastRequest.usage, resolved);
+            }
           }
         }
       }
