@@ -1,5 +1,6 @@
 import { autoUpdater } from "electron-updater";
 import type { UpdateInfo } from "electron-updater";
+import packageJson from "../../package.json";
 import { log } from "@/node/services/log";
 import type { UpdateChannel } from "@/common/types/project";
 import { parseDebugUpdater } from "@/common/utils/env";
@@ -10,6 +11,29 @@ import {
 
 // Update check timeout in milliseconds (30 seconds)
 const UPDATE_CHECK_TIMEOUT_MS = 30_000;
+
+/** Derive GitHub owner/repo from package.json repository URL instead of hardcoding. */
+function getGitHubRepo(): { owner: string; repo: string } {
+  const url =
+    typeof packageJson.repository === "string"
+      ? packageJson.repository
+      : packageJson.repository?.url;
+
+  if (url) {
+    // Matches github.com/owner/repo in URLs like:
+    //   git+https://github.com/coder/mux.git
+    //   https://github.com/coder/mux
+    //   git@github.com:coder/mux.git
+    //   git+https://github.com/acme/mux.desktop.git
+    const match = /github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?$/.exec(url);
+    if (match) {
+      return { owner: match[1], repo: match[2] };
+    }
+  }
+
+  // Fallback for non-standard repository URLs
+  return { owner: "coder", repo: "mux" };
+}
 
 /**
  * Detect transient errors that should trigger silent backoff rather than
@@ -112,14 +136,15 @@ export class UpdaterService {
   }
 
   private applyChannel(channel: UpdateChannel) {
+    const { owner, repo } = getGitHubRepo();
     if (channel === "nightly") {
       autoUpdater.allowPrerelease = true;
       autoUpdater.channel = "nightly";
       // Point at GitHub pre-releases for the nightly channel
       autoUpdater.setFeedURL({
         provider: "github",
-        owner: "coder",
-        repo: "mux",
+        owner,
+        repo,
         releaseType: "prerelease",
       });
     } else {
@@ -127,8 +152,8 @@ export class UpdaterService {
       autoUpdater.channel = "latest";
       autoUpdater.setFeedURL({
         provider: "github",
-        owner: "coder",
-        repo: "mux",
+        owner,
+        repo,
         releaseType: "release",
       });
     }
