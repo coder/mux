@@ -23,8 +23,8 @@ export interface SessionUsageTokenStatsCacheV1 {
   computedAt: number;
 
   /**
-   * WorkspaceStore providers config version used when this cache was computed.
-   * Optional for backward compatibility with pre-versioned cache entries.
+   * Stable fingerprint of provider config used when this cache was computed.
+   * Optional for backward compatibility with pre-fingerprint cache entries.
    */
   providersConfigVersion?: number;
 

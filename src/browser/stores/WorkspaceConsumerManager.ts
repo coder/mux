@@ -85,7 +85,7 @@ export class WorkspaceConsumerManager {
 
   // Callback to bump the store when calculation completes
   private readonly onCalculationComplete: (workspaceId: string) => void;
-  // WorkspaceStore providers config version to stamp persisted token stats cache entries.
+  // Stable provider-config fingerprint to stamp persisted token stats cache entries.
   private readonly getProvidersConfigVersion: () => number;
 
   // Track pending store notifications to avoid duplicate bumps within the same tick
@@ -220,15 +220,15 @@ export class WorkspaceConsumerManager {
           setTimeout(() => reject(new Error("Calculation timeout")), CALCULATION_TIMEOUT_MS)
         );
 
-        const providersConfigVersion = this.getProvidersConfigVersion();
+        const providersConfigFingerprint = this.getProvidersConfigVersion();
         const fullStats = await Promise.race([
-          calculateTokenStatsLatest(workspaceId, messages, model, providersConfigVersion),
+          calculateTokenStatsLatest(workspaceId, messages, model, providersConfigFingerprint),
           timeoutPromise,
         ]);
 
         // Provider mappings may change while tokenization is in flight.
         // Drop outdated results instead of repopulating cache with stale tokenizer metadata.
-        if (this.getProvidersConfigVersion() !== providersConfigVersion) {
+        if (this.getProvidersConfigVersion() !== providersConfigFingerprint) {
           this.needsRecalc.set(workspaceId, aggregator);
           throw new Error(TOKENIZER_CANCELLED_MESSAGE);
         }

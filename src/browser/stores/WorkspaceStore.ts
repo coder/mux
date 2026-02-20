@@ -377,6 +377,36 @@ function getMaxHistorySequence(messages: MuxMessage[]): number | undefined {
   return max;
 }
 
+const PROVIDERS_CONFIG_FNV_OFFSET_BASIS = 0x811c9dc5;
+const PROVIDERS_CONFIG_FNV_PRIME = 0x01000193;
+
+function stableNormalizeProvidersConfig(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stableNormalizeProvidersConfig);
+  }
+  if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.keys(obj)
+        .sort()
+        .map((key) => [key, stableNormalizeProvidersConfig(obj[key])])
+    );
+  }
+  return value;
+}
+
+function computeProvidersConfigFingerprint(config: ProvidersConfigMap | null): number {
+  const normalized = stableNormalizeProvidersConfig(config ?? {});
+  const serialized = JSON.stringify(normalized);
+
+  let hash = PROVIDERS_CONFIG_FNV_OFFSET_BASIS;
+  for (let i = 0; i < serialized.length; i += 1) {
+    hash ^= serialized.charCodeAt(i);
+    hash = Math.imul(hash, PROVIDERS_CONFIG_FNV_PRIME) >>> 0;
+  }
+
+  return hash >>> 0;
+}
 /**
  * External store for workspace aggregators and streaming state.
  *
@@ -397,7 +427,9 @@ export class WorkspaceStore {
   private client: RouterClient<AppRouter> | null = null;
   private clientChangeController = new AbortController();
   private providersConfig: ProvidersConfigMap | null = null;
-  /** Monotonic version counter for serializing provider config refreshes (latest wins). */
+  /** Stable fingerprint for cache freshness checks across reconnects/app restarts. */
+  private providersConfigFingerprint = computeProvidersConfigFingerprint(null);
+  /** Monotonic request counter for serializing provider config refreshes (latest wins). */
   private providersConfigVersion = 0;
   /** Version of the last successfully applied provider config (prevents stale overwrites). */
   private providersConfigAppliedVersion = 0;
@@ -777,7 +809,7 @@ export class WorkspaceStore {
       (workspaceId) => {
         this.consumersStore.bump(workspaceId);
       },
-      () => this.providersConfigAppliedVersion
+      () => this.providersConfigFingerprint
     );
 
     // Note: We DON'T auto-check recency on every state bump.
@@ -810,14 +842,21 @@ export class WorkspaceStore {
         return;
       }
 
+      const previousFingerprint = this.providersConfigFingerprint;
+      const nextFingerprint = computeProvidersConfigFingerprint(config);
+
       this.providersConfigAppliedVersion = version;
       this.providersConfig = config;
+      this.providersConfigFingerprint = nextFingerprint;
       this.bumpAllUsageStoreEntries();
-      // Invalidate consumer token stats — both in-memory and persisted —
-      // so mapped-model changes take effect on next access.
-      this.consumerManager.invalidateAll();
-      for (const [, usage] of this.sessionUsage) {
-        usage.tokenStatsCache = undefined;
+
+      if (previousFingerprint !== nextFingerprint) {
+        // Invalidate consumer token stats — both in-memory and persisted —
+        // so mapped-model changes take effect on next access.
+        this.consumerManager.invalidateAll();
+        for (const [, usage] of this.sessionUsage) {
+          usage.tokenStatsCache = undefined;
+        }
       }
     } catch {
       // Silently ignore — existing providersConfig is preserved so
@@ -1860,7 +1899,7 @@ export class WorkspaceStore {
       return false;
     }
 
-    if (tokenStatsCache.providersConfigVersion !== this.providersConfigAppliedVersion) {
+    if (tokenStatsCache.providersConfigVersion !== this.providersConfigFingerprint) {
       return false;
     }
 

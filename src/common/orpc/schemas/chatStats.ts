@@ -59,7 +59,7 @@ export const SessionUsageTokenStatsCacheSchema = z.object({
   providersConfigVersion: z
     .number()
     .optional()
-    .meta({ description: "WorkspaceStore providers config version used for this cache" }),
+    .meta({ description: "Stable provider-config fingerprint used for this cache" }),
   model: z
     .string()
     .meta({ description: "Model used for tokenization (affects tokenizer + tool definitions)" }),
