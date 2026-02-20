@@ -89,6 +89,7 @@ Use this index to find a page's:
     - Agentic Git Identity (`/config/agentic-git-identity`) → `references/docs/config/agentic-git-identity.mdx` — Configure a separate Git identity for AI-generated commits
     - Keyboard Shortcuts (`/config/keybinds`) → `references/docs/config/keybinds.mdx` — Complete keyboard shortcut reference for Mux
     - Notifications (`/config/notifications`) → `references/docs/config/notifications.mdx` — Configure how agents notify you about important events
+    - Server Access (`/config/server-access`) → `references/docs/config/server-access.mdx` — Configure authentication and session controls for mux server/browser mode
     - Vim Mode (`/config/vim-mode`) → `references/docs/config/vim-mode.mdx` — Vim-style editing in the Mux chat input
   - **Guides**
     - GitHub Actions (`/guides/github-actions`) → `references/docs/guides/github-actions.mdx` — Automate your workflows with mux run in GitHub Actions

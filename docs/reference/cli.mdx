@@ -100,18 +100,30 @@ mux run --budget 2.00 "Refactor the authentication module"
 
 ## `mux server`
 
-Start the HTTP/WebSocket server for remote access (e.g., from mobile devices):
+Start the HTTP/WebSocket server for remote access (for example, from a phone or another machine):
 
 ```bash
-mux server --port 3000 --host 0.0.0.0
+mux server --host 0.0.0.0 --port 3000
 ```
 
 Options:
 
-- `--host <host>` - Host to bind to (default: `localhost`)
+- `--host <host>` - Host/interface to bind to (default: `localhost`)
 - `--port <port>` - Port to bind to (default: `3000`)
-- `--auth-token <token>` - Optional bearer token for authentication
+- `--auth-token <token>` - Bearer token for HTTP/WS auth
+- `--no-auth` - Disable authentication entirely
+- `--print-auth-token` - Always print the auth token on startup
+- `--ssh-host <host>` - SSH hostname/alias used for editor deep links in browser mode
 - `--add-project <path>` - Add and open project at the specified path
+
+Auth token precedence:
+
+1. `--no-auth`
+2. `--auth-token`
+3. `MUX_SERVER_AUTH_TOKEN`
+4. Auto-generated token
+
+GitHub owner login for browser sessions is configured separately via `MUX_SERVER_AUTH_GITHUB_OWNER` or `serverAuthGithubOwner` in `~/.mux/config.json`. See [Server Access](/config/server-access).
 
 ## `mux desktop`
 
