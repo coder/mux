@@ -612,10 +612,12 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
               />
               <DiffIndicator type={chunk.type} background={codeBg} />
               <span
-                className="min-w-0 whitespace-pre [&_span:not(.search-highlight)]:!bg-transparent"
+                className="block min-w-0 leading-[inherit] whitespace-pre [&_span:not(.search-highlight)]:!bg-transparent"
                 style={{
                   background: codeBg,
                   color: getLineContentColor(chunk.type),
+                  overflowWrap: "normal",
+                  wordBreak: "normal",
                 }}
                 dangerouslySetInnerHTML={{ __html: line.html }}
               />
@@ -1278,14 +1280,14 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
             lineShadows.push(activeLineHighlight);
           }
 
-          // Each line renders as 3 CSS Grid cells: gutter | indicator | code
-          // Use display:contents wrapper for selection state + group hover behavior
+          // Each line renders as 3 CSS Grid cells: gutter | indicator | code.
+          // Keep rows single-line (no wrapping) so keyboard cursor + hover hitboxes stay aligned.
           return (
             <React.Fragment key={displayIndex}>
               <div
                 className={cn(
                   SELECTABLE_DIFF_LINE_CLASS,
-                  "group relative col-span-3 grid grid-cols-subgrid",
+                  "group relative col-span-3 grid grid-cols-subgrid whitespace-nowrap leading-[inherit]",
                   onLineIndexSelect ? "cursor-pointer" : "cursor-text"
                 )}
                 data-line-index={displayIndex}
@@ -1340,10 +1342,12 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                   }
                 />
                 <span
-                  className="min-w-0 whitespace-pre [&_span:not(.search-highlight)]:!bg-transparent"
+                  className="block min-w-0 leading-[inherit] whitespace-pre [&_span:not(.search-highlight)]:!bg-transparent"
                   style={{
                     background: codeBg,
                     color: getLineContentColor(lineInfo.type),
+                    overflowWrap: "normal",
+                    wordBreak: "normal",
                     boxShadow: lineShadows.length > 0 ? lineShadows.join(", ") : undefined,
                   }}
                   dangerouslySetInnerHTML={{ __html: lineInfo.html }}

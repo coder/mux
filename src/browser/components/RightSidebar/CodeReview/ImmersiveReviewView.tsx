@@ -603,27 +603,41 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     };
   }, []);
 
-  const revealTargetLineIndex =
-    activeLineIndex ??
-    selectedHunkRange?.firstModifiedIndex ??
-    selectedHunkRange?.startIndex ??
-    null;
+  const selectedHunkRevealTargetLineIndex =
+    selectedHunkRange?.firstModifiedIndex ?? selectedHunkRange?.startIndex ?? null;
   const isActiveFileRevealPending = pendingRevealFilePath === activeFilePath;
+  const revealTargetLineIndex = isActiveFileRevealPending
+    ? selectedHunkRevealTargetLineIndex
+    : (activeLineIndex ?? selectedHunkRevealTargetLineIndex);
+  const hasResolvedSelectedHunkForReveal =
+    selectedHunkId !== null && currentFileHunks.some((hunk) => hunk.id === selectedHunkId);
 
   useEffect(() => {
     if (!isActiveFileRevealPending || !isActiveFileContentSettled) {
       return;
     }
 
-    // Fail open so the UI cannot get stuck if a file has no hunk/line target.
-    if (currentFileHunks.length === 0 || revealTargetLineIndex === null) {
+    // Fail open so the UI cannot get stuck if a file has no hunks.
+    if (currentFileHunks.length === 0) {
+      setPendingRevealFilePath(null);
+      return;
+    }
+
+    // Avoid dropping the reveal gate while selected hunk state is still settling.
+    if (!hasResolvedSelectedHunkForReveal) {
+      return;
+    }
+
+    // Fail open once selection is stable if we still cannot resolve a reveal target.
+    if (selectedHunkRevealTargetLineIndex === null) {
       setPendingRevealFilePath(null);
     }
   }, [
     currentFileHunks.length,
-    revealTargetLineIndex,
+    hasResolvedSelectedHunkForReveal,
     isActiveFileRevealPending,
     isActiveFileContentSettled,
+    selectedHunkRevealTargetLineIndex,
   ]);
 
   useEffect(() => {
@@ -1137,6 +1151,21 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       `[data-line-index="${lineIndexForScroll}"]`
     );
     if (!lineElement) {
+      if (!isActiveFileRevealPending || !activeFilePath || contentChanged) {
+        return;
+      }
+
+      if (revealAnimationFrameRef.current !== null) {
+        cancelAnimationFrame(revealAnimationFrameRef.current);
+      }
+
+      const revealFilePath = activeFilePath;
+      revealAnimationFrameRef.current = window.requestAnimationFrame(() => {
+        setPendingRevealFilePath((pendingFilePath) =>
+          pendingFilePath === revealFilePath ? null : pendingFilePath
+        );
+        revealAnimationFrameRef.current = null;
+      });
       return;
     }
 
