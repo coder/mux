@@ -131,7 +131,11 @@ function splitDiffLines(content: string): string[] {
 }
 
 function normalizeFileLines(content: string): string[] {
-  const lines = content.split("\n");
+  // Normalize Windows CRLF to LF-equivalent lines so rows stay single-height in
+  // whitespace-preserving diff cells (embedded "\r" can render as extra breaks).
+  const lines = content
+    .split(/\r?\n/)
+    .map((line) => (line.endsWith("\r") ? line.slice(0, Math.max(0, line.length - 1)) : line));
   return lines.filter((line, idx) => idx < lines.length - 1 || line !== "");
 }
 
