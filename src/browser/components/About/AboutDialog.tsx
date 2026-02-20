@@ -216,15 +216,12 @@ export function AboutDialog() {
                       }}
                       disabled={channelLoading}
                       aria-label="Update channel"
-                      className="border-border-medium rounded border bg-transparent p-0 text-xs"
+                      size="sm"
                     >
-                      <ToggleGroupItem value="stable" className="rounded-none px-2.5 py-1">
+                      <ToggleGroupItem value="stable" size="sm">
                         Stable
                       </ToggleGroupItem>
-                      <ToggleGroupItem
-                        value="nightly"
-                        className="border-border-medium rounded-none border-l px-2.5 py-1"
-                      >
+                      <ToggleGroupItem value="nightly" size="sm">
                         Nightly
                       </ToggleGroupItem>
                     </ToggleGroup>
