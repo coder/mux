@@ -162,6 +162,19 @@ function buildOrigin(protocol: string, host: string): string | null {
   }
 }
 
+function normalizeHostForProtocol(host: string, protocol: "http" | "https"): string | null {
+  const trimmedHost = host.trim();
+  if (!trimmedHost) {
+    return null;
+  }
+
+  try {
+    return new URL(`${protocol}://${trimmedHost}`).host.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 function inferProtocol(req: OriginValidationRequest): "http" | "https" {
   if (typeof req.protocol === "string") {
     const normalized = normalizeProtocol(req.protocol);
@@ -173,22 +186,85 @@ function inferProtocol(req: OriginValidationRequest): "http" | "https" {
   return (req.socket as { encrypted?: boolean }).encrypted ? "https" : "http";
 }
 
-function getExpectedOrigins(req: OriginValidationRequest): string[] {
-  const hosts = [
-    getFirstHeaderValue(req, "x-forwarded-host"),
-    getFirstHeaderValue(req, "host"),
-  ].filter(
+function getExpectedHosts(req: OriginValidationRequest): string[] {
+  return [getFirstHeaderValue(req, "x-forwarded-host"), getFirstHeaderValue(req, "host")].filter(
     (value, index, values): value is string => value !== null && values.indexOf(value) === index
   );
+}
+
+function getFirstForwardedProtocol(req: OriginValidationRequest): "http" | "https" | null {
+  const forwardedProtoHeader = getFirstHeaderValue(req, "x-forwarded-proto");
+  if (!forwardedProtoHeader) {
+    return null;
+  }
+
+  // Trust the client-facing hop. Additional values come from downstream/internal hops.
+  const firstHop = forwardedProtoHeader.split(",")[0] ?? "";
+  return normalizeProtocol(firstHop);
+}
+
+function getOriginProtocolOnExpectedHost(req: OriginValidationRequest): "http" | "https" | null {
+  const normalizedOrigin = normalizeOrigin(getFirstHeaderValue(req, "origin"));
+  if (!normalizedOrigin) {
+    return null;
+  }
+
+  try {
+    const parsedOrigin = new URL(normalizedOrigin);
+    const originProtocol = normalizeProtocol(parsedOrigin.protocol);
+    if (!originProtocol) {
+      return null;
+    }
+
+    const originHost = parsedOrigin.host.toLowerCase();
+    const hasExpectedHost = getExpectedHosts(req).some((host) => {
+      const normalizedHost = normalizeHostForProtocol(host, originProtocol);
+      return normalizedHost !== null && normalizedHost === originHost;
+    });
+
+    return hasExpectedHost ? originProtocol : null;
+  } catch {
+    return null;
+  }
+}
+
+function getClientFacingProtocol(req: OriginValidationRequest): "http" | "https" {
+  return getFirstForwardedProtocol(req) ?? inferProtocol(req);
+}
+
+function getExpectedProtocols(req: OriginValidationRequest): Array<"http" | "https"> {
+  const clientFacingProtocol = getClientFacingProtocol(req);
+  const originProtocol = getOriginProtocolOnExpectedHost(req);
+
+  // Compatibility path: some reverse proxies overwrite X-Forwarded-Proto to http
+  // even when the browser-facing request is https. In that specific case, trust the
+  // validated origin protocol for host-matched requests.
+  if (clientFacingProtocol === "http" && originProtocol === "https") {
+    return ["https"];
+  }
+
+  return [clientFacingProtocol];
+}
+
+function getPreferredPublicProtocol(req: OriginValidationRequest): "http" | "https" {
+  const clientFacingProtocol = getClientFacingProtocol(req);
+  const originProtocol = getOriginProtocolOnExpectedHost(req);
+
+  if (clientFacingProtocol === "http" && originProtocol === "https") {
+    return "https";
+  }
+
+  return clientFacingProtocol;
+}
+
+function getExpectedOrigins(req: OriginValidationRequest): string[] {
+  const hosts = getExpectedHosts(req);
 
   if (hosts.length === 0) {
     return [];
   }
 
-  // Trust only the first X-Forwarded-Proto hop. Falling back to inferred protocol is
-  // only safe when the header is absent or invalid.
-  const forwardedProtocol = normalizeProtocol(getFirstHeaderValue(req, "x-forwarded-proto") ?? "");
-  const protocols = forwardedProtocol === null ? [inferProtocol(req)] : [forwardedProtocol];
+  const protocols = getExpectedProtocols(req);
 
   const expectedOrigins: string[] = [];
   for (const protocol of protocols) {
@@ -489,16 +565,7 @@ export async function createOrpcServer({
   }
 
   function isSecureRequest(req: OriginValidationRequest): boolean {
-    const forwardedProto = getFirstHeaderValue(req, "x-forwarded-proto");
-    if (forwardedProto) {
-      return normalizeProtocol(forwardedProto) === "https";
-    }
-
-    if (typeof req.protocol === "string") {
-      return normalizeProtocol(req.protocol) === "https";
-    }
-
-    return Boolean((req.socket as { encrypted?: boolean }).encrypted);
+    return getPreferredPublicProtocol(req) === "https";
   }
 
   function parsePathnameFromRequestValue(value: string | null | undefined): string | null {
@@ -731,14 +798,12 @@ export async function createOrpcServer({
       return;
     }
 
-    // When mux is running behind a reverse proxy, the terminating proxy may set
-    // X-Forwarded-Proto / X-Forwarded-Host, while the direct connection to mux
-    // is plain HTTP.
-    const protoHeader = req.get("x-forwarded-proto");
-    const forwardedProto = protoHeader?.split(",")[0]?.trim();
-    const proto = forwardedProto?.length ? forwardedProto : req.protocol;
-
-    const redirectUri = `${proto}://${host}/auth/mux-gateway/callback`;
+    // Keep callback scheme selection aligned with origin compatibility handling.
+    // Some proxy chains overwrite X-Forwarded-Proto to http on the final hop
+    // even when the browser-visible origin is https.
+    const protocol = getPreferredPublicProtocol(req);
+    const callbackHost = normalizeHostForProtocol(host, protocol) ?? host;
+    const redirectUri = `${protocol}://${callbackHost}/auth/mux-gateway/callback`;
     const { authorizeUrl, state } = context.muxGatewayOauthService.startServerFlow({ redirectUri });
     res.json({ authorizeUrl, state });
   });
@@ -885,11 +950,9 @@ export async function createOrpcServer({
       return;
     }
 
-    const protoHeader = req.get("x-forwarded-proto");
-    const forwardedProto = protoHeader?.split(",")[0]?.trim();
-    const proto = forwardedProto?.length ? forwardedProto : req.protocol;
-
-    const redirectUri = `${proto}://${host}/auth/mux-governor/callback`;
+    const protocol = getPreferredPublicProtocol(req);
+    const callbackHost = normalizeHostForProtocol(host, protocol) ?? host;
+    const redirectUri = `${protocol}://${callbackHost}/auth/mux-governor/callback`;
     const result = context.muxGovernorOauthService.startServerFlow({
       governorOrigin: governorUrl,
       redirectUri,

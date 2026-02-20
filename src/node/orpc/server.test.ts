@@ -264,6 +264,106 @@ describe("createOrpcServer", () => {
     }
   });
 
+  test("uses HTTPS redirect URIs for OAuth start routes when forwarded proto is overwritten", async () => {
+    let muxGatewayRedirectUri = "";
+    let muxGovernorRedirectUri = "";
+
+    const stubContext: Partial<ORPCContext> = {
+      muxGatewayOauthService: {
+        startServerFlow: (input: { redirectUri: string }) => {
+          muxGatewayRedirectUri = input.redirectUri;
+          return { authorizeUrl: "https://gateway.example.com/auth", state: "state-gateway" };
+        },
+      } as unknown as ORPCContext["muxGatewayOauthService"],
+      muxGovernorOauthService: {
+        startServerFlow: (input: { governorOrigin: string; redirectUri: string }) => {
+          muxGovernorRedirectUri = input.redirectUri;
+          return {
+            success: true,
+            data: { authorizeUrl: "https://governor.example.com/auth", state: "state-governor" },
+          };
+        },
+      } as unknown as ORPCContext["muxGovernorOauthService"],
+    };
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+        authToken: "test-token",
+      });
+
+      const sharedHeaders = {
+        Authorization: "Bearer test-token",
+        Origin: "https://mux-public.example.com",
+        "X-Forwarded-Host": "mux-public.example.com:443",
+        "X-Forwarded-Proto": "http",
+      };
+
+      const muxGatewayResponse = await fetch(`${server.baseUrl}/auth/mux-gateway/start`, {
+        headers: sharedHeaders,
+      });
+      expect(muxGatewayResponse.status).toBe(200);
+
+      const muxGovernorResponse = await fetch(
+        `${server.baseUrl}/auth/mux-governor/start?governorUrl=${encodeURIComponent("https://governor.example.com")}`,
+        {
+          headers: sharedHeaders,
+        }
+      );
+      expect(muxGovernorResponse.status).toBe(200);
+
+      expect(muxGatewayRedirectUri).toBe(
+        "https://mux-public.example.com/auth/mux-gateway/callback"
+      );
+      expect(muxGovernorRedirectUri).toBe(
+        "https://mux-public.example.com/auth/mux-governor/callback"
+      );
+    } finally {
+      await server?.close();
+    }
+  });
+
+  test("uses HTTP redirect URIs for OAuth start routes when client-facing proto is HTTP", async () => {
+    let muxGatewayRedirectUri = "";
+
+    const stubContext: Partial<ORPCContext> = {
+      muxGatewayOauthService: {
+        startServerFlow: (input: { redirectUri: string }) => {
+          muxGatewayRedirectUri = input.redirectUri;
+          return { authorizeUrl: "https://gateway.example.com/auth", state: "state-gateway-http" };
+        },
+      } as unknown as ORPCContext["muxGatewayOauthService"],
+    };
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+        authToken: "test-token",
+      });
+
+      const response = await fetch(`${server.baseUrl}/auth/mux-gateway/start`, {
+        headers: {
+          Authorization: "Bearer test-token",
+          Origin: server.baseUrl,
+          "X-Forwarded-Proto": "http,https",
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(muxGatewayRedirectUri).toBe(`${server.baseUrl}/auth/mux-gateway/callback`);
+    } finally {
+      await server?.close();
+    }
+  });
+
   test("scopes mux_session cookie path to forwarded app base path", async () => {
     const stubContext: Partial<ORPCContext> = {
       serverAuthService: {
@@ -301,6 +401,93 @@ describe("createOrpcServer", () => {
       expect(cookieHeader).toBeTruthy();
       expect(cookieHeader).toContain("mux_session=session-token-1");
       expect(cookieHeader).toContain("Path=/@test/workspace/apps/mux;");
+    } finally {
+      await server?.close();
+    }
+  });
+
+  test("sets Secure mux_session cookie when HTTPS origin is accepted via proto compatibility", async () => {
+    const stubContext: Partial<ORPCContext> = {
+      serverAuthService: {
+        waitForGithubDeviceFlow: () =>
+          Promise.resolve({
+            success: true,
+            data: { sessionId: "session-2", sessionToken: "session-token-compat" },
+          }),
+        cancelGithubDeviceFlow: () => {
+          // no-op for this test
+        },
+      } as unknown as ORPCContext["serverAuthService"],
+    };
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+      });
+
+      const response = await fetch(`${server.baseUrl}/auth/server-login/github/wait`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "https://mux-public.example.com",
+          "X-Forwarded-Host": "mux-public.example.com:443",
+          "X-Forwarded-Proto": "http",
+        },
+        body: JSON.stringify({ flowId: "flow-compat" }),
+      });
+
+      expect(response.status).toBe(200);
+      const cookieHeader = response.headers.get("set-cookie");
+      expect(cookieHeader).toBeTruthy();
+      expect(cookieHeader).toContain("mux_session=session-token-compat");
+      expect(cookieHeader).toContain("; Secure");
+    } finally {
+      await server?.close();
+    }
+  });
+
+  test("does not set Secure mux_session cookie when client-facing proto is HTTP", async () => {
+    const stubContext: Partial<ORPCContext> = {
+      serverAuthService: {
+        waitForGithubDeviceFlow: () =>
+          Promise.resolve({
+            success: true,
+            data: { sessionId: "session-3", sessionToken: "session-token-http" },
+          }),
+        cancelGithubDeviceFlow: () => {
+          // no-op for this test
+        },
+      } as unknown as ORPCContext["serverAuthService"],
+    };
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+      });
+
+      const response = await fetch(`${server.baseUrl}/auth/server-login/github/wait`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: server.baseUrl,
+          "X-Forwarded-Proto": "http,https",
+        },
+        body: JSON.stringify({ flowId: "flow-http" }),
+      });
+
+      expect(response.status).toBe(200);
+      const cookieHeader = response.headers.get("set-cookie");
+      expect(cookieHeader).toBeTruthy();
+      expect(cookieHeader).toContain("mux_session=session-token-http");
+      expect(cookieHeader).not.toContain("; Secure");
     } finally {
       await server?.close();
     }
@@ -582,6 +769,117 @@ describe("createOrpcServer", () => {
     }
   });
 
+  test("allows HTTP origins when X-Forwarded-Proto includes multiple hops with leading http", async () => {
+    const stubContext: Partial<ORPCContext> = {};
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+      });
+
+      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
+        headers: {
+          Origin: server.baseUrl,
+          "X-Forwarded-Proto": "http,https",
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("access-control-allow-origin")).toBe(server.baseUrl);
+      expect(response.headers.get("access-control-allow-credentials")).toBe("true");
+    } finally {
+      await server?.close();
+    }
+  });
+
+  test("allows HTTPS origins when X-Forwarded-Proto includes multiple hops with trailing https", async () => {
+    const stubContext: Partial<ORPCContext> = {};
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+      });
+
+      const forwardedOrigin = server.baseUrl.replace(/^http:/, "https:");
+      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
+        headers: {
+          Origin: forwardedOrigin,
+          "X-Forwarded-Proto": "http,https",
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("access-control-allow-origin")).toBe(forwardedOrigin);
+      expect(response.headers.get("access-control-allow-credentials")).toBe("true");
+    } finally {
+      await server?.close();
+    }
+  });
+
+  test("accepts HTTPS origins when X-Forwarded-Proto is overwritten to http by downstream proxy", async () => {
+    const stubContext: Partial<ORPCContext> = {};
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+      });
+
+      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
+        headers: {
+          Origin: "https://mux-public.example.com",
+          "X-Forwarded-Host": "mux-public.example.com",
+          "X-Forwarded-Proto": "http",
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("access-control-allow-origin")).toBe(
+        "https://mux-public.example.com"
+      );
+      expect(response.headers.get("access-control-allow-credentials")).toBe("true");
+    } finally {
+      await server?.close();
+    }
+  });
+
+  test("allows HTTPS origins when overwritten proto uses forwarded host with explicit :443", async () => {
+    const stubContext: Partial<ORPCContext> = {};
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+      });
+
+      const response = await fetch(`${server.baseUrl}/api/spec.json`, {
+        headers: {
+          Origin: "https://mux-public.example.com",
+          "X-Forwarded-Host": "mux-public.example.com:443",
+          "X-Forwarded-Proto": "http",
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("access-control-allow-origin")).toBe(
+        "https://mux-public.example.com"
+      );
+      expect(response.headers.get("access-control-allow-credentials")).toBe("true");
+    } finally {
+      await server?.close();
+    }
+  });
+
   test("rejects downgraded HTTP origins when X-Forwarded-Proto pins https", async () => {
     const stubContext: Partial<ORPCContext> = {};
 
@@ -747,6 +1045,94 @@ describe("createOrpcServer", () => {
           origin: "https://mux-public.example.com",
           "x-forwarded-host": "mux-public.example.com",
           "x-forwarded-proto": "https",
+        },
+      });
+
+      await waitForWebSocketOpen(ws);
+      await closeWebSocket(ws);
+      ws = null;
+    } finally {
+      ws?.terminate();
+      await server?.close();
+    }
+  });
+
+  test("accepts HTTP WebSocket origins when X-Forwarded-Proto includes multiple hops with leading http", async () => {
+    const stubContext: Partial<ORPCContext> = {};
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+    let ws: WebSocket | null = null;
+
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+      });
+
+      ws = new WebSocket(server.wsUrl, {
+        headers: {
+          origin: server.baseUrl,
+          "x-forwarded-proto": "http,https",
+        },
+      });
+
+      await waitForWebSocketOpen(ws);
+      await closeWebSocket(ws);
+      ws = null;
+    } finally {
+      ws?.terminate();
+      await server?.close();
+    }
+  });
+
+  test("accepts HTTPS WebSocket origins when X-Forwarded-Proto includes multiple hops with trailing https", async () => {
+    const stubContext: Partial<ORPCContext> = {};
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+    let ws: WebSocket | null = null;
+
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+      });
+
+      ws = new WebSocket(server.wsUrl, {
+        headers: {
+          origin: server.baseUrl.replace(/^http:/, "https:"),
+          "x-forwarded-proto": "http,https",
+        },
+      });
+
+      await waitForWebSocketOpen(ws);
+      await closeWebSocket(ws);
+      ws = null;
+    } finally {
+      ws?.terminate();
+      await server?.close();
+    }
+  });
+
+  test("accepts HTTPS WebSocket origins when X-Forwarded-Proto is overwritten to http by downstream proxy", async () => {
+    const stubContext: Partial<ORPCContext> = {};
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+    let ws: WebSocket | null = null;
+
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+      });
+
+      ws = new WebSocket(server.wsUrl, {
+        headers: {
+          origin: "https://mux-public.example.com",
+          "x-forwarded-host": "mux-public.example.com",
+          "x-forwarded-proto": "http",
         },
       });
 
