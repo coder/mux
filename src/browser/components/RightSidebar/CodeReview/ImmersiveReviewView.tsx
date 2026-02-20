@@ -871,12 +871,20 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       // from the overlay's lineHunkIds rather than using the stale selectedHunk.
       let targetHunk = selectedHunk;
       let targetRange = selectedHunkRange;
+      let targetSelectionEnd = selection?.endIndex ?? null;
 
       if (selection && (!targetRange || !isSelectionInsideRange(selection, targetRange))) {
         const resolved = findHunkAtLine(selection.endIndex, overlayData, currentFileHunks);
         if (resolved) {
           targetHunk = resolved.hunk;
           targetRange = resolved.range;
+          targetSelectionEnd = Math.max(
+            resolved.range.startIndex,
+            Math.min(resolved.range.endIndex, selection.endIndex)
+          );
+          // Keep cursor state anchored to the intended target line before
+          // hunk-selection effects run; this avoids snapping to hunk start.
+          setActiveLineIndex(targetSelectionEnd);
           // Keep the selected-hunk state in sync so the externalComposerSelectionRequest
           // memo (which checks inlineComposerRequest.hunkId === selectedHunk.id) works.
           onSelectHunk(resolved.hunk.id);
@@ -887,12 +895,17 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         return;
       }
 
+      const fallbackLineIndex =
+        targetSelectionEnd === null
+          ? targetRange.startIndex
+          : Math.max(targetRange.startIndex, Math.min(targetRange.endIndex, targetSelectionEnd));
+
       const effectiveSelection =
         selection && isSelectionInsideRange(selection, targetRange)
           ? selection
           : {
-              startIndex: targetRange.startIndex,
-              endIndex: targetRange.startIndex,
+              startIndex: fallbackLineIndex,
+              endIndex: fallbackLineIndex,
             };
 
       nextComposerRequestIdRef.current += 1;
@@ -955,9 +968,9 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
   const handleLineIndexSelect = useCallback(
     (lineIndex: number, shiftKey: boolean) => {
-      const lineHunkId = overlayData.lineHunkIds[lineIndex];
-      if (lineHunkId && selectedHunkIdRef.current !== lineHunkId) {
-        onSelectHunk(lineHunkId);
+      const resolvedHunk = findHunkAtLine(lineIndex, overlayData, currentFileHunks);
+      if (resolvedHunk && selectedHunkIdRef.current !== resolvedHunk.hunk.id) {
+        onSelectHunk(resolvedHunk.hunk.id);
       }
 
       const anchorIndex = shiftKey
@@ -971,7 +984,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         setSelectedLineRange(null);
       }
     },
-    [overlayData.lineHunkIds, onSelectHunk]
+    [overlayData, currentFileHunks, onSelectHunk]
   );
 
   // Auto-focus container on mount

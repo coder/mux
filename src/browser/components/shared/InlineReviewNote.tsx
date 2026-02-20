@@ -11,6 +11,7 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { formatLineRangeCompact } from "@/browser/utils/review/lineRange";
 import { matchesKeybind, formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import type { Review } from "@/common/types/review";
 
@@ -121,9 +122,11 @@ export const InlineReviewNote: React.FC<InlineReviewNoteProps> = ({
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (matchesKeybind(e, KEYBINDS.SAVE_EDIT)) {
+        stopKeyboardPropagation(e);
         e.preventDefault();
         handleSaveEdit();
       } else if (matchesKeybind(e, KEYBINDS.CANCEL_EDIT)) {
+        stopKeyboardPropagation(e);
         e.preventDefault();
         handleCancelEdit();
       }

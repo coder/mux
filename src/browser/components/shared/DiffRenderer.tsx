@@ -1182,8 +1182,9 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
           return;
         }
 
-        // Notify parent that this hunk should become active
+        // Notify parent that this hunk should become active.
         onLineClick?.();
+        onLineIndexSelect?.(lineIndex, shiftKey);
 
         const anchor =
           shiftKey && renderSelectionStartIndex !== null ? renderSelectionStartIndex : lineIndex;
@@ -1192,7 +1193,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
         setSelectionInitialNoteText("");
         setSelection({ startIndex: anchor, endIndex: lineIndex });
       },
-      [onLineClick, onReviewNote, renderSelectionStartIndex]
+      [onLineClick, onLineIndexSelect, onReviewNote, renderSelectionStartIndex]
     );
 
     const updateDragSelection = React.useCallback(
@@ -1201,14 +1202,16 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
           return;
         }
 
+        onLineIndexSelect?.(lineIndex, true);
         setSelection({ startIndex: dragAnchorRef.current, endIndex: lineIndex });
       },
-      [isDragging]
+      [isDragging, onLineIndexSelect]
     );
 
     const handleCommentButtonClick = (lineIndex: number, shiftKey: boolean) => {
-      // Notify parent that this hunk should become active
+      // Keep immersive cursor/hunk selection in sync with inline comment actions.
       onLineClick?.();
+      onLineIndexSelect?.(lineIndex, shiftKey);
 
       // Shift-click: extend existing selection
       if (shiftKey && renderSelection) {
