@@ -69,8 +69,8 @@ macOS and Linux.
 </tr>
 <tr>
 <td align="center" width="50%">
-<img src="./docs/img/project-secrets.webp" alt="Screenshot of project secrets" width="100%" /><br>
-<sub>Project secrets help split your Human and Agent identities</sub>
+<img src="./docs/img/auto-mode.webp" alt="Screenshot of auto mode" width="100%" /><br>
+<sub>Auto mode intelligently switches agent types for the best results</sub>
 </td>
 <td align="center" width="50%">
 <img src="./docs/img/costs-tab.webp" alt="Screenshot of costs table" width="100%" /><br>

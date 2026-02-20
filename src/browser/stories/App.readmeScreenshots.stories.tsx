@@ -38,6 +38,7 @@ import {
   LEFT_SIDEBAR_COLLAPSED_KEY,
   RIGHT_SIDEBAR_TAB_KEY,
   RIGHT_SIDEBAR_WIDTH_KEY,
+  getAgentIdKey,
   getRightSidebarLayoutKey,
 } from "@/common/constants/storage";
 import { within, userEvent, waitFor, expect } from "@storybook/test";
@@ -1025,58 +1026,148 @@ graph TD
   },
 };
 
-// README: docs/img/project-secrets.webp
-// The secrets button is opacity-0 behind a Radix Tooltip wrapper, which conflicts
-// with the headless test-runner. The capture script handles modal opening via
-// Playwright, so we skip this story in test-storybook.
-export const ProjectSecretsModal: AppStory = {
-  tags: ["!test"],
+// README: docs/img/auto-mode.webp
+// README now highlights Auto mode instead of project secrets. This story keeps Auto selected
+// and explains that it switches agent types to get the best result for each step.
+export const AutoModeAgentSwitching: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
-        const workspaceId = "ws-secrets";
+        const workspaceId = "ws-auto-mode";
 
-        const workspaces = [
-          createWorkspace({
-            id: workspaceId,
-            name: "feature/secrets",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-          }),
-        ];
+        const workspace = createWorkspace({
+          id: workspaceId,
+          name: "feature/auto-mode",
+          projectName: README_PROJECT_NAME,
+          projectPath: README_PROJECT_PATH,
+        });
+
+        // Persist Auto as the active agent so the picker trigger shows "Auto" immediately.
+        window.localStorage.setItem(getAgentIdKey(workspaceId), JSON.stringify("orchestrator"));
 
         expandProjects([README_PROJECT_PATH]);
-        selectWorkspace(workspaces[0]);
+        selectWorkspace(workspace);
+        collapseRightSidebar();
 
         return createMockORPCClient({
-          projects: groupWorkspacesByProject(workspaces),
-          workspaces,
-          projectSecrets: new Map([
-            [
-              README_PROJECT_PATH,
+          projects: groupWorkspacesByProject([workspace]),
+          workspaces: [workspace],
+          agentDefinitions: [
+            {
+              id: "exec",
+              scope: "built-in",
+              name: "Exec",
+              description: "Implement changes in the repository",
+              uiSelectable: true,
+              subagentRunnable: true,
+              uiColor: "var(--color-exec-mode)",
+            },
+            {
+              id: "plan",
+              scope: "built-in",
+              name: "Plan",
+              description: "Create a plan before coding",
+              uiSelectable: true,
+              subagentRunnable: false,
+              base: "plan",
+              uiColor: "var(--color-plan-mode)",
+            },
+            {
+              id: "ask",
+              scope: "built-in",
+              name: "Ask",
+              description: "Delegate questions to Explore sub-agents and synthesize an answer.",
+              uiSelectable: true,
+              subagentRunnable: false,
+              base: "exec",
+              uiColor: "var(--color-ask-mode)",
+            },
+            {
+              id: "orchestrator",
+              scope: "built-in",
+              name: "Auto",
+              description: "Intelligently switch agent types to provide the best results.",
+              uiSelectable: true,
+              subagentRunnable: false,
+              base: "exec",
+            },
+            {
+              id: "compact",
+              scope: "built-in",
+              name: "Compact",
+              description: "History compaction (internal)",
+              uiSelectable: false,
+              subagentRunnable: false,
+            },
+            {
+              id: "explore",
+              scope: "built-in",
+              name: "Explore",
+              description: "Read-only repository exploration",
+              uiSelectable: false,
+              subagentRunnable: true,
+              base: "exec",
+            },
+            {
+              id: "mux",
+              scope: "built-in",
+              name: "Mux",
+              description: "Configure mux global behavior (system workspace)",
+              uiSelectable: false,
+              subagentRunnable: false,
+            },
+          ],
+          onChat: createOnChatAdapter(
+            new Map([
               [
-                { key: "GITHUB_TOKEN", value: "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" },
-                { key: "OPENAI_API_KEY", value: "sk-proj-xxxxxxxxxxxxxxxxxxxxxxxxxxxx" },
-                { key: "ANTHROPIC_API_KEY", value: "sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxx" },
-                { key: "SENTRY_DSN", value: "https://examplePublicKey@o0.ingest.sentry.io/0" },
+                workspaceId,
+                createStaticChatHandler([
+                  createUserMessage(
+                    "msg-1",
+                    "Can you implement this rollout and decide the best workflow automatically?",
+                    {
+                      historySequence: 1,
+                      timestamp: STABLE_TIMESTAMP - 30_000,
+                    }
+                  ),
+                  createAssistantMessage(
+                    "msg-2",
+                    "Auto mode is enabled. I’ll switch between Plan, Ask, and Exec to provide the best results for each step.",
+                    {
+                      historySequence: 2,
+                      timestamp: STABLE_TIMESTAMP - 20_000,
+                    }
+                  ),
+                  createAssistantMessage(
+                    "msg-3",
+                    "I started with planning and delegated discovery.",
+                    {
+                      historySequence: 3,
+                      timestamp: STABLE_TIMESTAMP - 10_000,
+                      toolCalls: [
+                        createStatusTool(
+                          "call-status-1",
+                          "🔄",
+                          "Auto mode switched from Plan to Ask for repository exploration"
+                        ),
+                      ],
+                    }
+                  ),
+                ]),
               ],
-            ],
-          ]),
+            ])
+          ),
         });
       }}
     />
   ),
   play: async ({ canvasElement }) => {
-    // NOTE: Opening the secrets modal requires clicking an opacity-0 button inside
-    // a Radix Tooltip, which conflicts with the headless test runner (scroll lock +
-    // pointer-events: none). The capture script handles the modal interaction directly
-    // via Playwright. Here we just verify the sidebar rendered with the project row.
+    const canvas = within(canvasElement);
+
     await waitFor(
       () => {
-        const row = canvasElement.querySelector<HTMLElement>(
-          `[data-project-path="${README_PROJECT_PATH}"]`
-        );
-        if (!row) throw new Error("project row not found");
+        canvas.getByRole("button", { name: "Select agent" });
+        canvas.getByText(/Auto mode is enabled/i);
       },
       { timeout: 10_000 }
     );

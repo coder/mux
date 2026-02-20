@@ -89,7 +89,7 @@ If **any** of these fail:
 | `AgentStatusSidebar`             | `agent-status.webp`             | No                      |
 | `GitStatusPopover`               | `git-status.webp`               | Yes (hover + tab click) |
 | `PlanMermaidWithCosts`           | `plan-mermaid.webp`             | No                      |
-| `ProjectSecretsModal`            | `project-secrets.webp`          | Yes (force-click modal) |
+| `AutoModeAgentSwitching`         | `auto-mode.webp`                | Yes (open agent picker) |
 | `CostsTabRich`                   | `costs-tab.webp`                | No                      |
 | `OpportunisticCompactionTooltip` | `opportunistic-compaction.webp` | Yes (hover tooltip)     |
 | `OrchestrateAgents`              | `orchestrate-agents.webp`       | No                      |
@@ -150,21 +150,21 @@ The script:
 
 ### 4. Handle Failures
 
-Stories with `playInteraction` (GitStatusPopover, ProjectSecretsModal,
-OpportunisticCompactionTooltip) can be flaky under sequential load due to Radix
-portal timing. The script retries each up to 3 times. If failures persist:
+Stories with `playInteraction` (GitStatusPopover, AutoModeAgentSwitching,
+OpportunisticCompactionTooltip) can be flaky under sequential load due to UI timing.
+The script retries each up to 3 times. If failures persist:
 
 ```bash
 # Retry individual failed stories
 bun run scripts/capture-readme-screenshots.ts --story GitStatusPopover
-bun run scripts/capture-readme-screenshots.ts --story ProjectSecretsModal
+bun run scripts/capture-readme-screenshots.ts --story AutoModeAgentSwitching
 ```
 
 ### 5. Verify & Commit
 
 ```bash
 # Check all 8 files are present and 3800px wide
-for f in code-review agent-status git-status plan-mermaid project-secrets costs-tab opportunistic-compaction orchestrate-agents; do
+for f in code-review agent-status git-status plan-mermaid auto-mode costs-tab opportunistic-compaction orchestrate-agents; do
   bun -e "const s = require('sharp'); const m = await s('docs/img/${f}.webp').metadata(); console.log('${f}:', m.width + 'x' + m.height)"
 done
 

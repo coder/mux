@@ -116,21 +116,19 @@ const STORIES: StoryDef[] = [
     outputFile: "plan-mermaid.webp",
   },
   {
-    exportName: "ProjectSecretsModal",
-    storyId: `${STORY_ID_PREFIX}project-secrets-modal`,
-    outputFile: "project-secrets.webp",
-    clip: { x: 350, y: 50, width: 1200, height: 900 },
+    exportName: "AutoModeAgentSwitching",
+    storyId: `${STORY_ID_PREFIX}auto-mode-agent-switching`,
+    outputFile: "auto-mode.webp",
+    clip: { x: 100, y: 220, width: 1300, height: 900 },
     playInteraction: async (page: Page) => {
-      // The "Manage secrets" button is hidden until hover. Target the button directly
-      // by its aria-label (which is unique) and force-click to bypass visibility.
-      const manageBtn = page.getByRole("button", { name: "Manage secrets for mux" });
-      await manageBtn.waitFor({ timeout: 30_000 });
-      await manageBtn.click({ force: true });
+      // Open the agent picker so the screenshot shows Auto mode alongside other options.
+      const agentPicker = page.getByRole("button", { name: "Select agent" });
+      await agentPicker.waitFor({ timeout: 30_000 });
+      await agentPicker.click();
 
-      // Wait for the modal to appear with secrets content.
-      // Secret keys are rendered inside <input> elements, so use getByDisplayValue.
-      await page.getByText(/Manage Secrets/i).waitFor({ timeout: 10_000 });
-      await page.locator('input[value="GITHUB_TOKEN"]').waitFor({ timeout: 5_000 });
+      // Wait for the dropdown and Auto option row to appear.
+      await page.getByPlaceholder("Search agents…").waitFor({ timeout: 10_000 });
+      await page.locator('[data-agent-id="orchestrator"]').waitFor({ timeout: 10_000 });
     },
   },
   {
