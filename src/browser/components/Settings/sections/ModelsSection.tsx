@@ -161,13 +161,10 @@ export function ModelsSection() {
 
   // "Treat as" dropdown should only list known models — custom models don't have
   // the metadata (pricing, context window, tokenizer) that mapping inherits.
-  const knownModelIds = useMemo(
-    () =>
-      Object.values(KNOWN_MODELS)
-        .map((model) => model.id)
-        .sort(),
-    []
-  );
+  // Static list — React Compiler handles memoization; no manual useMemo needed.
+  const knownModelIds = Object.values(KNOWN_MODELS)
+    .map((model) => model.id)
+    .sort();
 
   // All models (including hidden) for the settings dropdowns.
   // PolicyService enforces model access on the backend, but we also filter here so users can't
