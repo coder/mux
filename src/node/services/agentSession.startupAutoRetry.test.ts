@@ -196,6 +196,60 @@ describe("AgentSession startup auto-retry recovery", () => {
     session.dispose();
   });
 
+  test("re-runs startup auto-retry check after transient history read failures", async () => {
+    const workspaceId = "startup-retry-history-read-rerun";
+    const { session, historyService, events, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const appendResult = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-1", "user", "Interrupted while history read failed", {
+        timestamp: Date.now(),
+      })
+    );
+    expect(appendResult.success).toBe(true);
+
+    const originalGetLastMessages = historyService.getLastMessages.bind(historyService);
+    let getLastMessagesCalls = 0;
+    historyService.getLastMessages = mock((id: string, count: number) => {
+      getLastMessagesCalls += 1;
+      if (getLastMessagesCalls === 1) {
+        return Promise.resolve({
+          success: false as const,
+          error: "temporary history read failure",
+        });
+      }
+
+      return originalGetLastMessages(id, count);
+    }) as unknown as HistoryService["getLastMessages"];
+
+    const privateSession = session as unknown as {
+      startupAutoRetryCheckPromise: Promise<void> | null;
+      startupAutoRetryCheckScheduled: boolean;
+    };
+
+    session.ensureStartupAutoRetryCheck();
+
+    const firstCheckPromise = privateSession.startupAutoRetryCheckPromise;
+    await firstCheckPromise;
+
+    expect(getLastMessagesCalls).toBeGreaterThanOrEqual(1);
+
+    const deadline = Date.now() + 1500;
+    while (
+      !events.some((event) => event.type === "auto-retry-scheduled") &&
+      Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    expect(getLastMessagesCalls).toBeGreaterThanOrEqual(2);
+    expect(events.some((event) => event.type === "auto-retry-scheduled")).toBe(true);
+    expect(privateSession.startupAutoRetryCheckScheduled).toBe(true);
+
+    session.dispose();
+  });
+
   test("waits for AI streaming to settle before rerunning deferred startup checks", async () => {
     const workspaceId = "startup-retry-wait-stream-settle";
     const { historyService, config, cleanup } = await createTestHistoryService();

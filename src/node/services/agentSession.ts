@@ -1048,7 +1048,7 @@ export class AgentSession {
         workspaceId: this.workspaceId,
         error: historyResult.error,
       });
-      return "completed";
+      return "deferred";
     }
 
     if (partial && this.isPendingAskUserQuestion(partial)) {
