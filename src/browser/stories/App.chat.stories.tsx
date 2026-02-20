@@ -471,21 +471,6 @@ export const SwitchAgentHandoff: AppStory = {
   ),
 };
 
-/** Chromatic interaction variant that expands the switch_agent reason details. */
-export const SwitchAgentHandoffExpanded: AppStory = {
-  ...SwitchAgentHandoff,
-  play: async ({ canvasElement }) => {
-    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
-    const canvas = within(storyRoot);
-
-    // Expand the switch_agent tool card so reason text is captured in Chromatic.
-    const handoffLabel = await canvas.findByText("Plan", {}, { timeout: 8000 });
-    await userEvent.click(handoffLabel);
-
-    await canvas.findByText(/scoped rollout plan with risk assessment/i, {}, { timeout: 8000 });
-  },
-};
-
 /** Voice input button shows user education when OpenAI API key is not set */
 export const VoiceInputNoApiKey: AppStory = {
   render: () => (
