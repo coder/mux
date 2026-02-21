@@ -259,6 +259,7 @@ describe("WorkspaceStore", () => {
       // Recency should still be based on createdAt
       const stateAfterCaughtUp = store.getWorkspaceState(workspaceId);
       expect(stateAfterCaughtUp.recencyTimestamp).toBe(new Date(createdAt).getTime());
+      expect(stateAfterCaughtUp.isHydratingTranscript).toBe(false);
 
       // Verify recency map
       const recency = store.getWorkspaceRecency();
@@ -410,6 +411,7 @@ describe("WorkspaceStore", () => {
             string,
             {
               caughtUp: boolean;
+              isHydratingTranscript: boolean;
               replayingHistory: boolean;
               historicalMessages: WorkspaceChatMessage[];
               pendingStreamEvents: WorkspaceChatMessage[];
@@ -420,6 +422,7 @@ describe("WorkspaceStore", () => {
       expect(transientState).toBeDefined();
 
       transientState!.caughtUp = false;
+      transientState!.isHydratingTranscript = true;
       transientState!.replayingHistory = true;
       transientState!.historicalMessages.push(
         createHistoryMessageEvent("stale-buffered-message", 9)
@@ -438,9 +441,11 @@ describe("WorkspaceStore", () => {
       store.setActiveWorkspaceId("workspace-2");
 
       expect(transientState!.caughtUp).toBe(false);
+      expect(transientState!.isHydratingTranscript).toBe(false);
       expect(transientState!.replayingHistory).toBe(false);
       expect(transientState!.historicalMessages).toHaveLength(0);
       expect(transientState!.pendingStreamEvents).toHaveLength(0);
+      expect(store.getWorkspaceState("workspace-2").isHydratingTranscript).toBe(true);
     });
     it("drops queued chat events from an aborted subscription attempt", async () => {
       const queuedMicrotasks: Array<() => void> = [];
@@ -626,6 +631,7 @@ describe("WorkspaceStore", () => {
         canInterrupt: false,
         isCompacting: false,
         loading: true, // loading because not caught up
+        isHydratingTranscript: true,
         muxMessages: [],
         currentModel: null,
       });

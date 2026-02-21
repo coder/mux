@@ -73,6 +73,7 @@ export interface WorkspaceState {
   isStreamStarting: boolean;
   awaitingUserQuestion: boolean;
   loading: boolean;
+  isHydratingTranscript: boolean;
   hasOlderHistory: boolean;
   loadingOlderHistory: boolean;
   muxMessages: MuxMessage[];
@@ -235,6 +236,7 @@ export interface WorkspaceConsumersState {
 
 interface WorkspaceChatTransientState {
   caughtUp: boolean;
+  isHydratingTranscript: boolean;
   historicalMessages: MuxMessage[];
   pendingStreamEvents: WorkspaceChatMessage[];
   replayingHistory: boolean;
@@ -284,6 +286,7 @@ function createInitialHistoryPaginationState(): WorkspaceHistoryPaginationState 
 function createInitialChatTransientState(): WorkspaceChatTransientState {
   return {
     caughtUp: false,
+    isHydratingTranscript: false,
     historicalMessages: [],
     pendingStreamEvents: [],
     replayingHistory: false,
@@ -928,6 +931,11 @@ export class WorkspaceStore {
 
     if (this.activeOnChatWorkspaceId) {
       const previousActiveWorkspaceId = this.activeOnChatWorkspaceId;
+      const previousTransient = this.chatTransientState.get(previousActiveWorkspaceId);
+      if (previousTransient) {
+        previousTransient.isHydratingTranscript = false;
+      }
+
       // Clear replay buffers before aborting so a fast workspace switch/reopen
       // cannot replay stale buffered rows from the previous subscription attempt.
       this.clearReplayBuffers(previousActiveWorkspaceId);
@@ -941,6 +949,12 @@ export class WorkspaceStore {
     }
 
     if (targetWorkspaceId) {
+      const transient = this.chatTransientState.get(targetWorkspaceId);
+      if (transient) {
+        transient.caughtUp = false;
+        transient.isHydratingTranscript = true;
+      }
+
       const controller = new AbortController();
       this.ipcUnsubscribers.set(targetWorkspaceId, () => controller.abort());
       this.activeOnChatWorkspaceId = targetWorkspaceId;
@@ -1327,6 +1341,8 @@ export class WorkspaceStore {
           ? (activity?.recency ?? null)
           : Math.max(aggregatorRecency, activity?.recency ?? aggregatorRecency);
       const isStreamStarting = pendingStreamStartTime !== null && !canInterrupt;
+      const isHydratingTranscript =
+        isActiveWorkspace && transient.isHydratingTranscript && !transient.caughtUp;
 
       // Live streaming stats
       const activeStreamMessageId = aggregator.getActiveStreamMessageId();
@@ -1346,6 +1362,7 @@ export class WorkspaceStore {
         isStreamStarting,
         awaitingUserQuestion: aggregator.hasAwaitingUserQuestion(),
         loading: !hasMessages && !transient.caughtUp,
+        isHydratingTranscript,
         hasOlderHistory: historyPagination.hasOlder,
         loadingOlderHistory: historyPagination.loading,
         muxMessages: messages,
@@ -2960,6 +2977,7 @@ export class WorkspaceStore {
       }
       // Mark as caught up
       transient.caughtUp = true;
+      transient.isHydratingTranscript = false;
       this.states.bump(workspaceId);
       this.checkAndBumpRecencyIfChanged(); // Messages loaded, update recency
 

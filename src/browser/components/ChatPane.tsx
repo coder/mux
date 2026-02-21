@@ -254,6 +254,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     isCompacting,
     isStreamStarting,
     loading,
+    isHydratingTranscript,
     hasOlderHistory,
     loadingOlderHistory,
   } = workspaceState;
@@ -607,9 +608,9 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     : null;
 
   const hasInterruptedStream = interruption?.hasInterruptedStream ?? false;
-  const showRetryBarrier = workspaceState
-    ? !workspaceState.canInterrupt && hasInterruptedStream
-    : false;
+  const showTranscriptHydrationPlaceholder = isHydratingTranscript;
+  const showRetryBarrier =
+    !showTranscriptHydrationPlaceholder && !workspaceState.canInterrupt && hasInterruptedStream;
 
   const lastActionableMessage = getLastNonDecorativeMessage(workspaceState.messages);
   const suppressRetryBarrier =
@@ -617,7 +618,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     lastActionableMessage.errorType === "context_exceeded";
   // Keep RetryBarrier mounted (but visually hidden) while a resumed stream is in flight
   // so its temporary auto-retry rollback effect can observe terminal stream outcomes.
-  const shouldMountRetryBarrier = hasInterruptedStream && !suppressRetryBarrier;
+  const shouldMountRetryBarrier =
+    !showTranscriptHydrationPlaceholder && hasInterruptedStream && !suppressRetryBarrier;
   const showRetryBarrierUI = showRetryBarrier && !suppressRetryBarrier;
 
   const handleLoadOlderHistory = useCallback(() => {
@@ -733,18 +735,29 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               onContextMenu={handleTranscriptContextMenu}
               role="log"
               aria-live={canInterrupt ? "polite" : "off"}
-              aria-busy={canInterrupt}
+              aria-busy={canInterrupt || isHydratingTranscript}
               aria-label="Conversation transcript"
               tabIndex={0}
               data-testid="message-window"
-              data-loaded={!loading}
+              data-loaded={!loading && !isHydratingTranscript}
               className="h-full overflow-x-hidden overflow-y-auto p-[15px] leading-[1.5] break-words whitespace-pre-wrap"
             >
               <div
                 ref={innerRef}
-                className={cn("max-w-4xl mx-auto", deferredMessages.length === 0 && "h-full")}
+                className={cn(
+                  "max-w-4xl mx-auto",
+                  (showTranscriptHydrationPlaceholder || deferredMessages.length === 0) && "h-full"
+                )}
               >
-                {deferredMessages.length === 0 ? (
+                {showTranscriptHydrationPlaceholder ? (
+                  <div
+                    data-testid="transcript-hydration-placeholder"
+                    className="text-placeholder flex h-full flex-1 flex-col items-center justify-center text-center [&_h3]:m-0 [&_h3]:mb-2.5 [&_h3]:text-base [&_h3]:font-medium [&_p]:m-0 [&_p]:text-[13px]"
+                  >
+                    <h3>Loading transcript...</h3>
+                    <p>Syncing recent messages for this workspace</p>
+                  </div>
+                ) : deferredMessages.length === 0 ? (
                   <div className="text-placeholder flex h-full flex-1 flex-col items-center justify-center text-center [&_h3]:m-0 [&_h3]:mb-2.5 [&_h3]:text-base [&_h3]:font-medium [&_p]:m-0 [&_p]:text-[13px]">
                     <h3>No Messages Yet</h3>
                     <p>Send a message below to begin</p>

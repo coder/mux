@@ -120,7 +120,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
       return contentElement;
     }
 
-    // Completed text renders as static content
+    // Completed text renders as static content so hydrated history never replays via typewriter.
     return content ? (
       showRaw ? (
         <div className="relative">
