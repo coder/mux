@@ -34,6 +34,9 @@ const enrollmentDrainState = {
 // Exported for testing only.
 export const pendingGatewayModelsUntilHydrated = {
   models: null as string[] | null,
+  inFlight: false,
+  retryTimer: null as number | null,
+  retryDelayMs: 250,
 };
 // ============================================================================
 // Pure utility functions (no side effects, used for message sending)
@@ -233,12 +236,8 @@ export function useGateway(): GatewayState {
   }, [gwConfig, updateOptimistically]);
 
   const persistGatewayPrefs = useCallback(
-    (nextEnabled: boolean, nextModels: string[]): boolean => {
-      if (!api?.config?.updateMuxGatewayPrefs) {
-        return false;
-      }
-
-      api.config
+    (nextEnabled: boolean, nextModels: string[]) => {
+      api?.config
         .updateMuxGatewayPrefs({
           muxGatewayEnabled: nextEnabled,
           muxGatewayModels: nextModels,
@@ -246,10 +245,69 @@ export function useGateway(): GatewayState {
         .catch(() => {
           // Best-effort only.
         });
-
-      return true;
     },
     [api]
+  );
+
+  const schedulePendingGatewayModelsRetry = useCallback(() => {
+    if (pendingGatewayModelsUntilHydrated.retryTimer != null || typeof window === "undefined") {
+      return;
+    }
+
+    const delayMs = pendingGatewayModelsUntilHydrated.retryDelayMs;
+    pendingGatewayModelsUntilHydrated.retryDelayMs = Math.min(delayMs * 2, 5_000);
+    pendingGatewayModelsUntilHydrated.retryTimer = window.setTimeout(() => {
+      pendingGatewayModelsUntilHydrated.retryTimer = null;
+      window.dispatchEvent(new Event(ENROLLMENT_PENDING_EVENT));
+    }, delayMs);
+  }, []);
+
+  const flushPendingGatewayModels = useCallback(
+    (persistedEnabled: boolean) => {
+      const pendingModels = pendingGatewayModelsUntilHydrated.models;
+      if (!pendingModels || pendingGatewayModelsUntilHydrated.inFlight) {
+        return;
+      }
+
+      if (!api?.config?.updateMuxGatewayPrefs) {
+        return;
+      }
+
+      pendingGatewayModelsUntilHydrated.inFlight = true;
+      let persistFailed = false;
+
+      api.config
+        .updateMuxGatewayPrefs({
+          muxGatewayEnabled: persistedEnabled,
+          muxGatewayModels: pendingModels,
+        })
+        .then(() => {
+          if (pendingGatewayModelsUntilHydrated.models === pendingModels) {
+            pendingGatewayModelsUntilHydrated.models = null;
+          }
+
+          pendingGatewayModelsUntilHydrated.retryDelayMs = 250;
+          if (pendingGatewayModelsUntilHydrated.retryTimer != null) {
+            window.clearTimeout(pendingGatewayModelsUntilHydrated.retryTimer);
+            pendingGatewayModelsUntilHydrated.retryTimer = null;
+          }
+        })
+        .catch(() => {
+          persistFailed = true;
+          // Keep queued models and retry with bounded backoff.
+          schedulePendingGatewayModelsRetry();
+        })
+        .finally(() => {
+          pendingGatewayModelsUntilHydrated.inFlight = false;
+
+          // If models changed while this write was in flight, persist the latest
+          // snapshot immediately after a successful write.
+          if (!persistFailed && pendingGatewayModelsUntilHydrated.models != null) {
+            window.dispatchEvent(new Event(ENROLLMENT_PENDING_EVENT));
+          }
+        });
+    },
+    [api, schedulePendingGatewayModelsRetry]
   );
 
   // Drain pending gateway enrollments from migrateGatewayModel.
@@ -327,38 +385,31 @@ export function useGateway(): GatewayState {
       // per-model toggle, and "enable all") persist from one config snapshot.
       updateOptimistically("mux-gateway", { gatewayModels: nextModels });
 
+      // Always queue the latest desired model set. We clear this only after a
+      // successful IPC write so reconnect/transient failures can retry safely.
+      pendingGatewayModelsUntilHydrated.models = nextModels;
+
       const persistedEnabled = gwConfig?.isEnabled;
       if (persistedEnabled == null) {
         // Do not guess enabled-state before hydration. Persist once gwConfig is
         // available so we don't accidentally flip a user-disabled gateway on.
-        pendingGatewayModelsUntilHydrated.models = nextModels;
         return;
       }
 
-      if (!persistGatewayPrefs(persistedEnabled, nextModels)) {
-        pendingGatewayModelsUntilHydrated.models = nextModels;
-        return;
-      }
-
-      pendingGatewayModelsUntilHydrated.models = null;
+      flushPendingGatewayModels(persistedEnabled);
     },
-    [gwConfig?.isEnabled, persistGatewayPrefs, updateOptimistically]
+    [flushPendingGatewayModels, gwConfig?.isEnabled, updateOptimistically]
   );
 
   // Flush any deferred model enrollment now that gateway enabled-state is known.
   useEffect(() => {
-    const pendingModels = pendingGatewayModelsUntilHydrated.models;
     const persistedEnabled = gwConfig?.isEnabled;
-    if (!pendingModels || persistedEnabled == null) {
+    if (persistedEnabled == null || pendingGatewayModelsUntilHydrated.models == null) {
       return;
     }
 
-    if (!persistGatewayPrefs(persistedEnabled, pendingModels)) {
-      return;
-    }
-
-    pendingGatewayModelsUntilHydrated.models = null;
-  }, [gwConfig?.isEnabled, persistGatewayPrefs]);
+    flushPendingGatewayModels(persistedEnabled);
+  }, [flushPendingGatewayModels, gwConfig?.isEnabled, enrollVersion]);
 
   const modelUsesGateway = useCallback(
     (modelId: string) => enabledModels.includes(modelId),

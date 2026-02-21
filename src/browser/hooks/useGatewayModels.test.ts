@@ -65,7 +65,13 @@ describe("useGateway", () => {
     globalThis.document = globalThis.window.document;
     optimisticUpdates = [];
     pendingGatewayEnrollments.clear();
+    if (pendingGatewayModelsUntilHydrated.retryTimer != null) {
+      window.clearTimeout(pendingGatewayModelsUntilHydrated.retryTimer);
+    }
     pendingGatewayModelsUntilHydrated.models = null;
+    pendingGatewayModelsUntilHydrated.inFlight = false;
+    pendingGatewayModelsUntilHydrated.retryTimer = null;
+    pendingGatewayModelsUntilHydrated.retryDelayMs = 250;
     updateMuxGatewayPrefsMock.mockClear();
     apiAvailable = true;
     mockConfig = {
@@ -80,7 +86,13 @@ describe("useGateway", () => {
   afterEach(() => {
     cleanup();
     pendingGatewayEnrollments.clear();
+    if (pendingGatewayModelsUntilHydrated.retryTimer != null) {
+      window.clearTimeout(pendingGatewayModelsUntilHydrated.retryTimer);
+    }
     pendingGatewayModelsUntilHydrated.models = null;
+    pendingGatewayModelsUntilHydrated.inFlight = false;
+    pendingGatewayModelsUntilHydrated.retryTimer = null;
+    pendingGatewayModelsUntilHydrated.retryDelayMs = 250;
     apiAvailable = true;
     globalThis.window = undefined as unknown as Window & typeof globalThis;
     globalThis.document = undefined as unknown as Document;
@@ -200,6 +212,46 @@ describe("useGateway", () => {
 
     expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(1);
     expect(updateMuxGatewayPrefsMock).toHaveBeenCalledWith({
+      muxGatewayEnabled: false,
+      muxGatewayModels: ["anthropic:claude-opus-4-5"],
+    });
+  });
+
+  test("retries deferred model persistence after IPC rejection", async () => {
+    mockConfig = null;
+    updateMuxGatewayPrefsMock.mockImplementationOnce(() => Promise.reject(new Error("IPC failed")));
+
+    const { result, rerender } = renderHook(() => useGateway());
+
+    act(() => {
+      result.current.setEnabledModels(["anthropic:claude-opus-4-5"]);
+    });
+
+    mockConfig = {
+      "mux-gateway": {
+        couponCodeSet: true,
+        isEnabled: false,
+        gatewayModels: [],
+      },
+    };
+
+    act(() => {
+      rerender();
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(1);
+    expect(pendingGatewayModelsUntilHydrated.models).toEqual(["anthropic:claude-opus-4-5"]);
+
+    act(() => {
+      window.dispatchEvent(new Event("mux:gatewayEnrollmentPending"));
+    });
+
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(2);
+    expect(updateMuxGatewayPrefsMock).toHaveBeenLastCalledWith({
       muxGatewayEnabled: false,
       muxGatewayModels: ["anthropic:claude-opus-4-5"],
     });
