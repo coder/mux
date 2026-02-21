@@ -560,7 +560,7 @@ export const AgentStatusSidebar: AppStory = {
                 toolCalls: [
                   createStatusTool(
                     "call-1",
-                    "📸",
+                    "🔧",
                     "Regenerating README screenshots and validating Chromatic diffs",
                     "https://github.com/coder/mux/pull/2035"
                   ),
@@ -1206,7 +1206,7 @@ export const ContextManagementDialog: AppStory = {
                       toolCalls: [
                         createStatusTool(
                           "call-status-1",
-                          "⚙️",
+                          "🔧",
                           "Reviewing context usage and idle compaction settings"
                         ),
                       ],
