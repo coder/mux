@@ -376,13 +376,54 @@ async function writeWatermark(
   );
 }
 
-async function insertEvents(conn: DuckDBConnection, events: IngestEvent[]): Promise<void> {
+async function replaceEventsByResponseIndex(
+  conn: DuckDBConnection,
+  workspaceId: string,
+  events: IngestEvent[]
+): Promise<void> {
   if (events.length === 0) {
     return;
   }
 
+  const responseIndexes: number[] = [];
+  const seenResponseIndexes = new Set<number>();
+
+  for (const event of events) {
+    const row = event.row;
+    assert(
+      row.workspace_id === workspaceId,
+      "replaceEventsByResponseIndex: all rows must belong to the target workspace"
+    );
+    const responseIndex = row.response_index;
+    assert(responseIndex !== null, "replaceEventsByResponseIndex: response_index must be present");
+    assert(
+      Number.isInteger(responseIndex),
+      "replaceEventsByResponseIndex: response_index must be an integer"
+    );
+    if (seenResponseIndexes.has(responseIndex)) {
+      continue;
+    }
+
+    seenResponseIndexes.add(responseIndex);
+    responseIndexes.push(responseIndex);
+  }
+
+  assert(
+    responseIndexes.length > 0,
+    "replaceEventsByResponseIndex: non-empty events must include response indexes"
+  );
+
+  const placeholders = responseIndexes.map(() => "?").join(", ");
+
   await conn.run("BEGIN TRANSACTION");
   try {
+    // response_index is stable for in-place rewrites, so delete before insert to
+    // ensure rewritten rows replace stale analytics entries instead of appending.
+    await conn.run(
+      `DELETE FROM events WHERE workspace_id = ? AND response_index IN (${placeholders})`,
+      [workspaceId, ...responseIndexes]
+    );
+
     for (const event of events) {
       const row = event.row;
       await conn.run(INSERT_EVENT_SQL, [
@@ -481,14 +522,16 @@ export async function ingestWorkspace(
     responseIndex += 1;
     maxSequence = Math.max(maxSequence, event.sequence);
 
-    if (event.sequence <= watermark.lastSequence) {
+    // Include the current watermark sequence so in-place rewrites with the same
+    // historySequence refresh stale analytics rows instead of getting skipped forever.
+    if (event.sequence < watermark.lastSequence) {
       continue;
     }
 
     eventsToInsert.push(event);
   }
 
-  await insertEvents(conn, eventsToInsert);
+  await replaceEventsByResponseIndex(conn, workspaceId, eventsToInsert);
 
   await writeWatermark(conn, workspaceId, {
     lastSequence: maxSequence,
