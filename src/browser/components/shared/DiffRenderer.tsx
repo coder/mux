@@ -996,6 +996,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     const [selectionInitialNoteText, setSelectionInitialNoteText] = React.useState("");
 
     const lastExternalSelectionRequestIdRef = React.useRef<number | null>(null);
+    const dismissedExternalSelectionRequestIdRef = React.useRef<number | null>(null);
 
     React.useEffect(() => {
       if (!externalSelectionRequest) {
@@ -1004,6 +1005,12 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
           setSelection(null);
           setSelectionInitialNoteText("");
         }
+        return;
+      }
+
+      // If the composer was closed for this request ID, keep it dismissed even
+      // if the parent prop lingers and re-renders before clearing.
+      if (dismissedExternalSelectionRequestIdRef.current === externalSelectionRequest.requestId) {
         return;
       }
 
@@ -1223,12 +1230,18 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
 
     const handleSubmitNote = (data: ReviewNoteData) => {
       if (!onReviewNote) return;
+      if (externalSelectionRequest) {
+        dismissedExternalSelectionRequestIdRef.current = externalSelectionRequest.requestId;
+      }
       onReviewNote(data);
       setSelection(null);
       setSelectionInitialNoteText("");
     };
 
     const handleCancelNote = () => {
+      if (externalSelectionRequest) {
+        dismissedExternalSelectionRequestIdRef.current = externalSelectionRequest.requestId;
+      }
       setSelection(null);
       setSelectionInitialNoteText("");
     };
