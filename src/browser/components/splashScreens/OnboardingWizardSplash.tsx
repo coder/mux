@@ -264,12 +264,12 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
         .then(() => {
           if (pendingGatewayDefaultEnrollmentRef.current?.version === version) {
             pendingGatewayDefaultEnrollmentRef.current = null;
-          }
 
-          gatewayDefaultEnrollmentRetryDelayRef.current = 250;
-          if (gatewayDefaultEnrollmentRetryTimerRef.current != null) {
-            window.clearTimeout(gatewayDefaultEnrollmentRetryTimerRef.current);
-            gatewayDefaultEnrollmentRetryTimerRef.current = null;
+            gatewayDefaultEnrollmentRetryDelayRef.current = 250;
+            if (gatewayDefaultEnrollmentRetryTimerRef.current != null) {
+              window.clearTimeout(gatewayDefaultEnrollmentRetryTimerRef.current);
+              gatewayDefaultEnrollmentRetryTimerRef.current = null;
+            }
           }
         })
         .catch(() => {
