@@ -69,8 +69,12 @@ export function formatBucketLabel(bucket: string): string {
     });
   }
 
+  // Date-only buckets (YYYY-MM-DD) are UTC midnight. Render with
+  // timeZone: "UTC" so west-of-UTC locales don't shift the displayed day
+  // (e.g. 2026-02-01 showing as "Jan 31" in PST).
   return parsedDate.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
+    timeZone: "UTC",
   });
 }
