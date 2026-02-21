@@ -4235,11 +4235,14 @@ export class AgentSession {
     const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
     const targetAgentSettings =
       metadataResult.success === true
-        ? (metadataResult.data.aiSettingsByAgent?.[targetAgentId] ?? metadataResult.data.aiSettings)
+        ? metadataResult.data.aiSettingsByAgent?.[targetAgentId]
         : undefined;
+    const workspaceAiSettings =
+      metadataResult.success === true ? metadataResult.data.aiSettings : undefined;
 
     const normalizedTargetModel = targetAgentSettings?.model?.trim();
     const normalizedOptionModel = currentOptions?.model?.trim();
+    const normalizedWorkspaceModel = workspaceAiSettings?.model?.trim();
     const effectiveModel =
       (normalizedTargetModel != null && normalizedTargetModel.length > 0
         ? normalizedTargetModel
@@ -4247,10 +4250,15 @@ export class AgentSession {
       (normalizedOptionModel != null && normalizedOptionModel.length > 0
         ? normalizedOptionModel
         : undefined) ??
+      (normalizedWorkspaceModel != null && normalizedWorkspaceModel.length > 0
+        ? normalizedWorkspaceModel
+        : undefined) ??
       fallbackModel.trim();
 
     const effectiveThinkingLevel =
-      targetAgentSettings?.thinkingLevel ?? currentOptions?.thinkingLevel;
+      targetAgentSettings?.thinkingLevel ??
+      currentOptions?.thinkingLevel ??
+      workspaceAiSettings?.thinkingLevel;
 
     // Build follow-up options from an explicit allowlist.
     // Exclude edit-only fields (editMessageId) to prevent the synthetic

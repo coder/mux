@@ -124,7 +124,14 @@ describe("AgentSession switch_agent target validation", () => {
     const { historyService, cleanup } = await createTestHistoryService();
     historyCleanup = cleanup;
 
-    const session = createSession(historyService, projectDir.path, projectDir.path);
+    const session = createSession(historyService, projectDir.path, projectDir.path, {
+      // Legacy workspace aiSettings should not override the active stream
+      // when switch_agent has no explicit target-agent override.
+      aiSettings: {
+        model: "openai:gpt-4.1",
+        thinkingLevel: "high",
+      },
+    });
 
     try {
       const internals = session as unknown as SessionInternals;
