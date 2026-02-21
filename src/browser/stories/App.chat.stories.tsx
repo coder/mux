@@ -39,11 +39,15 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/browser/components/ui/tooltip";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 export default {
   ...appMeta,
   title: "App/Chat",
 };
+
+const DEFAULT_AGENT_LABEL =
+  WORKSPACE_DEFAULTS.agentId.slice(0, 1).toUpperCase() + WORKSPACE_DEFAULTS.agentId.slice(1);
 
 /** Chat showing loaded skills via agent_skill_read tool calls */
 export const WithLoadedSkills: AppStory = {
@@ -1048,7 +1052,7 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
     const canvas = within(canvasElement);
 
     // Wait for chat input to mount.
-    await canvas.findAllByText("Exec", {}, { timeout: 15000 });
+    await canvas.findAllByText(DEFAULT_AGENT_LABEL, {}, { timeout: 15000 });
 
     // With gateway enabled, we should still display the *pretty* model name.
     // CI can take longer than the default waitFor timeout while workspace/model
@@ -1133,7 +1137,7 @@ export const ModelSelectorDropdownOpen: AppStory = {
     const canvas = within(canvasElement);
 
     // Wait for chat input to mount
-    await canvas.findAllByText("Exec", {}, { timeout: 15000 });
+    await canvas.findAllByText(DEFAULT_AGENT_LABEL, {}, { timeout: 15000 });
 
     // Wait for model selector to be clickable (shows pretty name "GPT-4o")
     const modelSelector = await waitFor(() => {

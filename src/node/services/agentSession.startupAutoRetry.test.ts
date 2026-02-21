@@ -12,6 +12,7 @@ import { createMuxMessage } from "@/common/types/message";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { Ok } from "@/common/types/result";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 interface SessionBundle {
   session: AgentSession;
@@ -34,7 +35,10 @@ async function createSessionBundle(workspaceId: string): Promise<SessionBundle> 
     projectPath: "/tmp/project",
     runtimeConfig: DEFAULT_RUNTIME_CONFIG,
     aiSettingsByAgent: {
-      exec: { model: "anthropic:claude-sonnet-4-5", thinkingLevel: "medium" },
+      [WORKSPACE_DEFAULTS.agentId]: {
+        model: "anthropic:claude-sonnet-4-5",
+        thinkingLevel: "medium",
+      },
     },
   };
 
@@ -145,7 +149,7 @@ describe("AgentSession startup auto-retry recovery", () => {
       throw new Error("Expected startup auto-retry options to be captured");
     }
     expect(retryOptions.model).toBe("anthropic:claude-sonnet-4-5");
-    expect(retryOptions.agentId).toBe("exec");
+    expect(retryOptions.agentId).toBe(WORKSPACE_DEFAULTS.agentId);
     expect(retryOptions.toolPolicy).toEqual([{ regex_match: ".*", action: "disable" }]);
     expect(retryOptions.disableWorkspaceAgents).toBe(true);
 
