@@ -395,6 +395,13 @@ function isCostsIncludedEntry(
     return true;
   }
 
+  // Unknown-cost rows are not gateway-billed by definition; they indicate
+  // missing pricing metadata and should be eligible for repricing when a
+  // mapping is later configured.
+  if (usage.hasUnknownCosts === true) {
+    return false;
+  }
+
   // Backward-compatibility: older session-usage.json entries may have been
   // gateway-billed with all costs explicitly zeroed before the costsIncluded
   // marker was persisted. Treat those all-zero entries as costs-included so
