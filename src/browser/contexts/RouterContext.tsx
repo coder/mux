@@ -20,6 +20,8 @@ export interface RouterContext {
   navigateToHome: () => void;
   navigateToSettings: (section?: string) => void;
   navigateFromSettings: () => void;
+  navigateToAnalytics: () => void;
+  navigateFromAnalytics: () => void;
   currentWorkspaceId: string | null;
 
   /** Settings section from URL (null when not on settings page). */
@@ -36,6 +38,9 @@ export interface RouterContext {
 
   /** Draft ID for UI-only workspace creation drafts (from URL) */
   pendingDraftId: string | null;
+
+  /** True when the analytics dashboard route is active. */
+  isAnalyticsOpen: boolean;
 }
 
 const RouterContext = createContext<RouterContext | undefined>(undefined);
@@ -114,13 +119,14 @@ function RouterContextInner(props: { children: ReactNode }) {
     location.pathname === "/project" ? getProjectPathFromLocationState(location.state) : null;
   const settingsMatch = /^\/settings\/([^/]+)$/.exec(location.pathname);
   const currentSettingsSection = settingsMatch ? decodeURIComponent(settingsMatch[1]) : null;
+  const isAnalyticsOpen = location.pathname === "/analytics";
 
   interface NonSettingsLocationSnapshot {
     url: string;
     state: unknown;
   }
 
-  // When leaving settings, we need to restore the *full* previous location including
+  // When leaving settings or analytics, we need to restore the *full* previous location including
   // any in-memory navigation state (e.g. /project relies on { projectPath } state, and
   // the legacy ?path= deep link rewrite stores that path in location.state).
   const lastNonSettingsLocationRef = useRef<NonSettingsLocationSnapshot>({
@@ -128,7 +134,7 @@ function RouterContextInner(props: { children: ReactNode }) {
     state: null,
   });
   useEffect(() => {
-    if (!location.pathname.startsWith("/settings")) {
+    if (!location.pathname.startsWith("/settings") && location.pathname !== "/analytics") {
       lastNonSettingsLocationRef.current = {
         url: location.pathname + location.search,
         state: location.state,
@@ -194,7 +200,28 @@ function RouterContextInner(props: { children: ReactNode }) {
 
   const navigateFromSettings = useCallback(() => {
     const lastLocation = lastNonSettingsLocationRef.current;
-    if (!lastLocation.url || lastLocation.url.startsWith("/settings")) {
+    if (
+      !lastLocation.url ||
+      lastLocation.url.startsWith("/settings") ||
+      lastLocation.url === "/analytics"
+    ) {
+      void navigateRef.current("/");
+      return;
+    }
+    void navigateRef.current(lastLocation.url, { state: lastLocation.state });
+  }, []);
+
+  const navigateToAnalytics = useCallback(() => {
+    void navigateRef.current("/analytics");
+  }, []);
+
+  const navigateFromAnalytics = useCallback(() => {
+    const lastLocation = lastNonSettingsLocationRef.current;
+    if (
+      !lastLocation.url ||
+      lastLocation.url.startsWith("/settings") ||
+      lastLocation.url === "/analytics"
+    ) {
       void navigateRef.current("/");
       return;
     }
@@ -208,18 +235,23 @@ function RouterContextInner(props: { children: ReactNode }) {
       navigateToHome,
       navigateToSettings,
       navigateFromSettings,
+      navigateToAnalytics,
+      navigateFromAnalytics,
       currentWorkspaceId,
       currentSettingsSection,
       currentProjectId,
       currentProjectPathFromState,
       pendingSectionId,
       pendingDraftId,
+      isAnalyticsOpen,
     }),
     [
       navigateToHome,
       navigateToProject,
       navigateToSettings,
       navigateFromSettings,
+      navigateToAnalytics,
+      navigateFromAnalytics,
       navigateToWorkspace,
       currentWorkspaceId,
       currentSettingsSection,
@@ -227,6 +259,7 @@ function RouterContextInner(props: { children: ReactNode }) {
       currentProjectPathFromState,
       pendingSectionId,
       pendingDraftId,
+      isAnalyticsOpen,
     ]
   );
 

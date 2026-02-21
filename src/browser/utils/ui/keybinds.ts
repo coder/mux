@@ -404,6 +404,10 @@ export const KEYBINDS = {
   // macOS: Cmd+, Win/Linux: Ctrl+,
   OPEN_SETTINGS: { key: ",", ctrl: true },
 
+  /** Open analytics dashboard */
+  // macOS: Cmd+., Win/Linux: Ctrl+.
+  OPEN_ANALYTICS: { key: ".", ctrl: true },
+
   /** Toggle voice input (dictation) */
   // macOS: Cmd+D, Win/Linux: Ctrl+D
   // "D" for Dictate - intuitive and available

@@ -68,6 +68,7 @@ import { AboutDialogProvider } from "./contexts/AboutDialogContext";
 import { ConfirmDialogProvider, useConfirmDialog } from "./contexts/ConfirmDialogContext";
 import { AboutDialog } from "./components/About/AboutDialog";
 import { SettingsPage } from "@/browser/components/Settings/SettingsPage";
+import { AnalyticsDashboard } from "@/browser/components/analytics/AnalyticsDashboard";
 import { MuxGatewaySessionExpiredDialog } from "./components/MuxGatewaySessionExpiredDialog";
 import { SshPromptDialog } from "./components/SshPromptDialog";
 import { SplashScreenProvider } from "./components/splashScreens/SplashScreenProvider";
@@ -103,7 +104,13 @@ function AppInner() {
     pendingNewWorkspaceDraftId,
     beginWorkspaceCreation,
   } = useWorkspaceContext();
-  const { currentWorkspaceId, currentSettingsSection } = useRouter();
+  const {
+    currentWorkspaceId,
+    currentSettingsSection,
+    isAnalyticsOpen,
+    navigateToAnalytics,
+    navigateFromAnalytics,
+  } = useRouter();
   const { theme, setTheme, toggleTheme } = useTheme();
   const { open: openSettings, isOpen: isSettingsOpen } = useSettings();
   const { confirm: confirmDialog } = useConfirmDialog();
@@ -701,6 +708,16 @@ function AppInner() {
       } else if (matchesKeybind(e, KEYBINDS.OPEN_SETTINGS)) {
         e.preventDefault();
         openSettings();
+      } else if (matchesKeybind(e, KEYBINDS.OPEN_ANALYTICS)) {
+        e.preventDefault();
+        // KEYBINDS.OPEN_ANALYTICS currently overlaps KEYBINDS.CYCLE_AGENT.
+        // Stop immediate propagation so cycling agents doesn't also fire when toggling analytics.
+        e.stopImmediatePropagation();
+        if (isAnalyticsOpen) {
+          navigateFromAnalytics();
+        } else {
+          navigateToAnalytics();
+        }
       } else if (matchesKeybind(e, KEYBINDS.NAVIGATE_BACK)) {
         e.preventDefault();
         void navigate(-1);
@@ -720,6 +737,9 @@ function AppInner() {
     closeCommandPalette,
     openCommandPalette,
     openSettings,
+    isAnalyticsOpen,
+    navigateToAnalytics,
+    navigateFromAnalytics,
     navigate,
   ]);
   // Mouse back/forward buttons (buttons 3 and 4)
@@ -957,8 +977,13 @@ function AppInner() {
           <WindowsToolchainBanner />
           <RosettaBanner />
           <div className="mobile-layout flex flex-1 overflow-hidden">
-            {/* Route-driven settings render in the main pane so project/workspace navigation stays visible. */}
-            {currentSettingsSection ? (
+            {/* Route-driven settings and analytics render in the main pane so project/workspace navigation stays visible. */}
+            {isAnalyticsOpen ? (
+              <AnalyticsDashboard
+                leftSidebarCollapsed={sidebarCollapsed}
+                onToggleLeftSidebarCollapsed={handleToggleSidebar}
+              />
+            ) : currentSettingsSection ? (
               <SettingsPage
                 leftSidebarCollapsed={sidebarCollapsed}
                 onToggleLeftSidebarCollapsed={handleToggleSidebar}

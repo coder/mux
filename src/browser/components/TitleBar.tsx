@@ -3,15 +3,26 @@ import { cn } from "@/common/lib/utils";
 import { VERSION } from "@/version";
 import { SettingsButton } from "./SettingsButton";
 import { GatewayIcon } from "./icons/GatewayIcon";
+import { Button } from "./ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import type { UpdateStatus } from "@/common/orpc/types";
-import { AlertTriangle, Download, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import {
+  AlertTriangle,
+  BarChart3,
+  Download,
+  Loader2,
+  RefreshCw,
+  ShieldCheck,
+  X,
+} from "lucide-react";
 
 import { useAPI } from "@/browser/contexts/API";
 import { useAboutDialog } from "@/browser/contexts/AboutDialogContext";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
+import { useRouter } from "@/browser/contexts/RouterContext";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useGateway } from "@/browser/hooks/useGatewayModels";
+import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import {
   formatMuxGatewayBalance,
   useMuxGatewayAccountStatus,
@@ -58,6 +69,7 @@ export function TitleBar(props: TitleBarProps) {
   const policyState = usePolicy();
   const policyEnforced = policyState.status.state === "enforced";
   const { open: openSettings } = useSettings();
+  const { isAnalyticsOpen, navigateToAnalytics, navigateFromAnalytics } = useRouter();
   const gateway = useGateway();
   const {
     data: muxGatewayAccountStatus,
@@ -239,6 +251,35 @@ export function TitleBar(props: TitleBarProps) {
             <TooltipContent align="end">Your settings are controlled by a policy.</TooltipContent>
           </Tooltip>
         )}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                if (isAnalyticsOpen) {
+                  navigateFromAnalytics();
+                  return;
+                }
+                navigateToAnalytics();
+              }}
+              className="border-border-light text-muted-foreground hover:border-border-medium/80 hover:bg-toggle-bg/70 h-5 w-5 border"
+              aria-label={isAnalyticsOpen ? "Close analytics" : "Open analytics"}
+              data-testid="analytics-button"
+            >
+              {isAnalyticsOpen ? (
+                <X className="h-3.5 w-3.5" aria-hidden />
+              ) : (
+                <BarChart3 className="h-3.5 w-3.5" aria-hidden />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {isAnalyticsOpen
+              ? "Close analytics"
+              : `Open analytics (${formatKeybind(KEYBINDS.OPEN_ANALYTICS)})`}
+          </TooltipContent>
+        </Tooltip>
         <SettingsButton
           // On touch/mobile, opening settings from the sidebar should also dismiss the
           // off-canvas sidebar so users are not stuck with it covering the settings page.
