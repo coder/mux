@@ -1,8 +1,5 @@
-import { readFileSync, existsSync } from "fs";
-
 import { getMuxExtensionMetadataPath } from "@/common/constants/paths";
-import { isThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
-import { log } from "@/node/services/log";
+import type { ThinkingLevel } from "@/common/types/thinking";
 
 /**
  * Extension metadata for a single workspace.
@@ -41,7 +38,11 @@ export function getExtensionMetadataPath(rootDir?: string): string {
   return getMuxExtensionMetadataPath(rootDir);
 }
 
-function coerceAgentStatus(value: unknown): ExtensionAgentStatus | null {
+/**
+ * Coerce an unknown value into a valid ExtensionAgentStatus, or null if invalid.
+ * Shared between the sync reader (extensionMetadata.ts) and ExtensionMetadataService.
+ */
+export function coerceAgentStatus(value: unknown): ExtensionAgentStatus | null {
   if (typeof value !== "object" || value === null) {
     return null;
   }
@@ -63,45 +64,8 @@ function coerceAgentStatus(value: unknown): ExtensionAgentStatus | null {
 }
 
 /**
- * Read extension metadata from JSON file.
- * Returns a map of workspace ID to metadata.
- * Used by both the main app and VS Code extension.
+ * Coerce an unknown value into a string URL, or null if not a string.
  */
-export function readExtensionMetadata(): Map<string, ExtensionMetadata> {
-  const metadataPath = getExtensionMetadataPath();
-
-  if (!existsSync(metadataPath)) {
-    return new Map();
-  }
-
-  try {
-    const content = readFileSync(metadataPath, "utf-8");
-    const data = JSON.parse(content) as ExtensionMetadataFile;
-
-    // Validate structure
-    if (typeof data !== "object" || data.version !== 1) {
-      log.error("Invalid metadata file format");
-      return new Map();
-    }
-
-    const map = new Map<string, ExtensionMetadata>();
-    for (const [workspaceId, metadata] of Object.entries(data.workspaces || {})) {
-      const rawThinkingLevel = (metadata as { lastThinkingLevel?: unknown }).lastThinkingLevel;
-      const rawAgentStatus = (metadata as { agentStatus?: unknown }).agentStatus;
-      const rawLastStatusUrl = (metadata as { lastStatusUrl?: unknown }).lastStatusUrl;
-      map.set(workspaceId, {
-        recency: metadata.recency,
-        streaming: metadata.streaming,
-        lastModel: metadata.lastModel ?? null,
-        lastThinkingLevel: isThinkingLevel(rawThinkingLevel) ? rawThinkingLevel : null,
-        agentStatus: coerceAgentStatus(rawAgentStatus),
-        lastStatusUrl: typeof rawLastStatusUrl === "string" ? rawLastStatusUrl : null,
-      });
-    }
-
-    return map;
-  } catch (error) {
-    log.error("Failed to read metadata:", error);
-    return new Map();
-  }
+export function coerceStatusUrl(url: unknown): string | null {
+  return typeof url === "string" ? url : null;
 }
