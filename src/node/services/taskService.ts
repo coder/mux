@@ -38,7 +38,6 @@ import {
 } from "@/node/services/utils/messageIds";
 import { defaultModel, normalizeGatewayModel } from "@/common/utils/ai/models";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
-import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { AgentIdSchema } from "@/common/orpc/schemas";
 import { GitPatchArtifactService } from "@/node/services/gitPatchArtifactService";
@@ -116,6 +115,10 @@ type AgentTaskWorkspaceEntry = WorkspaceConfigEntry & { projectPath: string };
 const COMPLETED_REPORT_CACHE_MAX_ENTRIES = 128;
 
 /** Maximum consecutive auto-resumes before stopping. Prevents infinite loops when descendants are stuck. */
+// Task-recovery paths must stay deterministic and editing-capable even when
+// workspace/default agent preferences evolve (e.g., auto router defaults).
+const TASK_RECOVERY_FALLBACK_AGENT_ID = "exec";
+
 const MAX_CONSECUTIVE_PARENT_AUTO_RESUMES = 3;
 
 interface AgentTaskIndex {
@@ -311,7 +314,7 @@ export class TaskService {
     // 3) Default
     // Keep task auto-resume recovery on exec even if the workspace default agent changes.
     // This path needs a deterministic editing-capable fallback for legacy/incomplete metadata.
-    agentId = agentId ?? "exec";
+    agentId = agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID;
 
     const aiSettings = this.resolveWorkspaceAISettings(parentEntry.workspace, agentId);
     return {
@@ -543,7 +546,7 @@ export class TaskService {
           : "This task is awaiting its final agent_report. Call agent_report exactly once now.",
         {
           model,
-          agentId: task.agentId ?? WORKSPACE_DEFAULTS.agentId,
+          agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
           thinkingLevel: task.taskThinkingLevel,
           toolPolicy: [{ regex_match: `^${completionToolName}$`, action: "require" }],
         },
@@ -589,7 +592,7 @@ export class TaskService {
               "When you have a final answer, call agent_report exactly once.",
         {
           model,
-          agentId: task.agentId ?? WORKSPACE_DEFAULTS.agentId,
+          agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
           thinkingLevel: task.taskThinkingLevel,
           experiments: task.taskExperiments,
         },
@@ -2064,7 +2067,7 @@ export class TaskService {
           queuedPrompt,
           {
             model,
-            agentId: task.agentId ?? WORKSPACE_DEFAULTS.agentId,
+            agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
             thinkingLevel: task.taskThinkingLevel,
             experiments: task.taskExperiments,
           },
@@ -2087,7 +2090,7 @@ export class TaskService {
           taskId,
           {
             model,
-            agentId: task.agentId ?? WORKSPACE_DEFAULTS.agentId,
+            agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
             thinkingLevel: task.taskThinkingLevel,
             experiments: task.taskExperiments,
           },
@@ -2263,7 +2266,7 @@ export class TaskService {
         : "Your stream ended without calling agent_report. Call agent_report exactly once now with your final report.",
       {
         model,
-        agentId: entry.workspace.agentId ?? WORKSPACE_DEFAULTS.agentId,
+        agentId: entry.workspace.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
         thinkingLevel: entry.workspace.taskThinkingLevel,
         toolPolicy: [{ regex_match: `^${missingCompletionToolName}$`, action: "require" }],
       },
