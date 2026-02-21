@@ -160,7 +160,8 @@ const STORIES: StoryDef[] = [
     exportName: "ContextManagementDialog",
     storyId: `${STORY_ID_PREFIX}context-management-dialog`,
     outputFile: "context-management.webp",
-    clip: { x: 360, y: 140, width: 1180, height: 820 },
+    // Tighten framing so the settings dialog fills more of the screenshot.
+    clip: { x: 430, y: 170, width: 1030, height: 760 },
     playInteraction: async (page: Page) => {
       // Open context/compaction management controls from the context usage button.
       const contextButton = page.getByRole("button", { name: /Context usage:/i }).first();
@@ -171,6 +172,13 @@ const STORIES: StoryDef[] = [
       await dialog.waitFor({ timeout: 10_000 });
       await dialog.getByText("Idle compaction").waitFor({ timeout: 10_000 });
     },
+  },
+  {
+    exportName: "MobileServerMode",
+    storyId: `${STORY_ID_PREFIX}mobile-server-mode`,
+    outputFile: "mobile-server-mode.webp",
+    viewport: { width: 430, height: 900 },
+    clip: { x: 0, y: 60, width: 430, height: 820 },
   },
   {
     exportName: "OrchestrateAgents",

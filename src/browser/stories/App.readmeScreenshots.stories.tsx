@@ -1236,6 +1236,82 @@ export const ContextManagementDialog: AppStory = {
   ),
 };
 
+// README: docs/img/mobile-server-mode.webp
+// Mobile-width workspace view to document server-mode responsiveness.
+export const MobileServerMode: AppStory = {
+  decorators: [
+    (Story: () => JSX.Element) => (
+      <div style={{ width: 430, height: "100dvh", position: "relative" }}>
+        <Story />
+      </div>
+    ),
+  ],
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaceId = "ws-mobile-server";
+
+        const workspace = createWorkspace({
+          id: workspaceId,
+          name: "feature/mobile-server",
+          projectName: README_PROJECT_NAME,
+          projectPath: README_PROJECT_PATH,
+        });
+
+        window.localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(true));
+        expandProjects([README_PROJECT_PATH]);
+        selectWorkspace(workspace);
+        collapseRightSidebar();
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject([workspace]),
+          workspaces: [workspace],
+          onChat: createOnChatAdapter(
+            new Map([
+              [
+                workspaceId,
+                createStaticChatHandler([
+                  createUserMessage(
+                    "msg-1",
+                    "Can I use mux server mode from my phone when I’m away from my laptop?",
+                    {
+                      historySequence: 1,
+                      timestamp: STABLE_TIMESTAMP - 45_000,
+                    }
+                  ),
+                  createAssistantMessage(
+                    "msg-2",
+                    "Yes — the workspace UI is responsive, so you can review progress and continue chats from mobile browsers.",
+                    {
+                      historySequence: 2,
+                      timestamp: STABLE_TIMESTAMP - 30_000,
+                      toolCalls: [
+                        createStatusTool(
+                          "call-status-1",
+                          "🔧",
+                          "Adapting the layout for mobile-sized viewport constraints"
+                        ),
+                      ],
+                    }
+                  ),
+                  createAssistantMessage(
+                    "msg-3",
+                    "I kept controls compact so model, mode, and send actions remain accessible on narrow screens.",
+                    {
+                      historySequence: 3,
+                      timestamp: STABLE_TIMESTAMP - 15_000,
+                    }
+                  ),
+                ]),
+              ],
+            ])
+          ),
+        });
+      }}
+    />
+  ),
+};
+
 // README: docs/img/orchestrate-agents.webp
 // Parent workspace is selected in plan mode while six running child workspaces
 // show nested status indicators in the expanded left sidebar.

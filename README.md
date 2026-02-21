@@ -87,6 +87,12 @@ macOS and Linux.
 <sub>Orchestrate parallel agent tasks with plan mode</sub>
 </td>
 </tr>
+<tr>
+<td align="center" colspan="2">
+<img src="./docs/img/mobile-server-mode.webp" alt="Screenshot of mux mobile UI" width="40%" /><br>
+<sub>Mux server mode has a responsive UI for mobile users</sub>
+</td>
+</tr>
 </table>
 
 ## More reading
