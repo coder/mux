@@ -545,13 +545,20 @@ export class CompactionHandler {
 
   /**
    * Approximate context window size after compaction (system prompt + summary).
+   * Excludes reasoning tokens because they are not replayed into the next prompt.
    */
   private computePostCompactionContextEstimate(
     systemMessageTokens: number | undefined,
     usage: LanguageModelV2Usage | undefined
   ): LanguageModelV2Usage | undefined {
-    const summaryTokens = usage?.outputTokens;
-    if (summaryTokens == null || summaryTokens <= 0) {
+    const totalSummaryOutputTokens = usage?.outputTokens;
+    if (totalSummaryOutputTokens == null || totalSummaryOutputTokens <= 0) {
+      return undefined;
+    }
+
+    const reasoningTokens = usage?.reasoningTokens ?? 0;
+    const summaryTokens = Math.max(0, totalSummaryOutputTokens - reasoningTokens);
+    if (summaryTokens <= 0) {
       return undefined;
     }
 

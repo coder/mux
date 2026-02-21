@@ -439,7 +439,12 @@ describe("CompactionHandler", () => {
       const compactionReq = createCompactionRequest();
       await seedHistory(compactionReq);
 
-      const usage = { inputTokens: 200, outputTokens: 100, totalTokens: 300 };
+      const usage = {
+        inputTokens: 200,
+        outputTokens: 100,
+        reasoningTokens: 30,
+        totalTokens: 300,
+      };
       const event = createStreamEndEvent("Summary", {
         model: "claude-3-5-sonnet-20241022",
         usage,
@@ -465,10 +470,10 @@ describe("CompactionHandler", () => {
         compactionBoundary: true,
         compactionEpoch: 1,
         contextUsage: {
-          // 100 system prompt tokens + 100 summary output tokens
-          inputTokens: 200,
+          // 100 system prompt tokens + (100 output - 30 reasoning) summary tokens
+          inputTokens: 170,
           outputTokens: 0,
-          totalTokens: 200,
+          totalTokens: 170,
         },
       });
       expect(sevt.metadata?.providerMetadata).toBeUndefined();
@@ -632,6 +637,12 @@ describe("CompactionHandler", () => {
       await seedHistory(compactionReq, streamedSummary);
 
       const event = createStreamEndEvent("Summary", {
+        usage: {
+          inputTokens: 100,
+          outputTokens: 50,
+          reasoningTokens: 20,
+          totalTokens: 150,
+        },
         providerMetadata: { anthropic: { cacheCreationInputTokens: 50_000 } },
         contextProviderMetadata: { anthropic: { cacheReadInputTokens: 10_000 } },
         contextUsage: { inputTokens: 123_456, outputTokens: 99_999, totalTokens: undefined },
@@ -648,17 +659,17 @@ describe("CompactionHandler", () => {
       expect(streamMsg?.metadata.providerMetadata).toBeUndefined();
       expect(streamMsg?.metadata.contextProviderMetadata).toBeUndefined();
       expect(streamMsg?.metadata.contextUsage).toEqual({
-        // 75 system prompt tokens + 50 summary output tokens
-        inputTokens: 125,
+        // 75 system prompt tokens + (50 output - 20 reasoning) summary tokens
+        inputTokens: 105,
         outputTokens: 0,
-        totalTokens: 125,
+        totalTokens: 105,
       });
       expect((streamMsg?.metadata as Record<string, unknown> | undefined)?.customField).toBe(
         "preserved"
       );
     });
 
-    it("omits context usage estimate when stream-end metadata has no summary output tokens", async () => {
+    it("omits context usage estimate when stream-end metadata has no visible summary tokens", async () => {
       const compactionReq = createMuxMessage(
         "req-streamed-no-estimate",
         "user",
@@ -677,7 +688,12 @@ describe("CompactionHandler", () => {
       await seedHistory(compactionReq, streamedSummary);
 
       const event = createStreamEndEvent("Summary", {
-        usage: { inputTokens: 100, outputTokens: 0, totalTokens: undefined },
+        usage: {
+          inputTokens: 100,
+          outputTokens: 20,
+          reasoningTokens: 20,
+          totalTokens: 120,
+        },
         providerMetadata: { anthropic: { cacheCreationInputTokens: 50_000 } },
       });
 
