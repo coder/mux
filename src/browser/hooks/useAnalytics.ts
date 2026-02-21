@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import assert from "@/common/utils/assert";
 import { useEffect, useState } from "react";
 import type { z } from "zod";
 import type { APIClient } from "@/browser/contexts/API";

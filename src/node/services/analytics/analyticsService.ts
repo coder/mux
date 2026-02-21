@@ -160,6 +160,16 @@ export class AnalyticsService {
 
     const dbPath = path.join(dbDir, "analytics.db");
     await this.dispatch("init", { dbPath });
+
+    // Backfill existing workspace history on first use so that analytics
+    // queries return data for workspaces that existed before the analytics
+    // feature was installed. Runs async in the background so it doesn't
+    // block the caller.
+    this.dispatch("rebuildAll", { sessionsDir: this.config.sessionsDir }).catch((error) => {
+      log.warn("[AnalyticsService] Background backfill failed (non-fatal)", {
+        error: getErrorMessage(error),
+      });
+    });
   }
 
   private ensureWorker(): Promise<void> {

@@ -273,6 +273,9 @@ async function queryTimingDistribution(
     TimingPercentilesRowSchema
   );
 
+  // Histogram emits real metric values (e.g. ms, tok/s) as bucket labels,
+  // not abstract 1..20 indices. This way the chart x-axis maps directly to
+  // meaningful units and percentile reference lines land correctly.
   const histogram = await typedQuery(
     conn,
     `
@@ -300,19 +303,25 @@ async function queryTimingDistribution(
               ) + 1
             )
           )
-        END AS bucket
+        END AS bucket_id
       FROM events
       CROSS JOIN stats
       WHERE events.${column} IS NOT NULL
         AND (? IS NULL OR events.project_path = ?)
     )
     SELECT
-      bucket,
+      ROUND(
+        (SELECT min_value FROM stats) +
+        (bucket_id - 0.5) * (
+          NULLIF((SELECT max_value FROM stats) - (SELECT min_value FROM stats), 0) / 20.0
+        ),
+        2
+      ) AS bucket,
       COUNT(*) AS count
     FROM bucketed
-    WHERE bucket IS NOT NULL
-    GROUP BY bucket
-    ORDER BY bucket
+    WHERE bucket_id IS NOT NULL
+    GROUP BY bucket_id
+    ORDER BY bucket_id
     `,
     [projectPath, projectPath, projectPath, projectPath],
     HistogramBucketSchema
