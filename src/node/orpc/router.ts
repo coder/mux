@@ -4082,6 +4082,53 @@ export const router = (authToken?: string) => {
           return { success: true };
         }),
     },
+    analytics: {
+      getSummary: t
+        .input(schemas.analytics.getSummary.input)
+        .output(schemas.analytics.getSummary.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.getSummary(input.projectPath ?? null);
+        }),
+      getSpendOverTime: t
+        .input(schemas.analytics.getSpendOverTime.input)
+        .output(schemas.analytics.getSpendOverTime.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.getSpendOverTime(input);
+        }),
+      getSpendByProject: t
+        .input(schemas.analytics.getSpendByProject.input)
+        .output(schemas.analytics.getSpendByProject.output)
+        .handler(async ({ context }) => {
+          return context.analyticsService.getSpendByProject();
+        }),
+      getSpendByModel: t
+        .input(schemas.analytics.getSpendByModel.input)
+        .output(schemas.analytics.getSpendByModel.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.getSpendByModel(input.projectPath ?? null);
+        }),
+      getTimingDistribution: t
+        .input(schemas.analytics.getTimingDistribution.input)
+        .output(schemas.analytics.getTimingDistribution.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.getTimingDistribution(
+            input.metric,
+            input.projectPath ?? null
+          );
+        }),
+      getAgentCostBreakdown: t
+        .input(schemas.analytics.getAgentCostBreakdown.input)
+        .output(schemas.analytics.getAgentCostBreakdown.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.getAgentCostBreakdown(input.projectPath ?? null);
+        }),
+      rebuildDatabase: t
+        .input(schemas.analytics.rebuildDatabase.input)
+        .output(schemas.analytics.rebuildDatabase.output)
+        .handler(async ({ context }) => {
+          return context.analyticsService.rebuildAll();
+        }),
+    },
     ssh: {
       prompt: {
         subscribe: t

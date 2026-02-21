@@ -39,6 +39,7 @@ import type {
 } from "@/common/types/stream";
 import { FeatureFlagService } from "@/node/services/featureFlagService";
 import { SessionTimingService } from "@/node/services/sessionTimingService";
+import { AnalyticsService } from "@/node/services/analytics/analyticsService";
 import { ExperimentsService } from "@/node/services/experimentsService";
 import { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import { McpOauthService } from "@/node/services/mcpOauthService";
@@ -112,6 +113,7 @@ export class ServiceContainer {
   public readonly telemetryService: TelemetryService;
   public readonly featureFlagService: FeatureFlagService;
   public readonly sessionTimingService: SessionTimingService;
+  public readonly analyticsService: AnalyticsService;
   public readonly experimentsService: ExperimentsService;
   public readonly signingService: SigningService;
   public readonly policyService: PolicyService;
@@ -133,6 +135,7 @@ export class ServiceContainer {
       muxHome: config.rootDir,
     });
     this.sessionTimingService = new SessionTimingService(config, this.telemetryService);
+    this.analyticsService = new AnalyticsService(config);
 
     // Desktop passes WorkspaceMcpOverridesService explicitly so AIService uses
     // the persistent config rather than creating a default with an ephemeral one.
@@ -253,9 +256,18 @@ export class ServiceContainer {
     this.aiService.on("tool-call-end", (data: ToolCallEndEvent) =>
       this.sessionTimingService.handleToolCallEnd(data)
     );
-    this.aiService.on("stream-end", (data: StreamEndEvent) =>
-      this.sessionTimingService.handleStreamEnd(data)
-    );
+    this.aiService.on("stream-end", (data: StreamEndEvent) => {
+      this.sessionTimingService.handleStreamEnd(data);
+
+      const workspaceLookup = this.config.findWorkspace(data.workspaceId);
+      const sessionDir = this.config.getSessionDir(data.workspaceId);
+      this.analyticsService.ingestWorkspace(data.workspaceId, sessionDir, {
+        projectPath: workspaceLookup?.projectPath,
+        projectName: workspaceLookup?.projectPath
+          ? path.basename(workspaceLookup.projectPath)
+          : undefined,
+      });
+    });
     this.aiService.on("stream-abort", (data: StreamAbortEvent) =>
       this.sessionTimingService.handleStreamAbort(data)
     );
@@ -447,6 +459,8 @@ export class ServiceContainer {
       coderService: this.coderService,
       serverAuthService: this.serverAuthService,
       sshPromptService: this.sshPromptService,
+      analyticsService: this.analyticsService,
+      hostKeyVerificationService: this.hostKeyVerificationService,
     };
   }
 
