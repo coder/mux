@@ -429,6 +429,32 @@ describe("useGateway", () => {
     });
   });
 
+  test("respects explicit model snapshots over queued migration enrollments", async () => {
+    mockConfig = {
+      "mux-gateway": {
+        couponCodeSet: true,
+        isEnabled: true,
+        gatewayModels: ["anthropic:claude-opus-4-5", "openai:gpt-5.2"],
+      },
+    };
+
+    // Simulate a legacy migration enrollment queued before the user explicitly
+    // updates models (e.g. disables openai:gpt-5.2 in settings).
+    pendingGatewayEnrollments.add("openai:gpt-5.2");
+    pendingGatewayModelsUntilHydrated.models = ["anthropic:claude-opus-4-5"];
+
+    renderHook(() => useGateway());
+
+    await flushDrain();
+
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(1);
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledWith({
+      muxGatewayEnabled: true,
+      muxGatewayModels: ["anthropic:claude-opus-4-5"],
+    });
+    expect(pendingGatewayEnrollments.size).toBe(0);
+  });
+
   test("drains models queued while a persistence call is in flight", async () => {
     mockConfig = {
       "mux-gateway": {

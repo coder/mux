@@ -534,14 +534,24 @@ export function ProvidersSection() {
   const startMuxGatewayLogin = async () => {
     const attempt = ++muxGatewayLoginAttemptRef.current;
 
-    // Enable default gateway models only when this looks like first-time setup.
-    // If config is still hydrating, we'll re-check after OAuth success before applying.
-    const gatewayConfig = config?.["mux-gateway"];
-    muxGatewayApplyDefaultModelsOnSuccessRef.current =
-      gatewayConfig?.couponCodeSet === false ||
-      (gatewayConfig?.couponCodeSet == null && (gatewayConfig?.gatewayModels?.length ?? 0) === 0);
-
     try {
+      // Enable default gateway models only for confirmed first-time setup.
+      // If config hydration is unknown, prefer preserving current selections.
+      let gatewayConfig = config?.["mux-gateway"];
+      if (gatewayConfig?.couponCodeSet == null && api) {
+        try {
+          const latestConfig = await api.providers.getConfig();
+          if (attempt !== muxGatewayLoginAttemptRef.current) {
+            return;
+          }
+          gatewayConfig = latestConfig?.["mux-gateway"];
+        } catch {
+          // If pre-login config fetch fails, avoid defaulting so we don't
+          // overwrite an intentional empty model selection.
+        }
+      }
+      muxGatewayApplyDefaultModelsOnSuccessRef.current = gatewayConfig?.couponCodeSet === false;
+
       setMuxGatewayLoginError(null);
       setMuxGatewayDesktopFlowId(null);
       setMuxGatewayServerState(null);

@@ -305,7 +305,12 @@ export function useGateway(): GatewayState {
         return;
       }
 
-      const enrollmentAdds = enrollmentBatch.filter((id) => !baseModels.includes(id));
+      // Explicit setEnabledModels writes represent the user's latest intent.
+      // Don't re-add queued migration enrollments on top of that snapshot.
+      const enrollmentAdds =
+        pendingModelsSnapshot == null
+          ? enrollmentBatch.filter((id) => !baseModels.includes(id))
+          : [];
       if (pendingModelsSnapshot == null && pendingEnabled == null && enrollmentAdds.length === 0) {
         // All queued migration enrollments are already persisted; clear them
         // without issuing a no-op config write.
@@ -315,7 +320,10 @@ export function useGateway(): GatewayState {
         return;
       }
 
-      const nextModels = Array.from(new Set([...baseModels, ...enrollmentAdds]));
+      const nextModels =
+        pendingModelsSnapshot == null
+          ? Array.from(new Set([...baseModels, ...enrollmentAdds]))
+          : Array.from(new Set(baseModels));
       updateOptimistically("mux-gateway", { gatewayModels: nextModels });
 
       try {
