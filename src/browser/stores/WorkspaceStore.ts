@@ -386,7 +386,11 @@ function getMaxHistorySequence(messages: MuxMessage[]): number | undefined {
  * not be repriced when model mappings change because the provider
  * gateway already handles billing.
  */
-function isCostsIncludedEntry(usage: ChatUsageDisplay, runtimeModelId: string): boolean {
+function isCostsIncludedEntry(
+  usage: ChatUsageDisplay,
+  runtimeModelId: string,
+  providersConfig: ProvidersConfigMap
+): boolean {
   if (usage.costsIncluded === true) {
     return true;
   }
@@ -397,9 +401,11 @@ function isCostsIncludedEntry(usage: ChatUsageDisplay, runtimeModelId: string): 
   // repricing doesn't inflate historical gateway-billed totals after upgrade.
   //
   // Guardrail: only apply this legacy heuristic for models that have non-zero
-  // billable pricing in model stats. This avoids classifying intentionally
-  // zero-priced models (e.g. subscription-backed models) as gateway-billed.
-  const stats = getModelStats(runtimeModelId);
+  // billable pricing in model stats. Use the resolved metadata model so mapped
+  // custom IDs (e.g. ollama:custom -> anthropic:claude-*) are classified by the
+  // effective pricing model, not the raw runtime string.
+  const metadataModel = resolveModelForMetadata(runtimeModelId, providersConfig);
+  const stats = getModelStats(metadataModel);
   const hasBillableRates =
     (stats?.input_cost_per_token ?? 0) > 0 ||
     (stats?.output_cost_per_token ?? 0) > 0 ||
@@ -438,13 +444,13 @@ function repriceSessionUsage(
 ): void {
   usage.tokenStatsCache = undefined;
   for (const [model, entry] of Object.entries(usage.byModel)) {
-    if (!model.includes(":") || isCostsIncludedEntry(entry, model)) continue;
+    if (!model.includes(":") || isCostsIncludedEntry(entry, model, config)) continue;
     const resolved = resolveModelForMetadata(model, config);
     usage.byModel[model] = recomputeUsageCosts(entry, resolved);
   }
   if (
     usage.lastRequest &&
-    !isCostsIncludedEntry(usage.lastRequest.usage, usage.lastRequest.model)
+    !isCostsIncludedEntry(usage.lastRequest.usage, usage.lastRequest.model, config)
   ) {
     const resolved = resolveModelForMetadata(usage.lastRequest.model, config);
     usage.lastRequest.usage = recomputeUsageCosts(usage.lastRequest.usage, resolved);
