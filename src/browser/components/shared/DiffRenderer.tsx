@@ -657,6 +657,8 @@ interface SelectableDiffRendererProps extends Omit<DiffRendererProps, "filePath"
     requestId: number;
     reviewId: string;
   } | null;
+  /** Callback when the inline composer is canceled (for parent/child sync). */
+  onComposerCancel?: () => void;
 }
 
 interface LineSelection {
@@ -973,6 +975,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     onLineIndexSelect,
     externalSelectionRequest,
     externalEditRequest,
+    onComposerCancel,
   }) => {
     const dragAnchorRef = React.useRef<number | null>(null);
     const [isDragging, setIsDragging] = React.useState(false);
@@ -1028,8 +1031,20 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       setSelectionInitialNoteText(externalSelectionRequest.initialNoteText ?? "");
     }, [externalSelectionRequest]);
 
-    const renderSelection: LineSelection | null = selection;
-    const renderNoteText = selectionInitialNoteText;
+    // Render newly-issued external composer requests immediately so immersive actions
+    // don't show a one-frame delay while local state catches up in the effect above.
+    const pendingExternalSelectionRequest =
+      externalSelectionRequest &&
+      dismissedExternalSelectionRequestIdRef.current !== externalSelectionRequest.requestId &&
+      lastExternalSelectionRequestIdRef.current !== externalSelectionRequest.requestId
+        ? externalSelectionRequest
+        : null;
+
+    const renderSelection: LineSelection | null =
+      pendingExternalSelectionRequest?.selection ?? selection;
+    const renderNoteText = pendingExternalSelectionRequest
+      ? (pendingExternalSelectionRequest.initialNoteText ?? "")
+      : selectionInitialNoteText;
     const renderSelectionStartIndex = renderSelection?.startIndex ?? null;
 
     // Notify parent when composition state changes
@@ -1244,6 +1259,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       }
       setSelection(null);
       setSelectionInitialNoteText("");
+      onComposerCancel?.();
     };
 
     const isLineInSelection = (index: number, lineSelection: LineSelection | null | undefined) => {

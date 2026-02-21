@@ -973,6 +973,13 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     [onReviewNote]
   );
 
+  const handleInlineComposerCancel = useCallback(() => {
+    // Keep immersive parent state aligned with child composer teardown so canceled
+    // keyboard-initiated requests do not linger or steal focus.
+    setInlineComposerRequest(null);
+    containerRef.current?.focus();
+  }, []);
+
   const moveLineCursor = useCallback(
     (delta: number, extendRange: boolean) => {
       const lineCount = overlayData.lineHunkIds.length;
@@ -1482,6 +1489,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                   maxHeight="none"
                   className="rounded-none border-0 [&>div]:overflow-x-visible"
                   onReviewNote={handleReviewNoteSubmit}
+                  onComposerCancel={handleInlineComposerCancel}
                   reviewActions={diffReviewActions}
                   enableHighlighting={shouldEnableHighlighting}
                   selectedLineRange={selectedLineRange}
