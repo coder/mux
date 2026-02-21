@@ -27,6 +27,7 @@ import {
   getDraftScopeId,
   getPendingWorkspaceSendErrorKey,
   getProjectScopeId,
+  GLOBAL_SCOPE_ID,
 } from "@/common/constants/storage";
 import type { SendMessageError } from "@/common/types/errors";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
@@ -77,9 +78,17 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
   }
 
   const projectAgentId = readPersistedState<string | null>(getAgentIdKey(projectScopeId), null);
-  if (projectAgentId) {
-    updatePersistedState(getAgentIdKey(workspaceId), projectAgentId);
-  }
+  const globalDefaultAgentId = readPersistedState<string>(
+    getAgentIdKey(GLOBAL_SCOPE_ID),
+    WORKSPACE_DEFAULTS.agentId
+  );
+  const effectiveAgentId =
+    typeof projectAgentId === "string" && projectAgentId.trim().length > 0
+      ? projectAgentId.trim().toLowerCase()
+      : typeof globalDefaultAgentId === "string" && globalDefaultAgentId.trim().length > 0
+        ? globalDefaultAgentId.trim().toLowerCase()
+        : WORKSPACE_DEFAULTS.agentId;
+  updatePersistedState(getAgentIdKey(workspaceId), effectiveAgentId);
 
   const projectThinkingLevel = readPersistedState<ThinkingLevel | null>(
     getThinkingLevelKey(projectScopeId),
@@ -90,10 +99,6 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
   }
 
   if (projectModel) {
-    const effectiveAgentId =
-      typeof projectAgentId === "string" && projectAgentId.trim().length > 0
-        ? projectAgentId.trim().toLowerCase()
-        : WORKSPACE_DEFAULTS.agentId;
     const effectiveThinking: ThinkingLevel = projectThinkingLevel ?? "off";
 
     updatePersistedState<Partial<Record<string, { model: string; thinkingLevel: ThinkingLevel }>>>(

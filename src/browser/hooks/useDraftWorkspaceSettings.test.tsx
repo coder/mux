@@ -5,7 +5,13 @@ import React from "react";
 import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { getLastRuntimeConfigKey, getRuntimeKey } from "@/common/constants/storage";
+import {
+  GLOBAL_SCOPE_ID,
+  getAgentIdKey,
+  getLastRuntimeConfigKey,
+  getProjectScopeId,
+  getRuntimeKey,
+} from "@/common/constants/storage";
 import { CODER_RUNTIME_PLACEHOLDER } from "@/common/types/runtime";
 import { useDraftWorkspaceSettings } from "./useDraftWorkspaceSettings";
 
@@ -36,6 +42,47 @@ describe("useDraftWorkspaceSettings", () => {
     cleanup();
     globalThis.window = undefined as unknown as Window & typeof globalThis;
     globalThis.document = undefined as unknown as Document;
+  });
+
+  test("uses global default agent when project preference is unset", async () => {
+    const projectPath = "/tmp/project";
+
+    updatePersistedState(getAgentIdKey(GLOBAL_SCOPE_ID), "ask");
+
+    const wrapper: React.FC<{ children: React.ReactNode }> = (props) => (
+      <APIProvider client={createStubApiClient()}>
+        <ThinkingProvider projectPath={projectPath}>{props.children}</ThinkingProvider>
+      </APIProvider>
+    );
+
+    const { result } = renderHook(() => useDraftWorkspaceSettings(projectPath, ["main"], "main"), {
+      wrapper,
+    });
+
+    await waitFor(() => {
+      expect(result.current.settings.agentId).toBe("ask");
+    });
+  });
+
+  test("prefers project agent over global default", async () => {
+    const projectPath = "/tmp/project";
+
+    updatePersistedState(getAgentIdKey(GLOBAL_SCOPE_ID), "ask");
+    updatePersistedState(getAgentIdKey(getProjectScopeId(projectPath)), "plan");
+
+    const wrapper: React.FC<{ children: React.ReactNode }> = (props) => (
+      <APIProvider client={createStubApiClient()}>
+        <ThinkingProvider projectPath={projectPath}>{props.children}</ThinkingProvider>
+      </APIProvider>
+    );
+
+    const { result } = renderHook(() => useDraftWorkspaceSettings(projectPath, ["main"], "main"), {
+      wrapper,
+    });
+
+    await waitFor(() => {
+      expect(result.current.settings.agentId).toBe("plan");
+    });
   });
 
   test("does not reset selected runtime to the default while editing SSH host", async () => {

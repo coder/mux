@@ -20,6 +20,7 @@ import {
   getTrunkBranchKey,
   getLastRuntimeConfigKey,
   getProjectScopeId,
+  GLOBAL_SCOPE_ID,
 } from "@/common/constants/storage";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
@@ -58,6 +59,11 @@ interface SshRuntimeState {
 
 /** Stable fallback for Coder config to avoid new object on every render */
 const DEFAULT_CODER_CONFIG: CoderWorkspaceConfig = { existingWorkspace: false };
+function coerceAgentId(value: unknown): string {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim().toLowerCase()
+    : WORKSPACE_DEFAULTS.agentId;
+}
 
 const buildRuntimeForMode = (
   mode: RuntimeMode,
@@ -127,11 +133,15 @@ export function useDraftWorkspaceSettings(
 
   const projectScopeId = getProjectScopeId(projectPath);
 
-  const [agentId] = usePersistedState<string>(
-    getAgentIdKey(projectScopeId),
+  const [globalDefaultAgentId] = usePersistedState<string>(
+    getAgentIdKey(GLOBAL_SCOPE_ID),
     WORKSPACE_DEFAULTS.agentId,
     { listener: true }
   );
+  const [projectAgentId] = usePersistedState<string | null>(getAgentIdKey(projectScopeId), null, {
+    listener: true,
+  });
+  const agentId = coerceAgentId(projectAgentId ?? globalDefaultAgentId);
 
   // Subscribe to the global default model preference so backend-seeded values apply
   // immediately on fresh origins (e.g., when switching ports).

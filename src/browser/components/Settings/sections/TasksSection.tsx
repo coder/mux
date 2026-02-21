@@ -16,7 +16,12 @@ import {
 import { copyToClipboard } from "@/browser/utils/clipboard";
 import { getDefaultModel, useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { updatePersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
-import { AGENT_AI_DEFAULTS_KEY, getModelKey } from "@/common/constants/storage";
+import {
+  AGENT_AI_DEFAULTS_KEY,
+  GLOBAL_SCOPE_ID,
+  getAgentIdKey,
+  getModelKey,
+} from "@/common/constants/storage";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import {
@@ -33,6 +38,7 @@ import {
 import { getThinkingOptionLabel, type ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 import { getErrorMessage } from "@/common/utils/errors";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 const INHERIT = "__inherit__";
 
@@ -53,6 +59,15 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     description: "Implement changes in the repository",
     uiSelectable: true,
     subagentRunnable: true,
+  },
+  {
+    id: "auto",
+    scope: "built-in",
+    name: "Auto",
+    description: "Automatically route to the best agent for the task",
+    uiSelectable: true,
+    subagentRunnable: false,
+    base: "exec",
   },
   {
     // Keep Ask visible when workspace agent discovery is unavailable.
@@ -276,6 +291,11 @@ function areAgentAiDefaultsEqual(a: AgentAiDefaults, b: AgentAiDefaults): boolea
 
   return true;
 }
+function coerceAgentId(value: unknown): string {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim().toLowerCase()
+    : WORKSPACE_DEFAULTS.agentId;
+}
 
 export function TasksSection() {
   const { api } = useAPI();
@@ -306,6 +326,14 @@ export function TasksSection() {
   } | null>(null);
 
   const { models, hiddenModelsForSelector } = useModelsFromSettings();
+  const [globalDefaultAgentIdRaw, setGlobalDefaultAgentIdRaw] = usePersistedState<string>(
+    getAgentIdKey(GLOBAL_SCOPE_ID),
+    WORKSPACE_DEFAULTS.agentId,
+    {
+      listener: true,
+    }
+  );
+  const newWorkspaceDefaultAgentId = coerceAgentId(globalDefaultAgentIdRaw);
 
   // Resolve the workspace's active model so that when a sub-agent's model is
   // "Inherit", we show thinking levels for the workspace model (falling back to
@@ -552,6 +580,9 @@ export function TasksSection() {
       normalizeTaskSettings({ ...prev, planSubagentDefaultsToOrchestrator: value })
     );
   };
+  const setNewWorkspaceDefaultAgentId = (agentId: string) => {
+    setGlobalDefaultAgentIdRaw(coerceAgentId(agentId));
+  };
 
   const setAgentModel = (agentId: string, value: string) => {
     setAgentAiDefaults((prev) =>
@@ -604,6 +635,21 @@ export function TasksSection() {
         .sort((a, b) => a.name.localeCompare(b.name)),
     [listedAgents]
   );
+  const newWorkspaceDefaultAgentOptions = useMemo(() => {
+    const options = uiAgents.map((agent) => ({
+      id: agent.id,
+      label: agent.name,
+    }));
+
+    if (!options.some((option) => option.id === newWorkspaceDefaultAgentId)) {
+      options.unshift({
+        id: newWorkspaceDefaultAgentId,
+        label: `${newWorkspaceDefaultAgentId} (unavailable)`,
+      });
+    }
+
+    return options;
+  }, [newWorkspaceDefaultAgentId, uiAgents]);
 
   const subagents = useMemo(
     () =>
@@ -878,6 +924,30 @@ export function TasksSection() {
       <div>
         <h3 className="text-foreground mb-4 text-sm font-medium">Task Settings</h3>
         <div className="space-y-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <div className="text-foreground text-sm">Default new-workspace agent</div>
+              <div className="text-muted text-xs">
+                Applies when a project does not have its own agent preference yet.
+              </div>
+            </div>
+            <Select
+              value={newWorkspaceDefaultAgentId}
+              onValueChange={setNewWorkspaceDefaultAgentId}
+            >
+              <SelectTrigger className="border-border-medium bg-background-secondary h-9 w-56">
+                <SelectValue placeholder="Select agent" />
+              </SelectTrigger>
+              <SelectContent>
+                {newWorkspaceDefaultAgentOptions.map((option) => (
+                  <SelectItem key={option.id} value={option.id}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1">
               <div className="text-foreground text-sm">Max Parallel Agent Tasks</div>
