@@ -710,9 +710,6 @@ function AppInner() {
         openSettings();
       } else if (matchesKeybind(e, KEYBINDS.OPEN_ANALYTICS)) {
         e.preventDefault();
-        // KEYBINDS.OPEN_ANALYTICS currently overlaps KEYBINDS.CYCLE_AGENT.
-        // Stop immediate propagation so cycling agents doesn't also fire when toggling analytics.
-        e.stopImmediatePropagation();
         if (isAnalyticsOpen) {
           navigateFromAnalytics();
         } else {

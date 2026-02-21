@@ -405,8 +405,9 @@ export const KEYBINDS = {
   OPEN_SETTINGS: { key: ",", ctrl: true },
 
   /** Open analytics dashboard */
-  // macOS: Cmd+., Win/Linux: Ctrl+.
-  OPEN_ANALYTICS: { key: ".", ctrl: true },
+  // macOS: Cmd+Shift+Y, Win/Linux: Ctrl+Shift+Y
+  // "Y" for analYtics — Ctrl+. is reserved for CYCLE_AGENT
+  OPEN_ANALYTICS: { key: "Y", ctrl: true, shift: true },
 
   /** Toggle voice input (dictation) */
   // macOS: Cmd+D, Win/Linux: Ctrl+D
