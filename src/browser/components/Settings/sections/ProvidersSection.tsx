@@ -1081,8 +1081,8 @@ export function ProvidersSection() {
 
       {visibleProviders.map((provider) => {
         const isExpanded = expandedProvider === provider;
-        // mux-gateway stores its enabled state separately (gateway-enabled localStorage key),
-        // not in the standard provider config, so use the gateway hook's state directly.
+        // mux-gateway enabled/models are sourced from backend config.json via
+        // useGateway/useProvidersConfig, so read the gateway hook's state directly.
         const enabled = provider === "mux-gateway" ? gateway.isEnabled : isEnabled(provider);
         const configured = isConfigured(provider);
         const fields = getProviderFields(provider);

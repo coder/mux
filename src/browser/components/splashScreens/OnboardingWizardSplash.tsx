@@ -234,6 +234,42 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   const [muxGatewayDesktopFlowId, setMuxGatewayDesktopFlowId] = useState<string | null>(null);
   const [muxGatewayServerState, setMuxGatewayServerState] = useState<string | null>(null);
 
+  const pendingGatewayDefaultEnrollmentRef = useRef<{
+    muxGatewayEnabled: boolean;
+    muxGatewayModels: string[];
+  } | null>(null);
+
+  const persistGatewayDefaultEnrollment = useCallback(
+    (payload: { muxGatewayEnabled: boolean; muxGatewayModels: string[] }) => {
+      if (!api?.config?.updateMuxGatewayPrefs) {
+        // API may be temporarily unavailable during reconnect; keep payload and
+        // flush once the API client becomes available again.
+        pendingGatewayDefaultEnrollmentRef.current = payload;
+        return;
+      }
+
+      api.config
+        .updateMuxGatewayPrefs(payload)
+        .then(() => {
+          if (pendingGatewayDefaultEnrollmentRef.current === payload) {
+            pendingGatewayDefaultEnrollmentRef.current = null;
+          }
+        })
+        .catch(() => {
+          // Keep latest payload for retry on the next reconnect.
+          pendingGatewayDefaultEnrollmentRef.current = payload;
+        });
+    },
+    [api]
+  );
+
+  useEffect(() => {
+    const pending = pendingGatewayDefaultEnrollmentRef.current;
+    if (!pending) return;
+
+    persistGatewayDefaultEnrollment(pending);
+  }, [persistGatewayDefaultEnrollment]);
+
   const cancelMuxGatewayLogin = useCallback(() => {
     muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
     muxGatewayLoginAttemptRef.current++;
@@ -318,15 +354,12 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
             // for fresh installs). Hardcoding true would silently re-enable
             // gateway routing for users who intentionally disabled it.
             const currentEnabled = latestConfig?.["mux-gateway"]?.isEnabled ?? true;
-            // Persist gateway models via backend config (no localStorage)
-            api?.config
-              .updateMuxGatewayPrefs({
-                muxGatewayEnabled: currentEnabled,
-                muxGatewayModels: eligibleModels,
-              })
-              .catch(() => {
-                // Best-effort only.
-              });
+            // Persist gateway models via backend config (no localStorage).
+            // If API is temporarily unavailable, queue for retry on reconnect.
+            persistGatewayDefaultEnrollment({
+              muxGatewayEnabled: currentEnabled,
+              muxGatewayModels: eligibleModels,
+            });
             muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
           }
 
@@ -402,7 +435,14 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
       setMuxGatewayLoginStatus("error");
       setMuxGatewayLoginError(message);
     }
-  }, [api, backendBaseUrl, isDesktop, providersConfig, refreshMuxGatewayAccountStatus]);
+  }, [
+    api,
+    backendBaseUrl,
+    isDesktop,
+    providersConfig,
+    persistGatewayDefaultEnrollment,
+    refreshMuxGatewayAccountStatus,
+  ]);
 
   useEffect(() => {
     const attempt = muxGatewayLoginAttemptRef.current;
@@ -431,15 +471,12 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
             // for fresh installs). Hardcoding true would silently re-enable
             // gateway routing for users who intentionally disabled it.
             const currentEnabled = latestConfig?.["mux-gateway"]?.isEnabled ?? true;
-            // Persist gateway models via backend config (no localStorage)
-            api?.config
-              .updateMuxGatewayPrefs({
-                muxGatewayEnabled: currentEnabled,
-                muxGatewayModels: eligibleModels,
-              })
-              .catch(() => {
-                // Best-effort only.
-              });
+            // Persist gateway models via backend config (no localStorage).
+            // If API is temporarily unavailable, queue for retry on reconnect.
+            persistGatewayDefaultEnrollment({
+              muxGatewayEnabled: currentEnabled,
+              muxGatewayModels: eligibleModels,
+            });
           };
 
           if (api) {
@@ -471,6 +508,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     muxGatewayLoginStatus,
     muxGatewayServerState,
     providersConfig,
+    persistGatewayDefaultEnrollment,
     refreshMuxGatewayAccountStatus,
   ]);
 

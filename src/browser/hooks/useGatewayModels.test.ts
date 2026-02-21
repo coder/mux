@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
+import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import {
   isGatewayFormat,
   isProviderSupported,
@@ -20,16 +21,18 @@ import {
 
 // Tracks optimistic updates applied to provider config
 let optimisticUpdates: Array<{ provider: string; updates: Record<string, unknown> }> = [];
-let mockConfig: Record<string, Record<string, unknown>> = {};
+let mockConfig: Record<string, Record<string, unknown>> | null = {};
 
 const useProvidersConfigMock = mock(() => ({
   config: mockConfig,
   updateOptimistically: (provider: string, updates: Record<string, unknown>) => {
     optimisticUpdates.push({ provider, updates });
     // Apply optimistically to local mock (simulates what updateOptimistically does)
+    const prevConfig = mockConfig ?? {};
+    const prevProvider = prevConfig[provider] ?? {};
     mockConfig = {
-      ...mockConfig,
-      [provider]: { ...mockConfig[provider], ...updates },
+      ...prevConfig,
+      [provider]: { ...prevProvider, ...updates },
     };
   },
 }));
@@ -57,6 +60,7 @@ describe("useGateway", () => {
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
     globalThis.document = globalThis.window.document;
     optimisticUpdates = [];
+    pendingGatewayEnrollments.clear();
     updateMuxGatewayPrefsMock.mockClear();
     mockConfig = {
       "mux-gateway": {
@@ -69,6 +73,7 @@ describe("useGateway", () => {
 
   afterEach(() => {
     cleanup();
+    pendingGatewayEnrollments.clear();
     globalThis.window = undefined as unknown as Window & typeof globalThis;
     globalThis.document = undefined as unknown as Document;
   });
@@ -134,7 +139,55 @@ describe("useGateway", () => {
     expect(result.current.modelUsesGateway("openai:gpt-4")).toBe(false);
   });
 
-  test("drains pending enrollments from migrateGatewayModel after config loads", () => {
+  test("marks gateway unconfigured when session-expired event fires", () => {
+    renderHook(() => useGateway());
+
+    act(() => {
+      window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED));
+    });
+
+    const expiryUpdate = [...optimisticUpdates]
+      .reverse()
+      .find((u) => u.provider === "mux-gateway" && u.updates.couponCodeSet === false);
+    expect(expiryUpdate).toEqual({
+      provider: "mux-gateway",
+      updates: { couponCodeSet: false },
+    });
+  });
+
+  test("defers session-expired event until provider config hydrates", () => {
+    mockConfig = null;
+
+    const { rerender } = renderHook(() => useGateway());
+
+    act(() => {
+      window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED));
+    });
+
+    // No config yet; event is deferred and no optimistic update is possible.
+    expect(optimisticUpdates).toHaveLength(0);
+
+    mockConfig = {
+      "mux-gateway": {
+        couponCodeSet: true,
+        isEnabled: true,
+        gatewayModels: [],
+      },
+    };
+
+    act(() => {
+      rerender();
+    });
+
+    const expiryUpdate = optimisticUpdates.find(
+      (u) => u.provider === "mux-gateway" && u.updates.couponCodeSet === false
+    );
+    expect(expiryUpdate).toEqual({
+      provider: "mux-gateway",
+      updates: { couponCodeSet: false },
+    });
+  });
+  test("drains pending enrollments from migrateGatewayModel after config loads", async () => {
     mockConfig = {
       "mux-gateway": {
         couponCodeSet: true,
@@ -156,11 +209,15 @@ describe("useGateway", () => {
       muxGatewayEnabled: true,
       muxGatewayModels: ["anthropic:claude-opus-4-5"],
     });
-    // Queue should be drained
+
+    // Queue drains after persistence resolves.
+    await act(async () => {
+      await Promise.resolve();
+    });
     expect(pendingGatewayEnrollments.size).toBe(0);
   });
 
-  test("skips enrollment for already-enrolled models", () => {
+  test("persists queued enrollments even when model is already in local gateway state", async () => {
     mockConfig = {
       "mux-gateway": {
         couponCodeSet: true,
@@ -169,15 +226,21 @@ describe("useGateway", () => {
       },
     };
 
-    // Queue model that's already enrolled
+    // Queue model that's already in local gateway state.
+    // We still persist once so backend config catches up.
     pendingGatewayEnrollments.add("anthropic:claude-opus-4-5");
 
     renderHook(() => useGateway());
 
-    // No optimistic update or IPC call — model already enrolled
-    expect(optimisticUpdates).toHaveLength(0);
-    expect(updateMuxGatewayPrefsMock).not.toHaveBeenCalled();
-    // Queue should still be drained
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(1);
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledWith({
+      muxGatewayEnabled: true,
+      muxGatewayModels: ["anthropic:claude-opus-4-5"],
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
     expect(pendingGatewayEnrollments.size).toBe(0);
   });
 
@@ -203,7 +266,7 @@ describe("useGateway", () => {
       muxGatewayModels: ["anthropic:claude-opus-4-5", "openai:gpt-5.2"],
     });
   });
-  test("keeps optimistic enrollment on IPC failure (best-effort persistence)", async () => {
+  test("keeps queued enrollments on IPC failure and retries with backoff", async () => {
     mockConfig = {
       "mux-gateway": {
         couponCodeSet: true,
@@ -212,29 +275,30 @@ describe("useGateway", () => {
       },
     };
 
-    // Make persist call fail
+    // First persist attempt fails.
     updateMuxGatewayPrefsMock.mockImplementationOnce(() => Promise.reject(new Error("IPC failed")));
 
     pendingGatewayEnrollments.add("anthropic:claude-opus-4-5");
 
     renderHook(() => useGateway());
 
-    // Should have attempted persistence
+    // Should have attempted persistence and applied optimistic update.
     expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(1);
-    // Optimistic update was applied (model appears enrolled in UI)
     const enrollUpdate = optimisticUpdates.find((u) => u.updates.gatewayModels != null);
     expect(enrollUpdate).toBeDefined();
     expect(enrollUpdate!.updates.gatewayModels).toEqual(["anthropic:claude-opus-4-5"]);
 
-    // Let the rejection handler settle (should not throw or trigger tight retry loop)
+    // Let the rejection handler settle; queued enrollment should remain for retry.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(pendingGatewayEnrollments.has("anthropic:claude-opus-4-5")).toBe(true);
+
+    // Backoff prevents immediate tight-loop retries.
     await act(async () => {
       await new Promise((r) => setTimeout(r, 50));
     });
-
-    // No retry — only 1 IPC call (avoids tight loops during backend disconnects)
     expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(1);
-    // Queue fully drained (no re-enqueue)
-    expect(pendingGatewayEnrollments.size).toBe(0);
   });
 });
 

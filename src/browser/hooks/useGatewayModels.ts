@@ -229,44 +229,69 @@ export function useGateway(): GatewayState {
     [api]
   );
 
+  const enrollmentRetryTimerRef = useRef<number | null>(null);
+  const enrollmentRetryDelayMsRef = useRef(250);
+  const enrollmentDrainInFlightRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      if (enrollmentRetryTimerRef.current != null) {
+        window.clearTimeout(enrollmentRetryTimerRef.current);
+        enrollmentRetryTimerRef.current = null;
+      }
+    };
+  }, []);
+
   // Drain pending gateway enrollments from migrateGatewayModel.
   // migrateGatewayModel queues models during render; this effect runs after
-  // render to persist them. We wait until gwConfig is loaded to avoid
-  // overwriting existing backend models, and batch all pending items together
-  // so back-to-back migrations don't overwrite each other.
+  // render to persist them. We wait until gwConfig and api are available,
+  // then persist the queued canonical model IDs in a single batch.
   //
-  // Durability: items are cleared from the queue optimistically, but re-enqueued
-  // if the IPC persist call fails. This ensures transient backend failures don't
-  // silently drop the user's gateway-routing intent — the next render cycle
-  // (triggered by config refresh) will retry.
+  // Durability: queued items are only removed after successful persistence.
+  // If persistence fails, items stay queued and we schedule a bounded retry
+  // (exponential backoff) to avoid tight failure loops during reconnects.
   useEffect(() => {
     // Wait for both provider config and API client before draining.
     // During reconnect/auth transitions api can be null while gwConfig is
-    // populated — draining without an API client would clear the queue with
-    // no way to persist or re-enqueue.
+    // populated — in that state, keep pending models queued for later.
     if (!gwConfig || !api || pendingGatewayEnrollments.size === 0) return;
+    if (enrollmentDrainInFlightRef.current) return;
 
     const batch = [...pendingGatewayEnrollments];
-    const newModels = batch.filter((id) => !enabledModels.includes(id));
+    const nextModels = Array.from(new Set([...enabledModels, ...batch]));
 
-    // Clear the queue — items already enrolled don't need retry, and new items
-    // get optimistic + IPC treatment below (with re-enqueue on failure).
-    pendingGatewayEnrollments.clear();
-
-    if (newModels.length === 0) return;
-
-    const nextModels = [...enabledModels, ...newModels];
+    enrollmentDrainInFlightRef.current = true;
     updateOptimistically("mux-gateway", { gatewayModels: nextModels });
+
     api.config
       .updateMuxGatewayPrefs({
         muxGatewayEnabled: isEnabled,
         muxGatewayModels: nextModels,
       })
+      .then(() => {
+        // Remove only the models persisted by this batch.
+        for (const id of batch) pendingGatewayEnrollments.delete(id);
+
+        // Reset retry state after success.
+        enrollmentRetryDelayMsRef.current = 250;
+        if (enrollmentRetryTimerRef.current != null) {
+          window.clearTimeout(enrollmentRetryTimerRef.current);
+          enrollmentRetryTimerRef.current = null;
+        }
+      })
       .catch(() => {
-        // Best-effort: if persistence fails, the model remains optimistically
-        // enrolled for this session. On next restart, migrateGatewayModel will
-        // re-queue it since it won't find it in config.json's gatewayModels.
-        // No immediate retry to avoid tight loops during backend disconnects.
+        // Keep queued models for retry and back off to avoid tight loops.
+        if (enrollmentRetryTimerRef.current == null) {
+          const delayMs = enrollmentRetryDelayMsRef.current;
+          enrollmentRetryDelayMsRef.current = Math.min(delayMs * 2, 5_000);
+          enrollmentRetryTimerRef.current = window.setTimeout(() => {
+            enrollmentRetryTimerRef.current = null;
+            setEnrollVersion((v) => v + 1);
+          }, delayMs);
+        }
+      })
+      .finally(() => {
+        enrollmentDrainInFlightRef.current = false;
       });
   }, [gwConfig, enabledModels, isEnabled, api, updateOptimistically, enrollVersion]);
 
