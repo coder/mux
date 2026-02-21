@@ -128,16 +128,25 @@ function parseTimingMetric(value: unknown): TimingMetric {
   return value;
 }
 
+function getTodayUtcDateString(now: Date = new Date()): string {
+  assert(Number.isFinite(now.getTime()), "Invalid Date while computing analytics summary date");
+  return now.toISOString().slice(0, 10);
+}
+
 async function querySummary(
   conn: DuckDBConnection,
   projectPath: string | null
 ): Promise<SummaryRow> {
+  // events.date is derived from message timestamps via UTC date buckets, so
+  // summary "today" must use a UTC date key instead of DuckDB local CURRENT_DATE.
+  const todayUtcDate = getTodayUtcDateString();
+
   return typedQueryOne(
     conn,
     `
     SELECT
       COALESCE(SUM(total_cost_usd), 0) AS total_spend_usd,
-      COALESCE(SUM(CASE WHEN date = CURRENT_DATE THEN total_cost_usd ELSE 0 END), 0) AS today_spend_usd,
+      COALESCE(SUM(CASE WHEN date = CAST(? AS DATE) THEN total_cost_usd ELSE 0 END), 0) AS today_spend_usd,
       COALESCE(
         COALESCE(SUM(total_cost_usd), 0) / NULLIF(COUNT(DISTINCT date), 0),
         0
@@ -154,7 +163,7 @@ async function querySummary(
     FROM events
     WHERE (? IS NULL OR project_path = ?)
     `,
-    [projectPath, projectPath],
+    [todayUtcDate, projectPath, projectPath],
     SummaryRowSchema
   );
 }

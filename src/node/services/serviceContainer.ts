@@ -268,6 +268,17 @@ export class ServiceContainer {
           : undefined,
       });
     });
+    // WorkspaceService emits metadata:null after successful remove().
+    // Clear analytics rows immediately so deleted workspaces disappear from stats
+    // without waiting for a future ingest pass.
+    this.workspaceService.on("metadata", (event) => {
+      if (event.metadata !== null) {
+        return;
+      }
+
+      this.analyticsService.clearWorkspace(event.workspaceId);
+    });
+
     this.aiService.on("stream-abort", (data: StreamAbortEvent) =>
       this.sessionTimingService.handleStreamAbort(data)
     );

@@ -474,7 +474,7 @@ async function readWorkspaceEventRowCount(
   return rowCount;
 }
 
-async function clearWorkspaceAnalyticsState(
+export async function clearWorkspaceAnalyticsState(
   conn: DuckDBConnection,
   workspaceId: string
 ): Promise<void> {

@@ -348,6 +348,24 @@ export class AnalyticsService {
     };
   }
 
+  clearWorkspace(workspaceId: string): void {
+    if (workspaceId.trim().length === 0) {
+      log.warn("[AnalyticsService] Skipping workspace clear due to missing workspaceId", {
+        workspaceId,
+      });
+      return;
+    }
+
+    this.ensureWorker()
+      .then(() => this.dispatch<void>("clearWorkspace", { workspaceId }))
+      .catch((error) => {
+        log.warn("[AnalyticsService] Failed to clear workspace analytics state", {
+          workspaceId,
+          error: getErrorMessage(error),
+        });
+      });
+  }
+
   ingestWorkspace(workspaceId: string, sessionDir: string, meta: IngestWorkspaceMeta = {}): void {
     if (workspaceId.trim().length === 0 || sessionDir.trim().length === 0) {
       log.warn("[AnalyticsService] Skipping ingest due to missing workspace information", {

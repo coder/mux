@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { parentPort } from "node:worker_threads";
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
 import { getErrorMessage } from "@/common/utils/errors";
-import { ingestWorkspace, rebuildAll } from "./etl";
+import { clearWorkspaceAnalyticsState, ingestWorkspace, rebuildAll } from "./etl";
 import { executeNamedQuery } from "./queries";
 
 interface WorkerRequest {
@@ -41,6 +41,10 @@ interface IngestData {
 
 interface RebuildAllData {
   sessionsDir: string;
+}
+
+interface ClearWorkspaceData {
+  workspaceId: string;
 }
 
 interface QueryData {
@@ -118,6 +122,11 @@ async function handleRebuildAll(data: RebuildAllData): Promise<{ workspacesInges
   return rebuildAll(getConn(), data.sessionsDir);
 }
 
+async function handleClearWorkspace(data: ClearWorkspaceData): Promise<void> {
+  assert(data.workspaceId.trim().length > 0, "clearWorkspace requires workspaceId");
+  await clearWorkspaceAnalyticsState(getConn(), data.workspaceId);
+}
+
 async function handleQuery(data: QueryData): Promise<unknown> {
   assert(data.queryName.trim().length > 0, "query requires queryName");
   return executeNamedQuery(getConn(), data.queryName, data.params);
@@ -131,6 +140,8 @@ async function dispatchTask(taskName: string, data: unknown): Promise<unknown> {
       return handleIngest(data as IngestData);
     case "rebuildAll":
       return handleRebuildAll(data as RebuildAllData);
+    case "clearWorkspace":
+      return handleClearWorkspace(data as ClearWorkspaceData);
     case "query":
       return handleQuery(data as QueryData);
     default:
