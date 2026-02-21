@@ -28,6 +28,12 @@ const enrollmentDrainState = {
   retryTimer: null as number | null,
   retryDelayMs: 250,
 };
+
+// If model enrollment is requested before gwConfig hydrates, keep the latest
+// models here and flush once we know the persisted enabled-state.
+const pendingGatewayModelsUntilHydrated = {
+  models: null as string[] | null,
+};
 // ============================================================================
 // Pure utility functions (no side effects, used for message sending)
 // ============================================================================
@@ -313,10 +319,32 @@ export function useGateway(): GatewayState {
       // Keep writes centralized in this hook so all gateway actions (global toggle,
       // per-model toggle, and "enable all") persist from one config snapshot.
       updateOptimistically("mux-gateway", { gatewayModels: nextModels });
-      persistGatewayPrefs(isEnabled, nextModels);
+
+      const persistedEnabled = gwConfig?.isEnabled;
+      if (persistedEnabled == null) {
+        // Do not guess enabled-state before hydration. Persist once gwConfig is
+        // available so we don't accidentally flip a user-disabled gateway on.
+        pendingGatewayModelsUntilHydrated.models = nextModels;
+        return;
+      }
+
+      pendingGatewayModelsUntilHydrated.models = null;
+      persistGatewayPrefs(persistedEnabled, nextModels);
     },
-    [isEnabled, persistGatewayPrefs, updateOptimistically]
+    [gwConfig?.isEnabled, persistGatewayPrefs, updateOptimistically]
   );
+
+  // Flush any deferred model enrollment now that gateway enabled-state is known.
+  useEffect(() => {
+    const pendingModels = pendingGatewayModelsUntilHydrated.models;
+    const persistedEnabled = gwConfig?.isEnabled;
+    if (!pendingModels || persistedEnabled == null) {
+      return;
+    }
+
+    pendingGatewayModelsUntilHydrated.models = null;
+    persistGatewayPrefs(persistedEnabled, pendingModels);
+  }, [gwConfig?.isEnabled, persistGatewayPrefs]);
 
   const modelUsesGateway = useCallback(
     (modelId: string) => enabledModels.includes(modelId),

@@ -121,6 +121,44 @@ describe("useGateway", () => {
     });
   });
 
+  test("defers model persistence until enabled-state hydrates", () => {
+    mockConfig = null;
+
+    const { result, rerender } = renderHook(() => useGateway());
+
+    act(() => {
+      result.current.setEnabledModels(["anthropic:claude-opus-4-5"]);
+    });
+
+    // Optimistic UI update happens immediately.
+    expect(optimisticUpdates).toHaveLength(1);
+    expect(optimisticUpdates[0]).toEqual({
+      provider: "mux-gateway",
+      updates: { gatewayModels: ["anthropic:claude-opus-4-5"] },
+    });
+
+    // No persistence until gwConfig is hydrated.
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(0);
+
+    mockConfig = {
+      "mux-gateway": {
+        couponCodeSet: true,
+        isEnabled: false,
+        gatewayModels: [],
+      },
+    };
+
+    act(() => {
+      rerender();
+    });
+
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(1);
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledWith({
+      muxGatewayEnabled: false,
+      muxGatewayModels: ["anthropic:claude-opus-4-5"],
+    });
+  });
+
   test("derives state from provider config without localStorage", () => {
     mockConfig = {
       "mux-gateway": {
