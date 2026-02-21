@@ -1,4 +1,3 @@
-import assert from "@/common/utils/assert";
 import { useState } from "react";
 import { ArrowLeft, Menu } from "lucide-react";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
@@ -30,52 +29,48 @@ interface AnalyticsDashboardProps {
 type TimeRange = "7d" | "30d" | "90d" | "all";
 type TimingMetric = "ttft" | "duration" | "tps";
 
+const VALID_TIME_RANGES = new Set<string>(["7d", "30d", "90d", "all"]);
+const VALID_TIMING_METRICS = new Set<string>(["ttft", "duration", "tps"]);
+
 const ANALYTICS_TIME_RANGE_STORAGE_KEY = "analytics:timeRange";
 const ANALYTICS_TIMING_METRIC_STORAGE_KEY = "analytics:timingMetric";
+
+/** Coerce a persisted value to a known TimeRange, falling back to "30d" if stale/corrupted. */
+function normalizeTimeRange(value: unknown): TimeRange {
+  return typeof value === "string" && VALID_TIME_RANGES.has(value) ? (value as TimeRange) : "30d";
+}
+
+/** Coerce a persisted value to a known TimingMetric, falling back to "duration" if stale/corrupted. */
+function normalizeTimingMetric(value: unknown): TimingMetric {
+  return typeof value === "string" && VALID_TIMING_METRICS.has(value)
+    ? (value as TimingMetric)
+    : "duration";
+}
+
+/** Build a UTC-aligned date boundary N days before today. Using UTC avoids
+ *  the backend's `toISOString().slice(0,10)` conversion silently shifting the
+ *  day in positive-offset timezones. */
+function utcDaysAgo(days: number): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - days));
+}
 
 function computeDateRange(timeRange: TimeRange): {
   from: Date | null;
   granularity: "hour" | "day" | "week";
 } {
-  const now = new Date();
-
   switch (timeRange) {
-    case "7d": {
-      const from = new Date(now);
-      from.setHours(0, 0, 0, 0);
-      from.setDate(from.getDate() - 6);
-      return {
-        from,
-        granularity: "day",
-      };
-    }
-    case "30d": {
-      const from = new Date(now);
-      from.setHours(0, 0, 0, 0);
-      from.setDate(from.getDate() - 29);
-      return {
-        from,
-        granularity: "day",
-      };
-    }
-    case "90d": {
-      const from = new Date(now);
-      from.setHours(0, 0, 0, 0);
-      from.setDate(from.getDate() - 89);
-      return {
-        from,
-        granularity: "week",
-      };
-    }
-    case "all": {
-      return {
-        from: null,
-        granularity: "week",
-      };
-    }
-    default: {
-      assert(false, "Unexpected time range");
-    }
+    case "7d":
+      return { from: utcDaysAgo(6), granularity: "day" };
+    case "30d":
+      return { from: utcDaysAgo(29), granularity: "day" };
+    case "90d":
+      return { from: utcDaysAgo(89), granularity: "week" };
+    case "all":
+      return { from: null, granularity: "week" };
+    default:
+      // Self-heal: unknown persisted value → safe default.
+      return { from: utcDaysAgo(29), granularity: "day" };
   }
 }
 
@@ -84,14 +79,19 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
   const { projects } = useProjectContext();
 
   const [projectPath, setProjectPath] = useState<string | null>(null);
-  const [timeRange, setTimeRange] = usePersistedState<TimeRange>(
+  const [rawTimeRange, setTimeRange] = usePersistedState<TimeRange>(
     ANALYTICS_TIME_RANGE_STORAGE_KEY,
     "30d"
   );
-  const [timingMetric, setTimingMetric] = usePersistedState<TimingMetric>(
+  const [rawTimingMetric, setTimingMetric] = usePersistedState<TimingMetric>(
     ANALYTICS_TIMING_METRIC_STORAGE_KEY,
     "duration"
   );
+
+  // Coerce persisted values to known enums — stale/corrupted localStorage
+  // entries self-heal to defaults instead of crashing the dashboard.
+  const timeRange = normalizeTimeRange(rawTimeRange);
+  const timingMetric = normalizeTimingMetric(rawTimingMetric);
 
   const dateRange = computeDateRange(timeRange);
 
