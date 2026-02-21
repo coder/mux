@@ -297,8 +297,13 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
         configSnapshot?.["mux-gateway"]?.gatewayModels ??
         providersConfig?.["mux-gateway"]?.gatewayModels ??
         [];
+      const shouldApplyDefaultModels = muxGatewayApplyDefaultModelsOnSuccessRef.current;
       const nextModels =
-        existingModels.length > 0 ? existingModels : getEligibleGatewayModels(configSnapshot);
+        existingModels.length > 0
+          ? existingModels
+          : shouldApplyDefaultModels
+            ? getEligibleGatewayModels(configSnapshot)
+            : [];
       const currentEnabled =
         configSnapshot?.["mux-gateway"]?.isEnabled ?? providersConfig?.["mux-gateway"]?.isEnabled;
 
@@ -369,11 +374,23 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   const startMuxGatewayLogin = useCallback(async () => {
     const attempt = ++muxGatewayLoginAttemptRef.current;
 
-    // Enable Mux Gateway for all eligible models after the *first* successful login.
-    const isLoggedIn = providersConfig?.["mux-gateway"]?.couponCodeSet ?? false;
-    muxGatewayApplyDefaultModelsOnSuccessRef.current = !isLoggedIn;
-
     try {
+      // Apply default enrollment only for confirmed first-time setup. If config
+      // hydration is unknown, prefer preserving the current backend selection.
+      let gatewayConfig = providersConfig?.["mux-gateway"];
+      if (gatewayConfig?.couponCodeSet == null && api) {
+        try {
+          const latestConfig = await api.providers.getConfig();
+          if (attempt !== muxGatewayLoginAttemptRef.current) {
+            return;
+          }
+          gatewayConfig = latestConfig?.["mux-gateway"];
+        } catch {
+          // Ignore pre-login fetch failures; fall back to current snapshot.
+        }
+      }
+      muxGatewayApplyDefaultModelsOnSuccessRef.current = gatewayConfig?.couponCodeSet === false;
+
       setMuxGatewayLoginError(null);
       setMuxGatewayDesktopFlowId(null);
       setMuxGatewayServerState(null);
