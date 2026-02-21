@@ -72,6 +72,26 @@ interface PersistedMessage {
   metadata?: unknown;
 }
 
+const TTFT_FIELD_CANDIDATES = [
+  "ttftMs",
+  "ttft_ms",
+  "timeToFirstTokenMs",
+  "time_to_first_token_ms",
+  "timeToFirstToken",
+  "time_to_first_token",
+  "firstTokenMs",
+  "first_token_ms",
+] as const;
+
+const TIMING_RECORD_CANDIDATES = [
+  "providerMetadata",
+  "timing",
+  "timings",
+  "metrics",
+  "latency",
+  "performance",
+] as const;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -162,6 +182,75 @@ function parseUsage(rawUsage: unknown): LanguageModelV2Usage | undefined {
     reasoningTokens,
     cachedInputTokens,
   };
+}
+
+function readFirstFiniteMetric(
+  source: Record<string, unknown>,
+  keys: readonly string[]
+): number | null {
+  for (const key of keys) {
+    const parsed = toFiniteNumber(source[key]);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function collectTimingMetricSources(
+  metadata: Record<string, unknown>
+): Array<Record<string, unknown>> {
+  const visited = new Set<Record<string, unknown>>();
+  const sources: Array<Record<string, unknown>> = [];
+
+  const enqueueRecord = (value: unknown): void => {
+    if (!isRecord(value) || visited.has(value)) {
+      return;
+    }
+
+    visited.add(value);
+    sources.push(value);
+  };
+
+  const enqueueKnownTimingCandidates = (value: unknown): void => {
+    if (!isRecord(value)) {
+      return;
+    }
+
+    enqueueRecord(value);
+
+    for (const key of TIMING_RECORD_CANDIDATES) {
+      enqueueRecord(value[key]);
+    }
+  };
+
+  enqueueKnownTimingCandidates(metadata);
+
+  const providerMetadata = metadata.providerMetadata;
+  enqueueKnownTimingCandidates(providerMetadata);
+
+  if (isRecord(providerMetadata)) {
+    for (const nestedProviderMetadata of Object.values(providerMetadata)) {
+      enqueueKnownTimingCandidates(nestedProviderMetadata);
+    }
+  }
+
+  return sources;
+}
+
+function extractTtftMs(metadata: Record<string, unknown>): number | null {
+  const timingSources = collectTimingMetricSources(metadata);
+  assert(timingSources.length > 0, "extractTtftMs: expected at least one timing source");
+
+  for (const source of timingSources) {
+    const ttftMs = readFirstFiniteMetric(source, TTFT_FIELD_CANDIDATES);
+    if (ttftMs !== null) {
+      return ttftMs;
+    }
+  }
+
+  return null;
 }
 
 function deriveProjectName(projectPath: string | undefined): string | undefined {
@@ -286,6 +375,7 @@ function extractIngestEvent(params: {
     (displayUsage.cached.cost_usd ?? 0) + (displayUsage.cacheCreate.cost_usd ?? 0);
 
   const durationMs = toFiniteNumber(metadata.duration);
+  const ttftMs = extractTtftMs(metadata);
   const outputTps =
     durationMs !== null && durationMs > 0 ? outputTokens / (durationMs / 1000) : null;
 
@@ -310,7 +400,7 @@ function extractIngestEvent(params: {
     cached_cost_usd: cachedCostUsd,
     total_cost_usd: inputCostUsd + outputCostUsd + reasoningCostUsd + cachedCostUsd,
     duration_ms: durationMs,
-    ttft_ms: null,
+    ttft_ms: ttftMs,
     streaming_ms: null,
     tool_execution_ms: null,
     output_tps: outputTps,
@@ -464,6 +554,88 @@ async function replaceEventsByResponseIndex(
   }
 }
 
+async function replaceWorkspaceEvents(
+  conn: DuckDBConnection,
+  workspaceId: string,
+  events: IngestEvent[]
+): Promise<void> {
+  await conn.run("BEGIN TRANSACTION");
+  try {
+    await conn.run("DELETE FROM events WHERE workspace_id = ?", [workspaceId]);
+
+    for (const event of events) {
+      const row = event.row;
+      assert(
+        row.workspace_id === workspaceId,
+        "replaceWorkspaceEvents: all rows must belong to the target workspace"
+      );
+      await conn.run(INSERT_EVENT_SQL, [
+        row.workspace_id,
+        row.project_path,
+        row.project_name,
+        row.workspace_name,
+        row.parent_workspace_id,
+        row.agent_id,
+        row.timestamp,
+        event.date,
+        row.model,
+        row.thinking_level,
+        row.input_tokens,
+        row.output_tokens,
+        row.reasoning_tokens,
+        row.cached_tokens,
+        row.cache_create_tokens,
+        row.input_cost_usd,
+        row.output_cost_usd,
+        row.reasoning_cost_usd,
+        row.cached_cost_usd,
+        row.total_cost_usd,
+        row.duration_ms,
+        row.ttft_ms,
+        row.streaming_ms,
+        row.tool_execution_ms,
+        row.output_tps,
+        row.response_index,
+        row.is_sub_agent,
+      ]);
+    }
+
+    await conn.run("COMMIT");
+  } catch (error) {
+    await conn.run("ROLLBACK");
+    throw error;
+  }
+}
+
+function getMaxSequence(events: IngestEvent[]): number | null {
+  if (events.length === 0) {
+    return null;
+  }
+
+  let maxSequence = Number.NEGATIVE_INFINITY;
+  for (const event of events) {
+    maxSequence = Math.max(maxSequence, event.sequence);
+  }
+
+  assert(Number.isFinite(maxSequence), "getMaxSequence: expected finite max sequence");
+  return maxSequence;
+}
+
+function shouldRebuildWorkspaceForRewind(params: {
+  watermark: IngestWatermark;
+  parsedMaxSequence: number | null;
+}): boolean {
+  if (params.watermark.lastSequence < 0) {
+    return false;
+  }
+
+  if (params.parsedMaxSequence === null) {
+    return true;
+  }
+
+  return params.parsedMaxSequence < params.watermark.lastSequence;
+}
+
 export async function ingestWorkspace(
   conn: DuckDBConnection,
   workspaceId: string,
@@ -498,8 +670,7 @@ export async function ingestWorkspace(
   const lines = chatContents.split("\n").filter((line) => line.trim().length > 0);
 
   let responseIndex = 0;
-  let maxSequence = watermark.lastSequence;
-  const eventsToInsert: IngestEvent[] = [];
+  const parsedEvents: IngestEvent[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     const lineNumber = i + 1;
@@ -520,6 +691,31 @@ export async function ingestWorkspace(
     }
 
     responseIndex += 1;
+    parsedEvents.push(event);
+  }
+
+  const parsedMaxSequence = getMaxSequence(parsedEvents);
+  const shouldRebuild = shouldRebuildWorkspaceForRewind({
+    watermark,
+    parsedMaxSequence,
+  });
+
+  if (shouldRebuild) {
+    // History truncation rewinds historySequence values below our watermark. Rebuild
+    // the workspace slice from current chat.jsonl contents so stale rows are removed
+    // even when the file now has zero assistant events.
+    await replaceWorkspaceEvents(conn, workspaceId, parsedEvents);
+
+    await writeWatermark(conn, workspaceId, {
+      lastSequence: parsedMaxSequence ?? -1,
+      lastModified: stat.mtimeMs,
+    });
+    return;
+  }
+
+  let maxSequence = watermark.lastSequence;
+  const eventsToInsert: IngestEvent[] = [];
+  for (const event of parsedEvents) {
     maxSequence = Math.max(maxSequence, event.sequence);
 
     // Include the current watermark sequence so in-place rewrites with the same
