@@ -25,6 +25,8 @@ const compactNumberFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 
+const BUCKET_TIME_COMPONENT_PATTERN = /(?:^|[ T])\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?/;
+
 export function formatUsd(amount: number): string {
   if (!Number.isFinite(amount)) {
     return "$0.00";
@@ -60,7 +62,7 @@ export function formatBucketLabel(bucket: string): string {
     return bucket;
   }
 
-  const includesTime = bucket.includes("T");
+  const includesTime = BUCKET_TIME_COMPONENT_PATTERN.test(bucket);
   if (includesTime) {
     return parsedDate.toLocaleString(undefined, {
       month: "short",

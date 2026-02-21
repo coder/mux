@@ -356,6 +356,12 @@ export class AnalyticsService {
       return;
     }
 
+    // Workspace-removal hooks can fire in processes that never touched analytics.
+    // Avoid bootstrapping DuckDB/backfill just to clear state that cannot exist yet.
+    if (this.worker == null && this.initPromise == null && this.workerError == null) {
+      return;
+    }
+
     this.ensureWorker()
       .then(() => this.dispatch<void>("clearWorkspace", { workspaceId }))
       .catch((error) => {
