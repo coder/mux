@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "./useProvidersConfig";
@@ -16,31 +16,9 @@ import type { ProvidersConfigMap } from "@/common/orpc/types";
 // Exported for testing only.
 export const pendingGatewayEnrollments = new Set<string>();
 
-// Lightweight signal event dispatched when migrateGatewayModel enqueues items.
-// The useGateway hook listens for this to bump a version counter, ensuring the
-// drain effect re-runs even for late enrollments (after the hook has mounted).
-const ENROLLMENT_PENDING_EVENT = "mux:gatewayEnrollmentPending";
-
-// Global drain state shared across all useGateway hook instances.
-// useGateway is mounted in multiple surfaces (title bar, model selector,
-// settings); this singleton prevents duplicate concurrent drain IPC calls.
-const enrollmentDrainState = {
-  inFlight: false,
-  retryTimer: null as number | null,
-  retryDelayMs: 250,
-};
-
-// If model enrollment is requested before gwConfig hydrates, keep the latest
-// models here and flush once we know the persisted enabled-state.
-// Exported for testing only.
-export const pendingGatewayModelsUntilHydrated = {
-  models: null as string[] | null,
-};
-// Deferred global enabled-state write (master gateway toggle). Cleared after
-// successful persistence. Exported for testing only.
-export const pendingGatewayEnabledUntilPersisted = {
-  value: null as boolean | null,
-};
+// Registered by useGateway so migrateGatewayModel can trigger a best-effort
+// enrollment flush for legacy mux-gateway model strings.
+let requestGatewayEnrollmentFlush: (() => void) | null = null;
 
 function clearLegacyGatewayLocalPrefs(): void {
   // Gateway localStorage keys are deprecated; clear stale values so migration
@@ -118,9 +96,7 @@ export function migrateGatewayModel(modelId: string): string {
     // Deferred via queueMicrotask because migrateGatewayModel can be called
     // during render; dispatching synchronously would be a React anti-pattern.
     queueMicrotask(() => {
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new Event(ENROLLMENT_PENDING_EVENT));
-      }
+      requestGatewayEnrollmentFlush?.();
     });
   }
 
@@ -215,14 +191,62 @@ export function useGateway(): GatewayState {
   const enabledModels = useMemo(() => gwConfig?.gatewayModels ?? [], [gwConfig?.gatewayModels]);
   const isActive = isConfigured && isEnabled;
 
-  // Bump a version counter when migrateGatewayModel enqueues items so the drain
-  // effect re-runs for late enrollments (after the hook has already mounted).
-  const [enrollVersion, setEnrollVersion] = useState(0);
+  const flushPendingEnrollments = useCallback(() => {
+    if (!api || pendingGatewayEnrollments.size === 0) {
+      return;
+    }
+
+    if (!gwConfig) {
+      pendingGatewayEnrollments.clear();
+      return;
+    }
+
+    const pendingModels = [...pendingGatewayEnrollments];
+    const existingModels = gwConfig.gatewayModels ?? [];
+    const newModels = pendingModels.filter((modelId) => !existingModels.includes(modelId));
+
+    // No-op flush: pending models are already persisted.
+    if (newModels.length === 0) {
+      pendingGatewayEnrollments.clear();
+      return;
+    }
+
+    const nextModels = [...existingModels, ...newModels];
+    updateOptimistically("mux-gateway", { gatewayModels: nextModels });
+    clearLegacyGatewayLocalPrefs();
+
+    // Clear eagerly to avoid duplicate writes from multiple hook instances.
+    pendingGatewayEnrollments.clear();
+
+    void api.config
+      .updateMuxGatewayPrefs({
+        muxGatewayEnabled: gwConfig.isEnabled ?? true,
+        muxGatewayModels: nextModels,
+      })
+      .catch(() => {
+        // Best-effort persistence. Keep pending models so a future user action or
+        // config refresh can flush them again.
+        for (const modelId of pendingModels) {
+          pendingGatewayEnrollments.add(modelId);
+        }
+      });
+  }, [api, gwConfig, updateOptimistically]);
+
+  // Register a best-effort flush callback so migrateGatewayModel can signal
+  // late enrollments that happen after this hook mounts.
   useEffect(() => {
-    const handler = () => setEnrollVersion((v) => v + 1);
-    window.addEventListener(ENROLLMENT_PENDING_EVENT, handler);
-    return () => window.removeEventListener(ENROLLMENT_PENDING_EVENT, handler);
-  }, []);
+    requestGatewayEnrollmentFlush = flushPendingEnrollments;
+    return () => {
+      if (requestGatewayEnrollmentFlush === flushPendingEnrollments) {
+        requestGatewayEnrollmentFlush = null;
+      }
+    };
+  }, [flushPendingEnrollments]);
+
+  // Flush queued legacy enrollments after provider config loads.
+  useEffect(() => {
+    flushPendingEnrollments();
+  }, [flushPendingEnrollments]);
 
   // Track whether a session-expired event arrived before config was hydrated.
   // updateOptimistically is a no-op when config is null, so we defer and apply
@@ -254,148 +278,6 @@ export function useGateway(): GatewayState {
     }
   }, [gwConfig, updateOptimistically]);
 
-  // Drain all pending gateway model writes (legacy model migration + explicit
-  // setEnabledModels writes) through a single serialized persistence path.
-  // This avoids races where separate writes could overwrite each other.
-  useEffect(() => {
-    if (!api) return;
-
-    const pendingEnabledSnapshot = pendingGatewayEnabledUntilPersisted.value;
-    if (
-      pendingGatewayEnrollments.size === 0 &&
-      pendingGatewayModelsUntilHydrated.models == null &&
-      pendingEnabledSnapshot == null
-    ) {
-      return;
-    }
-
-    if (enrollmentDrainState.inFlight) return;
-
-    const enrollmentBatch = [...pendingGatewayEnrollments];
-    const pendingModelsSnapshot = pendingGatewayModelsUntilHydrated.models;
-    const pendingEnabled = pendingEnabledSnapshot;
-
-    enrollmentDrainState.inFlight = true;
-    let persistFailed = false;
-
-    const scheduleRetry = () => {
-      if (enrollmentDrainState.retryTimer == null) {
-        const delayMs = enrollmentDrainState.retryDelayMs;
-        enrollmentDrainState.retryDelayMs = Math.min(delayMs * 2, 5_000);
-        enrollmentDrainState.retryTimer = window.setTimeout(() => {
-          enrollmentDrainState.retryTimer = null;
-          window.dispatchEvent(new Event(ENROLLMENT_PENDING_EVENT));
-        }, delayMs);
-      }
-    };
-
-    void (async () => {
-      let baseModels = pendingModelsSnapshot;
-      let nextEnabled = pendingEnabled;
-
-      // When we don't have an explicit queued value, read the latest backend
-      // config to avoid writing from a stale per-hook snapshot.
-      if (baseModels == null || nextEnabled == null) {
-        let latestConfig: Awaited<ReturnType<typeof api.providers.getConfig>>;
-        try {
-          latestConfig = await api.providers.getConfig();
-        } catch {
-          persistFailed = true;
-          scheduleRetry();
-          return;
-        }
-
-        const latestGateway = latestConfig?.["mux-gateway"];
-        if (!latestGateway) {
-          // Gateway provider may be hidden by policy. Drop queued writes so we
-          // don't schedule perpetual retries for unreachable prefs.
-          for (const id of enrollmentBatch) {
-            pendingGatewayEnrollments.delete(id);
-          }
-          if (pendingGatewayModelsUntilHydrated.models === pendingModelsSnapshot) {
-            pendingGatewayModelsUntilHydrated.models = null;
-          }
-          if (pendingGatewayEnabledUntilPersisted.value === pendingEnabled) {
-            pendingGatewayEnabledUntilPersisted.value = null;
-          }
-          return;
-        }
-
-        baseModels ??= latestGateway.gatewayModels ?? null;
-        nextEnabled ??= latestGateway.isEnabled ?? null;
-      }
-
-      if (baseModels == null || nextEnabled == null) {
-        persistFailed = true;
-        scheduleRetry();
-        return;
-      }
-
-      // Explicit setEnabledModels writes represent the user's latest intent.
-      // Don't re-add queued migration enrollments on top of that snapshot.
-      const enrollmentAdds =
-        pendingModelsSnapshot == null
-          ? enrollmentBatch.filter((id) => !baseModels.includes(id))
-          : [];
-      if (pendingModelsSnapshot == null && pendingEnabled == null && enrollmentAdds.length === 0) {
-        // All queued migration enrollments are already persisted; clear them
-        // without issuing a no-op config write.
-        for (const id of enrollmentBatch) {
-          pendingGatewayEnrollments.delete(id);
-        }
-        return;
-      }
-
-      const nextModels =
-        pendingModelsSnapshot == null
-          ? Array.from(new Set([...baseModels, ...enrollmentAdds]))
-          : Array.from(new Set(baseModels));
-      updateOptimistically("mux-gateway", { gatewayModels: nextModels });
-
-      try {
-        await api.config.updateMuxGatewayPrefs({
-          muxGatewayEnabled: nextEnabled,
-          muxGatewayModels: nextModels,
-        });
-
-        // Remove only the enrollments included in this batch.
-        for (const id of enrollmentBatch) pendingGatewayEnrollments.delete(id);
-
-        // If deferred payloads haven't changed since this write started,
-        // clear them now.
-        if (pendingGatewayModelsUntilHydrated.models === pendingModelsSnapshot) {
-          pendingGatewayModelsUntilHydrated.models = null;
-        }
-        if (pendingGatewayEnabledUntilPersisted.value === pendingEnabled) {
-          pendingGatewayEnabledUntilPersisted.value = null;
-        }
-
-        // Reset retry state after success.
-        enrollmentDrainState.retryDelayMs = 250;
-        if (enrollmentDrainState.retryTimer != null) {
-          window.clearTimeout(enrollmentDrainState.retryTimer);
-          enrollmentDrainState.retryTimer = null;
-        }
-      } catch {
-        persistFailed = true;
-        scheduleRetry();
-      }
-    })().finally(() => {
-      enrollmentDrainState.inFlight = false;
-
-      // If new writes were queued while this persistence was in flight,
-      // process them immediately after a successful write.
-      if (
-        !persistFailed &&
-        (pendingGatewayEnrollments.size > 0 ||
-          pendingGatewayModelsUntilHydrated.models != null ||
-          pendingGatewayEnabledUntilPersisted.value != null)
-      ) {
-        window.dispatchEvent(new Event(ENROLLMENT_PENDING_EVENT));
-      }
-    });
-  }, [api, enrollVersion, gwConfig?.isEnabled, updateOptimistically]);
-
   const toggleEnabled = useCallback(() => {
     const nextEnabled = !isEnabled;
     // Optimistic update for instant UI feedback.
@@ -403,34 +285,34 @@ export function useGateway(): GatewayState {
 
     clearLegacyGatewayLocalPrefs();
 
-    // Queue toggle persistence so reconnect windows don't drop user intent.
-    pendingGatewayEnabledUntilPersisted.value = nextEnabled;
-    window.dispatchEvent(new Event(ENROLLMENT_PENDING_EVENT));
-  }, [isEnabled, updateOptimistically]);
+    api?.config
+      .updateMuxGatewayPrefs({
+        muxGatewayEnabled: nextEnabled,
+        muxGatewayModels: enabledModels,
+      })
+      .catch(() => {
+        // Best-effort only; backend configChanged will reconcile state.
+      });
+  }, [api, enabledModels, isEnabled, updateOptimistically]);
 
   const setEnabledModels = useCallback(
     (nextModels: string[]) => {
       // Keep writes centralized in this hook so all gateway actions (global toggle,
-      // per-model toggle, and "enable all") persist from one config snapshot.
+      // per-model toggle, and "enable all") persist through one API call pattern.
       updateOptimistically("mux-gateway", { gatewayModels: nextModels });
 
       clearLegacyGatewayLocalPrefs();
 
-      // Queue the latest desired model set. The shared drain effect clears this
-      // only after successful persistence.
-      pendingGatewayModelsUntilHydrated.models = nextModels;
-
-      const persistedEnabled = gwConfig?.isEnabled;
-      if (persistedEnabled == null) {
-        // Do not guess enabled-state before hydration. Persist once gwConfig is
-        // available so we don't accidentally flip a user-disabled gateway on.
-        return;
-      }
-
-      // Nudge the shared drain loop to flush immediately.
-      window.dispatchEvent(new Event(ENROLLMENT_PENDING_EVENT));
+      api?.config
+        .updateMuxGatewayPrefs({
+          muxGatewayEnabled: isEnabled,
+          muxGatewayModels: nextModels,
+        })
+        .catch(() => {
+          // Best-effort only; backend configChanged will reconcile state.
+        });
     },
-    [gwConfig?.isEnabled, updateOptimistically]
+    [api, isEnabled, updateOptimistically]
   );
 
   const modelUsesGateway = useCallback(
@@ -440,37 +322,12 @@ export function useGateway(): GatewayState {
 
   const toggleModelGateway = useCallback(
     (modelId: string) => {
-      const applyToggle = (baseModels: string[]) => {
-        const nextModels = baseModels.includes(modelId)
-          ? baseModels.filter((m) => m !== modelId)
-          : [...baseModels, modelId];
-        setEnabledModels(nextModels);
-      };
-
-      // Prefer the shared pending snapshot so concurrent toggles across multiple
-      // hook instances don't overwrite each other before config refresh lands.
-      const pendingModels = pendingGatewayModelsUntilHydrated.models;
-      if (pendingModels != null) {
-        applyToggle(pendingModels);
-        return;
-      }
-
-      if (!api?.providers?.getConfig) {
-        applyToggle(enabledModels);
-        return;
-      }
-
-      void api.providers
-        .getConfig()
-        .then((latestConfig) => {
-          const latestModels = latestConfig?.["mux-gateway"]?.gatewayModels ?? enabledModels;
-          applyToggle(latestModels);
-        })
-        .catch(() => {
-          applyToggle(enabledModels);
-        });
+      const nextModels = enabledModels.includes(modelId)
+        ? enabledModels.filter((m) => m !== modelId)
+        : [...enabledModels, modelId];
+      setEnabledModels(nextModels);
     },
-    [api, enabledModels, setEnabledModels]
+    [enabledModels, setEnabledModels]
   );
 
   const canToggleModel = useCallback(

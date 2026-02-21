@@ -30,6 +30,7 @@ import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getEligibleGatewayModels } from "@/browser/utils/gatewayModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
+import { useGateway } from "@/browser/hooks/useGatewayModels";
 import {
   formatMuxGatewayBalance,
   useMuxGatewayAccountStatus,
@@ -234,128 +235,20 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   const [muxGatewayDesktopFlowId, setMuxGatewayDesktopFlowId] = useState<string | null>(null);
   const [muxGatewayServerState, setMuxGatewayServerState] = useState<string | null>(null);
 
-  const pendingGatewayDefaultModelsUntilConfigRef = useRef<string[] | null>(null);
-  const pendingGatewayDefaultEnrollmentRef = useRef<{
-    version: number;
-    payload: {
-      muxGatewayEnabled: boolean;
-      muxGatewayModels: string[];
-    };
-  } | null>(null);
-  const gatewayDefaultEnrollmentVersionRef = useRef(0);
+  const gateway = useGateway();
 
-  const [gatewayDefaultEnrollmentRetryTick, setGatewayDefaultEnrollmentRetryTick] = useState(0);
-  const gatewayDefaultEnrollmentRetryTimerRef = useRef<number | null>(null);
-  const gatewayDefaultEnrollmentRetryDelayRef = useRef(250);
-
-  const persistGatewayDefaultEnrollment = useCallback(
-    (payload: { muxGatewayEnabled: boolean; muxGatewayModels: string[] }) => {
-      const version = ++gatewayDefaultEnrollmentVersionRef.current;
-      pendingGatewayDefaultEnrollmentRef.current = { version, payload };
-
-      if (!api?.config?.updateMuxGatewayPrefs) {
-        // API may be temporarily unavailable during reconnect; keep payload and
-        // flush once the API client becomes available again.
-        return;
-      }
-
-      api.config
-        .updateMuxGatewayPrefs(payload)
-        .then(() => {
-          if (pendingGatewayDefaultEnrollmentRef.current?.version === version) {
-            pendingGatewayDefaultEnrollmentRef.current = null;
-
-            gatewayDefaultEnrollmentRetryDelayRef.current = 250;
-            if (gatewayDefaultEnrollmentRetryTimerRef.current != null) {
-              window.clearTimeout(gatewayDefaultEnrollmentRetryTimerRef.current);
-              gatewayDefaultEnrollmentRetryTimerRef.current = null;
-            }
-          }
-        })
-        .catch(() => {
-          // Keep latest payload for retry with backoff.
-          if ((pendingGatewayDefaultEnrollmentRef.current?.version ?? 0) <= version) {
-            pendingGatewayDefaultEnrollmentRef.current = { version, payload };
-          }
-
-          if (gatewayDefaultEnrollmentRetryTimerRef.current == null) {
-            const delayMs = gatewayDefaultEnrollmentRetryDelayRef.current;
-            gatewayDefaultEnrollmentRetryDelayRef.current = Math.min(delayMs * 2, 5_000);
-            gatewayDefaultEnrollmentRetryTimerRef.current = window.setTimeout(() => {
-              gatewayDefaultEnrollmentRetryTimerRef.current = null;
-              setGatewayDefaultEnrollmentRetryTick((tick) => tick + 1);
-            }, delayMs);
-          }
-        });
-    },
-    [api]
-  );
-
-  const persistGatewayDefaultModelsFromSnapshot = useCallback(
+  const applyDefaultGatewayModels = useCallback(
     (configSnapshot: ProvidersConfigMap | null) => {
       const existingModels =
         configSnapshot?.["mux-gateway"]?.gatewayModels ??
         providersConfig?.["mux-gateway"]?.gatewayModels ??
         [];
-      const shouldApplyDefaultModels = muxGatewayApplyDefaultModelsOnSuccessRef.current;
       const nextModels =
-        existingModels.length > 0
-          ? existingModels
-          : shouldApplyDefaultModels
-            ? getEligibleGatewayModels(configSnapshot)
-            : [];
-      const currentEnabled =
-        configSnapshot?.["mux-gateway"]?.isEnabled ?? providersConfig?.["mux-gateway"]?.isEnabled;
-
-      if (currentEnabled == null) {
-        // Do not guess the enabled flag (true/false). Wait for a hydrated config
-        // snapshot so onboarding never flips a user-disabled gateway back on.
-        pendingGatewayDefaultModelsUntilConfigRef.current = nextModels;
-        return;
-      }
-
-      pendingGatewayDefaultModelsUntilConfigRef.current = null;
-      persistGatewayDefaultEnrollment({
-        muxGatewayEnabled: currentEnabled,
-        muxGatewayModels: nextModels,
-      });
+        existingModels.length > 0 ? existingModels : getEligibleGatewayModels(configSnapshot);
+      gateway.setEnabledModels(nextModels);
     },
-    [persistGatewayDefaultEnrollment, providersConfig]
+    [gateway, providersConfig]
   );
-
-  useEffect(() => {
-    const pendingModels = pendingGatewayDefaultModelsUntilConfigRef.current;
-    const currentEnabled = providersConfig?.["mux-gateway"]?.isEnabled;
-    if (!pendingModels || currentEnabled == null) {
-      return;
-    }
-
-    const hydratedGatewayModels = providersConfig?.["mux-gateway"]?.gatewayModels ?? [];
-    const modelsToPersist =
-      hydratedGatewayModels.length > 0 ? hydratedGatewayModels : pendingModels;
-
-    pendingGatewayDefaultModelsUntilConfigRef.current = null;
-    persistGatewayDefaultEnrollment({
-      muxGatewayEnabled: currentEnabled,
-      muxGatewayModels: modelsToPersist,
-    });
-  }, [persistGatewayDefaultEnrollment, providersConfig]);
-
-  useEffect(() => {
-    const pending = pendingGatewayDefaultEnrollmentRef.current;
-    if (!pending) return;
-
-    persistGatewayDefaultEnrollment(pending.payload);
-  }, [gatewayDefaultEnrollmentRetryTick, persistGatewayDefaultEnrollment]);
-
-  useEffect(() => {
-    return () => {
-      if (gatewayDefaultEnrollmentRetryTimerRef.current != null) {
-        window.clearTimeout(gatewayDefaultEnrollmentRetryTimerRef.current);
-        gatewayDefaultEnrollmentRetryTimerRef.current = null;
-      }
-    };
-  }, []);
 
   const cancelMuxGatewayLogin = useCallback(() => {
     muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
@@ -449,8 +342,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
             }
 
             // Persist gateway models via backend config (no localStorage).
-            // If API/config are temporarily unavailable, queue for retry.
-            persistGatewayDefaultModelsFromSnapshot(latestConfig);
+            applyDefaultGatewayModels(latestConfig);
             muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
           }
 
@@ -531,7 +423,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     backendBaseUrl,
     isDesktop,
     providersConfig,
-    persistGatewayDefaultModelsFromSnapshot,
+    applyDefaultGatewayModels,
     refreshMuxGatewayAccountStatus,
   ]);
 
@@ -558,8 +450,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
           const applyLatest = (latestConfig: ProvidersConfigMap | null) => {
             if (muxGatewayLoginAttemptRef.current !== attempt) return;
             // Persist gateway models via backend config (no localStorage).
-            // If API/config are temporarily unavailable, queue for retry.
-            persistGatewayDefaultModelsFromSnapshot(latestConfig);
+            applyDefaultGatewayModels(latestConfig);
           };
 
           if (api) {
@@ -591,7 +482,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     muxGatewayLoginStatus,
     muxGatewayServerState,
     providersConfig,
-    persistGatewayDefaultModelsFromSnapshot,
+    applyDefaultGatewayModels,
     refreshMuxGatewayAccountStatus,
   ]);
 
