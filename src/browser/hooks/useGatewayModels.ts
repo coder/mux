@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "./useProvidersConfig";
 import {
   MUX_GATEWAY_SUPPORTED_PROVIDERS,
@@ -40,6 +41,13 @@ export const pendingGatewayModelsUntilHydrated = {
 export const pendingGatewayEnabledUntilPersisted = {
   value: null as boolean | null,
 };
+
+function clearLegacyGatewayLocalPrefs(): void {
+  // Gateway localStorage keys are deprecated; clear stale values so migration
+  // logic doesn't overwrite newer backend-driven user preferences.
+  updatePersistedState<boolean | undefined>("gateway-enabled", undefined);
+  updatePersistedState<string[] | undefined>("gateway-models", undefined);
+}
 
 // ============================================================================
 // Pure utility functions (no side effects, used for message sending)
@@ -390,6 +398,8 @@ export function useGateway(): GatewayState {
     // Optimistic update for instant UI feedback.
     updateOptimistically("mux-gateway", { isEnabled: nextEnabled });
 
+    clearLegacyGatewayLocalPrefs();
+
     // Queue toggle persistence so reconnect windows don't drop user intent.
     pendingGatewayEnabledUntilPersisted.value = nextEnabled;
     window.dispatchEvent(new Event(ENROLLMENT_PENDING_EVENT));
@@ -400,6 +410,8 @@ export function useGateway(): GatewayState {
       // Keep writes centralized in this hook so all gateway actions (global toggle,
       // per-model toggle, and "enable all") persist from one config snapshot.
       updateOptimistically("mux-gateway", { gatewayModels: nextModels });
+
+      clearLegacyGatewayLocalPrefs();
 
       // Queue the latest desired model set. The shared drain effect clears this
       // only after successful persistence.
