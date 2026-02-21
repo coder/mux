@@ -17,13 +17,13 @@ import { useRuntimeEnablement } from "@/browser/hooks/useRuntimeEnablement";
 import { RUNTIME_CHOICE_UI, type RuntimeUiSpec } from "@/browser/utils/runtimeUi";
 import { cn } from "@/common/lib/utils";
 import type { CoderInfo } from "@/common/orpc/schemas/coder";
+import { normalizeRuntimeEnablement, RUNTIME_MODE } from "@/common/types/runtime";
 import type {
   RuntimeAvailabilityStatus,
   RuntimeEnablement,
   RuntimeEnablementId,
   RuntimeMode,
 } from "@/common/types/runtime";
-import { normalizeRuntimeEnablement } from "@/common/types/runtime";
 
 type RuntimeAvailabilityMap = Record<RuntimeMode, RuntimeAvailabilityStatus>;
 
@@ -317,12 +317,18 @@ export function RuntimesSection() {
     };
 
     if (!isProjectScope) {
-      let nextDefaultRuntime = defaultRuntime ?? null;
-      if (nextDefaultRuntime && !nextEnablement[nextDefaultRuntime]) {
+      const implicitDefault: RuntimeEnablementId = defaultRuntime ?? RUNTIME_MODE.WORKTREE;
+      let nextDefaultRuntime: RuntimeEnablementId | null = implicitDefault;
+      if (!nextEnablement[implicitDefault]) {
         nextDefaultRuntime = getFallbackRuntime(nextEnablement);
       }
 
-      if (nextDefaultRuntime !== defaultRuntime) {
+      const shouldUpdateDefault =
+        defaultRuntime !== null
+          ? nextDefaultRuntime !== defaultRuntime
+          : nextDefaultRuntime !== implicitDefault;
+
+      if (shouldUpdateDefault) {
         setRuntimeEnabled(runtimeId, enabled, nextDefaultRuntime ?? null);
       } else {
         setRuntimeEnabled(runtimeId, enabled);
