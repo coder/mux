@@ -4087,7 +4087,11 @@ export const router = (authToken?: string) => {
         .input(schemas.analytics.getSummary.input)
         .output(schemas.analytics.getSummary.output)
         .handler(async ({ context, input }) => {
-          return context.analyticsService.getSummary(input.projectPath ?? null);
+          return context.analyticsService.getSummary(
+            input.projectPath ?? null,
+            input.from ?? null,
+            input.to ?? null
+          );
         }),
       getSpendOverTime: t
         .input(schemas.analytics.getSpendOverTime.input)
@@ -4098,14 +4102,18 @@ export const router = (authToken?: string) => {
       getSpendByProject: t
         .input(schemas.analytics.getSpendByProject.input)
         .output(schemas.analytics.getSpendByProject.output)
-        .handler(async ({ context }) => {
-          return context.analyticsService.getSpendByProject();
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.getSpendByProject(input.from ?? null, input.to ?? null);
         }),
       getSpendByModel: t
         .input(schemas.analytics.getSpendByModel.input)
         .output(schemas.analytics.getSpendByModel.output)
         .handler(async ({ context, input }) => {
-          return context.analyticsService.getSpendByModel(input.projectPath ?? null);
+          return context.analyticsService.getSpendByModel(
+            input.projectPath ?? null,
+            input.from ?? null,
+            input.to ?? null
+          );
         }),
       getTimingDistribution: t
         .input(schemas.analytics.getTimingDistribution.input)
@@ -4113,14 +4121,20 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.analyticsService.getTimingDistribution(
             input.metric,
-            input.projectPath ?? null
+            input.projectPath ?? null,
+            input.from ?? null,
+            input.to ?? null
           );
         }),
       getAgentCostBreakdown: t
         .input(schemas.analytics.getAgentCostBreakdown.input)
         .output(schemas.analytics.getAgentCostBreakdown.output)
         .handler(async ({ context, input }) => {
-          return context.analyticsService.getAgentCostBreakdown(input.projectPath ?? null);
+          return context.analyticsService.getAgentCostBreakdown(
+            input.projectPath ?? null,
+            input.from ?? null,
+            input.to ?? null
+          );
         }),
       rebuildDatabase: t
         .input(schemas.analytics.rebuildDatabase.input)

@@ -320,7 +320,11 @@ export class AnalyticsService {
     return this.dispatch<T>("query", { queryName, params });
   }
 
-  async getSummary(projectPath: string | null): Promise<{
+  async getSummary(
+    projectPath: string | null,
+    from?: Date | null,
+    to?: Date | null
+  ): Promise<{
     totalSpendUsd: number;
     todaySpendUsd: number;
     avgDailySpendUsd: number;
@@ -328,7 +332,11 @@ export class AnalyticsService {
     totalTokens: number;
     totalResponses: number;
   }> {
-    const row = await this.executeQuery<SummaryRow>("getSummary", { projectPath });
+    const row = await this.executeQuery<SummaryRow>("getSummary", {
+      projectPath,
+      from: toDateFilterString(from),
+      to: toDateFilterString(to),
+    });
 
     return {
       totalSpendUsd: row.total_spend_usd,
@@ -360,10 +368,16 @@ export class AnalyticsService {
     }));
   }
 
-  async getSpendByProject(): Promise<
+  async getSpendByProject(
+    from?: Date | null,
+    to?: Date | null
+  ): Promise<
     Array<{ projectName: string; projectPath: string; costUsd: number; tokenCount: number }>
   > {
-    const rows = await this.executeQuery<SpendByProjectRow[]>("getSpendByProject", {});
+    const rows = await this.executeQuery<SpendByProjectRow[]>("getSpendByProject", {
+      from: toDateFilterString(from),
+      to: toDateFilterString(to),
+    });
 
     return rows.map((row) => ({
       projectName: row.project_name,
@@ -374,9 +388,15 @@ export class AnalyticsService {
   }
 
   async getSpendByModel(
-    projectPath: string | null
+    projectPath: string | null,
+    from?: Date | null,
+    to?: Date | null
   ): Promise<Array<{ model: string; costUsd: number; tokenCount: number; responseCount: number }>> {
-    const rows = await this.executeQuery<SpendByModelRow[]>("getSpendByModel", { projectPath });
+    const rows = await this.executeQuery<SpendByModelRow[]>("getSpendByModel", {
+      projectPath,
+      from: toDateFilterString(from),
+      to: toDateFilterString(to),
+    });
 
     return rows.map((row) => ({
       model: row.model,
@@ -388,7 +408,9 @@ export class AnalyticsService {
 
   async getTimingDistribution(
     metric: "ttft" | "duration" | "tps",
-    projectPath: string | null
+    projectPath: string | null,
+    from?: Date | null,
+    to?: Date | null
   ): Promise<{
     p50: number;
     p90: number;
@@ -398,6 +420,8 @@ export class AnalyticsService {
     const row = await this.executeQuery<TimingDistributionRow>("getTimingDistribution", {
       metric,
       projectPath,
+      from: toDateFilterString(from),
+      to: toDateFilterString(to),
     });
 
     return {
@@ -412,11 +436,17 @@ export class AnalyticsService {
   }
 
   async getAgentCostBreakdown(
-    projectPath: string | null
+    projectPath: string | null,
+    from?: Date | null,
+    to?: Date | null
   ): Promise<
     Array<{ agentId: string; costUsd: number; tokenCount: number; responseCount: number }>
   > {
-    const rows = await this.executeQuery<AgentCostRow[]>("getAgentCostBreakdown", { projectPath });
+    const rows = await this.executeQuery<AgentCostRow[]>("getAgentCostBreakdown", {
+      projectPath,
+      from: toDateFilterString(from),
+      to: toDateFilterString(to),
+    });
 
     return rows.map((row) => ({
       agentId: row.agent_id,

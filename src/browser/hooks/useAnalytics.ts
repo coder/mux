@@ -26,6 +26,11 @@ type SpendByModelInput = z.input<typeof analytics.getSpendByModel.input>;
 type TimingDistributionInput = z.input<typeof analytics.getTimingDistribution.input>;
 type AgentCostBreakdownInput = z.input<typeof analytics.getAgentCostBreakdown.input>;
 
+interface DateFilterParams {
+  from?: Date | null;
+  to?: Date | null;
+}
+
 interface AnalyticsNamespace {
   getSummary: (input: SummaryInput) => Promise<Summary>;
   getSpendOverTime: (input: SpendOverTimeInput) => Promise<SpendOverTimeItem[]>;
@@ -61,7 +66,13 @@ function getAnalyticsNamespace(api: APIClient): AnalyticsNamespace | null {
   return maybeNamespace as AnalyticsNamespace;
 }
 
-export function useAnalyticsSummary(projectPath?: string | null): AsyncState<Summary> {
+export function useAnalyticsSummary(
+  projectPath?: string | null,
+  dateFilters?: DateFilterParams
+): AsyncState<Summary> {
+  const fromMs = dateFilters?.from?.getTime() ?? null;
+  const toMs = dateFilters?.to?.getTime() ?? null;
+
   const { api } = useAPI();
   const [state, setState] = useState<AsyncState<Summary>>({
     data: null,
@@ -92,8 +103,11 @@ export function useAnalyticsSummary(projectPath?: string | null): AsyncState<Sum
       error: null,
     }));
 
+    const fromDate = fromMs == null ? null : new Date(fromMs);
+    const toDate = toMs == null ? null : new Date(toMs);
+
     void analyticsApi
-      .getSummary({ projectPath: projectPath ?? null })
+      .getSummary({ projectPath: projectPath ?? null, from: fromDate, to: toDate })
       .then((data) => {
         if (ignore) {
           return;
@@ -114,7 +128,7 @@ export function useAnalyticsSummary(projectPath?: string | null): AsyncState<Sum
     return () => {
       ignore = true;
     };
-  }, [api, projectPath]);
+  }, [api, projectPath, fromMs, toMs]);
 
   return state;
 }
@@ -198,7 +212,12 @@ export function useAnalyticsSpendOverTime(params: {
   return state;
 }
 
-export function useAnalyticsSpendByProject(): AsyncState<SpendByProjectItem[]> {
+export function useAnalyticsSpendByProject(
+  dateFilters?: DateFilterParams
+): AsyncState<SpendByProjectItem[]> {
+  const fromMs = dateFilters?.from?.getTime() ?? null;
+  const toMs = dateFilters?.to?.getTime() ?? null;
+
   const { api } = useAPI();
   const [state, setState] = useState<AsyncState<SpendByProjectItem[]>>({
     data: null,
@@ -229,8 +248,11 @@ export function useAnalyticsSpendByProject(): AsyncState<SpendByProjectItem[]> {
       error: null,
     }));
 
+    const fromDate = fromMs == null ? null : new Date(fromMs);
+    const toDate = toMs == null ? null : new Date(toMs);
+
     void analyticsApi
-      .getSpendByProject({})
+      .getSpendByProject({ from: fromDate, to: toDate })
       .then((data) => {
         if (ignore) {
           return;
@@ -251,14 +273,18 @@ export function useAnalyticsSpendByProject(): AsyncState<SpendByProjectItem[]> {
     return () => {
       ignore = true;
     };
-  }, [api]);
+  }, [api, fromMs, toMs]);
 
   return state;
 }
 
 export function useAnalyticsSpendByModel(
-  projectPath?: string | null
+  projectPath?: string | null,
+  dateFilters?: DateFilterParams
 ): AsyncState<SpendByModelItem[]> {
+  const fromMs = dateFilters?.from?.getTime() ?? null;
+  const toMs = dateFilters?.to?.getTime() ?? null;
+
   const { api } = useAPI();
   const [state, setState] = useState<AsyncState<SpendByModelItem[]>>({
     data: null,
@@ -289,8 +315,11 @@ export function useAnalyticsSpendByModel(
       error: null,
     }));
 
+    const fromDate = fromMs == null ? null : new Date(fromMs);
+    const toDate = toMs == null ? null : new Date(toMs);
+
     void analyticsApi
-      .getSpendByModel({ projectPath: projectPath ?? null })
+      .getSpendByModel({ projectPath: projectPath ?? null, from: fromDate, to: toDate })
       .then((data) => {
         if (ignore) {
           return;
@@ -311,19 +340,23 @@ export function useAnalyticsSpendByModel(
     return () => {
       ignore = true;
     };
-  }, [api, projectPath]);
+  }, [api, projectPath, fromMs, toMs]);
 
   return state;
 }
 
 export function useAnalyticsTimingDistribution(
   metric: "ttft" | "duration" | "tps",
-  projectPath?: string | null
+  projectPath?: string | null,
+  dateFilters?: DateFilterParams
 ): AsyncState<TimingDistribution> {
   assert(
     metric === "ttft" || metric === "duration" || metric === "tps",
     "useAnalyticsTimingDistribution requires a valid metric"
   );
+
+  const fromMs = dateFilters?.from?.getTime() ?? null;
+  const toMs = dateFilters?.to?.getTime() ?? null;
 
   const { api } = useAPI();
   const [state, setState] = useState<AsyncState<TimingDistribution>>({
@@ -355,8 +388,16 @@ export function useAnalyticsTimingDistribution(
       error: null,
     }));
 
+    const fromDate = fromMs == null ? null : new Date(fromMs);
+    const toDate = toMs == null ? null : new Date(toMs);
+
     void analyticsApi
-      .getTimingDistribution({ metric, projectPath: projectPath ?? null })
+      .getTimingDistribution({
+        metric,
+        projectPath: projectPath ?? null,
+        from: fromDate,
+        to: toDate,
+      })
       .then((data) => {
         if (ignore) {
           return;
@@ -377,14 +418,18 @@ export function useAnalyticsTimingDistribution(
     return () => {
       ignore = true;
     };
-  }, [api, metric, projectPath]);
+  }, [api, metric, projectPath, fromMs, toMs]);
 
   return state;
 }
 
 export function useAnalyticsAgentCostBreakdown(
-  projectPath?: string | null
+  projectPath?: string | null,
+  dateFilters?: DateFilterParams
 ): AsyncState<AgentCostItem[]> {
+  const fromMs = dateFilters?.from?.getTime() ?? null;
+  const toMs = dateFilters?.to?.getTime() ?? null;
+
   const { api } = useAPI();
   const [state, setState] = useState<AsyncState<AgentCostItem[]>>({
     data: null,
@@ -415,8 +460,11 @@ export function useAnalyticsAgentCostBreakdown(
       error: null,
     }));
 
+    const fromDate = fromMs == null ? null : new Date(fromMs);
+    const toDate = toMs == null ? null : new Date(toMs);
+
     void analyticsApi
-      .getAgentCostBreakdown({ projectPath: projectPath ?? null })
+      .getAgentCostBreakdown({ projectPath: projectPath ?? null, from: fromDate, to: toDate })
       .then((data) => {
         if (ignore) {
           return;
@@ -437,7 +485,7 @@ export function useAnalyticsAgentCostBreakdown(
     return () => {
       ignore = true;
     };
-  }, [api, projectPath]);
+  }, [api, projectPath, fromMs, toMs]);
 
   return state;
 }

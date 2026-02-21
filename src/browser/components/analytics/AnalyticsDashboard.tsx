@@ -57,20 +57,21 @@ function utcDaysAgo(days: number): Date {
 
 function computeDateRange(timeRange: TimeRange): {
   from: Date | null;
+  to: Date | null;
   granularity: "hour" | "day" | "week";
 } {
   switch (timeRange) {
     case "7d":
-      return { from: utcDaysAgo(6), granularity: "day" };
+      return { from: utcDaysAgo(6), to: null, granularity: "day" };
     case "30d":
-      return { from: utcDaysAgo(29), granularity: "day" };
+      return { from: utcDaysAgo(29), to: null, granularity: "day" };
     case "90d":
-      return { from: utcDaysAgo(89), granularity: "week" };
+      return { from: utcDaysAgo(89), to: null, granularity: "week" };
     case "all":
-      return { from: null, granularity: "week" };
+      return { from: null, to: null, granularity: "week" };
     default:
       // Self-heal: unknown persisted value → safe default.
-      return { from: utcDaysAgo(29), granularity: "day" };
+      return { from: utcDaysAgo(29), to: null, granularity: "day" };
   }
 }
 
@@ -95,16 +96,32 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
 
   const dateRange = computeDateRange(timeRange);
 
-  const summary = useAnalyticsSummary(projectPath);
+  const summary = useAnalyticsSummary(projectPath, {
+    from: dateRange.from,
+    to: dateRange.to,
+  });
   const spendOverTime = useAnalyticsSpendOverTime({
     projectPath,
     granularity: dateRange.granularity,
     from: dateRange.from,
+    to: dateRange.to,
   });
-  const spendByProject = useAnalyticsSpendByProject();
-  const spendByModel = useAnalyticsSpendByModel(projectPath);
-  const timingDistribution = useAnalyticsTimingDistribution(timingMetric, projectPath);
-  const agentCosts = useAnalyticsAgentCostBreakdown(projectPath);
+  const spendByProject = useAnalyticsSpendByProject({
+    from: dateRange.from,
+    to: dateRange.to,
+  });
+  const spendByModel = useAnalyticsSpendByModel(projectPath, {
+    from: dateRange.from,
+    to: dateRange.to,
+  });
+  const timingDistribution = useAnalyticsTimingDistribution(timingMetric, projectPath, {
+    from: dateRange.from,
+    to: dateRange.to,
+  });
+  const agentCosts = useAnalyticsAgentCostBreakdown(projectPath, {
+    from: dateRange.from,
+    to: dateRange.to,
+  });
 
   const projectRows = Array.from(projects.entries())
     .map(([path]) => ({

@@ -8,7 +8,7 @@ import type { AppRouter } from "@/node/orpc/router";
 import type { OrpcServer } from "@/node/orpc/server";
 import type { ORPCContext } from "@/node/orpc/context";
 import type { AnalyticsService } from "@/node/services/analytics/analyticsService";
-import { useAnalyticsSummary, type Summary } from "./useAnalytics";
+import { useAnalyticsSpendByModel, useAnalyticsSummary, type Summary } from "./useAnalytics";
 
 const ANALYTICS_UNAVAILABLE_MESSAGE = "Analytics backend is not available in this build.";
 
@@ -21,7 +21,21 @@ const summaryFixture: Summary = {
   totalResponses: 84,
 };
 
+interface AnalyticsServiceCalls {
+  summary: Array<{
+    projectPath: string | null;
+    from: Date | null | undefined;
+    to: Date | null | undefined;
+  }>;
+  spendByModel: Array<{
+    projectPath: string | null;
+    from: Date | null | undefined;
+    to: Date | null | undefined;
+  }>;
+}
+
 let currentApiClient: RouterClient<AppRouter> | null = null;
+let analyticsServiceCalls: AnalyticsServiceCalls | null = null;
 
 void mock.module("@/browser/contexts/API", () => ({
   useAPI: () => ({ api: currentApiClient }),
@@ -49,31 +63,56 @@ type AnalyticsServiceStub = Pick<
   | "ingestWorkspace"
 >;
 
-function createAnalyticsServiceStub(summary: Summary): AnalyticsServiceStub {
+function createAnalyticsServiceStub(summary: Summary): {
+  service: AnalyticsServiceStub;
+  calls: AnalyticsServiceCalls;
+} {
+  const calls: AnalyticsServiceCalls = {
+    summary: [],
+    spendByModel: [],
+  };
+
   return {
-    getSummary: () => Promise.resolve(summary),
-    getSpendOverTime: () => Promise.resolve([]),
-    getSpendByProject: () => Promise.resolve([]),
-    getSpendByModel: () => Promise.resolve([]),
-    getTimingDistribution: () => Promise.resolve({ p50: 0, p90: 0, p99: 0, histogram: [] }),
-    getAgentCostBreakdown: () => Promise.resolve([]),
-    rebuildAll: () => Promise.resolve({ success: true, workspacesIngested: 0 }),
-    clearWorkspace: () => undefined,
-    ingestWorkspace: () => undefined,
+    calls,
+    service: {
+      getSummary: (projectPath, from, to) => {
+        calls.summary.push({ projectPath, from, to });
+        return Promise.resolve(summary);
+      },
+      getSpendOverTime: () => Promise.resolve([]),
+      getSpendByProject: () => Promise.resolve([]),
+      getSpendByModel: (projectPath, from, to) => {
+        calls.spendByModel.push({ projectPath, from, to });
+        return Promise.resolve([]);
+      },
+      getTimingDistribution: () => Promise.resolve({ p50: 0, p90: 0, p99: 0, histogram: [] }),
+      getAgentCostBreakdown: () => Promise.resolve([]),
+      rebuildAll: () => Promise.resolve({ success: true, workspacesIngested: 0 }),
+      clearWorkspace: () => undefined,
+      ingestWorkspace: () => undefined,
+    },
   };
 }
 
-describe("useAnalyticsSummary", () => {
+function requireAnalyticsServiceCalls(): AnalyticsServiceCalls {
+  if (!analyticsServiceCalls) {
+    throw new Error("Expected analytics service call tracking to be initialized");
+  }
+  return analyticsServiceCalls;
+}
+
+describe("useAnalytics hooks", () => {
   let server: OrpcServer | null = null;
 
   beforeEach(async () => {
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
     globalThis.document = globalThis.window.document;
 
+    const analyticsStub = createAnalyticsServiceStub(summaryFixture);
+    analyticsServiceCalls = analyticsStub.calls;
+
     const context: Partial<ORPCContext> = {
-      analyticsService: createAnalyticsServiceStub(
-        summaryFixture
-      ) as unknown as ORPCContext["analyticsService"],
+      analyticsService: analyticsStub.service as unknown as ORPCContext["analyticsService"],
     };
 
     // eslint-disable-next-line no-restricted-syntax -- test-only dynamic import avoids browser/node boundary lint
@@ -92,6 +131,7 @@ describe("useAnalyticsSummary", () => {
   afterEach(async () => {
     cleanup();
     currentApiClient = null;
+    analyticsServiceCalls = null;
     await server?.close();
     server = null;
     globalThis.window = undefined as unknown as Window & typeof globalThis;
@@ -115,5 +155,49 @@ describe("useAnalyticsSummary", () => {
     expect(result.current.error).not.toBe(ANALYTICS_UNAVAILABLE_MESSAGE);
     expect(result.current.error).toBeNull();
     expect(result.current.data).toEqual(summaryFixture);
+  });
+
+  test("forwards from/to filters to summary endpoint", async () => {
+    const from = new Date("2026-01-05T00:00:00.000Z");
+    const to = new Date("2026-01-20T00:00:00.000Z");
+
+    const { result } = renderHook(() => useAnalyticsSummary("/tmp/project", { from, to }));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const calls = requireAnalyticsServiceCalls().summary;
+    expect(calls.length).toBeGreaterThan(0);
+
+    const latest = calls.at(-1);
+    expect(latest).toBeDefined();
+    if (!latest || !(latest.from instanceof Date) || !(latest.to instanceof Date)) {
+      throw new Error("Expected summary call to include Date filters");
+    }
+
+    expect(latest.projectPath).toBe("/tmp/project");
+    expect(latest.from.toISOString()).toBe(from.toISOString());
+    expect(latest.to.toISOString()).toBe(to.toISOString());
+  });
+
+  test("forwards from/to filters to spend-by-model endpoint", async () => {
+    const from = new Date("2026-01-07T00:00:00.000Z");
+    const to = new Date("2026-01-27T00:00:00.000Z");
+
+    const { result } = renderHook(() => useAnalyticsSpendByModel("/tmp/project", { from, to }));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const calls = requireAnalyticsServiceCalls().spendByModel;
+    expect(calls.length).toBeGreaterThan(0);
+
+    const latest = calls.at(-1);
+    expect(latest).toBeDefined();
+    if (!latest || !(latest.from instanceof Date) || !(latest.to instanceof Date)) {
+      throw new Error("Expected spend-by-model call to include Date filters");
+    }
+
+    expect(latest.projectPath).toBe("/tmp/project");
+    expect(latest.from.toISOString()).toBe(from.toISOString());
+    expect(latest.to.toISOString()).toBe(to.toISOString());
   });
 });

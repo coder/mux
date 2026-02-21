@@ -135,7 +135,11 @@ function getTodayUtcDateString(now: Date = new Date()): string {
 
 async function querySummary(
   conn: DuckDBConnection,
-  projectPath: string | null
+  params: {
+    projectPath: string | null;
+    from: string | null;
+    to: string | null;
+  }
 ): Promise<SummaryRow> {
   // events.date is derived from message timestamps via UTC date buckets, so
   // summary "today" must use a UTC date key instead of DuckDB local CURRENT_DATE.
@@ -162,8 +166,18 @@ async function querySummary(
       COALESCE(COUNT(*), 0) AS total_responses
     FROM events
     WHERE (? IS NULL OR project_path = ?)
+      AND (? IS NULL OR date >= CAST(? AS DATE))
+      AND (? IS NULL OR date <= CAST(? AS DATE))
     `,
-    [todayUtcDate, projectPath, projectPath],
+    [
+      todayUtcDate,
+      params.projectPath,
+      params.projectPath,
+      params.from,
+      params.from,
+      params.to,
+      params.to,
+    ],
     SummaryRowSchema
   );
 }
@@ -208,7 +222,10 @@ async function querySpendOverTime(
   );
 }
 
-async function querySpendByProject(conn: DuckDBConnection): Promise<SpendByProjectRow[]> {
+async function querySpendByProject(
+  conn: DuckDBConnection,
+  params: { from: string | null; to: string | null }
+): Promise<SpendByProjectRow[]> {
   return typedQuery(
     conn,
     `
@@ -221,17 +238,21 @@ async function querySpendByProject(conn: DuckDBConnection): Promise<SpendByProje
         0
       ) AS token_count
     FROM events
+    WHERE (? IS NULL OR date >= CAST(? AS DATE))
+      AND (? IS NULL OR date <= CAST(? AS DATE))
     GROUP BY 1, 2
     ORDER BY cost_usd DESC
     `,
-    [],
+    [params.from, params.from, params.to, params.to],
     SpendByProjectRowSchema
   );
 }
 
 async function querySpendByModel(
   conn: DuckDBConnection,
-  projectPath: string | null
+  projectPath: string | null,
+  from: string | null,
+  to: string | null
 ): Promise<SpendByModelRow[]> {
   return typedQuery(
     conn,
@@ -246,10 +267,12 @@ async function querySpendByModel(
       COALESCE(COUNT(*), 0) AS response_count
     FROM events
     WHERE (? IS NULL OR project_path = ?)
+      AND (? IS NULL OR date >= CAST(? AS DATE))
+      AND (? IS NULL OR date <= CAST(? AS DATE))
     GROUP BY 1
     ORDER BY cost_usd DESC
     `,
-    [projectPath, projectPath],
+    [projectPath, projectPath, from, from, to, to],
     SpendByModelRowSchema
   );
 }
@@ -257,7 +280,9 @@ async function querySpendByModel(
 async function queryTimingDistribution(
   conn: DuckDBConnection,
   metric: TimingMetric,
-  projectPath: string | null
+  projectPath: string | null,
+  from: string | null,
+  to: string | null
 ): Promise<TimingDistributionResult> {
   const columnByMetric: Record<TimingMetric, string> = {
     ttft: "ttft_ms",
@@ -277,8 +302,10 @@ async function queryTimingDistribution(
     FROM events
     WHERE ${column} IS NOT NULL
       AND (? IS NULL OR project_path = ?)
+      AND (? IS NULL OR date >= CAST(? AS DATE))
+      AND (? IS NULL OR date <= CAST(? AS DATE))
     `,
-    [projectPath, projectPath],
+    [projectPath, projectPath, from, from, to, to],
     TimingPercentilesRowSchema
   );
 
@@ -295,6 +322,8 @@ async function queryTimingDistribution(
       FROM events
       WHERE ${column} IS NOT NULL
         AND (? IS NULL OR project_path = ?)
+        AND (? IS NULL OR date >= CAST(? AS DATE))
+        AND (? IS NULL OR date <= CAST(? AS DATE))
     ),
     bucketed AS (
       SELECT
@@ -317,6 +346,8 @@ async function queryTimingDistribution(
       CROSS JOIN stats
       WHERE events.${column} IS NOT NULL
         AND (? IS NULL OR events.project_path = ?)
+        AND (? IS NULL OR events.date >= CAST(? AS DATE))
+        AND (? IS NULL OR events.date <= CAST(? AS DATE))
     )
     SELECT
       COALESCE(
@@ -337,7 +368,7 @@ async function queryTimingDistribution(
     GROUP BY bucket_id
     ORDER BY bucket_id
     `,
-    [projectPath, projectPath, projectPath, projectPath],
+    [projectPath, projectPath, from, from, to, to, projectPath, projectPath, from, from, to, to],
     HistogramBucketSchema
   );
 
@@ -349,7 +380,9 @@ async function queryTimingDistribution(
 
 async function queryAgentCostBreakdown(
   conn: DuckDBConnection,
-  projectPath: string | null
+  projectPath: string | null,
+  from: string | null,
+  to: string | null
 ): Promise<AgentCostRow[]> {
   return typedQuery(
     conn,
@@ -364,10 +397,12 @@ async function queryAgentCostBreakdown(
       COALESCE(COUNT(*), 0) AS response_count
     FROM events
     WHERE (? IS NULL OR project_path = ?)
+      AND (? IS NULL OR date >= CAST(? AS DATE))
+      AND (? IS NULL OR date <= CAST(? AS DATE))
     GROUP BY 1
     ORDER BY cost_usd DESC
     `,
-    [projectPath, projectPath],
+    [projectPath, projectPath, from, from, to, to],
     AgentCostRowSchema
   );
 }
@@ -379,7 +414,11 @@ export async function executeNamedQuery(
 ): Promise<unknown> {
   switch (queryName) {
     case "getSummary": {
-      return querySummary(conn, parseOptionalString(params.projectPath));
+      return querySummary(conn, {
+        projectPath: parseOptionalString(params.projectPath),
+        from: parseDateFilter(params.from),
+        to: parseDateFilter(params.to),
+      });
     }
 
     case "getSpendOverTime": {
@@ -392,23 +431,38 @@ export async function executeNamedQuery(
     }
 
     case "getSpendByProject": {
-      return querySpendByProject(conn);
+      return querySpendByProject(conn, {
+        from: parseDateFilter(params.from),
+        to: parseDateFilter(params.to),
+      });
     }
 
     case "getSpendByModel": {
-      return querySpendByModel(conn, parseOptionalString(params.projectPath));
+      return querySpendByModel(
+        conn,
+        parseOptionalString(params.projectPath),
+        parseDateFilter(params.from),
+        parseDateFilter(params.to)
+      );
     }
 
     case "getTimingDistribution": {
       return queryTimingDistribution(
         conn,
         parseTimingMetric(params.metric),
-        parseOptionalString(params.projectPath)
+        parseOptionalString(params.projectPath),
+        parseDateFilter(params.from),
+        parseDateFilter(params.to)
       );
     }
 
     case "getAgentCostBreakdown": {
-      return queryAgentCostBreakdown(conn, parseOptionalString(params.projectPath));
+      return queryAgentCostBreakdown(
+        conn,
+        parseOptionalString(params.projectPath),
+        parseDateFilter(params.from),
+        parseDateFilter(params.to)
+      );
     }
 
     default:

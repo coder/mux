@@ -92,7 +92,11 @@ export type EventRow = z.infer<typeof EventRowSchema>;
 
 export const analytics = {
   getSummary: {
-    input: z.object({ projectPath: z.string().nullish() }),
+    input: z.object({
+      projectPath: z.string().nullish(),
+      from: z.coerce.date().nullish(),
+      to: z.coerce.date().nullish(),
+    }),
     output: z.object({
       totalSpendUsd: z.number(),
       todaySpendUsd: z.number(),
@@ -118,7 +122,10 @@ export const analytics = {
     ),
   },
   getSpendByProject: {
-    input: z.object({}),
+    input: z.object({
+      from: z.coerce.date().nullish(),
+      to: z.coerce.date().nullish(),
+    }),
     output: z.array(
       z.object({
         projectName: z.string(),
@@ -129,7 +136,11 @@ export const analytics = {
     ),
   },
   getSpendByModel: {
-    input: z.object({ projectPath: z.string().nullish() }),
+    input: z.object({
+      projectPath: z.string().nullish(),
+      from: z.coerce.date().nullish(),
+      to: z.coerce.date().nullish(),
+    }),
     output: z.array(
       z.object({
         model: z.string(),
@@ -143,6 +154,8 @@ export const analytics = {
     input: z.object({
       metric: z.enum(["ttft", "duration", "tps"]),
       projectPath: z.string().nullish(),
+      from: z.coerce.date().nullish(),
+      to: z.coerce.date().nullish(),
     }),
     output: z.object({
       p50: z.number(),
@@ -152,7 +165,11 @@ export const analytics = {
     }),
   },
   getAgentCostBreakdown: {
-    input: z.object({ projectPath: z.string().nullish() }),
+    input: z.object({
+      projectPath: z.string().nullish(),
+      from: z.coerce.date().nullish(),
+      to: z.coerce.date().nullish(),
+    }),
     output: z.array(
       z.object({
         agentId: z.string(),
