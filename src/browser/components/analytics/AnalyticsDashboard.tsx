@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import assert from "@/common/utils/assert";
 import { useState } from "react";
 import { ArrowLeft, Menu } from "lucide-react";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";

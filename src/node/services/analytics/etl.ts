@@ -77,6 +77,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function toFiniteNumber(value: unknown): number | null {
+  // DuckDB returns BIGINT columns as JS bigint — coerce to number when safe.
+  if (typeof value === "bigint") {
+    const coerced = Number(value);
+    return Number.isFinite(coerced) ? coerced : null;
+  }
+
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return null;
   }
