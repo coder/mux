@@ -385,8 +385,13 @@ export function useCreationWorkspace({
 
         // Read send options fresh from localStorage at send time to avoid
         // race conditions with React state updates (requestAnimationFrame batching
-        // in usePersistedState can delay state updates after model selection)
-        const sendMessageOptions = getSendOptionsFromStorage(projectScopeId);
+        // in usePersistedState can delay state updates after model selection).
+        // Override agentId from current draft settings so first-send uses the same
+        // project/global/default resolution chain as the creation UI.
+        const sendMessageOptions = {
+          ...getSendOptionsFromStorage(projectScopeId),
+          agentId: settings.agentId,
+        };
         // Use normalized override if provided, otherwise fall back to already-normalized storage model
         const normalizedOverride = optionsOverride?.model
           ? normalizeModelInput(optionsOverride.model)

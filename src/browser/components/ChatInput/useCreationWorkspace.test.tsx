@@ -621,6 +621,7 @@ describe("useCreationWorkspace", () => {
       selectedRuntime: { mode: "ssh", host: "example.com" },
       runtimeString: "ssh example.com",
       trunkBranch: "dev",
+      agentId: "ask",
     });
     const onWorkspaceCreated = mock((metadata: FrontendWorkspaceMetadata) => metadata);
 
@@ -640,6 +641,13 @@ describe("useCreationWorkspace", () => {
 
     expect(handleSendResult).toEqual({ success: true });
     expect(updatePersistedStateCalls).toContainEqual([getAgentIdKey(TEST_WORKSPACE_ID), "ask"]);
+
+    const sendCall = sendMessageMock.mock.calls[0];
+    if (!sendCall) {
+      throw new Error("Expected workspace.sendMessage to be called at least once");
+    }
+    const [sendRequest] = sendCall;
+    expect(sendRequest?.options?.agentId).toBe("ask");
   });
 
   test("handleSend returns failure when sendMessage fails and clears draft", async () => {
@@ -825,6 +833,7 @@ function createDraftSettingsHarness(
     trunkBranch: string;
     runtimeString?: string | undefined;
     defaultRuntimeMode?: RuntimeChoice;
+    agentId?: string;
     coderConfigFallback?: CoderWorkspaceConfig;
     sshHostFallback?: string;
   }>
@@ -832,6 +841,7 @@ function createDraftSettingsHarness(
   const state = {
     selectedRuntime: initial?.selectedRuntime ?? { mode: "local" as const },
     defaultRuntimeMode: initial?.defaultRuntimeMode ?? "worktree",
+    agentId: initial?.agentId ?? "exec",
     trunkBranch: initial?.trunkBranch ?? "main",
     runtimeString: initial?.runtimeString,
     coderConfigFallback: initial?.coderConfigFallback ?? { existingWorkspace: false },
@@ -839,6 +849,7 @@ function createDraftSettingsHarness(
   } satisfies {
     selectedRuntime: ParsedRuntime;
     defaultRuntimeMode: RuntimeChoice;
+    agentId: string;
     trunkBranch: string;
     runtimeString: string | undefined;
     coderConfigFallback: CoderWorkspaceConfig;
@@ -909,7 +920,7 @@ function createDraftSettingsHarness(
       const settings: DraftWorkspaceSettings = {
         model: "gpt-4",
         thinkingLevel: "medium",
-        agentId: "exec",
+        agentId: state.agentId,
         selectedRuntime: state.selectedRuntime,
         defaultRuntimeMode: state.defaultRuntimeMode,
         trunkBranch: state.trunkBranch,
