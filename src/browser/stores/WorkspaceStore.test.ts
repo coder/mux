@@ -358,6 +358,19 @@ describe("WorkspaceStore", () => {
       );
     });
 
+    it("does not pin hydration while waiting for the chat client", async () => {
+      const workspaceId = "workspace-awaiting-client";
+
+      store.setClient(null);
+      createAndAddWorkspace(store, workspaceId, {}, false);
+
+      store.setActiveWorkspaceId(workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(store.getWorkspaceState(workspaceId).isHydratingTranscript).toBe(false);
+      expect(mockOnChat).not.toHaveBeenCalled();
+    });
+
     it("switches onChat subscriptions when active workspace changes", async () => {
       // eslint-disable-next-line require-yield
       mockOnChat.mockImplementation(async function* (

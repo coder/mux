@@ -952,7 +952,9 @@ export class WorkspaceStore {
       const transient = this.chatTransientState.get(targetWorkspaceId);
       if (transient) {
         transient.caughtUp = false;
-        transient.isHydratingTranscript = true;
+        // Only show transcript hydration once we can actually establish onChat.
+        // When the ORPC client is unavailable, avoid pinning the pane in loading.
+        transient.isHydratingTranscript = this.client !== null;
       }
 
       const controller = new AbortController();
@@ -2356,6 +2358,19 @@ export class WorkspaceStore {
       const client = this.client ?? (await this.waitForClient(signal));
       if (!client || signal.aborted) {
         return;
+      }
+
+      // If activation happened while the client was offline, begin hydration now
+      // that we can actually start the subscription loop.
+      const initialTransient = this.chatTransientState.get(workspaceId);
+      if (
+        initialTransient &&
+        attempt === 0 &&
+        !initialTransient.caughtUp &&
+        !initialTransient.isHydratingTranscript
+      ) {
+        initialTransient.isHydratingTranscript = true;
+        this.states.bump(workspaceId);
       }
 
       // Allow us to abort only this subscription attempt (without unsubscribing the workspace).
