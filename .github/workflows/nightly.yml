@@ -66,6 +66,7 @@ jobs:
             nightly.yml
             nightly-mac.yml
             nightly-linux.yml
+            nightly-docker.txt
           )
 
           # Re-runs with no new commits may find an existing nightly release.
@@ -127,13 +128,34 @@ jobs:
       version: ${{ needs.compute-version.outputs.nightly_version }}
       is_latest: false
 
+  # Upload a sentinel asset after Docker publish succeeds so the next rerun
+  # (with no new commits) can detect whether Docker was published. Without this,
+  # a Depot/GHCR outage would leave the nightly tag without a Docker image and
+  # subsequent runs would skip the build (should_build=false).
+  docker-sentinel:
+    name: Upload Docker sentinel
+    needs: [compute-version, docker-publish]
+    if: needs.docker-publish.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Upload release asset
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Upload sentinel asset
+        run: |
+          echo "docker" > nightly-docker.txt
+          gh release upload "${{ needs.compute-version.outputs.release_tag }}" \
+            nightly-docker.txt --clobber \
+            --repo "${{ github.repository }}"
+
   # Clean up old nightly releases after version computation.
   # - Reuse path (should_build=false): run cleanup to enforce single-nightly policy.
-  # - Build path (should_build=true): run cleanup only after desktop-builds succeeds.
+  # - Build path (should_build=true): run cleanup only after all builds succeed.
   cleanup-old-nightlies:
     name: Clean up old nightly releases
-    needs: [compute-version, desktop-builds, docker-publish]
-    if: needs.compute-version.result == 'success' && (needs.compute-version.outputs.should_build != 'true' || (needs.desktop-builds.result == 'success' && needs.docker-publish.result == 'success'))
+    needs: [compute-version, desktop-builds, docker-sentinel]
+    if: needs.compute-version.result == 'success' && (needs.compute-version.outputs.should_build != 'true' || (needs.desktop-builds.result == 'success' && needs.docker-sentinel.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
       contents: write # Delete old pre-releases
