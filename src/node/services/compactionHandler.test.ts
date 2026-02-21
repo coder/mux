@@ -479,6 +479,45 @@ describe("CompactionHandler", () => {
       expect(sevt.metadata?.providerMetadata).toBeUndefined();
     });
 
+    it("falls back to contextUsage and provider reasoning metadata when total usage is unavailable", async () => {
+      const compactionReq = createCompactionRequest();
+      await seedHistory(compactionReq);
+
+      const event = createStreamEndEvent("Summary", {
+        usage: undefined,
+        contextUsage: {
+          inputTokens: 9_000,
+          outputTokens: 80,
+          totalTokens: 9_080,
+        },
+        contextProviderMetadata: { openai: { reasoningTokens: 30 } },
+        systemMessageTokens: 20,
+      });
+
+      const result = await handler.handleCompletion(event);
+      expect(result).toBe(true);
+
+      const summaryEvent = emittedEvents.find((_e) => {
+        const m = _e.data.message as MuxMessage | undefined;
+        return m?.role === "assistant" && m?.metadata?.compactionBoundary === true;
+      });
+      expect(summaryEvent).toBeDefined();
+      const summaryMessage = summaryEvent?.data.message as MuxMessage;
+      expect(summaryMessage.metadata?.contextUsage).toEqual({
+        // 20 system prompt tokens + (80 output - 30 reasoning) summary tokens
+        inputTokens: 70,
+        outputTokens: 0,
+        totalTokens: 70,
+      });
+
+      const streamMsg = getEmittedStreamEndEvent(emittedEvents);
+      expect(streamMsg?.metadata.contextUsage).toEqual({
+        inputTokens: 70,
+        outputTokens: 0,
+        totalTokens: 70,
+      });
+    });
+
     it("should emit stream-end event to frontend", async () => {
       const compactionReq = createCompactionRequest();
       await seedHistory(compactionReq);
