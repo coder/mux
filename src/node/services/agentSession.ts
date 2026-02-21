@@ -103,6 +103,7 @@ import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
 import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
 import { getErrorMessage } from "@/common/utils/errors";
 import { CompactionMonitor, type CompactionStatusEvent } from "./compactionMonitor";
+import { coerceNonEmptyString } from "@/node/services/taskUtils";
 
 /**
  * Tracked file state for detecting external edits.
@@ -4261,19 +4262,10 @@ export class AgentSession {
     const workspaceAiSettings =
       metadataResult.success === true ? metadataResult.data.aiSettings : undefined;
 
-    const normalizedTargetModel = targetAgentSettings?.model?.trim();
-    const normalizedOptionModel = currentOptions?.model?.trim();
-    const normalizedWorkspaceModel = workspaceAiSettings?.model?.trim();
     const effectiveModel =
-      (normalizedTargetModel != null && normalizedTargetModel.length > 0
-        ? normalizedTargetModel
-        : undefined) ??
-      (normalizedOptionModel != null && normalizedOptionModel.length > 0
-        ? normalizedOptionModel
-        : undefined) ??
-      (normalizedWorkspaceModel != null && normalizedWorkspaceModel.length > 0
-        ? normalizedWorkspaceModel
-        : undefined) ??
+      coerceNonEmptyString(targetAgentSettings?.model) ??
+      coerceNonEmptyString(currentOptions?.model) ??
+      coerceNonEmptyString(workspaceAiSettings?.model) ??
       fallbackModel.trim();
 
     const effectiveThinkingLevel =
