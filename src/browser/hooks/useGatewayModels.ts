@@ -156,6 +156,8 @@ export interface GatewayState {
   toggleEnabled: () => void;
   /** Which models are enabled for gateway routing */
   enabledModels: string[];
+  /** Replace the full set of gateway-enabled models */
+  setEnabledModels: (modelIds: string[]) => void;
   /** Check if a specific model uses gateway routing */
   modelUsesGateway: (modelId: string) => boolean;
   /** Toggle gateway routing for a specific model */
@@ -306,6 +308,16 @@ export function useGateway(): GatewayState {
     persistGatewayPrefs(nextEnabled, enabledModels);
   }, [enabledModels, isEnabled, persistGatewayPrefs, updateOptimistically]);
 
+  const setEnabledModels = useCallback(
+    (nextModels: string[]) => {
+      // Keep writes centralized in this hook so all gateway actions (global toggle,
+      // per-model toggle, and "enable all") persist from one config snapshot.
+      updateOptimistically("mux-gateway", { gatewayModels: nextModels });
+      persistGatewayPrefs(isEnabled, nextModels);
+    },
+    [isEnabled, persistGatewayPrefs, updateOptimistically]
+  );
+
   const modelUsesGateway = useCallback(
     (modelId: string) => enabledModels.includes(modelId),
     [enabledModels]
@@ -316,11 +328,9 @@ export function useGateway(): GatewayState {
       const nextModels = enabledModels.includes(modelId)
         ? enabledModels.filter((m) => m !== modelId)
         : [...enabledModels, modelId];
-      // Optimistic update for instant UI feedback
-      updateOptimistically("mux-gateway", { gatewayModels: nextModels });
-      persistGatewayPrefs(isEnabled, nextModels);
+      setEnabledModels(nextModels);
     },
-    [enabledModels, isEnabled, persistGatewayPrefs, updateOptimistically]
+    [enabledModels, setEnabledModels]
   );
 
   const canToggleModel = useCallback(
@@ -341,6 +351,7 @@ export function useGateway(): GatewayState {
       isEnabled,
       toggleEnabled,
       enabledModels,
+      setEnabledModels,
       modelUsesGateway,
       toggleModelGateway,
       canToggleModel,
@@ -352,6 +363,7 @@ export function useGateway(): GatewayState {
       isEnabled,
       toggleEnabled,
       enabledModels,
+      setEnabledModels,
       modelUsesGateway,
       toggleModelGateway,
       canToggleModel,

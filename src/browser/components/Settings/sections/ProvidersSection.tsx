@@ -173,42 +173,13 @@ export function ProvidersSection() {
 
   const gateway = useGateway();
 
-  // Gateway models come from the provider config (source of truth is backend config.json).
-  const gatewayModels = useMemo(() => config?.["mux-gateway"]?.gatewayModels ?? [], [config]);
-
   const eligibleGatewayModels = useMemo(() => getEligibleGatewayModels(config), [config]);
 
   const canEnableGatewayForAllModels = useMemo(
     () =>
       eligibleGatewayModels.length > 0 &&
-      !eligibleGatewayModels.every((modelId) => gatewayModels.includes(modelId)),
-    [eligibleGatewayModels, gatewayModels]
-  );
-
-  const persistGatewayModels = useCallback(
-    (nextModels: string[]) => {
-      if (!api?.config?.updateMuxGatewayPrefs) {
-        return;
-      }
-
-      api.config
-        .updateMuxGatewayPrefs({
-          muxGatewayEnabled: gateway.isEnabled,
-          muxGatewayModels: nextModels,
-        })
-        .catch(() => {
-          // Best-effort only.
-        });
-    },
-    [api, gateway.isEnabled]
-  );
-
-  const applyGatewayModels = useCallback(
-    (nextModels: string[]) => {
-      updateOptimistically("mux-gateway", { gatewayModels: nextModels });
-      persistGatewayModels(nextModels);
-    },
-    [persistGatewayModels, updateOptimistically]
+      !eligibleGatewayModels.every((modelId) => gateway.enabledModels.includes(modelId)),
+    [eligibleGatewayModels, gateway.enabledModels]
   );
 
   const enableGatewayForAllModels = useCallback(() => {
@@ -216,8 +187,10 @@ export function ProvidersSection() {
       return;
     }
 
-    applyGatewayModels(eligibleGatewayModels);
-  }, [applyGatewayModels, canEnableGatewayForAllModels, eligibleGatewayModels]);
+    // Keep gateway model writes centralized in useGateway so this action and the
+    // global gateway toggle persist from the same config snapshot.
+    gateway.setEnabledModels(eligibleGatewayModels);
+  }, [canEnableGatewayForAllModels, eligibleGatewayModels, gateway]);
 
   const backendBaseUrl = getBrowserBackendBaseUrl();
   const backendOrigin = (() => {
@@ -623,7 +596,7 @@ export function ProvidersSection() {
               return;
             }
 
-            applyGatewayModels(getEligibleGatewayModels(latestConfig));
+            gateway.setEnabledModels(getEligibleGatewayModels(latestConfig));
             muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
           }
 
@@ -715,7 +688,7 @@ export function ProvidersSection() {
 
           const applyLatest = (latestConfig: ProvidersConfigMap | null) => {
             if (muxGatewayLoginAttemptRef.current !== attempt) return;
-            applyGatewayModels(getEligibleGatewayModels(latestConfig));
+            gateway.setEnabledModels(getEligibleGatewayModels(latestConfig));
           };
 
           if (api) {
@@ -749,7 +722,7 @@ export function ProvidersSection() {
     backendOrigin,
     api,
     config,
-    applyGatewayModels,
+    gateway,
     refreshMuxGatewayAccountStatus,
   ]);
   const muxGatewayCouponCodeSet = config?.["mux-gateway"]?.couponCodeSet ?? false;
