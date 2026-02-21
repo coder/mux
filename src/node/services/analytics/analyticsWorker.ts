@@ -188,21 +188,14 @@ async function hasSessionDirectories(sessionsDir: string): Promise<boolean> {
 async function handleNeedsBackfill(data: NeedsBackfillData): Promise<{ needsBackfill: boolean }> {
   assert(data.sessionsDir.trim().length > 0, "needsBackfill requires sessionsDir");
 
-  const result = await getConn().run(`
-    SELECT
-      (SELECT COUNT(*) FROM events) AS event_count,
-      (SELECT COUNT(*) FROM ingest_watermarks) AS watermark_count
-  `);
+  const result = await getConn().run("SELECT COUNT(*) AS event_count FROM events");
   const rows = await result.getRowObjectsJS();
   assert(rows.length === 1, "needsBackfill should return exactly one row");
 
   const eventCount = parseNonNegativeInteger(rows[0].event_count);
   assert(eventCount !== null, "needsBackfill expected a non-negative integer event_count");
 
-  const watermarkCount = parseNonNegativeInteger(rows[0].watermark_count);
-  assert(watermarkCount !== null, "needsBackfill expected a non-negative integer watermark_count");
-
-  if (eventCount > 0 || watermarkCount > 0) {
+  if (eventCount > 0) {
     return { needsBackfill: false };
   }
 
