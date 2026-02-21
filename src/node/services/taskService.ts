@@ -21,6 +21,7 @@ import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { runBackgroundInit } from "@/node/runtime/runtimeFactory";
 import type { InitLogger, Runtime } from "@/node/runtime/Runtime";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
+import { routePlanToExecutor } from "@/node/services/planExecutorRouter";
 import {
   coerceNonEmptyString,
   tryReadGitHeadCommitSha,
@@ -28,8 +29,11 @@ import {
 } from "@/node/services/taskUtils";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { Ok, Err, type Result } from "@/common/types/result";
-import type { TaskSettings } from "@/common/types/tasks";
-import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
+import {
+  DEFAULT_TASK_SETTINGS,
+  type PlanSubagentExecutorRouting,
+  type TaskSettings,
+} from "@/common/types/tasks";
 
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import {
@@ -437,34 +441,91 @@ export class TaskService {
     workspaceId: string;
     entry: {
       projectPath: string;
-      workspace: Pick<WorkspaceConfigEntry, "id" | "name" | "path" | "runtimeConfig">;
+      workspace: Pick<
+        WorkspaceConfigEntry,
+        "id" | "name" | "path" | "runtimeConfig" | "taskModelString"
+      >;
     };
-    preferOrchestrator: boolean;
+    routing: PlanSubagentExecutorRouting;
+    planContent: string | null;
   }): Promise<"exec" | "orchestrator"> {
     assert(
       args.workspaceId.length > 0,
       "resolvePlanAutoHandoffTargetAgentId: workspaceId must be non-empty"
     );
+    assert(
+      args.routing === "exec" || args.routing === "orchestrator" || args.routing === "auto",
+      "resolvePlanAutoHandoffTargetAgentId: routing must be exec, orchestrator, or auto"
+    );
 
-    if (!args.preferOrchestrator) {
+    const resolveOrchestratorAvailability = async (): Promise<"exec" | "orchestrator"> => {
+      const orchestratorEnabled = await this.isAgentEnabledForTaskWorkspace({
+        workspaceId: args.workspaceId,
+        projectPath: args.entry.projectPath,
+        workspace: args.entry.workspace,
+        agentId: "orchestrator",
+      });
+      if (orchestratorEnabled) {
+        return "orchestrator";
+      }
+
+      // If orchestrator is disabled/unavailable, fall back to exec before mutating
+      // workspace agent state so the handoff stream can still proceed.
+      log.warn("Plan-task auto-handoff falling back to exec because orchestrator is unavailable", {
+        workspaceId: args.workspaceId,
+      });
+      return "exec";
+    };
+
+    if (args.routing === "exec") {
       return "exec";
     }
 
-    const orchestratorEnabled = await this.isAgentEnabledForTaskWorkspace({
-      workspaceId: args.workspaceId,
-      projectPath: args.entry.projectPath,
-      workspace: args.entry.workspace,
-      agentId: "orchestrator",
-    });
-    if (orchestratorEnabled) {
-      return "orchestrator";
+    if (args.routing === "orchestrator") {
+      return resolveOrchestratorAvailability();
     }
 
-    // If orchestrator is disabled/unavailable, fall back to exec before mutating
-    // workspace agent state so the handoff stream can still proceed.
-    log.warn("Plan-task auto-handoff falling back to exec because orchestrator is unavailable", {
-      workspaceId: args.workspaceId,
+    if (!args.planContent || args.planContent.trim().length === 0) {
+      log.warn("Plan-task auto-handoff auto-routing has no plan content; defaulting to exec", {
+        workspaceId: args.workspaceId,
+      });
+      return "exec";
+    }
+
+    const modelString = normalizeGatewayModel(
+      coerceNonEmptyString(args.entry.workspace.taskModelString) ?? defaultModel
+    );
+    assert(
+      modelString.trim().length > 0,
+      "resolvePlanAutoHandoffTargetAgentId: modelString must be non-empty"
+    );
+
+    const modelResult = await this.aiService.createModel(modelString);
+    if (!modelResult.success) {
+      log.warn("Plan-task auto-handoff auto-routing failed to create model; defaulting to exec", {
+        workspaceId: args.workspaceId,
+        model: modelString,
+        error: modelResult.error,
+      });
+      return "exec";
+    }
+
+    const decision = await routePlanToExecutor({
+      model: modelResult.data,
+      planContent: args.planContent,
     });
+
+    log.info("Plan-task auto-handoff routing decision", {
+      workspaceId: args.workspaceId,
+      target: decision.target,
+      reasoning: decision.reasoning,
+      model: modelString,
+    });
+
+    if (decision.target === "orchestrator") {
+      return resolveOrchestratorAvailability();
+    }
+
     return "exec";
   }
 
@@ -2234,8 +2295,8 @@ export class TaskService {
         workspaceId,
         entry,
         proposePlanResult,
-        planSubagentDefaultsToOrchestrator:
-          (cfg.taskSettings ?? DEFAULT_TASK_SETTINGS).planSubagentDefaultsToOrchestrator ?? false,
+        planSubagentExecutorRouting:
+          (cfg.taskSettings ?? DEFAULT_TASK_SETTINGS).planSubagentExecutorRouting ?? "exec",
       });
       return;
     }
@@ -2273,7 +2334,7 @@ export class TaskService {
     workspaceId: string;
     entry: { projectPath: string; workspace: WorkspaceConfigEntry };
     proposePlanResult: { planPath: string };
-    planSubagentDefaultsToOrchestrator: boolean;
+    planSubagentExecutorRouting: PlanSubagentExecutorRouting;
   }): Promise<void> {
     assert(
       args.workspaceId.length > 0,
@@ -2292,20 +2353,6 @@ export class TaskService {
     this.handoffInProgress.add(args.workspaceId);
 
     try {
-      const targetAgentId = await this.resolvePlanAutoHandoffTargetAgentId({
-        workspaceId: args.workspaceId,
-        entry: {
-          projectPath: args.entry.projectPath,
-          workspace: {
-            id: args.entry.workspace.id,
-            name: args.entry.workspace.name,
-            path: args.entry.workspace.path,
-            runtimeConfig: args.entry.workspace.runtimeConfig,
-          },
-        },
-        preferOrchestrator: args.planSubagentDefaultsToOrchestrator,
-      });
-
       let planSummary: { content: string; path: string } | null = null;
 
       try {
@@ -2338,6 +2385,22 @@ export class TaskService {
           error,
         });
       }
+
+      const targetAgentId = await this.resolvePlanAutoHandoffTargetAgentId({
+        workspaceId: args.workspaceId,
+        entry: {
+          projectPath: args.entry.projectPath,
+          workspace: {
+            id: args.entry.workspace.id,
+            name: args.entry.workspace.name,
+            path: args.entry.workspace.path,
+            runtimeConfig: args.entry.workspace.runtimeConfig,
+            taskModelString: args.entry.workspace.taskModelString,
+          },
+        },
+        routing: args.planSubagentExecutorRouting,
+        planContent: planSummary?.content ?? null,
+      });
 
       const summaryContent = planSummary
         ? `# Plan\n\n${planSummary.content}\n\nNote: This chat already contains the full plan; no need to re-open the plan file.\n\n---\n\n*Plan file preserved at:* \`${planSummary.path}\``

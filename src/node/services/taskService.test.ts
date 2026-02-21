@@ -17,6 +17,7 @@ import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { Ok, Err, type Result } from "@/common/types/result";
 import { defaultModel } from "@/common/utils/ai/models";
+import type { PlanSubagentExecutorRouting } from "@/common/types/tasks";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { StreamEndEvent } from "@/common/types/stream";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
@@ -99,6 +100,7 @@ function createAIServiceMocks(
     isStreaming: ReturnType<typeof mock>;
     getWorkspaceMetadata: ReturnType<typeof mock>;
     stopStream: ReturnType<typeof mock>;
+    createModel: ReturnType<typeof mock>;
     on: ReturnType<typeof mock>;
     off: ReturnType<typeof mock>;
   }>
@@ -107,6 +109,7 @@ function createAIServiceMocks(
   isStreaming: ReturnType<typeof mock>;
   getWorkspaceMetadata: ReturnType<typeof mock>;
   stopStream: ReturnType<typeof mock>;
+  createModel: ReturnType<typeof mock>;
   on: ReturnType<typeof mock>;
   off: ReturnType<typeof mock>;
 } {
@@ -121,15 +124,26 @@ function createAIServiceMocks(
 
   const stopStream =
     overrides?.stopStream ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
+  const createModel =
+    overrides?.createModel ??
+    mock((): Promise<Result<never>> => Promise.resolve(Err("createModel not mocked")));
 
   const on = overrides?.on ?? mock(() => undefined);
   const off = overrides?.off ?? mock(() => undefined);
 
   return {
-    aiService: { isStreaming, getWorkspaceMetadata, stopStream, on, off } as unknown as AIService,
+    aiService: {
+      isStreaming,
+      getWorkspaceMetadata,
+      stopStream,
+      createModel,
+      on,
+      off,
+    } as unknown as AIService,
     isStreaming,
     getWorkspaceMetadata,
     stopStream,
+    createModel,
     on,
     off,
   };
@@ -3200,6 +3214,7 @@ describe("TaskService", () => {
   });
 
   async function setupPlanModeStreamEndHarness(options?: {
+    planSubagentExecutorRouting?: PlanSubagentExecutorRouting;
     planSubagentDefaultsToOrchestrator?: boolean;
     childAgentId?: string;
     disableOrchestrator?: boolean;
@@ -3209,6 +3224,7 @@ describe("TaskService", () => {
       { modelString: string; thinkingLevel: ThinkingLevel; enabled?: boolean }
     >;
     sendMessageOverride?: ReturnType<typeof mock>;
+    aiServiceOverrides?: Parameters<typeof createAIServiceMocks>[1];
   }) {
     const config = await createTestConfig(rootDir);
 
@@ -3282,7 +3298,14 @@ describe("TaskService", () => {
       taskSettings: {
         maxParallelAgentTasks: 3,
         maxTaskNestingDepth: 3,
-        planSubagentDefaultsToOrchestrator: options?.planSubagentDefaultsToOrchestrator ?? false,
+        planSubagentExecutorRouting:
+          options?.planSubagentExecutorRouting ??
+          (options?.planSubagentDefaultsToOrchestrator ? "orchestrator" : "exec"),
+        ...(typeof options?.planSubagentDefaultsToOrchestrator === "boolean"
+          ? {
+              planSubagentDefaultsToOrchestrator: options.planSubagentDefaultsToOrchestrator,
+            }
+          : {}),
       },
       agentAiDefaults: Object.keys(agentAiDefaults).length > 0 ? agentAiDefaults : undefined,
     });
@@ -3302,7 +3325,8 @@ describe("TaskService", () => {
       sendMessage: options?.sendMessageOverride,
     });
 
-    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const { aiService, createModel } = createAIServiceMocks(config, options?.aiServiceOverrides);
+    const { taskService } = createTaskServiceHarness(config, { workspaceService, aiService });
 
     const internal = taskService as unknown as {
       handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
@@ -3313,6 +3337,7 @@ describe("TaskService", () => {
       childId,
       sendMessage,
       replaceHistory,
+      createModel,
       internal,
     };
   }
@@ -3503,10 +3528,36 @@ describe("TaskService", () => {
     expect(updatedTask?.taskStatus).toBe("awaiting_report");
   });
 
-  test("stream-end with propose_plan success hands off to orchestrator when planSubagentDefaultsToOrchestrator=true", async () => {
+  test("stream-end with propose_plan success in auto routing falls back to exec when plan content is unavailable", async () => {
+    const { config, childId, sendMessage, createModel, internal } =
+      await setupPlanModeStreamEndHarness({
+        planSubagentExecutorRouting: "auto",
+      });
+
+    await internal.handleStreamEnd(makeSuccessfulProposePlanStreamEndEvent(childId));
+
+    expect(createModel).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      childId,
+      expect.stringContaining("Implement the plan"),
+      expect.objectContaining({ agentId: "exec" }),
+      expect.objectContaining({ synthetic: true })
+    );
+
+    const postCfg = config.loadConfigOrDefault();
+    const updatedTask = Array.from(postCfg.projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === childId);
+
+    expect(updatedTask?.agentId).toBe("exec");
+    expect(updatedTask?.taskStatus).toBe("running");
+  });
+
+  test("stream-end with propose_plan success hands off to orchestrator when routing is orchestrator", async () => {
     const { config, childId, sendMessage, replaceHistory, internal } =
       await setupPlanModeStreamEndHarness({
-        planSubagentDefaultsToOrchestrator: true,
+        planSubagentExecutorRouting: "orchestrator",
       });
 
     await internal.handleStreamEnd(makeSuccessfulProposePlanStreamEndEvent(childId));
@@ -3536,7 +3587,7 @@ describe("TaskService", () => {
 
   test("orchestrator handoff inherits parent model when orchestrator defaults are unset", async () => {
     const { config, childId, sendMessage, internal } = await setupPlanModeStreamEndHarness({
-      planSubagentDefaultsToOrchestrator: true,
+      planSubagentExecutorRouting: "orchestrator",
       agentAiDefaults: {
         exec: {
           modelString: "openai:gpt-5.3-codex",
@@ -3571,7 +3622,7 @@ describe("TaskService", () => {
 
   test("stream-end with propose_plan success falls back to exec when orchestrator is disabled", async () => {
     const { config, childId, sendMessage, internal } = await setupPlanModeStreamEndHarness({
-      planSubagentDefaultsToOrchestrator: true,
+      planSubagentExecutorRouting: "orchestrator",
       disableOrchestrator: true,
     });
 

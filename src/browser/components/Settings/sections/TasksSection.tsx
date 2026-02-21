@@ -27,7 +27,9 @@ import {
 import {
   DEFAULT_TASK_SETTINGS,
   TASK_SETTINGS_LIMITS,
+  isPlanSubagentExecutorRouting,
   normalizeTaskSettings,
+  type PlanSubagentExecutorRouting,
   type TaskSettings,
 } from "@/common/types/tasks";
 import { getThinkingOptionLabel, type ThinkingLevel } from "@/common/types/thinking";
@@ -236,6 +238,7 @@ function areTaskSettingsEqual(a: TaskSettings, b: TaskSettings): boolean {
     a.maxParallelAgentTasks === b.maxParallelAgentTasks &&
     a.maxTaskNestingDepth === b.maxTaskNestingDepth &&
     a.proposePlanImplementReplacesChatHistory === b.proposePlanImplementReplacesChatHistory &&
+    a.planSubagentExecutorRouting === b.planSubagentExecutorRouting &&
     a.planSubagentDefaultsToOrchestrator === b.planSubagentDefaultsToOrchestrator &&
     a.bashOutputCompactionMinLines === b.bashOutputCompactionMinLines &&
     a.bashOutputCompactionMinTotalBytes === b.bashOutputCompactionMinTotalBytes &&
@@ -547,11 +550,21 @@ export function TasksSection() {
     );
   };
 
-  const setPlanSubagentDefaultsToOrchestrator = (value: boolean) => {
+  const setPlanSubagentExecutorRouting = (value: string) => {
+    if (!isPlanSubagentExecutorRouting(value)) {
+      return;
+    }
+
     setTaskSettings((prev) =>
-      normalizeTaskSettings({ ...prev, planSubagentDefaultsToOrchestrator: value })
+      normalizeTaskSettings({
+        ...prev,
+        planSubagentExecutorRouting: value,
+      })
     );
   };
+
+  const planSubagentExecutorRouting: PlanSubagentExecutorRouting =
+    taskSettings.planSubagentExecutorRouting ?? "exec";
 
   const setAgentModel = (agentId: string, value: string) => {
     setAgentAiDefaults((prev) =>
@@ -939,19 +952,24 @@ export function TasksSection() {
 
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1">
-              <div className="text-foreground text-sm">
-                Plan sub-agents: default to Orchestrator
-              </div>
+              <div className="text-foreground text-sm">Plan sub-agents: executor routing</div>
               <div className="text-muted text-xs">
-                When enabled, plan sub-agent tasks switch to Orchestrator after propose_plan.
-                Otherwise they switch to Exec.
+                Choose how plan sub-agent tasks route after propose_plan.
               </div>
             </div>
-            <Switch
-              checked={taskSettings.planSubagentDefaultsToOrchestrator ?? false}
-              onCheckedChange={setPlanSubagentDefaultsToOrchestrator}
-              aria-label="Toggle plan sub-agents default to Orchestrator"
-            />
+            <Select
+              value={planSubagentExecutorRouting}
+              onValueChange={setPlanSubagentExecutorRouting}
+            >
+              <SelectTrigger className="border-border-medium bg-background-secondary h-9 w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="exec">Exec</SelectItem>
+                <SelectItem value="orchestrator">Orchestrator</SelectItem>
+                <SelectItem value="auto">Auto (LLM decides)</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
 

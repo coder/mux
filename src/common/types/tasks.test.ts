@@ -52,4 +52,37 @@ describe("normalizeTaskSettings", () => {
 
     expect(normalized).toEqual(DEFAULT_TASK_SETTINGS);
   });
+
+  test("preserves explicit planSubagentExecutorRouting values", () => {
+    const normalized = normalizeTaskSettings({
+      planSubagentExecutorRouting: "auto",
+    });
+
+    expect(normalized.planSubagentExecutorRouting).toBe("auto");
+    expect(normalized.planSubagentDefaultsToOrchestrator).toBe(false);
+  });
+
+  test("migrates deprecated planSubagentDefaultsToOrchestrator when routing is unset", () => {
+    expect(
+      normalizeTaskSettings({
+        planSubagentDefaultsToOrchestrator: true,
+      }).planSubagentExecutorRouting
+    ).toBe("orchestrator");
+
+    expect(
+      normalizeTaskSettings({
+        planSubagentDefaultsToOrchestrator: false,
+      }).planSubagentExecutorRouting
+    ).toBe("exec");
+  });
+
+  test("prefers planSubagentExecutorRouting when both new and deprecated fields are set", () => {
+    const normalized = normalizeTaskSettings({
+      planSubagentExecutorRouting: "exec",
+      planSubagentDefaultsToOrchestrator: true,
+    });
+
+    expect(normalized.planSubagentExecutorRouting).toBe("exec");
+    expect(normalized.planSubagentDefaultsToOrchestrator).toBe(false);
+  });
 });

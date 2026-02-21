@@ -1,6 +1,10 @@
 import assert from "@/common/utils/assert";
 import { coerceThinkingLevel, type ThinkingLevel } from "./thinking";
 
+export const PLAN_SUBAGENT_EXECUTOR_ROUTING_VALUES = ["exec", "orchestrator", "auto"] as const;
+
+export type PlanSubagentExecutorRouting = (typeof PLAN_SUBAGENT_EXECUTOR_ROUTING_VALUES)[number];
+
 export interface TaskSettings {
   maxParallelAgentTasks: number;
   maxTaskNestingDepth: number;
@@ -11,7 +15,13 @@ export interface TaskSettings {
    */
   proposePlanImplementReplacesChatHistory?: boolean;
 
-  /** When a plan-mode sub-agent task calls propose_plan, hand off to Orchestrator instead of Exec (default). */
+  /** Controls plan sub-agent propose_plan handoff target: Exec, Orchestrator, or auto routing. */
+  planSubagentExecutorRouting?: PlanSubagentExecutorRouting;
+
+  /**
+   * @deprecated Use planSubagentExecutorRouting instead.
+   * Kept for downgrade compatibility with older config files.
+   */
   planSubagentDefaultsToOrchestrator?: boolean;
 
   // System 1: bash output compaction (log filtering)
@@ -38,6 +48,7 @@ export const DEFAULT_TASK_SETTINGS: TaskSettings = {
   maxParallelAgentTasks: TASK_SETTINGS_LIMITS.maxParallelAgentTasks.default,
   maxTaskNestingDepth: TASK_SETTINGS_LIMITS.maxTaskNestingDepth.default,
   proposePlanImplementReplacesChatHistory: false,
+  planSubagentExecutorRouting: "exec",
   planSubagentDefaultsToOrchestrator: false,
 
   bashOutputCompactionMinLines:
@@ -99,6 +110,15 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
   return rounded;
 }
 
+export function isPlanSubagentExecutorRouting(
+  value: unknown
+): value is PlanSubagentExecutorRouting {
+  return (
+    typeof value === "string" &&
+    PLAN_SUBAGENT_EXECUTOR_ROUTING_VALUES.some((candidate) => candidate === value)
+  );
+}
+
 export function normalizeTaskSettings(raw: unknown): TaskSettings {
   const record = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : ({} as const);
 
@@ -120,10 +140,27 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
       ? record.proposePlanImplementReplacesChatHistory
       : (DEFAULT_TASK_SETTINGS.proposePlanImplementReplacesChatHistory ?? false);
 
-  const planSubagentDefaultsToOrchestrator =
-    typeof record.planSubagentDefaultsToOrchestrator === "boolean"
+  const normalizedPlanSubagentExecutorRouting = isPlanSubagentExecutorRouting(
+    record.planSubagentExecutorRouting
+  )
+    ? record.planSubagentExecutorRouting
+    : undefined;
+
+  const migratedPlanSubagentExecutorRouting =
+    normalizedPlanSubagentExecutorRouting ??
+    (typeof record.planSubagentDefaultsToOrchestrator === "boolean"
       ? record.planSubagentDefaultsToOrchestrator
-      : (DEFAULT_TASK_SETTINGS.planSubagentDefaultsToOrchestrator ?? false);
+        ? "orchestrator"
+        : "exec"
+      : undefined);
+
+  const planSubagentExecutorRouting =
+    migratedPlanSubagentExecutorRouting ??
+    DEFAULT_TASK_SETTINGS.planSubagentExecutorRouting ??
+    "exec";
+
+  // Keep the deprecated boolean in sync for downgrade compatibility.
+  const planSubagentDefaultsToOrchestrator = planSubagentExecutorRouting === "orchestrator";
 
   const bashOutputCompactionMinLines = clampInt(
     record.bashOutputCompactionMinLines,
@@ -160,6 +197,7 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
     maxParallelAgentTasks,
     maxTaskNestingDepth,
     proposePlanImplementReplacesChatHistory,
+    planSubagentExecutorRouting,
     planSubagentDefaultsToOrchestrator,
     bashOutputCompactionMinLines,
     bashOutputCompactionMinTotalBytes,
@@ -180,6 +218,11 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
   assert(
     typeof proposePlanImplementReplacesChatHistory === "boolean",
     "normalizeTaskSettings: proposePlanImplementReplacesChatHistory must be a boolean"
+  );
+
+  assert(
+    isPlanSubagentExecutorRouting(planSubagentExecutorRouting),
+    "normalizeTaskSettings: planSubagentExecutorRouting must be exec, orchestrator, or auto"
   );
 
   assert(
