@@ -440,9 +440,12 @@ function isCostsIncludedEntry(
  */
 function repriceSessionUsage(
   usage: z.infer<typeof SessionUsageFileSchema>,
-  config: ProvidersConfigMap
+  config: ProvidersConfigMap,
+  providersConfigFingerprint: number
 ): void {
-  usage.tokenStatsCache = undefined;
+  if (usage.tokenStatsCache?.providersConfigVersion !== providersConfigFingerprint) {
+    usage.tokenStatsCache = undefined;
+  }
   for (const [model, entry] of Object.entries(usage.byModel)) {
     if (!model.includes(":") || isCostsIncludedEntry(entry, model, config)) continue;
     const resolved = resolveModelForMetadata(model, config);
@@ -910,7 +913,7 @@ export class WorkspaceStore {
         this.consumerManager.invalidateAll();
 
         for (const [, usage] of this.sessionUsage) {
-          repriceSessionUsage(usage, config);
+          repriceSessionUsage(usage, config, nextFingerprint);
         }
       }
 
@@ -2822,9 +2825,10 @@ export class WorkspaceStore {
           // force expensive re-tokenization for large histories).
           if (
             this.providersConfig &&
+            this.providersConfigFingerprint != null &&
             data.tokenStatsCache?.providersConfigVersion !== this.providersConfigFingerprint
           ) {
-            repriceSessionUsage(data, this.providersConfig);
+            repriceSessionUsage(data, this.providersConfig, this.providersConfigFingerprint);
           }
           this.sessionUsage.set(workspaceId, data);
           this.usageStore.bump(workspaceId);
