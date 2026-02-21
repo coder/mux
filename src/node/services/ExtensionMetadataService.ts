@@ -3,6 +3,7 @@ import { mkdir, readFile, access } from "fs/promises";
 import { constants } from "fs";
 import writeFileAtomic from "write-file-atomic";
 import {
+  type ExtensionAgentStatus,
   type ExtensionMetadata,
   type ExtensionMetadataFile,
   getExtensionMetadataPath,
@@ -18,6 +19,7 @@ import { log } from "@/node/services/log";
  * - streaming: Boolean indicating if workspace has an active stream
  * - lastModel: Last model used in this workspace
  * - lastThinkingLevel: Last thinking/reasoning level used in this workspace
+ * - agentStatus: Most recent status_set payload (for sidebar progress in background workspaces)
  *
  * File location: ~/.mux/extensionMetadata.json
  *
@@ -40,6 +42,7 @@ export class ExtensionMetadataService {
       streaming: entry.streaming,
       lastModel: entry.lastModel ?? null,
       lastThinkingLevel: entry.lastThinkingLevel ?? null,
+      agentStatus: entry.agentStatus ?? null,
     };
   }
 
@@ -113,6 +116,7 @@ export class ExtensionMetadataService {
         streaming: false,
         lastModel: null,
         lastThinkingLevel: null,
+        agentStatus: null,
       };
     } else {
       data.workspaces[workspaceId].recency = timestamp;
@@ -145,6 +149,7 @@ export class ExtensionMetadataService {
         streaming,
         lastModel: model ?? null,
         lastThinkingLevel: thinkingLevel ?? null,
+        agentStatus: null,
       };
     } else {
       data.workspaces[workspaceId].streaming = streaming;
@@ -160,6 +165,36 @@ export class ExtensionMetadataService {
     const workspace = data.workspaces[workspaceId];
     if (!workspace) {
       throw new Error(`Workspace ${workspaceId} metadata missing after streaming update.`);
+    }
+    return this.toSnapshot(workspace);
+  }
+
+  /**
+   * Update the latest status_set payload for a workspace.
+   */
+  async setAgentStatus(
+    workspaceId: string,
+    agentStatus: ExtensionAgentStatus | null
+  ): Promise<WorkspaceActivitySnapshot> {
+    const data = await this.load();
+    const now = Date.now();
+
+    if (!data.workspaces[workspaceId]) {
+      data.workspaces[workspaceId] = {
+        recency: now,
+        streaming: false,
+        lastModel: null,
+        lastThinkingLevel: null,
+        agentStatus,
+      };
+    } else {
+      data.workspaces[workspaceId].agentStatus = agentStatus;
+    }
+
+    await this.save(data);
+    const workspace = data.workspaces[workspaceId];
+    if (!workspace) {
+      throw new Error(`Workspace ${workspaceId} metadata missing after agent status update.`);
     }
     return this.toSnapshot(workspace);
   }

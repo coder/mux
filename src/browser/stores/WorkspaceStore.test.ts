@@ -980,6 +980,7 @@ describe("WorkspaceStore", () => {
         streaming: true,
         lastModel: "claude-sonnet-4",
         lastThinkingLevel: "high",
+        agentStatus: { emoji: "🔧", message: "Running checks", url: "https://example.com" },
       };
 
       // Recreate the store so the first activity.list call uses this test snapshot.
@@ -1005,6 +1006,7 @@ describe("WorkspaceStore", () => {
       expect(state.canInterrupt).toBe(true);
       expect(state.currentModel).toBe(activitySnapshot.lastModel);
       expect(state.currentThinkingLevel).toBe(activitySnapshot.lastThinkingLevel);
+      expect(state.agentStatus).toEqual(activitySnapshot.agentStatus ?? undefined);
       expect(state.recencyTimestamp).toBe(activitySnapshot.recency);
     });
 

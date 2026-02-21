@@ -74,7 +74,7 @@ import { isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/mod
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
-import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
+import type { StreamEndEvent, StreamAbortEvent, ToolCallEndEvent } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { WorkspaceAISettingsSchema } from "@/common/orpc/schemas";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
@@ -126,6 +126,7 @@ const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
 
 // Shared type for workspace-scoped AI settings (model + thinking)
 type WorkspaceAISettings = z.infer<typeof WorkspaceAISettingsSchema>;
+type WorkspaceAgentStatus = NonNullable<WorkspaceActivitySnapshot["agentStatus"]>;
 const POST_COMPACTION_METADATA_REFRESH_DEBOUNCE_MS = 100;
 
 interface FileCompletionsCacheEntry {
@@ -1036,6 +1037,34 @@ export class WorkspaceService extends EventEmitter {
       isWorkspaceEvent(v) &&
       (!("metadata" in (v as Record<string, unknown>)) || isObj((v as StreamEndEvent).metadata));
     const isStreamAbortEvent = (v: unknown): v is StreamAbortEvent => isWorkspaceEvent(v);
+    const isToolCallEndEvent = (v: unknown): v is ToolCallEndEvent =>
+      isWorkspaceEvent(v) &&
+      "toolName" in v &&
+      typeof (v as { toolName: unknown }).toolName === "string" &&
+      "result" in v;
+    const extractStatusSetResult = (result: unknown): WorkspaceAgentStatus | null => {
+      if (!isObj(result)) {
+        return null;
+      }
+
+      if (
+        result.success !== true ||
+        typeof result.emoji !== "string" ||
+        typeof result.message !== "string"
+      ) {
+        return null;
+      }
+
+      if (result.url !== undefined && typeof result.url !== "string") {
+        return null;
+      }
+
+      return {
+        emoji: result.emoji,
+        message: result.message,
+        ...(typeof result.url === "string" ? { url: result.url } : {}),
+      };
+    };
     const extractTimestamp = (event: StreamEndEvent | { metadata?: { timestamp?: number } }) => {
       const raw = event.metadata?.timestamp;
       return typeof raw === "number" && Number.isFinite(raw) ? raw : Date.now();
@@ -1058,6 +1087,19 @@ export class WorkspaceService extends EventEmitter {
       if (isStreamAbortEvent(data)) {
         void this.updateStreamingStatus(data.workspaceId, false);
       }
+    });
+
+    this.aiService.on("tool-call-end", (data: unknown) => {
+      if (!isToolCallEndEvent(data) || data.toolName !== "status_set") {
+        return;
+      }
+
+      const agentStatus = extractStatusSetResult(data.result);
+      if (!agentStatus) {
+        return;
+      }
+
+      void this.updateAgentStatus(data.workspaceId, agentStatus);
     });
   }
 
@@ -1092,6 +1134,18 @@ export class WorkspaceService extends EventEmitter {
       this.emitWorkspaceActivity(workspaceId, snapshot);
     } catch (error) {
       log.error("Failed to update workspace recency", { workspaceId, error });
+    }
+  }
+
+  private async updateAgentStatus(
+    workspaceId: string,
+    agentStatus: WorkspaceAgentStatus | null
+  ): Promise<void> {
+    try {
+      const snapshot = await this.extensionMetadata.setAgentStatus(workspaceId, agentStatus);
+      this.emitWorkspaceActivity(workspaceId, snapshot);
+    } catch (error) {
+      log.error("Failed to update workspace agent status", { workspaceId, error });
     }
   }
 

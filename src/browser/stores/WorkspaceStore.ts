@@ -364,6 +364,21 @@ function formatValidationError(error: IteratorValidationFailedError): string {
   return `${issuesSummary}${moreCount}${eventType}`;
 }
 
+function areAgentStatusesEqual(
+  a: WorkspaceActivitySnapshot["agentStatus"] | undefined,
+  b: WorkspaceActivitySnapshot["agentStatus"] | undefined
+): boolean {
+  if (a === b) {
+    return true;
+  }
+
+  if (!a || !b) {
+    return false;
+  }
+
+  return a.emoji === b.emoji && a.message === b.message && (a.url ?? null) === (b.url ?? null);
+}
+
 function calculateOnChatBackoffMs(attempt: number): number {
   return Math.min(ON_CHAT_RETRY_BASE_MS * 2 ** attempt, ON_CHAT_RETRY_MAX_MS);
 }
@@ -1571,6 +1586,11 @@ export class WorkspaceStore {
       const isStreamStarting = pendingStreamStartTime !== null && !canInterrupt;
       const isHydratingTranscript =
         isActiveWorkspace && transient.isHydratingTranscript && !transient.caughtUp;
+      const agentStatus = useAggregatorState
+        ? aggregator.getAgentStatus()
+        : activity
+          ? (activity.agentStatus ?? undefined)
+          : aggregator.getAgentStatus();
 
       // Live streaming stats
       const activeStreamMessageId = aggregator.getActiveStreamMessageId();
@@ -1601,7 +1621,7 @@ export class WorkspaceStore {
         loadedSkills: aggregator.getLoadedSkills(),
         skillLoadErrors: aggregator.getSkillLoadErrors(),
         lastAbortReason: aggregator.getLastAbortReason(),
-        agentStatus: aggregator.getAgentStatus(),
+        agentStatus,
         pendingStreamStartTime,
         pendingStreamModel: aggregator.getPendingStreamModel(),
         autoRetryStatus: transient.autoRetryStatus,
@@ -2278,7 +2298,8 @@ export class WorkspaceStore {
       previous?.streaming !== snapshot?.streaming ||
       previous?.lastModel !== snapshot?.lastModel ||
       previous?.lastThinkingLevel !== snapshot?.lastThinkingLevel ||
-      previous?.recency !== snapshot?.recency;
+      previous?.recency !== snapshot?.recency ||
+      !areAgentStatusesEqual(previous?.agentStatus, snapshot?.agentStatus);
 
     if (!changed) {
       return;

@@ -8,11 +8,18 @@ import { log } from "@/node/services/log";
  * Extension metadata for a single workspace.
  * Shared between main app (ExtensionMetadataService) and VS Code extension.
  */
+export interface ExtensionAgentStatus {
+  emoji: string;
+  message: string;
+  url?: string;
+}
+
 export interface ExtensionMetadata {
   recency: number;
   streaming: boolean;
   lastModel: string | null;
   lastThinkingLevel: ThinkingLevel | null;
+  agentStatus: ExtensionAgentStatus | null;
 }
 
 /**
@@ -29,6 +36,27 @@ export interface ExtensionMetadataFile {
  */
 export function getExtensionMetadataPath(rootDir?: string): string {
   return getMuxExtensionMetadataPath(rootDir);
+}
+
+function coerceAgentStatus(value: unknown): ExtensionAgentStatus | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (typeof record.emoji !== "string" || typeof record.message !== "string") {
+    return null;
+  }
+
+  if (record.url !== undefined && typeof record.url !== "string") {
+    return null;
+  }
+
+  return {
+    emoji: record.emoji,
+    message: record.message,
+    ...(typeof record.url === "string" ? { url: record.url } : {}),
+  };
 }
 
 /**
@@ -56,11 +84,13 @@ export function readExtensionMetadata(): Map<string, ExtensionMetadata> {
     const map = new Map<string, ExtensionMetadata>();
     for (const [workspaceId, metadata] of Object.entries(data.workspaces || {})) {
       const rawThinkingLevel = (metadata as { lastThinkingLevel?: unknown }).lastThinkingLevel;
+      const rawAgentStatus = (metadata as { agentStatus?: unknown }).agentStatus;
       map.set(workspaceId, {
         recency: metadata.recency,
         streaming: metadata.streaming,
         lastModel: metadata.lastModel ?? null,
         lastThinkingLevel: isThinkingLevel(rawThinkingLevel) ? rawThinkingLevel : null,
+        agentStatus: coerceAgentStatus(rawAgentStatus),
       });
     }
 
