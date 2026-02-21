@@ -274,21 +274,26 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
 
   const persistGatewayDefaultModelsFromSnapshot = useCallback(
     (configSnapshot: ProvidersConfigMap | null) => {
-      const eligibleModels = getEligibleGatewayModels(configSnapshot);
+      const existingModels =
+        configSnapshot?.["mux-gateway"]?.gatewayModels ??
+        providersConfig?.["mux-gateway"]?.gatewayModels ??
+        [];
+      const nextModels =
+        existingModels.length > 0 ? existingModels : getEligibleGatewayModels(configSnapshot);
       const currentEnabled =
         configSnapshot?.["mux-gateway"]?.isEnabled ?? providersConfig?.["mux-gateway"]?.isEnabled;
 
       if (currentEnabled == null) {
         // Do not guess the enabled flag (true/false). Wait for a hydrated config
         // snapshot so onboarding never flips a user-disabled gateway back on.
-        pendingGatewayDefaultModelsUntilConfigRef.current = eligibleModels;
+        pendingGatewayDefaultModelsUntilConfigRef.current = nextModels;
         return;
       }
 
       pendingGatewayDefaultModelsUntilConfigRef.current = null;
       persistGatewayDefaultEnrollment({
         muxGatewayEnabled: currentEnabled,
-        muxGatewayModels: eligibleModels,
+        muxGatewayModels: nextModels,
       });
     },
     [persistGatewayDefaultEnrollment, providersConfig]

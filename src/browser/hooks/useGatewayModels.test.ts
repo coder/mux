@@ -14,6 +14,7 @@ import {
   isGatewayFormat,
   isProviderSupported,
   migrateGatewayModel,
+  pendingGatewayEnabledUntilPersisted,
   pendingGatewayEnrollments,
   pendingGatewayModelsUntilHydrated,
   toGatewayModel,
@@ -66,6 +67,7 @@ describe("useGateway", () => {
     optimisticUpdates = [];
     pendingGatewayEnrollments.clear();
     pendingGatewayModelsUntilHydrated.models = null;
+    pendingGatewayEnabledUntilPersisted.value = null;
     updateMuxGatewayPrefsMock.mockClear();
     apiAvailable = true;
     mockConfig = {
@@ -81,6 +83,7 @@ describe("useGateway", () => {
     cleanup();
     pendingGatewayEnrollments.clear();
     pendingGatewayModelsUntilHydrated.models = null;
+    pendingGatewayEnabledUntilPersisted.value = null;
     apiAvailable = true;
     globalThis.window = undefined as unknown as Window & typeof globalThis;
     globalThis.document = undefined as unknown as Document;
@@ -94,13 +97,37 @@ describe("useGateway", () => {
 
     act(() => result.current.toggleEnabled());
 
-    // Optimistic update should set isEnabled: false
-    expect(optimisticUpdates).toHaveLength(1);
-    expect(optimisticUpdates[0]).toEqual({
+    // Optimistic update should set isEnabled: false.
+    const enabledUpdates = optimisticUpdates.filter((u) => u.updates.isEnabled != null);
+    expect(enabledUpdates.length).toBeGreaterThanOrEqual(1);
+    expect(enabledUpdates[0]).toEqual({
       provider: "mux-gateway",
       updates: { isEnabled: false },
     });
     // IPC should be called with the new state
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(1);
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledWith({
+      muxGatewayEnabled: false,
+      muxGatewayModels: [],
+    });
+  });
+
+  test("keeps toggleEnabled persistence queued while API is unavailable", () => {
+    const { result, rerender } = renderHook(() => useGateway());
+
+    apiAvailable = false;
+    act(() => result.current.toggleEnabled());
+
+    // Intent is retained while disconnected.
+    expect(pendingGatewayEnabledUntilPersisted.value).toBe(false);
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(0);
+
+    apiAvailable = true;
+    act(() => {
+      rerender();
+      window.dispatchEvent(new Event("mux:gatewayEnrollmentPending"));
+    });
+
     expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(1);
     expect(updateMuxGatewayPrefsMock).toHaveBeenCalledWith({
       muxGatewayEnabled: false,
