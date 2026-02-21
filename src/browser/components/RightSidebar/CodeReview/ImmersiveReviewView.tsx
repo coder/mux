@@ -76,6 +76,11 @@ interface SelectedLineRange {
   endIndex: number;
 }
 
+interface PendingComposerHunkSwitch {
+  fromHunkId: string | null;
+  toHunkId: string;
+}
+
 interface HunkLineRange {
   startIndex: number;
   endIndex: number;
@@ -582,6 +587,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     useState<InlineReviewEditRequest | null>(null);
   const nextComposerRequestIdRef = useRef(0);
   const nextInlineReviewEditRequestIdRef = useRef(0);
+  const pendingComposerHunkSwitchRef = useRef<PendingComposerHunkSwitch | null>(null);
 
   // Keyboard line cursor state within the whole rendered file.
   const [activeLineIndex, setActiveLineIndex] = useState<number | null>(null);
@@ -681,13 +687,32 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
   useEffect(() => {
     if (!inlineComposerRequest) {
+      pendingComposerHunkSwitchRef.current = null;
       return;
     }
 
-    if (!selectedHunk || inlineComposerRequest.hunkId !== selectedHunk.id) {
-      setInlineComposerRequest(null);
+    if (selectedHunk?.id === inlineComposerRequest.hunkId) {
+      pendingComposerHunkSwitchRef.current = null;
+      return;
     }
-  }, [inlineComposerRequest, selectedHunk]);
+
+    const pendingSwitch = pendingComposerHunkSwitchRef.current;
+    const isAwaitingRequestedHunk =
+      pendingSwitch?.toHunkId === inlineComposerRequest.hunkId &&
+      (selectedHunkId === pendingSwitch.fromHunkId || selectedHunkId === null);
+
+    if (isAwaitingRequestedHunk) {
+      const requestedHunkStillExists = currentFileHunks.some(
+        (hunk) => hunk.id === inlineComposerRequest.hunkId
+      );
+      if (requestedHunkStillExists) {
+        return;
+      }
+    }
+
+    pendingComposerHunkSwitchRef.current = null;
+    setInlineComposerRequest(null);
+  }, [currentFileHunks, inlineComposerRequest, selectedHunk, selectedHunkId]);
 
   // Refs keep hot-path callbacks stable so cursor movement doesn't trigger expensive re-renders.
   const activeLineIndexRef = useRef<number | null>(null);
@@ -865,6 +890,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const openComposer = useCallback(
     (prefill: string) => {
       const selection = getCurrentLineSelection();
+      pendingComposerHunkSwitchRef.current = null;
 
       // Resolve which hunk to attach the composer to. If the cursor has moved
       // into a different hunk (e.g. via arrow-key line navigation), look it up
@@ -885,9 +911,17 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
           // Keep cursor state anchored to the intended target line before
           // hunk-selection effects run; this avoids snapping to hunk start.
           setActiveLineIndex(targetSelectionEnd);
-          // Keep the selected-hunk state in sync so the externalComposerSelectionRequest
-          // memo (which checks inlineComposerRequest.hunkId === selectedHunk.id) works.
-          onSelectHunk(resolved.hunk.id);
+
+          const currentSelectedHunkId = selectedHunkIdRef.current;
+          if (resolved.hunk.id !== currentSelectedHunkId) {
+            // Record the in-flight hunk switch so mismatch guards do not clear
+            // this composer request before onSelectHunk propagates.
+            pendingComposerHunkSwitchRef.current = {
+              fromHunkId: currentSelectedHunkId,
+              toHunkId: resolved.hunk.id,
+            };
+            onSelectHunk(resolved.hunk.id);
+          }
         }
       }
 

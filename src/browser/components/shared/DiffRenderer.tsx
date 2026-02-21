@@ -995,27 +995,25 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     const [selection, setSelection] = React.useState<LineSelection | null>(null);
     const [selectionInitialNoteText, setSelectionInitialNoteText] = React.useState("");
 
-    const lastExternalSelectionSignatureRef = React.useRef<string | null>(null);
+    const lastExternalSelectionRequestIdRef = React.useRef<number | null>(null);
 
     React.useEffect(() => {
       if (!externalSelectionRequest) {
-        if (lastExternalSelectionSignatureRef.current !== null) {
-          lastExternalSelectionSignatureRef.current = null;
+        if (lastExternalSelectionRequestIdRef.current !== null) {
+          lastExternalSelectionRequestIdRef.current = null;
           setSelection(null);
           setSelectionInitialNoteText("");
         }
         return;
       }
 
-      const signature = `${externalSelectionRequest.requestId}:${externalSelectionRequest.selection.startIndex}:${externalSelectionRequest.selection.endIndex}:${externalSelectionRequest.initialNoteText ?? ""}`;
-      if (lastExternalSelectionSignatureRef.current === signature) {
+      // Reset only when a new request arrives; selection churn from the parent
+      // for the same request should not wipe an in-progress composer draft.
+      if (lastExternalSelectionRequestIdRef.current === externalSelectionRequest.requestId) {
         return;
       }
 
-      lastExternalSelectionSignatureRef.current = signature;
-      // Sync to internal state so drag interactions work after external requests.
-      // renderSelection/renderNoteText below ensure the composer appears
-      // immediately without waiting for this async state update.
+      lastExternalSelectionRequestIdRef.current = externalSelectionRequest.requestId;
       setSelection({
         startIndex: externalSelectionRequest.selection.startIndex,
         endIndex: externalSelectionRequest.selection.endIndex,
@@ -1023,17 +1021,8 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       setSelectionInitialNoteText(externalSelectionRequest.initialNoteText ?? "");
     }, [externalSelectionRequest]);
 
-    // Derive effective selection synchronously from external requests to avoid
-    // an extra render cycle through useEffect -> setSelection on large diffs.
-    const renderSelection: LineSelection | null = externalSelectionRequest
-      ? {
-          startIndex: externalSelectionRequest.selection.startIndex,
-          endIndex: externalSelectionRequest.selection.endIndex,
-        }
-      : selection;
-    const renderNoteText = externalSelectionRequest
-      ? (externalSelectionRequest.initialNoteText ?? "")
-      : selectionInitialNoteText;
+    const renderSelection: LineSelection | null = selection;
+    const renderNoteText = selectionInitialNoteText;
     const renderSelectionStartIndex = renderSelection?.startIndex ?? null;
 
     // Notify parent when composition state changes

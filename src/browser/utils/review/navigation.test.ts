@@ -214,6 +214,37 @@ describe("flattenFileTreeLeaves", () => {
     ]);
   });
 
+  test("normalizes rename syntax to renamed leaf paths", () => {
+    const root: FileTreeNode = {
+      name: "",
+      path: "",
+      isDirectory: true,
+      children: [
+        {
+          name: "src",
+          path: "src",
+          isDirectory: true,
+          children: [
+            {
+              name: "{oldName.ts => newName.ts}",
+              path: "src/{oldName.ts => newName.ts}",
+              isDirectory: false,
+              children: [],
+            },
+          ],
+        },
+        {
+          name: "README.old.md => README.md",
+          path: "README.old.md => README.md",
+          isDirectory: false,
+          children: [],
+        },
+      ],
+    };
+
+    expect(flattenFileTreeLeaves(root)).toEqual(["src/newName.ts", "README.md"]);
+  });
+
   test("skips directory nodes and only returns leaf file paths", () => {
     const root: FileTreeNode = {
       name: "",

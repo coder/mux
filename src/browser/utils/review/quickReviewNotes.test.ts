@@ -168,6 +168,30 @@ describe("buildQuickLineReviewNote", () => {
     expect(note.newStart).toBe(50);
   });
 
+  test("keeps old/new coordinates for context-only selections", () => {
+    const hunk = makeHunk({
+      oldStart: 30,
+      oldLines: 3,
+      newStart: 40,
+      newLines: 3,
+      content:
+        "-const removed = 1;\n+const added = 1;\n const keepOne = added;\n const keepTwo = keepOne;",
+      header: "@@ -30,3 +40,3 @@",
+    });
+
+    const note = buildQuickLineReviewNote({
+      hunk,
+      startIndex: 2,
+      endIndex: 3,
+      userNote: "Context-only selection",
+    });
+
+    expect(note.lineRange).toBe("-31-32 +41-42");
+    expect(note.selectedDiff).toBe(" const keepOne = added;\n const keepTwo = keepOne;");
+    expect(note.oldStart).toBe(31);
+    expect(note.newStart).toBe(41);
+  });
+
   test("clamps out-of-bounds selection indices", () => {
     const hunk = makeHunk({
       content: "-old\n+new\n context",
