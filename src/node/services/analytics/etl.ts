@@ -621,9 +621,10 @@ function getMaxSequence(events: IngestEvent[]): number | null {
   return maxSequence;
 }
 
-function shouldRebuildWorkspaceForRewind(params: {
+function shouldRebuildWorkspaceForSequenceRegression(params: {
   watermark: IngestWatermark;
   parsedMaxSequence: number | null;
+  hasSequenceRegression: boolean;
 }): boolean {
   if (params.watermark.lastSequence < 0) {
     return false;
@@ -633,7 +634,7 @@ function shouldRebuildWorkspaceForRewind(params: {
     return true;
   }
 
-  return params.parsedMaxSequence < params.watermark.lastSequence;
+  return params.hasSequenceRegression;
 }
 
 export async function ingestWorkspace(
@@ -670,6 +671,7 @@ export async function ingestWorkspace(
   const lines = chatContents.split("\n").filter((line) => line.trim().length > 0);
 
   let responseIndex = 0;
+  let hasSequenceRegression = false;
   const parsedEvents: IngestEvent[] = [];
 
   for (let i = 0; i < lines.length; i++) {
@@ -690,20 +692,25 @@ export async function ingestWorkspace(
       continue;
     }
 
+    if (watermark.lastSequence >= 0 && event.sequence < watermark.lastSequence) {
+      hasSequenceRegression = true;
+    }
+
     responseIndex += 1;
     parsedEvents.push(event);
   }
 
   const parsedMaxSequence = getMaxSequence(parsedEvents);
-  const shouldRebuild = shouldRebuildWorkspaceForRewind({
+  const shouldRebuild = shouldRebuildWorkspaceForSequenceRegression({
     watermark,
     parsedMaxSequence,
+    hasSequenceRegression,
   });
 
   if (shouldRebuild) {
-    // History truncation rewinds historySequence values below our watermark. Rebuild
-    // the workspace slice from current chat.jsonl contents so stale rows are removed
-    // even when the file now has zero assistant events.
+    // Any parsed historySequence below the persisted watermark means the tail was
+    // rewritten/regenerated. Rebuild the workspace slice so stale rows are removed,
+    // including the zero-assistant-event case after full truncation.
     await replaceWorkspaceEvents(conn, workspaceId, parsedEvents);
 
     await writeWatermark(conn, workspaceId, {
