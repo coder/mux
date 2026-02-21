@@ -306,10 +306,14 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
       return;
     }
 
+    const hydratedGatewayModels = providersConfig?.["mux-gateway"]?.gatewayModels ?? [];
+    const modelsToPersist =
+      hydratedGatewayModels.length > 0 ? hydratedGatewayModels : pendingModels;
+
     pendingGatewayDefaultModelsUntilConfigRef.current = null;
     persistGatewayDefaultEnrollment({
       muxGatewayEnabled: currentEnabled,
-      muxGatewayModels: pendingModels,
+      muxGatewayModels: modelsToPersist,
     });
   }, [persistGatewayDefaultEnrollment, providersConfig]);
 
