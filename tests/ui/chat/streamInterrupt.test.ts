@@ -3,7 +3,7 @@
  *
  * Tests verify that:
  * - User-initiated interrupts (Ctrl+C/Escape) do NOT show warning RetryBarrier
- * - Transcript hydration suppresses RetryBarrier and shows a loading placeholder
+ * - Transcript hydration suppresses RetryBarrier while preserving cached transcript rows
  *
  * Note: The error-case UI behavior (showing RetryBarrier for network errors) is covered
  * by unit tests in retryEligibility.test.ts. Testing it in UI integration tests is
@@ -105,10 +105,10 @@ describe("Stream Interrupt UI (mock AI router)", () => {
           const placeholder = app.view.container.querySelector(
             '[data-testid="transcript-hydration-placeholder"]'
           );
-          expect(placeholder).not.toBeNull();
+          expect(placeholder).toBeNull();
 
           const text = app.view.container.textContent ?? "";
-          expect(text).toContain("Loading transcript...");
+          expect(text).toContain("Mock response:");
           expect(text).not.toContain("No Messages Yet");
           expect(text).not.toContain("Stream interrupted");
         },

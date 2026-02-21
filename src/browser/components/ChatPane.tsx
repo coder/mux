@@ -608,9 +608,11 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     : null;
 
   const hasInterruptedStream = interruption?.hasInterruptedStream ?? false;
-  const showTranscriptHydrationPlaceholder = isHydratingTranscript;
+  // Keep rendering cached transcript rows during incremental catch-up so workspace switches
+  // feel stable; only show the full placeholder when there's no transcript content yet.
+  const showTranscriptHydrationPlaceholder = isHydratingTranscript && deferredMessages.length === 0;
   const showRetryBarrier =
-    !showTranscriptHydrationPlaceholder && !workspaceState.canInterrupt && hasInterruptedStream;
+    !isHydratingTranscript && !workspaceState.canInterrupt && hasInterruptedStream;
 
   const lastActionableMessage = getLastNonDecorativeMessage(workspaceState.messages);
   const suppressRetryBarrier =
@@ -619,7 +621,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   // Keep RetryBarrier mounted (but visually hidden) while a resumed stream is in flight
   // so its temporary auto-retry rollback effect can observe terminal stream outcomes.
   const shouldMountRetryBarrier =
-    !showTranscriptHydrationPlaceholder && hasInterruptedStream && !suppressRetryBarrier;
+    !isHydratingTranscript && hasInterruptedStream && !suppressRetryBarrier;
   const showRetryBarrierUI = showRetryBarrier && !suppressRetryBarrier;
 
   const handleLoadOlderHistory = useCallback(() => {
