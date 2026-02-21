@@ -475,6 +475,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   // Mobile breakpoint for auto-closing sidebar
   const MOBILE_BREAKPOINT = 768;
   const projectListScrollRef = useRef<HTMLDivElement | null>(null);
+  const mobileScrollTopRef = useRef(0);
+  const wasCollapsedRef = useRef(collapsed);
+
+  const normalizeMobileScrollTop = useCallback((scrollTop: number): number => {
+    return Number.isFinite(scrollTop) ? Math.max(0, Math.round(scrollTop)) : 0;
+  }, []);
 
   const persistMobileSidebarScrollTop = useCallback(
     (scrollTop: number) => {
@@ -484,12 +490,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
       // Keep the last viewed list position so reopening the touch sidebar returns
       // users to where they were browsing instead of jumping back to the top.
-      const normalizedScrollTop = Number.isFinite(scrollTop)
-        ? Math.max(0, Math.round(scrollTop))
-        : 0;
+      const normalizedScrollTop = normalizeMobileScrollTop(scrollTop);
       updatePersistedState<number>(MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY, normalizedScrollTop, 0);
     },
-    [MOBILE_BREAKPOINT]
+    [MOBILE_BREAKPOINT, normalizeMobileScrollTop]
   );
 
   useEffect(() => {
@@ -499,20 +503,29 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
     const persistedScrollTop = readPersistedState<unknown>(MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY, 0);
     const normalizedScrollTop =
-      typeof persistedScrollTop === "number" && Number.isFinite(persistedScrollTop)
-        ? Math.max(0, persistedScrollTop)
-        : 0;
+      typeof persistedScrollTop === "number" ? normalizeMobileScrollTop(persistedScrollTop) : 0;
+    mobileScrollTopRef.current = normalizedScrollTop;
 
     if (projectListScrollRef.current) {
       projectListScrollRef.current.scrollTop = normalizedScrollTop;
     }
-  }, [collapsed, MOBILE_BREAKPOINT]);
+  }, [collapsed, MOBILE_BREAKPOINT, normalizeMobileScrollTop]);
+
+  useEffect(() => {
+    const wasCollapsed = wasCollapsedRef.current;
+
+    if (!wasCollapsed && collapsed) {
+      persistMobileSidebarScrollTop(mobileScrollTopRef.current);
+    }
+
+    wasCollapsedRef.current = collapsed;
+  }, [collapsed, persistMobileSidebarScrollTop]);
 
   const handleProjectListScroll = useCallback(
     (event: React.UIEvent<HTMLDivElement>) => {
-      persistMobileSidebarScrollTop(event.currentTarget.scrollTop);
+      mobileScrollTopRef.current = normalizeMobileScrollTop(event.currentTarget.scrollTop);
     },
-    [persistMobileSidebarScrollTop]
+    [normalizeMobileScrollTop]
   );
 
   // Wrapper to close sidebar on mobile after workspace selection
@@ -520,7 +533,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     (selection: WorkspaceSelection) => {
       onSelectWorkspace(selection);
       if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
-        persistMobileSidebarScrollTop(projectListScrollRef.current?.scrollTop ?? 0);
+        persistMobileSidebarScrollTop(mobileScrollTopRef.current);
         onToggleCollapsed();
       }
     },
@@ -532,7 +545,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     (projectPath: string, sectionId?: string) => {
       createWorkspaceDraft(projectPath, sectionId);
       if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
-        persistMobileSidebarScrollTop(projectListScrollRef.current?.scrollTop ?? 0);
+        persistMobileSidebarScrollTop(mobileScrollTopRef.current);
         onToggleCollapsed();
       }
     },
@@ -544,7 +557,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     (projectPath: string, draftId: string, sectionId?: string | null) => {
       openWorkspaceDraft(projectPath, draftId, sectionId);
       if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
-        persistMobileSidebarScrollTop(projectListScrollRef.current?.scrollTop ?? 0);
+        persistMobileSidebarScrollTop(mobileScrollTopRef.current);
         onToggleCollapsed();
       }
     },
