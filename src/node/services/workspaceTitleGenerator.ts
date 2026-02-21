@@ -532,6 +532,7 @@ function looksLikeTitleRequirement(value: string): boolean {
 
   return /\b\d+\s*-\s*\d+\s*words?\b/.test(normalized) && /\bverb-noun format\b/.test(normalized);
 }
+
 function cleanExtractedValue(rawValue: string): string | null {
   const trimmed = rawValue.trim();
   if (trimmed.length === 0) {
