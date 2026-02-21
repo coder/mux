@@ -330,9 +330,12 @@ export function RuntimesSection() {
 
     setProjectEnablement(nextEnablement);
 
-    let nextDefaultRuntime = projectDefaultRuntime ?? null;
+    const inheritedDefault = projectDefaultRuntime ?? defaultRuntime ?? null;
+    let nextDefaultRuntime = inheritedDefault;
     if (nextDefaultRuntime && !nextEnablement[nextDefaultRuntime]) {
       nextDefaultRuntime = getFallbackRuntime(nextEnablement);
+    }
+    if (nextDefaultRuntime !== projectDefaultRuntime) {
       setProjectDefaultRuntime(nextDefaultRuntime);
     }
     const cacheEntry: RuntimeOverrideCacheEntry = {
