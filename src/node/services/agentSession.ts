@@ -3618,6 +3618,7 @@ export class AgentSession {
       const activeStreamOptions = this.activeStreamContext?.options;
 
       let emittedStreamEnd = false;
+      let handoffFailureMessage: string | undefined;
       try {
         const completedCompactionRequest = this.activeCompactionRequest;
         this.activeCompactionRequest = undefined;
@@ -3685,13 +3686,18 @@ export class AgentSession {
 
         const switchResult = this.extractSwitchAgentResult(streamEndPayload);
         if (switchResult) {
-          const dispatchedSwitchFollowUp = await this.dispatchAgentSwitch(
-            switchResult,
-            activeStreamOptions,
-            streamEndPayload.metadata.model
-          );
-          if (dispatchedSwitchFollowUp) {
-            return;
+          try {
+            const dispatchedSwitchFollowUp = await this.dispatchAgentSwitch(
+              switchResult,
+              activeStreamOptions,
+              streamEndPayload.metadata.model
+            );
+            if (dispatchedSwitchFollowUp) {
+              return;
+            }
+          } catch (error) {
+            handoffFailureMessage = getErrorMessage(error);
+            throw error;
           }
         }
 
@@ -3704,18 +3710,21 @@ export class AgentSession {
           this.sendQueuedMessages();
         }
       } catch (error) {
+        const streamEndCleanupError = getErrorMessage(error);
         log.error("stream-end cleanup failed", {
           workspaceId: this.workspaceId,
-          error: getErrorMessage(error),
+          error: streamEndCleanupError,
         });
 
-        this.emitChatEvent(
-          createStreamErrorMessage({
-            messageId: createAssistantMessageId(),
-            error: `An unexpected error occurred during agent handoff: ${getErrorMessage(error)}`,
-            errorType: "unknown",
-          })
-        );
+        if (handoffFailureMessage != null) {
+          this.emitChatEvent(
+            createStreamErrorMessage({
+              messageId: createAssistantMessageId(),
+              error: `An unexpected error occurred during agent handoff: ${handoffFailureMessage}`,
+              errorType: "unknown",
+            })
+          );
+        }
 
         // Defense-in-depth: unblock renderer if compaction handler threw before we emitted.
         if (!emittedStreamEnd) {
