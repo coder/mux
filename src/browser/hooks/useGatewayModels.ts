@@ -16,9 +16,9 @@ import type { ProvidersConfigMap } from "@/common/orpc/types";
 // Exported for testing only.
 export const pendingGatewayEnrollments = new Set<string>();
 
-// Registered by useGateway so migrateGatewayModel can trigger a best-effort
-// enrollment flush for legacy mux-gateway model strings.
-let requestGatewayEnrollmentFlush: (() => void) | null = null;
+// Registered by useGateway instances so migrateGatewayModel can trigger
+// best-effort enrollment flushes for legacy mux-gateway model strings.
+const gatewayEnrollmentFlushListeners = new Set<() => void>();
 
 function clearLegacyGatewayLocalPrefs(): void {
   // Gateway localStorage keys are deprecated; clear stale values so migration
@@ -96,7 +96,9 @@ export function migrateGatewayModel(modelId: string): string {
     // Deferred via queueMicrotask because migrateGatewayModel can be called
     // during render; dispatching synchronously would be a React anti-pattern.
     queueMicrotask(() => {
-      requestGatewayEnrollmentFlush?.();
+      for (const flushPendingEnrollments of gatewayEnrollmentFlushListeners) {
+        flushPendingEnrollments();
+      }
     });
   }
 
@@ -239,11 +241,9 @@ export function useGateway(): GatewayState {
   // Register a best-effort flush callback so migrateGatewayModel can signal
   // late enrollments that happen after this hook mounts.
   useEffect(() => {
-    requestGatewayEnrollmentFlush = flushPendingEnrollments;
+    gatewayEnrollmentFlushListeners.add(flushPendingEnrollments);
     return () => {
-      if (requestGatewayEnrollmentFlush === flushPendingEnrollments) {
-        requestGatewayEnrollmentFlush = null;
-      }
+      gatewayEnrollmentFlushListeners.delete(flushPendingEnrollments);
     };
   }, [flushPendingEnrollments]);
 
