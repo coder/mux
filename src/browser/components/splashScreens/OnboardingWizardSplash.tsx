@@ -235,29 +235,37 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   const [muxGatewayServerState, setMuxGatewayServerState] = useState<string | null>(null);
 
   const pendingGatewayDefaultEnrollmentRef = useRef<{
-    muxGatewayEnabled: boolean;
-    muxGatewayModels: string[];
+    version: number;
+    payload: {
+      muxGatewayEnabled: boolean;
+      muxGatewayModels: string[];
+    };
   } | null>(null);
+  const gatewayDefaultEnrollmentVersionRef = useRef(0);
 
   const persistGatewayDefaultEnrollment = useCallback(
     (payload: { muxGatewayEnabled: boolean; muxGatewayModels: string[] }) => {
+      const version = ++gatewayDefaultEnrollmentVersionRef.current;
+      pendingGatewayDefaultEnrollmentRef.current = { version, payload };
+
       if (!api?.config?.updateMuxGatewayPrefs) {
         // API may be temporarily unavailable during reconnect; keep payload and
         // flush once the API client becomes available again.
-        pendingGatewayDefaultEnrollmentRef.current = payload;
         return;
       }
 
       api.config
         .updateMuxGatewayPrefs(payload)
         .then(() => {
-          if (pendingGatewayDefaultEnrollmentRef.current === payload) {
+          if (pendingGatewayDefaultEnrollmentRef.current?.version === version) {
             pendingGatewayDefaultEnrollmentRef.current = null;
           }
         })
         .catch(() => {
           // Keep latest payload for retry on the next reconnect.
-          pendingGatewayDefaultEnrollmentRef.current = payload;
+          if ((pendingGatewayDefaultEnrollmentRef.current?.version ?? 0) <= version) {
+            pendingGatewayDefaultEnrollmentRef.current = { version, payload };
+          }
         });
     },
     [api]
@@ -267,7 +275,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     const pending = pendingGatewayDefaultEnrollmentRef.current;
     if (!pending) return;
 
-    persistGatewayDefaultEnrollment(pending);
+    persistGatewayDefaultEnrollment(pending.payload);
   }, [persistGatewayDefaultEnrollment]);
 
   const cancelMuxGatewayLogin = useCallback(() => {
