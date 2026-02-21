@@ -620,8 +620,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     lastActionableMessage.errorType === "context_exceeded";
   // Keep RetryBarrier mounted (but visually hidden) while a resumed stream is in flight
   // so its temporary auto-retry rollback effect can observe terminal stream outcomes.
-  const shouldMountRetryBarrier =
-    !isHydratingTranscript && hasInterruptedStream && !suppressRetryBarrier;
+  const shouldMountRetryBarrier = hasInterruptedStream && !suppressRetryBarrier;
   const showRetryBarrierUI = showRetryBarrier && !suppressRetryBarrier;
 
   const handleLoadOlderHistory = useCallback(() => {
