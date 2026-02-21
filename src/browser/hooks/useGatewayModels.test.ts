@@ -13,6 +13,7 @@ import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import {
   isGatewayFormat,
   isProviderSupported,
+  knownGatewayEnrollments,
   migrateGatewayModel,
   pendingGatewayEnabledUntilPersisted,
   pendingGatewayEnrollments,
@@ -66,6 +67,7 @@ describe("useGateway", () => {
     globalThis.document = globalThis.window.document;
     optimisticUpdates = [];
     pendingGatewayEnrollments.clear();
+    knownGatewayEnrollments.clear();
     pendingGatewayModelsUntilHydrated.models = null;
     pendingGatewayEnabledUntilPersisted.value = null;
     updateMuxGatewayPrefsMock.mockClear();
@@ -82,6 +84,7 @@ describe("useGateway", () => {
   afterEach(() => {
     cleanup();
     pendingGatewayEnrollments.clear();
+    knownGatewayEnrollments.clear();
     pendingGatewayModelsUntilHydrated.models = null;
     pendingGatewayEnabledUntilPersisted.value = null;
     apiAvailable = true;
@@ -369,7 +372,7 @@ describe("useGateway", () => {
     expect(pendingGatewayEnrollments.size).toBe(0);
   });
 
-  test("persists queued enrollments even when model is already in local gateway state", async () => {
+  test("drops queued enrollments that are already persisted", async () => {
     mockConfig = {
       "mux-gateway": {
         couponCodeSet: true,
@@ -378,17 +381,13 @@ describe("useGateway", () => {
       },
     };
 
-    // Queue model that's already in local gateway state.
-    // We still persist once so backend config catches up.
+    // Queue model that's already in persisted gateway state.
     pendingGatewayEnrollments.add("anthropic:claude-opus-4-5");
 
     renderHook(() => useGateway());
 
-    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(1);
-    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledWith({
-      muxGatewayEnabled: true,
-      muxGatewayModels: ["anthropic:claude-opus-4-5"],
-    });
+    // No-op writes are skipped to avoid unnecessary config churn.
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(0);
 
     await act(async () => {
       await Promise.resolve();
@@ -494,6 +493,25 @@ describe("useGateway", () => {
       await new Promise((r) => setTimeout(r, 50));
     });
     expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(1);
+  });
+  test("skips re-queueing migrated models that are already enrolled", async () => {
+    mockConfig = {
+      "mux-gateway": {
+        couponCodeSet: true,
+        isEnabled: true,
+        gatewayModels: ["anthropic:claude-opus-4-5"],
+      },
+    };
+
+    renderHook(() => useGateway());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const migrated = migrateGatewayModel("mux-gateway:anthropic/claude-opus-4-5");
+    expect(migrated).toBe("anthropic:claude-opus-4-5");
+    expect(pendingGatewayEnrollments.size).toBe(0);
   });
 });
 

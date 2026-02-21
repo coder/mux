@@ -41,6 +41,10 @@ export const pendingGatewayEnabledUntilPersisted = {
   value: null as boolean | null,
 };
 
+// Canonical models known to already be enrolled for gateway routing. Used to
+// avoid re-enqueuing the same migration write on repeated render paths.
+export const knownGatewayEnrollments = new Set<string>();
+
 // ============================================================================
 // Pure utility functions (no side effects, used for message sending)
 // ============================================================================
@@ -98,16 +102,22 @@ export function migrateGatewayModel(modelId: string): string {
   const model = inner.slice(slashIndex + 1);
   const canonicalId = `${provider}:${model}`;
 
+  // Skip already-enrolled models to avoid repeated no-op migration writes.
+  if (knownGatewayEnrollments.has(canonicalId)) {
+    return canonicalId;
+  }
+
   // Preserve gateway routing intent: queue the canonical model for enrollment.
   // The useGateway hook drains this queue after provider config loads,
   // persisting the model in muxGatewayModels so gateway routing continues
   // to work after the format migration.
+  const beforeSize = pendingGatewayEnrollments.size;
   pendingGatewayEnrollments.add(canonicalId);
 
-  // Signal the hook to re-run the drain effect. Deferred via queueMicrotask
-  // because migrateGatewayModel can be called during render; dispatching
-  // synchronously during render would be a React anti-pattern.
-  if (typeof window !== "undefined") {
+  // Only signal when the queue actually grew.
+  if (pendingGatewayEnrollments.size !== beforeSize && typeof window !== "undefined") {
+    // Deferred via queueMicrotask because migrateGatewayModel can be called
+    // during render; dispatching synchronously would be a React anti-pattern.
     queueMicrotask(() => {
       if (typeof window !== "undefined") {
         window.dispatchEvent(new Event(ENROLLMENT_PENDING_EVENT));
@@ -203,6 +213,14 @@ export function useGateway(): GatewayState {
   const enabledModels = useMemo(() => gwConfig?.gatewayModels ?? [], [gwConfig?.gatewayModels]);
   const isActive = isConfigured && isEnabled;
 
+  // Track models that are already known to be enrolled so migrateGatewayModel
+  // can avoid re-queuing no-op writes on steady-state render paths.
+  useEffect(() => {
+    for (const id of enabledModels) {
+      knownGatewayEnrollments.add(id);
+    }
+  }, [enabledModels]);
+
   // Bump a version counter when migrateGatewayModel enqueues items so the drain
   // effect re-runs for late enrollments (after the hook has already mounted).
   const [enrollVersion, setEnrollVersion] = useState(0);
@@ -279,7 +297,23 @@ export function useGateway(): GatewayState {
     }
 
     const baseModels = pendingModelsSnapshot ?? enabledModels;
-    const nextModels = Array.from(new Set([...baseModels, ...enrollmentBatch]));
+    const enrollmentAdds = enrollmentBatch.filter((id) => !baseModels.includes(id));
+
+    if (
+      pendingModelsSnapshot == null &&
+      pendingEnabledSnapshot == null &&
+      enrollmentAdds.length === 0
+    ) {
+      // All queued migration enrollments are already persisted; clear them
+      // without issuing a no-op config write.
+      for (const id of enrollmentBatch) {
+        pendingGatewayEnrollments.delete(id);
+        knownGatewayEnrollments.add(id);
+      }
+      return;
+    }
+
+    const nextModels = Array.from(new Set([...baseModels, ...enrollmentAdds]));
 
     enrollmentDrainState.inFlight = true;
     updateOptimistically("mux-gateway", { gatewayModels: nextModels });
@@ -294,6 +328,10 @@ export function useGateway(): GatewayState {
       .then(() => {
         // Remove only the enrollments included in this batch.
         for (const id of enrollmentBatch) pendingGatewayEnrollments.delete(id);
+
+        for (const id of nextModels) {
+          knownGatewayEnrollments.add(id);
+        }
 
         // If deferred setEnabledModels payload hasn't changed since this write
         // started, we can clear it now.
