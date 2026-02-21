@@ -5,6 +5,7 @@ import * as path from "path";
 
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { SendMessageOptions } from "@/common/orpc/types";
+import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { Config } from "@/node/config";
 
 import type { AIService } from "./aiService";
@@ -28,8 +29,19 @@ interface SessionInternals {
   ) => Promise<{ success: boolean }>;
 }
 
-function createAiService(projectPath: string): AIService {
+function createAiService(
+  projectPath: string,
+  metadataOverrides?: Partial<WorkspaceMetadata>
+): AIService {
   const emitter = new EventEmitter();
+  const workspaceMetadata: WorkspaceMetadata = {
+    id: "workspace-switch",
+    name: "workspace-switch-name",
+    projectName: "workspace-switch-project",
+    projectPath,
+    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    ...metadataOverrides,
+  };
 
   return {
     on(eventName: string | symbol, listener: (...args: unknown[]) => void) {
@@ -43,13 +55,7 @@ function createAiService(projectPath: string): AIService {
     getWorkspaceMetadata: mock(() =>
       Promise.resolve({
         success: true as const,
-        data: {
-          id: "workspace-switch",
-          name: "workspace-switch-name",
-          projectName: "workspace-switch-project",
-          projectPath,
-          runtimeConfig: DEFAULT_RUNTIME_CONFIG,
-        },
+        data: workspaceMetadata,
       })
     ),
     stopStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
@@ -59,7 +65,8 @@ function createAiService(projectPath: string): AIService {
 function createSession(
   historyService: HistoryService,
   sessionDir: string,
-  projectPath: string
+  projectPath: string,
+  metadataOverrides?: Partial<WorkspaceMetadata>
 ): AgentSession {
   const initStateManager: InitStateManager = {
     on() {
@@ -85,7 +92,7 @@ function createSession(
     workspaceId: "workspace-switch",
     config,
     historyService,
-    aiService: createAiService(projectPath),
+    aiService: createAiService(projectPath, metadataOverrides),
     initStateManager,
     backgroundProcessManager,
   });
@@ -112,7 +119,7 @@ describe("AgentSession switch_agent target validation", () => {
     await historyCleanup?.();
   });
 
-  test("dispatches synthetic follow-up when switch target is valid", async () => {
+  test("inherits model/thinking from outgoing stream when target has no aiSettingsByAgent entry", async () => {
     using projectDir = new DisposableTempDir("agent-session-switch-valid");
     const { historyService, cleanup } = await createTestHistoryService();
     historyCleanup = cleanup;
@@ -130,7 +137,7 @@ describe("AgentSession switch_agent target validation", () => {
           reason: "needs planning",
           followUp: "Create a plan.",
         },
-        { model: "openai:gpt-4o-mini", agentId: "exec" },
+        { model: "openai:gpt-4o-mini", agentId: "exec", thinkingLevel: "low" },
         "openai:gpt-4o"
       );
 
@@ -147,6 +154,60 @@ describe("AgentSession switch_agent target validation", () => {
       expect(messageArg).toBe("Create a plan.");
       expect(optionsArg.agentId).toBe("plan");
       expect(optionsArg.model).toBe("openai:gpt-4o-mini");
+      expect(optionsArg.thinkingLevel).toBe("low");
+      expect(internalArg).toEqual({ synthetic: true });
+    } finally {
+      session.dispose();
+    }
+  });
+
+  test("uses target agent settings from aiSettingsByAgent over outgoing stream", async () => {
+    using projectDir = new DisposableTempDir("agent-session-switch-agent-settings");
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const session = createSession(historyService, projectDir.path, projectDir.path, {
+      aiSettings: {
+        model: "openai:gpt-4.1",
+        thinkingLevel: "off",
+      },
+      aiSettingsByAgent: {
+        plan: {
+          model: "anthropic:claude-sonnet-4-5",
+          thinkingLevel: "high",
+        },
+      },
+    });
+
+    try {
+      const internals = session as unknown as SessionInternals;
+      const sendMessageMock = mock(() => Promise.resolve({ success: true as const }));
+      internals.sendMessage = sendMessageMock as unknown as SessionInternals["sendMessage"];
+
+      const result = await internals.dispatchAgentSwitch(
+        {
+          agentId: "plan",
+          reason: "needs planning",
+          followUp: "Create a plan.",
+        },
+        { model: "openai:gpt-4o-mini", agentId: "exec", thinkingLevel: "low" },
+        "openai:gpt-4o"
+      );
+
+      expect(result).toBe(true);
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+
+      const firstCall = sendMessageMock.mock.calls[0];
+      expect(firstCall).toBeDefined();
+      const [messageArg, optionsArg, internalArg] = firstCall as unknown as [
+        string,
+        SendMessageOptions,
+        { synthetic?: boolean },
+      ];
+      expect(messageArg).toBe("Create a plan.");
+      expect(optionsArg.agentId).toBe("plan");
+      expect(optionsArg.model).toBe("anthropic:claude-sonnet-4-5");
+      expect(optionsArg.thinkingLevel).toBe("high");
       expect(internalArg).toEqual({ synthetic: true });
     } finally {
       session.dispose();

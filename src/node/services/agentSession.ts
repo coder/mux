@@ -4229,11 +4229,28 @@ export class AgentSession {
           ? trimmedFollowUp
           : "Continue."
         : this.buildAgentSwitchFallbackFollowUp(switchResult);
+    // switch_agent hands off execution to a different agent, so prefer that
+    // agent's persisted model/thinking settings. If no per-agent override
+    // exists, inherit from the outgoing stream options.
+    const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
+    const targetAgentSettings =
+      metadataResult.success === true
+        ? (metadataResult.data.aiSettingsByAgent?.[targetAgentId] ?? metadataResult.data.aiSettings)
+        : undefined;
+
+    const normalizedTargetModel = targetAgentSettings?.model?.trim();
     const normalizedOptionModel = currentOptions?.model?.trim();
     const effectiveModel =
-      normalizedOptionModel && normalizedOptionModel.length > 0
+      (normalizedTargetModel != null && normalizedTargetModel.length > 0
+        ? normalizedTargetModel
+        : undefined) ??
+      (normalizedOptionModel != null && normalizedOptionModel.length > 0
         ? normalizedOptionModel
-        : fallbackModel.trim();
+        : undefined) ??
+      fallbackModel.trim();
+
+    const effectiveThinkingLevel =
+      targetAgentSettings?.thinkingLevel ?? currentOptions?.thinkingLevel;
 
     // Build follow-up options from an explicit allowlist.
     // Exclude edit-only fields (editMessageId) to prevent the synthetic
@@ -4242,7 +4259,7 @@ export class AgentSession {
       model: effectiveModel,
       agentId: targetAgentId,
       // Preserve relevant settings from the original request
-      ...(currentOptions?.thinkingLevel != null && { thinkingLevel: currentOptions.thinkingLevel }),
+      ...(effectiveThinkingLevel != null && { thinkingLevel: effectiveThinkingLevel }),
       ...(currentOptions?.system1ThinkingLevel != null && {
         system1ThinkingLevel: currentOptions.system1ThinkingLevel,
       }),
