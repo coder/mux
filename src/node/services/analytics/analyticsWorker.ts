@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import type { Dirent } from "node:fs";
+import * as fs from "node:fs/promises";
 import { parentPort } from "node:worker_threads";
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -28,18 +30,25 @@ interface InitData {
   dbPath: string;
 }
 
+interface WorkspaceMeta {
+  projectPath?: string;
+  projectName?: string;
+  workspaceName?: string;
+  parentWorkspaceId?: string;
+}
+
 interface IngestData {
   workspaceId: string;
   sessionDir: string;
-  meta?: {
-    projectPath?: string;
-    projectName?: string;
-    workspaceName?: string;
-    parentWorkspaceId?: string;
-  };
+  meta?: WorkspaceMeta;
 }
 
 interface RebuildAllData {
+  sessionsDir: string;
+  workspaceMetaById?: Record<string, WorkspaceMeta>;
+}
+
+interface NeedsBackfillData {
   sessionsDir: string;
 }
 
@@ -119,7 +128,14 @@ async function handleIngest(data: IngestData): Promise<void> {
 
 async function handleRebuildAll(data: RebuildAllData): Promise<{ workspacesIngested: number }> {
   assert(data.sessionsDir.trim().length > 0, "rebuildAll requires sessionsDir");
-  return rebuildAll(getConn(), data.sessionsDir);
+  if (data.workspaceMetaById != null) {
+    assert(
+      isRecord(data.workspaceMetaById) && !Array.isArray(data.workspaceMetaById),
+      "rebuildAll workspaceMetaById must be an object when provided"
+    );
+  }
+
+  return rebuildAll(getConn(), data.sessionsDir, data.workspaceMetaById ?? {});
 }
 
 async function handleClearWorkspace(data: ClearWorkspaceData): Promise<void> {
@@ -130,6 +146,10 @@ async function handleClearWorkspace(data: ClearWorkspaceData): Promise<void> {
 async function handleQuery(data: QueryData): Promise<unknown> {
   assert(data.queryName.trim().length > 0, "query requires queryName");
   return executeNamedQuery(getConn(), data.queryName, data.params);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function parseNonNegativeInteger(value: unknown): number | null {
@@ -149,16 +169,45 @@ function parseNonNegativeInteger(value: unknown): number | null {
   return value;
 }
 
-async function handleNeedsBackfill(): Promise<{ needsBackfill: boolean }> {
-  const result = await getConn().run("SELECT COUNT(*) AS row_count FROM events");
+async function hasSessionDirectories(sessionsDir: string): Promise<boolean> {
+  let entries: Dirent[];
+
+  try {
+    entries = await fs.readdir(sessionsDir, { withFileTypes: true });
+  } catch (error) {
+    if (isRecord(error) && error.code === "ENOENT") {
+      return false;
+    }
+
+    throw error;
+  }
+
+  return entries.some((entry) => entry.isDirectory());
+}
+
+async function handleNeedsBackfill(data: NeedsBackfillData): Promise<{ needsBackfill: boolean }> {
+  assert(data.sessionsDir.trim().length > 0, "needsBackfill requires sessionsDir");
+
+  const result = await getConn().run(`
+    SELECT
+      (SELECT COUNT(*) FROM events) AS event_count,
+      (SELECT COUNT(*) FROM ingest_watermarks) AS watermark_count
+  `);
   const rows = await result.getRowObjectsJS();
   assert(rows.length === 1, "needsBackfill should return exactly one row");
 
-  const rowCount = parseNonNegativeInteger(rows[0].row_count);
-  assert(rowCount !== null, "needsBackfill expected a non-negative integer row_count");
+  const eventCount = parseNonNegativeInteger(rows[0].event_count);
+  assert(eventCount !== null, "needsBackfill expected a non-negative integer event_count");
+
+  const watermarkCount = parseNonNegativeInteger(rows[0].watermark_count);
+  assert(watermarkCount !== null, "needsBackfill expected a non-negative integer watermark_count");
+
+  if (eventCount > 0 || watermarkCount > 0) {
+    return { needsBackfill: false };
+  }
 
   return {
-    needsBackfill: rowCount === 0,
+    needsBackfill: await hasSessionDirectories(data.sessionsDir),
   };
 }
 
@@ -175,7 +224,7 @@ async function dispatchTask(taskName: string, data: unknown): Promise<unknown> {
     case "query":
       return handleQuery(data as QueryData);
     case "needsBackfill":
-      return handleNeedsBackfill();
+      return handleNeedsBackfill(data as NeedsBackfillData);
     default:
       throw new Error(`Unknown analytics worker task: ${taskName}`);
   }
@@ -191,32 +240,52 @@ function requireParentPort(): NonNullable<typeof parentPort> {
 
 const workerParentPort = requireParentPort();
 
-async function processMessage(message: WorkerRequest): Promise<void> {
-  assert(
-    Number.isInteger(message.messageId) && message.messageId >= 0,
-    "analytics worker message must include a non-negative integer messageId"
-  );
-  assert(
-    typeof message.taskName === "string" && message.taskName.trim().length > 0,
-    "analytics worker message requires taskName"
-  );
+function toResponseMessageId(message: WorkerRequest): number {
+  if (Number.isInteger(message.messageId) && message.messageId >= 0) {
+    return message.messageId;
+  }
 
+  return -1;
+}
+
+function postWorkerResponse(response: WorkerSuccessResponse | WorkerErrorResponse): void {
   try {
-    const result = await dispatchTask(message.taskName, message.data);
-    const response: WorkerSuccessResponse = {
-      messageId: message.messageId,
-      result,
-    };
     workerParentPort.postMessage(response);
   } catch (error) {
+    process.stderr.write(
+      `[analytics-worker] Failed to post worker response: ${getErrorMessage(error)}\n`
+    );
+  }
+}
+
+async function processMessage(message: WorkerRequest): Promise<void> {
+  const responseMessageId = toResponseMessageId(message);
+
+  try {
+    assert(
+      Number.isInteger(message.messageId) && message.messageId >= 0,
+      "analytics worker message must include a non-negative integer messageId"
+    );
+    assert(
+      typeof message.taskName === "string" && message.taskName.trim().length > 0,
+      "analytics worker message requires taskName"
+    );
+
+    const result = await dispatchTask(message.taskName, message.data);
+    const response: WorkerSuccessResponse = {
+      messageId: responseMessageId,
+      result,
+    };
+    postWorkerResponse(response);
+  } catch (error) {
     const response: WorkerErrorResponse = {
-      messageId: message.messageId,
+      messageId: responseMessageId,
       error: {
         message: getErrorMessage(error),
         stack: error instanceof Error ? error.stack : undefined,
       },
     };
-    workerParentPort.postMessage(response);
+    postWorkerResponse(response);
   }
 }
 

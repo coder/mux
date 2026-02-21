@@ -13,6 +13,7 @@ import type {
 } from "@/common/orpc/schemas/analytics";
 import type { Config } from "@/node/config";
 import { getErrorMessage } from "@/common/utils/errors";
+import { PlatformPaths } from "@/common/utils/paths";
 import { log } from "@/node/services/log";
 
 interface WorkerRequest {
@@ -64,6 +65,24 @@ interface NeedsBackfillResult {
   needsBackfill: boolean;
 }
 
+interface RebuildAllData {
+  sessionsDir: string;
+  workspaceMetaById: Record<string, IngestWorkspaceMeta>;
+}
+
+interface NeedsBackfillData {
+  sessionsDir: string;
+}
+
+function toOptionalNonEmptyString(value: string | undefined): string | undefined {
+  if (value == null) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 function toDateFilterString(value: Date | null | undefined): string | null {
   if (value == null) {
     return null;
@@ -110,6 +129,60 @@ export class AnalyticsService {
     }
 
     return path.join(workerDir, workerFile);
+  }
+
+  private buildRebuildWorkspaceMetaById(): Record<string, IngestWorkspaceMeta> {
+    const configSnapshot = this.config.loadConfigOrDefault();
+    const workspaceMetaById: Record<string, IngestWorkspaceMeta> = {};
+
+    for (const [projectPath, projectConfig] of configSnapshot.projects) {
+      const normalizedProjectPath = toOptionalNonEmptyString(projectPath);
+      if (!normalizedProjectPath) {
+        log.warn("[AnalyticsService] Skipping rebuild metadata for empty project path");
+        continue;
+      }
+
+      const projectName = PlatformPaths.getProjectName(normalizedProjectPath);
+
+      for (const workspace of projectConfig.workspaces) {
+        const workspaceId = toOptionalNonEmptyString(workspace.id);
+        if (!workspaceId) {
+          continue;
+        }
+
+        if (workspaceMetaById[workspaceId]) {
+          log.warn(
+            "[AnalyticsService] Duplicate workspace ID in config while building rebuild metadata",
+            {
+              workspaceId,
+              projectPath: normalizedProjectPath,
+            }
+          );
+          continue;
+        }
+
+        workspaceMetaById[workspaceId] = {
+          projectPath: normalizedProjectPath,
+          projectName,
+          workspaceName: toOptionalNonEmptyString(workspace.name),
+          parentWorkspaceId: toOptionalNonEmptyString(workspace.parentWorkspaceId),
+        };
+      }
+    }
+
+    return workspaceMetaById;
+  }
+
+  private buildRebuildAllData(): RebuildAllData {
+    assert(
+      this.config.sessionsDir.trim().length > 0,
+      "Analytics rebuild requires a non-empty sessionsDir"
+    );
+
+    return {
+      sessionsDir: this.config.sessionsDir,
+      workspaceMetaById: this.buildRebuildWorkspaceMetaById(),
+    };
   }
 
   private readonly onWorkerMessage = (response: WorkerResponse): void => {
@@ -165,7 +238,9 @@ export class AnalyticsService {
     const dbPath = path.join(dbDir, "analytics.db");
     await this.dispatch("init", { dbPath });
 
-    const backfillState = await this.dispatch<NeedsBackfillResult>("needsBackfill", null);
+    const backfillState = await this.dispatch<NeedsBackfillResult>("needsBackfill", {
+      sessionsDir: this.config.sessionsDir,
+    } satisfies NeedsBackfillData);
     assert(
       typeof backfillState.needsBackfill === "boolean",
       "Analytics worker needsBackfill task must return a boolean"
@@ -176,11 +251,12 @@ export class AnalyticsService {
     }
 
     // Backfill existing workspace history only when the analytics DB appears
-    // uninitialized so routine worker restarts do not trigger a full rebuild.
+    // uninitialized (no events and no ingest watermarks) and there are session
+    // directories to process. Routine worker restarts therefore skip full rebuilds.
     // Awaited so the first query sees complete data instead of an
     // empty/partially-rebuilt database.
     try {
-      await this.dispatch("rebuildAll", { sessionsDir: this.config.sessionsDir });
+      await this.dispatch("rebuildAll", this.buildRebuildAllData());
     } catch (error) {
       // Non-fatal: queries will work but may show partial historical data
       // until incremental stream-end ingestion fills gaps.
@@ -352,9 +428,7 @@ export class AnalyticsService {
 
   async rebuildAll(): Promise<{ success: boolean; workspacesIngested: number }> {
     await this.ensureWorker();
-    const result = await this.dispatch<RebuildAllResult>("rebuildAll", {
-      sessionsDir: this.config.sessionsDir,
-    });
+    const result = await this.dispatch<RebuildAllResult>("rebuildAll", this.buildRebuildAllData());
 
     return {
       success: true,

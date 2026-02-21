@@ -55,6 +55,8 @@ interface WorkspaceMeta {
   parentWorkspaceId?: string;
 }
 
+type WorkspaceMetaById = Record<string, WorkspaceMeta>;
+
 interface IngestWatermark {
   lastSequence: number;
   lastModified: number;
@@ -897,9 +899,14 @@ export async function ingestWorkspace(
 
 export async function rebuildAll(
   conn: DuckDBConnection,
-  sessionsDir: string
+  sessionsDir: string,
+  workspaceMetaById: WorkspaceMetaById = {}
 ): Promise<{ workspacesIngested: number }> {
   assert(sessionsDir.trim().length > 0, "rebuildAll: sessionsDir is required");
+  assert(
+    isRecord(workspaceMetaById) && !Array.isArray(workspaceMetaById),
+    "rebuildAll: workspaceMetaById must be an object"
+  );
 
   await conn.run("DELETE FROM events");
   await conn.run("DELETE FROM ingest_watermarks");
@@ -926,9 +933,10 @@ export async function rebuildAll(
 
     const workspaceId = entry.name;
     const sessionDir = path.join(sessionsDir, workspaceId);
+    const suppliedWorkspaceMeta = workspaceMetaById[workspaceId] ?? {};
 
     try {
-      await ingestWorkspace(conn, workspaceId, sessionDir, {});
+      await ingestWorkspace(conn, workspaceId, sessionDir, suppliedWorkspaceMeta);
       workspacesIngested += 1;
     } catch (error) {
       log.warn("[analytics-etl] Failed to ingest workspace during rebuild", {
