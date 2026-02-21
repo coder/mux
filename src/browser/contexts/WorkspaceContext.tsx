@@ -184,7 +184,10 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
   }
 
   // Seed the active agent into the existing keys to avoid UI flash.
-  const activeAgentId = readPersistedState<string>(getAgentIdKey(workspaceId), "exec");
+  const activeAgentId = readPersistedState<string>(
+    getAgentIdKey(workspaceId),
+    WORKSPACE_DEFAULTS.agentId
+  );
   const active = nextByAgent[activeAgentId] ?? nextByAgent.exec ?? nextByAgent.plan;
   if (!active) {
     return;

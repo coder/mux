@@ -13,7 +13,7 @@ describe("WORKSPACE_DEFAULTS", () => {
   });
 
   test("should have correct default values", () => {
-    expect(WORKSPACE_DEFAULTS.agentId).toBe("exec");
+    expect(WORKSPACE_DEFAULTS.agentId).toBe("auto");
     expect(WORKSPACE_DEFAULTS.thinkingLevel).toBe("off");
     expect(WORKSPACE_DEFAULTS.model).toBe(DEFAULT_MODEL);
     expect(WORKSPACE_DEFAULTS.input).toBe("");
@@ -44,8 +44,8 @@ describe("WORKSPACE_DEFAULTS", () => {
     expect(WORKSPACE_DEFAULTS.agentId).toBe(originalAgentId);
   });
 
-  test("agentId should default to exec", () => {
-    expect(WORKSPACE_DEFAULTS.agentId).toBe("exec");
+  test("agentId should default to auto", () => {
+    expect(WORKSPACE_DEFAULTS.agentId).toBe("auto");
   });
 
   test("thinkingLevel should be valid ThinkingLevel", () => {

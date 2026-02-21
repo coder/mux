@@ -85,6 +85,7 @@ import { RosettaBanner } from "./components/RosettaBanner";
 import { isDesktopMode } from "./hooks/useDesktopTitlebar";
 import { cn } from "@/common/lib/utils";
 import { getErrorMessage } from "@/common/utils/errors";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 function AppInner() {
   // Get workspace state from context
@@ -411,8 +412,9 @@ function AppInner() {
       >;
 
       const normalizedAgentId =
-        readPersistedState<string>(getAgentIdKey(workspaceId), "exec").trim().toLowerCase() ||
-        "exec";
+        readPersistedState<string>(getAgentIdKey(workspaceId), WORKSPACE_DEFAULTS.agentId)
+          .trim()
+          .toLowerCase() || WORKSPACE_DEFAULTS.agentId;
 
       updatePersistedState<WorkspaceAISettingsByAgentCache>(
         getWorkspaceAISettingsByAgentKey(workspaceId),

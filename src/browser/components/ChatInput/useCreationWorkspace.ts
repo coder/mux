@@ -46,6 +46,7 @@ import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
 import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
 import { resolveDevcontainerSelection } from "@/browser/utils/devcontainerSelection";
 import { getErrorMessage } from "@/common/utils/errors";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 export type CreationSendResult = { success: true } | { success: false; error?: SendMessageError };
 
@@ -92,7 +93,7 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
     const effectiveAgentId =
       typeof projectAgentId === "string" && projectAgentId.trim().length > 0
         ? projectAgentId.trim().toLowerCase()
-        : "exec";
+        : WORKSPACE_DEFAULTS.agentId;
     const effectiveThinking: ThinkingLevel = projectThinkingLevel ?? "off";
 
     updatePersistedState<Partial<Record<string, { model: string; thinkingLevel: ThinkingLevel }>>>(

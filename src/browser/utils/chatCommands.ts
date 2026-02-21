@@ -41,6 +41,7 @@ import { getRuntimeKey, copyWorkspaceStorage } from "@/common/constants/storage"
 import { buildCompactionMessageText } from "@/common/utils/compaction/compactionPrompt";
 import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
 import { openInEditor } from "@/browser/utils/openInEditor";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 // ============================================================================
 // Workspace Creation
@@ -802,7 +803,7 @@ export function prepareCompactionMessage(options: CompactionOptions): {
     fc = {
       ...options.followUpContent,
       model: existingModel ?? options.sendMessageOptions.model,
-      agentId: existingAgentId ?? options.sendMessageOptions.agentId ?? "exec",
+      agentId: existingAgentId ?? options.sendMessageOptions.agentId ?? WORKSPACE_DEFAULTS.agentId,
       ...pickPreservedSendOptions(options.sendMessageOptions),
     };
   }

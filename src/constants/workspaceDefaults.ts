@@ -39,8 +39,8 @@ import { DEFAULT_MODEL } from "@/common/constants/knownModels";
  * Type assertions ensure proper typing while maintaining immutability.
  */
 export const WORKSPACE_DEFAULTS = {
-  /** Default agent id for new workspaces (built-in exec agent). */
-  agentId: "exec" as const,
+  /** Default agent id for new workspaces (built-in auto router agent). */
+  agentId: "auto" as const,
 
   /** Default thinking/reasoning level for new workspaces */
   thinkingLevel: THINKING_LEVEL_OFF,

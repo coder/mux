@@ -23,6 +23,7 @@ import {
 } from "@/common/constants/storage";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import { sortAgentsStable } from "@/browser/utils/agents";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 export interface AgentContextValue {
   agentId: string;
@@ -55,7 +56,9 @@ function getScopeId(workspaceId: string | undefined, projectPath: string | undef
 }
 
 function coerceAgentId(value: unknown): string {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : "exec";
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim().toLowerCase()
+    : WORKSPACE_DEFAULTS.agentId;
 }
 
 export function AgentProvider(props: AgentProviderProps) {
@@ -75,9 +78,13 @@ function AgentProviderWithState(props: {
 
   const scopeId = getScopeId(props.workspaceId, props.projectPath);
 
-  const [agentId, setAgentIdRaw] = usePersistedState<string>(getAgentIdKey(scopeId), "exec", {
-    listener: true,
-  });
+  const [agentId, setAgentIdRaw] = usePersistedState<string>(
+    getAgentIdKey(scopeId),
+    WORKSPACE_DEFAULTS.agentId,
+    {
+      listener: true,
+    }
+  );
 
   const [disableWorkspaceAgents, setDisableWorkspaceAgents] = usePersistedState<boolean>(
     getDisableWorkspaceAgentsKey(scopeId),
