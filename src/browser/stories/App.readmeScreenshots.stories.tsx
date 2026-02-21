@@ -39,7 +39,10 @@ import {
   RIGHT_SIDEBAR_TAB_KEY,
   RIGHT_SIDEBAR_WIDTH_KEY,
   getAgentIdKey,
+  getModelKey,
+  getProjectScopeId,
   getRightSidebarLayoutKey,
+  getThinkingLevelKey,
 } from "@/common/constants/storage";
 
 export default {
@@ -959,34 +962,28 @@ graph TD
 };
 
 // README: docs/img/auto-mode.webp
-// README now highlights Auto mode instead of project secrets. This story keeps Auto selected
-// and explains that it switches agent types to get the best result for each step.
+// Zoomed-in creation view that highlights project-scoped defaults before first send:
+// Auto agent mode, GPT-5.3 Codex, and XHIGH thinking.
 export const AutoModeAgentSwitching: AppStory = {
-  // Chromatic UI tests currently fail this story in both snapshot modes; README capture
-  // still exercises the picker interaction via Playwright, so Storybook test-runner is skipped.
-  tags: ["!test"],
   render: () => (
     <AppWithMocks
       setup={() => {
-        const workspaceId = "ws-auto-mode";
+        const projectScopeId = getProjectScopeId(README_PROJECT_PATH);
 
-        const workspace = createWorkspace({
-          id: workspaceId,
-          name: "feature/auto-mode",
-          projectName: README_PROJECT_NAME,
-          projectPath: README_PROJECT_PATH,
-        });
-
-        // Persist Auto as the active agent so the picker trigger shows "Auto" immediately.
-        window.localStorage.setItem(getAgentIdKey(workspaceId), JSON.stringify("orchestrator"));
+        // Seed creation-mode controls so the screenshot shows the exact requested defaults.
+        window.localStorage.setItem(getAgentIdKey(projectScopeId), JSON.stringify("orchestrator"));
+        window.localStorage.setItem(
+          getModelKey(projectScopeId),
+          JSON.stringify("openai:gpt-5.3-codex")
+        );
+        window.localStorage.setItem(getThinkingLevelKey(projectScopeId), JSON.stringify("xhigh"));
 
         expandProjects([README_PROJECT_PATH]);
-        selectWorkspace(workspace);
         collapseRightSidebar();
 
         return createMockORPCClient({
-          projects: groupWorkspacesByProject([workspace]),
-          workspaces: [workspace],
+          projects: new Map([[README_PROJECT_PATH, { workspaces: [] }]]),
+          workspaces: [],
           agentDefinitions: [
             {
               id: "exec",
@@ -1052,46 +1049,6 @@ export const AutoModeAgentSwitching: AppStory = {
               subagentRunnable: false,
             },
           ],
-          onChat: createOnChatAdapter(
-            new Map([
-              [
-                workspaceId,
-                createStaticChatHandler([
-                  createUserMessage(
-                    "msg-1",
-                    "Can you implement this rollout and decide the best workflow automatically?",
-                    {
-                      historySequence: 1,
-                      timestamp: STABLE_TIMESTAMP - 30_000,
-                    }
-                  ),
-                  createAssistantMessage(
-                    "msg-2",
-                    "Auto mode is enabled. I’ll switch between Plan, Ask, and Exec to provide the best results for each step.",
-                    {
-                      historySequence: 2,
-                      timestamp: STABLE_TIMESTAMP - 20_000,
-                    }
-                  ),
-                  createAssistantMessage(
-                    "msg-3",
-                    "I started with planning and delegated discovery.",
-                    {
-                      historySequence: 3,
-                      timestamp: STABLE_TIMESTAMP - 10_000,
-                      toolCalls: [
-                        createStatusTool(
-                          "call-status-1",
-                          "🔄",
-                          "Auto mode switched from Plan to Ask for repository exploration"
-                        ),
-                      ],
-                    }
-                  ),
-                ]),
-              ],
-            ])
-          ),
         });
       }}
     />

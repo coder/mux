@@ -119,16 +119,36 @@ const STORIES: StoryDef[] = [
     exportName: "AutoModeAgentSwitching",
     storyId: `${STORY_ID_PREFIX}auto-mode-agent-switching`,
     outputFile: "auto-mode.webp",
-    clip: { x: 100, y: 220, width: 1300, height: 900 },
+    // Zoom into the centered creation card so Auto + GPT-5.3 Codex + XHIGH are legible.
+    clip: { x: 430, y: 170, width: 1020, height: 760 },
     playInteraction: async (page: Page) => {
-      // Open the agent picker so the screenshot shows Auto mode alongside other options.
-      const agentPicker = page.getByRole("button", { name: "Select agent" });
-      await agentPicker.waitFor({ timeout: 30_000 });
-      await agentPicker.click();
+      // Enter project creation view from the sidebar row.
+      const projectRow = page
+        .locator('[data-project-path="/home/user/projects/mux"][aria-controls]')
+        .first();
+      await projectRow.waitFor({ timeout: 30_000 });
+      await projectRow.click();
 
-      // Wait for the dropdown and Auto option row to appear.
-      await page.getByPlaceholder("Search agents…").waitFor({ timeout: 10_000 });
-      await page.locator('[data-agent-id="orchestrator"]').waitFor({ timeout: 10_000 });
+      // Wait until the creation card and requested defaults are visible.
+      const creationCard = page.locator('[data-component="ChatInputSection"]');
+      await creationCard.waitFor({ timeout: 10_000 });
+      await page
+        .getByPlaceholder("Type your first message to create a workspace...")
+        .waitFor({ timeout: 10_000 });
+      await creationCard.locator("[data-thinking-label]", { hasText: "XHIGH" }).waitFor({
+        timeout: 10_000,
+      });
+      await page
+        .getByRole("combobox")
+        .filter({ hasText: /GPT[- ]5\.3/i })
+        .first()
+        .waitFor({
+          timeout: 10_000,
+        });
+      await creationCard
+        .getByRole("button", { name: "Select agent" })
+        .filter({ hasText: "Auto" })
+        .waitFor({ timeout: 10_000 });
     },
   },
   {
