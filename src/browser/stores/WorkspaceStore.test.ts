@@ -371,6 +371,39 @@ describe("WorkspaceStore", () => {
       expect(mockOnChat).not.toHaveBeenCalled();
     });
 
+    it("clears hydration after first pre-caught-up failure when client disconnects", async () => {
+      const workspaceId = "workspace-hydration-first-failure-offline";
+      let attempts = 0;
+      let resolveFirstFailure!: () => void;
+      const firstFailure = new Promise<void>((resolve) => {
+        resolveFirstFailure = resolve;
+      });
+
+      // eslint-disable-next-line require-yield
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        attempts += 1;
+        if (attempts === 1) {
+          resolveFirstFailure();
+          throw new Error("first-retry-failure");
+        }
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId, {}, false);
+      store.setActiveWorkspaceId(workspaceId);
+      await firstFailure;
+
+      // Simulate transport/client loss before a second retry can catch up.
+      store.setClient(null);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(store.getWorkspaceState(workspaceId).isHydratingTranscript).toBe(false);
+    });
+
     it("switches onChat subscriptions when active workspace changes", async () => {
       // eslint-disable-next-line require-yield
       mockOnChat.mockImplementation(async function* (

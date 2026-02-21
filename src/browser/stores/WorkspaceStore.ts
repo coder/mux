@@ -2352,9 +2352,9 @@ export class WorkspaceStore {
    */
   private async runOnChatSubscription(workspaceId: string, signal: AbortSignal): Promise<void> {
     let attempt = 0;
-    let consecutiveHydrationFailures = 0;
 
     while (!signal.aborted) {
+      const hadClientAtLoopStart = this.client !== null;
       const client = this.client ?? (await this.waitForClient(signal));
       if (!client || signal.aborted) {
         return;
@@ -2364,8 +2364,8 @@ export class WorkspaceStore {
       // that we can actually start the subscription loop.
       const initialTransient = this.chatTransientState.get(workspaceId);
       if (
+        !hadClientAtLoopStart &&
         initialTransient &&
-        attempt === 0 &&
         !initialTransient.caughtUp &&
         !initialTransient.isHydratingTranscript
       ) {
@@ -2545,19 +2545,13 @@ export class WorkspaceStore {
         // second replay copy and duplicate deltas/tool events on caught-up.
         this.clearReplayBuffers(workspaceId);
 
-        // If catch-up keeps failing, fall back to normal transcript/retry UI instead
-        // of pinning the workspace in hydration-loading indefinitely. Track retries
-        // independently from stream activity so partial replay events (without caught-up)
-        // still count as failed hydration attempts.
+        // If catch-up fails before the authoritative marker arrives, fall back to
+        // normal transcript/retry UI immediately so hydration cannot remain pinned
+        // while we wait for client reconnects.
         const transient = this.chatTransientState.get(workspaceId);
         if (transient?.isHydratingTranscript && !transient.caughtUp) {
-          consecutiveHydrationFailures += 1;
-          if (consecutiveHydrationFailures > 1) {
-            transient.isHydratingTranscript = false;
-            this.states.bump(workspaceId);
-          }
-        } else {
-          consecutiveHydrationFailures = 0;
+          transient.isHydratingTranscript = false;
+          this.states.bump(workspaceId);
         }
 
         // Preserve pagination across transient reconnect retries. Incremental
