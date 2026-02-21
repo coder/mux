@@ -130,7 +130,9 @@ export async function sendMessage(
   // options is now required by the oRPC schema; build with defaults if not provided
   const resolvedOptions: SendMessageOptions & { fileParts?: FilePart[] } = {
     model: options?.model ?? WORKSPACE_DEFAULTS.model,
-    agentId: options?.agentId ?? WORKSPACE_DEFAULTS.agentId,
+    // Keep integration helper sends deterministic: default to exec so tests exercise
+    // provider/model behavior directly instead of Auto routing.
+    agentId: options?.agentId ?? "exec",
     ...options,
   };
 
