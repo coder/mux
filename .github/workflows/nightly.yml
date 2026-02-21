@@ -112,13 +112,28 @@ jobs:
       version_override: ${{ needs.compute-version.outputs.nightly_version }}
     secrets: inherit # zizmor: ignore[secrets-inherit] -- reusable workflow needs platform signing secrets
 
+  docker-publish:
+    name: Build and Push Docker Image (Nightly)
+    needs: compute-version
+    if: needs.compute-version.outputs.should_build == 'true'
+    permissions:
+      contents: read
+      id-token: write # Depot OIDC authentication
+      packages: write # Push to GHCR
+    uses: ./.github/workflows/_docker-release.yml
+    with:
+      ref: ${{ needs.compute-version.outputs.build_sha }}
+      # Tag as the nightly version (e.g., 0.18.1-nightly.42) — not :latest
+      version: ${{ needs.compute-version.outputs.nightly_version }}
+      is_latest: false
+
   # Clean up old nightly releases after version computation.
   # - Reuse path (should_build=false): run cleanup to enforce single-nightly policy.
   # - Build path (should_build=true): run cleanup only after desktop-builds succeeds.
   cleanup-old-nightlies:
     name: Clean up old nightly releases
-    needs: [compute-version, desktop-builds]
-    if: needs.compute-version.result == 'success' && (needs.compute-version.outputs.should_build != 'true' || needs.desktop-builds.result == 'success')
+    needs: [compute-version, desktop-builds, docker-publish]
+    if: needs.compute-version.result == 'success' && (needs.compute-version.outputs.should_build != 'true' || (needs.desktop-builds.result == 'success' && needs.docker-publish.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
       contents: write # Delete old pre-releases

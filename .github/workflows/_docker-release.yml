@@ -1,0 +1,69 @@
+name: Docker Release Build (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref to build (tag, branch, or SHA)"
+        required: true
+        type: string
+      version:
+        description: "Image version tag (e.g., 0.18.0 or 0.18.1-nightly.42)"
+        required: true
+        type: string
+      is_latest:
+        description: "Whether to also tag the image as :latest"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  docker-publish:
+    name: Build and Push Docker Image
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      # OIDC token for Depot authentication (no static DEPOT_TOKEN needed)
+      id-token: write
+      # Push to GitHub Container Registry
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0 # Required for git describe to find tags
+          persist-credentials: false
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate Docker metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ghcr.io/coder/mux
+          tags: |
+            type=raw,value=${{ inputs.version }}
+            type=raw,value=latest,enable=${{ inputs.is_latest }}
+
+      - name: Set up Depot CLI
+        uses: depot/setup-action@15c09a5f77a0840ad4bce955686522a257853461 # v1.7.1
+
+      - name: Build and push multi-arch image
+        uses: depot/build-push-action@5f3b3c2e5a00f0093de47f657aeaefcedff27d18 # v1.17.0
+        with:
+          project: 3pmt6zbws4
+          context: .
+          # Depot routes each platform to a native builder — no QEMU emulation.
+          # This is critical for native modules like node-pty and ssh2.
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ inputs.version }}
