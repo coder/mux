@@ -4233,8 +4233,12 @@ export class AgentSession {
     // agent's persisted model/thinking settings. If no per-agent override
     // exists, inherit from the outgoing stream options.
     const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
+    // If we had to reroute to a safe fallback target (hidden/disabled/missing
+    // requested target), keep recovery in the current stream settings instead of
+    // applying persisted per-agent overrides for the fallback agent.
+    const usedFallbackTarget = targetAgentId !== switchResult.agentId;
     const targetAgentSettings =
-      metadataResult.success === true
+      metadataResult.success === true && !usedFallbackTarget
         ? metadataResult.data.aiSettingsByAgent?.[targetAgentId]
         : undefined;
     const workspaceAiSettings =

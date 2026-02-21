@@ -228,7 +228,14 @@ describe("AgentSession switch_agent target validation", () => {
     const { historyService, cleanup } = await createTestHistoryService();
     historyCleanup = cleanup;
 
-    const session = createSession(historyService, projectDir.path, projectDir.path);
+    const session = createSession(historyService, projectDir.path, projectDir.path, {
+      aiSettingsByAgent: {
+        exec: {
+          model: "anthropic:claude-sonnet-4-5",
+          thinkingLevel: "high",
+        },
+      },
+    });
 
     try {
       const internals = session as unknown as SessionInternals;
@@ -240,7 +247,7 @@ describe("AgentSession switch_agent target validation", () => {
           agentId: "hidden-agent",
           followUp: "Should not send",
         },
-        { model: "openai:gpt-4o-mini", agentId: "exec" },
+        { model: "openai:gpt-4o-mini", agentId: "exec", thinkingLevel: "low" },
         "openai:gpt-4o"
       );
 
@@ -252,6 +259,8 @@ describe("AgentSession switch_agent target validation", () => {
       const [messageArg, optionsArg] = firstCall as unknown as [string, SendMessageOptions];
       expect(messageArg).toContain('target "hidden-agent" is unavailable');
       expect(optionsArg.agentId).toBe("exec");
+      expect(optionsArg.model).toBe("openai:gpt-4o-mini");
+      expect(optionsArg.thinkingLevel).toBe("low");
     } finally {
       session.dispose();
     }
