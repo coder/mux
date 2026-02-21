@@ -4319,11 +4319,12 @@ export class AgentSession {
         dispatchedTargetAgentId: targetAgentId,
         error: sendResult.error,
       });
+      const dispatchStreamError = buildStreamErrorEventData(sendResult.error);
       this.emitChatEvent(
         createStreamErrorMessage({
-          messageId: createAssistantMessageId(),
-          error: `Failed to switch to agent "${targetAgentId}": ${sendResult.error.type === "unknown" ? sendResult.error.raw : sendResult.error.type}`,
-          errorType: "unknown",
+          messageId: dispatchStreamError.messageId,
+          error: `Failed to switch to agent "${targetAgentId}": ${dispatchStreamError.error}`,
+          errorType: dispatchStreamError.errorType,
         })
       );
       return false;

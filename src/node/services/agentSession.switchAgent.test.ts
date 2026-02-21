@@ -397,7 +397,7 @@ describe("AgentSession switch_agent target validation", () => {
     }
   });
 
-  test("emits stream-error when switch follow-up dispatch send fails", async () => {
+  test("emits stream-error with formatted classification when switch follow-up dispatch send fails", async () => {
     using projectDir = new DisposableTempDir("agent-session-switch-send-failure");
     const { historyService, cleanup } = await createTestHistoryService();
     historyCleanup = cleanup;
@@ -413,7 +413,7 @@ describe("AgentSession switch_agent target validation", () => {
       internals.sendMessage = mock(() =>
         Promise.resolve({
           success: false as const,
-          error: { type: "unknown", raw: "disk full" },
+          error: { type: "api_key_not_found", provider: "anthropic" },
         })
       ) as unknown as SessionInternals["sendMessage"];
 
@@ -430,7 +430,10 @@ describe("AgentSession switch_agent target validation", () => {
 
       const streamError = getLatestStreamError(events);
       expect(streamError).toBeDefined();
-      expect(streamError?.error).toContain('Failed to switch to agent "plan": disk full');
+      expect(streamError?.errorType).toBe("authentication");
+      expect(streamError?.error).toContain(
+        'Failed to switch to agent "plan": API key not configured for Anthropic.'
+      );
     } finally {
       session.dispose();
     }
