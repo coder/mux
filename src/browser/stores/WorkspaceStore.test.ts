@@ -498,6 +498,38 @@ describe("WorkspaceStore", () => {
       expect(store.getWorkspaceState(workspaceId).isHydratingTranscript).toBe(false);
     });
 
+    it("clears transcript hydration when retries keep replaying partial history without caught-up", async () => {
+      const workspaceId = "workspace-hydration-partial-replay-fallback";
+      let attempts = 0;
+
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        attempts += 1;
+
+        // Simulate flaky reconnects that emit some replay rows, then terminate
+        // before caught-up can arrive.
+        yield createHistoryMessageEvent(`partial-history-${attempts}`, attempts);
+        if (attempts <= 2) {
+          return;
+        }
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId, {}, false);
+      store.setActiveWorkspaceId(workspaceId);
+
+      const startedAt = Date.now();
+      while (mockOnChat.mock.calls.length < 3 && Date.now() - startedAt < 3_000) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+
+      expect(mockOnChat.mock.calls.length).toBeGreaterThanOrEqual(3);
+      expect(store.getWorkspaceState(workspaceId).isHydratingTranscript).toBe(false);
+    });
+
     it("drops queued chat events from an aborted subscription attempt", async () => {
       const queuedMicrotasks: Array<() => void> = [];
       const originalQueueMicrotask = global.queueMicrotask;

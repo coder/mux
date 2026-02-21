@@ -2350,6 +2350,7 @@ export class WorkspaceStore {
    */
   private async runOnChatSubscription(workspaceId: string, signal: AbortSignal): Promise<void> {
     let attempt = 0;
+    let consecutiveHydrationFailures = 0;
 
     while (!signal.aborted) {
       const client = this.client ?? (await this.waitForClient(signal));
@@ -2530,11 +2531,18 @@ export class WorkspaceStore {
         this.clearReplayBuffers(workspaceId);
 
         // If catch-up keeps failing, fall back to normal transcript/retry UI instead
-        // of pinning the workspace in hydration-loading indefinitely.
+        // of pinning the workspace in hydration-loading indefinitely. Track retries
+        // independently from stream activity so partial replay events (without caught-up)
+        // still count as failed hydration attempts.
         const transient = this.chatTransientState.get(workspaceId);
-        if (attempt > 0 && transient?.isHydratingTranscript && !transient.caughtUp) {
-          transient.isHydratingTranscript = false;
-          this.states.bump(workspaceId);
+        if (transient?.isHydratingTranscript && !transient.caughtUp) {
+          consecutiveHydrationFailures += 1;
+          if (consecutiveHydrationFailures > 1) {
+            transient.isHydratingTranscript = false;
+            this.states.bump(workspaceId);
+          }
+        } else {
+          consecutiveHydrationFailures = 0;
         }
 
         // Preserve pagination across transient reconnect retries. Incremental
