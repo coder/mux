@@ -1,5 +1,8 @@
+import { readFileSync, existsSync } from "fs";
+
 import { getMuxExtensionMetadataPath } from "@/common/constants/paths";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import { isThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import { log } from "@/node/services/log";
 
 /**
  * Extension metadata for a single workspace.
@@ -68,4 +71,48 @@ export function coerceAgentStatus(value: unknown): ExtensionAgentStatus | null {
  */
 export function coerceStatusUrl(url: unknown): string | null {
   return typeof url === "string" ? url : null;
+}
+
+/**
+ * Read extension metadata from JSON file.
+ * Returns a map of workspace ID to metadata.
+ * Used by both the main app and VS Code extension (vscode/src/muxConfig.ts).
+ */
+export function readExtensionMetadata(): Map<string, ExtensionMetadata> {
+  const metadataPath = getExtensionMetadataPath();
+
+  if (!existsSync(metadataPath)) {
+    return new Map();
+  }
+
+  try {
+    const content = readFileSync(metadataPath, "utf-8");
+    const data = JSON.parse(content) as ExtensionMetadataFile;
+
+    // Validate structure
+    if (typeof data !== "object" || data.version !== 1) {
+      log.error("Invalid metadata file format");
+      return new Map();
+    }
+
+    const map = new Map<string, ExtensionMetadata>();
+    for (const [workspaceId, metadata] of Object.entries(data.workspaces || {})) {
+      const rawThinkingLevel = (metadata as { lastThinkingLevel?: unknown }).lastThinkingLevel;
+      const rawAgentStatus = (metadata as { agentStatus?: unknown }).agentStatus;
+      const rawLastStatusUrl = (metadata as { lastStatusUrl?: unknown }).lastStatusUrl;
+      map.set(workspaceId, {
+        recency: metadata.recency,
+        streaming: metadata.streaming,
+        lastModel: metadata.lastModel ?? null,
+        lastThinkingLevel: isThinkingLevel(rawThinkingLevel) ? rawThinkingLevel : null,
+        agentStatus: coerceAgentStatus(rawAgentStatus),
+        lastStatusUrl: coerceStatusUrl(rawLastStatusUrl),
+      });
+    }
+
+    return map;
+  } catch (error) {
+    log.error("Failed to read metadata:", error);
+    return new Map();
+  }
 }
