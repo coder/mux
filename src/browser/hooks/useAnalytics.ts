@@ -39,7 +39,10 @@ const ANALYTICS_UNAVAILABLE_MESSAGE = "Analytics backend is not available in thi
 
 function getAnalyticsNamespace(api: APIClient): AnalyticsNamespace | null {
   const candidate = (api as { analytics?: unknown }).analytics;
-  if (!candidate || typeof candidate !== "object") {
+  // ORPC client namespaces can be proxy objects or callable proxy functions
+  // depending on transport/runtime shape. Accept both so we don't
+  // misclassify a valid analytics backend as unavailable.
+  if (!candidate || (typeof candidate !== "object" && typeof candidate !== "function")) {
     return null;
   }
 
