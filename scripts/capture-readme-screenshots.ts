@@ -88,22 +88,21 @@ const STORIES: StoryDef[] = [
     exportName: "GitStatusPopover",
     storyId: `${STORY_ID_PREFIX}git-status-popover`,
     outputFile: "git-status.webp",
-    clip: { x: 0, y: 0, width: 750, height: 850 },
+    // Include both the workspace list and centered divergence dialog in frame.
+    clip: { x: 220, y: 20, width: 1360, height: 930 },
     playInteraction: async (page: Page) => {
       // Wait for git status to render in the ws-diverged row.
       const row = page.locator('[data-workspace-id="ws-diverged"]');
       const plusText = row.getByText("+12.3k");
       await plusText.waitFor({ timeout: 30_000 });
 
-      // Hover to open tooltip.
-      await plusText.hover();
+      // Git divergence now opens in a dialog via click.
+      await plusText.click();
 
-      // Wait for the tooltip (portaled to body) to appear.
-      const tooltip = page.locator('.bg-modal-bg[data-state="open"]');
-      await tooltip.waitFor({ timeout: 10_000 });
-
-      // Click "Commits" tab in the tooltip (use radio role to avoid ambiguity).
-      await tooltip.getByRole("radio", { name: "Show commit divergence" }).click();
+      // Wait for the dialog (portaled to body) and switch to commit mode.
+      const dialog = page.getByRole("dialog", { name: "Git divergence details" });
+      await dialog.waitFor({ timeout: 10_000 });
+      await dialog.getByRole("radio", { name: "Show commit divergence" }).click();
 
       // Wait for divergence indicators to appear.
       await row.getByText("↑3").waitFor({ timeout: 5_000 });
@@ -158,23 +157,19 @@ const STORIES: StoryDef[] = [
     clip: { x: 1050, y: 0, width: 850, height: 1100 },
   },
   {
-    exportName: "OpportunisticCompactionTooltip",
-    storyId: `${STORY_ID_PREFIX}opportunistic-compaction-tooltip`,
-    outputFile: "opportunistic-compaction.webp",
-    clip: { x: 150, y: 350, width: 1000, height: 750 },
+    exportName: "ContextManagementDialog",
+    storyId: `${STORY_ID_PREFIX}context-management-dialog`,
+    outputFile: "context-management.webp",
+    clip: { x: 360, y: 140, width: 1180, height: 820 },
     playInteraction: async (page: Page) => {
-      // Wait for costs to render.
-      await page.getByText(/cache create/i).waitFor({ timeout: 15_000 });
+      // Open context/compaction management controls from the context usage button.
+      const contextButton = page.getByRole("button", { name: /Context usage:/i }).first();
+      await contextButton.waitFor({ timeout: 30_000 });
+      await contextButton.click();
 
-      // Hover the last "Start Here" button to show the compaction tooltip.
-      // Multiple assistant messages may have "Start Here"; we want the final one.
-      const startHere = page.getByRole("button", { name: "Start Here" }).last();
-      await startHere.hover();
-
-      // Wait for the tooltip text to appear.
-      await page
-        .getByText("Replace all chat history with this message")
-        .waitFor({ timeout: 10_000 });
+      const dialog = page.getByRole("dialog", { name: "Compaction settings" });
+      await dialog.waitFor({ timeout: 10_000 });
+      await dialog.getByText("Idle compaction").waitFor({ timeout: 10_000 });
     },
   },
   {

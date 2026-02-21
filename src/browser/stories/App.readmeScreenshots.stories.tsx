@@ -687,9 +687,8 @@ export const AgentStatusSidebar: AppStory = {
 };
 
 // README: docs/img/git-status.webp
-// The play function opens a Radix portaled tooltip which is unreliable in
-// the headless test-runner. The capture script replicates the interaction via
-// Playwright, so we skip this story in test-storybook.
+// Git divergence details now open in a dialog (not hover tooltip). The capture
+// script opens the dialog and switches modes to keep README output deterministic.
 export const GitStatusPopover: AppStory = {
   tags: ["!test"],
   render: () => (
@@ -1158,28 +1157,24 @@ export const CostsTabRich: AppStory = {
   ),
 };
 
-// README: docs/img/opportunistic-compaction.webp
-export const OpportunisticCompactionTooltip: AppStory = {
+// README: docs/img/context-management.webp
+// Show the compaction/context management dialog opened from the context usage control.
+export const ContextManagementDialog: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
-        const workspaceId = "ws-compaction";
+        const workspaceId = "ws-context-management";
 
         const workspace = createWorkspace({
           id: workspaceId,
-          name: "feature/compaction",
+          name: "feature/context-management",
           projectName: README_PROJECT_NAME,
           projectPath: README_PROJECT_PATH,
         });
 
-        window.localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
-        window.localStorage.setItem("costsTab:viewMode", JSON.stringify("session"));
-        window.localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "500");
-        window.localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
-
         expandProjects([README_PROJECT_PATH]);
         selectWorkspace(workspace);
-        expandRightSidebar();
+        collapseRightSidebar();
 
         return createMockORPCClient({
           projects: groupWorkspacesByProject([workspace]),
@@ -1191,52 +1186,43 @@ export const OpportunisticCompactionTooltip: AppStory = {
                 createStaticChatHandler([
                   createUserMessage(
                     "msg-1",
-                    "We’ve been working for a while, can you clean up the context?",
+                    "Can you tune our compaction setup so context stays healthy during long sessions?",
                     {
                       historySequence: 1,
                       timestamp: STABLE_TIMESTAMP - 60_000,
                     }
                   ),
-                  createAssistantMessage("msg-2", "Let me check the workspace state first.", {
-                    historySequence: 2,
-                    timestamp: STABLE_TIMESTAMP - 50_000,
-                    toolCalls: [
-                      createBashTool(
-                        "call-bash-1",
-                        "git status --short",
-                        " M src/browser/stories/App.readmeScreenshots.stories.tsx\n M src/browser/stories/mockFactory.ts\n?? src/browser/stories/fixtures/"
-                      ),
-                    ],
-                  }),
-                  createAssistantMessage("msg-3", "I’ve committed the in-progress work.", {
-                    historySequence: 3,
-                    timestamp: STABLE_TIMESTAMP - 40_000,
-                    toolCalls: [
-                      createFileEditTool(
-                        "call-edit-1",
-                        "src/browser/stories/App.readmeScreenshots.stories.tsx",
-                        "@@ -1,4 +1,6 @@\n+// Committed checkpoint: story fixtures seeded"
-                      ),
-                    ],
-                  }),
-                  createUserMessage("msg-4", "Good. Now compact — keep what matters.", {
-                    historySequence: 4,
-                    timestamp: STABLE_TIMESTAMP - 30_000,
-                  }),
                   createAssistantMessage(
-                    "msg-5",
-                    "I’ll compact and preserve the key context: the storybook fixture patterns, the capture pipeline design, and the current PR state.",
+                    "msg-2",
+                    "Absolutely — I’ll review current usage and adjust compaction thresholds.",
                     {
-                      historySequence: 5,
-                      timestamp: STABLE_TIMESTAMP - 20_000,
+                      historySequence: 2,
+                      timestamp: STABLE_TIMESTAMP - 45_000,
+                      contextUsage: {
+                        inputTokens: 112_000,
+                        outputTokens: 6_000,
+                        totalTokens: 118_000,
+                      },
+                      toolCalls: [
+                        createStatusTool(
+                          "call-status-1",
+                          "⚙️",
+                          "Reviewing context usage and idle compaction settings"
+                        ),
+                      ],
                     }
                   ),
                   createAssistantMessage(
-                    "msg-6",
-                    "Replace all chat history with this message\n\n- Keep: README screenshot mapping + terminal mock plan\n- Drop: exploratory discussion\n- Next: run make storybook-build + test-storybook",
+                    "msg-3",
+                    "Usage is nearing the threshold. Open compaction settings to tune the usage slider and idle timer before the next request.",
                     {
-                      historySequence: 6,
-                      timestamp: STABLE_TIMESTAMP - 10_000,
+                      historySequence: 3,
+                      timestamp: STABLE_TIMESTAMP - 30_000,
+                      contextUsage: {
+                        inputTokens: 129_000,
+                        outputTokens: 3_200,
+                        totalTokens: 132_200,
+                      },
                     }
                   ),
                 ]),

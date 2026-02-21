@@ -79,8 +79,8 @@ macOS and Linux.
 </tr>
 <tr>
 <td align="center" width="50%">
-<img src="./docs/img/opportunistic-compaction.webp" alt="Screenshot of opportunistic compaction" width="100%" /><br>
-<sub>Opportunistic compaction helps keep context small</sub>
+<img src="./docs/img/context-management.webp" alt="Screenshot of context management dialog" width="100%" /><br>
+<sub>Context management dialog keeps compaction controls in one place</sub>
 </td>
 <td align="center" width="50%">
 <img src="./docs/img/orchestrate-agents.webp" alt="Screenshot of orchestrate agents" width="100%" /><br>

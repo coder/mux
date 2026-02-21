@@ -83,16 +83,16 @@ If **any** of these fail:
 
 ### Story → Screenshot Mapping
 
-| Story Export Name                | Output File                     | Has Interaction         |
-| :------------------------------- | :------------------------------ | :---------------------- |
-| `CodeReview`                     | `code-review.webp`              | No                      |
-| `AgentStatusSidebar`             | `agent-status.webp`             | No                      |
-| `GitStatusPopover`               | `git-status.webp`               | Yes (hover + tab click) |
-| `PlanMermaidWithCosts`           | `plan-mermaid.webp`             | No                      |
-| `AutoModeAgentSwitching`         | `auto-mode.webp`                | Yes (open agent picker) |
-| `CostsTabRich`                   | `costs-tab.webp`                | No                      |
-| `OpportunisticCompactionTooltip` | `opportunistic-compaction.webp` | Yes (hover tooltip)     |
-| `OrchestrateAgents`              | `orchestrate-agents.webp`       | No                      |
+| Story Export Name         | Output File               | Has Interaction                 |
+| :------------------------ | :------------------------ | :------------------------------ |
+| `CodeReview`              | `code-review.webp`        | No                              |
+| `AgentStatusSidebar`      | `agent-status.webp`       | No                              |
+| `GitStatusPopover`        | `git-status.webp`         | Yes (open dialog + toggle mode) |
+| `PlanMermaidWithCosts`    | `plan-mermaid.webp`       | No                              |
+| `AutoModeAgentSwitching`  | `auto-mode.webp`          | Yes (open creation card)        |
+| `CostsTabRich`            | `costs-tab.webp`          | No                              |
+| `ContextManagementDialog` | `context-management.webp` | Yes (open settings dialog)      |
+| `OrchestrateAgents`       | `orchestrate-agents.webp` | No                              |
 
 ### Key Files
 
@@ -151,7 +151,7 @@ The script:
 ### 4. Handle Failures
 
 Stories with `playInteraction` (GitStatusPopover, AutoModeAgentSwitching,
-OpportunisticCompactionTooltip) can be flaky under sequential load due to UI timing.
+ContextManagementDialog) can be flaky under sequential load due to UI timing.
 The script retries each up to 3 times. If failures persist:
 
 ```bash
@@ -164,7 +164,7 @@ bun run scripts/capture-readme-screenshots.ts --story AutoModeAgentSwitching
 
 ```bash
 # Check all 8 files are present and 3800px wide
-for f in code-review agent-status git-status plan-mermaid auto-mode costs-tab opportunistic-compaction orchestrate-agents; do
+for f in code-review agent-status git-status plan-mermaid auto-mode costs-tab context-management orchestrate-agents; do
   bun -e "const s = require('sharp'); const m = await s('docs/img/${f}.webp').metadata(); console.log('${f}:', m.width + 'x' + m.height)"
 done
 
