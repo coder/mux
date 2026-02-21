@@ -15,6 +15,7 @@ import {
   isProviderSupported,
   migrateGatewayModel,
   pendingGatewayEnrollments,
+  pendingGatewayModelsUntilHydrated,
   toGatewayModel,
   useGateway,
 } from "./useGatewayModels";
@@ -42,15 +43,18 @@ void mock.module("@/browser/hooks/useProvidersConfig", () => ({
 }));
 
 const updateMuxGatewayPrefsMock = mock(() => Promise.resolve({ success: true }));
+let apiAvailable = true;
 
 void mock.module("@/browser/contexts/API", () => ({
   useAPI: () => ({
-    api: {
-      config: {
-        updateMuxGatewayPrefs: updateMuxGatewayPrefsMock,
-      },
-    },
-    status: "connected" as const,
+    api: apiAvailable
+      ? {
+          config: {
+            updateMuxGatewayPrefs: updateMuxGatewayPrefsMock,
+          },
+        }
+      : null,
+    status: apiAvailable ? ("connected" as const) : ("disconnected" as const),
     error: null,
   }),
 }));
@@ -61,7 +65,9 @@ describe("useGateway", () => {
     globalThis.document = globalThis.window.document;
     optimisticUpdates = [];
     pendingGatewayEnrollments.clear();
+    pendingGatewayModelsUntilHydrated.models = null;
     updateMuxGatewayPrefsMock.mockClear();
+    apiAvailable = true;
     mockConfig = {
       "mux-gateway": {
         couponCodeSet: true,
@@ -74,6 +80,8 @@ describe("useGateway", () => {
   afterEach(() => {
     cleanup();
     pendingGatewayEnrollments.clear();
+    pendingGatewayModelsUntilHydrated.models = null;
+    apiAvailable = true;
     globalThis.window = undefined as unknown as Window & typeof globalThis;
     globalThis.document = undefined as unknown as Document;
   });
@@ -148,6 +156,44 @@ describe("useGateway", () => {
       },
     };
 
+    act(() => {
+      rerender();
+    });
+
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(1);
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledWith({
+      muxGatewayEnabled: false,
+      muxGatewayModels: ["anthropic:claude-opus-4-5"],
+    });
+  });
+
+  test("keeps deferred model persistence queued while API is unavailable", () => {
+    mockConfig = null;
+
+    const { result, rerender } = renderHook(() => useGateway());
+
+    act(() => {
+      result.current.setEnabledModels(["anthropic:claude-opus-4-5"]);
+    });
+
+    // Hydrate config while API is disconnected: persistence should remain queued.
+    apiAvailable = false;
+    mockConfig = {
+      "mux-gateway": {
+        couponCodeSet: true,
+        isEnabled: false,
+        gatewayModels: [],
+      },
+    };
+
+    act(() => {
+      rerender();
+    });
+
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(0);
+
+    // Once API reconnects, queued persistence should flush with preserved enabled-state.
+    apiAvailable = true;
     act(() => {
       rerender();
     });

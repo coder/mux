@@ -31,7 +31,8 @@ const enrollmentDrainState = {
 
 // If model enrollment is requested before gwConfig hydrates, keep the latest
 // models here and flush once we know the persisted enabled-state.
-const pendingGatewayModelsUntilHydrated = {
+// Exported for testing only.
+export const pendingGatewayModelsUntilHydrated = {
   models: null as string[] | null,
 };
 // ============================================================================
@@ -232,8 +233,12 @@ export function useGateway(): GatewayState {
   }, [gwConfig, updateOptimistically]);
 
   const persistGatewayPrefs = useCallback(
-    (nextEnabled: boolean, nextModels: string[]) => {
-      api?.config
+    (nextEnabled: boolean, nextModels: string[]): boolean => {
+      if (!api?.config?.updateMuxGatewayPrefs) {
+        return false;
+      }
+
+      api.config
         .updateMuxGatewayPrefs({
           muxGatewayEnabled: nextEnabled,
           muxGatewayModels: nextModels,
@@ -241,6 +246,8 @@ export function useGateway(): GatewayState {
         .catch(() => {
           // Best-effort only.
         });
+
+      return true;
     },
     [api]
   );
@@ -328,8 +335,12 @@ export function useGateway(): GatewayState {
         return;
       }
 
+      if (!persistGatewayPrefs(persistedEnabled, nextModels)) {
+        pendingGatewayModelsUntilHydrated.models = nextModels;
+        return;
+      }
+
       pendingGatewayModelsUntilHydrated.models = null;
-      persistGatewayPrefs(persistedEnabled, nextModels);
     },
     [gwConfig?.isEnabled, persistGatewayPrefs, updateOptimistically]
   );
@@ -342,8 +353,11 @@ export function useGateway(): GatewayState {
       return;
     }
 
+    if (!persistGatewayPrefs(persistedEnabled, pendingModels)) {
+      return;
+    }
+
     pendingGatewayModelsUntilHydrated.models = null;
-    persistGatewayPrefs(persistedEnabled, pendingModels);
   }, [gwConfig?.isEnabled, persistGatewayPrefs]);
 
   const modelUsesGateway = useCallback(
