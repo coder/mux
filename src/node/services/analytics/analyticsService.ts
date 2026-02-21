@@ -474,20 +474,40 @@ export class AnalyticsService {
       return;
     }
 
-    // Workspace-removal hooks can fire in processes that never touched analytics.
-    // Avoid bootstrapping DuckDB/backfill just to clear state that cannot exist yet.
+    const runClear = () => {
+      this.ensureWorker()
+        .then(() => this.dispatch<void>("clearWorkspace", { workspaceId }))
+        .catch((error) => {
+          log.warn("[AnalyticsService] Failed to clear workspace analytics state", {
+            workspaceId,
+            error: getErrorMessage(error),
+          });
+        });
+    };
+
+    // Workspace-removal hooks can fire before analytics is ever opened in this
+    // process. If analytics DB does not exist yet, skip bootstrapping worker.
+    // If DB does exist (from prior runs), bootstrap and clear so stale rows are
+    // removed immediately after workspace deletion.
     if (this.worker == null && this.initPromise == null && this.workerError == null) {
+      const dbPath = path.join(this.config.rootDir, "analytics", "analytics.db");
+      void fs
+        .access(dbPath)
+        .then(() => {
+          runClear();
+        })
+        .catch((error) => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            return;
+          }
+
+          // For non-ENOENT access failures, attempt best-effort cleanup anyway.
+          runClear();
+        });
       return;
     }
 
-    this.ensureWorker()
-      .then(() => this.dispatch<void>("clearWorkspace", { workspaceId }))
-      .catch((error) => {
-        log.warn("[AnalyticsService] Failed to clear workspace analytics state", {
-          workspaceId,
-          error: getErrorMessage(error),
-        });
-      });
+    runClear();
   }
 
   ingestWorkspace(workspaceId: string, sessionDir: string, meta: IngestWorkspaceMeta = {}): void {
