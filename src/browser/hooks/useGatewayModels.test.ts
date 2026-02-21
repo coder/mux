@@ -316,6 +316,38 @@ describe("useGateway", () => {
     expect(pendingGatewayEnrollments.size).toBe(0);
   });
 
+  test("keeps queued enrollments until provider config hydration completes", async () => {
+    mockConfig = null;
+    pendingGatewayEnrollments.add("anthropic:claude-opus-4-5");
+
+    const { rerender } = renderHook(() => useGateway());
+    await flushAsyncWork();
+
+    // Hydration not finished yet: keep enrollment queued.
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(0);
+    expect(pendingGatewayEnrollments.has("anthropic:claude-opus-4-5")).toBe(true);
+
+    mockConfig = {
+      "mux-gateway": {
+        couponCodeSet: true,
+        isEnabled: true,
+        gatewayModels: [],
+      },
+    };
+
+    act(() => {
+      rerender();
+    });
+    await flushAsyncWork();
+
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(1);
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledWith({
+      muxGatewayEnabled: true,
+      muxGatewayModels: ["anthropic:claude-opus-4-5"],
+    });
+    expect(pendingGatewayEnrollments.size).toBe(0);
+  });
+
   test("drops queued enrollments when mux-gateway config is unavailable", async () => {
     mockConfig = {
       anthropic: {

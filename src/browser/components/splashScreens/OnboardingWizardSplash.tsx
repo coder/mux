@@ -271,7 +271,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
       // Apply default enrollment only for confirmed first-time setup. If config
       // hydration is unknown, prefer preserving the current backend selection.
       let gatewayConfig = providersConfig?.["mux-gateway"];
-      if (isDesktop && gatewayConfig?.couponCodeSet == null && api) {
+      if (gatewayConfig?.couponCodeSet == null && api?.providers?.getConfig) {
         try {
           const latestConfig = await api.providers.getConfig();
           if (attempt !== muxGatewayLoginAttemptRef.current) {

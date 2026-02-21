@@ -197,7 +197,11 @@ export function useGateway(): GatewayState {
     }
 
     if (!gwConfig) {
-      pendingGatewayEnrollments.clear();
+      // During hydration, config is null and mux-gateway state is temporarily
+      // unavailable. Keep queued enrollments so they flush once config loads.
+      if (config != null) {
+        pendingGatewayEnrollments.clear();
+      }
       return;
     }
 
@@ -230,7 +234,7 @@ export function useGateway(): GatewayState {
           pendingGatewayEnrollments.add(modelId);
         }
       });
-  }, [api, gwConfig, updateOptimistically]);
+  }, [api, config, gwConfig, updateOptimistically]);
 
   // Register a best-effort flush callback so migrateGatewayModel can signal
   // late enrollments that happen after this hook mounts.
