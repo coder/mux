@@ -112,9 +112,10 @@ mobile/node_modules/.installed: mobile/package.json mobile/bun.lock
 ensure-deps: node_modules/.installed
 
 # Rebuild native modules for Electron
-rebuild-native: node_modules/.installed ## Rebuild native modules (node-pty) for Electron
+rebuild-native: node_modules/.installed ## Rebuild native modules (node-pty, DuckDB) for Electron
 	@echo "Rebuilding native modules for Electron..."
 	@npx @electron/rebuild -f -m node_modules/node-pty
+	@npx @electron/rebuild -f -m node_modules/@duckdb/node-bindings
 	@echo "Native modules rebuilt successfully"
 
 # Run compiled CLI with trailing arguments (builds only if missing)
