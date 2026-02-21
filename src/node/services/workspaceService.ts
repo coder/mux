@@ -3206,13 +3206,12 @@ export class WorkspaceService extends EventEmitter {
       // in agentSession.sendMessage(). Keeps ExtensionMetadata in sync with chat.jsonl.
       const messageTimestamp = Date.now();
       if (!isIdleCompaction) {
-        void this.updateRecencyTimestamp(workspaceId, messageTimestamp);
+        await this.updateRecencyTimestamp(workspaceId, messageTimestamp);
       }
       if (!isIdleCompaction && !internal?.synthetic) {
-        // Keep background activity snapshots aligned with renderer behavior: a new
-        // user turn clears the previous status_set indicator until the agent sets
-        // a fresh status.
-        void this.updateAgentStatus(workspaceId, null);
+        // Serialize with recency updates so both fields persist from the same turn
+        // without last-writer-wins races across separate metadata writes.
+        await this.updateAgentStatus(workspaceId, null);
       }
 
       // Experiments: resolve flags respecting userOverridable setting.
