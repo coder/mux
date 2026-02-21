@@ -52,7 +52,7 @@ const SELECT_EXECUTOR_REMINDER =
 
 const selectExecutorInputSchema = z.object({
   target: z.enum(["exec", "orchestrator"]),
-  reasoning: z.string().min(1).max(240),
+  reasoning: z.string().min(1),
 });
 
 export async function routePlanToExecutor(
