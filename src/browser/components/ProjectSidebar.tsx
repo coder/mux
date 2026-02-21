@@ -1,17 +1,22 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import MuxLogoDark from "@/browser/assets/logos/mux-logo-dark.svg?react";
 import MuxLogoLight from "@/browser/assets/logos/mux-logo-light.svg?react";
 import { useTheme } from "@/browser/contexts/ThemeContext";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  readPersistedState,
+  updatePersistedState,
+  usePersistedState,
+} from "@/browser/hooks/usePersistedState";
 import { useDebouncedValue } from "@/browser/hooks/useDebouncedValue";
 import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import {
   EXPANDED_PROJECTS_KEY,
+  MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY,
   getDraftScopeId,
   getInputKey,
   getWorkspaceNameStateKey,
@@ -469,16 +474,57 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   // Mobile breakpoint for auto-closing sidebar
   const MOBILE_BREAKPOINT = 768;
+  const projectListScrollRef = useRef<HTMLDivElement | null>(null);
+
+  const persistMobileSidebarScrollTop = useCallback(
+    (scrollTop: number) => {
+      if (window.innerWidth > MOBILE_BREAKPOINT) {
+        return;
+      }
+
+      // Keep the last viewed list position so reopening the touch sidebar returns
+      // users to where they were browsing instead of jumping back to the top.
+      const normalizedScrollTop = Number.isFinite(scrollTop)
+        ? Math.max(0, Math.round(scrollTop))
+        : 0;
+      updatePersistedState<number>(MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY, normalizedScrollTop, 0);
+    },
+    [MOBILE_BREAKPOINT]
+  );
+
+  useEffect(() => {
+    if (collapsed || window.innerWidth > MOBILE_BREAKPOINT) {
+      return;
+    }
+
+    const persistedScrollTop = readPersistedState<unknown>(MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY, 0);
+    const normalizedScrollTop =
+      typeof persistedScrollTop === "number" && Number.isFinite(persistedScrollTop)
+        ? Math.max(0, persistedScrollTop)
+        : 0;
+
+    if (projectListScrollRef.current) {
+      projectListScrollRef.current.scrollTop = normalizedScrollTop;
+    }
+  }, [collapsed, MOBILE_BREAKPOINT]);
+
+  const handleProjectListScroll = useCallback(
+    (event: React.UIEvent<HTMLDivElement>) => {
+      persistMobileSidebarScrollTop(event.currentTarget.scrollTop);
+    },
+    [persistMobileSidebarScrollTop]
+  );
 
   // Wrapper to close sidebar on mobile after workspace selection
   const handleSelectWorkspace = useCallback(
     (selection: WorkspaceSelection) => {
       onSelectWorkspace(selection);
       if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
+        persistMobileSidebarScrollTop(projectListScrollRef.current?.scrollTop ?? 0);
         onToggleCollapsed();
       }
     },
-    [onSelectWorkspace, collapsed, onToggleCollapsed]
+    [onSelectWorkspace, collapsed, onToggleCollapsed, persistMobileSidebarScrollTop]
   );
 
   // Wrapper to close sidebar on mobile after adding workspace
@@ -486,10 +532,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     (projectPath: string, sectionId?: string) => {
       createWorkspaceDraft(projectPath, sectionId);
       if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
+        persistMobileSidebarScrollTop(projectListScrollRef.current?.scrollTop ?? 0);
         onToggleCollapsed();
       }
     },
-    [createWorkspaceDraft, collapsed, onToggleCollapsed]
+    [createWorkspaceDraft, collapsed, onToggleCollapsed, persistMobileSidebarScrollTop]
   );
 
   // Wrapper to close sidebar on mobile after opening an existing draft
@@ -497,10 +544,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     (projectPath: string, draftId: string, sectionId?: string | null) => {
       openWorkspaceDraft(projectPath, draftId, sectionId);
       if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
+        persistMobileSidebarScrollTop(projectListScrollRef.current?.scrollTop ?? 0);
         onToggleCollapsed();
       }
     },
-    [openWorkspaceDraft, collapsed, onToggleCollapsed]
+    [openWorkspaceDraft, collapsed, onToggleCollapsed, persistMobileSidebarScrollTop]
   );
 
   const handleOpenMuxChat = useCallback(() => {
@@ -934,7 +982,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                   <span>Add Project</span>
                 </button>
               </div>
-              <div className="flex-1 overflow-x-hidden overflow-y-auto">
+              <div
+                ref={projectListScrollRef}
+                onScroll={handleProjectListScroll}
+                className="flex-1 overflow-x-hidden overflow-y-auto"
+              >
                 {visibleProjectPaths.length === 0 ? (
                   <div className="px-4 py-8 text-center">
                     <p className="text-muted mb-4 text-[13px]">No projects</p>

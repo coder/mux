@@ -499,6 +499,15 @@ export const LEFT_SIDEBAR_COLLAPSED_KEY = "sidebarCollapsed";
 export const LEFT_SIDEBAR_WIDTH_KEY = "left-sidebar:width";
 
 /**
+ * Mobile left sidebar scroll position.
+ *
+ * The mobile sidebar content unmounts when collapsed, so we persist scrollTop
+ * to restore the previous browse position when the menu is reopened.
+ * Format: "mobile-left-sidebar:scroll-top"
+ */
+export const MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY = "mobile-left-sidebar:scroll-top";
+
+/**
  * Right sidebar tab selection (global)
  * Format: "right-sidebar-tab"
  */
