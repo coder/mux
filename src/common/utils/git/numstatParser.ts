@@ -143,38 +143,3 @@ export function buildFileTree(fileStats: FileStats[]): FileTreeNode {
 
   return root;
 }
-
-/**
- * Extract the common path prefix from all file paths
- * Returns null if no common prefix or only single path component
- *
- * This is used for display purposes only - the actual paths in the tree
- * remain unchanged so git commands work correctly.
- */
-export function extractCommonPrefix(fileStats: FileStats[]): string | null {
-  if (fileStats.length === 0) return null;
-
-  // Get all paths
-  const paths = fileStats.map((stat) => stat.filePath);
-
-  // Split first path into components
-  const firstParts = paths[0].split("/");
-  if (firstParts.length === 1) return null; // No directory structure
-
-  // Find common prefix length
-  let commonLength = 0;
-  for (let i = 0; i < firstParts.length - 1; i++) {
-    // -1 to exclude filename
-    const part = firstParts[i];
-    if (paths.every((path) => path.split("/")[i] === part)) {
-      commonLength = i + 1;
-    } else {
-      break;
-    }
-  }
-
-  // Return null if no common prefix
-  if (commonLength === 0) return null;
-
-  return firstParts.slice(0, commonLength).join("/");
-}
