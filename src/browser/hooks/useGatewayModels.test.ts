@@ -158,6 +158,8 @@ describe("useGateway", () => {
 
     act(() => result.current.toggleModelGateway(modelId));
 
+    await flushDrain();
+
     // Optimistic update should add the model.
     const modelUpdates = optimisticUpdates.filter((u) => u.updates.gatewayModels != null);
     expect(modelUpdates.length).toBeGreaterThanOrEqual(1);
@@ -165,7 +167,6 @@ describe("useGateway", () => {
       provider: "mux-gateway",
       updates: { gatewayModels: [modelId] },
     });
-    await flushDrain();
     expect(updateMuxGatewayPrefsMock).toHaveBeenCalledWith({
       muxGatewayEnabled: true,
       muxGatewayModels: [modelId],
@@ -305,6 +306,69 @@ describe("useGateway", () => {
     expect(result.current.isActive).toBe(false);
     expect(result.current.modelUsesGateway("anthropic:claude-opus-4-5")).toBe(true);
     expect(result.current.modelUsesGateway("openai:gpt-4")).toBe(false);
+  });
+
+  test("treats missing mux-gateway config as unconfigured once hydrated", () => {
+    mockConfig = {
+      "mux-gateway": {
+        couponCodeSet: true,
+        isEnabled: true,
+        gatewayModels: [],
+      },
+    };
+
+    const { result, rerender } = renderHook(() => useGateway());
+    expect(result.current.isConfigured).toBe(true);
+
+    mockConfig = {
+      anthropic: {
+        apiKeySet: true,
+        isEnabled: true,
+      },
+    };
+
+    act(() => {
+      rerender();
+    });
+
+    expect(result.current.isConfigured).toBe(false);
+    expect(result.current.isActive).toBe(false);
+  });
+
+  test("toggleModelGateway merges against latest backend models", async () => {
+    mockConfig = {
+      "mux-gateway": {
+        couponCodeSet: true,
+        isEnabled: true,
+        gatewayModels: ["anthropic:claude-opus-4-5"],
+      },
+    };
+
+    getProvidersConfigMock.mockResolvedValueOnce({
+      "mux-gateway": {
+        couponCodeSet: true,
+        isEnabled: true,
+        gatewayModels: ["anthropic:claude-opus-4-5", "openai:gpt-5.2"],
+      },
+    });
+
+    const { result } = renderHook(() => useGateway());
+
+    act(() => {
+      result.current.toggleModelGateway("google:gemini-2.5-pro");
+    });
+
+    await flushDrain();
+
+    const latestToggleUpdate = [...optimisticUpdates]
+      .reverse()
+      .find((u) => u.provider === "mux-gateway" && u.updates.gatewayModels != null);
+    expect(latestToggleUpdate).toBeDefined();
+    expect(latestToggleUpdate!.updates.gatewayModels).toEqual([
+      "anthropic:claude-opus-4-5",
+      "openai:gpt-5.2",
+      "google:gemini-2.5-pro",
+    ]);
   });
 
   test("marks gateway unconfigured when session-expired event fires", () => {

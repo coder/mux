@@ -207,7 +207,10 @@ export function useGateway(): GatewayState {
   if (gwConfig?.couponCodeSet != null) {
     lastKnownConfiguredRef.current = gwConfig.couponCodeSet;
   }
-  const isConfigured = gwConfig?.couponCodeSet ?? lastKnownConfiguredRef.current ?? false;
+  const isConfigured =
+    config == null
+      ? (gwConfig?.couponCodeSet ?? lastKnownConfiguredRef.current ?? false)
+      : (gwConfig?.couponCodeSet ?? false);
   const isEnabled = gwConfig?.isEnabled ?? true;
   const enabledModels = useMemo(() => gwConfig?.gatewayModels ?? [], [gwConfig?.gatewayModels]);
   const isActive = isConfigured && isEnabled;
@@ -437,12 +440,37 @@ export function useGateway(): GatewayState {
 
   const toggleModelGateway = useCallback(
     (modelId: string) => {
-      const nextModels = enabledModels.includes(modelId)
-        ? enabledModels.filter((m) => m !== modelId)
-        : [...enabledModels, modelId];
-      setEnabledModels(nextModels);
+      const applyToggle = (baseModels: string[]) => {
+        const nextModels = baseModels.includes(modelId)
+          ? baseModels.filter((m) => m !== modelId)
+          : [...baseModels, modelId];
+        setEnabledModels(nextModels);
+      };
+
+      // Prefer the shared pending snapshot so concurrent toggles across multiple
+      // hook instances don't overwrite each other before config refresh lands.
+      const pendingModels = pendingGatewayModelsUntilHydrated.models;
+      if (pendingModels != null) {
+        applyToggle(pendingModels);
+        return;
+      }
+
+      if (!api?.providers?.getConfig) {
+        applyToggle(enabledModels);
+        return;
+      }
+
+      void api.providers
+        .getConfig()
+        .then((latestConfig) => {
+          const latestModels = latestConfig?.["mux-gateway"]?.gatewayModels ?? enabledModels;
+          applyToggle(latestModels);
+        })
+        .catch(() => {
+          applyToggle(enabledModels);
+        });
     },
-    [enabledModels, setEnabledModels]
+    [api, enabledModels, setEnabledModels]
   );
 
   const canToggleModel = useCallback(
