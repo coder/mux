@@ -65,13 +65,7 @@ describe("useGateway", () => {
     globalThis.document = globalThis.window.document;
     optimisticUpdates = [];
     pendingGatewayEnrollments.clear();
-    if (pendingGatewayModelsUntilHydrated.retryTimer != null) {
-      window.clearTimeout(pendingGatewayModelsUntilHydrated.retryTimer);
-    }
     pendingGatewayModelsUntilHydrated.models = null;
-    pendingGatewayModelsUntilHydrated.inFlight = false;
-    pendingGatewayModelsUntilHydrated.retryTimer = null;
-    pendingGatewayModelsUntilHydrated.retryDelayMs = 250;
     updateMuxGatewayPrefsMock.mockClear();
     apiAvailable = true;
     mockConfig = {
@@ -86,13 +80,7 @@ describe("useGateway", () => {
   afterEach(() => {
     cleanup();
     pendingGatewayEnrollments.clear();
-    if (pendingGatewayModelsUntilHydrated.retryTimer != null) {
-      window.clearTimeout(pendingGatewayModelsUntilHydrated.retryTimer);
-    }
     pendingGatewayModelsUntilHydrated.models = null;
-    pendingGatewayModelsUntilHydrated.inFlight = false;
-    pendingGatewayModelsUntilHydrated.retryTimer = null;
-    pendingGatewayModelsUntilHydrated.retryDelayMs = 250;
     apiAvailable = true;
     globalThis.window = undefined as unknown as Window & typeof globalThis;
     globalThis.document = undefined as unknown as Document;
@@ -129,9 +117,10 @@ describe("useGateway", () => {
 
     act(() => result.current.toggleModelGateway(modelId));
 
-    // Optimistic update should add the model
-    expect(optimisticUpdates).toHaveLength(1);
-    expect(optimisticUpdates[0]).toEqual({
+    // Optimistic update should add the model.
+    const modelUpdates = optimisticUpdates.filter((u) => u.updates.gatewayModels != null);
+    expect(modelUpdates.length).toBeGreaterThanOrEqual(1);
+    expect(modelUpdates[0]).toEqual({
       provider: "mux-gateway",
       updates: { gatewayModels: [modelId] },
     });
