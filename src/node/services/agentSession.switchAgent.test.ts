@@ -4,7 +4,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
-import type { SendMessageOptions } from "@/common/orpc/types";
+import type { SendMessageOptions, WorkspaceChatMessage } from "@/common/orpc/types";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { Config } from "@/node/config";
 
@@ -29,11 +29,16 @@ interface SessionInternals {
   ) => Promise<{ success: boolean }>;
 }
 
+interface SessionHarness {
+  session: AgentSession;
+  aiEmitter: EventEmitter;
+}
+
 function createAiService(
   projectPath: string,
+  aiEmitter: EventEmitter,
   metadataOverrides?: Partial<WorkspaceMetadata>
 ): AIService {
-  const emitter = new EventEmitter();
   const workspaceMetadata: WorkspaceMetadata = {
     id: "workspace-switch",
     name: "workspace-switch-name",
@@ -43,15 +48,7 @@ function createAiService(
     ...metadataOverrides,
   };
 
-  return {
-    on(eventName: string | symbol, listener: (...args: unknown[]) => void) {
-      emitter.on(String(eventName), listener);
-      return this;
-    },
-    off(eventName: string | symbol, listener: (...args: unknown[]) => void) {
-      emitter.off(String(eventName), listener);
-      return this;
-    },
+  return Object.assign(aiEmitter, {
     getWorkspaceMetadata: mock(() =>
       Promise.resolve({
         success: true as const,
@@ -59,15 +56,16 @@ function createAiService(
       })
     ),
     stopStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
-  } as unknown as AIService;
+  }) as unknown as AIService;
 }
 
-function createSession(
+function createSessionHarness(
   historyService: HistoryService,
   sessionDir: string,
   projectPath: string,
   metadataOverrides?: Partial<WorkspaceMetadata>
-): AgentSession {
+): SessionHarness {
+  const aiEmitter = new EventEmitter();
   const initStateManager: InitStateManager = {
     on() {
       return this;
@@ -88,14 +86,25 @@ function createSession(
     loadConfigOrDefault: mock(() => ({})),
   } as unknown as Config;
 
-  return new AgentSession({
+  const session = new AgentSession({
     workspaceId: "workspace-switch",
     config,
     historyService,
-    aiService: createAiService(projectPath, metadataOverrides),
+    aiService: createAiService(projectPath, aiEmitter, metadataOverrides),
     initStateManager,
     backgroundProcessManager,
   });
+
+  return { session, aiEmitter };
+}
+
+function createSession(
+  historyService: HistoryService,
+  sessionDir: string,
+  projectPath: string,
+  metadataOverrides?: Partial<WorkspaceMetadata>
+): AgentSession {
+  return createSessionHarness(historyService, sessionDir, projectPath, metadataOverrides).session;
 }
 
 async function writeAgentDefinition(
@@ -110,6 +119,16 @@ async function writeAgentDefinition(
     `---\nname: ${agentId}\ndescription: ${agentId} description\n${extraFrontmatter}---\n${agentId} body\n`,
     "utf-8"
   );
+}
+
+function getLatestStreamError(
+  events: WorkspaceChatMessage[]
+): Extract<WorkspaceChatMessage, { type: "stream-error" }> | undefined {
+  const streamErrors = events.filter(
+    (event): event is Extract<WorkspaceChatMessage, { type: "stream-error" }> =>
+      event.type === "stream-error"
+  );
+  return streamErrors.at(-1);
 }
 
 describe("AgentSession switch_agent target validation", () => {
@@ -331,6 +350,147 @@ describe("AgentSession switch_agent target validation", () => {
       const [messageArg, optionsArg] = firstCall as unknown as [string, SendMessageOptions];
       expect(messageArg).toContain('target "missing-agent" is unavailable');
       expect(optionsArg.agentId).toBe("exec");
+    } finally {
+      session.dispose();
+    }
+  });
+
+  test("emits stream-error when switch loop guard blocks synthetic follow-up", async () => {
+    using projectDir = new DisposableTempDir("agent-session-switch-loop-guard");
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const session = createSession(historyService, projectDir.path, projectDir.path);
+    const events: WorkspaceChatMessage[] = [];
+    session.onChatEvent((event) => {
+      events.push(event.message);
+    });
+
+    try {
+      const internals = session as unknown as SessionInternals;
+      const sendMessageMock = mock(() => Promise.resolve({ success: true as const }));
+      internals.sendMessage = sendMessageMock as unknown as SessionInternals["sendMessage"];
+
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const allowed = await internals.dispatchAgentSwitch(
+          { agentId: "plan", followUp: `Attempt ${attempt + 1}` },
+          { model: "openai:gpt-4o-mini", agentId: "exec" },
+          "openai:gpt-4o"
+        );
+        expect(allowed).toBe(true);
+      }
+
+      const blockedResult = await internals.dispatchAgentSwitch(
+        { agentId: "plan", followUp: "blocked" },
+        { model: "openai:gpt-4o-mini", agentId: "exec" },
+        "openai:gpt-4o"
+      );
+
+      expect(blockedResult).toBe(false);
+      expect(sendMessageMock).toHaveBeenCalledTimes(3);
+
+      const streamError = getLatestStreamError(events);
+      expect(streamError).toBeDefined();
+      expect(streamError?.error).toContain("Agent switch loop detected");
+    } finally {
+      session.dispose();
+    }
+  });
+
+  test("emits stream-error when switch follow-up dispatch send fails", async () => {
+    using projectDir = new DisposableTempDir("agent-session-switch-send-failure");
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const session = createSession(historyService, projectDir.path, projectDir.path);
+    const events: WorkspaceChatMessage[] = [];
+    session.onChatEvent((event) => {
+      events.push(event.message);
+    });
+
+    try {
+      const internals = session as unknown as SessionInternals;
+      internals.sendMessage = mock(() =>
+        Promise.resolve({
+          success: false as const,
+          error: { type: "unknown", raw: "disk full" },
+        })
+      ) as unknown as SessionInternals["sendMessage"];
+
+      const result = await internals.dispatchAgentSwitch(
+        {
+          agentId: "plan",
+          followUp: "Create a plan.",
+        },
+        { model: "openai:gpt-4o-mini", agentId: "exec" },
+        "openai:gpt-4o"
+      );
+
+      expect(result).toBe(false);
+
+      const streamError = getLatestStreamError(events);
+      expect(streamError).toBeDefined();
+      expect(streamError?.error).toContain('Failed to switch to agent "plan": disk full');
+    } finally {
+      session.dispose();
+    }
+  });
+
+  test("emits stream-error when stream-end handoff throws unexpectedly", async () => {
+    using projectDir = new DisposableTempDir("agent-session-switch-stream-end-throw");
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const { session, aiEmitter } = createSessionHarness(
+      historyService,
+      projectDir.path,
+      projectDir.path
+    );
+    const events: WorkspaceChatMessage[] = [];
+    session.onChatEvent((event) => {
+      events.push(event.message);
+    });
+
+    try {
+      const internals = session as unknown as SessionInternals;
+      internals.dispatchAgentSwitch = (() =>
+        Promise.reject(new Error("handoff exploded"))) as SessionInternals["dispatchAgentSwitch"];
+
+      aiEmitter.emit("stream-end", {
+        type: "stream-end",
+        workspaceId: "workspace-switch",
+        messageId: "assistant-switch-stream-end",
+        parts: [
+          {
+            type: "dynamic-tool",
+            state: "output-available",
+            toolCallId: "tool-switch-agent",
+            toolName: "switch_agent",
+            input: { agentId: "plan", followUp: "Continue." },
+            output: { ok: true, agentId: "plan", followUp: "Continue." },
+          },
+        ],
+        metadata: {
+          model: "openai:gpt-4o-mini",
+          contextUsage: {
+            inputTokens: 12,
+            outputTokens: 3,
+            totalTokens: 15,
+          },
+          providerMetadata: {},
+        },
+      });
+
+      const deadline = Date.now() + 1500;
+      while (!events.some((event) => event.type === "stream-error") && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      const streamError = getLatestStreamError(events);
+      expect(streamError).toBeDefined();
+      expect(streamError?.error).toContain(
+        "An unexpected error occurred during agent handoff: handoff exploded"
+      );
     } finally {
       session.dispose();
     }

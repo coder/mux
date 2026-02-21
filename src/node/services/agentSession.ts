@@ -3709,6 +3709,14 @@ export class AgentSession {
           error: getErrorMessage(error),
         });
 
+        this.emitChatEvent(
+          createStreamErrorMessage({
+            messageId: createAssistantMessageId(),
+            error: `An unexpected error occurred during agent handoff: ${getErrorMessage(error)}`,
+            errorType: "unknown",
+          })
+        );
+
         // Defense-in-depth: unblock renderer if compaction handler threw before we emitted.
         if (!emittedStreamEnd) {
           try {
@@ -4187,6 +4195,13 @@ export class AgentSession {
         limit: MAX_CONSECUTIVE_AGENT_SWITCHES,
         targetAgentId: switchResult.agentId,
       });
+      this.emitChatEvent(
+        createStreamErrorMessage({
+          messageId: createAssistantMessageId(),
+          error: `Agent switch loop detected (${this.consecutiveAgentSwitches} consecutive switches). The agent was stopped to prevent an infinite loop.`,
+          errorType: "unknown",
+        })
+      );
       return false;
     }
 
@@ -4304,6 +4319,13 @@ export class AgentSession {
         dispatchedTargetAgentId: targetAgentId,
         error: sendResult.error,
       });
+      this.emitChatEvent(
+        createStreamErrorMessage({
+          messageId: createAssistantMessageId(),
+          error: `Failed to switch to agent "${targetAgentId}": ${sendResult.error.type === "unknown" ? sendResult.error.raw : sendResult.error.type}`,
+          errorType: "unknown",
+        })
+      );
       return false;
     }
 
