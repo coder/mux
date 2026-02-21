@@ -66,6 +66,12 @@ interface IngestEvent {
   date: string | null;
 }
 
+interface EventHeadSignatureParts {
+  timestamp: number | null;
+  model: string | null;
+  totalCostUsd: number | null;
+}
+
 interface PersistedMessage {
   role?: unknown;
   createdAt?: unknown;
@@ -468,6 +474,87 @@ async function readWorkspaceEventRowCount(
   return rowCount;
 }
 
+function serializeHeadSignatureValue(value: string | number | null): string {
+  if (value === null) {
+    return "null";
+  }
+
+  return `${typeof value}:${String(value)}`;
+}
+
+function createEventHeadSignature(parts: EventHeadSignatureParts): string {
+  return [
+    serializeHeadSignatureValue(parts.timestamp),
+    serializeHeadSignatureValue(parts.model),
+    serializeHeadSignatureValue(parts.totalCostUsd),
+  ].join("|");
+}
+
+function createEventHeadSignatureFromParsedEvent(event: IngestEvent): string {
+  const row = event.row;
+  assert(
+    Number.isFinite(row.total_cost_usd),
+    "createEventHeadSignatureFromParsedEvent: expected finite total_cost_usd"
+  );
+
+  return createEventHeadSignature({
+    timestamp: row.timestamp,
+    model: row.model,
+    totalCostUsd: row.total_cost_usd,
+  });
+}
+
+async function readPersistedWorkspaceHeadSignature(
+  conn: DuckDBConnection,
+  workspaceId: string
+): Promise<string | null> {
+  const result = await conn.run(
+    `
+    SELECT timestamp, model, total_cost_usd
+    FROM events
+    WHERE workspace_id = ?
+    ORDER BY response_index ASC NULLS LAST
+    LIMIT 1
+    `,
+    [workspaceId]
+  );
+  const rows = await result.getRowObjectsJS();
+
+  if (rows.length === 0) {
+    return null;
+  }
+
+  assert(
+    rows.length === 1,
+    "readPersistedWorkspaceHeadSignature: expected zero or one persisted head row"
+  );
+
+  const row = rows[0] as Record<string, unknown>;
+  const timestamp = toFiniteNumber(row.timestamp);
+  assert(
+    timestamp !== null || row.timestamp === null,
+    "readPersistedWorkspaceHeadSignature: expected timestamp to be finite number or null"
+  );
+
+  const model = row.model;
+  assert(
+    model === null || typeof model === "string",
+    "readPersistedWorkspaceHeadSignature: expected model to be string or null"
+  );
+
+  const totalCostUsd = toFiniteNumber(row.total_cost_usd);
+  assert(
+    totalCostUsd !== null || row.total_cost_usd === null,
+    "readPersistedWorkspaceHeadSignature: expected total_cost_usd to be finite number or null"
+  );
+
+  return createEventHeadSignature({
+    timestamp,
+    model,
+    totalCostUsd,
+  });
+}
+
 function hasPersistedWatermark(watermark: IngestWatermark): boolean {
   return watermark.lastSequence >= 0 || watermark.lastModified > 0;
 }
@@ -648,8 +735,9 @@ function shouldRebuildWorkspaceForSequenceRegression(params: {
   watermark: IngestWatermark;
   parsedMaxSequence: number | null;
   hasTruncation: boolean;
+  hasHeadMismatch: boolean;
 }): boolean {
-  if (params.hasTruncation) {
+  if (params.hasTruncation || params.hasHeadMismatch) {
     return true;
   }
 
@@ -728,22 +816,35 @@ export async function ingestWorkspace(
   }
 
   const parsedMaxSequence = getMaxSequence(parsedEvents);
+  const hasExistingWatermark = hasPersistedWatermark(watermark);
   const persistedEventRowCount = await readWorkspaceEventRowCount(conn, workspaceId);
   // Sequence-only checks miss truncations when the tail keeps the previous max
   // historySequence. If fewer assistant events are parsed than currently stored,
   // stale deleted rows remain unless we force a full workspace rebuild.
-  const hasTruncation =
-    hasPersistedWatermark(watermark) && parsedEvents.length < persistedEventRowCount;
+  const hasTruncation = hasExistingWatermark && parsedEvents.length < persistedEventRowCount;
+  const persistedHeadSignature = hasExistingWatermark
+    ? await readPersistedWorkspaceHeadSignature(conn, workspaceId)
+    : null;
+  const parsedHeadSignature =
+    parsedEvents.length > 0 ? createEventHeadSignatureFromParsedEvent(parsedEvents[0]) : null;
+  // Count checks can miss head truncation + append rewrites where assistant row
+  // totals recover. Head signature drift reveals shifted response indexes.
+  const hasHeadMismatch =
+    hasExistingWatermark &&
+    persistedHeadSignature !== null &&
+    parsedHeadSignature !== null &&
+    persistedHeadSignature !== parsedHeadSignature;
 
   const shouldRebuild = shouldRebuildWorkspaceForSequenceRegression({
     watermark,
     parsedMaxSequence,
     hasTruncation,
+    hasHeadMismatch,
   });
 
   if (shouldRebuild) {
-    // Rebuild on truncation or max-sequence rewinds. This removes stale rows,
-    // including the zero-assistant-event truncation case.
+    // Rebuild on truncation, head mismatch, or max-sequence rewinds. This removes
+    // stale rows, including the zero-assistant-event truncation case.
     await replaceWorkspaceEvents(conn, workspaceId, parsedEvents);
 
     await writeWatermark(conn, workspaceId, {
