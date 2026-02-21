@@ -39,6 +39,7 @@ interface RuntimeOverrideCacheEntry {
   enablement: RuntimeEnablement;
   defaultRuntime: RuntimeEnablementId | null;
   pending: boolean;
+  overridesEnabled: boolean;
 }
 
 const ALL_SCOPE_VALUE = "__all__";
@@ -79,7 +80,7 @@ export function RuntimesSection() {
   const [coderInfo, setCoderInfo] = useState<CoderInfo | null>(null);
   const [overrideCacheVersion, setOverrideCacheVersion] = useState(0);
   // Cache pending per-project overrides locally while config updates propagate.
-  const overrideCacheRef = useRef(new Map<string, RuntimeOverrideCacheEntry>());
+  const overrideCacheRef = useRef<Map<string, RuntimeOverrideCacheEntry>>(new Map());
 
   const selectedProjectPath = selectedScope === ALL_SCOPE_VALUE ? null : selectedScope;
   const isProjectScope = Boolean(selectedProjectPath);
@@ -142,7 +143,10 @@ export function RuntimesSection() {
 
     const cached = overrideCacheRef.current.get(selectedProjectPath);
     if (cached?.pending) {
-      setProjectOverrideEnabled(true);
+      // Keep the pending override state stable until refreshProjects completes to avoid
+      // toggling the UI back on/off while backend config is still propagating.
+      const overridesEnabled = cached.overridesEnabled === true;
+      setProjectOverrideEnabled(overridesEnabled);
       setProjectEnablement(cached.enablement);
       setProjectDefaultRuntime(cached.defaultRuntime ?? defaultRuntime ?? null);
       return;
@@ -166,6 +170,7 @@ export function RuntimesSection() {
         enablement: resolvedEnablement,
         defaultRuntime: projectConfig?.defaultRuntime ?? null,
         pending: false,
+        overridesEnabled: true,
       });
       return;
     }
@@ -257,26 +262,22 @@ export function RuntimesSection() {
     }
 
     if (!checked) {
+      const cacheEntry: RuntimeOverrideCacheEntry = {
+        enablement,
+        defaultRuntime: defaultRuntime ?? null,
+        pending: true,
+        overridesEnabled: false,
+      };
       setProjectOverrideEnabled(false);
       setProjectEnablement(enablement);
       setProjectDefaultRuntime(defaultRuntime ?? null);
-      overrideCacheRef.current.delete(selectedProjectPath);
-      const updatePromise = api?.config?.updateRuntimeEnablement({
+
+      queueProjectOverrideUpdate(selectedProjectPath, cacheEntry, {
         projectPath: selectedProjectPath,
         runtimeEnablement: null,
         defaultRuntime: null,
         runtimeOverridesEnabled: null,
       });
-      if (!updatePromise) {
-        return;
-      }
-      updatePromise
-        .finally(() => {
-          void syncProjects();
-        })
-        .catch(() => {
-          // Best-effort only.
-        });
       return;
     }
 
@@ -285,6 +286,7 @@ export function RuntimesSection() {
       enablement: nextEnablement,
       defaultRuntime: defaultRuntime ?? null,
       pending: true,
+      overridesEnabled: true,
     };
     setProjectOverrideEnabled(true);
     setProjectEnablement(nextEnablement);
@@ -337,6 +339,7 @@ export function RuntimesSection() {
       enablement: nextEnablement,
       defaultRuntime: nextDefaultRuntime,
       pending: true,
+      overridesEnabled: true,
     };
 
     const updatePayload: {
@@ -374,6 +377,7 @@ export function RuntimesSection() {
       enablement: projectEnablement,
       defaultRuntime: runtimeId,
       pending: true,
+      overridesEnabled: true,
     };
     queueProjectOverrideUpdate(selectedProjectPath, cacheEntry, {
       projectPath: selectedProjectPath,
