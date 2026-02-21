@@ -2150,6 +2150,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     // Handle send message (Shift+Enter for newline is default behavior)
     if (matchesKeybind(e, KEYBINDS.SEND_MESSAGE)) {
+      // Mobile keyboards should keep Enter for newlines; sending remains button-driven.
+      if (isMobileTouch) {
+        return;
+      }
       e.preventDefault();
       void handleSend();
     }
