@@ -449,6 +449,29 @@ async function readWatermark(
   };
 }
 
+async function readWorkspaceEventRowCount(
+  conn: DuckDBConnection,
+  workspaceId: string
+): Promise<number> {
+  const result = await conn.run(`SELECT COUNT(*) AS row_count FROM events WHERE workspace_id = ?`, [
+    workspaceId,
+  ]);
+  const rows = await result.getRowObjectsJS();
+  assert(rows.length === 1, "readWorkspaceEventRowCount: expected exactly one COUNT(*) result row");
+
+  const rowCount = toFiniteInteger(rows[0].row_count);
+  assert(
+    rowCount !== null && rowCount >= 0,
+    "readWorkspaceEventRowCount: expected non-negative integer row_count"
+  );
+
+  return rowCount;
+}
+
+function hasPersistedWatermark(watermark: IngestWatermark): boolean {
+  return watermark.lastSequence >= 0 || watermark.lastModified > 0;
+}
+
 async function writeWatermark(
   conn: DuckDBConnection,
   workspaceId: string,
@@ -625,7 +648,12 @@ function shouldRebuildWorkspaceForSequenceRegression(params: {
   watermark: IngestWatermark;
   parsedMaxSequence: number | null;
   hasSequenceRegression: boolean;
+  hasTruncation: boolean;
 }): boolean {
+  if (params.hasTruncation) {
+    return true;
+  }
+
   if (params.watermark.lastSequence < 0) {
     return false;
   }
@@ -701,10 +729,18 @@ export async function ingestWorkspace(
   }
 
   const parsedMaxSequence = getMaxSequence(parsedEvents);
+  const persistedEventRowCount = await readWorkspaceEventRowCount(conn, workspaceId);
+  // Sequence-only checks miss truncations when the tail keeps the previous max
+  // historySequence. If fewer assistant events are parsed than currently stored,
+  // stale deleted rows remain unless we force a full workspace rebuild.
+  const hasTruncation =
+    hasPersistedWatermark(watermark) && parsedEvents.length < persistedEventRowCount;
+
   const shouldRebuild = shouldRebuildWorkspaceForSequenceRegression({
     watermark,
     parsedMaxSequence,
     hasSequenceRegression,
+    hasTruncation,
   });
 
   if (shouldRebuild) {
