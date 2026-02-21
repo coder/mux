@@ -131,7 +131,10 @@ function migrateLocalGatewayPrefsToBackend(
   const localEnabled = readPersistedState<boolean>("gateway-enabled", true);
   const localModels = readPersistedState<string[]>("gateway-models", []);
 
-  const shouldMigrateEnabled = cfg.muxGatewayEnabled === undefined && localEnabled === false;
+  const shouldMigrateEnabled =
+    cfg.muxGatewayEnabled === undefined &&
+    cfg.muxGatewayModels === undefined &&
+    localEnabled === false;
   const shouldMigrateModels = cfg.muxGatewayModels === undefined && localModels.length > 0;
 
   const clearLegacyGatewayPrefs = () => {
