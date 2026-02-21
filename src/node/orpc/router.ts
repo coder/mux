@@ -613,7 +613,9 @@ export const router = (authToken?: string) => {
             return {
               ...config,
               muxGatewayEnabled: input.muxGatewayEnabled ? undefined : false,
-              muxGatewayModels: nextModels.length > 0 ? nextModels : undefined,
+              // Persist explicit empty selections so startup migration doesn't
+              // rehydrate stale legacy localStorage values.
+              muxGatewayModels: nextModels,
             };
           });
           // Notify subscribers (useProvidersConfig) so the frontend picks up the

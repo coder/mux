@@ -404,6 +404,26 @@ describe("useGateway", () => {
     expect(pendingGatewayEnrollments.size).toBe(0);
   });
 
+  test("drops queued enrollments when mux-gateway config is unavailable", async () => {
+    mockConfig = {
+      anthropic: {
+        apiKeySet: true,
+        isEnabled: true,
+      },
+    };
+
+    pendingGatewayEnrollments.add("anthropic:claude-opus-4-5");
+
+    renderHook(() => useGateway());
+
+    await flushDrain();
+
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(0);
+    expect(pendingGatewayEnrollments.size).toBe(0);
+    expect(pendingGatewayModelsUntilHydrated.models).toBeNull();
+    expect(pendingGatewayEnabledUntilPersisted.value).toBeNull();
+  });
+
   test("batches multiple pending enrollments together", async () => {
     mockConfig = {
       "mux-gateway": {

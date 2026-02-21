@@ -134,12 +134,18 @@ function migrateLocalGatewayPrefsToBackend(
   const shouldMigrateEnabled = cfg.muxGatewayEnabled === undefined && localEnabled === false;
   const shouldMigrateModels = cfg.muxGatewayModels === undefined && localModels.length > 0;
 
+  const clearLegacyGatewayPrefs = () => {
+    updatePersistedState<boolean | undefined>("gateway-enabled", undefined);
+    updatePersistedState<string[] | undefined>("gateway-models", undefined);
+  };
+
   if (shouldMigrateEnabled || shouldMigrateModels) {
     api.config
       .updateMuxGatewayPrefs({
         muxGatewayEnabled: cfg.muxGatewayEnabled ?? localEnabled,
         muxGatewayModels: cfg.muxGatewayModels ?? localModels,
       })
+      .then(clearLegacyGatewayPrefs)
       .catch(() => {
         // Best-effort only.
       });

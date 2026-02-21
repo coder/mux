@@ -244,6 +244,10 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   } | null>(null);
   const gatewayDefaultEnrollmentVersionRef = useRef(0);
 
+  const [gatewayDefaultEnrollmentRetryTick, setGatewayDefaultEnrollmentRetryTick] = useState(0);
+  const gatewayDefaultEnrollmentRetryTimerRef = useRef<number | null>(null);
+  const gatewayDefaultEnrollmentRetryDelayRef = useRef(250);
+
   const persistGatewayDefaultEnrollment = useCallback(
     (payload: { muxGatewayEnabled: boolean; muxGatewayModels: string[] }) => {
       const version = ++gatewayDefaultEnrollmentVersionRef.current;
@@ -261,11 +265,26 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
           if (pendingGatewayDefaultEnrollmentRef.current?.version === version) {
             pendingGatewayDefaultEnrollmentRef.current = null;
           }
+
+          gatewayDefaultEnrollmentRetryDelayRef.current = 250;
+          if (gatewayDefaultEnrollmentRetryTimerRef.current != null) {
+            window.clearTimeout(gatewayDefaultEnrollmentRetryTimerRef.current);
+            gatewayDefaultEnrollmentRetryTimerRef.current = null;
+          }
         })
         .catch(() => {
-          // Keep latest payload for retry on the next reconnect.
+          // Keep latest payload for retry with backoff.
           if ((pendingGatewayDefaultEnrollmentRef.current?.version ?? 0) <= version) {
             pendingGatewayDefaultEnrollmentRef.current = { version, payload };
+          }
+
+          if (gatewayDefaultEnrollmentRetryTimerRef.current == null) {
+            const delayMs = gatewayDefaultEnrollmentRetryDelayRef.current;
+            gatewayDefaultEnrollmentRetryDelayRef.current = Math.min(delayMs * 2, 5_000);
+            gatewayDefaultEnrollmentRetryTimerRef.current = window.setTimeout(() => {
+              gatewayDefaultEnrollmentRetryTimerRef.current = null;
+              setGatewayDefaultEnrollmentRetryTick((tick) => tick + 1);
+            }, delayMs);
           }
         });
     },
@@ -322,7 +341,16 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     if (!pending) return;
 
     persistGatewayDefaultEnrollment(pending.payload);
-  }, [persistGatewayDefaultEnrollment]);
+  }, [gatewayDefaultEnrollmentRetryTick, persistGatewayDefaultEnrollment]);
+
+  useEffect(() => {
+    return () => {
+      if (gatewayDefaultEnrollmentRetryTimerRef.current != null) {
+        window.clearTimeout(gatewayDefaultEnrollmentRetryTimerRef.current);
+        gatewayDefaultEnrollmentRetryTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const cancelMuxGatewayLogin = useCallback(() => {
     muxGatewayApplyDefaultModelsOnSuccessRef.current = false;

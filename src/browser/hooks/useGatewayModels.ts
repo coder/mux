@@ -295,8 +295,23 @@ export function useGateway(): GatewayState {
         }
 
         const latestGateway = latestConfig?.["mux-gateway"];
-        baseModels ??= latestGateway?.gatewayModels ?? null;
-        nextEnabled ??= latestGateway?.isEnabled ?? null;
+        if (!latestGateway) {
+          // Gateway provider may be hidden by policy. Drop queued writes so we
+          // don't schedule perpetual retries for unreachable prefs.
+          for (const id of enrollmentBatch) {
+            pendingGatewayEnrollments.delete(id);
+          }
+          if (pendingGatewayModelsUntilHydrated.models === pendingModelsSnapshot) {
+            pendingGatewayModelsUntilHydrated.models = null;
+          }
+          if (pendingGatewayEnabledUntilPersisted.value === pendingEnabled) {
+            pendingGatewayEnabledUntilPersisted.value = null;
+          }
+          return;
+        }
+
+        baseModels ??= latestGateway.gatewayModels ?? null;
+        nextEnabled ??= latestGateway.isEnabled ?? null;
       }
 
       if (baseModels == null || nextEnabled == null) {
