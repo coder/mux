@@ -715,6 +715,11 @@ export class CompactionHandler {
     );
     const persistedSummaryHistorySequence = persistedStreamSummary?.metadata?.historySequence;
 
+    const postCompactionContextEstimate = this.computePostCompactionContextEstimate(
+      metadata.systemMessageTokens,
+      metadata.usage
+    );
+
     const summaryMessage = createMuxMessage(
       persistedStreamSummary?.id ?? createCompactionSummaryMessageId(),
       "assistant",
@@ -731,6 +736,7 @@ export class CompactionHandler {
         usage: metadata.usage,
         duration: metadata.duration,
         systemMessageTokens: metadata.systemMessageTokens,
+        ...(postCompactionContextEstimate && { contextUsage: postCompactionContextEstimate }),
         muxMetadata: summaryMuxMetadata,
       }
     );

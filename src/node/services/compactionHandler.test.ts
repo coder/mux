@@ -464,6 +464,12 @@ describe("CompactionHandler", () => {
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 1,
+        contextUsage: {
+          // 100 system prompt tokens + 100 summary output tokens
+          inputTokens: 200,
+          outputTokens: 0,
+          totalTokens: 200,
+        },
       });
       expect(sevt.metadata?.providerMetadata).toBeUndefined();
     });
@@ -596,6 +602,12 @@ describe("CompactionHandler", () => {
       expect(updatedSummary.metadata?.historySequence).toBe(6);
       expect(updatedSummary.metadata?.compactionBoundary).toBe(true);
       expect(updatedSummary.metadata?.compactionEpoch).toBe(1);
+      expect(updatedSummary.metadata?.contextUsage).toEqual({
+        // 0 system prompt tokens + 50 summary output tokens
+        inputTokens: 50,
+        outputTokens: 0,
+        totalTokens: 50,
+      });
       expect(updatedSummary.metadata?.providerMetadata).toBeUndefined();
       expect(updatedSummary.metadata?.contextProviderMetadata).toBeUndefined();
 
