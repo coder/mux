@@ -73,6 +73,12 @@ export default {
 const README_PROJECT_NAME = "mux";
 const README_PROJECT_PATH = "/home/user/projects/mux";
 
+const IPHONE_17_PRO_MAX = {
+  // Source: https://ios-resolution.info/ (logical resolution)
+  width: 440,
+  height: 956,
+} as const;
+
 function createMultiModelSessionUsage(totalUsd: number): MockSessionUsage {
   // Split cost into model rows to make the Costs tab look realistic (cached + cacheCreate present).
   const primary = totalUsd * 0.62;
@@ -962,7 +968,7 @@ graph TD
 
 // README: docs/img/auto-mode.webp
 // Zoomed-in creation view that highlights project-scoped defaults before first send:
-// Auto agent mode, GPT-5.3 Codex, and XHIGH thinking.
+// Auto agent mode, Claude Opus 4.6, and MAX thinking.
 export const AutoModeAgentSwitching: AppStory = {
   render: () => (
     <AppWithMocks
@@ -973,7 +979,7 @@ export const AutoModeAgentSwitching: AppStory = {
         window.localStorage.setItem(getAgentIdKey(projectScopeId), JSON.stringify("orchestrator"));
         window.localStorage.setItem(
           getModelKey(projectScopeId),
-          JSON.stringify("openai:gpt-5.3-codex")
+          JSON.stringify("anthropic:claude-opus-4-6")
         );
         window.localStorage.setItem(getThinkingLevelKey(projectScopeId), JSON.stringify("xhigh"));
 
@@ -1021,6 +1027,7 @@ export const AutoModeAgentSwitching: AppStory = {
               uiSelectable: true,
               subagentRunnable: false,
               base: "exec",
+              uiColor: "var(--color-auto-mode)",
             },
             {
               id: "compact",
@@ -1237,11 +1244,18 @@ export const ContextManagementDialog: AppStory = {
 };
 
 // README: docs/img/mobile-server-mode.webp
-// Mobile-width workspace view to document server-mode responsiveness.
+// iPhone 17 Pro Max-sized workspace view to document server-mode responsiveness.
 export const MobileServerMode: AppStory = {
   decorators: [
     (Story: () => JSX.Element) => (
-      <div style={{ width: 430, height: "100dvh", position: "relative" }}>
+      <div
+        style={{
+          width: IPHONE_17_PRO_MAX.width,
+          height: IPHONE_17_PRO_MAX.height,
+          overflow: "hidden",
+          position: "relative",
+        }}
+      >
         <Story />
       </div>
     ),

@@ -14,7 +14,7 @@
 
 import { parseArgs } from "node:util";
 import path from "node:path";
-import { chromium, type Page } from "playwright";
+import { chromium, type BrowserContextOptions, type Page } from "playwright";
 import sharp from "sharp";
 
 // ---------------------------------------------------------------------------
@@ -65,6 +65,8 @@ interface StoryDef {
   clip?: { x: number; y: number; width: number; height: number };
   /** Optional per-story viewport override (CSS pixels). Defaults to global VIEWPORT. */
   viewport?: { width: number; height: number };
+  /** Optional context overrides for device-specific stories (mobile touch/user-agent). */
+  contextOptions?: BrowserContextOptions;
   /** Replicate the Storybook play function via Playwright interactions. */
   playInteraction?: (page: Page) => Promise<void>;
   /** Custom Sharp post-processing instead of the default full-page → WebP conversion. */
@@ -118,8 +120,8 @@ const STORIES: StoryDef[] = [
     exportName: "AutoModeAgentSwitching",
     storyId: `${STORY_ID_PREFIX}auto-mode-agent-switching`,
     outputFile: "auto-mode.webp",
-    // Zoom into the centered creation card so Auto + GPT-5.3 Codex + XHIGH are legible.
-    clip: { x: 430, y: 170, width: 1020, height: 760 },
+    // Keep the creation card centered with surrounding context so nothing is cut off.
+    clip: { x: 320, y: 120, width: 1260, height: 900 },
     playInteraction: async (page: Page) => {
       // Enter project creation view from the sidebar row.
       const projectRow = page
@@ -134,12 +136,12 @@ const STORIES: StoryDef[] = [
       await page
         .getByPlaceholder("Type your first message to create a workspace...")
         .waitFor({ timeout: 10_000 });
-      await creationCard.locator("[data-thinking-label]", { hasText: "XHIGH" }).waitFor({
+      await creationCard.locator("[data-thinking-label]", { hasText: "MAX" }).waitFor({
         timeout: 10_000,
       });
       await page
         .getByRole("combobox")
-        .filter({ hasText: /GPT[- ]5\.3/i })
+        .filter({ hasText: /Opus 4\.6/i })
         .first()
         .waitFor({
           timeout: 10_000,
@@ -177,8 +179,17 @@ const STORIES: StoryDef[] = [
     exportName: "MobileServerMode",
     storyId: `${STORY_ID_PREFIX}mobile-server-mode`,
     outputFile: "mobile-server-mode.webp",
-    viewport: { width: 430, height: 900 },
-    clip: { x: 0, y: 60, width: 430, height: 820 },
+    // Match the iPhone 17 Pro Max story viewport and capture full visible screen.
+    viewport: { width: 440, height: 956 },
+    contextOptions: {
+      hasTouch: true,
+      isMobile: true,
+      userAgent:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+    },
+    // Preserve native iPhone aspect/detail for mobile composition (no crop, no upscale).
+    postProcess: async (pngBuffer: Buffer) =>
+      sharp(pngBuffer).webp({ quality: WEBP_QUALITY }).toBuffer(),
   },
   {
     exportName: "OrchestrateAgents",
@@ -231,11 +242,12 @@ async function main() {
   }
 
   const browser = await chromium.launch();
-  const context = await browser.newContext({
+  const baseContextOptions: BrowserContextOptions = {
     viewport: VIEWPORT,
     deviceScaleFactor: DEVICE_SCALE_FACTOR,
     colorScheme: "dark",
-  });
+  };
+  const defaultContext = await browser.newContext(baseContextOptions);
 
   const succeeded: string[] = [];
   const failed: string[] = [];
@@ -256,62 +268,69 @@ async function main() {
         console.log(`  retry ${attempt}/${MAX_RETRIES}...`);
       }
 
-      const page = await context.newPage();
+      const attemptContext = story.contextOptions
+        ? await browser.newContext({ ...baseContextOptions, ...story.contextOptions })
+        : defaultContext;
       try {
-        if (story.viewport) {
-          await page.setViewportSize(story.viewport);
+        const page = await attemptContext.newPage();
+        try {
+          if (story.viewport) {
+            await page.setViewportSize(story.viewport);
+          }
+
+          // Navigate and wait for network idle + DOM stability.
+          await page.goto(iframeUrl(story.storyId), {
+            waitUntil: "networkidle",
+            timeout: 30_000,
+          });
+
+          // Stabilization delay for async renders (git status polling, mermaid,
+          // Radix portals). 3s handles slower static servers in batch mode.
+          await page.waitForTimeout(3_000);
+
+          // Run play-function interactions if the story requires them.
+          if (story.playInteraction) {
+            await story.playInteraction(page);
+            // Allow UI to settle after interactions.
+            await page.waitForTimeout(500);
+          }
+
+          // Capture the visible viewport only — fullPage would include off-screen
+          // scrollable content, producing absurdly tall images for stories with
+          // long sidebars or chat histories. Stories may also provide a focused
+          // clip region (in CSS pixels) for zoomed-in README screenshots.
+          const pngBuffer = await page.screenshot({
+            type: "png",
+            ...(story.clip ? { clip: story.clip } : {}),
+          });
+
+          // Convert to WebP (or run custom post-processing).
+          // For full-viewport captures, resize from native DPR resolution to TARGET_WIDTH.
+          // For clipped captures, preserve the native DPR resolution and only encode to WebP.
+          let webpBuffer: Buffer;
+          if (story.postProcess) {
+            webpBuffer = await story.postProcess(Buffer.from(pngBuffer));
+          } else {
+            const image = sharp(pngBuffer);
+            webpBuffer = story.clip
+              ? await image.webp({ quality: WEBP_QUALITY }).toBuffer()
+              : await image
+                  .resize({ width: TARGET_WIDTH, kernel: "lanczos3" })
+                  .webp({ quality: WEBP_QUALITY })
+                  .toBuffer();
+          }
+
+          await Bun.write(outputPath, webpBuffer);
+
+          // Report dimensions and size.
+          const meta = await sharp(webpBuffer).metadata();
+          console.log(`  ${meta.width}×${meta.height}  ${formatBytes(webpBuffer.byteLength)}`);
+          succeeded.push(story.exportName);
+          captured = true;
+          break; // Success — no more retries.
+        } finally {
+          await page.close();
         }
-
-        // Navigate and wait for network idle + DOM stability.
-        await page.goto(iframeUrl(story.storyId), {
-          waitUntil: "networkidle",
-          timeout: 30_000,
-        });
-
-        // Stabilization delay for async renders (git status polling, mermaid,
-        // Radix portals). 3s handles slower static servers in batch mode.
-        await page.waitForTimeout(3_000);
-
-        // Run play-function interactions if the story requires them.
-        if (story.playInteraction) {
-          await story.playInteraction(page);
-          // Allow UI to settle after interactions.
-          await page.waitForTimeout(500);
-        }
-
-        // Capture the visible viewport only — fullPage would include off-screen
-        // scrollable content, producing absurdly tall images for stories with
-        // long sidebars or chat histories. Stories may also provide a focused
-        // clip region (in CSS pixels) for zoomed-in README screenshots.
-        const pngBuffer = await page.screenshot({
-          type: "png",
-          ...(story.clip ? { clip: story.clip } : {}),
-        });
-
-        // Convert to WebP (or run custom post-processing).
-        // For full-viewport captures, resize from native DPR resolution to TARGET_WIDTH.
-        // For clipped captures, preserve the native DPR resolution and only encode to WebP.
-        let webpBuffer: Buffer;
-        if (story.postProcess) {
-          webpBuffer = await story.postProcess(Buffer.from(pngBuffer));
-        } else {
-          const image = sharp(pngBuffer);
-          webpBuffer = story.clip
-            ? await image.webp({ quality: WEBP_QUALITY }).toBuffer()
-            : await image
-                .resize({ width: TARGET_WIDTH, kernel: "lanczos3" })
-                .webp({ quality: WEBP_QUALITY })
-                .toBuffer();
-        }
-
-        await Bun.write(outputPath, webpBuffer);
-
-        // Report dimensions and size.
-        const meta = await sharp(webpBuffer).metadata();
-        console.log(`  ${meta.width}×${meta.height}  ${formatBytes(webpBuffer.byteLength)}`);
-        succeeded.push(story.exportName);
-        captured = true;
-        break; // Success — no more retries.
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (attempt < MAX_RETRIES) {
@@ -320,7 +339,9 @@ async function main() {
           console.error(`  FAILED after ${MAX_RETRIES} attempts: ${message}`);
         }
       } finally {
-        await page.close();
+        if (attemptContext !== defaultContext) {
+          await attemptContext.close();
+        }
       }
     }
 
@@ -329,6 +350,7 @@ async function main() {
     }
   }
 
+  await defaultContext.close();
   await browser.close();
 
   // Summary.
