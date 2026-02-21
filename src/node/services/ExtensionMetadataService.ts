@@ -188,7 +188,17 @@ export class ExtensionMetadataService {
         agentStatus,
       };
     } else {
-      data.workspaces[workspaceId].agentStatus = agentStatus;
+      const previousStatus = data.workspaces[workspaceId].agentStatus;
+      if (agentStatus && agentStatus.url === undefined && previousStatus?.url) {
+        // Mirror StreamingMessageAggregator behavior: keep the last known URL when
+        // a subsequent status_set omits `url`.
+        data.workspaces[workspaceId].agentStatus = {
+          ...agentStatus,
+          url: previousStatus.url,
+        };
+      } else {
+        data.workspaces[workspaceId].agentStatus = agentStatus;
+      }
     }
 
     await this.save(data);

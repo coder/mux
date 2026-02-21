@@ -183,6 +183,143 @@ describe("WorkspaceService rename lock", () => {
   });
 });
 
+describe("WorkspaceService sendMessage status clearing", () => {
+  let workspaceService: WorkspaceService;
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+
+  beforeEach(async () => {
+    const aiService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() =>
+        Promise.resolve({ success: false as const, error: "not found" })
+      ),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/test",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: mock(() => ({
+        workspacePath: "/tmp/test/workspace",
+        projectPath: "/tmp/test/project",
+      })),
+      loadConfigOrDefault: mock(() => ({ projects: new Map() })),
+    };
+
+    const mockExtensionMetadata: Partial<ExtensionMetadataService> = {
+      updateRecency: mock(() =>
+        Promise.resolve({
+          recency: Date.now(),
+          streaming: false,
+          lastModel: null,
+          lastThinkingLevel: null,
+          agentStatus: null,
+        })
+      ),
+      setStreaming: mock(() =>
+        Promise.resolve({
+          recency: Date.now(),
+          streaming: false,
+          lastModel: null,
+          lastThinkingLevel: null,
+          agentStatus: null,
+        })
+      ),
+      setAgentStatus: mock(() =>
+        Promise.resolve({
+          recency: Date.now(),
+          streaming: false,
+          lastModel: null,
+          lastThinkingLevel: null,
+          agentStatus: null,
+        })
+      ),
+    };
+
+    workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadata as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    const fakeSession = {
+      isBusy: mock(() => true),
+      queueMessage: mock(() => undefined),
+    } as unknown as AgentSession;
+
+    (
+      workspaceService as unknown as {
+        getOrCreateSession: (workspaceId: string) => AgentSession;
+      }
+    ).getOrCreateSession = mock(() => fakeSession);
+
+    (
+      workspaceService as unknown as {
+        maybePersistAISettingsFromOptions: (
+          workspaceId: string,
+          options: unknown,
+          source: "send" | "resume"
+        ) => Promise<void>;
+      }
+    ).maybePersistAISettingsFromOptions = mock(() => Promise.resolve());
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
+  test("clears persisted agent status for non-synthetic sends", async () => {
+    const updateAgentStatus = spyOn(
+      workspaceService as unknown as {
+        updateAgentStatus: (workspaceId: string, status: null) => Promise<void>;
+      },
+      "updateAgentStatus"
+    ).mockResolvedValue(undefined);
+
+    const result = await workspaceService.sendMessage("test-workspace", "hello", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(true);
+    expect(updateAgentStatus).toHaveBeenCalledWith("test-workspace", null);
+  });
+
+  test("does not clear persisted agent status for synthetic sends", async () => {
+    const updateAgentStatus = spyOn(
+      workspaceService as unknown as {
+        updateAgentStatus: (workspaceId: string, status: null) => Promise<void>;
+      },
+      "updateAgentStatus"
+    ).mockResolvedValue(undefined);
+
+    const result = await workspaceService.sendMessage(
+      "test-workspace",
+      "hello",
+      {
+        model: "openai:gpt-4o-mini",
+        agentId: "exec",
+      },
+      {
+        synthetic: true,
+      }
+    );
+
+    expect(result.success).toBe(true);
+    expect(updateAgentStatus).not.toHaveBeenCalled();
+  });
+});
+
 describe("WorkspaceService idle compaction dispatch", () => {
   let workspaceService: WorkspaceService;
   let historyService: HistoryService;

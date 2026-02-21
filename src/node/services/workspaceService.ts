@@ -3208,6 +3208,12 @@ export class WorkspaceService extends EventEmitter {
       if (!isIdleCompaction) {
         void this.updateRecencyTimestamp(workspaceId, messageTimestamp);
       }
+      if (!isIdleCompaction && !internal?.synthetic) {
+        // Keep background activity snapshots aligned with renderer behavior: a new
+        // user turn clears the previous status_set indicator until the agent sets
+        // a fresh status.
+        void this.updateAgentStatus(workspaceId, null);
+      }
 
       // Experiments: resolve flags respecting userOverridable setting.
       // - If userOverridable && frontend provides a value (explicit override) → use frontend value

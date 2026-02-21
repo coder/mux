@@ -40,8 +40,19 @@ describe("ExtensionMetadataService", () => {
     const snapshot = await service.setAgentStatus("workspace-3", status);
     expect(snapshot.agentStatus).toEqual(status);
 
+    const withoutUrl = await service.setAgentStatus("workspace-3", {
+      emoji: "✅",
+      message: "Checks passed",
+    });
+    // status_set often omits url after the first call; keep the last known URL.
+    expect(withoutUrl.agentStatus).toEqual({
+      emoji: "✅",
+      message: "Checks passed",
+      url: status.url,
+    });
+
     const snapshots = await service.getAllSnapshots();
-    expect(snapshots.get("workspace-3")?.agentStatus).toEqual(status);
+    expect(snapshots.get("workspace-3")?.agentStatus).toEqual(withoutUrl.agentStatus);
 
     const cleared = await service.setAgentStatus("workspace-3", null);
     expect(cleared.agentStatus).toBeNull();
