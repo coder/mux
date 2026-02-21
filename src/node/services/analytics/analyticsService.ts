@@ -163,13 +163,17 @@ export class AnalyticsService {
 
     // Backfill existing workspace history on first use so that analytics
     // queries return data for workspaces that existed before the analytics
-    // feature was installed. Runs async in the background so it doesn't
-    // block the caller.
-    this.dispatch("rebuildAll", { sessionsDir: this.config.sessionsDir }).catch((error) => {
-      log.warn("[AnalyticsService] Background backfill failed (non-fatal)", {
+    // feature was installed. Awaited so the first query sees complete data
+    // instead of an empty/partially-rebuilt database.
+    try {
+      await this.dispatch("rebuildAll", { sessionsDir: this.config.sessionsDir });
+    } catch (error) {
+      // Non-fatal: queries will work but may show partial historical data
+      // until incremental stream-end ingestion fills gaps.
+      log.warn("[AnalyticsService] Initial backfill failed (non-fatal)", {
         error: getErrorMessage(error),
       });
-    });
+    }
   }
 
   private ensureWorker(): Promise<void> {

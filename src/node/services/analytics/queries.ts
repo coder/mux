@@ -310,12 +310,17 @@ async function queryTimingDistribution(
         AND (? IS NULL OR events.project_path = ?)
     )
     SELECT
-      ROUND(
-        (SELECT min_value FROM stats) +
-        (bucket_id - 0.5) * (
-          NULLIF((SELECT max_value FROM stats) - (SELECT min_value FROM stats), 0) / 20.0
+      COALESCE(
+        ROUND(
+          (SELECT min_value FROM stats) +
+          (bucket_id - 0.5) * (
+            NULLIF((SELECT max_value FROM stats) - (SELECT min_value FROM stats), 0) / 20.0
+          ),
+          2
         ),
-        2
+        -- When min == max (single distinct value), NULLIF produces NULL.
+        -- Fall back to the actual value so the bucket label is meaningful.
+        ROUND((SELECT min_value FROM stats), 2)
       ) AS bucket,
       COUNT(*) AS count
     FROM bucketed

@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import assert from "@/common/utils/assert";
 
 // Shared color palette for all analytics charts.
 // Uses theme tokens so colors remain legible in both dark and light themes.
