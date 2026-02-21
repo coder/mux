@@ -662,6 +662,10 @@ function shouldRebuildWorkspaceForSequenceRegression(params: {
     return true;
   }
 
+  if (params.parsedMaxSequence < params.watermark.lastSequence) {
+    return true;
+  }
+
   return params.hasSequenceRegression;
 }
 
@@ -700,6 +704,7 @@ export async function ingestWorkspace(
 
   let responseIndex = 0;
   let hasSequenceRegression = false;
+  let previousParsedSequence: number | null = null;
   const parsedEvents: IngestEvent[] = [];
 
   for (let i = 0; i < lines.length; i++) {
@@ -720,9 +725,17 @@ export async function ingestWorkspace(
       continue;
     }
 
-    if (watermark.lastSequence >= 0 && event.sequence < watermark.lastSequence) {
+    assert(
+      Number.isInteger(event.sequence),
+      "ingestWorkspace: expected assistant event sequence to be an integer"
+    );
+
+    // Compare adjacent parsed assistant events to detect true rewrites. Older
+    // historical events naturally remain below the watermark in append-only logs.
+    if (previousParsedSequence !== null && event.sequence < previousParsedSequence) {
       hasSequenceRegression = true;
     }
+    previousParsedSequence = event.sequence;
 
     responseIndex += 1;
     parsedEvents.push(event);
@@ -744,9 +757,9 @@ export async function ingestWorkspace(
   });
 
   if (shouldRebuild) {
-    // Any parsed historySequence below the persisted watermark means the tail was
-    // rewritten/regenerated. Rebuild the workspace slice so stale rows are removed,
-    // including the zero-assistant-event case after full truncation.
+    // Rebuild on truncation, max-sequence rewinds, or sequence ordering regressions
+    // (a parsed assistant event sequence decreases versus the prior parsed event).
+    // This removes stale rows, including the zero-assistant-event truncation case.
     await replaceWorkspaceEvents(conn, workspaceId, parsedEvents);
 
     await writeWatermark(conn, workspaceId, {
