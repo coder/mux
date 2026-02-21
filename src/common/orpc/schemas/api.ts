@@ -82,6 +82,9 @@ export { telemetry, TelemetryEventSchema } from "./telemetry";
 // Re-export signing schemas
 export { signing, type SigningCapabilities, type SignatureEnvelope } from "./signing";
 
+// Re-export analytics schemas
+export { analytics } from "./analytics";
+
 // --- API Router Schemas ---
 
 // Background process info (for UI display)

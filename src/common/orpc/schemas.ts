@@ -37,6 +37,28 @@ export {
   WorkspaceStatsSnapshotSchema,
 } from "./schemas/workspaceStats";
 
+// Analytics schemas
+export {
+  AgentCostRowSchema,
+  EventRowSchema,
+  HistogramBucketSchema,
+  SpendByModelRowSchema,
+  SpendByProjectRowSchema,
+  SpendOverTimeRowSchema,
+  SummaryRowSchema,
+  TimingPercentilesRowSchema,
+} from "./schemas/analytics";
+export type {
+  AgentCostRow,
+  EventRow,
+  HistogramBucket,
+  SpendByModelRow,
+  SpendByProjectRow,
+  SpendOverTimeRow,
+  SummaryRow,
+  TimingPercentilesRow,
+} from "./schemas/analytics";
+
 // Chat stats schemas
 export {
   ChatStatsSchema,
@@ -174,6 +196,7 @@ export {
 export {
   ApiServerStatusSchema,
   AWSCredentialStatusSchema,
+  analytics,
   coder,
   CoderInfoSchema,
   CoderPresetSchema,
