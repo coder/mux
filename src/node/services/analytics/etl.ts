@@ -474,6 +474,23 @@ async function readWorkspaceEventRowCount(
   return rowCount;
 }
 
+async function clearWorkspaceAnalyticsState(
+  conn: DuckDBConnection,
+  workspaceId: string
+): Promise<void> {
+  assert(workspaceId.trim().length > 0, "clearWorkspaceAnalyticsState: workspaceId is required");
+
+  await conn.run("BEGIN TRANSACTION");
+  try {
+    await conn.run("DELETE FROM events WHERE workspace_id = ?", [workspaceId]);
+    await conn.run("DELETE FROM ingest_watermarks WHERE workspace_id = ?", [workspaceId]);
+    await conn.run("COMMIT");
+  } catch (error) {
+    await conn.run("ROLLBACK");
+    throw error;
+  }
+}
+
 function serializeHeadSignatureValue(value: string | number | null): string {
   if (value === null) {
     return "null";
@@ -768,6 +785,8 @@ export async function ingestWorkspace(
     stat = await fs.stat(chatPath);
   } catch (error) {
     if (isRecord(error) && error.code === "ENOENT") {
+      // Remove stale analytics state when the workspace history file no longer exists.
+      await clearWorkspaceAnalyticsState(conn, workspaceId);
       return;
     }
 
