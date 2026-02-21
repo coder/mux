@@ -4320,13 +4320,21 @@ export class AgentSession {
         error: sendResult.error,
       });
       const dispatchStreamError = buildStreamErrorEventData(sendResult.error);
-      this.emitChatEvent(
-        createStreamErrorMessage({
-          messageId: dispatchStreamError.messageId,
-          error: `Failed to switch to agent "${targetAgentId}": ${dispatchStreamError.error}`,
-          errorType: dispatchStreamError.errorType,
-        })
-      );
+      const nestedSendAlreadyReportedError =
+        this.activeStreamFailureHandled &&
+        (this.activeStreamErrorEventReceived ||
+          (sendResult.error.type !== "runtime_not_ready" &&
+            sendResult.error.type !== "runtime_start_failed"));
+
+      if (!nestedSendAlreadyReportedError) {
+        this.emitChatEvent(
+          createStreamErrorMessage({
+            messageId: dispatchStreamError.messageId,
+            error: `Failed to switch to agent "${targetAgentId}": ${dispatchStreamError.error}`,
+            errorType: dispatchStreamError.errorType,
+          })
+        );
+      }
       return false;
     }
 

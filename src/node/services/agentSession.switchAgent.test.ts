@@ -439,6 +439,47 @@ describe("AgentSession switch_agent target validation", () => {
     }
   });
 
+  test("does not emit duplicate stream-error when nested send already reported failure", async () => {
+    using projectDir = new DisposableTempDir("agent-session-switch-send-deduped");
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const session = createSession(historyService, projectDir.path, projectDir.path);
+    const events: WorkspaceChatMessage[] = [];
+    session.onChatEvent((event) => {
+      events.push(event.message);
+    });
+
+    try {
+      const internals = session as unknown as SessionInternals & {
+        activeStreamFailureHandled: boolean;
+        activeStreamErrorEventReceived: boolean;
+      };
+      internals.activeStreamFailureHandled = true;
+      internals.activeStreamErrorEventReceived = false;
+      internals.sendMessage = mock(() =>
+        Promise.resolve({
+          success: false as const,
+          error: { type: "provider_not_supported", provider: "anthropic" },
+        })
+      ) as unknown as SessionInternals["sendMessage"];
+
+      const result = await internals.dispatchAgentSwitch(
+        {
+          agentId: "plan",
+          followUp: "Create a plan.",
+        },
+        { model: "openai:gpt-4o-mini", agentId: "exec" },
+        "openai:gpt-4o"
+      );
+
+      expect(result).toBe(false);
+      expect(events.some((event) => event.type === "stream-error")).toBe(false);
+    } finally {
+      session.dispose();
+    }
+  });
+
   test("emits stream-error when stream-end handoff throws unexpectedly", async () => {
     using projectDir = new DisposableTempDir("agent-session-switch-stream-end-throw");
     const { historyService, cleanup } = await createTestHistoryService();
