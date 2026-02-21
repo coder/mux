@@ -266,6 +266,49 @@ describe("useGateway", () => {
       muxGatewayModels: ["anthropic:claude-opus-4-5", "openai:gpt-5.2"],
     });
   });
+
+  test("drains models queued while a persistence call is in flight", async () => {
+    mockConfig = {
+      "mux-gateway": {
+        couponCodeSet: true,
+        isEnabled: true,
+        gatewayModels: [],
+      },
+    };
+
+    let resolveFirstPersist: (() => void) | null = null;
+    updateMuxGatewayPrefsMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirstPersist = () => resolve({ success: true });
+        })
+    );
+
+    pendingGatewayEnrollments.add("anthropic:claude-opus-4-5");
+
+    renderHook(() => useGateway());
+
+    // First drain started and is still in flight.
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(1);
+
+    // Queue another model while first persist is in flight.
+    pendingGatewayEnrollments.add("openai:gpt-5.2");
+    act(() => {
+      window.dispatchEvent(new Event("mux:gatewayEnrollmentPending"));
+    });
+
+    await act(async () => {
+      resolveFirstPersist?.();
+      await Promise.resolve();
+    });
+
+    // Second drain should run after first settles.
+    expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(2);
+    expect(updateMuxGatewayPrefsMock).toHaveBeenNthCalledWith(2, {
+      muxGatewayEnabled: true,
+      muxGatewayModels: ["anthropic:claude-opus-4-5", "openai:gpt-5.2"],
+    });
+  });
   test("keeps queued enrollments on IPC failure and retries with backoff", async () => {
     mockConfig = {
       "mux-gateway": {

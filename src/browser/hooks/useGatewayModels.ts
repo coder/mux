@@ -263,6 +263,8 @@ export function useGateway(): GatewayState {
     enrollmentDrainInFlightRef.current = true;
     updateOptimistically("mux-gateway", { gatewayModels: nextModels });
 
+    let persistFailed = false;
+
     api.config
       .updateMuxGatewayPrefs({
         muxGatewayEnabled: isEnabled,
@@ -280,6 +282,7 @@ export function useGateway(): GatewayState {
         }
       })
       .catch(() => {
+        persistFailed = true;
         // Keep queued models for retry and back off to avoid tight loops.
         if (enrollmentRetryTimerRef.current == null) {
           const delayMs = enrollmentRetryDelayMsRef.current;
@@ -292,6 +295,12 @@ export function useGateway(): GatewayState {
       })
       .finally(() => {
         enrollmentDrainInFlightRef.current = false;
+
+        // If new models were queued while this drain was in flight, process
+        // them immediately after a successful persist.
+        if (!persistFailed && pendingGatewayEnrollments.size > 0) {
+          setEnrollVersion((v) => v + 1);
+        }
       });
   }, [gwConfig, enabledModels, isEnabled, api, updateOptimistically, enrollVersion]);
 
