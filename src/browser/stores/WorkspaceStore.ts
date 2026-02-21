@@ -2265,7 +2265,16 @@ export class WorkspaceStore {
     aggregator.clear();
 
     // Reset per-workspace transient state so the next replay rebuilds from the backend source of truth.
-    this.chatTransientState.set(workspaceId, createInitialChatTransientState());
+    const previousTransient = this.chatTransientState.get(workspaceId);
+    const nextTransient = createInitialChatTransientState();
+
+    // Preserve active hydration across full replay resets so workspace-switch catch-up
+    // remains in loading state until we receive an authoritative caught-up marker.
+    if (previousTransient?.isHydratingTranscript) {
+      nextTransient.isHydratingTranscript = true;
+    }
+
+    this.chatTransientState.set(workspaceId, nextTransient);
 
     this.historyPagination.set(workspaceId, createInitialHistoryPaginationState());
 
@@ -2519,6 +2528,14 @@ export class WorkspaceStore {
         // Clear replay buffers before the next attempt so we don't append a
         // second replay copy and duplicate deltas/tool events on caught-up.
         this.clearReplayBuffers(workspaceId);
+
+        // If catch-up keeps failing, fall back to normal transcript/retry UI instead
+        // of pinning the workspace in hydration-loading indefinitely.
+        const transient = this.chatTransientState.get(workspaceId);
+        if (attempt > 0 && transient?.isHydratingTranscript && !transient.caughtUp) {
+          transient.isHydratingTranscript = false;
+          this.states.bump(workspaceId);
+        }
 
         // Preserve pagination across transient reconnect retries. Incremental
         // caught-up payloads intentionally omit hasOlderHistory, so resetting
