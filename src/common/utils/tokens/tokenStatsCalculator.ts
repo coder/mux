@@ -276,7 +276,11 @@ interface SyncMetadata {
 /**
  * Extracts synchronous metadata from messages (no token counting needed)
  */
-export function extractSyncMetadata(messages: MuxMessage[], model: string): SyncMetadata {
+export function extractSyncMetadata(
+  messages: MuxMessage[],
+  model: string,
+  providersConfig: ProvidersConfigMap | null = null
+): SyncMetadata {
   let systemMessageTokens = 0;
   const usageHistory: ChatUsageDisplay[] = [];
 
@@ -289,10 +293,13 @@ export function extractSyncMetadata(messages: MuxMessage[], model: string): Sync
 
       // Store usage history for comparison with estimates
       if (message.metadata?.usage) {
+        const runtimeModel = message.metadata.model ?? model; // Use actual model from request
+        const metadataModel = resolveModelForMetadata(runtimeModel, providersConfig);
         const usage = createDisplayUsage(
           message.metadata.usage,
-          message.metadata.model ?? model, // Use actual model from request, not UI model
-          message.metadata.providerMetadata
+          runtimeModel,
+          message.metadata.providerMetadata,
+          metadataModel
         );
         if (usage) {
           usageHistory.push(usage);
@@ -420,7 +427,11 @@ export async function calculateTokenStats(
   );
 
   // Phase 2: Extract sync metadata (no awaits)
-  const { systemMessageTokens, usageHistory } = extractSyncMetadata(messages, model);
+  const { systemMessageTokens, usageHistory } = extractSyncMetadata(
+    messages,
+    model,
+    providersConfig
+  );
 
   // Phase 3: Create all token counting jobs (promises start immediately)
   const jobs = createTokenCountingJobs(messages, tokenizer);

@@ -23,6 +23,11 @@ export interface ModelCapabilities {
 
 export type SupportedInputMediaType = "image" | "pdf" | "audio" | "video";
 
+const PROVIDER_KEY_ALIASES: Record<string, string> = {
+  // GitHub Copilot keys in models.json use underscores for LiteLLM provider names.
+  "github-copilot": "github_copilot",
+};
+
 /**
  * Generates lookup keys for a model string with multiple naming patterns.
  *
@@ -33,6 +38,7 @@ function generateLookupKeys(modelString: string): string[] {
   const colonIndex = modelString.indexOf(":");
   const provider = colonIndex !== -1 ? modelString.slice(0, colonIndex) : "";
   const modelName = colonIndex !== -1 ? modelString.slice(colonIndex + 1) : modelString;
+  const litellmProvider = PROVIDER_KEY_ALIASES[provider] ?? provider;
 
   const keys: string[] = [
     modelName, // Direct model name (e.g., "claude-opus-4-5")
@@ -40,15 +46,15 @@ function generateLookupKeys(modelString: string): string[] {
 
   if (provider) {
     keys.push(
-      `${provider}/${modelName}`, // "ollama/gpt-oss:20b"
-      `${provider}/${modelName}-cloud` // "ollama/gpt-oss:20b-cloud" (LiteLLM convention)
+      `${litellmProvider}/${modelName}`, // "ollama/gpt-oss:20b"
+      `${litellmProvider}/${modelName}-cloud` // "ollama/gpt-oss:20b-cloud" (LiteLLM convention)
     );
 
     // Fallback: strip size suffix for base model lookup
     // "ollama:gpt-oss:20b" → "ollama/gpt-oss"
     if (modelName.includes(":")) {
       const baseModel = modelName.split(":")[0];
-      keys.push(`${provider}/${baseModel}`);
+      keys.push(`${litellmProvider}/${baseModel}`);
     }
   }
 
