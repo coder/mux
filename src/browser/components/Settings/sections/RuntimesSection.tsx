@@ -317,9 +317,15 @@ export function RuntimesSection() {
     };
 
     if (!isProjectScope) {
-      setRuntimeEnabled(runtimeId, enabled);
-      if (defaultRuntime && !nextEnablement[defaultRuntime]) {
-        setDefaultRuntime(getFallbackRuntime(nextEnablement));
+      let nextDefaultRuntime = defaultRuntime ?? null;
+      if (nextDefaultRuntime && !nextEnablement[nextDefaultRuntime]) {
+        nextDefaultRuntime = getFallbackRuntime(nextEnablement);
+      }
+
+      if (nextDefaultRuntime !== defaultRuntime) {
+        setRuntimeEnabled(runtimeId, enabled, nextDefaultRuntime ?? null);
+      } else {
+        setRuntimeEnabled(runtimeId, enabled);
       }
       return;
     }

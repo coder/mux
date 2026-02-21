@@ -12,7 +12,11 @@ import {
 
 interface RuntimeEnablementState {
   enablement: RuntimeEnablement;
-  setRuntimeEnabled: (id: RuntimeEnablementId, enabled: boolean) => void;
+  setRuntimeEnabled: (
+    id: RuntimeEnablementId,
+    enabled: boolean,
+    nextDefaultRuntime?: RuntimeEnablementId | null
+  ) => void;
   defaultRuntime: RuntimeEnablementId | null;
   setDefaultRuntime: (id: RuntimeEnablementId | null) => void;
 }
@@ -55,7 +59,11 @@ export function useRuntimeEnablement(): RuntimeEnablementState {
   const enablement = enablementRef.current;
   const defaultRuntime = normalizeDefaultRuntime(rawDefaultRuntime);
 
-  const setRuntimeEnabled = (id: RuntimeEnablementId, enabled: boolean) => {
+  const setRuntimeEnabled = (
+    id: RuntimeEnablementId,
+    enabled: boolean,
+    nextDefaultRuntime?: RuntimeEnablementId | null
+  ) => {
     const nextMap: RuntimeEnablement = {
       ...enablement,
       [id]: enabled,
@@ -63,9 +71,21 @@ export function useRuntimeEnablement(): RuntimeEnablementState {
 
     // Persist locally first so Settings reflects changes immediately and stays in sync.
     setRawEnablement(nextMap);
+    if (nextDefaultRuntime !== undefined) {
+      setRawDefaultRuntime(nextDefaultRuntime);
+    }
 
     // Best-effort backend write keeps ~/.mux/config.json aligned across devices.
-    api?.config?.updateRuntimeEnablement({ runtimeEnablement: nextMap }).catch(() => {
+    const payload: {
+      runtimeEnablement: RuntimeEnablement;
+      defaultRuntime?: RuntimeEnablementId | null;
+    } = { runtimeEnablement: nextMap };
+
+    if (nextDefaultRuntime !== undefined) {
+      payload.defaultRuntime = nextDefaultRuntime;
+    }
+
+    api?.config?.updateRuntimeEnablement(payload).catch(() => {
       // Best-effort only.
     });
   };
