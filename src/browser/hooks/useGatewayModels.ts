@@ -20,6 +20,14 @@ export const pendingGatewayEnrollments = new Set<string>();
 // drain effect re-runs even for late enrollments (after the hook has mounted).
 const ENROLLMENT_PENDING_EVENT = "mux:gatewayEnrollmentPending";
 
+// Global drain state shared across all useGateway hook instances.
+// useGateway is mounted in multiple surfaces (title bar, model selector,
+// settings); this singleton prevents duplicate concurrent drain IPC calls.
+const enrollmentDrainState = {
+  inFlight: false,
+  retryTimer: null as number | null,
+  retryDelayMs: 250,
+};
 // ============================================================================
 // Pure utility functions (no side effects, used for message sending)
 // ============================================================================
@@ -229,19 +237,6 @@ export function useGateway(): GatewayState {
     [api]
   );
 
-  const enrollmentRetryTimerRef = useRef<number | null>(null);
-  const enrollmentRetryDelayMsRef = useRef(250);
-  const enrollmentDrainInFlightRef = useRef(false);
-
-  useEffect(() => {
-    return () => {
-      if (enrollmentRetryTimerRef.current != null) {
-        window.clearTimeout(enrollmentRetryTimerRef.current);
-        enrollmentRetryTimerRef.current = null;
-      }
-    };
-  }, []);
-
   // Drain pending gateway enrollments from migrateGatewayModel.
   // migrateGatewayModel queues models during render; this effect runs after
   // render to persist them. We wait until gwConfig and api are available,
@@ -255,12 +250,12 @@ export function useGateway(): GatewayState {
     // During reconnect/auth transitions api can be null while gwConfig is
     // populated — in that state, keep pending models queued for later.
     if (!gwConfig || !api || pendingGatewayEnrollments.size === 0) return;
-    if (enrollmentDrainInFlightRef.current) return;
+    if (enrollmentDrainState.inFlight) return;
 
     const batch = [...pendingGatewayEnrollments];
     const nextModels = Array.from(new Set([...enabledModels, ...batch]));
 
-    enrollmentDrainInFlightRef.current = true;
+    enrollmentDrainState.inFlight = true;
     updateOptimistically("mux-gateway", { gatewayModels: nextModels });
 
     let persistFailed = false;
@@ -275,31 +270,31 @@ export function useGateway(): GatewayState {
         for (const id of batch) pendingGatewayEnrollments.delete(id);
 
         // Reset retry state after success.
-        enrollmentRetryDelayMsRef.current = 250;
-        if (enrollmentRetryTimerRef.current != null) {
-          window.clearTimeout(enrollmentRetryTimerRef.current);
-          enrollmentRetryTimerRef.current = null;
+        enrollmentDrainState.retryDelayMs = 250;
+        if (enrollmentDrainState.retryTimer != null) {
+          window.clearTimeout(enrollmentDrainState.retryTimer);
+          enrollmentDrainState.retryTimer = null;
         }
       })
       .catch(() => {
         persistFailed = true;
         // Keep queued models for retry and back off to avoid tight loops.
-        if (enrollmentRetryTimerRef.current == null) {
-          const delayMs = enrollmentRetryDelayMsRef.current;
-          enrollmentRetryDelayMsRef.current = Math.min(delayMs * 2, 5_000);
-          enrollmentRetryTimerRef.current = window.setTimeout(() => {
-            enrollmentRetryTimerRef.current = null;
-            setEnrollVersion((v) => v + 1);
+        if (enrollmentDrainState.retryTimer == null) {
+          const delayMs = enrollmentDrainState.retryDelayMs;
+          enrollmentDrainState.retryDelayMs = Math.min(delayMs * 2, 5_000);
+          enrollmentDrainState.retryTimer = window.setTimeout(() => {
+            enrollmentDrainState.retryTimer = null;
+            window.dispatchEvent(new Event(ENROLLMENT_PENDING_EVENT));
           }, delayMs);
         }
       })
       .finally(() => {
-        enrollmentDrainInFlightRef.current = false;
+        enrollmentDrainState.inFlight = false;
 
         // If new models were queued while this drain was in flight, process
         // them immediately after a successful persist.
         if (!persistFailed && pendingGatewayEnrollments.size > 0) {
-          setEnrollVersion((v) => v + 1);
+          window.dispatchEvent(new Event(ENROLLMENT_PENDING_EVENT));
         }
       });
   }, [gwConfig, enabledModels, isEnabled, api, updateOptimistically, enrollVersion]);
