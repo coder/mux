@@ -534,10 +534,12 @@ export function ProvidersSection() {
   const startMuxGatewayLogin = async () => {
     const attempt = ++muxGatewayLoginAttemptRef.current;
 
-    // Enable Mux Gateway for all eligible models after the *first* successful login.
-    // (If config isn't loaded yet, fall back to the gateway hook's isConfigured state.)
-    const isLoggedIn = config?.["mux-gateway"]?.couponCodeSet ?? gateway.isConfigured;
-    muxGatewayApplyDefaultModelsOnSuccessRef.current = !isLoggedIn;
+    // Enable default gateway models only when this looks like first-time setup.
+    // If config is still hydrating, we'll re-check after OAuth success before applying.
+    const gatewayConfig = config?.["mux-gateway"];
+    muxGatewayApplyDefaultModelsOnSuccessRef.current =
+      gatewayConfig?.couponCodeSet === false ||
+      (gatewayConfig?.couponCodeSet == null && (gatewayConfig?.gatewayModels?.length ?? 0) === 0);
 
     try {
       setMuxGatewayLoginError(null);
@@ -596,7 +598,10 @@ export function ProvidersSection() {
               return;
             }
 
-            gateway.setEnabledModels(getEligibleGatewayModels(latestConfig));
+            const latestGatewayModels = latestConfig?.["mux-gateway"]?.gatewayModels ?? [];
+            if (latestGatewayModels.length === 0) {
+              gateway.setEnabledModels(getEligibleGatewayModels(latestConfig));
+            }
             muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
           }
 
@@ -688,7 +693,10 @@ export function ProvidersSection() {
 
           const applyLatest = (latestConfig: ProvidersConfigMap | null) => {
             if (muxGatewayLoginAttemptRef.current !== attempt) return;
-            gateway.setEnabledModels(getEligibleGatewayModels(latestConfig));
+            const latestGatewayModels = latestConfig?.["mux-gateway"]?.gatewayModels ?? [];
+            if (latestGatewayModels.length === 0) {
+              gateway.setEnabledModels(getEligibleGatewayModels(latestConfig));
+            }
           };
 
           if (api) {

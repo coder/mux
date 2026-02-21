@@ -192,7 +192,7 @@ export function useGateway(): GatewayState {
   if (gwConfig?.couponCodeSet != null) {
     lastKnownConfiguredRef.current = gwConfig.couponCodeSet;
   }
-  const isConfigured = gwConfig?.couponCodeSet ?? lastKnownConfiguredRef.current ?? true;
+  const isConfigured = gwConfig?.couponCodeSet ?? lastKnownConfiguredRef.current ?? false;
   const isEnabled = gwConfig?.isEnabled ?? true;
   const enabledModels = useMemo(() => gwConfig?.gatewayModels ?? [], [gwConfig?.gatewayModels]);
   const isActive = isConfigured && isEnabled;
