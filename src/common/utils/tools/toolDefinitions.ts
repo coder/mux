@@ -535,7 +535,7 @@ export const SwitchAgentToolArgsSchema = z
   .object({
     agentId: AgentIdSchema,
     reason: z.string().max(512).nullish(),
-    followUp: z.string().max(2000).nullish(),
+    followUp: z.string().nullish(),
   })
   .strict();
 
