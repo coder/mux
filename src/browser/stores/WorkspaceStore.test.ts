@@ -2423,5 +2423,55 @@ describe("WorkspaceStore", () => {
 
       expect(store.getTaskToolLiveTaskId(workspaceId, "call-task-3")).toBe("child-workspace-3");
     });
+
+    it("uses compaction boundary context usage when it is the newest usage in the active epoch", async () => {
+      const workspaceId = "boundary-context-usage-workspace";
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        await Promise.resolve();
+        yield {
+          type: "message",
+          id: "pre-boundary-assistant",
+          role: "assistant",
+          parts: [{ type: "text", text: "Older context usage" }],
+          metadata: {
+            historySequence: 1,
+            timestamp: 1,
+            model: "claude-3-5-sonnet-20241022",
+            contextUsage: { inputTokens: 999, outputTokens: 10, totalTokens: undefined },
+          },
+        };
+
+        yield {
+          type: "message",
+          id: "compaction-boundary-summary",
+          role: "assistant",
+          parts: [{ type: "text", text: "Compacted summary" }],
+          metadata: {
+            historySequence: 2,
+            timestamp: 2,
+            model: "claude-3-5-sonnet-20241022",
+            compacted: "idle",
+            compactionBoundary: true,
+            compactionEpoch: 1,
+            contextUsage: { inputTokens: 42, outputTokens: 0, totalTokens: undefined },
+          },
+        };
+
+        yield { type: "caught-up" };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const usage = store.getWorkspaceUsage(workspaceId);
+      expect(usage.lastContextUsage?.input.tokens).toBe(42);
+      expect(usage.lastContextUsage?.output.tokens).toBe(0);
+      expect(usage.lastContextUsage?.model).toBe("claude-3-5-sonnet-20241022");
+    });
   });
 });

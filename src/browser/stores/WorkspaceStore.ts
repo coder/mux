@@ -1690,7 +1690,17 @@ export class WorkspaceStore {
       const lastContextUsage = (() => {
         for (let i = messages.length - 1; i >= 0; i--) {
           const msg = messages[i];
-          if (isDurableCompactionBoundaryMarker(msg)) break;
+          if (isDurableCompactionBoundaryMarker(msg)) {
+            // Idle/manual compaction boundary messages can include a post-compaction
+            // context estimate. Read it before breaking so context usage does not
+            // disappear when switching back to a compacted workspace.
+            const rawUsage = msg.metadata?.contextUsage;
+            if (rawUsage && msg.role === "assistant") {
+              const msgModel = msg.metadata?.model ?? model ?? "unknown";
+              return createDisplayUsage(rawUsage, msgModel, undefined);
+            }
+            break;
+          }
           if (msg.role === "assistant") {
             if (msg.metadata?.compacted) continue;
             const rawUsage = msg.metadata?.contextUsage;

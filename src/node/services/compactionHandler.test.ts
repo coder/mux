@@ -622,6 +622,8 @@ describe("CompactionHandler", () => {
       const event = createStreamEndEvent("Summary", {
         providerMetadata: { anthropic: { cacheCreationInputTokens: 50_000 } },
         contextProviderMetadata: { anthropic: { cacheReadInputTokens: 10_000 } },
+        contextUsage: { inputTokens: 123_456, outputTokens: 99_999, totalTokens: undefined },
+        systemMessageTokens: 75,
         customField: "preserved",
       });
 
@@ -633,9 +635,47 @@ describe("CompactionHandler", () => {
       expect(streamMsg?.messageId).toBe("msg-id");
       expect(streamMsg?.metadata.providerMetadata).toBeUndefined();
       expect(streamMsg?.metadata.contextProviderMetadata).toBeUndefined();
+      expect(streamMsg?.metadata.contextUsage).toEqual({
+        // 75 system prompt tokens + 50 summary output tokens
+        inputTokens: 125,
+        outputTokens: 0,
+        totalTokens: 125,
+      });
       expect((streamMsg?.metadata as Record<string, unknown> | undefined)?.customField).toBe(
         "preserved"
       );
+    });
+
+    it("omits context usage estimate when stream-end metadata has no summary output tokens", async () => {
+      const compactionReq = createMuxMessage(
+        "req-streamed-no-estimate",
+        "user",
+        "Please summarize",
+        {
+          historySequence: 5,
+          muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+        }
+      );
+      const streamedSummary = createMuxMessage("msg-id", "assistant", "Summary", {
+        historySequence: 6,
+        timestamp: Date.now(),
+        model: "claude-3-5-sonnet-20241022",
+      });
+
+      await seedHistory(compactionReq, streamedSummary);
+
+      const event = createStreamEndEvent("Summary", {
+        usage: { inputTokens: 100, outputTokens: 0, totalTokens: undefined },
+        providerMetadata: { anthropic: { cacheCreationInputTokens: 50_000 } },
+      });
+
+      const result = await handler.handleCompletion(event);
+
+      expect(result).toBe(true);
+      const streamMsg = getEmittedStreamEndEvent(emittedEvents);
+      expect(streamMsg).toBeDefined();
+      expect(streamMsg?.metadata.contextUsage).toBeUndefined();
+      expect(streamMsg?.metadata.providerMetadata).toBeUndefined();
     });
 
     it("should skip malformed compaction boundary markers when deriving next epoch", async () => {

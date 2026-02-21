@@ -519,19 +519,49 @@ export class CompactionHandler {
     const { providerMetadata, contextProviderMetadata, contextUsage, timestamp, ...cleanMetadata } =
       event.metadata;
 
+    // Carry a post-compaction context estimate (system prompt + summary) so the
+    // usage meter shows "near empty" after workspace switches instead of vanishing.
+    const postCompactionContextEstimate = this.computePostCompactionContextEstimate(
+      cleanMetadata.systemMessageTokens,
+      cleanMetadata.usage
+    );
+
     const sanitizedEvent: StreamEndEvent = {
       ...event,
-      metadata: cleanMetadata,
+      metadata: {
+        ...cleanMetadata,
+        ...(postCompactionContextEstimate && { contextUsage: postCompactionContextEstimate }),
+      },
     };
 
     assert(
       sanitizedEvent.metadata.providerMetadata === undefined &&
-        sanitizedEvent.metadata.contextProviderMetadata === undefined &&
-        sanitizedEvent.metadata.contextUsage === undefined,
-      "Compaction stream-end event must not carry stale provider metadata or context usage"
+        sanitizedEvent.metadata.contextProviderMetadata === undefined,
+      "Compaction stream-end event must not carry stale provider metadata"
     );
 
     return sanitizedEvent;
+  }
+
+  /**
+   * Approximate context window size after compaction (system prompt + summary).
+   */
+  private computePostCompactionContextEstimate(
+    systemMessageTokens: number | undefined,
+    usage: LanguageModelV2Usage | undefined
+  ): LanguageModelV2Usage | undefined {
+    const summaryTokens = usage?.outputTokens;
+    if (summaryTokens == null || summaryTokens <= 0) {
+      return undefined;
+    }
+
+    const systemTokens = systemMessageTokens ?? 0;
+    const estimatedInputTokens = systemTokens + summaryTokens;
+    return {
+      inputTokens: estimatedInputTokens,
+      outputTokens: 0,
+      totalTokens: estimatedInputTokens,
+    };
   }
 
   private findPersistedStreamSummaryMessage(
