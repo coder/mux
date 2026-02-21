@@ -26,7 +26,6 @@ import type { WorkspaceService } from "@/node/services/workspaceService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import { InitStateManager as RealInitStateManager } from "@/node/services/initStateManager";
 import assert from "node:assert";
-import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 function initGitRepo(projectPath: string): void {
   execSync("git init -b main", { cwd: projectPath, stdio: "ignore" });
@@ -1490,7 +1489,7 @@ describe("TaskService", () => {
     );
   });
 
-  test("auto-resume falls back to workspace default agentId when metadata and history lack agentId", async () => {
+  test("auto-resume falls back to exec agentId when metadata and history lack agentId", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -1547,7 +1546,7 @@ describe("TaskService", () => {
       rootWorkspaceId,
       expect.stringContaining(childTaskId),
       expect.objectContaining({
-        agentId: WORKSPACE_DEFAULTS.agentId,
+        agentId: "exec",
       }),
       expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
     );

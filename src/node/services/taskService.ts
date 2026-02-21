@@ -309,7 +309,9 @@ export class TaskService {
     }
 
     // 3) Default
-    agentId = agentId ?? WORKSPACE_DEFAULTS.agentId;
+    // Keep task auto-resume recovery on exec even if the workspace default agent changes.
+    // This path needs a deterministic editing-capable fallback for legacy/incomplete metadata.
+    agentId = agentId ?? "exec";
 
     const aiSettings = this.resolveWorkspaceAISettings(parentEntry.workspace, agentId);
     return {
