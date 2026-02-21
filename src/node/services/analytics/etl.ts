@@ -647,14 +647,13 @@ function getMaxSequence(events: IngestEvent[]): number | null {
 function shouldRebuildWorkspaceForSequenceRegression(params: {
   watermark: IngestWatermark;
   parsedMaxSequence: number | null;
-  hasSequenceRegression: boolean;
   hasTruncation: boolean;
 }): boolean {
   if (params.hasTruncation) {
     return true;
   }
 
-  if (params.watermark.lastSequence < 0) {
+  if (!hasPersistedWatermark(params.watermark)) {
     return false;
   }
 
@@ -662,11 +661,7 @@ function shouldRebuildWorkspaceForSequenceRegression(params: {
     return true;
   }
 
-  if (params.parsedMaxSequence < params.watermark.lastSequence) {
-    return true;
-  }
-
-  return params.hasSequenceRegression;
+  return params.parsedMaxSequence < params.watermark.lastSequence;
 }
 
 export async function ingestWorkspace(
@@ -703,8 +698,6 @@ export async function ingestWorkspace(
   const lines = chatContents.split("\n").filter((line) => line.trim().length > 0);
 
   let responseIndex = 0;
-  let hasSequenceRegression = false;
-  let previousParsedSequence: number | null = null;
   const parsedEvents: IngestEvent[] = [];
 
   for (let i = 0; i < lines.length; i++) {
@@ -730,13 +723,6 @@ export async function ingestWorkspace(
       "ingestWorkspace: expected assistant event sequence to be an integer"
     );
 
-    // Compare adjacent parsed assistant events to detect true rewrites. Older
-    // historical events naturally remain below the watermark in append-only logs.
-    if (previousParsedSequence !== null && event.sequence < previousParsedSequence) {
-      hasSequenceRegression = true;
-    }
-    previousParsedSequence = event.sequence;
-
     responseIndex += 1;
     parsedEvents.push(event);
   }
@@ -752,14 +738,12 @@ export async function ingestWorkspace(
   const shouldRebuild = shouldRebuildWorkspaceForSequenceRegression({
     watermark,
     parsedMaxSequence,
-    hasSequenceRegression,
     hasTruncation,
   });
 
   if (shouldRebuild) {
-    // Rebuild on truncation, max-sequence rewinds, or sequence ordering regressions
-    // (a parsed assistant event sequence decreases versus the prior parsed event).
-    // This removes stale rows, including the zero-assistant-event truncation case.
+    // Rebuild on truncation or max-sequence rewinds. This removes stale rows,
+    // including the zero-assistant-event truncation case.
     await replaceWorkspaceEvents(conn, workspaceId, parsedEvents);
 
     await writeWatermark(conn, workspaceId, {
