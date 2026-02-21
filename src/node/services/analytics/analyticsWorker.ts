@@ -132,6 +132,36 @@ async function handleQuery(data: QueryData): Promise<unknown> {
   return executeNamedQuery(getConn(), data.queryName, data.params);
 }
 
+function parseNonNegativeInteger(value: unknown): number | null {
+  if (typeof value === "bigint") {
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed < 0) {
+      return null;
+    }
+
+    return parsed;
+  }
+
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    return null;
+  }
+
+  return value;
+}
+
+async function handleNeedsBackfill(): Promise<{ needsBackfill: boolean }> {
+  const result = await getConn().run("SELECT COUNT(*) AS row_count FROM events");
+  const rows = await result.getRowObjectsJS();
+  assert(rows.length === 1, "needsBackfill should return exactly one row");
+
+  const rowCount = parseNonNegativeInteger(rows[0].row_count);
+  assert(rowCount !== null, "needsBackfill expected a non-negative integer row_count");
+
+  return {
+    needsBackfill: rowCount === 0,
+  };
+}
+
 async function dispatchTask(taskName: string, data: unknown): Promise<unknown> {
   switch (taskName) {
     case "init":
@@ -144,30 +174,59 @@ async function dispatchTask(taskName: string, data: unknown): Promise<unknown> {
       return handleClearWorkspace(data as ClearWorkspaceData);
     case "query":
       return handleQuery(data as QueryData);
+    case "needsBackfill":
+      return handleNeedsBackfill();
     default:
       throw new Error(`Unknown analytics worker task: ${taskName}`);
   }
 }
 
-assert(parentPort, "analytics worker requires a parentPort");
+function requireParentPort(): NonNullable<typeof parentPort> {
+  if (parentPort == null) {
+    throw new Error("analytics worker requires a parentPort");
+  }
 
-parentPort.on("message", (message: WorkerRequest) => {
-  dispatchTask(message.taskName, message.data)
-    .then((result) => {
-      const response: WorkerSuccessResponse = {
-        messageId: message.messageId,
-        result,
-      };
-      parentPort!.postMessage(response);
-    })
-    .catch((error) => {
-      const response: WorkerErrorResponse = {
-        messageId: message.messageId,
-        error: {
-          message: getErrorMessage(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        },
-      };
-      parentPort!.postMessage(response);
-    });
+  return parentPort;
+}
+
+const workerParentPort = requireParentPort();
+
+async function processMessage(message: WorkerRequest): Promise<void> {
+  assert(
+    Number.isInteger(message.messageId) && message.messageId >= 0,
+    "analytics worker message must include a non-negative integer messageId"
+  );
+  assert(
+    typeof message.taskName === "string" && message.taskName.trim().length > 0,
+    "analytics worker message requires taskName"
+  );
+
+  try {
+    const result = await dispatchTask(message.taskName, message.data);
+    const response: WorkerSuccessResponse = {
+      messageId: message.messageId,
+      result,
+    };
+    workerParentPort.postMessage(response);
+  } catch (error) {
+    const response: WorkerErrorResponse = {
+      messageId: message.messageId,
+      error: {
+        message: getErrorMessage(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      },
+    };
+    workerParentPort.postMessage(response);
+  }
+}
+
+let messageQueue: Promise<void> = Promise.resolve();
+
+workerParentPort.on("message", (message: WorkerRequest) => {
+  // Serialize ETL and query tasks to avoid races when ingest/rebuild requests
+  // arrive back-to-back from the parent process.
+  messageQueue = messageQueue.then(
+    () => processMessage(message),
+    () => processMessage(message)
+  );
 });

@@ -60,6 +60,10 @@ interface RebuildAllResult {
   workspacesIngested: number;
 }
 
+interface NeedsBackfillResult {
+  needsBackfill: boolean;
+}
+
 function toDateFilterString(value: Date | null | undefined): string | null {
   if (value == null) {
     return null;
@@ -161,10 +165,20 @@ export class AnalyticsService {
     const dbPath = path.join(dbDir, "analytics.db");
     await this.dispatch("init", { dbPath });
 
-    // Backfill existing workspace history on first use so that analytics
-    // queries return data for workspaces that existed before the analytics
-    // feature was installed. Awaited so the first query sees complete data
-    // instead of an empty/partially-rebuilt database.
+    const backfillState = await this.dispatch<NeedsBackfillResult>("needsBackfill", null);
+    assert(
+      typeof backfillState.needsBackfill === "boolean",
+      "Analytics worker needsBackfill task must return a boolean"
+    );
+
+    if (!backfillState.needsBackfill) {
+      return;
+    }
+
+    // Backfill existing workspace history only when the analytics DB appears
+    // uninitialized so routine worker restarts do not trigger a full rebuild.
+    // Awaited so the first query sees complete data instead of an
+    // empty/partially-rebuilt database.
     try {
       await this.dispatch("rebuildAll", { sessionsDir: this.config.sessionsDir });
     } catch (error) {
