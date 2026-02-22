@@ -4,6 +4,7 @@ export interface BackfillDecisionInput {
   eventCount: number;
   watermarkCount: number;
   sessionWorkspaceCount: number;
+  hasAnyWatermarkAtOrAboveZero: boolean;
 }
 
 export function shouldRunInitialBackfill(input: BackfillDecisionInput): boolean {
@@ -19,6 +20,10 @@ export function shouldRunInitialBackfill(input: BackfillDecisionInput): boolean 
     Number.isInteger(input.sessionWorkspaceCount) && input.sessionWorkspaceCount >= 0,
     "shouldRunInitialBackfill requires a non-negative integer sessionWorkspaceCount"
   );
+  assert(
+    typeof input.hasAnyWatermarkAtOrAboveZero === "boolean",
+    "shouldRunInitialBackfill requires boolean hasAnyWatermarkAtOrAboveZero"
+  );
 
   if (input.sessionWorkspaceCount === 0) {
     return false;
@@ -33,7 +38,16 @@ export function shouldRunInitialBackfill(input: BackfillDecisionInput): boolean 
 
   // Watermark rows are keyed by workspace id, so a count lower than the number
   // of session workspaces means a previous rebuild was only partially completed.
-  // When all workspaces are represented (including zero-event histories),
-  // initialization is complete and startup should avoid repeated rebuild loops.
-  return input.watermarkCount < input.sessionWorkspaceCount;
+  if (input.watermarkCount < input.sessionWorkspaceCount) {
+    return true;
+  }
+
+  if (input.eventCount > 0) {
+    return false;
+  }
+
+  // Empty events + complete watermark coverage is usually a legitimate zero-event
+  // history. Rebuild only if any watermark proves assistant events were ingested
+  // before (last_sequence >= 0), which indicates the events table was wiped.
+  return input.hasAnyWatermarkAtOrAboveZero;
 }

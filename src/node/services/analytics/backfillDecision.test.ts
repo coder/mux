@@ -8,6 +8,7 @@ describe("shouldRunInitialBackfill", () => {
         eventCount: 1,
         watermarkCount: 0,
         sessionWorkspaceCount: 2,
+        hasAnyWatermarkAtOrAboveZero: false,
       })
     ).toBe(true);
 
@@ -16,6 +17,7 @@ describe("shouldRunInitialBackfill", () => {
         eventCount: 0,
         watermarkCount: 0,
         sessionWorkspaceCount: 1,
+        hasAnyWatermarkAtOrAboveZero: false,
       })
     ).toBe(true);
   });
@@ -26,16 +28,40 @@ describe("shouldRunInitialBackfill", () => {
         eventCount: 10,
         watermarkCount: 1,
         sessionWorkspaceCount: 2,
+        hasAnyWatermarkAtOrAboveZero: false,
       })
     ).toBe(true);
   });
 
-  test("returns false when watermark rows already cover all session workspaces", () => {
+  test("returns true when events are missing but watermarks show prior assistant history", () => {
     expect(
       shouldRunInitialBackfill({
         eventCount: 0,
         watermarkCount: 2,
         sessionWorkspaceCount: 2,
+        hasAnyWatermarkAtOrAboveZero: true,
+      })
+    ).toBe(true);
+  });
+
+  test("returns false for fully initialized zero-event histories", () => {
+    expect(
+      shouldRunInitialBackfill({
+        eventCount: 0,
+        watermarkCount: 2,
+        sessionWorkspaceCount: 2,
+        hasAnyWatermarkAtOrAboveZero: false,
+      })
+    ).toBe(false);
+  });
+
+  test("returns false when events already exist and watermark coverage is complete", () => {
+    expect(
+      shouldRunInitialBackfill({
+        eventCount: 3,
+        watermarkCount: 2,
+        sessionWorkspaceCount: 2,
+        hasAnyWatermarkAtOrAboveZero: true,
       })
     ).toBe(false);
   });
@@ -46,6 +72,7 @@ describe("shouldRunInitialBackfill", () => {
         eventCount: 0,
         watermarkCount: 0,
         sessionWorkspaceCount: 0,
+        hasAnyWatermarkAtOrAboveZero: false,
       })
     ).toBe(false);
 
@@ -54,6 +81,7 @@ describe("shouldRunInitialBackfill", () => {
         eventCount: 5,
         watermarkCount: 0,
         sessionWorkspaceCount: 0,
+        hasAnyWatermarkAtOrAboveZero: true,
       })
     ).toBe(false);
   });

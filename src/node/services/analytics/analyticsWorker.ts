@@ -171,6 +171,23 @@ function parseNonNegativeInteger(value: unknown): number | null {
   return value;
 }
 
+function parseBooleanLike(value: unknown): boolean | null {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  const parsed = parseNonNegativeInteger(value);
+  if (parsed === 0) {
+    return false;
+  }
+
+  if (parsed === 1) {
+    return true;
+  }
+
+  return null;
+}
+
 async function countSessionWorkspacesWithHistory(sessionsDir: string): Promise<number> {
   let entries: Dirent[];
 
@@ -216,7 +233,9 @@ async function handleNeedsBackfill(data: NeedsBackfillData): Promise<{ needsBack
   const result = await getConn().run(`
     SELECT
       (SELECT COUNT(*) FROM events) AS event_count,
-      (SELECT COUNT(*) FROM ingest_watermarks) AS watermark_count
+      (SELECT COUNT(*) FROM ingest_watermarks) AS watermark_count,
+      (SELECT EXISTS(SELECT 1 FROM ingest_watermarks WHERE last_sequence >= 0))
+        AS has_any_watermark_at_or_above_zero
   `);
   const rows = await result.getRowObjectsJS();
   assert(rows.length === 1, "needsBackfill should return exactly one row");
@@ -227,6 +246,12 @@ async function handleNeedsBackfill(data: NeedsBackfillData): Promise<{ needsBack
   const watermarkCount = parseNonNegativeInteger(rows[0].watermark_count);
   assert(watermarkCount !== null, "needsBackfill expected a non-negative integer watermark_count");
 
+  const hasAnyWatermarkAtOrAboveZero = parseBooleanLike(rows[0].has_any_watermark_at_or_above_zero);
+  assert(
+    hasAnyWatermarkAtOrAboveZero !== null,
+    "needsBackfill expected boolean has_any_watermark_at_or_above_zero"
+  );
+
   const sessionWorkspaceCount = await countSessionWorkspacesWithHistory(data.sessionsDir);
 
   return {
@@ -234,6 +259,7 @@ async function handleNeedsBackfill(data: NeedsBackfillData): Promise<{ needsBack
       eventCount,
       watermarkCount,
       sessionWorkspaceCount,
+      hasAnyWatermarkAtOrAboveZero,
     }),
   };
 }
