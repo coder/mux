@@ -2359,8 +2359,10 @@ export class TaskService {
           return;
         }
 
+        // Preserve taskPrompt here: interrupted queued tasks store their only initial
+        // prompt in config. If send/resume fails, restoreInterruptedTaskAfterResumeFailure
+        // must be able to retain that original prompt for inspection/retry.
         ws.taskStatus = "running";
-        ws.taskPrompt = undefined;
         transitionedToRunning = true;
       },
       { allowMissing: true }

@@ -1977,7 +1977,7 @@ describe("TaskService", () => {
     expect(queuedTask?.taskPrompt).toBe("resume me later");
   });
 
-  test("markInterruptedTaskRunning restores interrupted descendant tasks to running", async () => {
+  test("markInterruptedTaskRunning restores interrupted descendant tasks to running without clearing prompt", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -2016,7 +2016,7 @@ describe("TaskService", () => {
     const tasks = saved.projects.get(projectPath)?.workspaces ?? [];
     const childTask = tasks.find((workspace) => workspace.id === childTaskId);
     expect(childTask?.taskStatus).toBe("running");
-    expect(childTask?.taskPrompt).toBeUndefined();
+    expect(childTask?.taskPrompt).toBe("stale prompt");
   });
 
   test("markInterruptedTaskRunning is a no-op for non-interrupted workspaces", async () => {
