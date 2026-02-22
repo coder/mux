@@ -36,13 +36,36 @@ export interface ExtensionWorkspaceMetadata extends ExtensionMetadata {
 
 export class ExtensionMetadataService {
   private readonly filePath: string;
+
+  private coerceStatusUrl(url: unknown): string | null {
+    return typeof url === "string" ? url : null;
+  }
+
+  private coerceAgentStatus(status: unknown): ExtensionAgentStatus | null {
+    if (typeof status !== "object" || status === null) {
+      return null;
+    }
+
+    const record = status as Record<string, unknown>;
+    if (typeof record.emoji !== "string" || typeof record.message !== "string") {
+      return null;
+    }
+
+    const url = this.coerceStatusUrl(record.url);
+    return {
+      emoji: record.emoji,
+      message: record.message,
+      ...(url ? { url } : {}),
+    };
+  }
+
   private toSnapshot(entry: ExtensionMetadata): WorkspaceActivitySnapshot {
     return {
       recency: entry.recency,
       streaming: entry.streaming,
       lastModel: entry.lastModel ?? null,
       lastThinkingLevel: entry.lastThinkingLevel ?? null,
-      agentStatus: entry.agentStatus ?? null,
+      agentStatus: this.coerceAgentStatus(entry.agentStatus),
     };
   }
 
@@ -199,8 +222,9 @@ export class ExtensionMetadataService {
       };
     } else {
       const workspace = data.workspaces[workspaceId];
-      const previousStatus = workspace.agentStatus;
-      const previousUrl = previousStatus?.url ?? workspace.lastStatusUrl ?? null;
+      const previousStatus = this.coerceAgentStatus(workspace.agentStatus);
+      const previousUrl =
+        previousStatus?.url ?? this.coerceStatusUrl(workspace.lastStatusUrl) ?? null;
       if (agentStatus) {
         const carriedUrl = agentStatus.url ?? previousUrl ?? undefined;
         workspace.agentStatus =
