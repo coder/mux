@@ -3503,9 +3503,19 @@ export class WorkspaceService extends EventEmitter {
   ): Promise<Result<void>> {
     try {
       this.taskService?.resetAutoResumeCount(workspaceId);
+      if (!options?.soft) {
+        // Mark before attempting the session interrupt to close races where a child
+        // could report between stop initiation and descendant cascade termination.
+        this.taskService?.markParentWorkspaceInterrupted(workspaceId);
+      }
+
       const session = this.getOrCreateSession(workspaceId);
       const stopResult = await session.interruptStream(options);
       if (!stopResult.success) {
+        // Interrupt failed, so clear hard-interrupt suppression we set above.
+        if (!options?.soft) {
+          this.taskService?.resetAutoResumeCount(workspaceId);
+        }
         log.error("Failed to stop stream:", stopResult.error);
         return Err(stopResult.error);
       }
@@ -3548,6 +3558,10 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
+      if (!options?.soft) {
+        // Keep suppression state consistent if interrupt setup/stop throws.
+        this.taskService?.resetAutoResumeCount(workspaceId);
+      }
       const errorMessage = getErrorMessage(error);
       log.error("Unexpected error in interruptStream handler:", error);
       return Err(`Failed to interrupt stream: ${errorMessage}`);

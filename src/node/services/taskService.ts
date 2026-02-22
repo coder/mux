@@ -234,6 +234,11 @@ export class TaskService {
   private readonly gitPatchArtifactService: GitPatchArtifactService;
   private readonly remindedAwaitingReport = new Set<string>();
   private readonly handoffInProgress = new Set<string>();
+  /**
+   * Hard-interrupted parent workspaces must not auto-resume until the next user message.
+   * This closes races where descendants could report between parent interrupt and cascade cleanup.
+   */
+  private interruptedParentWorkspaceIds = new Set<string>();
   /** Tracks consecutive auto-resumes per workspace. Reset when a user message is sent. */
   private consecutiveAutoResumes = new Map<string, number>();
 
@@ -2267,9 +2272,20 @@ export class TaskService {
     }
   }
 
-  /** Reset the auto-resume counter for a workspace (called when user sends a real message). */
+  /**
+   * Reset interrupt + auto-resume state for a workspace (called when user sends a real message).
+   */
   resetAutoResumeCount(workspaceId: string): void {
+    assert(workspaceId.length > 0, "resetAutoResumeCount: workspaceId must be non-empty");
     this.consecutiveAutoResumes.delete(workspaceId);
+    this.interruptedParentWorkspaceIds.delete(workspaceId);
+  }
+
+  /** Mark a parent workspace as hard-interrupted by the user. */
+  markParentWorkspaceInterrupted(workspaceId: string): void {
+    assert(workspaceId.length > 0, "markParentWorkspaceInterrupted: workspaceId must be non-empty");
+    this.consecutiveAutoResumes.delete(workspaceId);
+    this.interruptedParentWorkspaceIds.add(workspaceId);
   }
 
   private async handleStreamEnd(event: StreamEndEvent): Promise<void> {
@@ -2288,6 +2304,11 @@ export class TaskService {
       }
 
       if (this.aiService.isStreaming(workspaceId)) {
+        return;
+      }
+
+      if (this.interruptedParentWorkspaceIds.has(workspaceId)) {
+        log.debug("Skipping parent auto-resume after hard interrupt", { workspaceId });
         return;
       }
 
@@ -2820,6 +2841,15 @@ export class TaskService {
     if (!hasActiveDescendants) {
       this.consecutiveAutoResumes.delete(parentWorkspaceId);
     }
+
+    if (this.interruptedParentWorkspaceIds.has(parentWorkspaceId)) {
+      log.debug("Skipping post-report parent auto-resume after hard interrupt", {
+        parentWorkspaceId,
+        childWorkspaceId,
+      });
+      return;
+    }
+
     if (!hasActiveDescendants && !this.aiService.isStreaming(parentWorkspaceId)) {
       const resumeOptions = await this.resolveParentAutoResumeOptions(
         parentWorkspaceId,
