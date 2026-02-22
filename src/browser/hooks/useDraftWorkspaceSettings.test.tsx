@@ -57,7 +57,9 @@ describe("useDraftWorkspaceSettings", () => {
 
     const wrapper: React.FC<{ children: React.ReactNode }> = (props) => (
       <APIProvider client={createStubApiClient()}>
-        <ThinkingProvider projectPath={projectPath}>{props.children}</ThinkingProvider>
+        <ProjectProvider>
+          <ThinkingProvider projectPath={projectPath}>{props.children}</ThinkingProvider>
+        </ProjectProvider>
       </APIProvider>
     );
 
@@ -78,7 +80,9 @@ describe("useDraftWorkspaceSettings", () => {
 
     const wrapper: React.FC<{ children: React.ReactNode }> = (props) => (
       <APIProvider client={createStubApiClient()}>
-        <ThinkingProvider projectPath={projectPath}>{props.children}</ThinkingProvider>
+        <ProjectProvider>
+          <ThinkingProvider projectPath={projectPath}>{props.children}</ThinkingProvider>
+        </ProjectProvider>
       </APIProvider>
     );
 
