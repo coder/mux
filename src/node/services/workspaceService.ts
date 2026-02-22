@@ -3311,7 +3311,7 @@ export class WorkspaceService extends EventEmitter {
         });
         if (shouldClearPersistedAgentStatus) {
           // Match renderer semantics: clear status when a new user turn is accepted.
-          await this.updateAgentStatus(workspaceId, null);
+          void this.updateAgentStatus(workspaceId, null);
         }
         return Ok(undefined);
       }
@@ -3332,7 +3332,7 @@ export class WorkspaceService extends EventEmitter {
 
       if (shouldClearPersistedAgentStatus) {
         // Match renderer semantics: clear status when a new user turn is accepted.
-        await this.updateAgentStatus(workspaceId, null);
+        void this.updateAgentStatus(workspaceId, null);
       }
       return result;
     } catch (error) {
