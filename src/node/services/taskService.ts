@@ -1160,10 +1160,16 @@ export class TaskService {
   }
 
   /**
-   * Terminate all descendant agent tasks for a workspace (leaf-first).
+   * Interrupt all descendant agent tasks for a workspace (leaf-first).
    *
    * Rationale: when a user hard-interrupts a parent workspace, descendants must
    * also stop so they cannot later auto-resume the interrupted parent.
+   *
+   * Keep interrupted task workspaces on disk so users can inspect or manually
+   * resume them later.
+   *
+   * Legacy naming note: this method retains the original "terminate" name for
+   * compatibility with existing call sites.
    */
   async terminateAllDescendantAgentTasks(workspaceId: string): Promise<string[]> {
     assert(
@@ -1171,7 +1177,7 @@ export class TaskService {
       "terminateAllDescendantAgentTasks: workspaceId must be non-empty"
     );
 
-    const terminatedTaskIds: string[] = [];
+    const interruptedTaskIds: string[] = [];
 
     {
       await using _lock = await this.mutex.acquire();
@@ -1180,10 +1186,10 @@ export class TaskService {
       const index = this.buildAgentTaskIndex(cfg);
       const descendants = this.listDescendantAgentTaskIdsFromIndex(index, workspaceId);
       if (descendants.length === 0) {
-        return terminatedTaskIds;
+        return interruptedTaskIds;
       }
 
-      // Delete leaves first to avoid leaving children with missing parents.
+      // Interrupt leaves first to avoid descendant/ancestor status races.
       const parentById = index.parentById;
       const depthById = new Map<string, number>();
       for (const id of descendants) {
@@ -1191,7 +1197,7 @@ export class TaskService {
       }
       descendants.sort((a, b) => (depthById.get(b) ?? 0) - (depthById.get(a) ?? 0));
 
-      const terminationError = new Error("Parent workspace interrupted");
+      const interruptionError = new Error("Parent workspace interrupted");
 
       for (const id of descendants) {
         // Best-effort: stop any active stream immediately to avoid further token usage.
@@ -1206,25 +1212,35 @@ export class TaskService {
 
         this.remindedAwaitingReport.delete(id);
         this.completedReportsByTaskId.delete(id);
-        this.rejectWaiters(id, terminationError);
+        this.rejectWaiters(id, interruptionError);
 
-        const removeResult = await this.workspaceService.remove(id, true);
-        if (!removeResult.success) {
-          log.error("terminateAllDescendantAgentTasks: failed to remove task workspace", {
+        const updated = await this.editWorkspaceEntry(
+          id,
+          (ws) => {
+            ws.taskStatus = "interrupted";
+            ws.taskPrompt = undefined;
+          },
+          { allowMissing: true }
+        );
+        if (!updated) {
+          log.debug("terminateAllDescendantAgentTasks: descendant workspace missing", {
             taskId: id,
-            error: removeResult.error,
           });
           continue;
         }
 
-        terminatedTaskIds.push(id);
+        interruptedTaskIds.push(id);
       }
+    }
+
+    for (const taskId of interruptedTaskIds) {
+      await this.emitWorkspaceMetadata(taskId);
     }
 
     // Free slots and start any queued tasks (best-effort).
     await this.maybeStartQueuedTasks();
 
-    return terminatedTaskIds;
+    return interruptedTaskIds;
   }
 
   private async rollbackFailedTaskCreate(
@@ -1345,10 +1361,15 @@ export class TaskService {
     // persisted artifact from the requesting workspace session dir.
     const cfg = this.config.loadConfigOrDefault();
     const taskWorkspaceEntry = findWorkspaceEntry(cfg, taskId);
-    if (!taskWorkspaceEntry || taskWorkspaceEntry.workspace.taskStatus === "reported") {
+    const taskStatus = taskWorkspaceEntry?.workspace.taskStatus;
+    if (!taskWorkspaceEntry || taskStatus === "reported" || taskStatus === "interrupted") {
       const persisted = await tryReadPersistedReport();
       if (persisted) {
         return persisted;
+      }
+
+      if (taskStatus === "interrupted") {
+        throw new Error("Task interrupted");
       }
 
       throw new Error("Task not found");
@@ -1370,14 +1391,23 @@ export class TaskService {
           return;
         }
 
-        if (taskWorkspaceEntry.workspace.taskStatus === "reported") {
+        if (
+          taskWorkspaceEntry.workspace.taskStatus === "reported" ||
+          taskWorkspaceEntry.workspace.taskStatus === "interrupted"
+        ) {
           const persisted = await tryReadPersistedReport();
           if (persisted) {
             resolve(persisted);
             return;
           }
 
-          reject(new Error("Task not found"));
+          reject(
+            new Error(
+              taskWorkspaceEntry.workspace.taskStatus === "interrupted"
+                ? "Task interrupted"
+                : "Task not found"
+            )
+          );
           return;
         }
 
@@ -2363,6 +2393,9 @@ export class TaskService {
     }
 
     const status = entry.workspace.taskStatus;
+    if (status === "interrupted") {
+      return;
+    }
     if (status === "reported") {
       await this.finalizeTerminationPhaseForReportedTask(workspaceId);
       return;

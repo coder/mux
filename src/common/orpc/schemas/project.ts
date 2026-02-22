@@ -74,10 +74,13 @@ export const WorkspaceConfigSchema = z.object({
     description:
       "When true, switch_agent tool is enabled for this workspace (set when session starts from Auto agent).",
   }),
-  taskStatus: z.enum(["queued", "running", "awaiting_report", "reported"]).optional().meta({
-    description:
-      "Agent task lifecycle status for child workspaces (queued|running|awaiting_report|reported).",
-  }),
+  taskStatus: z
+    .enum(["queued", "running", "awaiting_report", "interrupted", "reported"])
+    .optional()
+    .meta({
+      description:
+        "Agent task lifecycle status for child workspaces (queued|running|awaiting_report|interrupted|reported).",
+    }),
   reportedAt: z.string().optional().meta({
     description: "ISO 8601 timestamp for when an agent task reported completion (optional).",
   }),

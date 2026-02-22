@@ -3531,16 +3531,16 @@ export class WorkspaceService extends EventEmitter {
       // descendant sub-agents cannot finish later and auto-resume this workspace.
       if (!options?.soft) {
         try {
-          const terminatedTaskIds =
+          const interruptedTaskIds =
             await this.taskService?.terminateAllDescendantAgentTasks?.(workspaceId);
-          if (terminatedTaskIds && terminatedTaskIds.length > 0) {
-            log.debug("Cascade-terminated descendant tasks on interrupt", {
+          if (interruptedTaskIds && interruptedTaskIds.length > 0) {
+            log.debug("Cascade-interrupted descendant tasks on interrupt", {
               workspaceId,
-              terminatedTaskIds,
+              interruptedTaskIds,
             });
           }
         } catch (error: unknown) {
-          log.error("Failed to cascade-terminate descendant tasks on interrupt", {
+          log.error("Failed to cascade-interrupt descendant tasks on interrupt", {
             workspaceId,
             error,
           });

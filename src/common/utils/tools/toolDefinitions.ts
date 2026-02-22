@@ -481,7 +481,13 @@ export const TaskTerminateToolResultSchema = z
 // task_list (list descendant sub-agent tasks)
 // -----------------------------------------------------------------------------
 
-const TaskListStatusSchema = z.enum(["queued", "running", "awaiting_report", "reported"]);
+const TaskListStatusSchema = z.enum([
+  "queued",
+  "running",
+  "awaiting_report",
+  "interrupted",
+  "reported",
+]);
 const TaskListThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh", "max"]);
 
 export const TaskListToolArgsSchema = z

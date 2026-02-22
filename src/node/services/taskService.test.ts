@@ -1840,7 +1840,7 @@ describe("TaskService", () => {
     expect(remove).toHaveBeenNthCalledWith(2, parentTaskId, true);
   });
 
-  test("terminateAllDescendantAgentTasks terminates entire subtree leaf-first", async () => {
+  test("terminateAllDescendantAgentTasks interrupts entire subtree leaf-first", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -1882,8 +1882,8 @@ describe("TaskService", () => {
     const { workspaceService, remove } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
-    const terminatedTaskIds = await taskService.terminateAllDescendantAgentTasks(rootWorkspaceId);
-    expect(terminatedTaskIds).toEqual([childTaskId, parentTaskId]);
+    const interruptedTaskIds = await taskService.terminateAllDescendantAgentTasks(rootWorkspaceId);
+    expect(interruptedTaskIds).toEqual([childTaskId, parentTaskId]);
 
     expect(stopStream).toHaveBeenNthCalledWith(
       1,
@@ -1895,8 +1895,14 @@ describe("TaskService", () => {
       parentTaskId,
       expect.objectContaining({ abandonPartial: true })
     );
-    expect(remove).toHaveBeenNthCalledWith(1, childTaskId, true);
-    expect(remove).toHaveBeenNthCalledWith(2, parentTaskId, true);
+    expect(remove).not.toHaveBeenCalled();
+
+    const saved = config.loadConfigOrDefault();
+    const tasks = saved.projects.get(projectPath)?.workspaces ?? [];
+    const parentTask = tasks.find((workspace) => workspace.id === parentTaskId);
+    const childTask = tasks.find((workspace) => workspace.id === childTaskId);
+    expect(parentTask?.taskStatus).toBe("interrupted");
+    expect(childTask?.taskStatus).toBe("interrupted");
   });
 
   test("terminateAllDescendantAgentTasks is a no-op with no descendants", async () => {
@@ -2091,6 +2097,50 @@ describe("TaskService", () => {
 
     const report = await reportPromise;
     expect(report.reportMarkdown).toBe("ok");
+  });
+
+  test("waitForAgentReport rejects interrupted tasks without waiting", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child"),
+                id: childId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "interrupted",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    const { taskService } = createTaskServiceHarness(config);
+
+    let caught: unknown = null;
+    try {
+      await taskService.waitForAgentReport(childId, { timeoutMs: 10_000 });
+    } catch (error: unknown) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    if (caught instanceof Error) {
+      expect(caught.message).toMatch(/Task interrupted/);
+    }
   });
 
   test("waitForAgentReport returns persisted report after workspace is removed", async () => {
