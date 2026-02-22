@@ -1958,7 +1958,7 @@ describe("TaskService", () => {
     expect(remove).not.toHaveBeenCalled();
   });
 
-  test("terminateAllDescendantAgentTasks preserves queued task prompts", async () => {
+  test("terminateAllDescendantAgentTasks preserves queued task prompts across repeated interrupts", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -1990,8 +1990,13 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const interruptedTaskIds = await taskService.terminateAllDescendantAgentTasks(rootWorkspaceId);
-    expect(interruptedTaskIds).toEqual([queuedTaskId]);
+    const firstInterruptedTaskIds =
+      await taskService.terminateAllDescendantAgentTasks(rootWorkspaceId);
+    expect(firstInterruptedTaskIds).toEqual([queuedTaskId]);
+
+    const secondInterruptedTaskIds =
+      await taskService.terminateAllDescendantAgentTasks(rootWorkspaceId);
+    expect(secondInterruptedTaskIds).toEqual([queuedTaskId]);
 
     const saved = config.loadConfigOrDefault();
     const tasks = saved.projects.get(projectPath)?.workspaces ?? [];

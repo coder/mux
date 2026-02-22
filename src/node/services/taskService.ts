@@ -1232,12 +1232,17 @@ export class TaskService {
           id,
           (ws) => {
             const previousStatus = ws.taskStatus;
+            const persistedQueuedPrompt = coerceNonEmptyString(ws.taskPrompt);
             ws.taskStatus = "interrupted";
 
             // Queued tasks persist their initial prompt in config until first start.
             // Preserve that prompt when interrupting queued descendants so users can
             // still inspect/resume the preserved workspace intent.
-            if (previousStatus !== "queued") {
+            //
+            // Also preserve across repeated hard interrupts: once a never-started task
+            // is first interrupted, its status becomes "interrupted". Later cascades
+            // must not clear the same persisted prompt.
+            if (previousStatus !== "queued" && !persistedQueuedPrompt) {
               ws.taskPrompt = undefined;
             }
           },
