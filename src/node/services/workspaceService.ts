@@ -1162,7 +1162,7 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  private async updateAgentStatus(
+  public async updateAgentStatus(
     workspaceId: string,
     agentStatus: WorkspaceAgentStatus | null
   ): Promise<void> {

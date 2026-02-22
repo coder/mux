@@ -2480,21 +2480,38 @@ export class TaskService {
         });
       }
 
-      const targetAgentId = await this.resolvePlanAutoHandoffTargetAgentId({
-        workspaceId: args.workspaceId,
-        entry: {
-          projectPath: args.entry.projectPath,
-          workspace: {
-            id: args.entry.workspace.id,
-            name: args.entry.workspace.name,
-            path: args.entry.workspace.path,
-            runtimeConfig: args.entry.workspace.runtimeConfig,
-            taskModelString: args.entry.workspace.taskModelString,
-          },
-        },
-        routing: args.planSubagentExecutorRouting,
-        planContent: planSummary?.content ?? null,
-      });
+      const targetAgentId = await (async () => {
+        const shouldShowRoutingStatus = args.planSubagentExecutorRouting === "auto";
+        if (shouldShowRoutingStatus) {
+          // Auto routing can pause for up to the LLM timeout; surface progress in the sidebar.
+          await this.workspaceService.updateAgentStatus(args.workspaceId, {
+            emoji: "🤔",
+            message: "Deciding execution strategy…",
+          });
+        }
+
+        try {
+          return await this.resolvePlanAutoHandoffTargetAgentId({
+            workspaceId: args.workspaceId,
+            entry: {
+              projectPath: args.entry.projectPath,
+              workspace: {
+                id: args.entry.workspace.id,
+                name: args.entry.workspace.name,
+                path: args.entry.workspace.path,
+                runtimeConfig: args.entry.workspace.runtimeConfig,
+                taskModelString: args.entry.workspace.taskModelString,
+              },
+            },
+            routing: args.planSubagentExecutorRouting,
+            planContent: planSummary?.content ?? null,
+          });
+        } finally {
+          if (shouldShowRoutingStatus) {
+            await this.workspaceService.updateAgentStatus(args.workspaceId, null);
+          }
+        }
+      })();
 
       const summaryContent = planSummary
         ? `# Plan\n\n${planSummary.content}\n\nNote: This chat already contains the full plan; no need to re-open the plan file.\n\n---\n\n*Plan file preserved at:* \`${planSummary.path}\``

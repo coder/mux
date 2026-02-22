@@ -20,7 +20,7 @@ export const WorkspaceStatusDot = memo<{
       recencyTimestamp,
     } = useWorkspaceSidebarState(workspaceId);
 
-    const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
+    const isWorking = (canInterrupt || isStarting || Boolean(agentStatus)) && !awaitingUserQuestion;
 
     // Compute unread status if lastReadTimestamp provided (sidebar only)
     const unread = useMemo(() => {
