@@ -25,7 +25,10 @@ export function shouldRunInitialBackfill(input: BackfillDecisionInput): boolean 
   }
 
   if (input.watermarkCount === 0) {
-    return input.eventCount === 0;
+    // Event rows can exist without any watermark rows when ingestion is interrupted
+    // between writes. Treat missing watermarks as incomplete initialization so
+    // startup repairs the partial state on the next boot.
+    return true;
   }
 
   // Watermark rows are keyed by workspace id, so a count lower than the number

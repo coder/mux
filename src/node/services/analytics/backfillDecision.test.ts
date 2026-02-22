@@ -2,14 +2,22 @@ import { describe, expect, test } from "bun:test";
 import { shouldRunInitialBackfill } from "./backfillDecision";
 
 describe("shouldRunInitialBackfill", () => {
-  test("returns false when events exist but no watermarks", () => {
+  test("returns true when session workspaces exist but watermark coverage is missing", () => {
     expect(
       shouldRunInitialBackfill({
         eventCount: 1,
         watermarkCount: 0,
         sessionWorkspaceCount: 2,
       })
-    ).toBe(false);
+    ).toBe(true);
+
+    expect(
+      shouldRunInitialBackfill({
+        eventCount: 0,
+        watermarkCount: 0,
+        sessionWorkspaceCount: 1,
+      })
+    ).toBe(true);
   });
 
   test("returns true when watermark rows cover only part of the session set", () => {
@@ -32,18 +40,18 @@ describe("shouldRunInitialBackfill", () => {
     ).toBe(false);
   });
 
-  test("returns true only for uninitialized analytics with session workspaces", () => {
+  test("returns false when there are no session workspaces", () => {
     expect(
       shouldRunInitialBackfill({
         eventCount: 0,
         watermarkCount: 0,
-        sessionWorkspaceCount: 1,
+        sessionWorkspaceCount: 0,
       })
-    ).toBe(true);
+    ).toBe(false);
 
     expect(
       shouldRunInitialBackfill({
-        eventCount: 0,
+        eventCount: 5,
         watermarkCount: 0,
         sessionWorkspaceCount: 0,
       })
