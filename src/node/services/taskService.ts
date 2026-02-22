@@ -1217,8 +1217,15 @@ export class TaskService {
         const updated = await this.editWorkspaceEntry(
           id,
           (ws) => {
+            const previousStatus = ws.taskStatus;
             ws.taskStatus = "interrupted";
-            ws.taskPrompt = undefined;
+
+            // Queued tasks persist their initial prompt in config until first start.
+            // Preserve that prompt when interrupting queued descendants so users can
+            // still inspect/resume the preserved workspace intent.
+            if (previousStatus !== "queued") {
+              ws.taskPrompt = undefined;
+            }
           },
           { allowMissing: true }
         );

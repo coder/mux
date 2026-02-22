@@ -1935,6 +1935,48 @@ describe("TaskService", () => {
     expect(remove).not.toHaveBeenCalled();
   });
 
+  test("terminateAllDescendantAgentTasks preserves queued task prompts", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const queuedTaskId = "task-queued";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
+              {
+                path: path.join(projectPath, "queued-task"),
+                id: queuedTaskId,
+                name: "agent_exec_queued",
+                parentWorkspaceId: rootWorkspaceId,
+                agentType: "exec",
+                taskStatus: "queued",
+                taskPrompt: "resume me later",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    const { taskService } = createTaskServiceHarness(config);
+
+    const interruptedTaskIds = await taskService.terminateAllDescendantAgentTasks(rootWorkspaceId);
+    expect(interruptedTaskIds).toEqual([queuedTaskId]);
+
+    const saved = config.loadConfigOrDefault();
+    const tasks = saved.projects.get(projectPath)?.workspaces ?? [];
+    const queuedTask = tasks.find((workspace) => workspace.id === queuedTaskId);
+    expect(queuedTask?.taskStatus).toBe("interrupted");
+    expect(queuedTask?.taskPrompt).toBe("resume me later");
+  });
+
   test("markInterruptedTaskRunning restores interrupted descendant tasks to running", async () => {
     const config = await createTestConfig(rootDir);
 

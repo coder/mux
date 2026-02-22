@@ -3469,6 +3469,14 @@ export class WorkspaceService extends EventEmitter {
 
       const session = this.getOrCreateSession(workspaceId);
 
+      const taskStatus = this.taskService?.getAgentTaskStatus?.(workspaceId);
+      if (taskStatus === "interrupted" && session.isBusy()) {
+        return Err({
+          type: "unknown",
+          raw: "Interrupted task is still winding down. Wait until it is idle, then try again.",
+        });
+      }
+
       const normalizedOptions = this.normalizeSendMessageAgentId(options);
 
       // Persist last-used model + thinking level for cross-device consistency.
