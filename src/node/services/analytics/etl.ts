@@ -908,8 +908,17 @@ export async function rebuildAll(
     "rebuildAll: workspaceMetaById must be an object"
   );
 
-  await conn.run("DELETE FROM events");
-  await conn.run("DELETE FROM ingest_watermarks");
+  await conn.run("BEGIN TRANSACTION");
+  try {
+    // Reset both tables atomically so a crash cannot leave empty events with
+    // stale watermarks that would incorrectly suppress initial backfill.
+    await conn.run("DELETE FROM events");
+    await conn.run("DELETE FROM ingest_watermarks");
+    await conn.run("COMMIT");
+  } catch (error) {
+    await conn.run("ROLLBACK");
+    throw error;
+  }
 
   let entries: Dirent[] | null = null;
   try {
