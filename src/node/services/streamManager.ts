@@ -677,6 +677,33 @@ export class StreamManager extends EventEmitter {
     return totalUsage;
   }
 
+  private resolveTtftMsForStreamEnd(streamInfo: WorkspaceStreamInfo): number | undefined {
+    const firstTokenPart = streamInfo.parts.find(
+      (
+        part
+      ): part is Extract<
+        CompletedMessagePart,
+        { type: "text" | "reasoning"; timestamp?: number }
+      > => (part.type === "text" || part.type === "reasoning") && part.text.length > 0
+    );
+
+    if (!firstTokenPart) {
+      return undefined;
+    }
+
+    if (!Number.isFinite(streamInfo.startTime)) {
+      return undefined;
+    }
+
+    const firstTokenTimestamp = firstTokenPart.timestamp;
+    if (typeof firstTokenTimestamp !== "number" || !Number.isFinite(firstTokenTimestamp)) {
+      return undefined;
+    }
+
+    const ttftMs = Math.max(0, firstTokenTimestamp - streamInfo.startTime);
+    return Number.isFinite(ttftMs) ? ttftMs : undefined;
+  }
+
   /**
    * Aggregate provider metadata across all steps.
    *
@@ -1947,6 +1974,7 @@ export class StreamManager extends EventEmitter {
             const contextProviderMetadata =
               streamMeta.contextProviderMetadata ?? streamInfo.lastStepProviderMetadata;
             const duration = streamMeta.duration;
+            const ttftMs = this.resolveTtftMsForStreamEnd(streamInfo);
             // Aggregated provider metadata across all steps (for cost calculation with cache tokens)
             const providerMetadata = markProviderMetadataCostsIncluded(
               await this.getAggregatedProviderMetadata(streamInfo),
@@ -1977,6 +2005,7 @@ export class StreamManager extends EventEmitter {
                 providerMetadata, // Aggregated (for cost calculation)
                 contextProviderMetadata, // Last step (for context window display)
                 duration,
+                ...(ttftMs !== undefined && { ttftMs }),
               },
               parts: streamInfo.parts, // Parts array with temporal ordering (includes reasoning)
             };

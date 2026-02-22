@@ -240,6 +240,7 @@ export const StreamEndEventSchema = z.object({
       // Last step's provider metadata (for context window cache display)
       contextProviderMetadata: z.record(z.string(), z.unknown()).optional(),
       duration: z.number().optional(),
+      ttftMs: z.number().optional(),
       systemMessageTokens: z.number().optional(),
       historySequence: z.number().optional().meta({
         description: "Present when loading from history",

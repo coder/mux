@@ -119,6 +119,7 @@ export const MuxMessageSchema = z.object({
       providerMetadata: z.record(z.string(), z.unknown()).optional(),
       contextProviderMetadata: z.record(z.string(), z.unknown()).optional(),
       duration: z.number().optional(),
+      ttftMs: z.number().optional(),
       systemMessageTokens: z.number().optional(),
       muxMetadata: z.any().optional(),
       cmuxMetadata: z.any().optional(), // Legacy field for backward compatibility

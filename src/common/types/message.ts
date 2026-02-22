@@ -387,6 +387,7 @@ export function isCompactionSummaryMetadata(
 export interface MuxMetadata {
   historySequence?: number; // Assigned by backend for global message ordering (required when writing to history)
   duration?: number;
+  ttftMs?: number; // Time-to-first-token measured from stream start; omitted when unavailable
   /** @deprecated Legacy base mode derived from agent definition. */
   mode?: AgentMode;
   timestamp?: number;

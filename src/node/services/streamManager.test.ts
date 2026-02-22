@@ -891,6 +891,151 @@ describe("StreamManager - Unavailable Tool Handling", () => {
   });
 });
 
+describe("StreamManager - TTFT metadata persistence", () => {
+  const runtime = createRuntime({ type: "local", srcBaseDir: "/tmp" });
+
+  async function finalizeStreamAndReadMessage(params: {
+    workspaceId: string;
+    messageId: string;
+    historySequence: number;
+    startTime: number;
+    parts: unknown[];
+  }) {
+    const streamManager = new StreamManager(historyService);
+    // Suppress error events from bubbling up as uncaught exceptions during tests
+    streamManager.on("error", () => undefined);
+
+    const replaceTokenTrackerResult = Reflect.set(streamManager, "tokenTracker", {
+      setModel: async () => undefined,
+      countTokens: async () => 0,
+    });
+    if (!replaceTokenTrackerResult) {
+      throw new Error("Failed to mock StreamManager.tokenTracker");
+    }
+
+    const appendResult = await historyService.appendToHistory(params.workspaceId, {
+      id: params.messageId,
+      role: "assistant",
+      metadata: {
+        historySequence: params.historySequence,
+        partial: true,
+      },
+      parts: [],
+    });
+    expect(appendResult.success).toBe(true);
+    if (!appendResult.success) {
+      throw new Error(appendResult.error);
+    }
+
+    const processStreamWithCleanup = Reflect.get(streamManager, "processStreamWithCleanup") as (
+      workspaceId: string,
+      streamInfo: unknown,
+      historySequence: number
+    ) => Promise<void>;
+    expect(typeof processStreamWithCleanup).toBe("function");
+
+    const streamInfo = {
+      state: "streaming",
+      streamResult: {
+        fullStream: (async function* () {
+          // No-op stream: tests verify stream-end finalization behavior from pre-populated parts.
+        })(),
+        totalUsage: Promise.resolve({ inputTokens: 4, outputTokens: 6, totalTokens: 10 }),
+        usage: Promise.resolve({ inputTokens: 4, outputTokens: 6, totalTokens: 10 }),
+        providerMetadata: Promise.resolve(undefined),
+        steps: Promise.resolve([]),
+      },
+      abortController: new AbortController(),
+      messageId: params.messageId,
+      token: "test-token",
+      startTime: params.startTime,
+      lastPartTimestamp: params.startTime,
+      toolCompletionTimestamps: new Map<string, number>(),
+      model: KNOWN_MODELS.SONNET.id,
+      historySequence: params.historySequence,
+      parts: params.parts,
+      lastPartialWriteTime: 0,
+      partialWriteTimer: undefined,
+      partialWritePromise: undefined,
+      processingPromise: Promise.resolve(),
+      softInterrupt: { pending: false as const },
+      runtimeTempDir: "",
+      runtime,
+      cumulativeUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      cumulativeProviderMetadata: undefined,
+      didRetryPreviousResponseIdAtStep: false,
+      currentStepStartIndex: 0,
+      stepTracker: {},
+    };
+
+    await processStreamWithCleanup.call(
+      streamManager,
+      params.workspaceId,
+      streamInfo,
+      params.historySequence
+    );
+
+    const historyResult = await historyService.getHistoryFromLatestBoundary(params.workspaceId);
+    expect(historyResult.success).toBe(true);
+    if (!historyResult.success) {
+      throw new Error(historyResult.error);
+    }
+
+    const updatedMessage = historyResult.data.find((message) => message.id === params.messageId);
+    expect(updatedMessage).toBeDefined();
+    if (!updatedMessage) {
+      throw new Error(`Expected updated message ${params.messageId} in history`);
+    }
+
+    return updatedMessage;
+  }
+
+  test("persists ttftMs in final assistant metadata when first-token timing is available", async () => {
+    const startTime = Date.now() - 1000;
+    const updatedMessage = await finalizeStreamAndReadMessage({
+      workspaceId: "ttft-present-workspace",
+      messageId: "ttft-present-message",
+      historySequence: 1,
+      startTime,
+      parts: [
+        {
+          type: "text",
+          text: "hello",
+          timestamp: startTime + 250,
+        },
+      ],
+    });
+
+    expect(updatedMessage.metadata?.ttftMs).toBe(250);
+  });
+
+  test("omits ttftMs in final assistant metadata when first-token timing is unavailable", async () => {
+    const startTime = Date.now() - 1000;
+    const updatedMessage = await finalizeStreamAndReadMessage({
+      workspaceId: "ttft-missing-workspace",
+      messageId: "ttft-missing-message",
+      historySequence: 1,
+      startTime,
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "tool-1",
+          toolName: "bash",
+          state: "output-available",
+          input: { script: "echo hi" },
+          output: { ok: true },
+          timestamp: startTime + 100,
+        },
+      ],
+    });
+
+    expect(updatedMessage.metadata?.ttftMs).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(updatedMessage.metadata ?? {}, "ttftMs")).toBe(
+      false
+    );
+  });
+});
+
 describe("StreamManager - previousResponseId recovery", () => {
   test("isResponseIdLost returns false for unknown IDs", () => {
     const streamManager = new StreamManager(historyService);
