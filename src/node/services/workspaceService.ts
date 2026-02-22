@@ -1095,7 +1095,7 @@ export class WorkspaceService extends EventEmitter {
     });
 
     this.aiService.on("tool-call-end", (data: unknown) => {
-      if (!isToolCallEndEvent(data) || data.toolName !== "status_set") {
+      if (!isToolCallEndEvent(data) || data.replay === true || data.toolName !== "status_set") {
         return;
       }
 
