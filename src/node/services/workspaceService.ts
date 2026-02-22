@@ -3187,6 +3187,7 @@ export class WorkspaceService extends EventEmitter {
       options,
     });
 
+    let resumedInterruptedTask = false;
     try {
       // Block streaming while workspace is being renamed to prevent path conflicts
       if (this.renamingWorkspaces.has(workspaceId)) {
@@ -3293,6 +3294,19 @@ export class WorkspaceService extends EventEmitter {
       // Persist last-used model + thinking level for cross-device consistency.
       await this.maybePersistAISettingsFromOptions(workspaceId, normalizedOptions, "send");
 
+      // Non-destructive interrupt cascades preserve descendant task workspaces with
+      // taskStatus=interrupted. Transition before queue checks so queued retries still
+      // resume normal stream-end/report finalization when they eventually run.
+      try {
+        resumedInterruptedTask =
+          (await this.taskService?.markInterruptedTaskRunning?.(workspaceId)) ?? false;
+      } catch (error: unknown) {
+        log.error("Failed to restore interrupted task status before sendMessage", {
+          workspaceId,
+          error,
+        });
+      }
+
       const shouldQueue = !normalizedOptions?.editMessageId && session.isBusy();
 
       if (shouldQueue) {
@@ -3330,20 +3344,6 @@ export class WorkspaceService extends EventEmitter {
         this.taskService?.resetAutoResumeCount(workspaceId);
       }
 
-      // Non-destructive interrupt cascades preserve descendant task workspaces with
-      // taskStatus=interrupted. Transition before stream start so TaskService stream-end
-      // handling does not early-return on interrupted status.
-      let resumedInterruptedTask = false;
-      try {
-        resumedInterruptedTask =
-          (await this.taskService?.markInterruptedTaskRunning?.(workspaceId)) ?? false;
-      } catch (error: unknown) {
-        log.error("Failed to restore interrupted task status before sendMessage", {
-          workspaceId,
-          error,
-        });
-      }
-
       const result = await session.sendMessage(message, normalizedOptions, {
         synthetic: internal?.synthetic,
       });
@@ -3369,6 +3369,17 @@ export class WorkspaceService extends EventEmitter {
 
       return result;
     } catch (error) {
+      if (resumedInterruptedTask) {
+        try {
+          await this.taskService?.restoreInterruptedTaskAfterResumeFailure?.(workspaceId);
+        } catch (restoreError: unknown) {
+          log.error("Failed to restore interrupted task status after sendMessage throw", {
+            workspaceId,
+            error: restoreError,
+          });
+        }
+      }
+
       const errorMessage = error instanceof Error ? error.message : JSON.stringify(error, null, 2);
       log.error("Unexpected error in sendMessage handler:", error);
 
@@ -3394,6 +3405,7 @@ export class WorkspaceService extends EventEmitter {
     options: SendMessageOptions,
     internal?: { allowQueuedAgentTask?: boolean }
   ): Promise<Result<{ started: boolean }, SendMessageError>> {
+    let resumedInterruptedTask = false;
     try {
       // Block streaming while workspace is being renamed to prevent path conflicts
       if (this.renamingWorkspaces.has(workspaceId)) {
@@ -3457,7 +3469,6 @@ export class WorkspaceService extends EventEmitter {
       // Non-destructive interrupt cascades preserve descendant task workspaces with
       // taskStatus=interrupted. Transition before stream start so TaskService stream-end
       // handling does not early-return on interrupted status.
-      let resumedInterruptedTask = false;
       try {
         resumedInterruptedTask =
           (await this.taskService?.markInterruptedTaskRunning?.(workspaceId)) ?? false;
@@ -3505,6 +3516,17 @@ export class WorkspaceService extends EventEmitter {
 
       return result;
     } catch (error) {
+      if (resumedInterruptedTask) {
+        try {
+          await this.taskService?.restoreInterruptedTaskAfterResumeFailure?.(workspaceId);
+        } catch (restoreError: unknown) {
+          log.error("Failed to restore interrupted task status after resumeStream throw", {
+            workspaceId,
+            error: restoreError,
+          });
+        }
+      }
+
       const errorMessage = getErrorMessage(error);
       log.error("Unexpected error in resumeStream handler:", error);
 
