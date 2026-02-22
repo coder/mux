@@ -284,7 +284,7 @@ describe("WorkspaceService sendMessage status clearing", () => {
     await cleanupHistory();
   });
 
-  test("clears persisted agent status for non-synthetic sends", async () => {
+  test("does not clear persisted agent status directly for non-synthetic sends", async () => {
     const updateAgentStatus = spyOn(
       workspaceService as unknown as {
         updateAgentStatus: (workspaceId: string, status: null) => Promise<void>;
@@ -298,10 +298,10 @@ describe("WorkspaceService sendMessage status clearing", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(updateAgentStatus).toHaveBeenCalledWith("test-workspace", null);
+    expect(updateAgentStatus).not.toHaveBeenCalled();
   });
 
-  test("does not clear persisted agent status for synthetic sends", async () => {
+  test("does not clear persisted agent status directly for synthetic sends", async () => {
     const updateAgentStatus = spyOn(
       workspaceService as unknown as {
         updateAgentStatus: (workspaceId: string, status: null) => Promise<void>;
@@ -324,7 +324,8 @@ describe("WorkspaceService sendMessage status clearing", () => {
     expect(result.success).toBe(true);
     expect(updateAgentStatus).not.toHaveBeenCalled();
   });
-  test("clears persisted agent status when direct send fails after turn acceptance", async () => {
+
+  test("does not clear persisted agent status directly when direct send fails after turn acceptance", async () => {
     fakeSession.isBusy.mockReturnValue(false);
     fakeSession.sendMessage.mockResolvedValue(
       Err({
@@ -346,10 +347,10 @@ describe("WorkspaceService sendMessage status clearing", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(updateAgentStatus).toHaveBeenCalledWith("test-workspace", null);
+    expect(updateAgentStatus).not.toHaveBeenCalled();
   });
 
-  test("does not clear persisted agent status when direct send is rejected pre-acceptance", async () => {
+  test("does not clear persisted agent status directly when direct send is rejected pre-acceptance", async () => {
     fakeSession.isBusy.mockReturnValue(false);
     fakeSession.sendMessage.mockResolvedValue(
       Err({
@@ -371,6 +372,78 @@ describe("WorkspaceService sendMessage status clearing", () => {
     });
 
     expect(result.success).toBe(false);
+    expect(updateAgentStatus).not.toHaveBeenCalled();
+  });
+
+  test("registerSession clears persisted agent status for accepted user chat events", () => {
+    const updateAgentStatus = spyOn(
+      workspaceService as unknown as {
+        updateAgentStatus: (workspaceId: string, status: null) => Promise<void>;
+      },
+      "updateAgentStatus"
+    ).mockResolvedValue(undefined);
+
+    const workspaceId = "listener-workspace";
+    const sessionEmitter = new EventEmitter();
+    const listenerSession = {
+      onChatEvent: (listener: (event: unknown) => void) => {
+        sessionEmitter.on("chat-event", listener);
+        return () => sessionEmitter.off("chat-event", listener);
+      },
+      onMetadataEvent: (listener: (event: unknown) => void) => {
+        sessionEmitter.on("metadata-event", listener);
+        return () => sessionEmitter.off("metadata-event", listener);
+      },
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      dispose: () => {},
+    } as unknown as AgentSession;
+
+    workspaceService.registerSession(workspaceId, listenerSession);
+
+    sessionEmitter.emit("chat-event", {
+      workspaceId,
+      message: {
+        type: "message",
+        ...createMuxMessage("user-accepted", "user", "hello"),
+      },
+    });
+
+    expect(updateAgentStatus).toHaveBeenCalledWith(workspaceId, null);
+  });
+
+  test("registerSession does not clear persisted agent status for synthetic user chat events", () => {
+    const updateAgentStatus = spyOn(
+      workspaceService as unknown as {
+        updateAgentStatus: (workspaceId: string, status: null) => Promise<void>;
+      },
+      "updateAgentStatus"
+    ).mockResolvedValue(undefined);
+
+    const workspaceId = "synthetic-listener-workspace";
+    const sessionEmitter = new EventEmitter();
+    const listenerSession = {
+      onChatEvent: (listener: (event: unknown) => void) => {
+        sessionEmitter.on("chat-event", listener);
+        return () => sessionEmitter.off("chat-event", listener);
+      },
+      onMetadataEvent: (listener: (event: unknown) => void) => {
+        sessionEmitter.on("metadata-event", listener);
+        return () => sessionEmitter.off("metadata-event", listener);
+      },
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      dispose: () => {},
+    } as unknown as AgentSession;
+
+    workspaceService.registerSession(workspaceId, listenerSession);
+
+    sessionEmitter.emit("chat-event", {
+      workspaceId,
+      message: {
+        type: "message",
+        ...createMuxMessage("user-synthetic", "user", "hello", { synthetic: true }),
+      },
+    });
+
     expect(updateAgentStatus).not.toHaveBeenCalled();
   });
 });

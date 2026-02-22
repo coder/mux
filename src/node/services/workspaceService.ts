@@ -1301,6 +1301,15 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  // Clear persisted sidebar status only after the user turn is accepted and emitted.
+  // sendMessage can fail before acceptance (for example invalid_model_string), so
+  // clearing inside sendMessage would drop status for turns that never entered history.
+  private shouldClearAgentStatusFromChatMessage(message: WorkspaceChatMessage): boolean {
+    return (
+      message.type === "message" && message.role === "user" && message.metadata?.synthetic !== true
+    );
+  }
+
   public getOrCreateSession(workspaceId: string): AgentSession {
     assert(typeof workspaceId === "string", "workspaceId must be a string");
     const trimmed = workspaceId.trim();
@@ -1329,6 +1338,9 @@ export class WorkspaceService extends EventEmitter {
 
     const chatUnsubscribe = session.onChatEvent((event) => {
       this.emit("chat", { workspaceId: event.workspaceId, message: event.message });
+      if (this.shouldClearAgentStatusFromChatMessage(event.message)) {
+        void this.updateAgentStatus(event.workspaceId, null);
+      }
     });
 
     const metadataUnsubscribe = session.onMetadataEvent((event) => {
@@ -1362,6 +1374,9 @@ export class WorkspaceService extends EventEmitter {
 
     const chatUnsubscribe = session.onChatEvent((event) => {
       this.emit("chat", { workspaceId: event.workspaceId, message: event.message });
+      if (this.shouldClearAgentStatusFromChatMessage(event.message)) {
+        void this.updateAgentStatus(event.workspaceId, null);
+      }
     });
 
     const metadataUnsubscribe = session.onMetadataEvent((event) => {
@@ -3234,7 +3249,6 @@ export class WorkspaceService extends EventEmitter {
       // Use current time for recency - this matches the timestamp used on the message
       // in agentSession.sendMessage(). Keeps ExtensionMetadata in sync with chat.jsonl.
       const messageTimestamp = Date.now();
-      const shouldClearPersistedAgentStatus = !isIdleCompaction && !internal?.synthetic;
       if (!isIdleCompaction) {
         void this.updateRecencyTimestamp(workspaceId, messageTimestamp);
       }
@@ -3309,10 +3323,6 @@ export class WorkspaceService extends EventEmitter {
         session.queueMessage(message, normalizedOptions, {
           synthetic: internal?.synthetic,
         });
-        if (shouldClearPersistedAgentStatus) {
-          // Match renderer semantics: clear status when a new user turn is accepted.
-          void this.updateAgentStatus(workspaceId, null);
-        }
         return Ok(undefined);
       }
 
@@ -3328,19 +3338,9 @@ export class WorkspaceService extends EventEmitter {
           error: result.error,
         });
 
-        if (shouldClearPersistedAgentStatus && result.error.type !== "invalid_model_string") {
-          // Some send errors happen after the user turn is accepted and emitted
-          // (for example runtime/startup failures). Clear persisted status in those
-          // cases so background activity does not retain stale previous-turn status.
-          void this.updateAgentStatus(workspaceId, null);
-        }
         return result;
       }
 
-      if (shouldClearPersistedAgentStatus) {
-        // Match renderer semantics: clear status when a new user turn is accepted.
-        void this.updateAgentStatus(workspaceId, null);
-      }
       return result;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : JSON.stringify(error, null, 2);
