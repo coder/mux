@@ -56,6 +56,10 @@ import {
 import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
 import { formatSendMessageError } from "@/node/services/utils/sendMessageError";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
+import {
+  PLAN_AUTO_ROUTING_STATUS_EMOJI,
+  PLAN_AUTO_ROUTING_STATUS_MESSAGE,
+} from "@/common/constants/planAutoRoutingStatus";
 import { taskQueueDebug } from "@/node/services/taskQueueDebug";
 import { readSubagentGitPatchArtifact } from "@/node/services/subagentGitPatchArtifacts";
 import {
@@ -2485,8 +2489,8 @@ export class TaskService {
         if (shouldShowRoutingStatus) {
           // Auto routing can pause for up to the LLM timeout; surface progress in the sidebar.
           await this.workspaceService.updateAgentStatus(args.workspaceId, {
-            emoji: "🤔",
-            message: "Deciding execution strategy…",
+            emoji: PLAN_AUTO_ROUTING_STATUS_EMOJI,
+            message: PLAN_AUTO_ROUTING_STATUS_MESSAGE,
           });
         }
 

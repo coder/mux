@@ -40,6 +40,10 @@ import {
   TooltipTrigger,
 } from "@/browser/components/ui/tooltip";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import {
+  PLAN_AUTO_ROUTING_STATUS_EMOJI,
+  PLAN_AUTO_ROUTING_STATUS_MESSAGE,
+} from "@/common/constants/planAutoRoutingStatus";
 
 export default {
   ...appMeta,
@@ -1776,7 +1780,13 @@ export const ProposePlanAutoRoutingDecisionGap: AppStory = {
             createAssistantMessage("msg-3", "Selecting the right executor for this plan.", {
               historySequence: 3,
               timestamp: STABLE_TIMESTAMP - 220000,
-              toolCalls: [createStatusTool("call-status-1", "🤔", "Deciding execution strategy…")],
+              toolCalls: [
+                createStatusTool(
+                  "call-status-1",
+                  PLAN_AUTO_ROUTING_STATUS_EMOJI,
+                  PLAN_AUTO_ROUTING_STATUS_MESSAGE
+                ),
+              ],
             }),
           ],
         })

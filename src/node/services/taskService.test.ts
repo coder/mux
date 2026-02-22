@@ -20,6 +20,10 @@ import { defaultModel } from "@/common/utils/ai/models";
 import type { PlanSubagentExecutorRouting } from "@/common/types/tasks";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { StreamEndEvent } from "@/common/types/stream";
+import {
+  PLAN_AUTO_ROUTING_STATUS_EMOJI,
+  PLAN_AUTO_ROUTING_STATUS_MESSAGE,
+} from "@/common/constants/planAutoRoutingStatus";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { AIService } from "@/node/services/aiService";
@@ -3713,8 +3717,8 @@ describe("TaskService", () => {
       1,
       childId,
       expect.objectContaining({
-        emoji: "🤔",
-        message: "Deciding execution strategy…",
+        emoji: PLAN_AUTO_ROUTING_STATUS_EMOJI,
+        message: PLAN_AUTO_ROUTING_STATUS_MESSAGE,
       })
     );
     expect(updateAgentStatus).toHaveBeenNthCalledWith(2, childId, null);
