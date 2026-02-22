@@ -21,14 +21,27 @@ function createMockConn(runImplementation: (sql: string, params?: unknown[]) => 
   };
 }
 
+function getSqlStatements(runMock: ReturnType<typeof mock>): string[] {
+  const calls = runMock.mock.calls as unknown[][];
+
+  return calls.map((call) => {
+    const sql = call[0];
+    if (typeof sql !== "string") {
+      throw new TypeError("Expected SQL statement as the first run() argument");
+    }
+
+    return sql;
+  });
+}
+
 describe("rebuildAll", () => {
   test("deletes events and watermarks inside a single transaction", async () => {
-    const { conn, runMock } = createMockConn(async () => undefined);
+    const { conn, runMock } = createMockConn(() => Promise.resolve(undefined));
 
     const result = await rebuildAll(conn, createMissingSessionsDir());
 
     expect(result).toEqual({ workspacesIngested: 0 });
-    expect(runMock.mock.calls.map(([sql]) => sql)).toEqual([
+    expect(getSqlStatements(runMock)).toEqual([
       "BEGIN TRANSACTION",
       "DELETE FROM events",
       "DELETE FROM ingest_watermarks",
@@ -38,19 +51,24 @@ describe("rebuildAll", () => {
 
   test("rolls back when the reset cannot delete both tables", async () => {
     const deleteWatermarksError = new Error("delete ingest_watermarks failed");
-    const { conn, runMock } = createMockConn(async (sql) => {
+    const { conn, runMock } = createMockConn((sql) => {
       if (sql === "DELETE FROM ingest_watermarks") {
-        throw deleteWatermarksError;
+        return Promise.reject(deleteWatermarksError);
       }
 
-      return undefined;
+      return Promise.resolve(undefined);
     });
 
-    await expect(rebuildAll(conn, createMissingSessionsDir())).rejects.toThrow(
-      deleteWatermarksError.message
+    await rebuildAll(conn, createMissingSessionsDir()).then(
+      () => {
+        throw new Error("Expected rebuildAll to reject when deleting ingest_watermarks fails");
+      },
+      (error: unknown) => {
+        expect(error).toBe(deleteWatermarksError);
+      }
     );
 
-    expect(runMock.mock.calls.map(([sql]) => sql)).toEqual([
+    expect(getSqlStatements(runMock)).toEqual([
       "BEGIN TRANSACTION",
       "DELETE FROM events",
       "DELETE FROM ingest_watermarks",
