@@ -1976,6 +1976,43 @@ describe("TaskService", () => {
     expect(childTask?.taskPrompt).toBeUndefined();
   });
 
+  test("markInterruptedTaskRunning is a no-op for non-interrupted workspaces", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const childTaskId = "task-child";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
+              {
+                path: path.join(projectPath, "child-task"),
+                id: childTaskId,
+                name: "agent_explore_child",
+                parentWorkspaceId: rootWorkspaceId,
+                agentType: "explore",
+                taskStatus: "running",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    const editConfigSpy = spyOn(config, "editConfig");
+    const { taskService } = createTaskServiceHarness(config);
+
+    await taskService.markInterruptedTaskRunning(childTaskId);
+
+    expect(editConfigSpy).not.toHaveBeenCalled();
+  });
+
   test("initialize resumes awaiting_report tasks after restart", async () => {
     const config = await createTestConfig(rootDir);
 

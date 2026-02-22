@@ -2329,6 +2329,15 @@ export class TaskService {
   async markInterruptedTaskRunning(workspaceId: string): Promise<void> {
     assert(workspaceId.length > 0, "markInterruptedTaskRunning: workspaceId must be non-empty");
 
+    const configAtStart = this.config.loadConfigOrDefault();
+    const entryAtStart = findWorkspaceEntry(configAtStart, workspaceId);
+    if (!entryAtStart?.workspace.parentWorkspaceId) {
+      return;
+    }
+    if (entryAtStart.workspace.taskStatus !== "interrupted") {
+      return;
+    }
+
     let transitionedToRunning = false;
     await this.editWorkspaceEntry(
       workspaceId,
