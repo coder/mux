@@ -57,6 +57,8 @@ description: Agent instructions for AI assistants working on the Mux codebase
 
 - If a PR has Codex review comments, address + resolve them, then re-request review by commenting `@codex review` on the PR.
 - Prefer `gh` CLI for GitHub interactions over manual web/curl flows.
+- In Orchestrator mode, delegate implementation/verification commands to `exec` or `explore` sub-agents and integrate their patches; do not bypass delegation with direct local edits.
+- In Orchestrator mode, route higher-complexity implementation tasks to `plan` sub-agents so they can research and produce a precise plan before auto-handoff to implementation.
 
 > PR readiness is mandatory. You MUST keep iterating until the PR is fully ready.
 > A PR is fully ready only when: (1) Codex confirms approval (thumbs-up reaction on the PR description or an approval comment like "Didn't find any major issues"), (2) all Codex review threads are resolved, and (3) all required CI checks pass.
@@ -65,11 +67,11 @@ description: Agent instructions for AI assistants working on the Mux codebase
 When a PR exists, you MUST remain in this loop until the PR is fully ready:
 
 1. Push your latest fixes.
-2. Run local validation (`make static-check` and targeted tests as needed).
+2. Run local validation (`make static-check` and targeted tests as needed); in Orchestrator mode, delegate command execution to sub-agents.
 3. Request review with `@codex review`.
 4. Run `./scripts/wait_pr_ready.sh <pr_number>` (which must execute `./scripts/wait_pr_checks.sh <pr_number> --once` while checks are pending).
-5. If Codex leaves comments, address them, resolve threads with `./scripts/resolve_pr_comment.sh <thread_id>`, push, and repeat.
-6. If checks/mergeability fail, fix issues locally, push, and repeat.
+5. If Codex leaves comments, address them (delegate fixes in Orchestrator mode), resolve threads with `./scripts/resolve_pr_comment.sh <thread_id>`, push, and repeat.
+6. If checks/mergeability fail, fix issues locally (delegate fixes in Orchestrator mode), push, and repeat.
 
 The only early-stop exception is when the reviewer is clearly misunderstanding the intended change and further churn would be counterproductive. In that case, leave a clarifying PR comment and pause for human direction.
 
