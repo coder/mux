@@ -247,7 +247,6 @@ async function main() {
     deviceScaleFactor: DEVICE_SCALE_FACTOR,
     colorScheme: "dark",
   };
-  const defaultContext = await browser.newContext(baseContextOptions);
 
   const succeeded: string[] = [];
   const failed: string[] = [];
@@ -268,9 +267,13 @@ async function main() {
         console.log(`  retry ${attempt}/${MAX_RETRIES}...`);
       }
 
-      const attemptContext = story.contextOptions
-        ? await browser.newContext({ ...baseContextOptions, ...story.contextOptions })
-        : defaultContext;
+      // Use a fresh context for every attempt/story so localStorage state from one
+      // screenshot cannot leak into another. This keeps captures deterministic
+      // regardless of run order or --story subset selection.
+      const attemptContext = await browser.newContext({
+        ...baseContextOptions,
+        ...story.contextOptions,
+      });
       try {
         const page = await attemptContext.newPage();
         try {
@@ -339,9 +342,7 @@ async function main() {
           console.error(`  FAILED after ${MAX_RETRIES} attempts: ${message}`);
         }
       } finally {
-        if (attemptContext !== defaultContext) {
-          await attemptContext.close();
-        }
+        await attemptContext.close();
       }
     }
 
@@ -350,7 +351,6 @@ async function main() {
     }
   }
 
-  await defaultContext.close();
   await browser.close();
 
   // Summary.
