@@ -117,6 +117,7 @@ export class ExtensionMetadataService {
         lastModel: null,
         lastThinkingLevel: null,
         agentStatus: null,
+        lastStatusUrl: null,
       };
     } else {
       data.workspaces[workspaceId].recency = timestamp;
@@ -150,6 +151,7 @@ export class ExtensionMetadataService {
         lastModel: model ?? null,
         lastThinkingLevel: thinkingLevel ?? null,
         agentStatus: null,
+        lastStatusUrl: null,
       };
     } else {
       data.workspaces[workspaceId].streaming = streaming;
@@ -180,24 +182,40 @@ export class ExtensionMetadataService {
     const now = Date.now();
 
     if (!data.workspaces[workspaceId]) {
+      const carriedUrl = agentStatus?.url;
       data.workspaces[workspaceId] = {
         recency: now,
         streaming: false,
         lastModel: null,
         lastThinkingLevel: null,
-        agentStatus,
+        agentStatus:
+          agentStatus && carriedUrl !== undefined
+            ? {
+                ...agentStatus,
+                url: carriedUrl,
+              }
+            : agentStatus,
+        lastStatusUrl: carriedUrl ?? null,
       };
     } else {
-      const previousStatus = data.workspaces[workspaceId].agentStatus;
-      if (agentStatus && agentStatus.url === undefined && previousStatus?.url) {
-        // Mirror StreamingMessageAggregator behavior: keep the last known URL when
-        // a subsequent status_set omits `url`.
-        data.workspaces[workspaceId].agentStatus = {
-          ...agentStatus,
-          url: previousStatus.url,
-        };
+      const workspace = data.workspaces[workspaceId];
+      const previousStatus = workspace.agentStatus;
+      const previousUrl = previousStatus?.url ?? workspace.lastStatusUrl ?? null;
+      if (agentStatus) {
+        const carriedUrl = agentStatus.url ?? previousUrl ?? undefined;
+        workspace.agentStatus =
+          carriedUrl !== undefined
+            ? {
+                ...agentStatus,
+                url: carriedUrl,
+              }
+            : agentStatus;
+        workspace.lastStatusUrl = carriedUrl ?? null;
       } else {
-        data.workspaces[workspaceId].agentStatus = agentStatus;
+        workspace.agentStatus = null;
+        // Keep lastStatusUrl across clears so the next status_set without `url`
+        // can still reuse the previous deep link.
+        workspace.lastStatusUrl = previousUrl;
       }
     }
 

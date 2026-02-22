@@ -56,6 +56,16 @@ describe("ExtensionMetadataService", () => {
 
     const cleared = await service.setAgentStatus("workspace-3", null);
     expect(cleared.agentStatus).toBeNull();
+
+    const afterClearWithoutUrl = await service.setAgentStatus("workspace-3", {
+      emoji: "🧪",
+      message: "Re-running",
+    });
+    expect(afterClearWithoutUrl.agentStatus).toEqual({
+      emoji: "🧪",
+      message: "Re-running",
+      url: status.url,
+    });
   });
 
   test("setStreaming toggles status and remembers last model", async () => {
