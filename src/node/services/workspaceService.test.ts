@@ -187,6 +187,11 @@ describe("WorkspaceService sendMessage status clearing", () => {
   let workspaceService: WorkspaceService;
   let historyService: HistoryService;
   let cleanupHistory: () => Promise<void>;
+  let fakeSession: {
+    isBusy: ReturnType<typeof mock>;
+    queueMessage: ReturnType<typeof mock>;
+    sendMessage: ReturnType<typeof mock>;
+  };
 
   beforeEach(async () => {
     const aiService: AIService = {
@@ -252,16 +257,17 @@ describe("WorkspaceService sendMessage status clearing", () => {
       mockBackgroundProcessManager as BackgroundProcessManager
     );
 
-    const fakeSession = {
+    fakeSession = {
       isBusy: mock(() => true),
       queueMessage: mock(() => undefined),
-    } as unknown as AgentSession;
+      sendMessage: mock(() => Promise.resolve(Ok(undefined))),
+    };
 
     (
       workspaceService as unknown as {
         getOrCreateSession: (workspaceId: string) => AgentSession;
       }
-    ).getOrCreateSession = mock(() => fakeSession);
+    ).getOrCreateSession = mock(() => fakeSession as unknown as AgentSession);
 
     (
       workspaceService as unknown as {
@@ -316,6 +322,30 @@ describe("WorkspaceService sendMessage status clearing", () => {
     );
 
     expect(result.success).toBe(true);
+    expect(updateAgentStatus).not.toHaveBeenCalled();
+  });
+  test("does not clear persisted agent status when direct send fails", async () => {
+    fakeSession.isBusy.mockReturnValue(false);
+    fakeSession.sendMessage.mockResolvedValue(
+      Err({
+        type: "unknown" as const,
+        raw: "model validation failed",
+      })
+    );
+
+    const updateAgentStatus = spyOn(
+      workspaceService as unknown as {
+        updateAgentStatus: (workspaceId: string, status: null) => Promise<void>;
+      },
+      "updateAgentStatus"
+    ).mockResolvedValue(undefined);
+
+    const result = await workspaceService.sendMessage("test-workspace", "hello", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(false);
     expect(updateAgentStatus).not.toHaveBeenCalled();
   });
 });

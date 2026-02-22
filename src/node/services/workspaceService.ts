@@ -3234,13 +3234,9 @@ export class WorkspaceService extends EventEmitter {
       // Use current time for recency - this matches the timestamp used on the message
       // in agentSession.sendMessage(). Keeps ExtensionMetadata in sync with chat.jsonl.
       const messageTimestamp = Date.now();
+      const shouldClearPersistedAgentStatus = !isIdleCompaction && !internal?.synthetic;
       if (!isIdleCompaction) {
         await this.updateRecencyTimestamp(workspaceId, messageTimestamp);
-      }
-      if (!isIdleCompaction && !internal?.synthetic) {
-        // Serialize with recency updates so both fields persist from the same turn
-        // without last-writer-wins races across separate metadata writes.
-        await this.updateAgentStatus(workspaceId, null);
       }
 
       // Experiments: resolve flags respecting userOverridable setting.
@@ -3313,6 +3309,10 @@ export class WorkspaceService extends EventEmitter {
         session.queueMessage(message, normalizedOptions, {
           synthetic: internal?.synthetic,
         });
+        if (shouldClearPersistedAgentStatus) {
+          // Match renderer semantics: clear status when a new user turn is accepted.
+          await this.updateAgentStatus(workspaceId, null);
+        }
         return Ok(undefined);
       }
 
@@ -3327,6 +3327,12 @@ export class WorkspaceService extends EventEmitter {
           workspaceId,
           error: result.error,
         });
+        return result;
+      }
+
+      if (shouldClearPersistedAgentStatus) {
+        // Match renderer semantics: clear status when a new user turn is accepted.
+        await this.updateAgentStatus(workspaceId, null);
       }
       return result;
     } catch (error) {
