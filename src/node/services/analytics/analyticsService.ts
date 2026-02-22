@@ -326,9 +326,10 @@ export class AnalyticsService {
       return;
     }
 
-    // Backfill existing workspace history only when the analytics DB appears
-    // uninitialized (no events and no ingest watermarks) and there are session
-    // directories to process. Routine worker restarts therefore skip full rebuilds.
+    // Backfill existing workspace history when analytics initialization is
+    // missing or appears partial (fewer workspace watermarks than workspace
+    // history files on disk). Once every session workspace has a watermark row,
+    // routine worker restarts skip full rebuilds, including zero-event histories.
     // Awaited so the first query sees complete data instead of an
     // empty/partially-rebuilt database.
     try {

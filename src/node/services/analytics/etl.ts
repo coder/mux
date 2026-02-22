@@ -9,7 +9,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { log } from "@/node/services/log";
 
-const CHAT_FILE_NAME = "chat.jsonl";
+export const CHAT_FILE_NAME = "chat.jsonl";
 const METADATA_FILE_NAME = "metadata.json";
 
 const INSERT_EVENT_SQL = `

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import type { Dirent } from "node:fs";
 import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { parentPort } from "node:worker_threads";
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
 import { getErrorMessage } from "@/common/utils/errors";
 import { shouldRunInitialBackfill } from "./backfillDecision";
-import { clearWorkspaceAnalyticsState, ingestWorkspace, rebuildAll } from "./etl";
+import { CHAT_FILE_NAME, clearWorkspaceAnalyticsState, ingestWorkspace, rebuildAll } from "./etl";
 import { executeNamedQuery } from "./queries";
 
 interface WorkerRequest {
@@ -170,20 +171,43 @@ function parseNonNegativeInteger(value: unknown): number | null {
   return value;
 }
 
-async function hasSessionDirectories(sessionsDir: string): Promise<boolean> {
+async function countSessionWorkspacesWithHistory(sessionsDir: string): Promise<number> {
   let entries: Dirent[];
 
   try {
     entries = await fs.readdir(sessionsDir, { withFileTypes: true });
   } catch (error) {
     if (isRecord(error) && error.code === "ENOENT") {
-      return false;
+      return 0;
     }
 
     throw error;
   }
 
-  return entries.some((entry) => entry.isDirectory());
+  let sessionWorkspaceCount = 0;
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+
+    const chatPath = path.join(sessionsDir, entry.name, CHAT_FILE_NAME);
+
+    try {
+      const chatStat = await fs.stat(chatPath);
+      if (chatStat.isFile()) {
+        sessionWorkspaceCount += 1;
+      }
+    } catch (error) {
+      if (isRecord(error) && error.code === "ENOENT") {
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  return sessionWorkspaceCount;
 }
 
 async function handleNeedsBackfill(data: NeedsBackfillData): Promise<{ needsBackfill: boolean }> {
@@ -203,16 +227,13 @@ async function handleNeedsBackfill(data: NeedsBackfillData): Promise<{ needsBack
   const watermarkCount = parseNonNegativeInteger(rows[0].watermark_count);
   assert(watermarkCount !== null, "needsBackfill expected a non-negative integer watermark_count");
 
-  const hasSessionDirs =
-    eventCount === 0 && watermarkCount === 0
-      ? await hasSessionDirectories(data.sessionsDir)
-      : false;
+  const sessionWorkspaceCount = await countSessionWorkspacesWithHistory(data.sessionsDir);
 
   return {
     needsBackfill: shouldRunInitialBackfill({
       eventCount,
       watermarkCount,
-      hasSessionDirectories: hasSessionDirs,
+      sessionWorkspaceCount,
     }),
   };
 }

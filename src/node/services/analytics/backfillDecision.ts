@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 export interface BackfillDecisionInput {
   eventCount: number;
   watermarkCount: number;
-  hasSessionDirectories: boolean;
+  sessionWorkspaceCount: number;
 }
 
 export function shouldRunInitialBackfill(input: BackfillDecisionInput): boolean {
@@ -16,17 +16,21 @@ export function shouldRunInitialBackfill(input: BackfillDecisionInput): boolean 
     "shouldRunInitialBackfill requires a non-negative integer watermarkCount"
   );
   assert(
-    typeof input.hasSessionDirectories === "boolean",
-    "shouldRunInitialBackfill requires a boolean hasSessionDirectories"
+    Number.isInteger(input.sessionWorkspaceCount) && input.sessionWorkspaceCount >= 0,
+    "shouldRunInitialBackfill requires a non-negative integer sessionWorkspaceCount"
   );
 
-  // If ingest watermarks already exist, initialization has happened before even
-  // when the workspace currently has zero assistant events (for example, a
-  // history containing only non-billable messages). Rebuilding on every startup
-  // would repeatedly rescan all sessions and waste work.
-  if (input.eventCount > 0 || input.watermarkCount > 0) {
+  if (input.sessionWorkspaceCount === 0) {
     return false;
   }
 
-  return input.hasSessionDirectories;
+  if (input.watermarkCount === 0) {
+    return input.eventCount === 0;
+  }
+
+  // Watermark rows are keyed by workspace id, so a count lower than the number
+  // of session workspaces means a previous rebuild was only partially completed.
+  // When all workspaces are represented (including zero-event histories),
+  // initialization is complete and startup should avoid repeated rebuild loops.
+  return input.watermarkCount < input.sessionWorkspaceCount;
 }
