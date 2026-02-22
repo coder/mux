@@ -3236,7 +3236,7 @@ export class WorkspaceService extends EventEmitter {
       const messageTimestamp = Date.now();
       const shouldClearPersistedAgentStatus = !isIdleCompaction && !internal?.synthetic;
       if (!isIdleCompaction) {
-        await this.updateRecencyTimestamp(workspaceId, messageTimestamp);
+        void this.updateRecencyTimestamp(workspaceId, messageTimestamp);
       }
 
       // Experiments: resolve flags respecting userOverridable setting.
