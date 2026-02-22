@@ -86,6 +86,10 @@ interface ReviewPanelProps {
   isCreating?: boolean;
   /** Callback to report stats changes (for tab badge) */
   onStatsChange?: (stats: ReviewPanelStats) => void;
+  /** Whether immersive review should use touch/mobile UX affordances. */
+  isTouchImmersive?: boolean;
+  /** Allow parent to switch touch/mobile immersive affordances before entering immersive UI. */
+  onTouchImmersiveChange?: (isTouch: boolean) => void;
   /** Callback to open a file in a new tab */
   onOpenFile?: (relativePath: string) => void;
 }
@@ -260,6 +264,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   focusTrigger,
   isCreating = false,
   onStatsChange,
+  isTouchImmersive = false,
+  onTouchImmersiveChange,
   onOpenFile,
 }) => {
   const originFetchRef = useRef<OriginFetchState | null>(null);
@@ -378,8 +384,15 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   );
 
   const toggleImmersive = useCallback(() => {
-    setIsImmersive((prev) => !prev);
-  }, [setIsImmersive]);
+    setIsImmersive((prev) => {
+      const next = !prev;
+      if (next) {
+        // The in-panel immersive button defaults to keyboard-first navigation.
+        onTouchImmersiveChange?.(false);
+      }
+      return next;
+    });
+  }, [onTouchImmersiveChange, setIsImmersive]);
 
   const reviewsByFilePath = useMemo(() => {
     const grouped = new Map<string, typeof reviews>();
@@ -1436,6 +1449,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
               selectedHunkId={selectedHunkId}
               onSelectHunk={setSelectedHunkId}
               onExit={toggleImmersive}
+              isTouchImmersive={isTouchImmersive}
               onReviewNote={onReviewNote}
               reviewActions={reviewActions}
               reviewsByFilePath={reviewsByFilePath}

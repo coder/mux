@@ -1,6 +1,6 @@
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
-import { GitBranch, Link2, Pencil, Server } from "lucide-react";
+import { GitBranch, Link2, Maximize2, Pencil, Server } from "lucide-react";
 import React from "react";
 
 interface WorkspaceActionButtonProps {
@@ -38,6 +38,8 @@ interface WorkspaceActionsMenuContentProps {
   onEditTitle?: (() => void) | null;
   /** Workspace-level settings action currently surfaced from the workspace menu bar. */
   onConfigureMcp?: (() => void) | null;
+  /** Mobile workspace-header action: open immersive review in full-screen touch mode. */
+  onOpenTouchFullscreenReview?: (() => void) | null;
   onForkChat?: ((anchorEl: HTMLElement) => void) | null;
   onShareTranscript?: (() => void) | null;
   onArchiveChat?: ((anchorEl: HTMLElement) => void) | null;
@@ -80,6 +82,17 @@ export const WorkspaceActionsMenuContent: React.FC<WorkspaceActionsMenuContentPr
             props.onConfigureMcp?.();
           }}
           testId={props.configureMcpTestId}
+        />
+      )}
+      {props.onOpenTouchFullscreenReview && !props.isMuxHelpChat && (
+        <WorkspaceActionButton
+          label="Mobile full-screen review"
+          icon={<Maximize2 className="h-3 w-3 shrink-0" />}
+          onClick={(e) => {
+            e.stopPropagation();
+            props.onCloseMenu();
+            props.onOpenTouchFullscreenReview?.();
+          }}
         />
       )}
       {props.onForkChat && !props.isMuxHelpChat && (

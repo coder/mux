@@ -6,6 +6,7 @@ import {
   getRightSidebarLayoutKey,
   getTerminalTitlesKey,
 } from "@/common/constants/storage";
+import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import {
   readPersistedState,
@@ -244,6 +245,10 @@ interface RightSidebarTabsetNodeProps {
   reviewStats: ReviewStats | null;
   onReviewStatsChange: (stats: ReviewStats | null) => void;
   statsTabEnabled: boolean;
+  /** Whether immersive review should use touch/mobile UX affordances. */
+  isTouchReviewImmersive: boolean;
+  /** Update touch/mobile immersive affordance mode from child controls/events. */
+  onTouchReviewImmersiveChange: (isTouch: boolean) => void;
   /** Whether any sidebar tab is currently being dragged */
   isDraggingTab: boolean;
   /** Data about the currently dragged tab (if any) */
@@ -616,6 +621,8 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
               onReviewNote={props.onReviewNote}
               focusTrigger={props.focusTrigger}
               isCreating={props.isCreating}
+              isTouchImmersive={props.isTouchReviewImmersive}
+              onTouchImmersiveChange={props.onTouchReviewImmersiveChange}
               onStatsChange={props.onReviewStatsChange}
               onOpenFile={props.onOpenFile}
             />
@@ -658,6 +665,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     false,
     { listener: true }
   );
+
+  const [isTouchReviewImmersive, setIsTouchReviewImmersive] = React.useState(false);
 
   // Stats tab feature flag
   const { statsTabState } = useFeatureFlags();
@@ -802,6 +811,30 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     _setFocusTrigger((prev) => prev + 1);
   }, [setLayout]);
 
+  React.useEffect(() => {
+    const handleOpenTouchReviewImmersive = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId: string }>).detail;
+      if (detail?.workspaceId !== workspaceId) {
+        return;
+      }
+
+      setIsTouchReviewImmersive(true);
+      setCollapsed(false);
+      selectOrOpenReviewTab();
+      setIsReviewImmersive(true);
+    };
+
+    window.addEventListener(
+      CUSTOM_EVENTS.OPEN_TOUCH_REVIEW_IMMERSIVE,
+      handleOpenTouchReviewImmersive
+    );
+    return () =>
+      window.removeEventListener(
+        CUSTOM_EVENTS.OPEN_TOUCH_REVIEW_IMMERSIVE,
+        handleOpenTouchReviewImmersive
+      );
+  }, [selectOrOpenReviewTab, setCollapsed, setIsReviewImmersive, workspaceId]);
+
   // Keyboard shortcuts for tab switching by position (Cmd/Ctrl+1-9)
   // Auto-expands sidebar if collapsed
   React.useEffect(() => {
@@ -863,12 +896,18 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       e.preventDefault();
       setCollapsed(false);
       selectOrOpenReviewTab();
-      setIsReviewImmersive((prev) => !prev);
+      setIsReviewImmersive((prev) => {
+        const next = !prev;
+        if (next) {
+          setIsTouchReviewImmersive(false);
+        }
+        return next;
+      });
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isReviewImmersive, selectOrOpenReviewTab, setCollapsed, setIsReviewImmersive]);
+  }, [selectOrOpenReviewTab, setCollapsed, setIsReviewImmersive]);
 
   const baseId = `right-sidebar-${workspaceId}`;
 
@@ -1280,6 +1319,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         reviewStats={reviewStats}
         statsTabEnabled={statsTabEnabled}
         onReviewStatsChange={setReviewStats}
+        isTouchReviewImmersive={isTouchReviewImmersive}
+        onTouchReviewImmersiveChange={setIsTouchReviewImmersive}
         isDraggingTab={isDraggingTab}
         activeDragData={activeDragData}
         setLayout={setLayout}

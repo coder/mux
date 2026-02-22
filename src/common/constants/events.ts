@@ -88,6 +88,12 @@ export const CUSTOM_EVENTS = {
   ANALYTICS_REBUILD_TOAST: "mux:analyticsRebuildToast",
 
   /**
+   * Event to open immersive code review in touch/mobile mode for a workspace.
+   * Detail: { workspaceId: string }
+   */
+  OPEN_TOUCH_REVIEW_IMMERSIVE: "mux:openTouchReviewImmersive",
+
+  /**
    * Event to open the debug LLM request modal
    * No detail
    */
@@ -139,6 +145,9 @@ export interface CustomEventPayloads {
     type: "success" | "error";
     message: string;
     title?: string;
+  };
+  [CUSTOM_EVENTS.OPEN_TOUCH_REVIEW_IMMERSIVE]: {
+    workspaceId: string;
   };
   [CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST]: never; // No payload
 }

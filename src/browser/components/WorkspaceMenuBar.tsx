@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Bell, BellOff, Ellipsis, Menu, Pencil } from "lucide-react";
-import { CUSTOM_EVENTS } from "@/common/constants/events";
+import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { cn } from "@/common/lib/utils";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -127,6 +127,17 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
       void openTerminalPopout(workspaceId, runtimeConfig);
     }
   }, [workspaceId, openTerminalPopout, runtimeConfig, onOpenTerminal]);
+
+  const isTouchMobileScreen =
+    typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches;
+
+  const handleOpenTouchFullscreenReview = useCallback(() => {
+    window.dispatchEvent(
+      createCustomEvent(CUSTOM_EVENTS.OPEN_TOUCH_REVIEW_IMMERSIVE, {
+        workspaceId,
+      })
+    );
+  }, [workspaceId]);
 
   const handleOpenInEditor = useCallback(async () => {
     setEditorError(null);
@@ -516,6 +527,9 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
             {/* Keep MCP configuration in the more actions menu to keep the workspace menu bar lean. */}
             <WorkspaceActionsMenuContent
               onConfigureMcp={() => setMcpModalOpen(true)}
+              onOpenTouchFullscreenReview={
+                isTouchMobileScreen ? handleOpenTouchFullscreenReview : null
+              }
               onForkChat={(anchorEl) => {
                 void handleForkChat(anchorEl);
               }}

@@ -51,6 +51,8 @@ interface ImmersiveReviewViewProps {
   onToggleRead: (hunkId: string) => void;
   selectedHunkId: string | null;
   onSelectHunk: (hunkId: string | null) => void;
+  /** Whether immersive review should use touch/mobile UX affordances. */
+  isTouchImmersive?: boolean;
   onExit: () => void;
   onReviewNote?: (data: ReviewNoteData) => void;
   reviewActions?: ReviewActionCallbacks;
@@ -364,7 +366,9 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     onToggleRead,
     onExit,
     onReviewNote,
+    isTouchImmersive,
   } = props;
+  const isTouchExperience = isTouchImmersive === true;
 
   // Flatten file tree into ordered file list
   const fileList = useMemo(() => flattenFileTreeLeaves(fileTree), [fileTree]);
@@ -889,8 +893,12 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const selectedLineSummary = getCurrentLineSelection();
 
   const openComposer = useCallback(
-    (prefill: string) => {
-      const selection = getCurrentLineSelection();
+    (prefill: string, selectionOverride?: SelectedLineRange) => {
+      const selection = selectionOverride ??
+        getCurrentLineSelection() ?? {
+          startIndex: activeLineIndexRef.current ?? 0,
+          endIndex: activeLineIndexRef.current ?? 0,
+        };
       pendingComposerHunkSwitchRef.current = null;
 
       // Resolve which hunk to attach the composer to. If the cursor has moved
@@ -1025,17 +1033,30 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       } else {
         setSelectedLineRange(null);
       }
+
+      if (isTouchExperience && !shiftKey) {
+        // Mobile row tap should immediately open the add-comment composer.
+        openComposer("", { startIndex: lineIndex, endIndex: lineIndex });
+      }
     },
-    [overlayData, currentFileHunks, onSelectHunk]
+    [overlayData, currentFileHunks, isTouchExperience, onSelectHunk, openComposer]
   );
 
-  // Auto-focus container on mount
+  // Auto-focus only for keyboard-first immersive mode.
   useEffect(() => {
+    if (isTouchExperience) {
+      return;
+    }
+
     containerRef.current?.focus();
-  }, []);
+  }, [isTouchExperience]);
 
   // --- Keyboard handler ---
   useEffect(() => {
+    if (isTouchExperience) {
+      return;
+    }
+
     const handleKeyDown = (e: KeyboardEvent) => {
       // Tab: toggle between diff and notes panels.
       if (matchesKeybind(e, KEYBINDS.REVIEW_FOCUS_NOTES)) {
@@ -1224,6 +1245,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     openComposer,
     selectedHunkId,
     onToggleRead,
+    isTouchExperience,
   ]);
 
   const previousContentRef = useRef(overlayData.content);
@@ -1379,7 +1401,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   return (
     <div
       ref={containerRef}
-      tabIndex={0}
+      tabIndex={isTouchExperience ? -1 : 0}
       className="flex h-full flex-col overflow-hidden outline-none"
       data-testid="immersive-review-view"
     >
@@ -1507,113 +1529,119 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
           )}
         </div>
 
-        <aside className="border-border-light bg-dark flex w-[280px] min-w-[280px] flex-col border-l">
-          <div className="border-border-light flex items-center justify-between border-b px-3 py-2">
-            <h2
-              className={cn(
-                "text-foreground text-xs font-medium",
-                focusedPanel === "notes" && "text-[var(--color-review-accent)]"
-              )}
-            >
-              Notes
-            </h2>
-            <span className="bg-muted/20 text-muted rounded px-1.5 py-0.5 font-mono text-[10px]">
-              {allReviews.length}
-            </span>
-          </div>
+        {!isTouchExperience && (
+          <aside className="border-border-light bg-dark flex w-[280px] min-w-[280px] flex-col border-l">
+            <div className="border-border-light flex items-center justify-between border-b px-3 py-2">
+              <h2
+                className={cn(
+                  "text-foreground text-xs font-medium",
+                  focusedPanel === "notes" && "text-[var(--color-review-accent)]"
+                )}
+              >
+                Notes
+              </h2>
+              <span className="bg-muted/20 text-muted rounded px-1.5 py-0.5 font-mono text-[10px]">
+                {allReviews.length}
+              </span>
+            </div>
 
-          <div ref={notesSidebarRef} className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
-            {allReviews.length === 0 ? (
-              <div className="text-muted flex h-full flex-col items-center justify-center text-center text-xs">
-                <p>No notes yet</p>
-                <p className="text-dim mt-1">Press Shift+L to add one</p>
-              </div>
-            ) : (
-              <div className="space-y-1.5">
-                {allReviews.map((review, noteIndex) => {
-                  const normalizedUserNote = review.data.userNote.trimStart();
-                  const isDislike = normalizedUserNote.startsWith(DISLIKE_NOTE_PREFIX);
-                  const isLike = normalizedUserNote.startsWith(LIKE_NOTE_PREFIX);
-                  const statusClasses = getReviewStatusSidebarClasses(review.status);
-                  const ReviewTypeIcon = isDislike ? ThumbsDown : isLike ? ThumbsUp : MessageSquare;
-                  const isActiveFileReview = review.data.filePath === activeFilePath;
+            <div ref={notesSidebarRef} className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+              {allReviews.length === 0 ? (
+                <div className="text-muted flex h-full flex-col items-center justify-center text-center text-xs">
+                  <p>No notes yet</p>
+                  <p className="text-dim mt-1">Press Shift+L to add one</p>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {allReviews.map((review, noteIndex) => {
+                    const normalizedUserNote = review.data.userNote.trimStart();
+                    const isDislike = normalizedUserNote.startsWith(DISLIKE_NOTE_PREFIX);
+                    const isLike = normalizedUserNote.startsWith(LIKE_NOTE_PREFIX);
+                    const statusClasses = getReviewStatusSidebarClasses(review.status);
+                    const ReviewTypeIcon = isDislike
+                      ? ThumbsDown
+                      : isLike
+                        ? ThumbsUp
+                        : MessageSquare;
+                    const isActiveFileReview = review.data.filePath === activeFilePath;
 
-                  return (
-                    <div
-                      key={review.id}
-                      role="button"
-                      tabIndex={0}
-                      data-note-index={noteIndex}
-                      className={cn(
-                        "group/review-item border-border-light hover:bg-muted/10 focus-visible:ring-primary/40 flex w-full cursor-pointer overflow-hidden rounded border text-left outline-none transition-colors focus-visible:ring-2",
-                        isActiveFileReview && "bg-muted/10",
-                        focusedPanel === "notes" &&
-                          noteIndex === focusedNoteIndex &&
-                          "ring-2 ring-[var(--color-review-accent)]/40 bg-muted/10"
-                      )}
-                      onClick={() => navigateToReview(review)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          navigateToReview(review);
-                        }
-                      }}
-                    >
-                      <div className={cn("w-[3px] shrink-0", statusClasses.accent)} />
+                    return (
+                      <div
+                        key={review.id}
+                        role="button"
+                        tabIndex={0}
+                        data-note-index={noteIndex}
+                        className={cn(
+                          "group/review-item border-border-light hover:bg-muted/10 focus-visible:ring-primary/40 flex w-full cursor-pointer overflow-hidden rounded border text-left outline-none transition-colors focus-visible:ring-2",
+                          isActiveFileReview && "bg-muted/10",
+                          focusedPanel === "notes" &&
+                            noteIndex === focusedNoteIndex &&
+                            "ring-2 ring-[var(--color-review-accent)]/40 bg-muted/10"
+                        )}
+                        onClick={() => navigateToReview(review)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            navigateToReview(review);
+                          }
+                        }}
+                      >
+                        <div className={cn("w-[3px] shrink-0", statusClasses.accent)} />
 
-                      <div className="min-w-0 flex-1 px-2 py-1.5">
-                        <div className="flex items-center gap-1.5">
-                          <ReviewTypeIcon className={cn("size-3 shrink-0", statusClasses.icon)} />
+                        <div className="min-w-0 flex-1 px-2 py-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <ReviewTypeIcon className={cn("size-3 shrink-0", statusClasses.icon)} />
 
-                          <span
-                            className="text-muted min-w-0 flex-1 truncate font-mono text-[10px]"
-                            title={`${review.data.filePath}:L${formatLineRangeCompact(review.data.lineRange)}`}
-                          >
-                            {`${getFileBaseName(review.data.filePath)}:L${formatLineRangeCompact(review.data.lineRange)}`}
-                          </span>
-
-                          <span
-                            className={cn(
-                              "shrink-0 rounded px-1 py-0.5 text-[9px] uppercase",
-                              statusClasses.badge
-                            )}
-                          >
-                            {review.status}
-                          </span>
-
-                          {props.reviewActions?.onDelete && (
-                            <button
-                              type="button"
-                              className="text-muted hover:text-error ml-0.5 hidden cursor-pointer items-center rounded p-0.5 transition-colors group-hover/review-item:inline-flex"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                props.reviewActions?.onDelete?.(review.id);
-                              }}
-                              aria-label="Delete review note"
+                            <span
+                              className="text-muted min-w-0 flex-1 truncate font-mono text-[10px]"
+                              title={`${review.data.filePath}:L${formatLineRangeCompact(review.data.lineRange)}`}
                             >
-                              <Trash2 className="size-3" />
-                            </button>
-                          )}
-                        </div>
+                              {`${getFileBaseName(review.data.filePath)}:L${formatLineRangeCompact(review.data.lineRange)}`}
+                            </span>
 
-                        <p
-                          className="text-foreground mt-1 overflow-hidden text-[11px] leading-[1.4] break-words whitespace-pre-wrap"
-                          style={{
-                            display: "-webkit-box",
-                            WebkitBoxOrient: "vertical",
-                            WebkitLineClamp: 2,
-                          }}
-                        >
-                          {review.data.userNote || "(No note text)"}
-                        </p>
+                            <span
+                              className={cn(
+                                "shrink-0 rounded px-1 py-0.5 text-[9px] uppercase",
+                                statusClasses.badge
+                              )}
+                            >
+                              {review.status}
+                            </span>
+
+                            {props.reviewActions?.onDelete && (
+                              <button
+                                type="button"
+                                className="text-muted hover:text-error ml-0.5 hidden cursor-pointer items-center rounded p-0.5 transition-colors group-hover/review-item:inline-flex"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  props.reviewActions?.onDelete?.(review.id);
+                                }}
+                                aria-label="Delete review note"
+                              >
+                                <Trash2 className="size-3" />
+                              </button>
+                            )}
+                          </div>
+
+                          <p
+                            className="text-foreground mt-1 overflow-hidden text-[11px] leading-[1.4] break-words whitespace-pre-wrap"
+                            style={{
+                              display: "-webkit-box",
+                              WebkitBoxOrient: "vertical",
+                              WebkitLineClamp: 2,
+                            }}
+                          >
+                            {review.data.userNote || "(No note text)"}
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </aside>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </aside>
+        )}
       </div>
 
       {/* Boundary toast */}
@@ -1625,19 +1653,23 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         </div>
       )}
 
-      {/* Shortcut bar */}
-      <div className="border-border-light bg-dark flex flex-wrap items-center justify-center gap-3 border-t px-3 py-1.5">
-        <KeycapGroup keys={["Esc"]} label="back" />
-        <KeycapGroup keys={["H", "L"]} label="file" />
-        <KeycapGroup keys={["J", "K"]} label="hunk" />
-        <KeycapGroup keys={["↑", "↓"]} label="line" />
-        <KeycapGroup keys={["Shift", "↑↓"]} label="select" />
-        <KeycapGroup keys={["m"]} label="read" />
-        <KeycapGroup keys={["⇧C"]} label="comment" />
-        <KeycapGroup keys={["⇧L", "⇧D"]} label="like / dislike" />
-        <KeycapGroup keys={["Enter"]} label="submit" />
-        <KeycapGroup keys={["Tab"]} label="notes" />
-      </div>
+      {!isTouchExperience && (
+        <>
+          {/* Shortcut bar */}
+          <div className="border-border-light bg-dark flex flex-wrap items-center justify-center gap-3 border-t px-3 py-1.5">
+            <KeycapGroup keys={["Esc"]} label="back" />
+            <KeycapGroup keys={["H", "L"]} label="file" />
+            <KeycapGroup keys={["J", "K"]} label="hunk" />
+            <KeycapGroup keys={["↑", "↓"]} label="line" />
+            <KeycapGroup keys={["Shift", "↑↓"]} label="select" />
+            <KeycapGroup keys={["m"]} label="read" />
+            <KeycapGroup keys={["⇧C"]} label="comment" />
+            <KeycapGroup keys={["⇧L", "⇧D"]} label="like / dislike" />
+            <KeycapGroup keys={["Enter"]} label="submit" />
+            <KeycapGroup keys={["Tab"]} label="notes" />
+          </div>
+        </>
+      )}
     </div>
   );
 };
