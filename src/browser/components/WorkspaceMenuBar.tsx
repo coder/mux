@@ -129,7 +129,8 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   }, [workspaceId, openTerminalPopout, runtimeConfig, onOpenTerminal]);
 
   const isTouchMobileScreen =
-    typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches;
+    typeof window !== "undefined" &&
+    window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches;
 
   const handleOpenTouchFullscreenReview = useCallback(() => {
     window.dispatchEvent(
