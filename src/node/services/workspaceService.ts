@@ -3449,6 +3449,13 @@ export class WorkspaceService extends EventEmitter {
         return result;
       }
 
+      // resumeStream can succeed without starting a new stream when the session is
+      // still busy (started=false). Only clear interrupted task status after an actual
+      // resume starts; otherwise keep fail-fast interrupted semantics intact.
+      if (!result.data.started) {
+        return result;
+      }
+
       // Non-destructive interrupt cascades preserve descendant task workspaces with
       // taskStatus=interrupted. If a user manually resumes one, restore running so
       // TaskService stream-end handling can finalize reports and unblock task_await.

@@ -362,6 +362,27 @@ describe("WorkspaceService sendMessage status clearing", () => {
     expect(markInterruptedTaskRunning).toHaveBeenCalledWith("test-workspace");
   });
 
+  test("resumeStream keeps interrupted task status when no stream starts", async () => {
+    fakeSession.resumeStream.mockResolvedValue(Ok({ started: false }));
+
+    const markInterruptedTaskRunning = mock(() => Promise.resolve());
+    workspaceService.setTaskService({
+      markInterruptedTaskRunning,
+      resetAutoResumeCount: mock(() => undefined),
+    } as unknown as TaskService);
+
+    const result = await workspaceService.resumeStream("test-workspace", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.started).toBe(false);
+    }
+    expect(markInterruptedTaskRunning).not.toHaveBeenCalled();
+  });
+
   test("does not clear persisted agent status directly when direct send fails after turn acceptance", async () => {
     fakeSession.isBusy.mockReturnValue(false);
     fakeSession.sendMessage.mockResolvedValue(
