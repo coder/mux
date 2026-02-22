@@ -327,11 +327,11 @@ export class AnalyticsService {
     }
 
     // Backfill existing workspace history when analytics initialization is
-    // missing or appears partial (fewer workspace watermarks than workspace
-    // history files on disk). Once every session workspace has a watermark row,
-    // routine worker restarts skip full rebuilds, including zero-event histories.
-    // Awaited so the first query sees complete data instead of an
-    // empty/partially-rebuilt database.
+    // missing or appears partial (for example, when any session workspace lacks
+    // a matching watermark row, even if stale watermark rows keep counts equal).
+    // Once every session workspace has a watermark row, routine worker restarts
+    // skip full rebuilds, including zero-event histories. Awaited so the first
+    // query sees complete data instead of an empty/partially-rebuilt database.
     try {
       await this.dispatch("rebuildAll", this.buildRebuildAllData());
     } catch (error) {

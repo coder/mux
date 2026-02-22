@@ -8,6 +8,7 @@ describe("shouldRunInitialBackfill", () => {
         eventCount: 1,
         watermarkCount: 0,
         sessionWorkspaceCount: 2,
+        hasSessionWorkspaceMissingWatermark: true,
         hasAnyWatermarkAtOrAboveZero: false,
       })
     ).toBe(true);
@@ -17,17 +18,31 @@ describe("shouldRunInitialBackfill", () => {
         eventCount: 0,
         watermarkCount: 0,
         sessionWorkspaceCount: 1,
+        hasSessionWorkspaceMissingWatermark: true,
         hasAnyWatermarkAtOrAboveZero: false,
       })
     ).toBe(true);
   });
 
-  test("returns true when watermark rows cover only part of the session set", () => {
+  test("returns true when any session workspace is missing a watermark row", () => {
     expect(
       shouldRunInitialBackfill({
         eventCount: 10,
         watermarkCount: 1,
         sessionWorkspaceCount: 2,
+        hasSessionWorkspaceMissingWatermark: true,
+        hasAnyWatermarkAtOrAboveZero: false,
+      })
+    ).toBe(true);
+  });
+
+  test("returns true when watermark count matches but IDs are stale", () => {
+    expect(
+      shouldRunInitialBackfill({
+        eventCount: 3,
+        watermarkCount: 2,
+        sessionWorkspaceCount: 2,
+        hasSessionWorkspaceMissingWatermark: true,
         hasAnyWatermarkAtOrAboveZero: false,
       })
     ).toBe(true);
@@ -39,6 +54,7 @@ describe("shouldRunInitialBackfill", () => {
         eventCount: 0,
         watermarkCount: 2,
         sessionWorkspaceCount: 2,
+        hasSessionWorkspaceMissingWatermark: false,
         hasAnyWatermarkAtOrAboveZero: true,
       })
     ).toBe(true);
@@ -50,6 +66,7 @@ describe("shouldRunInitialBackfill", () => {
         eventCount: 0,
         watermarkCount: 2,
         sessionWorkspaceCount: 2,
+        hasSessionWorkspaceMissingWatermark: false,
         hasAnyWatermarkAtOrAboveZero: false,
       })
     ).toBe(false);
@@ -61,6 +78,7 @@ describe("shouldRunInitialBackfill", () => {
         eventCount: 3,
         watermarkCount: 2,
         sessionWorkspaceCount: 2,
+        hasSessionWorkspaceMissingWatermark: false,
         hasAnyWatermarkAtOrAboveZero: true,
       })
     ).toBe(false);
@@ -72,6 +90,7 @@ describe("shouldRunInitialBackfill", () => {
         eventCount: 0,
         watermarkCount: 0,
         sessionWorkspaceCount: 0,
+        hasSessionWorkspaceMissingWatermark: false,
         hasAnyWatermarkAtOrAboveZero: false,
       })
     ).toBe(false);
@@ -81,6 +100,7 @@ describe("shouldRunInitialBackfill", () => {
         eventCount: 5,
         watermarkCount: 0,
         sessionWorkspaceCount: 0,
+        hasSessionWorkspaceMissingWatermark: false,
         hasAnyWatermarkAtOrAboveZero: true,
       })
     ).toBe(false);

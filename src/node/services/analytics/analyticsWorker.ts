@@ -188,20 +188,32 @@ function parseBooleanLike(value: unknown): boolean | null {
   return null;
 }
 
-async function countSessionWorkspacesWithHistory(sessionsDir: string): Promise<number> {
+function parseNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  if (value.trim().length === 0) {
+    return null;
+  }
+
+  return value;
+}
+
+async function listSessionWorkspaceIdsWithHistory(sessionsDir: string): Promise<string[]> {
   let entries: Dirent[];
 
   try {
     entries = await fs.readdir(sessionsDir, { withFileTypes: true });
   } catch (error) {
     if (isRecord(error) && error.code === "ENOENT") {
-      return 0;
+      return [];
     }
 
     throw error;
   }
 
-  let sessionWorkspaceCount = 0;
+  const sessionWorkspaceIds: string[] = [];
 
   for (const entry of entries) {
     if (!entry.isDirectory()) {
@@ -213,7 +225,12 @@ async function countSessionWorkspacesWithHistory(sessionsDir: string): Promise<n
     try {
       const chatStat = await fs.stat(chatPath);
       if (chatStat.isFile()) {
-        sessionWorkspaceCount += 1;
+        const workspaceId = parseNonEmptyString(entry.name);
+        assert(
+          workspaceId !== null,
+          "needsBackfill expected session workspace directory names to be non-empty"
+        );
+        sessionWorkspaceIds.push(workspaceId);
       }
     } catch (error) {
       if (isRecord(error) && error.code === "ENOENT") {
@@ -224,7 +241,24 @@ async function countSessionWorkspacesWithHistory(sessionsDir: string): Promise<n
     }
   }
 
-  return sessionWorkspaceCount;
+  return sessionWorkspaceIds;
+}
+
+async function listWatermarkWorkspaceIds(): Promise<Set<string>> {
+  const result = await getConn().run("SELECT workspace_id FROM ingest_watermarks");
+  const rows = await result.getRowObjectsJS();
+
+  const watermarkWorkspaceIds = new Set<string>();
+  for (const row of rows) {
+    const workspaceId = parseNonEmptyString(row.workspace_id);
+    assert(
+      workspaceId !== null,
+      "needsBackfill expected ingest_watermarks rows to have non-empty workspace_id"
+    );
+    watermarkWorkspaceIds.add(workspaceId);
+  }
+
+  return watermarkWorkspaceIds;
 }
 
 async function handleNeedsBackfill(data: NeedsBackfillData): Promise<{ needsBackfill: boolean }> {
@@ -252,13 +286,25 @@ async function handleNeedsBackfill(data: NeedsBackfillData): Promise<{ needsBack
     "needsBackfill expected boolean has_any_watermark_at_or_above_zero"
   );
 
-  const sessionWorkspaceCount = await countSessionWorkspacesWithHistory(data.sessionsDir);
+  const sessionWorkspaceIds = await listSessionWorkspaceIdsWithHistory(data.sessionsDir);
+  const sessionWorkspaceCount = sessionWorkspaceIds.length;
+
+  const watermarkWorkspaceIds = await listWatermarkWorkspaceIds();
+  assert(
+    watermarkWorkspaceIds.size === watermarkCount,
+    "needsBackfill expected watermark_count to match ingest_watermarks workspace IDs"
+  );
+
+  const hasSessionWorkspaceMissingWatermark = sessionWorkspaceIds.some(
+    (workspaceId) => !watermarkWorkspaceIds.has(workspaceId)
+  );
 
   return {
     needsBackfill: shouldRunInitialBackfill({
       eventCount,
       watermarkCount,
       sessionWorkspaceCount,
+      hasSessionWorkspaceMissingWatermark,
       hasAnyWatermarkAtOrAboveZero,
     }),
   };

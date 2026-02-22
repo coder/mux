@@ -4,6 +4,7 @@ export interface BackfillDecisionInput {
   eventCount: number;
   watermarkCount: number;
   sessionWorkspaceCount: number;
+  hasSessionWorkspaceMissingWatermark: boolean;
   hasAnyWatermarkAtOrAboveZero: boolean;
 }
 
@@ -21,6 +22,10 @@ export function shouldRunInitialBackfill(input: BackfillDecisionInput): boolean 
     "shouldRunInitialBackfill requires a non-negative integer sessionWorkspaceCount"
   );
   assert(
+    typeof input.hasSessionWorkspaceMissingWatermark === "boolean",
+    "shouldRunInitialBackfill requires boolean hasSessionWorkspaceMissingWatermark"
+  );
+  assert(
     typeof input.hasAnyWatermarkAtOrAboveZero === "boolean",
     "shouldRunInitialBackfill requires boolean hasAnyWatermarkAtOrAboveZero"
   );
@@ -36,8 +41,14 @@ export function shouldRunInitialBackfill(input: BackfillDecisionInput): boolean 
     return true;
   }
 
-  // Watermark rows are keyed by workspace id, so a count lower than the number
-  // of session workspaces means a previous rebuild was only partially completed.
+  if (input.hasSessionWorkspaceMissingWatermark) {
+    // Count parity alone is not enough: stale watermark rows can keep the count
+    // equal while still leaving current session workspaces uncovered.
+    return true;
+  }
+
+  // Keep this as a defensive fallback in case upstream workspace-id coverage
+  // checks regress and start reporting false negatives.
   if (input.watermarkCount < input.sessionWorkspaceCount) {
     return true;
   }
