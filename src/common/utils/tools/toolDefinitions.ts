@@ -37,6 +37,7 @@ import {
 } from "@/common/constants/toolLimits";
 import { TOOL_EDIT_WARNING } from "@/common/types/tools";
 import { SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS } from "@/common/types/tasks";
+import { THINKING_LEVELS } from "@/common/types/thinking";
 
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
@@ -488,7 +489,7 @@ const TaskListStatusSchema = z.enum([
   "interrupted",
   "reported",
 ]);
-const TaskListThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh", "max"]);
+const TaskListThinkingLevelSchema = z.enum(THINKING_LEVELS);
 
 export const TaskListToolArgsSchema = z
   .object({
