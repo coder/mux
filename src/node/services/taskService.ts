@@ -1150,6 +1150,74 @@ export class TaskService {
     return Ok({ terminatedTaskIds });
   }
 
+  /**
+   * Terminate all descendant agent tasks for a workspace (leaf-first).
+   *
+   * Rationale: when a user hard-interrupts a parent workspace, descendants must
+   * also stop so they cannot later auto-resume the interrupted parent.
+   */
+  async terminateAllDescendantAgentTasks(workspaceId: string): Promise<string[]> {
+    assert(
+      workspaceId.length > 0,
+      "terminateAllDescendantAgentTasks: workspaceId must be non-empty"
+    );
+
+    const terminatedTaskIds: string[] = [];
+
+    {
+      await using _lock = await this.mutex.acquire();
+
+      const cfg = this.config.loadConfigOrDefault();
+      const index = this.buildAgentTaskIndex(cfg);
+      const descendants = this.listDescendantAgentTaskIdsFromIndex(index, workspaceId);
+      if (descendants.length === 0) {
+        return terminatedTaskIds;
+      }
+
+      // Delete leaves first to avoid leaving children with missing parents.
+      const parentById = index.parentById;
+      const depthById = new Map<string, number>();
+      for (const id of descendants) {
+        depthById.set(id, this.getTaskDepthFromParentById(parentById, id));
+      }
+      descendants.sort((a, b) => (depthById.get(b) ?? 0) - (depthById.get(a) ?? 0));
+
+      const terminationError = new Error("Parent workspace interrupted");
+
+      for (const id of descendants) {
+        // Best-effort: stop any active stream immediately to avoid further token usage.
+        try {
+          const stopResult = await this.aiService.stopStream(id, { abandonPartial: true });
+          if (!stopResult.success) {
+            log.debug("terminateAllDescendantAgentTasks: stopStream failed", { taskId: id });
+          }
+        } catch (error: unknown) {
+          log.debug("terminateAllDescendantAgentTasks: stopStream threw", { taskId: id, error });
+        }
+
+        this.remindedAwaitingReport.delete(id);
+        this.completedReportsByTaskId.delete(id);
+        this.rejectWaiters(id, terminationError);
+
+        const removeResult = await this.workspaceService.remove(id, true);
+        if (!removeResult.success) {
+          log.error("terminateAllDescendantAgentTasks: failed to remove task workspace", {
+            taskId: id,
+            error: removeResult.error,
+          });
+          continue;
+        }
+
+        terminatedTaskIds.push(id);
+      }
+    }
+
+    // Free slots and start any queued tasks (best-effort).
+    await this.maybeStartQueuedTasks();
+
+    return terminatedTaskIds;
+  }
+
   private async rollbackFailedTaskCreate(
     runtime: Runtime,
     projectPath: string,

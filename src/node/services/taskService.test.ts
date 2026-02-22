@@ -1761,6 +1761,95 @@ describe("TaskService", () => {
     expect(remove).toHaveBeenNthCalledWith(2, parentTaskId, true);
   });
 
+  test("terminateAllDescendantAgentTasks terminates entire subtree leaf-first", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const parentTaskId = "task-parent";
+    const childTaskId = "task-child";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
+              {
+                path: path.join(projectPath, "parent-task"),
+                id: parentTaskId,
+                name: "agent_exec_parent",
+                parentWorkspaceId: rootWorkspaceId,
+                agentType: "exec",
+                taskStatus: "running",
+              },
+              {
+                path: path.join(projectPath, "child-task"),
+                id: childTaskId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentTaskId,
+                agentType: "explore",
+                taskStatus: "running",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService, stopStream } = createAIServiceMocks(config);
+    const { workspaceService, remove } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    const terminatedTaskIds = await taskService.terminateAllDescendantAgentTasks(rootWorkspaceId);
+    expect(terminatedTaskIds).toEqual([childTaskId, parentTaskId]);
+
+    expect(stopStream).toHaveBeenNthCalledWith(
+      1,
+      childTaskId,
+      expect.objectContaining({ abandonPartial: true })
+    );
+    expect(stopStream).toHaveBeenNthCalledWith(
+      2,
+      parentTaskId,
+      expect.objectContaining({ abandonPartial: true })
+    );
+    expect(remove).toHaveBeenNthCalledWith(1, childTaskId, true);
+    expect(remove).toHaveBeenNthCalledWith(2, parentTaskId, true);
+  });
+
+  test("terminateAllDescendantAgentTasks is a no-op with no descendants", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService, stopStream } = createAIServiceMocks(config);
+    const { workspaceService, remove } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    const terminatedTaskIds = await taskService.terminateAllDescendantAgentTasks(rootWorkspaceId);
+    expect(terminatedTaskIds).toEqual([]);
+    expect(stopStream).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
   test("initialize resumes awaiting_report tasks after restart", async () => {
     const config = await createTestConfig(rootDir);
 

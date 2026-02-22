@@ -3517,6 +3517,26 @@ export class WorkspaceService extends EventEmitter {
         await this.historyService.deletePartial(workspaceId);
       }
 
+      // Rationale: user-initiated hard interrupts should stop the entire task tree so
+      // descendant sub-agents cannot finish later and auto-resume this workspace.
+      if (!options?.soft) {
+        try {
+          const terminatedTaskIds =
+            await this.taskService?.terminateAllDescendantAgentTasks?.(workspaceId);
+          if (terminatedTaskIds && terminatedTaskIds.length > 0) {
+            log.debug("Cascade-terminated descendant tasks on interrupt", {
+              workspaceId,
+              terminatedTaskIds,
+            });
+          }
+        } catch (error: unknown) {
+          log.error("Failed to cascade-terminate descendant tasks on interrupt", {
+            workspaceId,
+            error,
+          });
+        }
+      }
+
       // Handle queued messages based on option
       if (options?.sendQueuedImmediately) {
         // Send queued messages immediately instead of restoring to input
