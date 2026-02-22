@@ -120,8 +120,8 @@ const STORIES: StoryDef[] = [
     exportName: "AutoModeAgentSwitching",
     storyId: `${STORY_ID_PREFIX}auto-mode-agent-switching`,
     outputFile: "auto-mode.webp",
-    // Keep the creation card centered with surrounding context so nothing is cut off.
-    clip: { x: 320, y: 120, width: 1260, height: 900 },
+    // Emphasize the workspace creation card while still keeping the MCP panel context.
+    clip: { x: 390, y: 90, width: 1120, height: 800 },
     playInteraction: async (page: Page) => {
       // Enter project creation view from the sidebar row.
       const projectRow = page

@@ -42,6 +42,7 @@ import {
   getModelKey,
   getProjectScopeId,
   getRightSidebarLayoutKey,
+  getStatusStateKey,
   getThinkingLevelKey,
 } from "@/common/constants/storage";
 
@@ -496,61 +497,144 @@ export const AgentStatusSidebar: AppStory = {
         // This screenshot should explicitly show the expanded projects sidebar.
         window.localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(false));
 
-        const workspaces = [
-          createWorkspace({
+        const workspaceFixtures = [
+          {
             id: "ws-status-1",
             name: "feature/docs",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-          }),
-          createWorkspace({
+            assistantText:
+              "Capture run is active. I widened the viewport and I am checking the git divergence + agent status stories for regressions.",
+            statusEmoji: "🔍",
+            statusMessage: "Comparing refreshed screenshots",
+            statusUrl: "https://github.com/coder/mux/pull/2035",
+          },
+          {
             id: "ws-status-2",
             name: "feature/sidebar",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-          }),
-          createWorkspace({
+            assistantText: "Profiling workspace row rendering and hover interactions.",
+            statusEmoji: "🔍",
+            statusMessage: "Profiling sidebar rendering",
+          },
+          {
             id: "ws-status-3",
             name: "bugfix/stream",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-          }),
-          createWorkspace({
+            assistantText: "Collecting crash traces from interrupted stream retries.",
+            statusEmoji: "🔍",
+            statusMessage: "Reading stream crash logs",
+          },
+          {
             id: "ws-status-4",
-            name: "refactor/store",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-          }),
-          createWorkspace({
+            name: "feature/auth",
+            assistantText: "Wiring shared auth checks into task launch paths.",
+            statusEmoji: "🔧",
+            statusMessage: "Implementing auth middleware",
+          },
+          {
             id: "ws-status-5",
-            name: "feature/right-sidebar",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-          }),
-          createSSHWorkspace({
+            name: "tests/sidebar-regression",
+            assistantText: "Expanding status indicator coverage with visual assertions.",
+            statusEmoji: "🧪",
+            statusMessage: "Running sidebar regression tests",
+          },
+          {
             id: "ws-status-ssh",
             name: "deploy/prod",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
+            runtime: "ssh" as const,
             host: "prod.example.com",
-          }),
-          createWorkspace({
+            assistantText: "Deploying staged patch to production canary nodes.",
+            statusEmoji: "⏳",
+            statusMessage: "Waiting for deploy health checks",
+          },
+          {
             id: "ws-status-6",
-            name: "release/v1.0.0",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-          }),
-          createWorkspace({
+            name: "feature/web-research",
+            assistantText: "Comparing provider docs for tool schema strictness changes.",
+            statusEmoji: "🔍",
+            statusMessage: "Searching web for API notes",
+          },
+          {
             id: "ws-status-7",
+            name: "release/v1.0.0",
+            assistantText: "Preparing release summary for this screenshot refresh.",
+            statusEmoji: "📝",
+            statusMessage: "Drafting release notes",
+          },
+          {
+            id: "ws-status-8",
+            name: "chore/static-check",
+            assistantText: "Running formatter + static checks before posting updates.",
+            statusEmoji: "🧪",
+            statusMessage: "Running make static-check",
+          },
+          {
+            id: "ws-status-9",
+            name: "feature/costs-tab",
+            assistantText: "Comparing token breakdown rows across models.",
+            statusEmoji: "🔄",
+            statusMessage: "Refreshing costs snapshots",
+          },
+          {
+            id: "ws-status-10",
+            name: "docs/readme",
+            assistantText: "Regenerating docs assets and linking updated images.",
+            statusEmoji: "📝",
+            statusMessage: "Updating README screenshots",
+          },
+          {
+            id: "ws-status-11",
+            name: "refactor/task-runner",
+            assistantText: "Splitting task lifecycle updates into smaller reducers.",
+            statusEmoji: "🔧",
+            statusMessage: "Refactoring task status flow",
+          },
+          {
+            id: "ws-status-12",
             name: "main",
+            assistantText: "Monitoring queue health while waiting for follow-up tasks.",
+            statusEmoji: "⏳",
+            statusMessage: "Waiting for next screenshot task",
+          },
+        ];
+
+        // Seed persisted statusState for every workspace so the sidebar can show
+        // many status examples without requiring each workspace's onChat stream
+        // to be actively subscribed.
+        for (const fixture of workspaceFixtures) {
+          window.localStorage.setItem(
+            getStatusStateKey(fixture.id),
+            JSON.stringify({
+              emoji: fixture.statusEmoji,
+              message: fixture.statusMessage,
+              ...(fixture.statusUrl ? { url: fixture.statusUrl } : {}),
+            })
+          );
+        }
+
+        const workspaces = workspaceFixtures.map((fixture, index) => {
+          const createdAt = new Date(NOW - (index + 1) * 60_000).toISOString();
+          if (fixture.runtime === "ssh") {
+            return createSSHWorkspace({
+              id: fixture.id,
+              name: fixture.name,
+              projectName: README_PROJECT_NAME,
+              projectPath: README_PROJECT_PATH,
+              host: fixture.host,
+              createdAt,
+            });
+          }
+          return createWorkspace({
+            id: fixture.id,
+            name: fixture.name,
             projectName: README_PROJECT_NAME,
             projectPath: README_PROJECT_PATH,
-          }),
-        ];
+            createdAt,
+          });
+        });
+
+        const primaryWorkspace = workspaceFixtures[0];
 
         const chatHandlers = new Map([
           [
-            "ws-status-1",
+            primaryWorkspace.id,
             createStaticChatHandler([
               createUserMessage(
                 "msg-1",
@@ -568,114 +652,43 @@ export const AgentStatusSidebar: AppStory = {
                     "call-1",
                     "🔧",
                     "Regenerating README screenshots and validating Chromatic diffs",
-                    "https://github.com/coder/mux/pull/2035"
+                    primaryWorkspace.statusUrl
                   ),
                 ],
               }),
-              createAssistantMessage(
-                "msg-3",
-                "Capture run is active. I widened the viewport and I am checking the git divergence + agent status stories for regressions.",
-                {
-                  historySequence: 3,
-                  timestamp: STABLE_TIMESTAMP - 100_000,
-                  toolCalls: [
-                    createStatusTool(
-                      "call-2",
-                      "🔍",
-                      "Comparing refreshed screenshots against Chromatic baseline"
-                    ),
-                  ],
-                }
-              ),
-            ]),
-          ],
-          [
-            "ws-status-2",
-            createStaticChatHandler([
-              createAssistantMessage("msg-1", "Tuning sidebar virtualization.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 95_000,
-                toolCalls: [createStatusTool("call-1", "🔍", "Reviewing perf regressions")],
-              }),
-            ]),
-          ],
-          [
-            "ws-status-3",
-            createStaticChatHandler([
-              createAssistantMessage("msg-1", "Investigating stream stalls.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 90_000,
-                toolCalls: [createStatusTool("call-1", "🧪", "Reproducing with Playwright")],
-              }),
-            ]),
-          ],
-          [
-            "ws-status-4",
-            createStaticChatHandler([
-              createAssistantMessage("msg-1", "Refactoring WorkspaceStore subscriptions.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 85_000,
-                toolCalls: [createStatusTool("call-1", "🔄", "Cleaning up state")],
-              }),
-            ]),
-          ],
-          [
-            "ws-status-5",
-            createStaticChatHandler([
-              createAssistantMessage("msg-1", "Adding split pane layout fixtures.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 80_000,
+              createAssistantMessage("msg-3", primaryWorkspace.assistantText, {
+                historySequence: 3,
+                timestamp: STABLE_TIMESTAMP - 100_000,
                 toolCalls: [
                   createStatusTool(
-                    "call-1",
-                    "🚀",
-                    "PR ready for review",
-                    "https://github.com/mux/cmux/pull/1234"
+                    "call-2",
+                    primaryWorkspace.statusEmoji,
+                    primaryWorkspace.statusMessage,
+                    primaryWorkspace.statusUrl
                   ),
                 ],
               }),
             ]),
           ],
-          [
-            "ws-status-ssh",
-            createStaticChatHandler([
-              createAssistantMessage("msg-1", "Deploying staging.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 70_000,
-                toolCalls: [createStatusTool("call-1", "⏳", "Waiting for CI")],
-              }),
-            ]),
-          ],
-          [
-            "ws-status-6",
-            createStaticChatHandler([
-              createAssistantMessage("msg-1", "Preparing release notes.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 65_000,
-                toolCalls: [createStatusTool("call-1", "📝", "Drafting changelog")],
-              }),
-            ]),
-          ],
-          [
-            "ws-status-7",
-            createStaticChatHandler([
-              createAssistantMessage(
-                "msg-1",
-                "Monitoring queue health and waiting for follow-up tasks.",
-                {
+          ...workspaceFixtures.slice(1).map((fixture, index) => {
+            return [
+              fixture.id,
+              createStaticChatHandler([
+                createAssistantMessage("msg-1", fixture.assistantText, {
                   historySequence: 1,
-                  timestamp: STABLE_TIMESTAMP - 60_000,
+                  timestamp: STABLE_TIMESTAMP - (95_000 - index * 4_000),
                   toolCalls: [
                     createStatusTool(
                       "call-1",
-                      "⏳",
-                      "Idle: waiting for next screenshot refresh request"
+                      fixture.statusEmoji,
+                      fixture.statusMessage,
+                      fixture.statusUrl
                     ),
                   ],
-                }
-              ),
-            ]),
-          ],
+                }),
+              ]),
+            ] as const;
+          }),
         ]);
 
         expandProjects([README_PROJECT_PATH]);
