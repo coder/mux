@@ -4136,6 +4136,16 @@ export const router = (authToken?: string) => {
             input.to ?? null
           );
         }),
+      getCacheHitRatioByProvider: t
+        .input(schemas.analytics.getCacheHitRatioByProvider.input)
+        .output(schemas.analytics.getCacheHitRatioByProvider.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.getCacheHitRatioByProvider(
+            input.projectPath ?? null,
+            input.from ?? null,
+            input.to ?? null
+          );
+        }),
       rebuildDatabase: t
         .input(schemas.analytics.rebuildDatabase.input)
         .output(schemas.analytics.rebuildDatabase.output)

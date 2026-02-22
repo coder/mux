@@ -8,7 +8,12 @@ import type { AppRouter } from "@/node/orpc/router";
 import type { OrpcServer } from "@/node/orpc/server";
 import type { ORPCContext } from "@/node/orpc/context";
 import type { AnalyticsService } from "@/node/services/analytics/analyticsService";
-import { useAnalyticsSpendByModel, useAnalyticsSummary, type Summary } from "./useAnalytics";
+import {
+  useAnalyticsProviderCacheHitRatio,
+  useAnalyticsSpendByModel,
+  useAnalyticsSummary,
+  type Summary,
+} from "./useAnalytics";
 
 const ANALYTICS_UNAVAILABLE_MESSAGE = "Analytics backend is not available in this build.";
 
@@ -28,6 +33,11 @@ interface AnalyticsServiceCalls {
     to: Date | null | undefined;
   }>;
   spendByModel: Array<{
+    projectPath: string | null;
+    from: Date | null | undefined;
+    to: Date | null | undefined;
+  }>;
+  cacheHitRatioByProvider: Array<{
     projectPath: string | null;
     from: Date | null | undefined;
     to: Date | null | undefined;
@@ -58,6 +68,7 @@ type AnalyticsServiceStub = Pick<
   | "getSpendByModel"
   | "getTimingDistribution"
   | "getAgentCostBreakdown"
+  | "getCacheHitRatioByProvider"
   | "rebuildAll"
   | "clearWorkspace"
   | "ingestWorkspace"
@@ -70,6 +81,7 @@ function createAnalyticsServiceStub(summary: Summary): {
   const calls: AnalyticsServiceCalls = {
     summary: [],
     spendByModel: [],
+    cacheHitRatioByProvider: [],
   };
 
   return {
@@ -87,6 +99,10 @@ function createAnalyticsServiceStub(summary: Summary): {
       },
       getTimingDistribution: () => Promise.resolve({ p50: 0, p90: 0, p99: 0, histogram: [] }),
       getAgentCostBreakdown: () => Promise.resolve([]),
+      getCacheHitRatioByProvider: (projectPath, from, to) => {
+        calls.cacheHitRatioByProvider.push({ projectPath, from, to });
+        return Promise.resolve([]);
+      },
       rebuildAll: () => Promise.resolve({ success: true, workspacesIngested: 0 }),
       clearWorkspace: () => undefined,
       ingestWorkspace: () => undefined,
@@ -194,6 +210,30 @@ describe("useAnalytics hooks", () => {
     expect(latest).toBeDefined();
     if (!latest || !(latest.from instanceof Date) || !(latest.to instanceof Date)) {
       throw new Error("Expected spend-by-model call to include Date filters");
+    }
+
+    expect(latest.projectPath).toBe("/tmp/project");
+    expect(latest.from.toISOString()).toBe(from.toISOString());
+    expect(latest.to.toISOString()).toBe(to.toISOString());
+  });
+
+  test("forwards from/to filters to provider cache-hit-ratio endpoint", async () => {
+    const from = new Date("2026-01-09T00:00:00.000Z");
+    const to = new Date("2026-01-30T00:00:00.000Z");
+
+    const { result } = renderHook(() =>
+      useAnalyticsProviderCacheHitRatio("/tmp/project", { from, to })
+    );
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const calls = requireAnalyticsServiceCalls().cacheHitRatioByProvider;
+    expect(calls.length).toBeGreaterThan(0);
+
+    const latest = calls.at(-1);
+    expect(latest).toBeDefined();
+    if (!latest || !(latest.from instanceof Date) || !(latest.to instanceof Date)) {
+      throw new Error("Expected provider cache-hit-ratio call to include Date filters");
     }
 
     expect(latest.projectPath).toBe("/tmp/project");

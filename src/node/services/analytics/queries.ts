@@ -4,6 +4,7 @@ import type { z } from "zod";
 import {
   AgentCostRowSchema,
   HistogramBucketSchema,
+  ProviderCacheHitModelRowSchema,
   SpendByModelRowSchema,
   SpendByProjectRowSchema,
   SpendOverTimeRowSchema,
@@ -11,6 +12,7 @@ import {
   TimingPercentilesRowSchema,
   type AgentCostRow,
   type HistogramBucket,
+  type ProviderCacheHitModelRow,
   type SpendByModelRow,
   type SpendByProjectRow,
   type SpendOverTimeRow,
@@ -407,6 +409,32 @@ async function queryAgentCostBreakdown(
   );
 }
 
+async function queryCacheHitRatioByProvider(
+  conn: DuckDBConnection,
+  projectPath: string | null,
+  from: string | null,
+  to: string | null
+): Promise<ProviderCacheHitModelRow[]> {
+  return typedQuery(
+    conn,
+    `
+    SELECT
+      COALESCE(model, 'unknown') AS model,
+      COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
+      COALESCE(SUM(input_tokens + cached_tokens), 0) AS total_prompt_tokens,
+      COALESCE(COUNT(*), 0) AS response_count
+    FROM events
+    WHERE (? IS NULL OR project_path = ?)
+      AND (? IS NULL OR date >= CAST(? AS DATE))
+      AND (? IS NULL OR date <= CAST(? AS DATE))
+    GROUP BY 1
+    ORDER BY response_count DESC
+    `,
+    [projectPath, projectPath, from, from, to, to],
+    ProviderCacheHitModelRowSchema
+  );
+}
+
 export async function executeNamedQuery(
   conn: DuckDBConnection,
   queryName: string,
@@ -458,6 +486,15 @@ export async function executeNamedQuery(
 
     case "getAgentCostBreakdown": {
       return queryAgentCostBreakdown(
+        conn,
+        parseOptionalString(params.projectPath),
+        parseDateFilter(params.from),
+        parseDateFilter(params.to)
+      );
+    }
+
+    case "getCacheHitRatioByProvider": {
+      return queryCacheHitRatioByProvider(
         conn,
         parseOptionalString(params.projectPath),
         parseDateFilter(params.from),

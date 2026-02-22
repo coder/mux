@@ -8,6 +8,7 @@
 import type { APIClient } from "@/browser/contexts/API";
 import type {
   AgentCostItem,
+  ProviderCacheHitRatioItem,
   SpendByModelItem,
   SpendByProjectItem,
   SpendOverTimeItem,
@@ -50,6 +51,11 @@ interface StoryAnalyticsNamespace {
     projectPath?: string | null;
   }) => Promise<TimingDistribution>;
   getAgentCostBreakdown: (input: { projectPath?: string | null }) => Promise<AgentCostItem[]>;
+  getCacheHitRatioByProvider: (input: {
+    projectPath?: string | null;
+    from?: Date | null;
+    to?: Date | null;
+  }) => Promise<ProviderCacheHitRatioItem[]>;
   rebuildDatabase: (_input: Record<string, never>) => Promise<{
     success: boolean;
     workspacesIngested: number;
@@ -355,6 +361,22 @@ const AGENT_SCALING: Record<AnalyticsProjectPath, { costScale: number; tokenScal
   [PROJECT_PATHS.docs]: { costScale: 0.18, tokenScale: 0.19 },
 };
 
+const BASE_PROVIDER_CACHE_HIT_RATIOS: ProviderCacheHitRatioItem[] = [
+  { provider: "anthropic", cacheHitRatio: 0.56, responseCount: 512 },
+  { provider: "openai", cacheHitRatio: 0.43, responseCount: 463 },
+  { provider: "google", cacheHitRatio: 0.37, responseCount: 201 },
+  { provider: "unknown", cacheHitRatio: 0.21, responseCount: 110 },
+];
+
+const PROVIDER_CACHE_HIT_SCALING: Record<
+  AnalyticsProjectPath,
+  { ratioScale: number; responseScale: number }
+> = {
+  [PROJECT_PATHS.atlas]: { ratioScale: 1.06, responseScale: 0.55 },
+  [PROJECT_PATHS.orbit]: { ratioScale: 0.94, responseScale: 0.35 },
+  [PROJECT_PATHS.docs]: { ratioScale: 0.82, responseScale: 0.2 },
+};
+
 function normalizeProjectPath(projectPath: string | null | undefined): AnalyticsProjectPath | null {
   if (projectPath == null) {
     return null;
@@ -494,6 +516,24 @@ function getAgentCostBreakdown(projectPath: AnalyticsProjectPath | null): AgentC
   })).filter((row) => row.costUsd > 1.5);
 }
 
+function getProviderCacheHitRatios(
+  projectPath: AnalyticsProjectPath | null
+): ProviderCacheHitRatioItem[] {
+  if (projectPath === null) {
+    return BASE_PROVIDER_CACHE_HIT_RATIOS;
+  }
+
+  const scaling = PROVIDER_CACHE_HIT_SCALING[projectPath];
+  return BASE_PROVIDER_CACHE_HIT_RATIOS.map((row) => ({
+    provider: row.provider,
+    cacheHitRatio: Math.max(
+      0,
+      Math.min(0.98, Number((row.cacheHitRatio * scaling.ratioScale).toFixed(3)))
+    ),
+    responseCount: Math.max(1, Math.round(row.responseCount * scaling.responseScale)),
+  })).filter((row) => row.responseCount >= 12);
+}
+
 function setupAnalyticsStory(): APIClient {
   const workspaces = [
     createWorkspace({
@@ -562,6 +602,10 @@ function setupAnalyticsStory(): APIClient {
       const projectPath = normalizeProjectPath(input.projectPath ?? null);
       return Promise.resolve(getAgentCostBreakdown(projectPath));
     },
+    getCacheHitRatioByProvider: (input) => {
+      const projectPath = normalizeProjectPath(input.projectPath ?? null);
+      return Promise.resolve(getProviderCacheHitRatios(projectPath));
+    },
     rebuildDatabase: () =>
       Promise.resolve({
         success: true,
@@ -598,6 +642,7 @@ export const StatsDashboard: AppStory = {
     await canvas.findByRole("heading", { name: /spend by project/i });
     await canvas.findByRole("heading", { name: /spend by model/i });
     await canvas.findByRole("heading", { name: /timing distribution/i });
+    await canvas.findByRole("heading", { name: /cache hit ratio by provider/i });
     await canvas.findByRole("heading", { name: /agent cost breakdown/i });
 
     await waitFor(() => {
@@ -615,6 +660,10 @@ export const StatsDashboard: AppStory = {
 
       if (canvas.queryByText(/No timing data available yet/i)) {
         throw new Error("Expected timing distribution chart to render populated data");
+      }
+
+      if (canvas.queryByText(/No provider cache hit data available/i)) {
+        throw new Error("Expected provider cache-hit chart to render populated data");
       }
 
       if (canvas.queryByText(/No agent-level spend data available/i)) {

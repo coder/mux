@@ -12,6 +12,9 @@ export type SpendByProjectItem = z.infer<typeof analytics.getSpendByProject.outp
 export type SpendByModelItem = z.infer<typeof analytics.getSpendByModel.output>[number];
 export type TimingDistribution = z.infer<typeof analytics.getTimingDistribution.output>;
 export type AgentCostItem = z.infer<typeof analytics.getAgentCostBreakdown.output>[number];
+export type ProviderCacheHitRatioItem = z.infer<
+  typeof analytics.getCacheHitRatioByProvider.output
+>[number];
 
 export interface AsyncState<T> {
   data: T | null;
@@ -25,6 +28,7 @@ type SpendByProjectInput = z.input<typeof analytics.getSpendByProject.input>;
 type SpendByModelInput = z.input<typeof analytics.getSpendByModel.input>;
 type TimingDistributionInput = z.input<typeof analytics.getTimingDistribution.input>;
 type AgentCostBreakdownInput = z.input<typeof analytics.getAgentCostBreakdown.input>;
+type ProviderCacheHitRatioInput = z.input<typeof analytics.getCacheHitRatioByProvider.input>;
 
 interface DateFilterParams {
   from?: Date | null;
@@ -38,6 +42,9 @@ interface AnalyticsNamespace {
   getSpendByModel: (input: SpendByModelInput) => Promise<SpendByModelItem[]>;
   getTimingDistribution: (input: TimingDistributionInput) => Promise<TimingDistribution>;
   getAgentCostBreakdown: (input: AgentCostBreakdownInput) => Promise<AgentCostItem[]>;
+  getCacheHitRatioByProvider: (
+    input: ProviderCacheHitRatioInput
+  ) => Promise<ProviderCacheHitRatioItem[]>;
 }
 
 const ANALYTICS_UNAVAILABLE_MESSAGE = "Analytics backend is not available in this build.";
@@ -58,7 +65,8 @@ function getAnalyticsNamespace(api: APIClient): AnalyticsNamespace | null {
     typeof maybeNamespace.getSpendByProject !== "function" ||
     typeof maybeNamespace.getSpendByModel !== "function" ||
     typeof maybeNamespace.getTimingDistribution !== "function" ||
-    typeof maybeNamespace.getAgentCostBreakdown !== "function"
+    typeof maybeNamespace.getAgentCostBreakdown !== "function" ||
+    typeof maybeNamespace.getCacheHitRatioByProvider !== "function"
   ) {
     return null;
   }
@@ -419,6 +427,73 @@ export function useAnalyticsTimingDistribution(
       ignore = true;
     };
   }, [api, metric, projectPath, fromMs, toMs]);
+
+  return state;
+}
+
+export function useAnalyticsProviderCacheHitRatio(
+  projectPath?: string | null,
+  dateFilters?: DateFilterParams
+): AsyncState<ProviderCacheHitRatioItem[]> {
+  const fromMs = dateFilters?.from?.getTime() ?? null;
+  const toMs = dateFilters?.to?.getTime() ?? null;
+
+  const { api } = useAPI();
+  const [state, setState] = useState<AsyncState<ProviderCacheHitRatioItem[]>>({
+    data: null,
+    loading: true,
+    error: null,
+  });
+
+  useEffect(() => {
+    if (!api) {
+      setState((previousState) => ({
+        data: previousState.data,
+        loading: true,
+        error: null,
+      }));
+      return;
+    }
+
+    const analyticsApi = getAnalyticsNamespace(api);
+    if (!analyticsApi) {
+      setState({ data: null, loading: false, error: ANALYTICS_UNAVAILABLE_MESSAGE });
+      return;
+    }
+
+    let ignore = false;
+    setState((previousState) => ({
+      data: previousState.data,
+      loading: true,
+      error: null,
+    }));
+
+    const fromDate = fromMs == null ? null : new Date(fromMs);
+    const toDate = toMs == null ? null : new Date(toMs);
+
+    void analyticsApi
+      .getCacheHitRatioByProvider({ projectPath: projectPath ?? null, from: fromDate, to: toDate })
+      .then((data) => {
+        if (ignore) {
+          return;
+        }
+        setState({ data, loading: false, error: null });
+      })
+      .catch((error: unknown) => {
+        if (ignore) {
+          return;
+        }
+        setState((previousState) => ({
+          data: previousState.data,
+          loading: false,
+          error: getErrorMessage(error),
+        }));
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [api, projectPath, fromMs, toMs]);
 
   return state;
 }

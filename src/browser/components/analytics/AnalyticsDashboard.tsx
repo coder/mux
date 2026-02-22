@@ -4,6 +4,7 @@ import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useRouter } from "@/browser/contexts/RouterContext";
 import {
   useAnalyticsAgentCostBreakdown,
+  useAnalyticsProviderCacheHitRatio,
   useAnalyticsSpendByModel,
   useAnalyticsSpendByProject,
   useAnalyticsSpendOverTime,
@@ -15,6 +16,7 @@ import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { Button } from "@/browser/components/ui/button";
 import { cn } from "@/common/lib/utils";
 import { AgentCostChart } from "./AgentCostChart";
+import { ProviderCacheHitChart } from "./ProviderCacheHitChart";
 import { ModelBreakdown } from "./ModelBreakdown";
 import { SpendChart } from "./SpendChart";
 import { SummaryCards } from "./SummaryCards";
@@ -115,6 +117,10 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
     to: dateRange.to,
   });
   const timingDistribution = useAnalyticsTimingDistribution(timingMetric, projectPath, {
+    from: dateRange.from,
+    to: dateRange.to,
+  });
+  const providerCacheHitRatios = useAnalyticsProviderCacheHitRatio(projectPath, {
     from: dateRange.from,
     to: dateRange.to,
   });
@@ -226,6 +232,11 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
             error={timingDistribution.error}
             metric={timingMetric}
             onMetricChange={setTimingMetric}
+          />
+          <ProviderCacheHitChart
+            data={providerCacheHitRatios.data}
+            loading={providerCacheHitRatios.loading}
+            error={providerCacheHitRatios.error}
           />
           <AgentCostChart
             data={agentCosts.data}

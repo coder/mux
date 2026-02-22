@@ -5,12 +5,14 @@ import { Worker } from "node:worker_threads";
 import type {
   AgentCostRow,
   HistogramBucket,
+  ProviderCacheHitModelRow,
   SpendByModelRow,
   SpendByProjectRow,
   SpendOverTimeRow,
   SummaryRow,
   TimingPercentilesRow,
 } from "@/common/orpc/schemas/analytics";
+import { getModelProvider } from "@/common/utils/ai/models";
 import type { Config } from "@/node/config";
 import { getErrorMessage } from "@/common/utils/errors";
 import { PlatformPaths } from "@/common/utils/paths";
@@ -43,7 +45,8 @@ type AnalyticsQueryName =
   | "getSpendByProject"
   | "getSpendByModel"
   | "getTimingDistribution"
-  | "getAgentCostBreakdown";
+  | "getAgentCostBreakdown"
+  | "getCacheHitRatioByProvider";
 
 interface IngestWorkspaceMeta {
   projectPath?: string;
@@ -90,6 +93,79 @@ function toDateFilterString(value: Date | null | undefined): string | null {
 
   assert(Number.isFinite(value.getTime()), "Analytics date filter must be a valid Date");
   return value.toISOString().slice(0, 10);
+}
+
+interface ProviderCacheHitTotals {
+  cachedTokens: number;
+  totalPromptTokens: number;
+  responseCount: number;
+}
+
+function normalizeProviderName(model: string): string {
+  const provider = getModelProvider(model).trim().toLowerCase();
+  return provider.length > 0 ? provider : "unknown";
+}
+
+/**
+ * Roll model-level cache metrics into provider buckets using the same provider
+ * parser as the rest of the app (handles mux-gateway prefixes and malformed
+ * model strings consistently).
+ */
+export function aggregateProviderCacheHitRows(
+  rows: ProviderCacheHitModelRow[]
+): Array<{ provider: string; cacheHitRatio: number; responseCount: number }> {
+  const totalsByProvider = new Map<string, ProviderCacheHitTotals>();
+
+  for (const row of rows) {
+    assert(typeof row.model === "string", "Provider cache hit aggregation requires a string model");
+    assert(
+      Number.isFinite(row.cached_tokens) && row.cached_tokens >= 0,
+      "Provider cache hit aggregation requires non-negative cached_tokens"
+    );
+    assert(
+      Number.isFinite(row.total_prompt_tokens) && row.total_prompt_tokens >= 0,
+      "Provider cache hit aggregation requires non-negative total_prompt_tokens"
+    );
+    assert(
+      Number.isFinite(row.response_count) && row.response_count >= 0,
+      "Provider cache hit aggregation requires non-negative response_count"
+    );
+
+    const provider = normalizeProviderName(row.model);
+    const current = totalsByProvider.get(provider);
+
+    if (current) {
+      current.cachedTokens += row.cached_tokens;
+      current.totalPromptTokens += row.total_prompt_tokens;
+      current.responseCount += row.response_count;
+      continue;
+    }
+
+    totalsByProvider.set(provider, {
+      cachedTokens: row.cached_tokens,
+      totalPromptTokens: row.total_prompt_tokens,
+      responseCount: row.response_count,
+    });
+  }
+
+  return Array.from(totalsByProvider.entries())
+    .map(([provider, totals]) => ({
+      provider,
+      cacheHitRatio:
+        totals.totalPromptTokens > 0 ? totals.cachedTokens / totals.totalPromptTokens : 0,
+      responseCount: totals.responseCount,
+    }))
+    .sort((left, right) => {
+      if (right.cacheHitRatio !== left.cacheHitRatio) {
+        return right.cacheHitRatio - left.cacheHitRatio;
+      }
+
+      if (right.responseCount !== left.responseCount) {
+        return right.responseCount - left.responseCount;
+      }
+
+      return left.provider.localeCompare(right.provider);
+    });
 }
 
 export class AnalyticsService {
@@ -454,6 +530,20 @@ export class AnalyticsService {
       tokenCount: row.token_count,
       responseCount: row.response_count,
     }));
+  }
+
+  async getCacheHitRatioByProvider(
+    projectPath: string | null,
+    from?: Date | null,
+    to?: Date | null
+  ): Promise<Array<{ provider: string; cacheHitRatio: number; responseCount: number }>> {
+    const rows = await this.executeQuery<ProviderCacheHitModelRow[]>("getCacheHitRatioByProvider", {
+      projectPath,
+      from: toDateFilterString(from),
+      to: toDateFilterString(to),
+    });
+
+    return aggregateProviderCacheHitRows(rows);
   }
 
   async rebuildAll(): Promise<{ success: boolean; workspacesIngested: number }> {

@@ -57,6 +57,14 @@ export const AgentCostRowSchema = z.object({
 });
 export type AgentCostRow = z.infer<typeof AgentCostRowSchema>;
 
+export const ProviderCacheHitModelRowSchema = z.object({
+  model: z.string(),
+  cached_tokens: z.number(),
+  total_prompt_tokens: z.number(),
+  response_count: z.number(),
+});
+export type ProviderCacheHitModelRow = z.infer<typeof ProviderCacheHitModelRowSchema>;
+
 /** ETL input validation — each row extracted from chat.jsonl is validated before insert */
 export const EventRowSchema = z.object({
   workspace_id: z.string(),
@@ -175,6 +183,20 @@ export const analytics = {
         agentId: z.string(),
         costUsd: z.number(),
         tokenCount: z.number(),
+        responseCount: z.number(),
+      })
+    ),
+  },
+  getCacheHitRatioByProvider: {
+    input: z.object({
+      projectPath: z.string().nullish(),
+      from: z.coerce.date().nullish(),
+      to: z.coerce.date().nullish(),
+    }),
+    output: z.array(
+      z.object({
+        provider: z.string(),
+        cacheHitRatio: z.number(),
         responseCount: z.number(),
       })
     ),
