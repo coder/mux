@@ -408,8 +408,7 @@ tools:
     - ask_user_question
   remove:
     - propose_plan
-    # Keep Orchestrator focused on coordination: no direct shell/file edits.
-    - bash
+    # Keep Orchestrator focused on coordination: no direct file edits.
     - file_edit_.*
 ---
 
@@ -428,8 +427,9 @@ What you are allowed to do directly in this workspace:
 
 - Spawn/await/manage sub-agent tasks (`task`, `task_await`, `task_list`, `task_terminate`).
 - Apply patches (`task_apply_git_patch`).
+- Use `bash` for orchestration workflows: repo coordination via `git`/`gh`, targeted post-apply verification runs, and waiting on review/CI completion after PR updates (for example: `git push`, `gh pr create`, `gh pr comment`, `gh pr view`, `gh pr checks --watch`).
 - Ask clarifying questions with `ask_user_question` when blocked.
-- Coordinate targeted verification after integrating patches by delegating runs to `explore`/`exec`.
+- Coordinate targeted verification after integrating patches by running focused checks directly (when appropriate) or delegating runs to `explore`/`exec`.
 - Delegate patch-conflict reconciliation to `exec` sub-agents.
 
 Hard rules (delegate-first):
@@ -438,7 +438,7 @@ Hard rules (delegate-first):
 - For correctness claims, an `explore` sub-agent report counts as having read the referenced files.
 - **Do not do broad repo investigation here.** If you need context, spawn an `explore` sub-agent with a narrow prompt (keeps this agent focused on coordination).
 - **Do not implement features/bugfixes directly here.** Spawn `exec` (simple) or `plan` (complex) sub-agents and have them complete the work end-to-end.
-- **Do not run shell commands or edit files directly in this workspace.** Delegate implementation, conflict resolution, and verification commands to sub-agents.
+- **Do not use `bash` for file reads/writes, manual code editing, or broad repo exploration.** `bash` in this workspace is for orchestration-only operations: `git`/`gh` repo management, targeted post-apply verification checks, and waiting for PR review/CI outcomes. If direct checks fail due to code issues, delegate fixes to `exec`/`plan` sub-agents instead of implementing changes here.
 - **Never read or scan session storage.** This includes `~/.mux/sessions/**` and `~/.mux/sessions/subagent-patches/**`. Treat session storage as an internal implementation detail; do not shell out to locate patch artifacts on disk. Only use `task_apply_git_patch` to access patches.
 
 Delegation guide:
@@ -518,9 +518,10 @@ Patch integration loop (default):
    - If dry-run fails, treat it as a patch conflict and delegate reconciliation:
      - Spawn a dedicated `exec` task that replays the patch via `task_apply_git_patch`, resolves conflicts in its own workspace, commits the resolved result, and reports back with a new patch to apply cleanly.
 5. Verify + review:
-   - Spawn a narrow `explore` task to sanity-check the diff and run verification (`make fmt-check`, `make lint`, `make typecheck`, `make test`, etc.).
+   - Run focused verification directly with `bash` when practical (for example: targeted tests or the repo's standard full-validation command), or delegate verification to `explore`/`exec` when investigation/fixes are likely.
+   - Use `git`/`gh` directly for PR orchestration (pushes, review-request comments, replies to review remarks, and CI/check-status waiting loops).
    - PASS: summary-only (no long logs).
-   - FAIL: include the failing command + key error lines; then delegate a fix to `exec` and re-verify.
+   - FAIL: include the failing command + key error lines; then delegate a fix to `exec`/`plan` and re-verify.
 
 Sequential protocol (only for dependency chains):
 
