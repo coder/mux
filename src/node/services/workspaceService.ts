@@ -3341,6 +3341,18 @@ export class WorkspaceService extends EventEmitter {
         return result;
       }
 
+      // Non-destructive interrupt cascades preserve descendant task workspaces with
+      // taskStatus=interrupted. If a user manually resumes one, restore running so
+      // TaskService stream-end handling can finalize reports and unblock task_await.
+      try {
+        await this.taskService?.markInterruptedTaskRunning?.(workspaceId);
+      } catch (error: unknown) {
+        log.error("Failed to restore interrupted task status on sendMessage", {
+          workspaceId,
+          error,
+        });
+      }
+
       return result;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : JSON.stringify(error, null, 2);
@@ -3434,7 +3446,21 @@ export class WorkspaceService extends EventEmitter {
           workspaceId,
           error: result.error,
         });
+        return result;
       }
+
+      // Non-destructive interrupt cascades preserve descendant task workspaces with
+      // taskStatus=interrupted. If a user manually resumes one, restore running so
+      // TaskService stream-end handling can finalize reports and unblock task_await.
+      try {
+        await this.taskService?.markInterruptedTaskRunning?.(workspaceId);
+      } catch (error: unknown) {
+        log.error("Failed to restore interrupted task status on resumeStream", {
+          workspaceId,
+          error,
+        });
+      }
+
       return result;
     } catch (error) {
       const errorMessage = getErrorMessage(error);

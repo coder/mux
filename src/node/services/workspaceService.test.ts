@@ -192,6 +192,7 @@ describe("WorkspaceService sendMessage status clearing", () => {
     isBusy: ReturnType<typeof mock>;
     queueMessage: ReturnType<typeof mock>;
     sendMessage: ReturnType<typeof mock>;
+    resumeStream: ReturnType<typeof mock>;
   };
 
   beforeEach(async () => {
@@ -262,6 +263,7 @@ describe("WorkspaceService sendMessage status clearing", () => {
       isBusy: mock(() => true),
       queueMessage: mock(() => undefined),
       sendMessage: mock(() => Promise.resolve(Ok(undefined))),
+      resumeStream: mock(() => Promise.resolve(Ok({ started: true }))),
     };
 
     (
@@ -324,6 +326,40 @@ describe("WorkspaceService sendMessage status clearing", () => {
 
     expect(result.success).toBe(true);
     expect(updateAgentStatus).not.toHaveBeenCalled();
+  });
+
+  test("sendMessage restores interrupted task status after successful send", async () => {
+    fakeSession.isBusy.mockReturnValue(false);
+
+    const markInterruptedTaskRunning = mock(() => Promise.resolve());
+    workspaceService.setTaskService({
+      markInterruptedTaskRunning,
+      resetAutoResumeCount: mock(() => undefined),
+    } as unknown as TaskService);
+
+    const result = await workspaceService.sendMessage("test-workspace", "hello", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(true);
+    expect(markInterruptedTaskRunning).toHaveBeenCalledWith("test-workspace");
+  });
+
+  test("resumeStream restores interrupted task status after successful resume", async () => {
+    const markInterruptedTaskRunning = mock(() => Promise.resolve());
+    workspaceService.setTaskService({
+      markInterruptedTaskRunning,
+      resetAutoResumeCount: mock(() => undefined),
+    } as unknown as TaskService);
+
+    const result = await workspaceService.resumeStream("test-workspace", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(true);
+    expect(markInterruptedTaskRunning).toHaveBeenCalledWith("test-workspace");
   });
 
   test("does not clear persisted agent status directly when direct send fails after turn acceptance", async () => {

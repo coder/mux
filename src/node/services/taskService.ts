@@ -2322,6 +2322,39 @@ export class TaskService {
     this.interruptedParentWorkspaceIds.add(workspaceId);
   }
 
+  /**
+   * If a preserved descendant task workspace was previously interrupted and the user manually
+   * resumes it, restore taskStatus=running so stream-end finalization can proceed normally.
+   */
+  async markInterruptedTaskRunning(workspaceId: string): Promise<void> {
+    assert(workspaceId.length > 0, "markInterruptedTaskRunning: workspaceId must be non-empty");
+
+    let transitionedToRunning = false;
+    await this.editWorkspaceEntry(
+      workspaceId,
+      (ws) => {
+        // Only descendant task workspaces have task lifecycle status.
+        if (!ws.parentWorkspaceId) {
+          return;
+        }
+        if (ws.taskStatus !== "interrupted") {
+          return;
+        }
+
+        ws.taskStatus = "running";
+        ws.taskPrompt = undefined;
+        transitionedToRunning = true;
+      },
+      { allowMissing: true }
+    );
+
+    if (!transitionedToRunning) {
+      return;
+    }
+
+    await this.emitWorkspaceMetadata(workspaceId);
+  }
+
   private async handleStreamEnd(event: StreamEndEvent): Promise<void> {
     const workspaceId = event.workspaceId;
 
