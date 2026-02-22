@@ -1282,6 +1282,120 @@ describe("StreamManager - replayStream", () => {
 
     expect(replayedToolEnds).toEqual(["tool-new"]);
   });
+  test("replayStream emits replay usage-delta from tracked step/cumulative usage", async () => {
+    const streamManager = new StreamManager(historyService);
+
+    // Suppress error events from bubbling up as uncaught exceptions during tests
+    streamManager.on("error", () => undefined);
+
+    const workspaceId = "ws-replay-usage";
+    const usageEvents: Array<{
+      replay?: boolean;
+      usage: { inputTokens: number; outputTokens: number; totalTokens: number };
+      cumulativeUsage: { inputTokens: number; outputTokens: number; totalTokens: number };
+    }> = [];
+
+    streamManager.on(
+      "usage-delta",
+      (event: {
+        replay?: boolean;
+        usage: { inputTokens: number; outputTokens: number; totalTokens: number };
+        cumulativeUsage: { inputTokens: number; outputTokens: number; totalTokens: number };
+      }) => {
+        usageEvents.push(event);
+      }
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
+    if (!(workspaceStreamsValue instanceof Map)) {
+      throw new Error("StreamManager.workspaceStreams is not a Map");
+    }
+    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
+
+    workspaceStreams.set(workspaceId, {
+      state: "streaming",
+      messageId: "msg-usage",
+      model: "claude-sonnet-4",
+      metadataModel: "claude-sonnet-4",
+      historySequence: 1,
+      startTime: 123,
+      initialMetadata: {},
+      toolCompletionTimestamps: new Map<string, number>(),
+      parts: [{ type: "text", text: "hello", timestamp: 10 }],
+      lastStepUsage: { inputTokens: 21, outputTokens: 3, totalTokens: 24 },
+      cumulativeUsage: { inputTokens: 55, outputTokens: 11, totalTokens: 66 },
+      lastStepProviderMetadata: { anthropic: { cacheReadInputTokens: 2 } },
+      cumulativeProviderMetadata: { anthropic: { cacheCreationInputTokens: 9 } },
+    });
+
+    const tokenTracker = Reflect.get(streamManager, "tokenTracker") as {
+      setModel: (model: string) => Promise<void>;
+      countTokens: (text: string) => Promise<number>;
+    };
+
+    tokenTracker.setModel = () => Promise.resolve();
+    tokenTracker.countTokens = () => Promise.resolve(1);
+
+    await streamManager.replayStream(workspaceId);
+
+    expect(usageEvents).toHaveLength(1);
+    expect(usageEvents[0]?.replay).toBe(true);
+    expect(usageEvents[0]?.usage).toEqual({ inputTokens: 21, outputTokens: 3, totalTokens: 24 });
+    expect(usageEvents[0]?.cumulativeUsage).toEqual({
+      inputTokens: 55,
+      outputTokens: 11,
+      totalTokens: 66,
+    });
+  });
+  test("replayStream skips replay usage-delta for incremental afterTimestamp replays", async () => {
+    const streamManager = new StreamManager(historyService);
+
+    // Suppress error events from bubbling up as uncaught exceptions during tests
+    streamManager.on("error", () => undefined);
+
+    const workspaceId = "ws-replay-usage-incremental";
+    const usageEvents: Array<{ replay?: boolean }> = [];
+
+    streamManager.on("usage-delta", (event: { replay?: boolean }) => {
+      usageEvents.push(event);
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
+    if (!(workspaceStreamsValue instanceof Map)) {
+      throw new Error("StreamManager.workspaceStreams is not a Map");
+    }
+    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
+
+    workspaceStreams.set(workspaceId, {
+      state: "streaming",
+      messageId: "msg-usage-incremental",
+      model: "claude-sonnet-4",
+      metadataModel: "claude-sonnet-4",
+      historySequence: 1,
+      startTime: 123,
+      initialMetadata: {},
+      toolCompletionTimestamps: new Map<string, number>(),
+      parts: [{ type: "text", text: "hello", timestamp: 10 }],
+      lastStepUsage: { inputTokens: 21, outputTokens: 3, totalTokens: 24 },
+      cumulativeUsage: { inputTokens: 55, outputTokens: 11, totalTokens: 66 },
+      lastStepProviderMetadata: { anthropic: { cacheReadInputTokens: 2 } },
+      cumulativeProviderMetadata: { anthropic: { cacheCreationInputTokens: 9 } },
+    });
+
+    const tokenTracker = Reflect.get(streamManager, "tokenTracker") as {
+      setModel: (model: string) => Promise<void>;
+      countTokens: (text: string) => Promise<number>;
+    };
+
+    tokenTracker.setModel = () => Promise.resolve();
+    tokenTracker.countTokens = () => Promise.resolve(1);
+
+    await streamManager.replayStream(workspaceId, { afterTimestamp: 999 });
+
+    expect(usageEvents).toHaveLength(0);
+  });
 });
 
 describe("StreamManager - getStreamInfo", () => {

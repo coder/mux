@@ -400,6 +400,10 @@ export const UsageDeltaEventSchema = z.object({
   type: z.literal("usage-delta"),
   workspaceId: z.string(),
   messageId: z.string(),
+  replay: z
+    .boolean()
+    .optional()
+    .meta({ description: "True when this event is emitted during stream replay" }),
 
   // Step-level: this step only (for context window display)
   usage: LanguageModelV2UsageSchema,

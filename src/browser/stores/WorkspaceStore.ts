@@ -518,6 +518,10 @@ export class WorkspaceStore {
   // Workspaces that need a clean history replay once a new iterator is established.
   // We keep the existing UI visible until the replay can actually start.
   private pendingReplayReset = new Set<string>();
+  // Last usage snapshot captured right before full replay clears the aggregator.
+  // Used as a temporary fallback so context/cost indicators don't flash empty
+  // during reconnect until replayed usage catches up.
+  private preReplayUsageSnapshot = new Map<string, WorkspaceUsageState>();
   private consumersStore = new MapStore<string, WorkspaceConsumersState>();
 
   // Manager for consumer calculations (debouncing, caching, lazy loading)
@@ -1287,27 +1291,6 @@ export class WorkspaceStore {
   }
 
   /**
-   * Defer the caught-up usage bump until idle time so first transcript paint is not blocked
-   * by a second full ChatPane pass that only refreshes usage-derived UI.
-   */
-  private scheduleCaughtUpUsageBump(workspaceId: string): void {
-    const bumpUsage = () => {
-      const transient = this.chatTransientState.get(workspaceId);
-      if (!transient?.caughtUp || !this.aggregators.has(workspaceId)) {
-        return;
-      }
-      this.usageStore.bump(workspaceId);
-    };
-
-    if (typeof requestIdleCallback !== "function") {
-      setTimeout(bumpUsage, 0);
-      return;
-    }
-
-    requestIdleCallback(bumpUsage, { timeout: 100 });
-  }
-
-  /**
    * Subscribe to backend timing stats snapshots for a workspace.
    */
 
@@ -1947,11 +1930,18 @@ export class WorkspaceStore {
           sessionTotal.reasoning.tokens
         : 0;
 
+      const messages = aggregator.getAllMessages();
+      if (messages.length === 0) {
+        const snapshot = this.preReplayUsageSnapshot.get(workspaceId);
+        if (snapshot) {
+          return snapshot;
+        }
+      }
+
       // Get last message's context usage — only search within the current
       // compaction epoch. Pre-boundary messages carry stale contextUsage from
       // before compaction; including them inflates the usage indicator and
       // triggers premature auto-compaction.
-      const messages = aggregator.getAllMessages();
       const lastContextUsage = (() => {
         for (let i = messages.length - 1; i >= 0; i--) {
           const msg = messages[i];
@@ -2536,6 +2526,21 @@ export class WorkspaceStore {
     // Clear any pending UI bumps from deltas - we're about to rebuild the message list.
     this.cancelPendingIdleBump(workspaceId);
 
+    // Preserve last-known usage while replay rebuilds the aggregator.
+    // Without this, getWorkspaceUsage() can briefly return an empty state and hide
+    // context/cost indicators until replayed usage catches up.
+    const currentUsage = this.getWorkspaceUsage(workspaceId);
+    const hasUsageSnapshot =
+      currentUsage.totalTokens > 0 ||
+      currentUsage.lastContextUsage !== undefined ||
+      currentUsage.liveUsage !== undefined ||
+      currentUsage.liveCostUsage !== undefined;
+    if (hasUsageSnapshot) {
+      this.preReplayUsageSnapshot.set(workspaceId, currentUsage);
+    } else {
+      this.preReplayUsageSnapshot.delete(workspaceId);
+    }
+
     aggregator.clear();
 
     // Reset per-workspace transient state so the next replay rebuilds from the backend source of truth.
@@ -2826,6 +2831,13 @@ export class WorkspaceStore {
           this.states.bump(workspaceId);
         }
 
+        // Full replay resets can preserve the last usage snapshot until caught-up.
+        // If reconnect fails before caught-up arrives, drop that snapshot so stale
+        // live usage isn't shown indefinitely while retries continue.
+        if (transient && !transient.caughtUp && this.preReplayUsageSnapshot.delete(workspaceId)) {
+          this.usageStore.bump(workspaceId);
+        }
+
         // Preserve pagination across transient reconnect retries. Incremental
         // caught-up payloads intentionally omit hasOlderHistory, so resetting
         // here would permanently hide "Load older messages" until a full replay.
@@ -2988,6 +3000,7 @@ export class WorkspaceStore {
     this.statsStore.delete(workspaceId);
     this.statsListenerCounts.delete(workspaceId);
     this.historyPagination.delete(workspaceId);
+    this.preReplayUsageSnapshot.delete(workspaceId);
     this.sessionUsage.delete(workspaceId);
 
     this.ensureActiveOnChatSubscription();
@@ -3066,6 +3079,7 @@ export class WorkspaceStore {
     this.statsStore.clear();
     this.statsListenerCounts.clear();
     this.historyPagination.clear();
+    this.preReplayUsageSnapshot.clear();
     this.sessionUsage.clear();
     this.recencyCache.clear();
     this.previousSidebarValues.clear();
@@ -3303,9 +3317,10 @@ export class WorkspaceStore {
       this.states.bump(workspaceId);
       this.checkAndBumpRecencyIfChanged(); // Messages loaded, update recency
 
-      // Usage-only updates can trigger an extra full ChatPane render right after catch-up.
-      // Schedule this as idle follow-up so initial transcript paint wins the critical path.
-      this.scheduleCaughtUpUsageBump(workspaceId);
+      // Replay resets clear the aggregator before history is rebuilt. Drop the temporary
+      // fallback snapshot and recompute usage immediately once catch-up is authoritative.
+      this.preReplayUsageSnapshot.delete(workspaceId);
+      this.usageStore.bump(workspaceId);
 
       // Hydrate consumer breakdown from persisted cache when possible.
       // Fall back to tokenization when no cache (or stale cache) exists.

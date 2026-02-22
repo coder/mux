@@ -3064,6 +3064,24 @@ export class StreamManager extends EventEmitter {
     for (const part of filteredReplayParts) {
       await this.emitPartAsEvent(typedWorkspaceId, replayMessageId, part, { replay: true });
     }
+
+    // Live streams emit usage-delta after each finish-step. Replay part snapshots do not
+    // include finish-step boundaries, so full replays emit the latest accumulated usage
+    // explicitly. Incremental/live-mode replays pass afterTimestamp and should only replay
+    // stream context (not stale usage snapshots) to avoid duplicate usage updates.
+    if (streamInfo.lastStepUsage && afterTimestamp == null) {
+      const usageEvent: UsageDeltaEvent = {
+        type: "usage-delta",
+        workspaceId,
+        messageId: streamInfo.messageId,
+        replay: true,
+        usage: streamInfo.lastStepUsage,
+        providerMetadata: streamInfo.lastStepProviderMetadata,
+        cumulativeUsage: streamInfo.cumulativeUsage,
+        cumulativeProviderMetadata: streamInfo.cumulativeProviderMetadata,
+      };
+      this.emit("usage-delta", usageEvent);
+    }
   }
 
   /**

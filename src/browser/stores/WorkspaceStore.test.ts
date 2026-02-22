@@ -2561,6 +2561,183 @@ describe("WorkspaceStore", () => {
       expect(store.getTaskToolLiveTaskId(workspaceId, "call-task-3")).toBe("child-workspace-3");
     });
 
+    it("preserves usage state while full replay resets the aggregator", async () => {
+      const workspaceId = "usage-reset-replay-workspace";
+      let subscriptionCount = 0;
+      let releaseFirstSubscription: (() => void) | undefined;
+      const holdFirstSubscription = new Promise<void>((resolve) => {
+        releaseFirstSubscription = resolve;
+      });
+
+      let releaseSecondCaughtUp: (() => void) | undefined;
+      const holdSecondCaughtUp = new Promise<void>((resolve) => {
+        releaseSecondCaughtUp = resolve;
+      });
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        subscriptionCount += 1;
+
+        if (subscriptionCount === 1) {
+          yield { type: "caught-up" };
+          await Promise.resolve();
+          yield {
+            type: "stream-start",
+            workspaceId,
+            messageId: "msg-live-usage",
+            historySequence: 1,
+            model: "claude-3-5-sonnet-20241022",
+            startTime: 1,
+          };
+          yield {
+            type: "usage-delta",
+            workspaceId,
+            messageId: "msg-live-usage",
+            usage: { inputTokens: 321, outputTokens: 9, totalTokens: 330 },
+            cumulativeUsage: { inputTokens: 500, outputTokens: 15, totalTokens: 515 },
+          };
+
+          await holdFirstSubscription;
+          return;
+        }
+
+        if (subscriptionCount === 2) {
+          // Hold caught-up so the test can inspect usage after resetChatStateForReplay()
+          // cleared the aggregator but before replay completion.
+          await holdSecondCaughtUp;
+          yield { type: "caught-up", replay: "full" };
+          return;
+        }
+
+        await waitForAbortSignal();
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const seededUsage = await waitUntil(() => {
+        const aggregator = store.getAggregator(workspaceId);
+        return aggregator?.getActiveStreamUsage("msg-live-usage")?.inputTokens === 321;
+      });
+      expect(seededUsage).toBe(true);
+
+      releaseFirstSubscription?.();
+
+      const startedSecondSubscription = await waitUntil(() => subscriptionCount >= 2);
+      expect(startedSecondSubscription).toBe(true);
+
+      const usageDuringReplay = store.getWorkspaceUsage(workspaceId);
+      expect(usageDuringReplay.liveUsage?.input.tokens).toBe(321);
+      expect(usageDuringReplay.liveCostUsage?.input.tokens).toBe(500);
+
+      releaseSecondCaughtUp?.();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const usageAfterCaughtUp = store.getWorkspaceUsage(workspaceId);
+      expect(usageAfterCaughtUp.liveUsage).toBeUndefined();
+    });
+
+    it("clears replay usage snapshot when reconnect fails before caught-up", async () => {
+      const workspaceId = "usage-reset-replay-failure-workspace";
+      let subscriptionCount = 0;
+      let releaseFirstSubscription: (() => void) | undefined;
+      const holdFirstSubscription = new Promise<void>((resolve) => {
+        releaseFirstSubscription = resolve;
+      });
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        subscriptionCount += 1;
+
+        if (subscriptionCount === 1) {
+          yield { type: "caught-up" };
+          await Promise.resolve();
+          yield {
+            type: "stream-start",
+            workspaceId,
+            messageId: "msg-live-usage-failure",
+            historySequence: 1,
+            model: "claude-3-5-sonnet-20241022",
+            startTime: 1,
+          };
+          yield {
+            type: "usage-delta",
+            workspaceId,
+            messageId: "msg-live-usage-failure",
+            usage: { inputTokens: 111, outputTokens: 9, totalTokens: 120 },
+            cumulativeUsage: { inputTokens: 300, outputTokens: 15, totalTokens: 315 },
+          };
+          // Keep two active streams so reconnect cannot build a safe incremental cursor.
+          // This forces a full replay attempt, which executes resetChatStateForReplay().
+          yield {
+            type: "stream-start",
+            workspaceId,
+            messageId: "msg-live-usage-failure-2",
+            historySequence: 2,
+            model: "claude-3-5-sonnet-20241022",
+            startTime: 2,
+          };
+
+          await holdFirstSubscription;
+          return;
+        }
+
+        if (subscriptionCount === 2) {
+          // Simulate reconnect failure before authoritative caught-up.
+          await Promise.resolve();
+          return;
+        }
+
+        await waitForAbortSignal();
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const seededUsage = await waitUntil(() => {
+        const aggregator = store.getAggregator(workspaceId);
+        return aggregator?.getActiveStreamUsage("msg-live-usage-failure")?.inputTokens === 111;
+      });
+      expect(seededUsage).toBe(true);
+
+      releaseFirstSubscription?.();
+
+      const startedSecondSubscription = await waitUntil(() => subscriptionCount >= 2);
+      expect(startedSecondSubscription).toBe(true);
+
+      const usageSnapshotCleared = await waitUntil(() => {
+        const usage = store.getWorkspaceUsage(workspaceId);
+        return usage.liveUsage === undefined && usage.liveCostUsage === undefined;
+      });
+      expect(usageSnapshotCleared).toBe(true);
+    });
+
     it("uses compaction boundary context usage when it is the newest usage in the active epoch", async () => {
       const workspaceId = "boundary-context-usage-workspace";
 
