@@ -1034,8 +1034,8 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         setSelectedLineRange(null);
       }
 
-      if (isTouchExperience && !shiftKey) {
-        // Mobile row tap should immediately open the add-comment composer.
+      if (isTouchExperience && !shiftKey && resolvedHunk) {
+        // Mobile row tap should only open a composer for lines backed by a diff hunk.
         openComposer("", { startIndex: lineIndex, endIndex: lineIndex });
       }
     },
