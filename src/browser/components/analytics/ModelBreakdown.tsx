@@ -136,9 +136,17 @@ export function ModelBreakdown(props: ModelBreakdownProps) {
                     borderColor: "var(--color-border-medium)",
                     backgroundColor: "var(--color-background-secondary)",
                     borderRadius: "8px",
+                    color: "var(--color-foreground)",
                   }}
+                  labelStyle={{ color: "var(--color-foreground)" }}
+                  itemStyle={{ color: "var(--color-foreground)" }}
                 />
-                <Legend wrapperStyle={{ fontSize: "11px" }} />
+                <Legend
+                  wrapperStyle={{ fontSize: "11px" }}
+                  formatter={(value) => (
+                    <span style={{ color: "var(--color-foreground)" }}>{value}</span>
+                  )}
+                />
               </PieChart>
             </ResponsiveContainer>
           </div>
