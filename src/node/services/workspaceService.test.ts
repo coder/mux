@@ -324,12 +324,37 @@ describe("WorkspaceService sendMessage status clearing", () => {
     expect(result.success).toBe(true);
     expect(updateAgentStatus).not.toHaveBeenCalled();
   });
-  test("does not clear persisted agent status when direct send fails", async () => {
+  test("clears persisted agent status when direct send fails after turn acceptance", async () => {
     fakeSession.isBusy.mockReturnValue(false);
     fakeSession.sendMessage.mockResolvedValue(
       Err({
         type: "unknown" as const,
-        raw: "model validation failed",
+        raw: "runtime startup failed after user turn persisted",
+      })
+    );
+
+    const updateAgentStatus = spyOn(
+      workspaceService as unknown as {
+        updateAgentStatus: (workspaceId: string, status: null) => Promise<void>;
+      },
+      "updateAgentStatus"
+    ).mockResolvedValue(undefined);
+
+    const result = await workspaceService.sendMessage("test-workspace", "hello", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(false);
+    expect(updateAgentStatus).toHaveBeenCalledWith("test-workspace", null);
+  });
+
+  test("does not clear persisted agent status when direct send is rejected pre-acceptance", async () => {
+    fakeSession.isBusy.mockReturnValue(false);
+    fakeSession.sendMessage.mockResolvedValue(
+      Err({
+        type: "invalid_model_string" as const,
+        message: "invalid model",
       })
     );
 

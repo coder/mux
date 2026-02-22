@@ -3327,6 +3327,13 @@ export class WorkspaceService extends EventEmitter {
           workspaceId,
           error: result.error,
         });
+
+        if (shouldClearPersistedAgentStatus && result.error.type !== "invalid_model_string") {
+          // Some send errors happen after the user turn is accepted and emitted
+          // (for example runtime/startup failures). Clear persisted status in those
+          // cases so background activity does not retain stale previous-turn status.
+          void this.updateAgentStatus(workspaceId, null);
+        }
         return result;
       }
 
