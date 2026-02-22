@@ -328,12 +328,14 @@ describe("WorkspaceService sendMessage status clearing", () => {
     expect(updateAgentStatus).not.toHaveBeenCalled();
   });
 
-  test("sendMessage restores interrupted task status after successful send", async () => {
+  test("sendMessage restores interrupted task status before successful send", async () => {
     fakeSession.isBusy.mockReturnValue(false);
 
-    const markInterruptedTaskRunning = mock(() => Promise.resolve());
+    const markInterruptedTaskRunning = mock(() => Promise.resolve(true));
+    const restoreInterruptedTaskAfterResumeFailure = mock(() => Promise.resolve());
     workspaceService.setTaskService({
       markInterruptedTaskRunning,
+      restoreInterruptedTaskAfterResumeFailure,
       resetAutoResumeCount: mock(() => undefined),
     } as unknown as TaskService);
 
@@ -344,12 +346,15 @@ describe("WorkspaceService sendMessage status clearing", () => {
 
     expect(result.success).toBe(true);
     expect(markInterruptedTaskRunning).toHaveBeenCalledWith("test-workspace");
+    expect(restoreInterruptedTaskAfterResumeFailure).not.toHaveBeenCalled();
   });
 
-  test("resumeStream restores interrupted task status after successful resume", async () => {
-    const markInterruptedTaskRunning = mock(() => Promise.resolve());
+  test("resumeStream restores interrupted task status before successful resume", async () => {
+    const markInterruptedTaskRunning = mock(() => Promise.resolve(true));
+    const restoreInterruptedTaskAfterResumeFailure = mock(() => Promise.resolve());
     workspaceService.setTaskService({
       markInterruptedTaskRunning,
+      restoreInterruptedTaskAfterResumeFailure,
       resetAutoResumeCount: mock(() => undefined),
     } as unknown as TaskService);
 
@@ -360,14 +365,17 @@ describe("WorkspaceService sendMessage status clearing", () => {
 
     expect(result.success).toBe(true);
     expect(markInterruptedTaskRunning).toHaveBeenCalledWith("test-workspace");
+    expect(restoreInterruptedTaskAfterResumeFailure).not.toHaveBeenCalled();
   });
 
   test("resumeStream keeps interrupted task status when no stream starts", async () => {
     fakeSession.resumeStream.mockResolvedValue(Ok({ started: false }));
 
-    const markInterruptedTaskRunning = mock(() => Promise.resolve());
+    const markInterruptedTaskRunning = mock(() => Promise.resolve(true));
+    const restoreInterruptedTaskAfterResumeFailure = mock(() => Promise.resolve());
     workspaceService.setTaskService({
       markInterruptedTaskRunning,
+      restoreInterruptedTaskAfterResumeFailure,
       resetAutoResumeCount: mock(() => undefined),
     } as unknown as TaskService);
 
@@ -380,7 +388,35 @@ describe("WorkspaceService sendMessage status clearing", () => {
     if (result.success) {
       expect(result.data.started).toBe(false);
     }
-    expect(markInterruptedTaskRunning).not.toHaveBeenCalled();
+    expect(markInterruptedTaskRunning).toHaveBeenCalledWith("test-workspace");
+    expect(restoreInterruptedTaskAfterResumeFailure).toHaveBeenCalledWith("test-workspace");
+  });
+
+  test("sendMessage restores interrupted status when resumed send fails", async () => {
+    fakeSession.isBusy.mockReturnValue(false);
+    fakeSession.sendMessage.mockResolvedValue(
+      Err({
+        type: "unknown" as const,
+        raw: "runtime startup failed after user turn persisted",
+      })
+    );
+
+    const markInterruptedTaskRunning = mock(() => Promise.resolve(true));
+    const restoreInterruptedTaskAfterResumeFailure = mock(() => Promise.resolve());
+    workspaceService.setTaskService({
+      markInterruptedTaskRunning,
+      restoreInterruptedTaskAfterResumeFailure,
+      resetAutoResumeCount: mock(() => undefined),
+    } as unknown as TaskService);
+
+    const result = await workspaceService.sendMessage("test-workspace", "hello", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(false);
+    expect(markInterruptedTaskRunning).toHaveBeenCalledWith("test-workspace");
+    expect(restoreInterruptedTaskAfterResumeFailure).toHaveBeenCalledWith("test-workspace");
   });
 
   test("does not clear persisted agent status directly when direct send fails after turn acceptance", async () => {

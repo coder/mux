@@ -2325,17 +2325,19 @@ export class TaskService {
   /**
    * If a preserved descendant task workspace was previously interrupted and the user manually
    * resumes it, restore taskStatus=running so stream-end finalization can proceed normally.
+   *
+   * Returns true only when a state transition happened.
    */
-  async markInterruptedTaskRunning(workspaceId: string): Promise<void> {
+  async markInterruptedTaskRunning(workspaceId: string): Promise<boolean> {
     assert(workspaceId.length > 0, "markInterruptedTaskRunning: workspaceId must be non-empty");
 
     const configAtStart = this.config.loadConfigOrDefault();
     const entryAtStart = findWorkspaceEntry(configAtStart, workspaceId);
     if (!entryAtStart?.workspace.parentWorkspaceId) {
-      return;
+      return false;
     }
     if (entryAtStart.workspace.taskStatus !== "interrupted") {
-      return;
+      return false;
     }
 
     let transitionedToRunning = false;
@@ -2358,6 +2360,41 @@ export class TaskService {
     );
 
     if (!transitionedToRunning) {
+      return false;
+    }
+
+    await this.emitWorkspaceMetadata(workspaceId);
+    return true;
+  }
+
+  /**
+   * Revert a pre-stream interrupted->running transition when send/resume fails to start
+   * or complete. This preserves fail-fast interrupted semantics for task_await.
+   */
+  async restoreInterruptedTaskAfterResumeFailure(workspaceId: string): Promise<void> {
+    assert(
+      workspaceId.length > 0,
+      "restoreInterruptedTaskAfterResumeFailure: workspaceId must be non-empty"
+    );
+
+    let revertedToInterrupted = false;
+    await this.editWorkspaceEntry(
+      workspaceId,
+      (ws) => {
+        if (!ws.parentWorkspaceId) {
+          return;
+        }
+        if (ws.taskStatus !== "running") {
+          return;
+        }
+
+        ws.taskStatus = "interrupted";
+        revertedToInterrupted = true;
+      },
+      { allowMissing: true }
+    );
+
+    if (!revertedToInterrupted) {
       return;
     }
 

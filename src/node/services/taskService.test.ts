@@ -1967,7 +1967,8 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    await taskService.markInterruptedTaskRunning(childTaskId);
+    const transitioned = await taskService.markInterruptedTaskRunning(childTaskId);
+    expect(transitioned).toBe(true);
 
     const saved = config.loadConfigOrDefault();
     const tasks = saved.projects.get(projectPath)?.workspaces ?? [];
@@ -2008,9 +2009,49 @@ describe("TaskService", () => {
     const editConfigSpy = spyOn(config, "editConfig");
     const { taskService } = createTaskServiceHarness(config);
 
-    await taskService.markInterruptedTaskRunning(childTaskId);
+    const transitioned = await taskService.markInterruptedTaskRunning(childTaskId);
 
+    expect(transitioned).toBe(false);
     expect(editConfigSpy).not.toHaveBeenCalled();
+  });
+
+  test("restoreInterruptedTaskAfterResumeFailure reverts running descendant tasks", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const childTaskId = "task-child";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
+              {
+                path: path.join(projectPath, "child-task"),
+                id: childTaskId,
+                name: "agent_explore_child",
+                parentWorkspaceId: rootWorkspaceId,
+                agentType: "explore",
+                taskStatus: "running",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    const { taskService } = createTaskServiceHarness(config);
+
+    await taskService.restoreInterruptedTaskAfterResumeFailure(childTaskId);
+
+    const saved = config.loadConfigOrDefault();
+    const tasks = saved.projects.get(projectPath)?.workspaces ?? [];
+    const childTask = tasks.find((workspace) => workspace.id === childTaskId);
+    expect(childTask?.taskStatus).toBe("interrupted");
   });
 
   test("initialize resumes awaiting_report tasks after restart", async () => {

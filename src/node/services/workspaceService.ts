@@ -3329,6 +3329,21 @@ export class WorkspaceService extends EventEmitter {
       if (!internal?.skipAutoResumeReset) {
         this.taskService?.resetAutoResumeCount(workspaceId);
       }
+
+      // Non-destructive interrupt cascades preserve descendant task workspaces with
+      // taskStatus=interrupted. Transition before stream start so TaskService stream-end
+      // handling does not early-return on interrupted status.
+      let resumedInterruptedTask = false;
+      try {
+        resumedInterruptedTask =
+          (await this.taskService?.markInterruptedTaskRunning?.(workspaceId)) ?? false;
+      } catch (error: unknown) {
+        log.error("Failed to restore interrupted task status before sendMessage", {
+          workspaceId,
+          error,
+        });
+      }
+
       const result = await session.sendMessage(message, normalizedOptions, {
         synthetic: internal?.synthetic,
       });
@@ -3338,19 +3353,18 @@ export class WorkspaceService extends EventEmitter {
           error: result.error,
         });
 
-        return result;
-      }
+        if (resumedInterruptedTask) {
+          try {
+            await this.taskService?.restoreInterruptedTaskAfterResumeFailure?.(workspaceId);
+          } catch (error: unknown) {
+            log.error("Failed to restore interrupted task status after sendMessage failure", {
+              workspaceId,
+              error,
+            });
+          }
+        }
 
-      // Non-destructive interrupt cascades preserve descendant task workspaces with
-      // taskStatus=interrupted. If a user manually resumes one, restore running so
-      // TaskService stream-end handling can finalize reports and unblock task_await.
-      try {
-        await this.taskService?.markInterruptedTaskRunning?.(workspaceId);
-      } catch (error: unknown) {
-        log.error("Failed to restore interrupted task status on sendMessage", {
-          workspaceId,
-          error,
-        });
+        return result;
       }
 
       return result;
@@ -3440,32 +3454,53 @@ export class WorkspaceService extends EventEmitter {
       // Persist last-used model + thinking level for cross-device consistency.
       await this.maybePersistAISettingsFromOptions(workspaceId, normalizedOptions, "resume");
 
+      // Non-destructive interrupt cascades preserve descendant task workspaces with
+      // taskStatus=interrupted. Transition before stream start so TaskService stream-end
+      // handling does not early-return on interrupted status.
+      let resumedInterruptedTask = false;
+      try {
+        resumedInterruptedTask =
+          (await this.taskService?.markInterruptedTaskRunning?.(workspaceId)) ?? false;
+      } catch (error: unknown) {
+        log.error("Failed to restore interrupted task status before resumeStream", {
+          workspaceId,
+          error,
+        });
+      }
+
       const result = await session.resumeStream(normalizedOptions);
       if (!result.success) {
         log.error("resumeStream handler: session returned error", {
           workspaceId,
           error: result.error,
         });
+        if (resumedInterruptedTask) {
+          try {
+            await this.taskService?.restoreInterruptedTaskAfterResumeFailure?.(workspaceId);
+          } catch (error: unknown) {
+            log.error("Failed to restore interrupted task status after resumeStream failure", {
+              workspaceId,
+              error,
+            });
+          }
+        }
         return result;
       }
 
       // resumeStream can succeed without starting a new stream when the session is
-      // still busy (started=false). Only clear interrupted task status after an actual
-      // resume starts; otherwise keep fail-fast interrupted semantics intact.
+      // still busy (started=false). Keep interrupted semantics in that case.
       if (!result.data.started) {
+        if (resumedInterruptedTask) {
+          try {
+            await this.taskService?.restoreInterruptedTaskAfterResumeFailure?.(workspaceId);
+          } catch (error: unknown) {
+            log.error("Failed to restore interrupted task status after no-op resumeStream", {
+              workspaceId,
+              error,
+            });
+          }
+        }
         return result;
-      }
-
-      // Non-destructive interrupt cascades preserve descendant task workspaces with
-      // taskStatus=interrupted. If a user manually resumes one, restore running so
-      // TaskService stream-end handling can finalize reports and unblock task_await.
-      try {
-        await this.taskService?.markInterruptedTaskRunning?.(workspaceId);
-      } catch (error: unknown) {
-        log.error("Failed to restore interrupted task status on resumeStream", {
-          workspaceId,
-          error,
-        });
       }
 
       return result;
