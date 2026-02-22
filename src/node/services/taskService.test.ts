@@ -157,6 +157,7 @@ function createWorkspaceServiceMocks(
   overrides?: Partial<{
     sendMessage: ReturnType<typeof mock>;
     resumeStream: ReturnType<typeof mock>;
+    clearQueue: ReturnType<typeof mock>;
     remove: ReturnType<typeof mock>;
     emit: ReturnType<typeof mock>;
     getInfo: ReturnType<typeof mock>;
@@ -167,6 +168,7 @@ function createWorkspaceServiceMocks(
   workspaceService: WorkspaceService;
   sendMessage: ReturnType<typeof mock>;
   resumeStream: ReturnType<typeof mock>;
+  clearQueue: ReturnType<typeof mock>;
   remove: ReturnType<typeof mock>;
   emit: ReturnType<typeof mock>;
   getInfo: ReturnType<typeof mock>;
@@ -178,6 +180,7 @@ function createWorkspaceServiceMocks(
   const resumeStream =
     overrides?.resumeStream ??
     mock((): Promise<Result<{ started: boolean }>> => Promise.resolve(Ok({ started: true })));
+  const clearQueue = overrides?.clearQueue ?? mock((): Result<void> => Ok(undefined));
   const remove =
     overrides?.remove ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
   const emit = overrides?.emit ?? mock(() => true);
@@ -191,6 +194,7 @@ function createWorkspaceServiceMocks(
     workspaceService: {
       sendMessage,
       resumeStream,
+      clearQueue,
       remove,
       emit,
       getInfo,
@@ -199,6 +203,7 @@ function createWorkspaceServiceMocks(
     } as unknown as WorkspaceService,
     sendMessage,
     resumeStream,
+    clearQueue,
     remove,
     emit,
     getInfo,
@@ -1878,13 +1883,25 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
     });
 
-    const { aiService, stopStream } = createAIServiceMocks(config);
-    const { workspaceService, remove } = createWorkspaceServiceMocks();
+    const callOrder: string[] = [];
+    const clearQueue = mock((workspaceId: string): Result<void> => {
+      callOrder.push(`clear:${workspaceId}`);
+      return Ok(undefined);
+    });
+    const stopStream = mock((workspaceId: string): Promise<Result<void>> => {
+      callOrder.push(`stop:${workspaceId}`);
+      return Promise.resolve(Ok(undefined));
+    });
+
+    const { aiService } = createAIServiceMocks(config, { stopStream });
+    const { workspaceService, remove } = createWorkspaceServiceMocks({ clearQueue });
     const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
     const interruptedTaskIds = await taskService.terminateAllDescendantAgentTasks(rootWorkspaceId);
     expect(interruptedTaskIds).toEqual([childTaskId, parentTaskId]);
 
+    expect(clearQueue).toHaveBeenNthCalledWith(1, childTaskId);
+    expect(clearQueue).toHaveBeenNthCalledWith(2, parentTaskId);
     expect(stopStream).toHaveBeenNthCalledWith(
       1,
       childTaskId,
@@ -1895,6 +1912,12 @@ describe("TaskService", () => {
       parentTaskId,
       expect.objectContaining({ abandonPartial: true })
     );
+    expect(callOrder).toEqual([
+      `clear:${childTaskId}`,
+      `stop:${childTaskId}`,
+      `clear:${parentTaskId}`,
+      `stop:${parentTaskId}`,
+    ]);
     expect(remove).not.toHaveBeenCalled();
 
     const saved = config.loadConfigOrDefault();

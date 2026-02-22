@@ -1200,6 +1200,20 @@ export class TaskService {
       const interruptionError = new Error("Parent workspace interrupted");
 
       for (const id of descendants) {
+        // Best-effort: clear queue first. AgentSession stream-end cleanup auto-flushes
+        // queued messages, so descendants must not keep pending input after a hard interrupt.
+        try {
+          const clearQueueResult = this.workspaceService.clearQueue(id);
+          if (!clearQueueResult.success) {
+            log.debug("terminateAllDescendantAgentTasks: clearQueue failed", {
+              taskId: id,
+              error: clearQueueResult.error,
+            });
+          }
+        } catch (error: unknown) {
+          log.debug("terminateAllDescendantAgentTasks: clearQueue threw", { taskId: id, error });
+        }
+
         // Best-effort: stop any active stream immediately to avoid further token usage.
         try {
           const stopResult = await this.aiService.stopStream(id, { abandonPartial: true });
