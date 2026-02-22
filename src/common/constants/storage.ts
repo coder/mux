@@ -489,15 +489,6 @@ export function getStatusStateKey(workspaceId: string): string {
 }
 
 /**
- * Get the localStorage key for session timing stats for a workspace
- * Stores aggregate timing data: totalDurationMs, totalToolExecutionMs, totalTtftMs, ttftCount, responseCount
- * Format: "sessionTiming:{workspaceId}"
- */
-export function getSessionTimingKey(workspaceId: string): string {
-  return `sessionTiming:${workspaceId}`;
-}
-
-/**
  * Get the localStorage key for last-read timestamps per workspace.
  * Format: "workspaceLastRead:{workspaceId}"
  */
