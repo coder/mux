@@ -3719,6 +3719,7 @@ describe("TaskService", () => {
       expect.objectContaining({
         emoji: PLAN_AUTO_ROUTING_STATUS_EMOJI,
         message: PLAN_AUTO_ROUTING_STATUS_MESSAGE,
+        url: "",
       })
     );
     expect(updateAgentStatus).toHaveBeenNthCalledWith(2, childId, null);

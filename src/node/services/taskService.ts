@@ -2491,6 +2491,9 @@ export class TaskService {
           await this.workspaceService.updateAgentStatus(args.workspaceId, {
             emoji: PLAN_AUTO_ROUTING_STATUS_EMOJI,
             message: PLAN_AUTO_ROUTING_STATUS_MESSAGE,
+            // ExtensionMetadataService carries forward the previous status URL when url is omitted.
+            // Use an explicit empty string sentinel to clear stale links for this transient status.
+            url: "",
           });
         }
 
