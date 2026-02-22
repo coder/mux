@@ -4,6 +4,7 @@ import * as fs from "node:fs/promises";
 import { parentPort } from "node:worker_threads";
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
 import { getErrorMessage } from "@/common/utils/errors";
+import { shouldRunInitialBackfill } from "./backfillDecision";
 import { clearWorkspaceAnalyticsState, ingestWorkspace, rebuildAll } from "./etl";
 import { executeNamedQuery } from "./queries";
 
@@ -188,19 +189,31 @@ async function hasSessionDirectories(sessionsDir: string): Promise<boolean> {
 async function handleNeedsBackfill(data: NeedsBackfillData): Promise<{ needsBackfill: boolean }> {
   assert(data.sessionsDir.trim().length > 0, "needsBackfill requires sessionsDir");
 
-  const result = await getConn().run("SELECT COUNT(*) AS event_count FROM events");
+  const result = await getConn().run(`
+    SELECT
+      (SELECT COUNT(*) FROM events) AS event_count,
+      (SELECT COUNT(*) FROM ingest_watermarks) AS watermark_count
+  `);
   const rows = await result.getRowObjectsJS();
   assert(rows.length === 1, "needsBackfill should return exactly one row");
 
   const eventCount = parseNonNegativeInteger(rows[0].event_count);
   assert(eventCount !== null, "needsBackfill expected a non-negative integer event_count");
 
-  if (eventCount > 0) {
-    return { needsBackfill: false };
-  }
+  const watermarkCount = parseNonNegativeInteger(rows[0].watermark_count);
+  assert(watermarkCount !== null, "needsBackfill expected a non-negative integer watermark_count");
+
+  const hasSessionDirs =
+    eventCount === 0 && watermarkCount === 0
+      ? await hasSessionDirectories(data.sessionsDir)
+      : false;
 
   return {
-    needsBackfill: await hasSessionDirectories(data.sessionsDir),
+    needsBackfill: shouldRunInitialBackfill({
+      eventCount,
+      watermarkCount,
+      hasSessionDirectories: hasSessionDirs,
+    }),
   };
 }
 
