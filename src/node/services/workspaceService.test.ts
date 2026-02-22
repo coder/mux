@@ -16,6 +16,7 @@ import type { AIService } from "./aiService";
 import type { InitStateManager, InitStatus } from "./initStateManager";
 import type { ExtensionMetadataService } from "./ExtensionMetadataService";
 import type { FrontendWorkspaceMetadata, WorkspaceMetadata } from "@/common/types/workspace";
+import type { TaskService } from "./taskService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import type { BashToolResult } from "@/common/types/tools";
 import { createMuxMessage } from "@/common/types/message";
@@ -2652,6 +2653,84 @@ describe("WorkspaceService fork", () => {
     } finally {
       orchestrateForkSpy.mockRestore();
       createRuntimeSpy.mockRestore();
+      getOrCreateSessionSpy.mockRestore();
+    }
+  });
+});
+
+describe("WorkspaceService interruptStream", () => {
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+
+  beforeEach(async () => {
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
+  test("sendQueuedImmediately clears hard-interrupt suppression before queued resend", async () => {
+    const workspaceId = "ws-interrupt-queue-111";
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/test",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: mock(() => null),
+    };
+
+    const mockAIService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() => Promise.resolve({ success: false, error: "not found" })),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    const workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      mockAIService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    const resetAutoResumeCount = mock(() => undefined);
+    const markParentWorkspaceInterrupted = mock(() => undefined);
+    const terminateAllDescendantAgentTasks = mock(() => Promise.resolve([] as string[]));
+    workspaceService.setTaskService({
+      resetAutoResumeCount,
+      markParentWorkspaceInterrupted,
+      terminateAllDescendantAgentTasks,
+    } as unknown as TaskService);
+
+    const sendQueuedMessages = mock(() => undefined);
+    const restoreQueueToInput = mock(() => undefined);
+    const interruptStream = mock(() => Promise.resolve(Ok(undefined)));
+    const fakeSession = {
+      interruptStream,
+      sendQueuedMessages,
+      restoreQueueToInput,
+    };
+    const getOrCreateSessionSpy = spyOn(workspaceService, "getOrCreateSession").mockReturnValue(
+      fakeSession as unknown as AgentSession
+    );
+
+    try {
+      const result = await workspaceService.interruptStream(workspaceId, {
+        sendQueuedImmediately: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(markParentWorkspaceInterrupted).toHaveBeenCalledWith(workspaceId);
+      expect(terminateAllDescendantAgentTasks).toHaveBeenCalledWith(workspaceId);
+      expect(resetAutoResumeCount).toHaveBeenCalledTimes(2);
+      expect(sendQueuedMessages).toHaveBeenCalledTimes(1);
+      expect(restoreQueueToInput).not.toHaveBeenCalled();
+    } finally {
       getOrCreateSessionSpy.mockRestore();
     }
   });

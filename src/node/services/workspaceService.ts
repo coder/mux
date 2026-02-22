@@ -3549,6 +3549,9 @@ export class WorkspaceService extends EventEmitter {
 
       // Handle queued messages based on option
       if (options?.sendQueuedImmediately) {
+        // `sendQueuedMessages()` routes through AgentSession directly, so explicitly
+        // clear hard-interrupt suppression first (it won't flow through sendMessage()).
+        this.taskService?.resetAutoResumeCount(workspaceId);
         // Send queued messages immediately instead of restoring to input
         session.sendQueuedMessages();
       } else {
