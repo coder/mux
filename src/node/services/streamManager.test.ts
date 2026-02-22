@@ -906,8 +906,8 @@ describe("StreamManager - TTFT metadata persistence", () => {
     streamManager.on("error", () => undefined);
 
     const replaceTokenTrackerResult = Reflect.set(streamManager, "tokenTracker", {
-      setModel: async () => undefined,
-      countTokens: async () => 0,
+      setModel: () => Promise.resolve(undefined),
+      countTokens: () => Promise.resolve(0),
     });
     if (!replaceTokenTrackerResult) {
       throw new Error("Failed to mock StreamManager.tokenTracker");
