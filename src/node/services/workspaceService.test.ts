@@ -1299,6 +1299,69 @@ describe("WorkspaceService remove timing rollup", () => {
   });
 });
 
+describe("WorkspaceService metadata listeners", () => {
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+
+  beforeEach(async () => {
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
+  test("error events clear streaming metadata", async () => {
+    const workspaceId = "ws-error";
+    const setStreaming = mock(() =>
+      Promise.resolve({
+        recency: Date.now(),
+        streaming: false,
+        lastModel: null,
+        lastThinkingLevel: null,
+        agentStatus: null,
+      })
+    );
+
+    class FakeAIService extends EventEmitter {
+      isStreaming = mock(() => false);
+      getWorkspaceMetadata = mock(() =>
+        Promise.resolve({ success: false as const, error: "not found" })
+      );
+    }
+
+    const aiService = new FakeAIService() as unknown as AIService;
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/src",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      findWorkspace: mock(() => null),
+      loadConfigOrDefault: mock(() => ({ projects: new Map() })),
+    };
+    const mockExtensionMetadata: Partial<ExtensionMetadataService> = { setStreaming };
+
+    new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadata as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    aiService.emit("error", {
+      workspaceId,
+      messageId: "msg-1",
+      error: "rate limited",
+      errorType: "rate_limit",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(setStreaming).toHaveBeenCalledTimes(1);
+    expect(setStreaming).toHaveBeenCalledWith(workspaceId, false, undefined, undefined);
+  });
+});
+
 describe("WorkspaceService archive lifecycle hooks", () => {
   const workspaceId = "ws-archive";
   const projectPath = "/tmp/project";

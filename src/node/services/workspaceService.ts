@@ -1042,6 +1042,8 @@ export class WorkspaceService extends EventEmitter {
       isWorkspaceEvent(v) &&
       (!("metadata" in (v as Record<string, unknown>)) || isObj((v as StreamEndEvent).metadata));
     const isStreamAbortEvent = (v: unknown): v is StreamAbortEvent => isWorkspaceEvent(v);
+    const isErrorEvent = (v: unknown): v is { workspaceId: string; error: string } =>
+      isWorkspaceEvent(v) && "error" in v && typeof (v as { error: unknown }).error === "string";
     const isToolCallEndEvent = (v: unknown): v is ToolCallEndEvent =>
       isWorkspaceEvent(v) &&
       "toolName" in v &&
@@ -1090,6 +1092,12 @@ export class WorkspaceService extends EventEmitter {
 
     this.aiService.on("stream-abort", (data: unknown) => {
       if (isStreamAbortEvent(data)) {
+        void this.updateStreamingStatus(data.workspaceId, false);
+      }
+    });
+
+    this.aiService.on("error", (data: unknown) => {
+      if (isErrorEvent(data)) {
         void this.updateStreamingStatus(data.workspaceId, false);
       }
     });
