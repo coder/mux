@@ -1,7 +1,13 @@
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Skeleton } from "@/browser/components/ui/skeleton";
 import type { AgentCostItem } from "@/browser/hooks/useAnalytics";
-import { ANALYTICS_CHART_COLORS, formatCompactNumber, formatUsd } from "./analyticsUtils";
+import {
+  ANALYTICS_CHART_COLORS,
+  CHART_AXIS_STROKE,
+  CHART_AXIS_TICK,
+  formatCompactNumber,
+  formatUsd,
+} from "./analyticsUtils";
 
 interface AgentCostChartProps {
   data: AgentCostItem[] | null;
@@ -86,19 +92,19 @@ export function AgentCostChart(props: AgentCostChartProps) {
               layout="vertical"
               margin={{ top: 8, right: 12, left: 0, bottom: 0 }}
             >
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-light)" />
+              <CartesianGrid strokeDasharray="3 3" stroke={CHART_AXIS_STROKE} />
               <XAxis
                 type="number"
-                tick={{ fill: "var(--color-muted)", fontSize: 11 }}
+                tick={CHART_AXIS_TICK}
                 tickFormatter={(value: number) => formatUsd(Number(value))}
-                stroke="var(--color-border-light)"
+                stroke={CHART_AXIS_STROKE}
               />
               <YAxis
                 type="category"
                 dataKey="agentId"
                 width={140}
-                tick={{ fill: "var(--color-muted)", fontSize: 11 }}
-                stroke="var(--color-border-light)"
+                tick={CHART_AXIS_TICK}
+                stroke={CHART_AXIS_STROKE}
               />
               <Tooltip
                 cursor={{ fill: "var(--color-hover)" }}

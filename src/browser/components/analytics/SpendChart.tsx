@@ -10,7 +10,14 @@ import {
 } from "recharts";
 import { Skeleton } from "@/browser/components/ui/skeleton";
 import type { SpendOverTimeItem } from "@/browser/hooks/useAnalytics";
-import { ANALYTICS_CHART_COLORS, formatBucketLabel, formatUsd } from "./analyticsUtils";
+import {
+  ANALYTICS_CHART_COLORS,
+  CHART_AXIS_STROKE,
+  CHART_AXIS_TICK,
+  CHART_TOOLTIP_CONTENT_STYLE,
+  formatBucketLabel,
+  formatUsd,
+} from "./analyticsUtils";
 
 interface SpendChartProps {
   data: SpendOverTimeItem[] | null;
@@ -75,29 +82,25 @@ export function SpendChart(props: SpendChartProps) {
         <div className="mt-3 h-80 w-full">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={rows} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-light)" />
+              <CartesianGrid strokeDasharray="3 3" stroke={CHART_AXIS_STROKE} />
               <XAxis
                 dataKey="bucket"
                 minTickGap={24}
-                tick={{ fill: "var(--color-muted)", fontSize: 11 }}
+                tick={CHART_AXIS_TICK}
                 tickFormatter={formatBucketLabel}
-                stroke="var(--color-border-light)"
+                stroke={CHART_AXIS_STROKE}
               />
               <YAxis
-                tick={{ fill: "var(--color-muted)", fontSize: 11 }}
+                tick={CHART_AXIS_TICK}
                 tickFormatter={(value: number) => formatUsd(Number(value))}
                 width={64}
-                stroke="var(--color-border-light)"
+                stroke={CHART_AXIS_STROKE}
               />
               <Tooltip
                 labelFormatter={(value) => formatBucketLabel(String(value))}
                 formatter={(value: number, key: string) => [formatUsd(Number(value)), key]}
                 cursor={{ fill: "var(--color-hover)" }}
-                contentStyle={{
-                  borderColor: "var(--color-border-medium)",
-                  backgroundColor: "var(--color-background-secondary)",
-                  borderRadius: "8px",
-                }}
+                contentStyle={CHART_TOOLTIP_CONTENT_STYLE}
               />
               <Legend wrapperStyle={{ fontSize: "11px" }} />
               {models.map((model, index) => (

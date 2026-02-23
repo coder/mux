@@ -1,7 +1,13 @@
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Skeleton } from "@/browser/components/ui/skeleton";
 import type { ProviderCacheHitRatioItem } from "@/browser/hooks/useAnalytics";
-import { ANALYTICS_CHART_COLORS, formatCompactNumber, formatPercent } from "./analyticsUtils";
+import {
+  ANALYTICS_CHART_COLORS,
+  CHART_AXIS_STROKE,
+  CHART_AXIS_TICK,
+  formatCompactNumber,
+  formatPercent,
+} from "./analyticsUtils";
 
 interface ProviderCacheHitChartProps {
   data: ProviderCacheHitRatioItem[] | null;
@@ -111,20 +117,20 @@ export function ProviderCacheHitChart(props: ProviderCacheHitChartProps) {
               layout="vertical"
               margin={{ top: 8, right: 12, left: 0, bottom: 0 }}
             >
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-light)" />
+              <CartesianGrid strokeDasharray="3 3" stroke={CHART_AXIS_STROKE} />
               <XAxis
                 type="number"
                 domain={[0, 1]}
-                tick={{ fill: "var(--color-muted)", fontSize: 11 }}
+                tick={CHART_AXIS_TICK}
                 tickFormatter={(value: number) => formatPercent(Number(value))}
-                stroke="var(--color-border-light)"
+                stroke={CHART_AXIS_STROKE}
               />
               <YAxis
                 type="category"
                 dataKey="providerLabel"
                 width={120}
-                tick={{ fill: "var(--color-muted)", fontSize: 11 }}
-                stroke="var(--color-border-light)"
+                tick={CHART_AXIS_TICK}
+                stroke={CHART_AXIS_STROKE}
               />
               <Tooltip
                 cursor={{ fill: "var(--color-hover)" }}

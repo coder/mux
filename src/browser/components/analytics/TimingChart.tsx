@@ -11,7 +11,12 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { ANALYTICS_CHART_COLORS } from "./analyticsUtils";
+import {
+  ANALYTICS_CHART_COLORS,
+  CHART_AXIS_STROKE,
+  CHART_AXIS_TICK,
+  CHART_TOOLTIP_CONTENT_STYLE,
+} from "./analyticsUtils";
 
 const METRIC_LABELS = {
   ttft: {
@@ -121,26 +126,19 @@ export function TimingChart(props: TimingChartProps) {
               margin={{ top: 12, right: 12, left: 4, bottom: 0 }}
               barSize={14}
             >
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-light)" />
+              <CartesianGrid strokeDasharray="3 3" stroke={CHART_AXIS_STROKE} />
               <XAxis
                 dataKey="bucket"
                 type="number"
-                tick={{ fill: "var(--color-muted)", fontSize: 11 }}
+                tick={CHART_AXIS_TICK}
                 tickFormatter={(value: number) => formatMetricValue(Number(value), props.metric)}
-                stroke="var(--color-border-light)"
+                stroke={CHART_AXIS_STROKE}
               />
-              <YAxis
-                tick={{ fill: "var(--color-muted)", fontSize: 11 }}
-                stroke="var(--color-border-light)"
-              />
+              <YAxis tick={CHART_AXIS_TICK} stroke={CHART_AXIS_STROKE} />
               <Tooltip
                 labelFormatter={(value: number) => formatMetricValue(Number(value), props.metric)}
                 formatter={(value: number) => [value, "Responses"]}
-                contentStyle={{
-                  borderColor: "var(--color-border-medium)",
-                  backgroundColor: "var(--color-background-secondary)",
-                  borderRadius: "8px",
-                }}
+                contentStyle={CHART_TOOLTIP_CONTENT_STYLE}
               />
               <ReferenceLine
                 x={props.data.p50}

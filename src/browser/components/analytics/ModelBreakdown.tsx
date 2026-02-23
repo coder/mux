@@ -17,7 +17,14 @@ import type {
   SpendByModelItem,
   SpendByProjectItem,
 } from "@/browser/hooks/useAnalytics";
-import { ANALYTICS_CHART_COLORS, formatProjectDisplayName, formatUsd } from "./analyticsUtils";
+import {
+  ANALYTICS_CHART_COLORS,
+  CHART_AXIS_STROKE,
+  CHART_AXIS_TICK,
+  CHART_TOOLTIP_CONTENT_STYLE,
+  formatProjectDisplayName,
+  formatUsd,
+} from "./analyticsUtils";
 
 interface ModelBreakdownProps {
   spendByProject: AsyncState<SpendByProjectItem[]>;
@@ -67,27 +74,23 @@ export function ModelBreakdown(props: ModelBreakdownProps) {
                 layout="vertical"
                 margin={{ top: 8, right: 12, left: 0, bottom: 0 }}
               >
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-light)" />
+                <CartesianGrid strokeDasharray="3 3" stroke={CHART_AXIS_STROKE} />
                 <XAxis
                   type="number"
-                  tick={{ fill: "var(--color-muted)", fontSize: 11 }}
+                  tick={CHART_AXIS_TICK}
                   tickFormatter={(value: number) => formatUsd(Number(value))}
-                  stroke="var(--color-border-light)"
+                  stroke={CHART_AXIS_STROKE}
                 />
                 <YAxis
                   type="category"
                   dataKey="label"
                   width={120}
-                  tick={{ fill: "var(--color-muted)", fontSize: 11 }}
-                  stroke="var(--color-border-light)"
+                  tick={CHART_AXIS_TICK}
+                  stroke={CHART_AXIS_STROKE}
                 />
                 <Tooltip
                   formatter={(value: number) => [formatUsd(Number(value)), "Spend"]}
-                  contentStyle={{
-                    borderColor: "var(--color-border-medium)",
-                    backgroundColor: "var(--color-background-secondary)",
-                    borderRadius: "8px",
-                  }}
+                  contentStyle={CHART_TOOLTIP_CONTENT_STYLE}
                 />
                 <Bar dataKey="costUsd" fill={ANALYTICS_CHART_COLORS[0]} radius={[0, 4, 4, 0]} />
               </BarChart>
@@ -133,9 +136,7 @@ export function ModelBreakdown(props: ModelBreakdownProps) {
                 <Tooltip
                   formatter={(value: number, key: string) => [formatUsd(Number(value)), key]}
                   contentStyle={{
-                    borderColor: "var(--color-border-medium)",
-                    backgroundColor: "var(--color-background-secondary)",
-                    borderRadius: "8px",
+                    ...CHART_TOOLTIP_CONTENT_STYLE,
                     color: "var(--color-foreground)",
                   }}
                   labelStyle={{ color: "var(--color-foreground)" }}

@@ -13,6 +13,22 @@ export const ANALYTICS_CHART_COLORS = [
   "var(--color-ask-mode)",
 ] as const;
 
+// Shared recharts styling constants so each chart component stays DRY.
+// These match the project's CSS custom-property theme tokens.
+
+/** Axis tick label style shared by all analytics charts. */
+export const CHART_AXIS_TICK = { fill: "var(--color-muted)", fontSize: 11 } as const;
+
+/** Axis / grid stroke colour. */
+export const CHART_AXIS_STROKE = "var(--color-border-light)";
+
+/** Tooltip content style shared by charts that use recharts `<Tooltip>`. */
+export const CHART_TOOLTIP_CONTENT_STYLE = {
+  borderColor: "var(--color-border-medium)",
+  backgroundColor: "var(--color-background-secondary)",
+  borderRadius: "8px",
+} as const;
+
 const usdFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
