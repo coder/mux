@@ -276,7 +276,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
           <div>
             • <span className="font-mono">-t max output tokens</span>
           </div>
-          <div>• add a followup message on the next line</div>
+          <div>• Add a followup message on the next line</div>
         </div>
         <AutoCompactSettings
           data={data}
