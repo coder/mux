@@ -73,6 +73,15 @@ const MODEL_DEFINITIONS = {
     warm: true,
     tokenizerOverride: "openai/gpt-5",
   },
+  // Codex Spark is a real-time, text-only variant of GPT-5.3-Codex with a 128k context window.
+  // We intentionally keep it first-class so users can select it directly via the `spark` alias.
+  GPT_53_CODEX_SPARK: {
+    provider: "openai",
+    providerModelId: "gpt-5.3-codex-spark",
+    aliases: ["spark"],
+    warm: true,
+    tokenizerOverride: "openai/gpt-5",
+  },
   GPT_MINI: {
     provider: "openai",
     providerModelId: "gpt-5.1-codex-mini",

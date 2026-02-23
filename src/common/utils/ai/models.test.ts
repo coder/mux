@@ -114,6 +114,8 @@ describe("resolveModelAlias", () => {
     expect(resolveModelAlias("grok")).toBe("xai:grok-4-1-fast");
     expect(resolveModelAlias("codex")).toBe("openai:gpt-5.2-codex");
     expect(resolveModelAlias("gemini")).toBe("google:gemini-3.1-pro-preview");
+    expect(resolveModelAlias("codex-mini")).toBe("openai:gpt-5.1-codex-mini");
+    expect(resolveModelAlias("spark")).toBe("openai:gpt-5.3-codex-spark");
     expect(resolveModelAlias("gemini-pro")).toBe("google:gemini-3.1-pro-preview");
     expect(resolveModelAlias("gemini-flash")).toBe("google:gemini-3-flash-preview");
   });

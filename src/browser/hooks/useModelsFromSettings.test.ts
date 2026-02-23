@@ -130,6 +130,8 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
 
     expect(result.current.models).toContain("openai:gpt-5.2");
     expect(result.current.models).toContain("openai:gpt-5.2-codex");
+    expect(result.current.models).toContain("openai:gpt-5.3-codex");
+    expect(result.current.models).toContain("openai:gpt-5.3-codex-spark");
     expect(result.current.models).not.toContain("openai:gpt-5.2-pro");
   });
 
@@ -143,6 +145,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
     expect(result.current.models).toContain("openai:gpt-5.2-pro");
     expect(result.current.models).toContain("openai:gpt-5.2-codex");
     expect(result.current.models).not.toContain("openai:gpt-5.3-codex");
+    expect(result.current.models).not.toContain("openai:gpt-5.3-codex-spark");
   });
 
   test("api key + codex oauth: allows all OpenAI models", () => {
@@ -155,6 +158,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
     expect(result.current.models).toContain("openai:gpt-5.2-pro");
     expect(result.current.models).toContain("openai:gpt-5.2-codex");
     expect(result.current.models).toContain("openai:gpt-5.3-codex");
+    expect(result.current.models).toContain("openai:gpt-5.3-codex-spark");
   });
 
   test("neither with configured provider: hides Codex OAuth required OpenAI models", () => {
@@ -167,6 +171,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
     expect(result.current.models).toContain("openai:gpt-5.2-pro");
     expect(result.current.models).toContain("openai:gpt-5.2-codex");
     expect(result.current.models).not.toContain("openai:gpt-5.3-codex");
+    expect(result.current.models).not.toContain("openai:gpt-5.3-codex-spark");
   });
 
   test("exposes OpenAI auth state flags", () => {
@@ -265,10 +270,12 @@ describe("useModelsFromSettings provider availability gating", () => {
 
     const { result } = renderHook(() => useModelsFromSettings());
 
-    // OAuth-required models (e.g. gpt-5.3-codex) should NOT appear in either list
+    // OAuth-required models (e.g. gpt-5.3-codex, gpt-5.3-codex-spark) should NOT appear in either list
     // because selecting them from "Show all models…" would also fail at send time.
     expect(result.current.models).not.toContain("openai:gpt-5.3-codex");
+    expect(result.current.models).not.toContain("openai:gpt-5.3-codex-spark");
     expect(result.current.hiddenModelsForSelector).not.toContain("openai:gpt-5.3-codex");
+    expect(result.current.hiddenModelsForSelector).not.toContain("openai:gpt-5.3-codex-spark");
 
     // Non-OAuth-required OpenAI models should still be in the hidden bucket
     expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.GPT.id);
