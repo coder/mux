@@ -4,6 +4,8 @@ import * as path from "path";
 import * as os from "os";
 import { execSync } from "child_process";
 import { Config } from "@/node/config";
+import type { SshPromptRequest } from "@/common/orpc/schemas/ssh";
+import { SshPromptService } from "@/node/services/sshPromptService";
 import { ProjectService, type CloneEvent } from "./projectService";
 
 async function createLocalGitRepository(rootDir: string, repoName: string): Promise<string> {
@@ -653,6 +655,377 @@ exit 1
           delete process.env.CONCURRENT_MARKER_PATH;
         } else {
           process.env.CONCURRENT_MARKER_PATH = originalConcurrentMarkerPath;
+        }
+      }
+    });
+  });
+
+  describe("cloneWithProgress SSH askpass", () => {
+    async function collectCloneEvents(
+      projectService: ProjectService,
+      repoUrl: string,
+      cloneParentDir: string
+    ): Promise<CloneEvent[]> {
+      const events: CloneEvent[] = [];
+      for await (const event of projectService.cloneWithProgress({ repoUrl, cloneParentDir })) {
+        events.push(event);
+      }
+      return events;
+    }
+
+    async function readLoggedEnv(logPath: string): Promise<Record<string, string>> {
+      const envContent = await fs.readFile(logPath, "utf-8");
+      return Object.fromEntries(
+        envContent
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => line.includes("="))
+          .map((line) => {
+            const separatorIndex = line.indexOf("=");
+            return [line.slice(0, separatorIndex), line.slice(separatorIndex + 1)] as const;
+          })
+      );
+    }
+
+    it("SSH clone invokes askpass for host-key prompt and succeeds when accepted", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "ssh-askpass-host-key-accept");
+      const fakeBinDir = path.join(tempDir, "fake-bin-ssh-host-key-accept");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const fakeGitEnvLogPath = path.join(tempDir, "fake-git-ssh-host-key-accept-env.log");
+      const originalPath = process.env.PATH ?? "";
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+      const originalFakeGitEnvLogPath = process.env.FAKE_GIT_ENV_LOG;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  printf 'SSH_ASKPASS=%s\nSSH_ASKPASS_REQUIRE=%s\nGIT_TERMINAL_PROMPT=%s\n' "\${SSH_ASKPASS:-}" "\${SSH_ASKPASS_REQUIRE:-}" "\${GIT_TERMINAL_PROMPT:-}" > "$FAKE_GIT_ENV_LOG"
+  if [ -z "$SSH_ASKPASS" ]; then
+    echo "Host key verification failed." >&2
+    exit 128
+  fi
+  RESPONSE=$("$SSH_ASKPASS" "Are you sure you want to continue connecting (yes/no/[fingerprint])? ")
+  if [ "$RESPONSE" != "yes" ]; then
+    echo "Host key verification failed." >&2
+    exit 128
+  fi
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      const sshPromptService = new SshPromptService(5000);
+      const release = sshPromptService.registerInteractiveResponder();
+      const sshCloneService = new ProjectService(config, sshPromptService);
+      let promptRequest: SshPromptRequest | null = null;
+      const onRequest = (request: SshPromptRequest) => {
+        promptRequest = request;
+        sshPromptService.respond(request.requestId, "yes");
+      };
+      sshPromptService.on("request", onRequest);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.HOME = tempDir;
+      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
+      process.env.FAKE_GIT_ENV_LOG = fakeGitEnvLogPath;
+
+      try {
+        const events = await collectCloneEvents(
+          sshCloneService,
+          "testuser/testrepo",
+          cloneParentDir
+        );
+
+        const successEvent = events.find((event) => event.type === "success");
+        expect(successEvent?.type).toBe("success");
+
+        expect(promptRequest?.kind).toBe("host-key");
+        if (promptRequest?.kind !== "host-key") throw new Error("Expected host-key prompt request");
+        expect(promptRequest.prompt).toContain("continue connecting");
+
+        const env = await readLoggedEnv(fakeGitEnvLogPath);
+        expect(env.SSH_ASKPASS).toContain("mux-askpass");
+        expect(env.SSH_ASKPASS_REQUIRE).toBe("force");
+        expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+      } finally {
+        sshPromptService.off("request", onRequest);
+        release();
+        process.env.PATH = originalPath;
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+        if (originalFakeGitEnvLogPath === undefined) {
+          delete process.env.FAKE_GIT_ENV_LOG;
+        } else {
+          process.env.FAKE_GIT_ENV_LOG = originalFakeGitEnvLogPath;
+        }
+      }
+    });
+
+    it("SSH clone yields ssh_host_key_rejected when host-key prompt is rejected", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "ssh-askpass-host-key-reject");
+      const fakeBinDir = path.join(tempDir, "fake-bin-ssh-host-key-reject");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  if [ -z "$SSH_ASKPASS" ]; then
+    echo "Host key verification failed." >&2
+    exit 128
+  fi
+  RESPONSE=$("$SSH_ASKPASS" "Are you sure you want to continue connecting (yes/no/[fingerprint])? ")
+  if [ "$RESPONSE" != "yes" ]; then
+    echo "Host key verification failed." >&2
+    exit 128
+  fi
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      const sshPromptService = new SshPromptService(5000);
+      const release = sshPromptService.registerInteractiveResponder();
+      const sshCloneService = new ProjectService(config, sshPromptService);
+      let promptRequest: SshPromptRequest | null = null;
+      const onRequest = (request: SshPromptRequest) => {
+        promptRequest = request;
+        sshPromptService.respond(request.requestId, "no");
+      };
+      sshPromptService.on("request", onRequest);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.HOME = tempDir;
+      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
+
+      try {
+        const events = await collectCloneEvents(
+          sshCloneService,
+          "testuser/testrepo",
+          cloneParentDir
+        );
+
+        const terminalEvent = events[events.length - 1];
+        expect(terminalEvent?.type).toBe("error");
+        if (terminalEvent?.type !== "error") throw new Error("Expected error event");
+        expect(terminalEvent.code).toBe("ssh_host_key_rejected");
+        expect(terminalEvent.error).toContain("Host key verification failed");
+
+        expect(promptRequest?.kind).toBe("host-key");
+      } finally {
+        sshPromptService.off("request", onRequest);
+        release();
+        process.env.PATH = originalPath;
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+      }
+    });
+
+    it("SSH clone invokes askpass for credential prompt and succeeds", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "ssh-askpass-credential");
+      const fakeBinDir = path.join(tempDir, "fake-bin-ssh-credential");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  if [ -z "$SSH_ASKPASS" ]; then
+    echo "Permission denied (publickey,password)." >&2
+    exit 128
+  fi
+  RESPONSE=$("$SSH_ASKPASS" "Enter passphrase for key '/home/user/.ssh/id_ed25519':")
+  if [ -z "$RESPONSE" ]; then
+    echo "Permission denied (publickey,password)." >&2
+    exit 128
+  fi
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      const sshPromptService = new SshPromptService(5000);
+      const release = sshPromptService.registerInteractiveResponder();
+      const sshCloneService = new ProjectService(config, sshPromptService);
+      let promptRequest: SshPromptRequest | null = null;
+      const onRequest = (request: SshPromptRequest) => {
+        promptRequest = request;
+        sshPromptService.respond(request.requestId, "test-passphrase");
+      };
+      sshPromptService.on("request", onRequest);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.HOME = tempDir;
+      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
+
+      try {
+        const events = await collectCloneEvents(
+          sshCloneService,
+          "testuser/testrepo",
+          cloneParentDir
+        );
+
+        const successEvent = events.find((event) => event.type === "success");
+        expect(successEvent?.type).toBe("success");
+
+        expect(promptRequest?.kind).toBe("credential");
+        if (promptRequest?.kind !== "credential")
+          throw new Error("Expected credential prompt request");
+        expect(promptRequest.prompt).toContain("Enter passphrase");
+      } finally {
+        sshPromptService.off("request", onRequest);
+        release();
+        process.env.PATH = originalPath;
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+      }
+    });
+
+    it("HTTPS clone does not set SSH askpass env vars", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "https-no-askpass");
+      const fakeBinDir = path.join(tempDir, "fake-bin-https-no-askpass");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const fakeGitEnvLogPath = path.join(tempDir, "fake-git-https-no-askpass-env.log");
+      const originalPath = process.env.PATH ?? "";
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+      const originalFakeGitEnvLogPath = process.env.FAKE_GIT_ENV_LOG;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  printf 'SSH_ASKPASS=%s\nSSH_ASKPASS_REQUIRE=%s\nGIT_TERMINAL_PROMPT=%s\n' "\${SSH_ASKPASS:-}" "\${SSH_ASKPASS_REQUIRE:-}" "\${GIT_TERMINAL_PROMPT:-}" > "$FAKE_GIT_ENV_LOG"
+  if [ -n "$SSH_ASKPASS" ]; then
+    echo "Unexpected SSH_ASKPASS for HTTPS clone" >&2
+    exit 128
+  fi
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      const sshPromptService = new SshPromptService(5000);
+      const release = sshPromptService.registerInteractiveResponder();
+      const sshCloneService = new ProjectService(config, sshPromptService);
+      let sawPromptRequest = false;
+      const onRequest = (request: SshPromptRequest) => {
+        sawPromptRequest = true;
+        sshPromptService.respond(request.requestId, "yes");
+      };
+      sshPromptService.on("request", onRequest);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.HOME = tempDir;
+      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
+      process.env.FAKE_GIT_ENV_LOG = fakeGitEnvLogPath;
+
+      try {
+        const events = await collectCloneEvents(
+          sshCloneService,
+          "https://github.com/testuser/testrepo.git",
+          cloneParentDir
+        );
+
+        const successEvent = events.find((event) => event.type === "success");
+        expect(successEvent?.type).toBe("success");
+
+        expect(sawPromptRequest).toBe(false);
+
+        const env = await readLoggedEnv(fakeGitEnvLogPath);
+        expect(env.SSH_ASKPASS).toBe("");
+        expect(env.SSH_ASKPASS_REQUIRE).toBe("");
+        expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+      } finally {
+        sshPromptService.off("request", onRequest);
+        release();
+        process.env.PATH = originalPath;
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+        if (originalFakeGitEnvLogPath === undefined) {
+          delete process.env.FAKE_GIT_ENV_LOG;
+        } else {
+          process.env.FAKE_GIT_ENV_LOG = originalFakeGitEnvLogPath;
         }
       }
     });
