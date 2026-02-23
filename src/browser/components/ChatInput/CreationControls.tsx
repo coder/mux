@@ -676,7 +676,7 @@ export function CreationControls(props: CreationControlsProps) {
             ? selectedRuntime.host
             : props.sshHostFallback;
         const sshForwardAgent =
-          selectedRuntime.mode === RUNTIME_MODE.SSH ? selectedRuntime.forwardAgent : false;
+          selectedRuntime.mode === RUNTIME_MODE.SSH ? selectedRuntime.forwardAgent : undefined;
         onSelectedRuntimeChange({
           mode: "ssh",
           host: sshHost,
@@ -911,7 +911,7 @@ export function CreationControls(props: CreationControlsProps) {
                       ? selectedRuntime.host
                       : props.sshHostFallback;
                   const sshForwardAgent =
-                    selectedRuntime.mode === "ssh" ? selectedRuntime.forwardAgent : false;
+                    selectedRuntime.mode === "ssh" ? selectedRuntime.forwardAgent : undefined;
                   onSelectedRuntimeChange({
                     mode: "ssh",
                     host: sshHost,

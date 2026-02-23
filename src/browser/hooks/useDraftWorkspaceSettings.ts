@@ -349,7 +349,12 @@ export function useDraftWorkspaceSettings(
       if (config.coder) {
         setLastRuntimeConfig(RUNTIME_MODE.SSH, "coderConfig", config.coder);
       }
-      setLastRuntimeConfig(RUNTIME_MODE.SSH, "forwardAgent", config.forwardAgent ?? false);
+      // Only persist forwardAgent when explicitly set — callers that don't care
+      // about it (mode switches, Coder selection) pass undefined and should not
+      // overwrite the stored value.
+      if (config.forwardAgent != null) {
+        setLastRuntimeConfig(RUNTIME_MODE.SSH, "forwardAgent", config.forwardAgent);
+      }
     },
     [setLastRuntimeConfig]
   );
