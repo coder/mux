@@ -47,8 +47,9 @@ export const CompactionWarning: React.FC<{
       <div className={isUrgent ? "text-plan-mode font-semibold" : "text-muted"}>{text}</div>
       <div className="text-muted">
         Run <span className="font-mono">/compact</span> to compact manually ·{" "}
-        <span className="font-mono">-m model</span> · <span className="font-mono">-t tokens</span> ·
-        add a followup on the next line
+        <span className="font-mono">-m model</span> ·{" "}
+        <span className="font-mono">-t max output tokens</span> · add a followup message on the next
+        line
       </div>
     </div>
   );
