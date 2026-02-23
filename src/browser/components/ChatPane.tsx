@@ -560,12 +560,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
 
       // Enable auto-scroll when user sends a message
       setAutoScroll(true);
-
-      // Reset autoRetry when user sends a message
-      // User action = clear intent: "I'm actively using this workspace"
-      enableAutoRetryPreference(workspaceId);
     },
-    [setAutoScroll, autoBackgroundOnSend, workspaceId]
+    [setAutoScroll, autoBackgroundOnSend]
   );
 
   const handleClearHistory = useCallback(
