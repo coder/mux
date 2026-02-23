@@ -11,11 +11,18 @@ type SshPromptRequestParams =
   | (Omit<SshHostKeyPromptRequest, "requestId"> & { dedupeKey?: string })
   | (Omit<SshCredentialPromptRequest, "requestId"> & { dedupeKey?: string });
 
+export type SshPromptResolutionReason = "responded" | "timeout" | "no_responder";
+
+export interface SshPromptResolution {
+  response: string;
+  reason: SshPromptResolutionReason;
+}
+
 interface PendingEntry {
   request: SshPromptRequest;
   dedupeKey: string | null;
   timer: ReturnType<typeof setTimeout>;
-  waiters: Array<(response: string) => void>;
+  waiters: Array<(resolution: SshPromptResolution) => void>;
 }
 
 export class SshPromptService extends EventEmitter {
@@ -80,8 +87,8 @@ export class SshPromptService extends EventEmitter {
     };
   }
 
-  // NOTE: `response` may contain credentials. Never log response values.
-  private finalizeRequest(requestId: string, response: string): void {
+  // NOTE: `resolution.response` may contain credentials. Never log response values.
+  private finalizeRequest(requestId: string, resolution: SshPromptResolution): void {
     const entry = this.pending.get(requestId);
     if (!entry) {
       return;
@@ -95,11 +102,11 @@ export class SshPromptService extends EventEmitter {
     this.emit("removed", requestId);
 
     for (const resolve of entry.waiters) {
-      resolve(response);
+      resolve(resolution);
     }
   }
 
-  private joinPendingByDedupeKey(dedupeKey: string): Promise<string> | undefined {
+  private joinPendingByDedupeKey(dedupeKey: string): Promise<SshPromptResolution> | undefined {
     const existingId = this.inflightByDedupeKey.get(dedupeKey);
     if (!existingId) {
       return undefined;
@@ -111,7 +118,7 @@ export class SshPromptService extends EventEmitter {
       return undefined;
     }
 
-    return new Promise<string>((resolve) => {
+    return new Promise<SshPromptResolution>((resolve) => {
       entry.waiters.push(resolve);
     });
   }
@@ -122,7 +129,7 @@ export class SshPromptService extends EventEmitter {
    * Responder admission only applies to new prompts; deduped callers can still
    * join an existing pending prompt even during transient responder gaps.
    */
-  async requestPrompt(params: SshPromptRequestParams): Promise<string> {
+  async requestPromptDetailed(params: SshPromptRequestParams): Promise<SshPromptResolution> {
     const dedupeKey = params.kind === "host-key" ? (params.dedupeKey ?? params.host) : null;
 
     if (dedupeKey) {
@@ -133,7 +140,7 @@ export class SshPromptService extends EventEmitter {
     }
 
     if (!this.hasInteractiveResponder()) {
-      return "";
+      return { response: "", reason: "no_responder" };
     }
 
     const requestId = crypto.randomUUID();
@@ -156,13 +163,13 @@ export class SshPromptService extends EventEmitter {
             secret: params.secret,
           };
 
-    return new Promise<string>((resolve) => {
+    return new Promise<SshPromptResolution>((resolve) => {
       const request: SshPromptRequest = { requestId, ...requestWithoutId };
       const entry: PendingEntry = {
         request,
         dedupeKey,
         timer: setTimeout(() => {
-          this.finalizeRequest(requestId, "");
+          this.finalizeRequest(requestId, { response: "", reason: "timeout" });
         }, this.timeoutMs),
         waiters: [resolve],
       };
@@ -172,7 +179,12 @@ export class SshPromptService extends EventEmitter {
     });
   }
 
+  async requestPrompt(params: SshPromptRequestParams): Promise<string> {
+    const resolution = await this.requestPromptDetailed(params);
+    return resolution.response;
+  }
+
   respond(requestId: string, response: string): void {
-    this.finalizeRequest(requestId, response);
+    this.finalizeRequest(requestId, { response, reason: "responded" });
   }
 }

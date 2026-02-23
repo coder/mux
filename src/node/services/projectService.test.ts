@@ -943,6 +943,77 @@ exit 1
       }
     });
 
+    it("SSH clone yields ssh_prompt_timeout when host-key prompt expires", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "ssh-askpass-host-key-timeout");
+      const fakeBinDir = path.join(tempDir, "fake-bin-ssh-host-key-timeout");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  if [ -z "$SSH_ASKPASS" ]; then
+    echo "Host key verification failed." >&2
+    exit 128
+  fi
+  RESPONSE=$("$SSH_ASKPASS" "Are you sure you want to continue connecting (yes/no/[fingerprint])? ")
+  if [ "$RESPONSE" != "yes" ]; then
+    echo "Host key verification failed." >&2
+    exit 128
+  fi
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      const sshPromptService = new SshPromptService(50);
+      const release = sshPromptService.registerInteractiveResponder();
+      const sshCloneService = new ProjectService(config, sshPromptService);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.HOME = tempDir;
+      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
+
+      try {
+        const events = await collectCloneEvents(
+          sshCloneService,
+          "github.com:org/repo-timeout.git",
+          cloneParentDir
+        );
+
+        const terminalEvent = events[events.length - 1];
+        expect(terminalEvent?.type).toBe("error");
+        if (terminalEvent?.type !== "error") throw new Error("Expected error event");
+        expect(terminalEvent.code).toBe("ssh_prompt_timeout");
+      } finally {
+        release();
+        process.env.PATH = originalPath;
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+      }
+    });
+
     it("keeps ambiguous SSH transport failures as clone_failed", async () => {
       if (process.platform === "win32") {
         // This test relies on a POSIX shell shim named "git" in PATH.

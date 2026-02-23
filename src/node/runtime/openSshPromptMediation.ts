@@ -1,5 +1,5 @@
 import { log } from "@/node/services/log";
-import type { SshPromptService } from "@/node/services/sshPromptService";
+import type { SshPromptResolutionReason, SshPromptService } from "@/node/services/sshPromptService";
 import { createAskpassSession, parseHostKeyPrompt, type AskpassSession } from "./sshAskpass";
 
 export interface MediatedAskpassOptions {
@@ -20,6 +20,16 @@ export interface MediatedAskpassOptions {
   onHostKeyPromptStarted?: () => void;
 }
 
+export interface MediatedPromptOutcome {
+  kind: "host-key" | "credential";
+  reason: SshPromptResolutionReason;
+  response: string;
+}
+
+export interface MediatedAskpassSession extends AskpassSession {
+  getLastPromptOutcome(): MediatedPromptOutcome | null;
+}
+
 export function classifyAskpassPrompt(promptText: string): "host-key" | "credential" {
   if (/continue connecting/i.test(promptText)) return "host-key";
   return "credential";
@@ -27,11 +37,13 @@ export function classifyAskpassPrompt(promptText: string): "host-key" | "credent
 
 export async function createMediatedAskpassSession(
   options: MediatedAskpassOptions
-): Promise<AskpassSession> {
+): Promise<MediatedAskpassSession> {
   const { sshPromptService, promptPolicy, dedupeKey, getStderrContext, onHostKeyPromptStarted } =
     options;
 
-  return createAskpassSession(async (promptText) => {
+  let lastPromptOutcome: MediatedPromptOutcome | null = null;
+
+  const askpass = await createAskpassSession(async (promptText) => {
     const kind = classifyAskpassPrompt(promptText);
 
     if (kind === "host-key") {
@@ -43,12 +55,18 @@ export async function createMediatedAskpassSession(
 
       const fullContext = `${getStderrContext?.() ?? ""}\n${promptText}`;
       const parsed = parseHostKeyPrompt(fullContext);
-      const response = await sshPromptService.requestPrompt({
+      const resolution = await sshPromptService.requestPromptDetailed({
         kind: "host-key",
         ...parsed,
         dedupeKey,
       });
-      return response || "no";
+
+      lastPromptOutcome = {
+        kind: "host-key",
+        reason: resolution.reason,
+        response: resolution.response,
+      };
+      return resolution.response || "no";
     }
 
     if (!promptPolicy.allowCredential) {
@@ -56,10 +74,24 @@ export async function createMediatedAskpassSession(
       return "";
     }
 
-    return sshPromptService.requestPrompt({
+    const resolution = await sshPromptService.requestPromptDetailed({
       kind: "credential",
       prompt: promptText.trim(),
       secret: true,
     });
+
+    lastPromptOutcome = {
+      kind: "credential",
+      reason: resolution.reason,
+      response: resolution.response,
+    };
+    return resolution.response;
   });
+
+  return {
+    ...askpass,
+    getLastPromptOutcome(): MediatedPromptOutcome | null {
+      return lastPromptOutcome;
+    },
+  };
 }
