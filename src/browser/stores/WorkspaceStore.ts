@@ -567,6 +567,7 @@ export class WorkspaceStore {
   // Cumulative session usage (from session-usage.json)
 
   private sessionUsage = new Map<string, z.infer<typeof SessionUsageFileSchema>>();
+  private sessionUsageRequestVersion = new Map<string, number>();
 
   // Idle compaction notification callbacks (called when backend signals idle compaction started)
   private idleCompactionCallbacks = new Set<(workspaceId: string) => void>();
@@ -913,6 +914,51 @@ export class WorkspaceStore {
     }
   }
 
+  /**
+   * Fetch persisted session usage from backend and update in-memory cache.
+   * Uses a per-workspace request version guard so slower/older responses
+   * cannot overwrite fresher state (e.g. rapid workspace switches).
+   */
+  private refreshSessionUsage(workspaceId: string): void {
+    const client = this.client;
+    if (!client || !this.isWorkspaceRegistered(workspaceId)) {
+      return;
+    }
+
+    const requestVersion = (this.sessionUsageRequestVersion.get(workspaceId) ?? 0) + 1;
+    this.sessionUsageRequestVersion.set(workspaceId, requestVersion);
+
+    client.workspace
+      .getSessionUsage({ workspaceId })
+      .then((data) => {
+        if (!data) {
+          return;
+        }
+        // Stale-response guard: a newer refresh was issued while this one was in-flight.
+        if ((this.sessionUsageRequestVersion.get(workspaceId) ?? 0) !== requestVersion) {
+          return;
+        }
+        // Workspace may have been removed while the fetch was in-flight.
+        if (!this.isWorkspaceRegistered(workspaceId)) {
+          return;
+        }
+
+        if (
+          this.providersConfig &&
+          this.providersConfigFingerprint != null &&
+          data.tokenStatsCache?.providersConfigVersion !== this.providersConfigFingerprint
+        ) {
+          repriceSessionUsage(data, this.providersConfig, this.providersConfigFingerprint);
+        }
+
+        this.sessionUsage.set(workspaceId, data);
+        this.usageStore.bump(workspaceId);
+      })
+      .catch((error) => {
+        console.warn(`Failed to fetch session usage for ${workspaceId}:`, error);
+      });
+  }
+
   private async refreshProvidersConfig(client: RouterClient<AppRouter>): Promise<void> {
     // Version counter prevents an older, slower response from overwriting a newer one.
     // We bump eagerly so concurrent requests each get unique versions, then only apply
@@ -1096,6 +1142,12 @@ export class WorkspaceStore {
     const previousActiveId = this.activeWorkspaceId;
     this.activeWorkspaceId = workspaceId;
     this.ensureActiveOnChatSubscription();
+
+    // Re-hydrate persisted session usage so cost totals reflect any
+    // session-usage-delta events that arrived while this workspace was inactive.
+    if (workspaceId) {
+      this.refreshSessionUsage(workspaceId);
+    }
 
     // Invalidate cached workspace state for both the old and new active
     // workspaces. getWorkspaceState() uses activeOnChatWorkspaceId to decide
@@ -2915,29 +2967,7 @@ export class WorkspaceStore {
     aggregator.clearActiveStreams();
 
     // Fetch persisted session usage (fire-and-forget)
-    this.client?.workspace
-      .getSessionUsage({ workspaceId })
-      .then((data) => {
-        if (data) {
-          // If provider config is already loaded AND the config has changed
-          // since the cached data was written, reprice the hydrated usage so
-          // costs reflect the current model mapping. Skip when fingerprints
-          // match to avoid discarding a valid tokenStatsCache (which would
-          // force expensive re-tokenization for large histories).
-          if (
-            this.providersConfig &&
-            this.providersConfigFingerprint != null &&
-            data.tokenStatsCache?.providersConfigVersion !== this.providersConfigFingerprint
-          ) {
-            repriceSessionUsage(data, this.providersConfig, this.providersConfigFingerprint);
-          }
-          this.sessionUsage.set(workspaceId, data);
-          this.usageStore.bump(workspaceId);
-        }
-      })
-      .catch((error) => {
-        console.warn(`Failed to fetch session usage for ${workspaceId}:`, error);
-      });
+    this.refreshSessionUsage(workspaceId);
 
     // Stats snapshots are subscribed lazily via subscribeStats().
     if (this.statsEnabled) {
@@ -3002,6 +3032,7 @@ export class WorkspaceStore {
     this.historyPagination.delete(workspaceId);
     this.preReplayUsageSnapshot.delete(workspaceId);
     this.sessionUsage.delete(workspaceId);
+    this.sessionUsageRequestVersion.delete(workspaceId);
 
     this.ensureActiveOnChatSubscription();
     this.derived.bump("recency");

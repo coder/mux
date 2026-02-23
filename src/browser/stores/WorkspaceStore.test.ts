@@ -29,7 +29,9 @@ const mockOnChat = mock(async function* (
   });
 });
 
-const mockGetSessionUsage = mock(() => Promise.resolve(undefined));
+const mockGetSessionUsage = mock((_input: { workspaceId: string }) =>
+  Promise.resolve<unknown>(undefined)
+);
 const mockHistoryLoadMore = mock(
   (): Promise<LoadMoreResponse> =>
     Promise.resolve({
@@ -654,6 +656,111 @@ describe("WorkspaceStore", () => {
     store.setActiveWorkspaceId(null);
     expect(store.isOnChatSubscriptionActive("workspace-1")).toBe(false);
     expect(store.isOnChatSubscriptionActive("workspace-2")).toBe(false);
+  });
+
+  describe("session usage refresh on activation", () => {
+    it("re-fetches persisted session usage when switching to an inactive workspace", async () => {
+      const sessionUsageData = {
+        byModel: {
+          "claude-sonnet-4": {
+            input: { tokens: 1000, cost_usd: 0.003 },
+            cached: { tokens: 0, cost_usd: 0 },
+            cacheCreate: { tokens: 0, cost_usd: 0 },
+            output: { tokens: 100, cost_usd: 0.0015 },
+            reasoning: { tokens: 0, cost_usd: 0 },
+          },
+        },
+        version: 1 as const,
+      };
+
+      mockGetSessionUsage.mockImplementation(({ workspaceId }: { workspaceId: string }) => {
+        if (workspaceId === "workspace-2") {
+          return Promise.resolve(sessionUsageData);
+        }
+        return Promise.resolve(undefined);
+      });
+
+      createAndAddWorkspace(store, "workspace-1", {}, false);
+      createAndAddWorkspace(store, "workspace-2", {}, false);
+
+      store.setActiveWorkspaceId("workspace-1");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Clear call history to isolate the activation fetch.
+      mockGetSessionUsage.mockClear();
+
+      store.setActiveWorkspaceId("workspace-2");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Activation should trigger a fresh fetch for workspace-2.
+      expect(mockGetSessionUsage).toHaveBeenCalledWith({ workspaceId: "workspace-2" });
+
+      const usage = store.getWorkspaceUsage("workspace-2");
+      expect(usage.sessionTotal).toBeDefined();
+      expect(usage.sessionTotal!.input.tokens).toBe(1000);
+    });
+
+    it("ignores stale session-usage fetch when a newer refresh supersedes it", async () => {
+      let resolveFirst!: (value: unknown) => void;
+      const firstFetch = new Promise((resolve) => {
+        resolveFirst = resolve;
+      });
+
+      const freshData = {
+        byModel: {
+          "claude-sonnet-4": {
+            input: { tokens: 9999, cost_usd: 0.03 },
+            cached: { tokens: 0, cost_usd: 0 },
+            cacheCreate: { tokens: 0, cost_usd: 0 },
+            output: { tokens: 500, cost_usd: 0.0075 },
+            reasoning: { tokens: 0, cost_usd: 0 },
+          },
+        },
+        version: 1 as const,
+      };
+
+      const staleData = {
+        byModel: {
+          "claude-sonnet-4": {
+            input: { tokens: 1, cost_usd: 0.000003 },
+            cached: { tokens: 0, cost_usd: 0 },
+            cacheCreate: { tokens: 0, cost_usd: 0 },
+            output: { tokens: 1, cost_usd: 0.0000015 },
+            reasoning: { tokens: 0, cost_usd: 0 },
+          },
+        },
+        version: 1 as const,
+      };
+
+      let callCount = 0;
+      mockGetSessionUsage.mockImplementation(() => {
+        callCount++;
+        if (callCount <= 2) {
+          // First two calls (addWorkspace + first activation) are slow responses.
+          return firstFetch;
+        }
+        // Third call (second activation) resolves immediately with fresh data.
+        return Promise.resolve(freshData);
+      });
+
+      createAndAddWorkspace(store, "workspace-1", {}, false);
+      store.setActiveWorkspaceId("workspace-1");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Trigger a second activation (rapid switch away and back).
+      store.setActiveWorkspaceId(null);
+      store.setActiveWorkspaceId("workspace-1");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Now resolve the stale first fetch.
+      resolveFirst(staleData);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // The stale response should be ignored; fresh data should win.
+      const usage = store.getWorkspaceUsage("workspace-1");
+      expect(usage.sessionTotal).toBeDefined();
+      expect(usage.sessionTotal!.input.tokens).toBe(9999);
+    });
   });
 
   describe("syncWorkspaces", () => {
