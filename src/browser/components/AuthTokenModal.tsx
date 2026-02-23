@@ -313,7 +313,17 @@ export function AuthTokenModal(props: AuthTokenModalProps) {
                         return;
                       }
 
-                      void navigator.clipboard.writeText(githubUserCode);
+                      const clipboard = navigator.clipboard;
+                      if (clipboard?.writeText) {
+                        try {
+                          void clipboard.writeText(githubUserCode).catch(() => {
+                            // Ignore clipboard write failures so login can continue.
+                          });
+                        } catch {
+                          // Ignore clipboard access failures so login can continue.
+                        }
+                      }
+
                       window.open(githubVerificationUri, "_blank", "noopener");
                     }}
                     className="h-8 px-3 text-xs"
