@@ -81,8 +81,6 @@ interface NeedsBackfillData {
   sessionsDir: string;
 }
 
-const WORKER_SHUTDOWN_TIMEOUT_MS = 5_000;
-
 function toOptionalNonEmptyString(value: string | undefined): string | undefined {
   if (value == null) {
     return undefined;
@@ -575,50 +573,14 @@ export class AnalyticsService {
     };
   }
 
-  async dispose(): Promise<void> {
-    this.disposePromise ??= this.disposeInternal();
+  dispose(): Promise<void> {
+    this.disposePromise ??= Promise.resolve().then(() => {
+      this.disposeInternal();
+    });
     return this.disposePromise;
   }
 
-  private waitForWorkerExit(worker: Worker, timeoutMs: number): Promise<boolean> {
-    assert(
-      Number.isInteger(timeoutMs) && timeoutMs > 0,
-      "Analytics worker exit timeout must be a positive integer"
-    );
-
-    if (worker.threadId === -1) {
-      return Promise.resolve(true);
-    }
-
-    return new Promise<boolean>((resolve, reject) => {
-      const cleanup = (): void => {
-        clearTimeout(timeoutHandle);
-        worker.off("error", onError);
-        worker.off("exit", onExit);
-      };
-
-      const onError = (error: Error): void => {
-        cleanup();
-        reject(error);
-      };
-
-      const onExit = (): void => {
-        cleanup();
-        resolve(true);
-      };
-
-      const timeoutHandle = setTimeout(() => {
-        cleanup();
-        resolve(false);
-      }, timeoutMs);
-      timeoutHandle.unref?.();
-
-      worker.once("error", onError);
-      worker.once("exit", onExit);
-    });
-  }
-
-  private async disposeInternal(): Promise<void> {
+  private disposeInternal(): void {
     this.isDisposed = true;
 
     const disposedError = new Error("Analytics service is shutting down");
@@ -637,42 +599,12 @@ export class AnalyticsService {
     worker.off("error", this.onWorkerError);
     worker.off("exit", this.onWorkerExit);
 
-    // Shut down DuckDB from inside the worker thread first. Hard terminate can
-    // abort native DuckDB cleanup mid-operation and crash the parent process.
-    let postedShutdown = true;
+    // Shut down DuckDB from inside the worker thread first. The worker is
+    // already unref'd, so process shutdown does not wait for this cleanup.
     try {
       worker.postMessage({ type: "shutdown" } satisfies WorkerShutdownMessage);
     } catch (error) {
-      postedShutdown = false;
       log.warn("[AnalyticsService] Failed to post graceful shutdown message to analytics worker", {
-        error: getErrorMessage(error),
-      });
-    }
-
-    if (postedShutdown) {
-      try {
-        const exitedNaturally = await this.waitForWorkerExit(worker, WORKER_SHUTDOWN_TIMEOUT_MS);
-        if (exitedNaturally) {
-          return;
-        }
-
-        log.warn(
-          "[AnalyticsService] Analytics worker did not exit after graceful shutdown request",
-          {
-            timeoutMs: WORKER_SHUTDOWN_TIMEOUT_MS,
-          }
-        );
-      } catch (error) {
-        log.warn("[AnalyticsService] Error while waiting for analytics worker to exit", {
-          error: getErrorMessage(error),
-        });
-      }
-    }
-
-    try {
-      await worker.terminate();
-    } catch (error) {
-      log.warn("[AnalyticsService] Failed to terminate analytics worker during dispose", {
         error: getErrorMessage(error),
       });
     }
