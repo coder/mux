@@ -1,5 +1,5 @@
 ---
-author: @ammario
+author: "@ammario"
 date: 2026-02-23
 ---
 
