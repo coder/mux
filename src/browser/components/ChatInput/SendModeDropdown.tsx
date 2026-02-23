@@ -74,11 +74,13 @@ export const SendModeDropdown: React.FC<SendModeDropdownProps> = (props) => {
         disabled={props.disabled}
         onClick={() => setIsOpen((prev) => !prev)}
         className={cn(
-          "text-muted hover:text-foreground hover:bg-hover inline-flex items-center justify-center rounded-sm px-0.5 py-0.5 font-medium transition-colors duration-200",
+          // Button applies a default `[&_svg]:size-4`; override locally so this caret
+          // stays compact and optically aligned with the neighboring send icon.
+          "text-muted hover:text-foreground hover:bg-hover inline-flex items-center justify-center rounded-sm px-0.5 py-0.5 font-medium transition-colors duration-200 [&_svg]:!size-1.5 [&_svg]:translate-y-px",
           props.triggerClassName
         )}
       >
-        <ChevronDown className="h-1.5 w-1.5" strokeWidth={2.5} />
+        <ChevronDown strokeWidth={2.5} />
       </Button>
 
       {isOpen && (
