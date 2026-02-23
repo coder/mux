@@ -252,7 +252,6 @@ describe("useDraftWorkspaceSettings", () => {
         mode: "ssh",
         host: CODER_RUNTIME_PLACEHOLDER,
         coder: { existingWorkspace: false },
-        forwardAgent: false,
       });
     });
 

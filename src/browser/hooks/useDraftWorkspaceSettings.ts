@@ -89,7 +89,7 @@ const buildRuntimeForMode = (
         mode: "ssh",
         host: effectiveHost,
         coder: sshConfig.coder,
-        forwardAgent: sshConfig.forwardAgent,
+        ...(sshConfig.forwardAgent != null && { forwardAgent: sshConfig.forwardAgent }),
       };
     }
     case RUNTIME_MODE.DOCKER:
@@ -587,7 +587,8 @@ export function useDraftWorkspaceSettings(
         ? {
             host: CODER_RUNTIME_PLACEHOLDER,
             coder: freshSshState.coderConfig ?? DEFAULT_CODER_CONFIG,
-            forwardAgent: freshSshState.forwardAgent,
+            // forwardAgent intentionally omitted for Coder — the UI hides
+            // the toggle and Coder manages its own credential forwarding.
           }
         : {
             host: freshSshState.host,
