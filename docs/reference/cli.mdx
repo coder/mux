@@ -142,6 +142,71 @@ Options:
 - `--auth-token <token>` - Optional bearer token for authenticated server connections
 - `--log-file <path>` - Write ACP logs to a file instead of console stderr (helpful when your editor hides subprocess logs)
 
+Environment variable equivalents:
+
+- `MUX_SERVER_URL` - Same as `--server-url`
+- `MUX_SERVER_AUTH_TOKEN` - Same as `--auth-token`
+
+Use `MUX_SERVER_AUTH_TOKEN` for ACP auth; `MUX_AUTH_TOKEN` is not read by `mux acp`.
+
+### Set up Zed
+
+Add a custom agent server in Zed that runs the ACP subcommand.
+
+If `mux` is installed globally:
+
+```json
+{
+  "agent_servers": {
+    "Mux": {
+      "type": "custom",
+      "command": "mux",
+      "args": ["acp"]
+    }
+  }
+}
+```
+
+If you prefer an ephemeral install:
+
+```json
+{
+  "agent_servers": {
+    "Mux": {
+      "type": "custom",
+      "command": "npx",
+      "args": ["-y", "mux", "acp"]
+    }
+  }
+}
+```
+
+### Connect Zed to a remote mux server
+
+You can point ACP at a remote mux server either with flags or environment variables.
+
+Using flags:
+
+```json
+{
+  "agent_servers": {
+    "Mux": {
+      "type": "custom",
+      "command": "mux",
+      "args": ["acp", "--server-url", "https://mux.example.com", "--auth-token", "<token>"]
+    }
+  }
+}
+```
+
+Using environment variables (for any `mux acp` process):
+
+```bash
+MUX_SERVER_URL=https://mux.example.com \
+MUX_SERVER_AUTH_TOKEN=<token> \
+mux acp
+```
+
 ## `mux desktop`
 
 Launch the desktop app. This is automatically invoked when running the packaged app or via `electron .`:
