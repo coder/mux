@@ -810,6 +810,37 @@ describe("WorkspaceService idle compaction dispatch", () => {
     }
     expect(executionError.message).toContain("idle-only send was skipped");
   });
+  test("clears idle marker when streaming=false metadata update fails", async () => {
+    const workspaceId = "idle-streaming-false-failure";
+
+    const setStreaming = mock(() => Promise.reject(new Error("setStreaming failed")));
+    const extensionMetadata = {
+      setStreaming,
+    } as unknown as ExtensionMetadataService;
+
+    (
+      workspaceService as unknown as {
+        extensionMetadata: ExtensionMetadataService;
+      }
+    ).extensionMetadata = extensionMetadata;
+
+    const internals = workspaceService as unknown as {
+      idleCompactingWorkspaces: Set<string>;
+      updateStreamingStatus: (
+        workspaceId: string,
+        streaming: boolean,
+        model?: string,
+        agentId?: string
+      ) => Promise<void>;
+    };
+
+    internals.idleCompactingWorkspaces.add(workspaceId);
+
+    await internals.updateStreamingStatus(workspaceId, false);
+
+    expect(internals.idleCompactingWorkspaces.has(workspaceId)).toBe(false);
+    expect(setStreaming).toHaveBeenCalledWith(workspaceId, false, undefined, undefined);
+  });
 });
 
 describe("WorkspaceService executeBash archive guards", () => {

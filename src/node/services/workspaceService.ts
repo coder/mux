@@ -1201,11 +1201,14 @@ export class WorkspaceService extends EventEmitter {
         workspaceId,
         isIdleCompaction ? { ...snapshot, isIdleCompaction: true } : snapshot
       );
+    } catch (error) {
+      log.error("Failed to update workspace streaming status", { workspaceId, error });
+    } finally {
+      // Idle compaction marker is turn-scoped. Always clear on streaming=false transitions,
+      // even when metadata writes fail, so stale state cannot leak into future user streams.
       if (!streaming) {
         this.idleCompactingWorkspaces.delete(workspaceId);
       }
-    } catch (error) {
-      log.error("Failed to update workspace streaming status", { workspaceId, error });
     }
   }
 
