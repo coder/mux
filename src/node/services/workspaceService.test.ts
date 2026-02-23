@@ -18,6 +18,7 @@ import type { ExtensionMetadataService } from "./ExtensionMetadataService";
 import type { FrontendWorkspaceMetadata, WorkspaceMetadata } from "@/common/types/workspace";
 import type { TaskService } from "./taskService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
+import type { TerminalService } from "@/node/services/terminalService";
 import type { BashToolResult } from "@/common/types/tools";
 import { createMuxMessage } from "@/common/types/message";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
@@ -1413,6 +1414,37 @@ describe("WorkspaceService archive lifecycle hooks", () => {
 
     expect(result.success).toBe(false);
     expect(interruptStreamSpy).toHaveBeenCalledTimes(0);
+  });
+
+  test("archive() closes workspace terminal sessions on success", async () => {
+    const closeWorkspaceSessions = mock(() => undefined);
+    const terminalService = {
+      closeWorkspaceSessions,
+    } as unknown as TerminalService;
+    workspaceService.setTerminalService(terminalService);
+
+    const result = await workspaceService.archive(workspaceId);
+
+    expect(result.success).toBe(true);
+    expect(closeWorkspaceSessions).toHaveBeenCalledTimes(1);
+    expect(closeWorkspaceSessions).toHaveBeenCalledWith(workspaceId);
+  });
+
+  test("archive() does not close terminal sessions when beforeArchive hook fails", async () => {
+    const hooks = new WorkspaceLifecycleHooks();
+    hooks.registerBeforeArchive(() => Promise.resolve(Err("hook failed")));
+    workspaceService.setWorkspaceLifecycleHooks(hooks);
+
+    const closeWorkspaceSessions = mock(() => undefined);
+    const terminalService = {
+      closeWorkspaceSessions,
+    } as unknown as TerminalService;
+    workspaceService.setTerminalService(terminalService);
+
+    const result = await workspaceService.archive(workspaceId);
+
+    expect(result.success).toBe(false);
+    expect(closeWorkspaceSessions).not.toHaveBeenCalled();
   });
 
   test("persists archivedAt when beforeArchive hooks succeed", async () => {

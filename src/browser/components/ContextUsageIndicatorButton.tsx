@@ -263,8 +263,21 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
       */}
       <DialogContent maxWidth="380px" className="gap-3 p-3">
         <DialogHeader className="space-y-0">
-          <DialogTitle className="text-sm">Compaction settings</DialogTitle>
+          <DialogTitle className="text-sm">Compaction Settings</DialogTitle>
         </DialogHeader>
+        {/* Keep manual /compact discoverability in the settings modal so the inline auto-compact hint stays minimal. */}
+        <div className="text-muted text-[10px]">
+          <div>
+            Run <span className="font-mono">/compact</span> to compact manually
+          </div>
+          <div className="mt-1">
+            • <span className="font-mono">-m model</span>
+          </div>
+          <div>
+            • <span className="font-mono">-t max output tokens</span>
+          </div>
+          <div>• Add a followup message on the next line</div>
+        </div>
         <AutoCompactSettings
           data={data}
           usageConfig={autoCompaction}

@@ -24,6 +24,8 @@ import {
   getInputKey,
   getModelKey,
   getPendingScopeId,
+  getRightSidebarLayoutKey,
+  getTerminalTitlesKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
   getWorkspaceNameStateKey,
@@ -47,6 +49,12 @@ import {
 } from "@/browser/hooks/usePersistedState";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+import { isTerminalTab } from "@/browser/types/rightSidebar";
+import {
+  collectAllTabs,
+  isRightSidebarLayoutState,
+  removeTabEverywhere,
+} from "@/browser/utils/rightSidebarLayout";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
@@ -1307,6 +1315,23 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       try {
         const result = await api.workspace.archive({ workspaceId });
         if (result.success) {
+          // Terminal PTYs are killed on archive; clear persisted terminal tabs so
+          // unarchive doesn't briefly flash dead terminal tabs.
+          const layoutKey = getRightSidebarLayoutKey(workspaceId);
+          const rawLayout = readPersistedState<unknown>(layoutKey, null);
+
+          if (isRightSidebarLayoutState(rawLayout)) {
+            const terminalTabs = collectAllTabs(rawLayout.root).filter(isTerminalTab);
+            let cleanedLayout = rawLayout;
+            for (const tab of terminalTabs) {
+              cleanedLayout = removeTabEverywhere(cleanedLayout, tab);
+            }
+            updatePersistedState(layoutKey, cleanedLayout);
+          }
+
+          // Also clear persisted terminal titles since those sessions are gone.
+          updatePersistedState(getTerminalTitlesKey(workspaceId), {});
+
           // Workspace list + navigation are driven by the workspace metadata subscription.
           return { success: true };
         }
