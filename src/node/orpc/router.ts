@@ -2416,6 +2416,20 @@ export const router = (authToken?: string) => {
             context.projectService.setIdleCompactionHours(input.projectPath, input.hours)
           ),
       },
+      nixShell: {
+        get: t
+          .input(schemas.projects.nixShell.get.input)
+          .output(schemas.projects.nixShell.get.output)
+          .handler(({ context, input }) => ({
+            enabled: context.projectService.getNixShellEnabled(input.projectPath),
+          })),
+        set: t
+          .input(schemas.projects.nixShell.set.input)
+          .output(schemas.projects.nixShell.set.output)
+          .handler(({ context, input }) =>
+            context.projectService.setNixShellEnabled(input.projectPath, input.enabled)
+          ),
+      },
       sections: {
         list: t
           .input(schemas.projects.sections.list.input)

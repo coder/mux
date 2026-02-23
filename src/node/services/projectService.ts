@@ -1025,6 +1025,45 @@ export class ProjectService {
     }
   }
 
+  /**
+   * Get whether Nix shell wrapping is enabled for a project.
+   */
+  getNixShellEnabled(projectPath: string): boolean {
+    try {
+      const config = this.config.loadConfigOrDefault();
+      const project = config.projects.get(projectPath);
+      return project?.useNixShell ?? false;
+    } catch (error) {
+      log.error("Failed to get nix shell setting:", error);
+      return false;
+    }
+  }
+
+  /**
+   * Set whether Nix shell wrapping is enabled for a project.
+   */
+  async setNixShellEnabled(projectPath: string, enabled: boolean): Promise<Result<void>> {
+    try {
+      const config = this.config.loadConfigOrDefault();
+      const project = config.projects.get(projectPath);
+
+      if (!project) {
+        return Err(`Project not found: ${projectPath}`);
+      }
+
+      if (enabled) {
+        project.useNixShell = true;
+      } else {
+        delete project.useNixShell;
+      }
+      await this.config.saveConfig(config);
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to set nix shell setting: ${message}`);
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Section Management
   // ─────────────────────────────────────────────────────────────────────────────

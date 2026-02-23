@@ -883,6 +883,13 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
         : { script, didRewrite: false };
       const scriptWithEnv = toolEnvPrelude + nulRedirectRewrite.script;
 
+      // Wrap in nix develop shell if enabled for this project
+      let finalScript = scriptWithEnv;
+      if (config.useNixShell) {
+        const escaped = scriptWithEnv.replace(/'/g, "'\\''");
+        finalScript = `nix develop --command bash -c '${escaped}'`;
+      }
+
       const nulRedirectNote = nulRedirectRewrite.didRewrite
         ? "Rewrote `>nul`/`2>nul` → `/dev/null` (bash tool runs in bash; use `/dev/null` to discard output)."
         : undefined;
@@ -909,7 +916,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
         const spawnResult = await config.backgroundProcessManager.spawn(
           config.runtime,
           config.workspaceId,
-          scriptWithEnv,
+          finalScript,
           {
             cwd: config.cwd,
             // Match foreground bash behavior: muxEnv is present and secrets override it.
@@ -985,7 +992,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
 
       // Execute using runtime interface (works for both local and SSH)
       const scriptWithClosedStdin = `exec </dev/null
-${scriptWithEnv}`;
+${finalScript}`;
       const execStream = await config.runtime.exec(scriptWithClosedStdin, {
         cwd: config.cwd,
         env: { ...config.muxEnv, ...config.secrets, ...NON_INTERACTIVE_ENV_VARS },

@@ -91,6 +91,8 @@ export interface ToolConfiguration {
   availableSubagents?: AgentDefinitionDescriptor[];
   /** Available skills for the agent_skill_read tool description (dynamic context) */
   availableSkills?: AgentSkillDescriptor[];
+  /** When true, wrap bash commands in `nix develop --command bash -c '...'` */
+  useNixShell?: boolean;
 }
 
 /**

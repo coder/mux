@@ -673,6 +673,19 @@ export const projects = {
       output: ResultSchema(z.void(), z.string()),
     },
   },
+  nixShell: {
+    get: {
+      input: z.object({ projectPath: z.string() }),
+      output: z.object({ enabled: z.boolean() }),
+    },
+    set: {
+      input: z.object({
+        projectPath: z.string(),
+        enabled: z.boolean(),
+      }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+  },
   sections: {
     list: {
       input: z.object({ projectPath: z.string() }),

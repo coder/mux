@@ -147,4 +147,8 @@ export const ProjectConfigSchema = z.object({
   defaultRuntime: RuntimeEnablementIdSchema.optional().meta({
     description: "Default runtime override for new workspaces in this project",
   }),
+  useNixShell: z.boolean().optional().meta({
+    description:
+      "When true, wrap all agent bash commands in the project's Nix dev shell (nix develop)",
+  }),
 });

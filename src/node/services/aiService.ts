@@ -885,6 +885,9 @@ export class AIService extends EventEmitter {
           // Dynamic context for tool descriptions (moved from system prompt for better model attention)
           availableSubagents: agentDefinitions,
           availableSkills,
+          useNixShell:
+            this.config.loadConfigOrDefault().projects.get(metadata.projectPath)?.useNixShell ??
+            false,
         },
         workspaceId,
         this.initStateManager,
