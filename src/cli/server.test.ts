@@ -90,6 +90,9 @@ async function createTestServer(): Promise<TestServerHandle> {
     sessionUsageService: services.sessionUsageService,
     signingService: services.signingService,
     coderService: services.coderService,
+    serverAuthService: services.serverAuthService,
+    sshPromptService: services.sshPromptService,
+    analyticsService: services.analyticsService,
   };
 
   // Use the actual createOrpcServer function

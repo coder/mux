@@ -9,18 +9,14 @@ import { FORCE_COMPACTION_BUFFER_PERCENT } from "@/common/constants/ui";
  * - At/above threshold (not streaming): Bold "Next message will Auto-Compact"
  * - At/above threshold (streaming): "Force-compacting in N%" (where N = force threshold - current usage)
  *
- * All states are clickable to insert /compact command.
- *
  * @param usagePercentage - Current token usage as percentage (0-100), reflects live usage when streaming
  * @param thresholdPercentage - Auto-compaction trigger threshold (0-100, default 70)
  * @param isStreaming - Whether currently streaming a response
- * @param onCompactClick - Callback when user clicks to trigger manual compaction
  */
 export const CompactionWarning: React.FC<{
   usagePercentage: number;
   thresholdPercentage: number;
   isStreaming: boolean;
-  onCompactClick?: () => void;
 }> = (props) => {
   // At threshold or above, next message will trigger compaction
   const willCompactNext = props.usagePercentage >= props.thresholdPercentage;
@@ -47,17 +43,12 @@ export const CompactionWarning: React.FC<{
   }
 
   return (
-    <div className="mx-4 mt-2 mb-1 text-right text-[10px]">
-      <button
-        type="button"
-        onClick={props.onCompactClick}
-        className={`cursor-pointer hover:underline ${
-          isUrgent ? "text-plan-mode font-semibold" : "text-muted"
-        }`}
-        title="Click to insert /compact command"
-      >
-        {text}
-      </button>
+    <div
+      className={`mx-4 mt-2 mb-1 text-right text-[10px] ${
+        isUrgent ? "text-plan-mode font-semibold" : "text-muted"
+      }`}
+    >
+      {text}
     </div>
   );
 };

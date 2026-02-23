@@ -46,6 +46,7 @@ export const NestedToolCallSchema = z.object({
   input: z.unknown(),
   output: z.unknown().optional(),
   state: z.enum(["input-available", "output-available", "output-redacted"]),
+  failed: z.boolean().optional(),
   timestamp: z.number().optional(),
 });
 
@@ -64,6 +65,7 @@ export const DynamicToolPartAvailableSchema = MuxToolPartBase.extend({
 });
 export const DynamicToolPartRedactedSchema = MuxToolPartBase.extend({
   state: z.literal("output-redacted"),
+  failed: z.boolean().optional(),
   nestedCalls: z.array(NestedToolCallSchema).optional(),
 });
 
@@ -83,6 +85,14 @@ export const MuxFilePartSchema = FilePartSchema.extend({
 // Export types inferred from schemas for reuse across app/test code.
 export type FilePart = z.infer<typeof FilePartSchema>;
 export type MuxFilePart = z.infer<typeof MuxFilePartSchema>;
+
+const CompactionEpochSchema = z.optional(
+  z.preprocess(
+    (value) =>
+      typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined,
+    z.number().int().positive().or(z.undefined())
+  )
+);
 
 // MuxMessage (simplified)
 export const MuxMessageSchema = z.object({
@@ -109,12 +119,22 @@ export const MuxMessageSchema = z.object({
       providerMetadata: z.record(z.string(), z.unknown()).optional(),
       contextProviderMetadata: z.record(z.string(), z.unknown()).optional(),
       duration: z.number().optional(),
+      ttftMs: z.number().optional(),
       systemMessageTokens: z.number().optional(),
       muxMetadata: z.any().optional(),
       cmuxMetadata: z.any().optional(), // Legacy field for backward compatibility
+      // ACP prompt correlation id for reconnect/diagnostic continuity.
+      acpPromptId: z.string().optional(),
       // Compaction source: "user" (manual), "idle" (auto), or legacy boolean (true)
       compacted: z.union([z.literal("user"), z.literal("idle"), z.boolean()]).optional(),
+      // Monotonic compaction epoch id. Incremented whenever compaction succeeds.
+      // Self-healing read path: malformed persisted compactionEpoch is ignored.
+      compactionEpoch: CompactionEpochSchema,
+      // Durable boundary marker for compaction summaries.
+      compactionBoundary: z.boolean().optional(),
       toolPolicy: z.any().optional(),
+      disableWorkspaceAgents: z.boolean().optional(),
+      retrySendOptions: z.any().optional(),
       agentId: AgentIdSchema.optional().catch(undefined),
       partial: z.boolean().optional(),
       synthetic: z.boolean().optional(),

@@ -8,9 +8,14 @@ import {
   PREFERRED_COMPACTION_MODEL_KEY,
 } from "@/common/constants/storage";
 import { readPersistedState, readPersistedString } from "@/browser/hooks/usePersistedState";
-import { useWorkspaceState, useWorkspaceAggregator } from "@/browser/stores/WorkspaceStore";
+import {
+  useWorkspaceState,
+  useWorkspaceAggregator,
+  useWorkspaceStoreRaw,
+} from "@/browser/stores/WorkspaceStore";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { useSettings } from "@/browser/contexts/SettingsContext";
+import { useAPI } from "@/browser/contexts/API";
 
 type StreamingPhase =
   | "starting" // Message sent, waiting for stream-start
@@ -22,16 +27,33 @@ type StreamingPhase =
 interface StreamingBarrierProps {
   workspaceId: string;
   className?: string;
+  /**
+   * Optional vim state from parent subscription.
+   * Falls back to persisted value when omitted.
+   */
+  vimEnabled?: boolean;
+  /**
+   * Optional compaction-specific cancel hook.
+   * When provided, this path should preserve compaction edit state + follow-up content.
+   */
+  onCancelCompaction?: () => void;
 }
 
 /**
  * Self-contained streaming status barrier.
- * Computes all state internally from workspaceId - no props drilling needed.
+ * Computes streaming state internally from workspaceId.
  * Returns null when there's nothing to show.
  */
-export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId, className }) => {
+export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
+  workspaceId,
+  className,
+  vimEnabled: vimEnabledFromParent,
+  onCancelCompaction,
+}) => {
   const workspaceState = useWorkspaceState(workspaceId);
   const aggregator = useWorkspaceAggregator(workspaceId);
+  const storeRaw = useWorkspaceStoreRaw();
+  const { api } = useAPI();
   const { open: openSettings } = useSettings();
 
   const {
@@ -78,11 +100,11 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
       : currentModel;
   const modelName = model ? getModelName(model) : null;
 
-  // Vim mode affects cancel keybind hint (read once per render, no subscription needed)
-  const vimEnabled = readPersistedState(VIM_ENABLED_KEY, false);
+  // Prefer parent vim state (subscribed in ChatPane) so the hint updates immediately.
+  const vimEnabled = vimEnabledFromParent ?? readPersistedState(VIM_ENABLED_KEY, false);
   const interruptKeybind = formatKeybind(
     vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL
-  );
+  ).replace("Escape", "Esc");
   const interruptHint = `hit ${interruptKeybind} to cancel`;
 
   // Compute status text based on phase
@@ -119,6 +141,40 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
     }
   })();
 
+  const canTapCancel = phase === "starting" || phase === "streaming" || phase === "compacting";
+  const handleCancelClick = () => {
+    if (!api) {
+      return;
+    }
+
+    if (phase !== "starting" && phase !== "streaming" && phase !== "compacting") {
+      return;
+    }
+
+    void api.workspace.setAutoRetryEnabled?.({ workspaceId, enabled: false });
+
+    if (phase === "compacting") {
+      // Reuse the established compaction-cancel flow from keyboard shortcuts so we keep
+      // edit restoration + follow-up content behavior consistent across input methods.
+      if (onCancelCompaction) {
+        onCancelCompaction();
+        return;
+      }
+
+      void api.workspace.interruptStream({
+        workspaceId,
+        options: { abandonPartial: true },
+      });
+      return;
+    }
+
+    if (phase === "streaming") {
+      storeRaw.setInterrupting(workspaceId);
+    }
+
+    void api.workspace.interruptStream({ workspaceId });
+  };
+
   // Show settings hint during compaction if no custom compaction model is configured
   const showCompactionHint =
     phase === "compacting" && !readPersistedString(PREFERRED_COMPACTION_MODEL_KEY);
@@ -129,6 +185,8 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
       tokenCount={tokenCount}
       tps={tps}
       cancelText={cancelText}
+      onCancel={canTapCancel ? handleCancelClick : undefined}
+      cancelShortcutText={canTapCancel ? interruptKeybind : undefined}
       className={className}
       hintElement={
         showCompactionHint ? (

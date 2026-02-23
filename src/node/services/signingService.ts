@@ -20,12 +20,12 @@ import {
   type KeyType as MuxMdKeyType,
   type SignatureEnvelope,
 } from "@coder/mux-md-client";
-import { createSshAgentSignatureEnvelope } from "@coder/mux-md-client/ssh-agent";
 import sshpk from "sshpk";
 import { OpenSSHAgent, type KnownPublicKeys, type ParsedKey, type PublicKeyEntry } from "ssh2";
 import { getMuxHome } from "@/common/constants/paths";
 import { execAsync } from "@/node/utils/disposableExec";
 import { log } from "@/node/services/log";
+import { getErrorMessage } from "@/common/utils/errors";
 
 interface KeyPair {
   privateKey: sshpk.PrivateKey;
@@ -78,6 +78,29 @@ const SUPPORTED_AGENT_KEY_TYPES = new Set([
   "ecdsa-sha2-nistp384",
   "ecdsa-sha2-nistp521",
 ]);
+
+/**
+ * Probe whether the @coder/mux-md-client/ssh-agent subpath is importable.
+ * Caches the result so we only pay the cost once. If the module is missing
+ * (e.g. bun resolved to a version without the export), ssh-agent signing is
+ * silently unavailable and the service falls back to disk keys.
+ */
+let sshAgentModuleAvailable: boolean | null = null;
+async function isSshAgentModuleAvailable(): Promise<boolean> {
+  if (sshAgentModuleAvailable != null) return sshAgentModuleAvailable;
+  try {
+    // eslint-disable-next-line no-restricted-syntax -- startup resilience probe
+    await import("@coder/mux-md-client/ssh-agent");
+    sshAgentModuleAvailable = true;
+  } catch {
+    log.warn(
+      "[SigningService] @coder/mux-md-client/ssh-agent is not available — ssh-agent signing disabled. " +
+        "This usually means the package resolved to a version missing the export."
+    );
+    sshAgentModuleAvailable = false;
+  }
+  return sshAgentModuleAvailable;
+}
 
 const AGENT_KEY_TYPE_PRIORITY: Record<MuxMdKeyType, number> = {
   ed25519: 0,
@@ -186,7 +209,7 @@ export class SigningService {
         log.info("[SigningService] Public key:", publicKeyOpenSSH.slice(0, 50) + "...");
         return keyPair;
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = getErrorMessage(err);
         // Check for encrypted key
         if (message.includes("encrypted") || message.includes("passphrase")) {
           log.info(
@@ -243,7 +266,7 @@ export class SigningService {
           muxKeyType: parsed.type,
         });
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = getErrorMessage(err);
         log.debug("[SigningService] Skipping unsupported SSH agent key:", message);
       }
     }
@@ -277,6 +300,22 @@ export class SigningService {
     const desiredFingerprint = process.env.MUX_SIGNING_KEY_FINGERPRINT?.trim();
     const hasOverride = Boolean(desiredPublicKeyRaw?.length) || Boolean(desiredFingerprint?.length);
 
+    // If the ssh-agent module isn't available, skip agent key selection entirely
+    // so the service falls back to disk keys. But if the caller explicitly requested
+    // a specific key via env overrides, report an error — silently signing with a
+    // different disk key would produce signatures that fail verification.
+    if (!(await isSshAgentModuleAvailable())) {
+      if (hasOverride) {
+        return {
+          selection: null,
+          error:
+            "SSH agent signing module is unavailable (possible dependency resolution issue). " +
+            "Cannot honor MUX_SIGNING_PUBLIC_KEY/MUX_SIGNING_KEY_FINGERPRINT — try updating mux.",
+        };
+      }
+      return { selection: null, error: null };
+    }
+
     const sshAuthSock = process.env.SSH_AUTH_SOCK?.trim();
     if (!sshAuthSock) {
       if (hasOverride) {
@@ -293,7 +332,7 @@ export class SigningService {
     try {
       candidates = await this.listSshAgentKeyCandidates(sshAuthSock);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       log.info("[SigningService] Failed to query SSH agent:", message);
       if (hasOverride) {
         return {
@@ -388,7 +427,7 @@ export class SigningService {
         this.signingKey = loaded;
         return loaded;
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = getErrorMessage(err);
         log.warn("[SigningService] Unexpected key load error:", message);
         this.signingKey = null;
         this.keyLoadError = "Failed to load signing key";
@@ -505,7 +544,7 @@ export class SigningService {
         error = "Not logged in to GitHub CLI (run: gh auth login)";
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       if (message.includes("command not found") || message.includes("ENOENT")) {
         log.info("[SigningService] gh CLI not installed");
         error = "GitHub CLI not installed (brew install gh)";
@@ -583,7 +622,17 @@ export class SigningService {
       return envelope;
     }
 
-    const envelope = await createSshAgentSignatureEnvelope(bytes, {
+    // eslint-disable-next-line no-restricted-syntax -- not circular-dep hiding; startup resilience
+    const sshAgentModule = await import("@coder/mux-md-client/ssh-agent").catch((err: unknown) => {
+      const message = getErrorMessage(err);
+      log.error("[SigningService] Failed to load ssh-agent signing module:", message);
+      throw new Error(
+        "SSH agent signing is unavailable — the @coder/mux-md-client/ssh-agent module failed to load. " +
+          "Try updating mux or falling back to disk key signing."
+      );
+    });
+
+    const envelope = await sshAgentModule.createSshAgentSignatureEnvelope(bytes, {
       sshAuthSock: signingKey.sshAuthSock,
       publicKey: signingKey.publicKeyOpenSSH,
       fingerprint: signingKey.fingerprint,

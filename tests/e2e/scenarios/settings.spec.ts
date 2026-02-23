@@ -5,16 +5,18 @@ test.skip(
   "Electron scenario runs on chromium only"
 );
 
-test.describe("Settings Modal", () => {
-  test("opens settings modal via gear button", async ({ ui, page }) => {
+test.describe("Settings", () => {
+  test("opens settings via gear button", async ({ ui, page }) => {
     await ui.projects.openFirstWorkspace();
 
     // Open settings
     await ui.settings.open();
 
-    // Verify modal is open with correct structure
-    const dialog = page.getByRole("dialog", { name: "Settings" });
-    await expect(dialog).toBeVisible();
+    // The titlebar settings control now acts as the close toggle while settings are open.
+    await expect(page.getByTestId("settings-button")).toHaveAttribute(
+      "aria-label",
+      "Close settings"
+    );
 
     // Verify sidebar sections are present
     await expect(page.getByRole("button", { name: "General", exact: true })).toBeVisible();
@@ -42,39 +44,25 @@ test.describe("Settings Modal", () => {
     await expect(page.getByText("Theme", { exact: true })).toBeVisible();
   });
 
-  test("closes settings with Escape key", async ({ ui }) => {
+  test("closes settings with the titlebar toggle button", async ({ ui, page }) => {
     await ui.projects.openFirstWorkspace();
     await ui.settings.open();
 
-    // Close via Escape
-    await ui.settings.close();
-
-    // Verify closed
-    await ui.settings.expectClosed();
-  });
-
-  test("closes settings with X button", async ({ ui, page }) => {
-    await ui.projects.openFirstWorkspace();
-    await ui.settings.open();
-
-    // Click close button
-    const closeButton = page.getByRole("button", { name: /close settings/i });
+    const closeButton = page.getByTestId("settings-button");
+    await expect(closeButton).toHaveAttribute("aria-label", "Close settings");
     await closeButton.click();
 
-    // Verify closed
     await ui.settings.expectClosed();
   });
 
-  test("closes settings by clicking overlay", async ({ ui, page }) => {
+  test("returns to previous page when closing settings", async ({ ui, page }) => {
     await ui.projects.openFirstWorkspace();
     await ui.settings.open();
+    await ui.settings.selectSection("Providers");
 
-    // Click overlay (outside modal content) - Radix Dialog uses data-state attribute
-    const overlay = page.locator('[data-state="open"].fixed.inset-0');
-    await overlay.click({ position: { x: 10, y: 10 }, force: true });
+    await ui.settings.close();
 
-    // Verify closed
-    await ui.settings.expectClosed();
+    await expect(page.getByRole("textbox", { name: /message/i })).toBeVisible();
   });
 
   test("expands provider accordion in Providers section", async ({ ui, page }) => {
@@ -165,8 +153,8 @@ test.describe("Settings Modal", () => {
     // The API key should still show as set
     await expect(page.getByText("••••••••")).toBeVisible();
 
-    // The provider should show as configured (green indicator dot)
-    const configuredIndicator = openaiButton.locator(".bg-green-500");
+    // The provider should show as configured (status indicator dot)
+    const configuredIndicator = openaiButton.locator('[title="Configured"]');
     await expect(configuredIndicator).toBeVisible();
   });
 });

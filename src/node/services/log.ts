@@ -20,7 +20,13 @@ import * as fs from "fs";
 import * as path from "path";
 import chalk from "chalk";
 import { parseBoolEnv } from "@/common/utils/env";
-import { getMuxHome } from "@/common/constants/paths";
+import { getErrorMessage } from "@/common/utils/errors";
+import { getMuxHome, getMuxLogsDir } from "@/common/constants/paths";
+import { hasDebugSubscriber, pushLogEntry } from "./logBuffer";
+
+process.once("exit", () => {
+  closeLogFile();
+});
 
 // Lazy-initialized to avoid circular dependency with config.ts
 let _debugObjDir: string | null = null;
@@ -72,6 +78,284 @@ function getDefaultLogLevel(): LogLevel {
   // Desktop mode defaults to info
   const isElectron = "electron" in process.versions;
   return isElectron ? "info" : "error";
+}
+
+type FileSinkState =
+  | { status: "idle" }
+  | { status: "open"; stream: fs.WriteStream; path: string; size: number }
+  | { status: "degraded"; reason: string; retryAfterMs: number }
+  | { status: "closed" };
+
+let fileSinkState: FileSinkState = { status: "idle" };
+let sinkTransition: Promise<void> = Promise.resolve();
+let sinkTransitionDepth = 0;
+let sinkLifecycleEpoch = 0;
+
+function enqueueSinkTransition(task: () => Promise<void>): Promise<void> {
+  sinkTransitionDepth += 1;
+
+  // `run` is the caller-visible promise: resolves/rejects with the task's real outcome.
+  const run = sinkTransition.catch(() => undefined).then(task);
+
+  // The internal chain absorbs failures so subsequent commands still execute,
+  // but only transitions to degraded if the sink hasn't been terminally closed.
+  sinkTransition = run
+    .catch((error) => {
+      if (fileSinkState.status !== "closed") {
+        setDegradedState(error);
+      }
+    })
+    .finally(() => {
+      sinkTransitionDepth -= 1;
+    });
+
+  return run;
+}
+
+const MAX_LOG_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_LOG_FILES = 3;
+const LOG_FILE_RETRY_BACKOFF_MS = 30_000;
+
+function createSafeStream(filePath: string): fs.WriteStream {
+  const stream = fs.createWriteStream(filePath, { flags: "a" });
+  stream.on("error", (error) => {
+    // Ignore stale stream errors after rotation/clear/close; only active stream
+    // failures should flip the sink into degraded mode.
+    if (fileSinkState.status !== "open" || fileSinkState.stream !== stream) {
+      return;
+    }
+
+    fileSinkState = {
+      status: "degraded",
+      reason: getErrorMessage(error),
+      retryAfterMs: Date.now() + LOG_FILE_RETRY_BACKOFF_MS,
+    };
+
+    try {
+      stream.destroy();
+    } catch {
+      // logger must fail silently
+    }
+  });
+  return stream;
+}
+
+function setDegradedState(error: unknown): void {
+  fileSinkState = {
+    status: "degraded",
+    reason: getErrorMessage(error),
+    retryAfterMs: Date.now() + LOG_FILE_RETRY_BACKOFF_MS,
+  };
+}
+
+function waitForStreamClose(stream: fs.WriteStream): Promise<void> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) {
+        return;
+      }
+      done = true;
+      resolve();
+    };
+
+    stream.once("close", finish);
+    stream.once("error", finish);
+    // .end() callback fires on 'finish', which precedes 'close'—
+    // but the callback guarantees flush completed.
+    stream.end(() => finish());
+  });
+}
+
+function stripAnsi(text: string): string {
+  // Matches standard ANSI escape codes for colors/styles.
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+function ensureSinkOpen(): void {
+  // Bail while a transition (rotate/clear/close) is in progress — the queue
+  // will reopen the sink if appropriate.
+  if (sinkTransitionDepth > 0) {
+    return;
+  }
+
+  if (fileSinkState.status === "open" || fileSinkState.status === "closed") {
+    return;
+  }
+
+  if (fileSinkState.status === "degraded" && Date.now() < fileSinkState.retryAfterMs) {
+    return;
+  }
+
+  try {
+    const logsDir = getMuxLogsDir();
+    const activeLogPath = path.join(logsDir, "mux.log");
+
+    fs.mkdirSync(logsDir, { recursive: true });
+
+    let fileSize = 0;
+    try {
+      fileSize = fs.statSync(activeLogPath).size;
+    } catch {
+      fileSize = 0;
+    }
+
+    const stream = createSafeStream(activeLogPath);
+    fileSinkState = { status: "open", stream, path: activeLogPath, size: fileSize };
+  } catch (error) {
+    // Never throw from the logger; enter degraded mode and retry later.
+    setDegradedState(error);
+  }
+}
+
+function rotateSink(): void {
+  if (fileSinkState.status !== "open") {
+    return;
+  }
+
+  const openSink = fileSinkState;
+  const transitionEpoch = sinkLifecycleEpoch;
+  // Immediately move to idle so writeSink() won't write to the old stream.
+  fileSinkState = { status: "idle" };
+
+  enqueueSinkTransition(async () => {
+    await waitForStreamClose(openSink.stream);
+
+    const logsDir = path.dirname(openSink.path);
+
+    // Shift: mux.3.log → deleted, mux.2.log → mux.3.log, etc.
+    for (let i = MAX_LOG_FILES; i >= 1; i--) {
+      const from = path.join(logsDir, i === 1 ? "mux.log" : `mux.${i - 1}.log`);
+      const to = path.join(logsDir, `mux.${i}.log`);
+      try {
+        fs.renameSync(from, to);
+      } catch {
+        // file may not exist
+      }
+    }
+
+    if (fileSinkState.status === "closed" || transitionEpoch !== sinkLifecycleEpoch) {
+      return;
+    }
+
+    const stream = createSafeStream(openSink.path);
+    fileSinkState = { status: "open", stream, path: openSink.path, size: 0 };
+  }).catch(() => undefined);
+}
+
+function writeSink(cleanLineWithNewline: string): void {
+  try {
+    ensureSinkOpen();
+    if (fileSinkState.status !== "open") {
+      return;
+    }
+
+    const openSink = fileSinkState;
+    const bytes = Buffer.byteLength(cleanLineWithNewline, "utf-8");
+
+    openSink.stream.write(cleanLineWithNewline);
+
+    // Stream writes are async and can error out-of-band. Only update size
+    // when this sink instance is still active.
+    if (fileSinkState.status !== "open" || fileSinkState.stream !== openSink.stream) {
+      return;
+    }
+
+    const nextSize = openSink.size + bytes;
+    fileSinkState = { ...openSink, size: nextSize };
+
+    if (nextSize >= MAX_LOG_FILE_SIZE) {
+      rotateSink();
+    }
+  } catch {
+    // Silent failure.
+  }
+}
+
+export function getLogFilePath(): string {
+  return path.join(getMuxLogsDir(), "mux.log");
+}
+
+function clearSink(): Promise<void> {
+  const logsDir = getMuxLogsDir();
+  const activeLogPath = path.join(logsDir, "mux.log");
+
+  const openSink = fileSinkState.status === "open" ? fileSinkState : null;
+  const transitionEpoch = sinkLifecycleEpoch;
+  // Immediately move to idle so writeSink() won't write to the old stream.
+  if (openSink) {
+    fileSinkState = { status: "idle" };
+  }
+
+  return enqueueSinkTransition(async () => {
+    if (openSink) {
+      await waitForStreamClose(openSink.stream);
+    }
+
+    fs.mkdirSync(logsDir, { recursive: true });
+
+    // Truncate the active log. Throws on permission errors.
+    const fd = fs.openSync(activeLogPath, "w");
+    fs.closeSync(fd);
+
+    // Remove rotated files — missing files are fine.
+    for (let i = 1; i <= MAX_LOG_FILES; i++) {
+      const rotatedPath = path.join(logsDir, `mux.${i}.log`);
+      try {
+        fs.unlinkSync(rotatedPath);
+      } catch {
+        // file may not exist
+      }
+    }
+
+    if (!openSink || fileSinkState.status === "closed" || transitionEpoch !== sinkLifecycleEpoch) {
+      return;
+    }
+
+    const stream = createSafeStream(activeLogPath);
+    fileSinkState = { status: "open", stream, path: activeLogPath, size: 0 };
+  });
+}
+
+export function clearLogFiles(): Promise<void> {
+  return clearSink();
+}
+
+function closeSink(): void {
+  const openSink = fileSinkState.status === "open" ? fileSinkState : null;
+
+  // Terminal state — set immediately so no new writes start.
+  fileSinkState = { status: "closed" };
+  sinkLifecycleEpoch += 1;
+
+  if (!openSink) {
+    return;
+  }
+
+  enqueueSinkTransition(async () => {
+    await waitForStreamClose(openSink.stream);
+  }).catch(() => undefined);
+}
+
+export function closeLogFile(): void {
+  closeSink();
+}
+
+/** @internal Test seam: reset singleton sink state for hermetic tests. */
+export function __resetFileSinkForTests(): void {
+  if (fileSinkState.status === "open") {
+    try {
+      fileSinkState.stream.end();
+    } catch {
+      // silent
+    }
+  }
+
+  fileSinkState = { status: "idle" };
+  sinkTransition = Promise.resolve();
+  sinkTransitionDepth = 0;
+  sinkLifecycleEpoch = 0;
 }
 
 let currentLogLevel: LogLevel = getDefaultLogLevel();
@@ -140,33 +424,79 @@ function getTimestamp(): string {
   return `${hours}:${mm}.${ms}${ampm}`;
 }
 
+interface ParsedStackFrame {
+  filePath: string;
+  lineNum: string;
+}
+
+function parseStackFrame(stackLine: string): ParsedStackFrame | null {
+  const match = /\((.+):(\d+):\d+\)$/.exec(stackLine) ?? /at (.+):(\d+):\d+$/.exec(stackLine);
+  if (!match) {
+    return null;
+  }
+
+  const [, filePath, lineNum] = match;
+  return { filePath, lineNum };
+}
+
+function isLoggerStackFrame(stackLine: string, filePath: string): boolean {
+  const normalizedPath = filePath.replace(/\\/g, "/");
+
+  if (
+    normalizedPath.endsWith("/src/node/services/log.ts") ||
+    normalizedPath.endsWith("/src/node/services/log.js")
+  ) {
+    return true;
+  }
+
+  return (
+    stackLine.includes("getCallerLocation") ||
+    stackLine.includes("safePipeLog") ||
+    stackLine.includes("formatLogLine")
+  );
+}
+
+function formatCallerLocation(filePath: string, lineNum: string): string {
+  const normalizedPath = filePath.replace(/\\/g, "/");
+  const normalizedCwd = process.cwd().replace(/\\/g, "/");
+
+  if (normalizedPath.startsWith(`${normalizedCwd}/`)) {
+    return `${normalizedPath.slice(normalizedCwd.length + 1)}:${lineNum}`;
+  }
+
+  const srcIndex = normalizedPath.lastIndexOf("/src/");
+  if (srcIndex >= 0) {
+    return `${normalizedPath.slice(srcIndex + 1)}:${lineNum}`;
+  }
+
+  return `${path.basename(normalizedPath)}:${lineNum}`;
+}
+
 /**
- * Get the caller's file path and line number from the stack trace
- * Returns format: "path/to/file.ts:123"
+ * Get the first non-logger caller frame from the stack trace.
+ *
+ * We intentionally scan frames instead of using a fixed stack index because
+ * wrapper levels can shift over time and otherwise collapse locations to the
+ * logger wrapper (e.g. log.ts:488) instead of the real call site.
  */
 function getCallerLocation(): string {
-  const error = new Error();
-  const stack = error.stack?.split("\n");
+  const stackLines = new Error().stack?.split("\n").slice(1) ?? [];
 
-  // Stack trace format:
-  // 0: "Error"
-  // 1: "    at getCallerLocation (log.ts:X:Y)"
-  // 2: "    at safePipeLog (log.ts:X:Y)"
-  // 3: "    at log.info (log.ts:X:Y)"  or  "at log.error (log.ts:X:Y)"
-  // 4: "    at <actual caller> (file.ts:X:Y)" <- We want this one
-
-  if (stack && stack.length > 4) {
-    const callerLine = stack[4];
-    // Extract file path and line number from the stack trace
-    // Format: "    at FunctionName (path/to/file.ts:123:45)"
-    const match = /\((.+):(\d+):\d+\)/.exec(callerLine) ?? /at (.+):(\d+):\d+/.exec(callerLine);
-
-    if (match) {
-      const [, filePath, lineNum] = match;
-      // Strip the full path to just show relative path from project root
-      const relativePath = filePath.replace(/^.*\/mux\//, "");
-      return `${relativePath}:${lineNum}`;
+  for (const stackLine of stackLines) {
+    const parsedFrame = parseStackFrame(stackLine);
+    if (!parsedFrame) {
+      continue;
     }
+
+    if (parsedFrame.filePath.startsWith("node:")) {
+      continue;
+    }
+
+    if (isLoggerStackFrame(stackLine, parsedFrame.filePath)) {
+      continue;
+    }
+
+    return formatCallerLocation(parsedFrame.filePath, parsedFrame.lineNum);
   }
 
   return "unknown:0";
@@ -178,12 +508,12 @@ function getCallerLocation(): string {
  * @param level - Log level
  * @param args - Arguments to log
  */
-function safePipeLog(level: LogLevel, ...args: unknown[]): void {
-  // Check if this level should be logged
-  if (!shouldLog(level)) {
-    return;
-  }
-
+function formatLogLine(level: LogLevel): {
+  timestamp: string;
+  location: string;
+  useColor: boolean;
+  prefix: string;
+} {
   const timestamp = getTimestamp();
   const location = getCallerLocation();
   const useColor = supportsColor();
@@ -209,30 +539,47 @@ function safePipeLog(level: LogLevel, ...args: unknown[]): void {
     prefix = `${timestamp} ${location}`;
   }
 
+  return { timestamp, location, useColor, prefix };
+}
+
+function safePipeLog(level: LogLevel, ...args: unknown[]): void {
+  const shouldConsoleLog = shouldLog(level);
+
+  // Fast path: skip formatting entirely for debug entries that won't be
+  // logged to console or persisted. Avoids the expensive new Error().stack
+  // capture in getCallerLocation() on hot callsites.
+  if (level === "debug" && !shouldConsoleLog && !hasDebugSubscriber()) {
+    return;
+  }
+
+  const { timestamp, location, useColor, prefix } = formatLogLine(level);
+
   try {
-    if (level === "error") {
-      // Color the entire error message red if supported
-      if (useColor) {
-        console.error(
-          prefix,
-          ...args.map((arg) => (typeof arg === "string" ? chalkRed(arg) : arg))
-        );
+    if (shouldConsoleLog) {
+      if (level === "error") {
+        // Color the entire error message red if supported
+        if (useColor) {
+          console.error(
+            prefix,
+            ...args.map((arg) => (typeof arg === "string" ? chalkRed(arg) : arg))
+          );
+        } else {
+          console.error(prefix, ...args);
+        }
+      } else if (level === "warn") {
+        // Color the entire warning message yellow if supported
+        if (useColor) {
+          console.error(
+            prefix,
+            ...args.map((arg) => (typeof arg === "string" ? chalkYellow(arg) : arg))
+          );
+        } else {
+          console.error(prefix, ...args);
+        }
       } else {
-        console.error(prefix, ...args);
+        // info and debug go to stdout
+        console.log(prefix, ...args);
       }
-    } else if (level === "warn") {
-      // Color the entire warning message yellow if supported
-      if (useColor) {
-        console.error(
-          prefix,
-          ...args.map((arg) => (typeof arg === "string" ? chalkYellow(arg) : arg))
-        );
-      } else {
-        console.error(prefix, ...args);
-      }
-    } else {
-      // info and debug go to stdout
-      console.log(prefix, ...args);
     }
   } catch (error) {
     // Silently ignore EPIPE and other console errors
@@ -252,6 +599,46 @@ function safePipeLog(level: LogLevel, ...args: unknown[]): void {
       }
     }
   }
+
+  // Always persist error/warn/info to buffer+file.
+  // Debug entries only persist when console level includes debug
+  // or an Output tab subscriber has requested debug level.
+  const shouldPersist = level !== "debug" || shouldConsoleLog || hasDebugSubscriber();
+  if (!shouldPersist) {
+    return;
+  }
+
+  // Build a best-effort, pre-formatted single-line message for file/buffer.
+  // Note: console output behavior is intentionally unchanged.
+  const message = args
+    .map((arg) => {
+      if (typeof arg === "string") {
+        return arg;
+      }
+      if (arg instanceof Error) {
+        return arg.stack ?? arg.message;
+      }
+      try {
+        return JSON.stringify(arg);
+      } catch {
+        return String(arg);
+      }
+    })
+    .join(" ");
+
+  const formattedLine = `${prefix} ${message}`;
+  const cleanLine = stripAnsi(formattedLine);
+
+  writeSink(`${cleanLine}\n`);
+
+  pushLogEntry({
+    timestamp: Date.now(),
+    level,
+    // Send just the log message, not the pre-formatted line (timestamp+location
+    // are already separate fields — no need to duplicate them in the message).
+    message,
+    location,
+  });
 }
 
 /**

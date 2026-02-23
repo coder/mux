@@ -1,10 +1,9 @@
 import assert from "@/common/utils/assert";
+import type { z } from "zod";
+import type { System1KeepRangeSchema } from "@/common/utils/tools/toolDefinitions";
 
-export interface System1KeepRange {
-  start: number;
-  end: number;
-  reason?: string;
-}
+// Derived from the Zod schema (single source of truth) to avoid drift.
+export type System1KeepRange = z.infer<typeof System1KeepRangeSchema>;
 
 export interface ApplySystem1KeepRangesResult {
   filteredOutput: string;

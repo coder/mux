@@ -5,17 +5,18 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 
-import { AIService, discoverAvailableSubagentsForToolContext } from "./aiService";
+import { AIService } from "./aiService";
+import { discoverAvailableSubagentsForToolContext } from "./streamContextBuilder";
 import {
   normalizeAnthropicBaseURL,
   buildAnthropicHeaders,
   buildAppAttributionHeaders,
   ANTHROPIC_1M_CONTEXT_HEADER,
+  type ProviderModelFactory,
 } from "./providerModelFactory";
 import { HistoryService } from "./historyService";
-import { PartialService } from "./partialService";
 import { InitStateManager } from "./initStateManager";
 import { ProviderService } from "./providerService";
 import { Config } from "@/node/config";
@@ -29,22 +30,28 @@ import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
 import { CODEX_ENDPOINT } from "@/common/constants/codexOAuth";
 
+import type { LanguageModel } from "ai";
+import { createMuxMessage } from "@/common/types/message";
+import type { MuxMessage } from "@/common/types/message";
+import type { WorkspaceMetadata } from "@/common/types/workspace";
+import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
+import type { StreamAbortEvent } from "@/common/types/stream";
+import type { StreamManager } from "./streamManager";
+import * as agentResolution from "./agentResolution";
+import * as streamContextBuilder from "./streamContextBuilder";
+import * as messagePipeline from "./messagePipeline";
+import * as toolsModule from "@/common/utils/tools/tools";
+import * as systemMessageModule from "./systemMessage";
+
 describe("AIService", () => {
   let service: AIService;
 
   beforeEach(() => {
     const config = new Config();
     const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
     const initStateManager = new InitStateManager(config);
     const providerService = new ProviderService(config);
-    service = new AIService(
-      config,
-      historyService,
-      partialService,
-      initStateManager,
-      providerService
-    );
+    service = new AIService(config, historyService, initStateManager, providerService);
   });
 
   // Note: These tests are placeholders as Bun doesn't support Jest mocking
@@ -54,6 +61,43 @@ describe("AIService", () => {
   it("should create an AIService instance", () => {
     expect(service).toBeDefined();
     expect(service).toBeInstanceOf(AIService);
+  });
+});
+
+describe("AIService.setupStreamEventForwarding", () => {
+  afterEach(() => {
+    mock.restore();
+  });
+
+  it("forwards stream-abort even when partial cleanup throws", async () => {
+    using muxHome = new DisposableTempDir("ai-service-stream-abort-forwarding");
+    const config = new Config(muxHome.path);
+    const historyService = new HistoryService(config);
+    const initStateManager = new InitStateManager(config);
+    const providerService = new ProviderService(config);
+    const service = new AIService(config, historyService, initStateManager, providerService);
+
+    const cleanupError = new Error("disk full");
+    const deletePartialSpy = spyOn(historyService, "deletePartial").mockImplementation(() =>
+      Promise.reject(cleanupError)
+    );
+
+    const streamManager = (service as unknown as { streamManager: StreamManager }).streamManager;
+    const abortEvent: StreamAbortEvent = {
+      type: "stream-abort",
+      workspaceId: "workspace-1",
+      messageId: "message-1",
+      abandonPartial: true,
+    };
+
+    const forwardedAbortPromise = new Promise<StreamAbortEvent>((resolve) => {
+      service.once("stream-abort", (event) => resolve(event as StreamAbortEvent));
+    });
+
+    streamManager.emit("stream-abort", abortEvent);
+
+    expect(await forwardedAbortPromise).toEqual(abortEvent);
+    expect(deletePartialSpy).toHaveBeenCalledWith(abortEvent.workspaceId);
   });
 });
 
@@ -94,10 +138,9 @@ describe("AIService.resolveGatewayModelString", () => {
   function createService(root: string): AIService {
     const config = new Config(root);
     const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
     const initStateManager = new InitStateManager(config);
     const providerService = new ProviderService(config);
-    return new AIService(config, historyService, partialService, initStateManager, providerService);
+    return new AIService(config, historyService, initStateManager, providerService);
   }
 
   it("routes allowlisted models when gateway is enabled + configured", async () => {
@@ -233,10 +276,9 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
   function createService(root: string): AIService {
     const config = new Config(root);
     const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
     const initStateManager = new InitStateManager(config);
     const providerService = new ProviderService(config);
-    return new AIService(config, historyService, partialService, initStateManager, providerService);
+    return new AIService(config, historyService, initStateManager, providerService);
   }
 
   function getFetchUrl(input: Parameters<typeof fetch>[0]): string {
@@ -267,7 +309,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
     delete process.env.OPENAI_API_KEY;
     try {
       const service = createService(muxHome.path);
-      const result = await service.createModel(KNOWN_MODELS.GPT_52_CODEX.id);
+      const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -288,7 +330,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
     });
 
     const service = createService(muxHome.path);
-    const result = await service.createModel(KNOWN_MODELS.GPT_52_CODEX.id);
+    const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
 
     // Should succeed — falls back to API key instead of erroring with oauth_not_connected
     expect(result.success).toBe(true);
@@ -310,7 +352,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
     });
 
     const service = createService(muxHome.path);
-    const result = await service.createModel(KNOWN_MODELS.GPT_52_CODEX.id);
+    const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
 
     expect(result.success).toBe(true);
   });
@@ -320,17 +362,10 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
 
     const config = new Config(muxHome.path);
     const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
     const initStateManager = new InitStateManager(config);
     const providerService = new ProviderService(config);
 
-    const service = new AIService(
-      config,
-      historyService,
-      partialService,
-      initStateManager,
-      providerService
-    );
+    const service = new AIService(config, historyService, initStateManager, providerService);
 
     const requests: Array<{
       input: Parameters<typeof fetch>[0];
@@ -427,17 +462,10 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
 
     const config = new Config(muxHome.path);
     const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
     const initStateManager = new InitStateManager(config);
     const providerService = new ProviderService(config);
 
-    const service = new AIService(
-      config,
-      historyService,
-      partialService,
-      initStateManager,
-      providerService
-    );
+    const service = new AIService(config, historyService, initStateManager, providerService);
 
     const requests: Array<{
       input: Parameters<typeof fetch>[0];
@@ -520,17 +548,10 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
 
     const config = new Config(muxHome.path);
     const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
     const initStateManager = new InitStateManager(config);
     const providerService = new ProviderService(config);
 
-    const service = new AIService(
-      config,
-      historyService,
-      partialService,
-      initStateManager,
-      providerService
-    );
+    const service = new AIService(config, historyService, initStateManager, providerService);
 
     const requests: Array<{
       input: Parameters<typeof fetch>[0];
@@ -677,17 +698,10 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
 
     const config = new Config(muxHome.path);
     const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
     const initStateManager = new InitStateManager(config);
     const providerService = new ProviderService(config);
 
-    const service = new AIService(
-      config,
-      historyService,
-      partialService,
-      initStateManager,
-      providerService
-    );
+    const service = new AIService(config, historyService, initStateManager, providerService);
 
     const requests: Array<{
       input: Parameters<typeof fetch>[0];
@@ -827,6 +841,332 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
     expect(filtered.find((i) => i.type === "function_call")?.id).toBe("fc_xyz");
     expect(filtered.find((i) => i.type === "function_call_output")?.call_id).toBe("call_1");
     expect(filtered.find((i) => i.role === "user")).toBeDefined();
+  });
+});
+
+describe("AIService.streamMessage compaction boundary slicing", () => {
+  interface StreamMessageHarness {
+    service: AIService;
+    planPayloadMessageIds: string[][];
+    preparedPayloadMessageIds: string[][];
+    startStreamCalls: unknown[][];
+  }
+
+  function createWorkspaceMetadata(workspaceId: string, projectPath: string): WorkspaceMetadata {
+    return {
+      id: workspaceId,
+      name: "workspace-under-test",
+      projectName: "project-under-test",
+      projectPath,
+      runtimeConfig: { type: "local" },
+    };
+  }
+
+  function messageIdsFromUnknownArray(messages: unknown): string[] {
+    if (!Array.isArray(messages)) {
+      throw new Error("Expected message array");
+    }
+
+    return messages.map((message) => {
+      if (!message || typeof message !== "object") {
+        throw new Error("Expected message object in array");
+      }
+
+      const id = (message as { id?: unknown }).id;
+      if (typeof id !== "string") {
+        throw new Error("Expected message.id to be a string");
+      }
+
+      return id;
+    });
+  }
+
+  function openAIOptionsFromStartStreamCall(startStreamArgs: unknown[]): Record<string, unknown> {
+    const providerOptions = startStreamArgs[11];
+    if (!providerOptions || typeof providerOptions !== "object") {
+      throw new Error("Expected provider options object at startStream arg index 11");
+    }
+
+    const openai = (providerOptions as { openai?: unknown }).openai;
+    if (!openai || typeof openai !== "object") {
+      throw new Error("Expected OpenAI provider options in startStream providerOptions");
+    }
+
+    return openai as Record<string, unknown>;
+  }
+
+  function createHarness(muxHomePath: string, metadata: WorkspaceMetadata): StreamMessageHarness {
+    const config = new Config(muxHomePath);
+    const historyService = new HistoryService(config);
+    const initStateManager = new InitStateManager(config);
+    const providerService = new ProviderService(config);
+    const service = new AIService(config, historyService, initStateManager, providerService);
+
+    const planPayloadMessageIds: string[][] = [];
+    const preparedPayloadMessageIds: string[][] = [];
+    const startStreamCalls: unknown[][] = [];
+
+    const resolvedAgentResult: Awaited<ReturnType<typeof agentResolution.resolveAgentForStream>> = {
+      success: true,
+      data: {
+        effectiveAgentId: "exec",
+        agentDefinition: {
+          id: "exec",
+          scope: "built-in",
+          frontmatter: { name: "Exec" },
+          body: "Exec agent body",
+        },
+        agentDiscoveryPath: metadata.projectPath,
+        isSubagentWorkspace: false,
+        agentIsPlanLike: false,
+        effectiveMode: "exec",
+        taskSettings: DEFAULT_TASK_SETTINGS,
+        taskDepth: 0,
+        shouldDisableTaskToolsForDepth: false,
+        effectiveToolPolicy: undefined,
+        toolNamesForSentinel: [],
+      },
+    };
+    spyOn(agentResolution, "resolveAgentForStream").mockImplementation(() =>
+      Promise.resolve(resolvedAgentResult)
+    );
+
+    spyOn(streamContextBuilder, "buildPlanInstructions").mockImplementation((args) => {
+      planPayloadMessageIds.push(args.requestPayloadMessages.map((message) => message.id));
+
+      const planInstructionsResult: Awaited<
+        ReturnType<typeof streamContextBuilder.buildPlanInstructions>
+      > = {
+        effectiveAdditionalInstructions: undefined,
+        planFilePath: path.join(metadata.projectPath, "plan.md"),
+        planContentForTransition: undefined,
+      };
+
+      return Promise.resolve(planInstructionsResult);
+    });
+
+    spyOn(streamContextBuilder, "buildStreamSystemContext").mockResolvedValue({
+      agentSystemPrompt: "test-agent-prompt",
+      systemMessage: "test-system-message",
+      systemMessageTokens: 1,
+      agentDefinitions: undefined,
+      availableSkills: undefined,
+    });
+
+    spyOn(messagePipeline, "prepareMessagesForProvider").mockImplementation((args) => {
+      preparedPayloadMessageIds.push(args.messagesWithSentinel.map((message) => message.id));
+      const preparedMessages = args.messagesWithSentinel as unknown as Awaited<
+        ReturnType<typeof messagePipeline.prepareMessagesForProvider>
+      >;
+      return Promise.resolve(preparedMessages);
+    });
+
+    spyOn(toolsModule, "getToolsForModel").mockResolvedValue({});
+    spyOn(systemMessageModule, "readToolInstructions").mockResolvedValue({});
+
+    const fakeModel = Object.create(null) as LanguageModel;
+    const providerModelFactory = Reflect.get(service, "providerModelFactory") as
+      | ProviderModelFactory
+      | undefined;
+    if (!providerModelFactory) {
+      throw new Error("Expected AIService.providerModelFactory in streamMessage test harness");
+    }
+
+    const resolveAndCreateModelResult: Awaited<
+      ReturnType<ProviderModelFactory["resolveAndCreateModel"]>
+    > = {
+      success: true,
+      data: {
+        model: fakeModel,
+        effectiveModelString: "openai:gpt-5.2",
+        canonicalModelString: "openai:gpt-5.2",
+        canonicalProviderName: "openai",
+        canonicalModelId: "gpt-5.2",
+        routedThroughGateway: false,
+      },
+    };
+    spyOn(providerModelFactory, "resolveAndCreateModel").mockResolvedValue(
+      resolveAndCreateModelResult
+    );
+
+    spyOn(service, "getWorkspaceMetadata").mockResolvedValue({
+      success: true,
+      data: metadata,
+    });
+
+    spyOn(initStateManager, "waitForInit").mockResolvedValue(undefined);
+
+    spyOn(config, "findWorkspace").mockReturnValue({
+      workspacePath: metadata.projectPath,
+      projectPath: metadata.projectPath,
+    });
+
+    spyOn(historyService, "commitPartial").mockResolvedValue({
+      success: true,
+      data: undefined,
+    });
+
+    spyOn(historyService, "appendToHistory").mockImplementation((_workspaceId, message) => {
+      message.metadata = {
+        ...(message.metadata ?? {}),
+        historySequence: 7,
+      };
+
+      return Promise.resolve({ success: true, data: undefined });
+    });
+
+    const streamManager = (service as unknown as { streamManager: StreamManager }).streamManager;
+    const streamToken = "stream-token" as ReturnType<StreamManager["generateStreamToken"]>;
+
+    spyOn(streamManager, "generateStreamToken").mockReturnValue(streamToken);
+    spyOn(streamManager, "createTempDirForStream").mockResolvedValue(
+      path.join(metadata.projectPath, ".tmp-stream")
+    );
+    spyOn(streamManager, "isResponseIdLost").mockReturnValue(false);
+    spyOn(streamManager, "startStream").mockImplementation((...args: unknown[]) => {
+      startStreamCalls.push(args);
+
+      const startStreamResult: Awaited<ReturnType<StreamManager["startStream"]>> = {
+        success: true,
+        data: streamToken,
+      };
+
+      return Promise.resolve(startStreamResult);
+    });
+
+    return {
+      service,
+      planPayloadMessageIds,
+      preparedPayloadMessageIds,
+      startStreamCalls,
+    };
+  }
+
+  afterEach(() => {
+    mock.restore();
+  });
+
+  it("uses the latest durable boundary slice for provider payload and OpenAI derivations", async () => {
+    using muxHome = new DisposableTempDir("ai-service-slice-latest-boundary");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-slice-latest";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+
+    const messages: MuxMessage[] = [
+      createMuxMessage("boundary-1", "assistant", "compaction epoch 1", {
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 1,
+        model: "openai:gpt-5.2",
+      }),
+      createMuxMessage("assistant-old-response", "assistant", "older response", {
+        model: "openai:gpt-5.2",
+        providerMetadata: { openai: { responseId: "resp_epoch_1" } },
+      }),
+      createMuxMessage(
+        "start-here-summary",
+        "assistant",
+        "# Start Here\n\n- Existing plan context\n\n*Plan file preserved at:* /tmp/plan.md",
+        {
+          compacted: "user",
+          agentId: "plan",
+        }
+      ),
+      createMuxMessage("mid-user", "user", "mid conversation"),
+      createMuxMessage("boundary-2", "assistant", "compaction epoch 2", {
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 2,
+        model: "openai:gpt-5.2",
+      }),
+      createMuxMessage("latest-user", "user", "continue"),
+    ];
+
+    const result = await harness.service.streamMessage({
+      messages,
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "medium",
+    });
+
+    expect(result.success).toBe(true);
+    expect(harness.planPayloadMessageIds).toEqual([["boundary-2", "latest-user"]]);
+    expect(harness.preparedPayloadMessageIds).toEqual([["boundary-2", "latest-user"]]);
+    expect(harness.startStreamCalls).toHaveLength(1);
+
+    const startStreamCall = harness.startStreamCalls[0];
+    expect(startStreamCall).toBeDefined();
+    if (!startStreamCall) {
+      throw new Error("Expected streamManager.startStream call arguments");
+    }
+
+    const startStreamMessageIds = messageIdsFromUnknownArray(startStreamCall[1]);
+    expect(startStreamMessageIds).toEqual(["boundary-2", "latest-user"]);
+
+    const openaiOptions = openAIOptionsFromStartStreamCall(startStreamCall);
+    expect(openaiOptions.previousResponseId).toBeUndefined();
+    expect(openaiOptions.promptCacheKey).toBe(`mux-v1-${workspaceId}`);
+  });
+
+  it("falls back safely when boundary metadata is malformed", async () => {
+    using muxHome = new DisposableTempDir("ai-service-slice-malformed-boundary");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-slice-malformed";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+
+    const messages: MuxMessage[] = [
+      createMuxMessage("assistant-before-malformed", "assistant", "response before malformed", {
+        model: "openai:gpt-5.2",
+        providerMetadata: { openai: { responseId: "resp_before_malformed" } },
+      }),
+      createMuxMessage("malformed-boundary", "assistant", "not a durable boundary", {
+        compacted: "user",
+        compactionBoundary: true,
+        // Invalid durable marker: must not truncate request payload.
+        compactionEpoch: 0,
+        model: "openai:gpt-5.2",
+      }),
+      createMuxMessage("latest-user", "user", "continue"),
+    ];
+
+    const result = await harness.service.streamMessage({
+      messages,
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "medium",
+    });
+
+    expect(result.success).toBe(true);
+    expect(harness.planPayloadMessageIds).toEqual([
+      ["assistant-before-malformed", "malformed-boundary", "latest-user"],
+    ]);
+    expect(harness.preparedPayloadMessageIds).toEqual([
+      ["assistant-before-malformed", "malformed-boundary", "latest-user"],
+    ]);
+    expect(harness.startStreamCalls).toHaveLength(1);
+
+    const startStreamCall = harness.startStreamCalls[0];
+    expect(startStreamCall).toBeDefined();
+    if (!startStreamCall) {
+      throw new Error("Expected streamManager.startStream call arguments");
+    }
+
+    const startStreamMessageIds = messageIdsFromUnknownArray(startStreamCall[1]);
+    expect(startStreamMessageIds).toEqual([
+      "assistant-before-malformed",
+      "malformed-boundary",
+      "latest-user",
+    ]);
+
+    const openaiOptions = openAIOptionsFromStartStreamCall(startStreamCall);
+    expect(openaiOptions.previousResponseId).toBe("resp_before_malformed");
+    expect(openaiOptions.promptCacheKey).toBe(`mux-v1-${workspaceId}`);
   });
 });
 

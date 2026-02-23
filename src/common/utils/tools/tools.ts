@@ -1,6 +1,6 @@
 import { type Tool } from "ai";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
-import assert from "@/common/utils/assert";
+import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createFileReadTool } from "@/node/services/tools/file_read";
 import { createBashTool } from "@/node/services/tools/bash";
 import { createBashOutputTool } from "@/node/services/tools/bash_output";
@@ -24,6 +24,7 @@ import { createAgentSkillReadFileTool } from "@/node/services/tools/agent_skill_
 import { createMuxGlobalAgentsReadTool } from "@/node/services/tools/mux_global_agents_read";
 import { createMuxGlobalAgentsWriteTool } from "@/node/services/tools/mux_global_agents_write";
 import { createAgentReportTool } from "@/node/services/tools/agent_report";
+import { createSwitchAgentTool } from "@/node/services/tools/switch_agent";
 import { createSystem1KeepRangesTool } from "@/node/services/tools/system1_keep_ranges";
 import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
 import { withHooks, type HookConfig } from "@/node/services/tools/withHooks";
@@ -117,21 +118,6 @@ function augmentToolDescription(baseTool: Tool, additionalInstructions: string):
   baseToolRecord.description = augmentedDescription;
 
   return baseTool;
-}
-
-function cloneToolPreservingDescriptors(tool: unknown): Tool {
-  assert(tool && typeof tool === "object", "tool must be an object");
-
-  // Clone the tool without invoking getters (important for some dynamic tools).
-  const prototype = Object.getPrototypeOf(tool) as unknown;
-  assert(
-    prototype === null || typeof prototype === "object",
-    "tool prototype must be an object or null"
-  );
-
-  const clone = Object.create(prototype) as object;
-  Object.defineProperties(clone, Object.getOwnPropertyDescriptors(tool));
-  return clone as Tool;
 }
 
 function wrapToolExecuteWithModelOnlyNotifications(
@@ -260,6 +246,24 @@ function wrapToolsWithHooks(
  * @param toolInstructions Optional map of tool names to additional instructions from "Tool: <name>" sections
  * @returns Promise resolving to record of tools available for the model
  */
+/**
+ * Returns true when an Anthropic model supports webFetch_20250910 (Claude 4.6+).
+ *
+ * Generation-based IDs: claude-{variant}-{major}-{minor} (e.g. claude-sonnet-4-6)
+ * Pinned generation IDs: claude-{variant}-{major}-{minor}-{date} (e.g. claude-opus-4-6-20260201)
+ * Date-based pre-4.6 IDs: claude-{variant}-{major}-{date} (e.g. claude-sonnet-4-20250514)
+ *
+ * The \d{1,2} constraint on the minor segment accepts 1-2 digit version numbers (1–99) while
+ * rejecting 8-digit date suffixes. The (?:-|$) lookahead allows an optional pinned date to follow.
+ */
+function supportsAnthropicNativeWebFetch(modelId: string): boolean {
+  const match = /^claude-\w+-(\d+)-(\d{1,2})(?:-|$)/.exec(modelId);
+  if (!match) return false;
+  const major = parseInt(match[1], 10);
+  const minor = parseInt(match[2], 10);
+  return major > 4 || (major === 4 && minor >= 6);
+}
+
 export async function getToolsForModel(
   modelString: string,
   config: ToolConfiguration,
@@ -317,6 +321,7 @@ export async function getToolsForModel(
     ask_user_question: createAskUserQuestionTool(config),
     propose_plan: createProposePlanTool(config),
     ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),
+    switch_agent: createSwitchAgentTool(config),
     system1_keep_ranges: createSystem1KeepRangesTool(config),
     todo_write: createTodoWriteTool(config),
     todo_read: createTodoReadTool(config),
@@ -337,12 +342,33 @@ export async function getToolsForModel(
     switch (provider) {
       case "anthropic": {
         const { anthropic } = await import("@ai-sdk/anthropic");
-        allTools = {
-          ...baseTools,
-          ...(mcpTools ?? {}),
-          // Provider-specific tool types are compatible with Tool at runtime
-          web_search: anthropic.tools.webSearch_20250305({ maxUses: 1000 }) as Tool,
-        };
+
+        // webFetch_20250910 was introduced with the Claude 4.6 generation.
+        // Sending it to an older model (e.g. claude-sonnet-4-5) causes an API error,
+        // so only override web_fetch when the model is >= 4.6.
+        //
+        // Known limitations when the native override is active:
+        // - Cannot reach private/localhost URLs (Anthropic's servers can't see workspace network).
+        // - mux.md share links rely on client-side decryption via URL fragment (#key);
+        //   Anthropic drops the fragment when making HTTP requests, so decryption silently fails.
+        // - Not bridgeable in the PTC sandbox (no execute()); see BridgeableToolName comment.
+        // - Tool hooks (.mux/tool_pre/.mux/tool_post) are skipped because withHooks() returns
+        //   early when execute() is absent — same limitation as web_search (provider-native).
+        if (supportsAnthropicNativeWebFetch(modelId)) {
+          allTools = {
+            ...baseTools,
+            ...(mcpTools ?? {}),
+            // Provider-specific tool types are compatible with Tool at runtime
+            web_search: anthropic.tools.webSearch_20250305({ maxUses: 1000 }) as Tool,
+            web_fetch: anthropic.tools.webFetch_20250910({ maxUses: 1000 }) as Tool,
+          };
+        } else {
+          allTools = {
+            ...baseTools,
+            ...(mcpTools ?? {}),
+            web_search: anthropic.tools.webSearch_20250305({ maxUses: 1000 }) as Tool,
+          };
+        }
         break;
       }
 

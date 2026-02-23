@@ -272,6 +272,8 @@ export const electronTest = base.extend<ElectronFixtures>({
       recordVideoDir = testInfo.outputPath("electron-video");
       fs.mkdirSync(recordVideoDir, { recursive: true });
 
+      const isPerfScenario = /[\\/]scenarios[\\/]perf\./.test(testInfo.file);
+      const shouldCaptureReactProfile = process.env.MUX_PROFILE_REACT === "1" || isPerfScenario;
       const electronEnv: Record<string, string> = {};
       for (const [key, value] of Object.entries(process.env)) {
         if (typeof value === "string") {
@@ -282,6 +284,7 @@ export const electronTest = base.extend<ElectronFixtures>({
       electronEnv.MUX_MOCK_AI = electronEnv.MUX_MOCK_AI ?? "1";
       electronEnv.MUX_ROOT = configRoot;
       electronEnv.MUX_E2E = "1";
+      electronEnv.MUX_PROFILE_REACT = shouldCaptureReactProfile ? "1" : "0";
       electronEnv.MUX_E2E_LOAD_DIST = shouldLoadDist ? "1" : "0";
       electronEnv.VITE_DISABLE_MERMAID = "1";
 
@@ -293,9 +296,11 @@ export const electronTest = base.extend<ElectronFixtures>({
         electronEnv.NODE_ENV = electronEnv.NODE_ENV ?? "production";
       }
 
-      // When running as root (e.g., in Docker/CI), Electron requires --no-sandbox
+      // When running in Linux containers, Electron's chrome-sandbox helper binary is often
+      // present but not configured correctly (setuid root). In that case Electron hard-fails
+      // unless we disable sandboxing.
       const launchArgs = ["."];
-      if (process.getuid?.() === 0) {
+      if (process.platform === "linux" || process.getuid?.() === 0) {
         launchArgs.unshift("--no-sandbox");
       }
 

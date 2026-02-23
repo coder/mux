@@ -33,8 +33,8 @@ export interface UserMessageContent {
  * Does not include model/agentId since those come from sendMessageOptions.
  */
 export interface CompactionFollowUpInput extends UserMessageContent {
-  /** Frontend metadata to apply to the queued follow-up user message (e.g., preserve /skill display) */
-  muxMetadata?: MuxFrontendMetadata;
+  /** Message metadata to apply to the queued follow-up user message (e.g., preserve /skill display) */
+  muxMetadata?: MuxMessageMetadata;
 }
 
 /**
@@ -59,6 +59,41 @@ export function pickPreservedSendOptions(options: SendMessageOptions): Preserved
   return {
     thinkingLevel: options.thinkingLevel,
     additionalSystemInstructions: options.additionalSystemInstructions,
+    providerOptions: options.providerOptions,
+    experiments: options.experiments,
+    disableWorkspaceAgents: options.disableWorkspaceAgents,
+  };
+}
+
+export type StartupRetrySendOptions = Pick<
+  SendMessageOptions,
+  | "model"
+  | "agentId"
+  | "thinkingLevel"
+  | "system1ThinkingLevel"
+  | "system1Model"
+  | "toolPolicy"
+  | "additionalSystemInstructions"
+  | "maxOutputTokens"
+  | "providerOptions"
+  | "experiments"
+  | "disableWorkspaceAgents"
+>;
+
+/**
+ * Snapshot retry-relevant send options so startup recovery can resume interrupted
+ * turns with the same request configuration (model/provider options/system hints).
+ */
+export function pickStartupRetrySendOptions(options: SendMessageOptions): StartupRetrySendOptions {
+  return {
+    model: options.model,
+    agentId: options.agentId,
+    thinkingLevel: options.thinkingLevel,
+    system1ThinkingLevel: options.system1ThinkingLevel,
+    system1Model: options.system1Model,
+    toolPolicy: options.toolPolicy,
+    additionalSystemInstructions: options.additionalSystemInstructions,
+    maxOutputTokens: options.maxOutputTokens,
     providerOptions: options.providerOptions,
     experiments: options.experiments,
     disableWorkspaceAgents: options.disableWorkspaceAgents,
@@ -99,8 +134,8 @@ export type ContinueMessage = UserMessageContent & {
   model?: string;
   /** Agent ID for the continue message (determines tool policy via agent definitions). Defaults to 'exec'. */
   agentId?: string;
-  /** Frontend metadata to apply to the queued follow-up user message (e.g., preserve /skill display) */
-  muxMetadata?: MuxFrontendMetadata;
+  /** Message metadata to apply to the queued follow-up user message (e.g., preserve /skill display) */
+  muxMetadata?: MuxMessageMetadata;
   /** Brand marker - not present at runtime, enforces factory usage at compile time */
   readonly [ContinueMessageBrand]: true;
 };
@@ -113,8 +148,8 @@ export interface BuildContinueMessageOptions {
   text?: string;
   fileParts?: FilePart[];
   reviews?: ReviewNoteDataForDisplay[];
-  /** Optional frontend metadata to carry through to the queued follow-up user message */
-  muxMetadata?: MuxFrontendMetadata;
+  /** Optional message metadata to carry through to the queued follow-up user message */
+  muxMetadata?: MuxMessageMetadata;
   model: string;
   agentId: string;
 }
@@ -169,9 +204,6 @@ export function isDefaultSourceContent(content?: Partial<UserMessageContent>): b
   return text === "Continue" && !hasFiles && !hasReviews;
 }
 
-/** @deprecated Use isDefaultSourceContent. Legacy alias for backward compatibility. */
-export const isDefaultContinueMessage = isDefaultSourceContent;
-
 /**
  * Rebuild a ContinueMessage from persisted data.
  * Use this when reading from storage/history where the data may have been
@@ -223,10 +255,10 @@ export interface CompactionRequestData {
  */
 export function prepareUserMessageForSend(
   content: UserMessageContent,
-  existingMetadata?: MuxFrontendMetadata
+  existingMetadata?: MuxMessageMetadata
 ): {
   finalText: string;
-  metadata: MuxFrontendMetadata | undefined;
+  metadata: MuxMessageMetadata | undefined;
 } {
   const { text, reviews } = content;
 
@@ -235,7 +267,7 @@ export function prepareUserMessageForSend(
   const finalText = reviewsText ? reviewsText + (text ? "\n\n" + text : "") : text;
 
   // Build metadata with reviews for display
-  let metadata: MuxFrontendMetadata | undefined = existingMetadata;
+  let metadata: MuxMessageMetadata | undefined = existingMetadata;
   if (reviews?.length) {
     metadata = metadata ? { ...metadata, reviews } : { type: "normal", reviews };
   }
@@ -252,7 +284,7 @@ export interface BuildAgentSkillMetadataOptions {
 
 export function buildAgentSkillMetadata(
   options: BuildAgentSkillMetadataOptions
-): MuxFrontendMetadata {
+): MuxMessageMetadata {
   return {
     type: "agent-skill",
     rawCommand: options.rawCommand,
@@ -263,7 +295,7 @@ export function buildAgentSkillMetadata(
 }
 
 /** Base fields common to all metadata types */
-interface MuxFrontendMetadataBase {
+interface MuxMessageMetadataBase {
   /** Structured review data for rich UI display (orthogonal to message type) */
   reviews?: ReviewNoteDataForDisplay[];
   /** Command prefix to highlight in UI (e.g., "/compact -m sonnet" or "/react-effects") */
@@ -283,14 +315,19 @@ export interface DisplayStatus {
   message: string;
 }
 
-export type MuxFrontendMetadata = MuxFrontendMetadataBase &
+export type MuxMessageMetadata = MuxMessageMetadataBase &
   (
     | {
         type: "compaction-request";
         rawCommand: string; // The original /compact command as typed by user (for display)
         parsed: CompactionRequestData;
-        /** Source of compaction request: user-initiated (undefined) or idle-compaction (auto) */
-        source?: "idle-compaction";
+        /**
+         * Source of compaction request:
+         * - undefined: user-initiated (/compact)
+         * - idle-compaction: backend idle compaction
+         * - auto-compaction: threshold-triggered compaction (on-send / mid-stream)
+         */
+        source?: "idle-compaction" | "auto-compaction";
         /** Transient status to display in sidebar during this operation */
         displayStatus?: DisplayStatus;
       }
@@ -316,11 +353,13 @@ export type MuxFrontendMetadata = MuxFrontendMetadataBase &
       }
     | {
         type: "normal"; // Regular messages
+        /** Original user input for one-shot overrides (e.g., "/opus+high do something") — used as display content so the command prefix remains visible. */
+        rawCommand?: string;
       }
   );
 
 export function getCompactionFollowUpContent(
-  metadata?: MuxFrontendMetadata
+  metadata?: MuxMessageMetadata
 ): CompactionRequestData["followUpContent"] | undefined {
   // Keep follow-up extraction centralized so callers don't duplicate legacy handling.
   if (!metadata || metadata.type !== "compaction-request") {
@@ -335,14 +374,11 @@ export function getCompactionFollowUpContent(
 }
 
 /** Type for compaction-summary metadata variant */
-export type CompactionSummaryMetadata = Extract<
-  MuxFrontendMetadata,
-  { type: "compaction-summary" }
->;
+export type CompactionSummaryMetadata = Extract<MuxMessageMetadata, { type: "compaction-summary" }>;
 
 /** Type guard for compaction-summary metadata */
 export function isCompactionSummaryMetadata(
-  metadata: MuxFrontendMetadata | undefined
+  metadata: MuxMessageMetadata | undefined
 ): metadata is CompactionSummaryMetadata {
   return metadata?.type === "compaction-summary";
 }
@@ -351,6 +387,7 @@ export function isCompactionSummaryMetadata(
 export interface MuxMetadata {
   historySequence?: number; // Assigned by backend for global message ordering (required when writing to history)
   duration?: number;
+  ttftMs?: number; // Time-to-first-token measured from stream start; omitted when unavailable
   /** @deprecated Legacy base mode derived from agent definition. */
   mode?: AgentMode;
   timestamp?: number;
@@ -387,10 +424,31 @@ export interface MuxMetadata {
   // Compaction source: "user" (manual /compact), "idle" (auto-triggered), or legacy boolean `true`
   // Readers should use helper: isCompacted = compacted !== undefined && compacted !== false
   compacted?: "user" | "idle" | boolean;
+  /**
+   * Monotonic compaction epoch identifier.
+   *
+   * Legacy histories may omit this; compaction code backfills by counting historical compacted summaries.
+   */
+  compactionEpoch?: number;
+  /**
+   * Durable boundary marker for compaction summaries.
+   *
+   * This lets downstream logic identify compaction boundaries without mutating history.
+   */
+  compactionBoundary?: boolean;
   toolPolicy?: ToolPolicy; // Tool policy active when this message was sent (user messages only)
+  disableWorkspaceAgents?: boolean; // Whether workspace-local agent files were disabled for this user turn
+  /** Snapshot of send options used for this user turn (for startup retry recovery). */
+  retrySendOptions?: StartupRetrySendOptions;
   agentId?: string; // Agent id active when this message was sent (assistant messages only)
-  cmuxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
-  muxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
+  cmuxMetadata?: MuxMessageMetadata; // Command metadata persisted for legacy message formats
+  muxMetadata?: MuxMessageMetadata; // Command metadata used by both frontend and backend message flows
+  /**
+   * ACP-only correlation id propagated through stream events so prompt() can
+   * match terminal events to the originating ACP request in shared workspaces.
+   */
+  acpPromptId?: string;
+
   /**
    * @file mention snapshot token(s) this message provides content for.
    * When present, injectFileAtMentions() skips re-reading these tokens,
@@ -520,6 +578,10 @@ export type DisplayedMessage =
       mode?: AgentMode;
       timestamp?: number;
       tokens?: number;
+      /** Presentation hint for smooth streaming — indicates if this is live or replayed content. */
+      streamPresentation?: {
+        source: "live" | "replay";
+      };
     }
   | {
       type: "tool";
@@ -542,6 +604,7 @@ export type DisplayedMessage =
         input: unknown;
         output?: unknown;
         state: "input-available" | "output-available" | "output-redacted";
+        failed?: boolean;
         timestamp?: number;
       }>;
     }
@@ -557,6 +620,10 @@ export type DisplayedMessage =
       isLastPartOfMessage?: boolean; // True if this is the last part of a multi-part message
       timestamp?: number;
       tokens?: number; // Reasoning tokens if available
+      /** Presentation hint for smooth streaming — indicates if this is live or replayed content. */
+      streamPresentation?: {
+        source: "live" | "replay";
+      };
     }
   | {
       type: "stream-error";
@@ -569,6 +636,13 @@ export type DisplayedMessage =
       model?: string;
       routedThroughGateway?: boolean;
       errorCount?: number; // Number of consecutive identical errors merged into this message
+    }
+  | {
+      type: "compaction-boundary";
+      id: string; // Display ID for UI/React keys
+      historySequence: number; // Sequence of the compaction summary this boundary belongs to
+      position: "start" | "end";
+      compactionEpoch?: number;
     }
   | {
       type: "history-hidden";

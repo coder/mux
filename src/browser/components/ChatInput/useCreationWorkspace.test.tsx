@@ -1,6 +1,8 @@
 import type { APIClient } from "@/browser/contexts/API";
+import { ProjectProvider } from "@/browser/contexts/ProjectContext";
 import type { DraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
 import {
+  GLOBAL_SCOPE_ID,
   getAgentIdKey,
   getInputKey,
   getInputAttachmentsKey,
@@ -161,7 +163,10 @@ type WorkspaceUpdateAgentAISettingsResult = Awaited<
 type WorkspaceCreateResult = Awaited<ReturnType<APIClient["workspace"]["create"]>>;
 type NameGenerationArgs = Parameters<APIClient["nameGeneration"]["generate"]>[0];
 type NameGenerationResult = Awaited<ReturnType<APIClient["nameGeneration"]["generate"]>>;
-type MockOrpcProjectsClient = Pick<APIClient["projects"], "listBranches" | "runtimeAvailability">;
+type MockOrpcProjectsClient = Pick<
+  APIClient["projects"],
+  "list" | "listBranches" | "runtimeAvailability"
+>;
 type MockOrpcWorkspaceClient = Pick<
   APIClient["workspace"],
   "sendMessage" | "create" | "updateAgentAISettings"
@@ -266,6 +271,7 @@ const setupWindow = ({
 
   currentORPCClient = {
     projects: {
+      list: () => Promise.resolve([]),
       listBranches: (input: ListBranchesArgs) => listBranchesMock(input),
       runtimeAvailability: () =>
         Promise.resolve({
@@ -577,6 +583,78 @@ describe("useCreationWorkspace", () => {
     expect(updatePersistedStateCalls).toContainEqual([pendingImagesKey, undefined]);
   });
 
+  test("syncs global default agent to workspace when project agent is unset", async () => {
+    const listBranchesMock = mock(
+      (): Promise<BranchListResult> =>
+        Promise.resolve({
+          branches: ["main"],
+          recommendedTrunk: "main",
+        })
+    );
+    const sendMessageMock = mock(
+      (_args: WorkspaceSendMessageArgs): Promise<WorkspaceSendMessageResult> =>
+        Promise.resolve({
+          success: true as const,
+          data: {},
+        })
+    );
+    const createMock = mock(
+      (_args: WorkspaceCreateArgs): Promise<WorkspaceCreateResult> =>
+        Promise.resolve({
+          success: true,
+          metadata: TEST_METADATA,
+        } as WorkspaceCreateResult)
+    );
+    const nameGenerationMock = mock(
+      (_args: NameGenerationArgs): Promise<NameGenerationResult> =>
+        Promise.resolve({
+          success: true,
+          data: { name: "generated-name", modelUsed: "anthropic:claude-haiku-4-5" },
+        } as NameGenerationResult)
+    );
+    setupWindow({
+      listBranches: listBranchesMock,
+      sendMessage: sendMessageMock,
+      create: createMock,
+      nameGeneration: nameGenerationMock,
+    });
+
+    persistedPreferences[getAgentIdKey(GLOBAL_SCOPE_ID)] = "ask";
+    persistedPreferences[getModelKey(getProjectScopeId(TEST_PROJECT_PATH))] = "gpt-4";
+
+    draftSettingsState = createDraftSettingsHarness({
+      selectedRuntime: { mode: "ssh", host: "example.com" },
+      runtimeString: "ssh example.com",
+      trunkBranch: "dev",
+      agentId: "ask",
+    });
+    const onWorkspaceCreated = mock((metadata: FrontendWorkspaceMetadata) => metadata);
+
+    const getHook = renderUseCreationWorkspace({
+      projectPath: TEST_PROJECT_PATH,
+      onWorkspaceCreated,
+      message: "launch workspace",
+    });
+
+    await waitFor(() => expect(getHook().branches).toEqual(["main"]));
+    await waitFor(() => expect(nameGenerationMock.mock.calls.length).toBe(1));
+
+    let handleSendResult: CreationSendResult | undefined;
+    await act(async () => {
+      handleSendResult = await getHook().handleSend("launch workspace");
+    });
+
+    expect(handleSendResult).toEqual({ success: true });
+    expect(updatePersistedStateCalls).toContainEqual([getAgentIdKey(TEST_WORKSPACE_ID), "ask"]);
+
+    const sendCall = sendMessageMock.mock.calls[0];
+    if (!sendCall) {
+      throw new Error("Expected workspace.sendMessage to be called at least once");
+    }
+    const [sendRequest] = sendCall;
+    expect(sendRequest?.options?.agentId).toBe("ask");
+  });
+
   test("handleSend returns failure when sendMessage fails and clears draft", async () => {
     const listBranchesMock = mock(
       (): Promise<BranchListResult> =>
@@ -760,6 +838,7 @@ function createDraftSettingsHarness(
     trunkBranch: string;
     runtimeString?: string | undefined;
     defaultRuntimeMode?: RuntimeChoice;
+    agentId?: string;
     coderConfigFallback?: CoderWorkspaceConfig;
     sshHostFallback?: string;
   }>
@@ -767,6 +846,7 @@ function createDraftSettingsHarness(
   const state = {
     selectedRuntime: initial?.selectedRuntime ?? { mode: "local" as const },
     defaultRuntimeMode: initial?.defaultRuntimeMode ?? "worktree",
+    agentId: initial?.agentId ?? "exec",
     trunkBranch: initial?.trunkBranch ?? "main",
     runtimeString: initial?.runtimeString,
     coderConfigFallback: initial?.coderConfigFallback ?? { existingWorkspace: false },
@@ -774,6 +854,7 @@ function createDraftSettingsHarness(
   } satisfies {
     selectedRuntime: ParsedRuntime;
     defaultRuntimeMode: RuntimeChoice;
+    agentId: string;
     trunkBranch: string;
     runtimeString: string | undefined;
     coderConfigFallback: CoderWorkspaceConfig;
@@ -844,7 +925,7 @@ function createDraftSettingsHarness(
       const settings: DraftWorkspaceSettings = {
         model: "gpt-4",
         thinkingLevel: "medium",
-        agentId: "exec",
+        agentId: state.agentId,
         selectedRuntime: state.selectedRuntime,
         defaultRuntimeMode: state.defaultRuntimeMode,
         trunkBranch: state.trunkBranch,
@@ -881,7 +962,11 @@ function renderUseCreationWorkspace(options: HookOptions) {
     return null;
   }
 
-  render(<Harness {...options} />);
+  render(
+    <ProjectProvider>
+      <Harness {...options} />
+    </ProjectProvider>
+  );
 
   return () => {
     if (!resultRef.current) {

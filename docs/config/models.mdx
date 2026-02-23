@@ -14,16 +14,17 @@ Mux ships with curated models kept up to date with the frontier. Use any custom 
 | Model                  | ID                            | Aliases                                  | Default |
 | ---------------------- | ----------------------------- | ---------------------------------------- | ------- |
 | Opus 4.6               | anthropic:claude-opus-4-6     | `opus`                                   | ✓       |
-| Sonnet 4.5             | anthropic:claude-sonnet-4-5   | `sonnet`                                 |         |
+| Sonnet 4.6             | anthropic:claude-sonnet-4-6   | `sonnet`                                 |         |
 | Haiku 4.5              | anthropic:claude-haiku-4-5    | `haiku`                                  |         |
 | GPT-5.2                | openai:gpt-5.2                | `gpt`                                    |         |
 | GPT-5.2 Pro            | openai:gpt-5.2-pro            | `gpt-pro`                                |         |
-| GPT-5.2 Codex          | openai:gpt-5.2-codex          | `codex`                                  |         |
-| GPT-5.1 Codex          | openai:gpt-5.1-codex          | `codex-5.1`                              |         |
-| GPT-5.1 Codex Mini     | openai:gpt-5.1-codex-mini     | `codex-mini`                             |         |
-| GPT-5.1 Codex Max      | openai:gpt-5.1-codex-max      | `codex-max`                              |         |
-| Gemini 3 Pro Preview   | google:gemini-3-pro-preview   | `gemini`, `gemini-3`, `gemini-3-pro`     |         |
-| Gemini 3 Flash Preview | google:gemini-3-flash-preview | `gemini-3-flash`                         |         |
+| Codex 5.2              | openai:gpt-5.2-codex          | `codex`                                  |         |
+| Codex 5.3              | openai:gpt-5.3-codex          | `codex-5.3`                              |         |
+| Spark 5.3              | openai:gpt-5.3-codex-spark    | `spark`                                  |         |
+| Codex Mini 5.1         | openai:gpt-5.1-codex-mini     | `codex-mini`                             |         |
+| Codex Max 5.1          | openai:gpt-5.1-codex-max      | `codex-max`                              |         |
+| Gemini 3.1 Pro Preview | google:gemini-3.1-pro-preview | `gemini`, `gemini-pro`                   |         |
+| Gemini 3 Flash Preview | google:gemini-3-flash-preview | `gemini-flash`                           |         |
 | Grok 4 1 Fast          | xai:grok-4-1-fast             | `grok`, `grok-4`, `grok-4.1`, `grok-4-1` |         |
 | Grok Code Fast 1       | xai:grok-code-fast-1          | `grok-code`                              |         |
 
@@ -46,6 +47,41 @@ Alternatively, use the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`):
 3. Choose from available models
 
 Models are specified in the format: `provider:model-name`
+
+## One-shot Overrides
+
+Override the model or thinking level for a single message using slash commands. The override applies only to that message — workspace settings stay unchanged.
+
+### Syntax
+
+| Command                     | Effect                                   |
+| --------------------------- | ---------------------------------------- |
+| `/sonnet explain this code` | Use Sonnet for one message               |
+| `/opus+high deep review`    | Use Opus with high thinking              |
+| `/haiku+0 quick answer`     | Use Haiku at its lowest thinking level   |
+| `/+2 analyze this`          | Keep current model, set thinking level 2 |
+
+### Thinking levels
+
+Append `+level` to any model alias. Levels can be **named** (`off`, `low`, `medium`/`med`, `high`, `max`) or **numeric** (`0`–`9`).
+
+Numeric levels are **model-relative** — they map to the model's allowed thinking range:
+
+- `0` = model's lowest allowed level (e.g., `off` for Sonnet, `medium` for GPT-5.2 Pro)
+- Higher numbers select progressively higher levels, clamped to the model's maximum
+
+This means `/sonnet+0` disables thinking while `/gpt-pro+0` sets thinking to medium (GPT-5.2 Pro's minimum).
+
+Use `/+level` (no model) to override thinking on the current model: `/+0 quick answer`
+
+### CLI
+
+The `mux run` CLI accepts the same thinking levels via `--thinking`:
+
+```bash
+mux run -t 0 "Quick fix"          # Lowest thinking for the model
+mux run -t high "Deep analysis"   # Named level
+```
 
 ## Next Steps
 

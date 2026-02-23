@@ -42,8 +42,3 @@ export type GitStatus = z.infer<typeof GitStatusSchema>;
 export type FrontendWorkspaceMetadata = z.infer<typeof FrontendWorkspaceMetadataSchema>;
 
 export type WorkspaceActivitySnapshot = z.infer<typeof WorkspaceActivitySnapshotSchema>;
-
-/**
- * @deprecated Use FrontendWorkspaceMetadata instead
- */
-export type WorkspaceMetadataWithPaths = FrontendWorkspaceMetadata;

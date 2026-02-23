@@ -51,9 +51,9 @@ export type CommandSource = () => CommandAction[];
 
 interface CommandRegistryContextValue {
   isOpen: boolean;
-  open: () => void;
+  initialQuery: string;
+  open: (initialQuery?: string) => void;
   close: () => void;
-  toggle: () => void;
   registerSource: (source: CommandSource) => () => void;
   getActions: () => CommandAction[];
   addRecent: (actionId: string) => void;
@@ -72,6 +72,7 @@ const RECENT_STORAGE_KEY = "commandPalette:recent";
 
 export const CommandRegistryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [initialQuery, setInitialQuery] = useState("");
   const [sources, setSources] = useState<Set<CommandSource>>(new Set());
   const [recent, setRecent] = useState<string[]>(() => {
     try {
@@ -101,9 +102,11 @@ export const CommandRegistryProvider: React.FC<{ children: React.ReactNode }> = 
     [recent, persistRecent]
   );
 
-  const open = useCallback(() => setIsOpen(true), []);
+  const open = useCallback((query?: string) => {
+    setInitialQuery(query ?? "");
+    setIsOpen(true);
+  }, []);
   const close = useCallback(() => setIsOpen(false), []);
-  const toggle = useCallback(() => setIsOpen((v) => !v), []);
 
   const registerSource = useCallback((source: CommandSource) => {
     setSources((prev) => new Set(prev).add(source));
@@ -132,8 +135,17 @@ export const CommandRegistryProvider: React.FC<{ children: React.ReactNode }> = 
   }, [sources]);
 
   const value = useMemo(
-    () => ({ isOpen, open, close, toggle, registerSource, getActions, addRecent, recent }),
-    [isOpen, open, close, toggle, registerSource, getActions, addRecent, recent]
+    () => ({
+      isOpen,
+      initialQuery,
+      open,
+      close,
+      registerSource,
+      getActions,
+      addRecent,
+      recent,
+    }),
+    [isOpen, initialQuery, open, close, registerSource, getActions, addRecent, recent]
   );
 
   return (

@@ -1,12 +1,10 @@
-import { describe, expect, it, mock } from "bun:test";
+import { describe, expect, it, mock, afterEach, spyOn } from "bun:test";
 import { EventEmitter } from "events";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
 import type { AIService } from "@/node/services/aiService";
-import type { HistoryService } from "@/node/services/historyService";
-import type { PartialService } from "@/node/services/partialService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { Config } from "@/node/config";
@@ -18,6 +16,7 @@ import type { Result } from "@/common/types/result";
 import { Ok } from "@/common/types/result";
 
 import { AgentSession } from "./agentSession";
+import { createTestHistoryService } from "./testHistoryService";
 
 describe("AgentSession.sendMessage (agent skill snapshots)", () => {
   async function createTestWorkspaceWithSkill(args: { skillName: string; skillBody: string }) {
@@ -30,6 +29,11 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
 
     return { workspacePath: tmp };
   }
+
+  let historyCleanup: (() => Promise<void>) | undefined;
+  afterEach(async () => {
+    await historyCleanup?.();
+  });
 
   it("persists a synthetic agent skill snapshot before the user message", async () => {
     const workspaceId = "ws-test";
@@ -44,29 +48,17 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       getSessionDir: (_workspaceId: string) => "/tmp",
     } as unknown as Config;
 
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
     const messages: MuxMessage[] = [];
-    let nextSeq = 0;
-
-    const appendToHistory = mock((_workspaceId: string, message: MuxMessage) => {
-      message.metadata = { ...(message.metadata ?? {}), historySequence: nextSeq++ };
-      messages.push(message);
-      return Promise.resolve(Ok(undefined));
-    });
-
-    const historyService = {
-      appendToHistory,
-      truncateAfterMessage: mock((_workspaceId: string, _messageId: string) => {
-        void _messageId;
-        return Promise.resolve(Ok(undefined));
-      }),
-      getHistory: mock((_workspaceId: string): Promise<Result<MuxMessage[], string>> => {
-        return Promise.resolve(Ok([...messages]));
-      }),
-    } as unknown as HistoryService;
-
-    const partialService = {
-      commitToHistory: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-    } as unknown as PartialService;
+    const realAppend = historyService.appendToHistory.bind(historyService);
+    const appendToHistory = spyOn(historyService, "appendToHistory").mockImplementation(
+      async (wId: string, message: MuxMessage) => {
+        messages.push(message);
+        return realAppend(wId, message);
+      }
+    );
 
     const aiEmitter = new EventEmitter();
 
@@ -105,7 +97,6 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       workspaceId,
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,
@@ -162,29 +153,17 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       getSessionDir: (_workspaceId: string) => "/tmp",
     } as unknown as Config;
 
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
     const messages: MuxMessage[] = [];
-    let nextSeq = 0;
-
-    const appendToHistory = mock((_workspaceId: string, message: MuxMessage) => {
-      message.metadata = { ...(message.metadata ?? {}), historySequence: nextSeq++ };
-      messages.push(message);
-      return Promise.resolve(Ok(undefined));
-    });
-
-    const historyService = {
-      appendToHistory,
-      truncateAfterMessage: mock((_workspaceId: string, _messageId: string) => {
-        void _messageId;
-        return Promise.resolve(Ok(undefined));
-      }),
-      getHistory: mock((_workspaceId: string): Promise<Result<MuxMessage[], string>> => {
-        return Promise.resolve(Ok([...messages]));
-      }),
-    } as unknown as HistoryService;
-
-    const partialService = {
-      commitToHistory: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-    } as unknown as PartialService;
+    const realAppend = historyService.appendToHistory.bind(historyService);
+    const appendToHistory = spyOn(historyService, "appendToHistory").mockImplementation(
+      async (wId: string, message: MuxMessage) => {
+        messages.push(message);
+        return realAppend(wId, message);
+      }
+    );
 
     const aiEmitter = new EventEmitter();
 
@@ -223,7 +202,6 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       workspaceId,
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,
@@ -263,29 +241,17 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       getSessionDir: (_workspaceId: string) => "/tmp",
     } as unknown as Config;
 
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
     const messages: MuxMessage[] = [];
-    let nextSeq = 0;
-
-    const appendToHistory = mock((_workspaceId: string, message: MuxMessage) => {
-      message.metadata = { ...(message.metadata ?? {}), historySequence: nextSeq++ };
-      messages.push(message);
-      return Promise.resolve(Ok(undefined));
-    });
-
-    const historyService = {
-      appendToHistory,
-      truncateAfterMessage: mock((_workspaceId: string, _messageId: string) => {
-        void _messageId;
-        return Promise.resolve(Ok(undefined));
-      }),
-      getHistory: mock((_workspaceId: string): Promise<Result<MuxMessage[], string>> => {
-        return Promise.resolve(Ok([...messages]));
-      }),
-    } as unknown as HistoryService;
-
-    const partialService = {
-      commitToHistory: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-    } as unknown as PartialService;
+    const realAppend = historyService.appendToHistory.bind(historyService);
+    const appendToHistory = spyOn(historyService, "appendToHistory").mockImplementation(
+      async (wId: string, message: MuxMessage) => {
+        messages.push(message);
+        return realAppend(wId, message);
+      }
+    );
 
     const aiEmitter = new EventEmitter();
 
@@ -324,7 +290,6 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       workspaceId,
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,
@@ -379,29 +344,17 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       getSessionDir: (_workspaceId: string) => "/tmp",
     } as unknown as Config;
 
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
     const messages: MuxMessage[] = [];
-    let nextSeq = 0;
-
-    const appendToHistory = mock((_workspaceId: string, message: MuxMessage) => {
-      message.metadata = { ...(message.metadata ?? {}), historySequence: nextSeq++ };
-      messages.push(message);
-      return Promise.resolve(Ok(undefined));
-    });
-
-    const historyService = {
-      appendToHistory,
-      truncateAfterMessage: mock((_workspaceId: string, _messageId: string) => {
-        void _messageId;
-        return Promise.resolve(Ok(undefined));
-      }),
-      getHistory: mock((_workspaceId: string): Promise<Result<MuxMessage[], string>> => {
-        return Promise.resolve(Ok([...messages]));
-      }),
-    } as unknown as HistoryService;
-
-    const partialService = {
-      commitToHistory: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-    } as unknown as PartialService;
+    const realAppend = historyService.appendToHistory.bind(historyService);
+    const appendToHistory = spyOn(historyService, "appendToHistory").mockImplementation(
+      async (wId: string, message: MuxMessage) => {
+        messages.push(message);
+        return realAppend(wId, message);
+      }
+    );
 
     const aiEmitter = new EventEmitter();
 
@@ -438,7 +391,6 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       workspaceId,
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,
@@ -538,25 +490,16 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       }),
     ];
 
-    const truncateAfterMessage = mock((_workspaceId: string, _messageId: string) => {
-      void _workspaceId;
-      void _messageId;
-      return Promise.resolve(Ok(undefined));
-    });
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
 
-    const historyService = {
-      truncateAfterMessage,
-      appendToHistory: mock((_workspaceId: string, _message: MuxMessage) => {
-        return Promise.resolve(Ok(undefined));
-      }),
-      getHistory: mock((_workspaceId: string): Promise<Result<MuxMessage[], string>> => {
-        return Promise.resolve(Ok([...historyMessages]));
-      }),
-    } as unknown as HistoryService;
+    // Seed history messages before setting up spies
+    for (const msg of historyMessages) {
+      await historyService.appendToHistory(workspaceId, msg);
+    }
 
-    const partialService = {
-      commitToHistory: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-    } as unknown as PartialService;
+    const truncateAfterMessage = spyOn(historyService, "truncateAfterMessage");
+    spyOn(historyService, "appendToHistory");
 
     const aiEmitter = new EventEmitter();
     const aiService = Object.assign(aiEmitter, {
@@ -582,7 +525,6 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       workspaceId,
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,

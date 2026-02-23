@@ -65,6 +65,8 @@
     --color-ask-mode-light: hsl(246 100% 85%);
     --color-ask-mode-alpha: hsla(246 100% 68% / 0.1);
 
+    --color-auto-mode: hsl(168 72% 43%);
+
     --color-exec-mode: hsl(268.56 94.04% 55.19%);
     --color-exec-mode-hover: hsl(268.56 94.04% 67%);
     --color-exec-mode-light: hsl(268.56 94.04% 78%);
@@ -764,12 +766,12 @@
   --color-code-type: #24837b;
   --color-code-keyword: #205ea6;
 
-  --color-toast-success-bg: hsl(from var(--color-accent) h s l / 0.18);
+  --color-toast-success-bg: color-mix(in srgb, var(--color-accent) 18%, var(--color-background) 82%);
   --color-toast-success-text: color-mix(in srgb, var(--color-accent), black 28%);
-  --color-toast-error-bg: hsl(from var(--color-danger) h s l / 0.18);
+  --color-toast-error-bg: color-mix(in srgb, var(--color-danger) 18%, var(--color-background) 82%);
   --color-toast-error-text: color-mix(in srgb, var(--color-danger), black 22%);
   --color-toast-error-border: var(--color-danger);
-  --color-toast-fatal-bg: hsl(from var(--color-danger) h s l / 0.12);
+  --color-toast-fatal-bg: color-mix(in srgb, var(--color-danger) 12%, var(--color-background) 88%);
   --color-toast-fatal-border: color-mix(in srgb, var(--color-danger), white 45%);
 
   --color-danger-overlay: hsl(from var(--color-danger) h s l / 0.12);
@@ -973,12 +975,12 @@
   --color-terminal-bg: #100f0f;
   --color-terminal-fg: #cecdc3;
 
-  --color-toast-success-bg: hsl(from var(--color-accent) h s l / 0.13);
+  --color-toast-success-bg: color-mix(in srgb, var(--color-accent) 13%, var(--color-background) 87%);
   --color-toast-success-text: color-mix(in srgb, var(--color-accent), white 22%);
-  --color-toast-error-bg: hsl(from var(--color-danger) h s l / 0.15);
+  --color-toast-error-bg: color-mix(in srgb, var(--color-danger) 15%, var(--color-background) 85%);
   --color-toast-error-text: var(--color-danger);
   --color-toast-error-border: var(--color-danger);
-  --color-toast-fatal-bg: hsl(from var(--color-danger) h s l / 0.12);
+  --color-toast-fatal-bg: color-mix(in srgb, var(--color-danger) 12%, var(--color-background) 88%);
   --color-toast-fatal-border: color-mix(in srgb, var(--color-danger), black 22%);
 
   --color-danger-overlay: hsl(from var(--color-danger) h s l / 0.1);
@@ -1067,6 +1069,22 @@ body,
 
   body {
     font-size: 15px;
+    /* User request: prevent accidental text highlighting while tapping/scrolling on touch devices. */
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Keep selection/caret behavior in editable controls on touch devices. */
+  input,
+  textarea,
+  [contenteditable="true"],
+  [contenteditable="plaintext-only"] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  .mobile-hide-shortcut-hints {
+    display: none !important;
   }
 
   button,
@@ -1448,10 +1466,11 @@ code {
 
 .plan-content blockquote {
   border-left: 3px solid var(--color-plan-mode);
-  padding-left: 12px;
+  background: color-mix(in srgb, var(--color-plan-mode) 8%, transparent);
+  padding: 6px 12px;
   margin: 8px 0;
-  color: var(--color-secondary);
-  font-style: italic;
+  color: var(--color-muted-foreground);
+  border-radius: 0 4px 4px 0;
 }
 
 [title]:hover::before {
@@ -1571,11 +1590,12 @@ code {
 }
 
 .markdown-content blockquote {
-  border-left: 3px solid var(--color-border);
-  padding-left: 12px;
+  border-left: 3px solid var(--color-muted);
+  background: color-mix(in srgb, var(--color-border) 15%, transparent);
+  padding: 6px 12px;
   margin: 1em 0;
-  color: var(--color-secondary);
-  font-style: italic;
+  color: var(--color-muted-foreground);
+  border-radius: 0 4px 4px 0;
 }
 
 .markdown-content strong {
@@ -2090,9 +2110,9 @@ input[type="checkbox"] {
 
 
 
-/* Titlebar inset for WorkspaceHeader when left sidebar is collapsed.
+/* Titlebar inset for WorkspaceMenuBar when left sidebar is collapsed.
  * The sidebar collapse state is synced to a data attribute on :root by App.tsx.
- * This centralizes the concern - WorkspaceHeader doesn't need props or JS logic. */
-:root[data-left-sidebar-collapsed="true"] [data-testid="workspace-header"] {
+ * This centralizes the concern - WorkspaceMenuBar doesn't need props or JS logic. */
+:root[data-left-sidebar-collapsed="true"] [data-testid="workspace-menu-bar"] {
   padding-left: 60px;
 }

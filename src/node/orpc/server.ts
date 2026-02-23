@@ -5,7 +5,6 @@
  * This module exports the server creation logic so it can be tested.
  * The CLI entry point (server.ts) uses this to start the server.
  */
-import cors from "cors";
 import express, { type Express } from "express";
 import * as fs from "fs/promises";
 import * as http from "http";
@@ -19,11 +18,16 @@ import { OpenAPIHandler } from "@orpc/openapi/node";
 import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
 import { router, type AppRouter } from "@/node/orpc/router";
 import type { ORPCContext } from "@/node/orpc/context";
-import { extractWsHeaders, safeEq } from "@/node/orpc/authMiddleware";
+import { extractCookieValues, extractWsHeaders, safeEq } from "@/node/orpc/authMiddleware";
 import { VERSION } from "@/version";
 import { formatOrpcError } from "@/node/orpc/formatOrpcError";
 import { log } from "@/node/services/log";
+import {
+  SERVER_AUTH_SESSION_COOKIE_NAME,
+  SERVER_AUTH_SESSION_MAX_AGE_SECONDS,
+} from "@/node/services/serverAuthService";
 import { attachStreamErrorHandler, isIgnorableStreamError } from "@/node/utils/streamErrors";
+import { getErrorMessage } from "@/common/utils/errors";
 
 type AliveWebSocket = WebSocket & { isAlive?: boolean };
 
@@ -48,6 +52,11 @@ export interface OrpcServerOptions {
   authToken?: string;
   /** Optional pre-created router (if not provided, creates router(authToken)) */
   router?: AppRouter;
+  /**
+   * Allow HTTPS browser origins when reverse proxies forward X-Forwarded-Proto=http.
+   * Keep disabled by default and only enable when TLS is terminated before mux.
+   */
+  allowHttpOrigin?: boolean;
 }
 
 export interface OrpcServer {
@@ -118,6 +127,308 @@ function escapeHtml(input: string): string {
     .replaceAll("'", "&#39;");
 }
 
+type OriginValidationRequest = Pick<http.IncomingMessage, "headers" | "socket"> & {
+  protocol?: string;
+};
+
+function getFirstHeaderValue(req: OriginValidationRequest, headerName: string): string | null {
+  const rawValue = req.headers[headerName.toLowerCase()];
+  const value = Array.isArray(rawValue) ? rawValue[0] : rawValue;
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const firstValue = value.split(",")[0]?.trim();
+  return firstValue?.length ? firstValue : null;
+}
+
+function normalizeProtocol(rawProtocol: string): "http" | "https" | null {
+  const normalized = rawProtocol.trim().toLowerCase().replace(/:$/, "");
+  if (normalized === "http" || normalized === "https") {
+    return normalized;
+  }
+
+  return null;
+}
+
+function buildOrigin(protocol: string, host: string): string | null {
+  const normalizedProtocol = normalizeProtocol(protocol);
+  const normalizedHost = host.trim();
+
+  if (!normalizedProtocol || normalizedHost.length === 0) {
+    return null;
+  }
+
+  try {
+    return new URL(`${normalizedProtocol}://${normalizedHost}`).origin;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeHostForProtocol(host: string, protocol: "http" | "https"): string | null {
+  const trimmedHost = host.trim();
+  if (!trimmedHost) {
+    return null;
+  }
+
+  try {
+    return new URL(`${protocol}://${trimmedHost}`).host.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function inferProtocol(req: OriginValidationRequest): "http" | "https" {
+  if (typeof req.protocol === "string") {
+    const normalized = normalizeProtocol(req.protocol);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return (req.socket as { encrypted?: boolean }).encrypted ? "https" : "http";
+}
+
+function getExpectedHosts(req: OriginValidationRequest): string[] {
+  return [getFirstHeaderValue(req, "x-forwarded-host"), getFirstHeaderValue(req, "host")].filter(
+    (value, index, values): value is string => value !== null && values.indexOf(value) === index
+  );
+}
+
+function getFirstForwardedProtocol(req: OriginValidationRequest): "http" | "https" | null {
+  const forwardedProtoHeader = getFirstHeaderValue(req, "x-forwarded-proto");
+  if (!forwardedProtoHeader) {
+    return null;
+  }
+
+  // Trust the client-facing hop. Additional values come from downstream/internal hops.
+  const firstHop = forwardedProtoHeader.split(",")[0] ?? "";
+  return normalizeProtocol(firstHop);
+}
+
+function getOriginProtocolOnExpectedHost(req: OriginValidationRequest): "http" | "https" | null {
+  const normalizedOrigin = normalizeOrigin(getFirstHeaderValue(req, "origin"));
+  if (!normalizedOrigin) {
+    return null;
+  }
+
+  try {
+    const parsedOrigin = new URL(normalizedOrigin);
+    const originProtocol = normalizeProtocol(parsedOrigin.protocol);
+    if (!originProtocol) {
+      return null;
+    }
+
+    const originHost = parsedOrigin.host.toLowerCase();
+    const hasExpectedHost = getExpectedHosts(req).some((host) => {
+      const normalizedHost = normalizeHostForProtocol(host, originProtocol);
+      return normalizedHost !== null && normalizedHost === originHost;
+    });
+
+    return hasExpectedHost ? originProtocol : null;
+  } catch {
+    return null;
+  }
+}
+
+function getClientFacingProtocol(req: OriginValidationRequest): "http" | "https" {
+  return getFirstForwardedProtocol(req) ?? inferProtocol(req);
+}
+
+function getExpectedProtocols(
+  req: OriginValidationRequest,
+  allowHttpOrigin = false
+): Array<"http" | "https"> {
+  const clientFacingProtocol = getClientFacingProtocol(req);
+  const originProtocol = getOriginProtocolOnExpectedHost(req);
+
+  // Compatibility path: some reverse proxies overwrite X-Forwarded-Proto to http
+  // even when the browser-facing request is https. In that specific case, trust the
+  // validated origin protocol for host-matched requests only when explicitly enabled.
+  if (allowHttpOrigin && clientFacingProtocol === "http" && originProtocol === "https") {
+    return ["https"];
+  }
+
+  return [clientFacingProtocol];
+}
+
+function getPreferredPublicProtocol(
+  req: OriginValidationRequest,
+  allowHttpOrigin = false
+): "http" | "https" {
+  const clientFacingProtocol = getClientFacingProtocol(req);
+  const originProtocol = getOriginProtocolOnExpectedHost(req);
+
+  if (allowHttpOrigin && clientFacingProtocol === "http" && originProtocol === "https") {
+    return "https";
+  }
+
+  return clientFacingProtocol;
+}
+
+function getExpectedOrigins(req: OriginValidationRequest, allowHttpOrigin = false): string[] {
+  const hosts = getExpectedHosts(req);
+
+  if (hosts.length === 0) {
+    return [];
+  }
+
+  const protocols = getExpectedProtocols(req, allowHttpOrigin);
+
+  const expectedOrigins: string[] = [];
+  for (const protocol of protocols) {
+    for (const host of hosts) {
+      const origin = buildOrigin(protocol, host);
+      if (!origin || expectedOrigins.includes(origin)) {
+        continue;
+      }
+
+      expectedOrigins.push(origin);
+    }
+  }
+
+  return expectedOrigins;
+}
+
+function normalizeOrigin(raw: string | null | undefined): string | null {
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(raw);
+    const normalizedProtocol = normalizeProtocol(parsed.protocol);
+
+    if (!normalizedProtocol) {
+      return null;
+    }
+
+    return `${normalizedProtocol}://${parsed.host}`;
+  } catch {
+    return null;
+  }
+}
+
+interface OriginIdentity {
+  protocol: "http:" | "https:";
+  port: string;
+  hostname: string;
+  isLoopback: boolean;
+}
+
+function normalizeHostnameForOriginCheck(hostname: string): string {
+  const normalized = hostname.trim().toLowerCase();
+
+  // URL.hostname may include brackets for IPv6 literals in some runtimes.
+  if (normalized.startsWith("[") && normalized.endsWith("]")) {
+    return normalized.slice(1, -1);
+  }
+
+  return normalized;
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = normalizeHostnameForOriginCheck(hostname);
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
+}
+
+function parseOriginIdentity(rawOrigin: string): OriginIdentity | null {
+  try {
+    const parsed = new URL(rawOrigin);
+
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+
+    const hostname = normalizeHostnameForOriginCheck(parsed.hostname);
+    return {
+      protocol: parsed.protocol,
+      port: parsed.port,
+      hostname,
+      isLoopback: isLoopbackHostname(hostname),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// In local development, the browser and proxy may use loopback aliases interchangeably.
+// Treat loopback host aliases as equivalent origins when protocol+port match.
+function areEquivalentLoopbackOrigins(originA: string, originB: string): boolean {
+  const identityA = parseOriginIdentity(originA);
+  const identityB = parseOriginIdentity(originB);
+
+  if (!identityA || !identityB) {
+    return false;
+  }
+
+  return (
+    identityA.protocol === identityB.protocol &&
+    identityA.port === identityB.port &&
+    identityA.isLoopback &&
+    identityB.isLoopback
+  );
+}
+
+function isOriginAllowed(
+  req: OriginValidationRequest,
+  expectedOrigins: readonly string[] = getExpectedOrigins(req)
+): boolean {
+  const origin = getFirstHeaderValue(req, "origin");
+  if (!origin) {
+    return true;
+  }
+
+  const normalizedOrigin = normalizeOrigin(origin);
+  if (!normalizedOrigin || expectedOrigins.length === 0) {
+    return false;
+  }
+
+  return expectedOrigins.some(
+    (expectedOrigin) =>
+      normalizedOrigin === expectedOrigin ||
+      areEquivalentLoopbackOrigins(normalizedOrigin, expectedOrigin)
+  );
+}
+
+function getPathnameFromRequestUrl(requestUrl: string | undefined): string | null {
+  if (!requestUrl) {
+    return null;
+  }
+
+  try {
+    return new URL(requestUrl, "http://localhost").pathname;
+  } catch {
+    return null;
+  }
+}
+
+// Non-greedy so we match the first "/apps/<slug>" segment in nested routes.
+const APP_PROXY_BASE_PATH_RE = /(.*?\/apps\/[^/]+)(?:\/|$)/;
+
+const OAUTH_CALLBACK_ORIGIN_BYPASS_PATHS = new Set<string>([
+  "/auth/mux-gateway/callback",
+  "/auth/mux-governor/callback",
+  "/auth/mcp-oauth/callback",
+]);
+
+function isOAuthCallbackNavigationRequest(req: Pick<express.Request, "method" | "path">): boolean {
+  return (
+    (req.method === "GET" || req.method === "POST") &&
+    OAUTH_CALLBACK_ORIGIN_BYPASS_PATHS.has(req.path)
+  );
+}
+
+function shouldEnforceOriginValidation(req: Pick<express.Request, "path">): boolean {
+  // User rationale: static HTML/CSS/JS must keep loading even when intermediaries rewrite
+  // Origin/forwarded headers, while API and auth endpoints retain strict same-origin checks.
+  return (
+    req.path.startsWith("/orpc") || req.path.startsWith("/api") || req.path.startsWith("/auth/")
+  );
+}
+
 /**
  * Create an oRPC server with HTTP and WebSocket endpoints.
  *
@@ -132,6 +443,7 @@ export async function createOrpcServer({
   authToken,
   context,
   serveStatic = false,
+  allowHttpOrigin = false,
   // From dist/node/orpc/, go up 2 levels to reach dist/ where index.html lives
   staticDir = path.join(__dirname, "../.."),
   onOrpcError = (error, options) => {
@@ -154,7 +466,71 @@ export async function createOrpcServer({
 }: OrpcServerOptions): Promise<OrpcServer> {
   // Express app setup
   const app = express();
-  app.use(cors());
+  app.use((req, res, next) => {
+    if (!shouldEnforceOriginValidation(req)) {
+      next();
+      return;
+    }
+
+    const originHeader = getFirstHeaderValue(req, "origin");
+
+    if (!originHeader) {
+      next();
+      return;
+    }
+
+    const normalizedOrigin = normalizeOrigin(originHeader);
+    const expectedOrigins = getExpectedOrigins(req, allowHttpOrigin);
+    const allowedOrigin = isOriginAllowed(req, expectedOrigins) ? normalizedOrigin : null;
+    const oauthCallbackNavigationRequest = isOAuthCallbackNavigationRequest(req);
+
+    if (req.method === "OPTIONS") {
+      if (!allowedOrigin) {
+        log.warn("Blocked cross-origin CORS preflight request", {
+          method: req.method,
+          path: req.path,
+          origin: originHeader,
+          expectedOrigins,
+        });
+        res.sendStatus(403);
+        return;
+      }
+
+      res.setHeader("Vary", "Origin");
+      res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+      res.setHeader("Access-Control-Max-Age", "86400");
+      res.sendStatus(204);
+      return;
+    }
+
+    if (!allowedOrigin) {
+      // OAuth redirects can legitimately arrive from a different origin (including
+      // response_mode=form_post). These callback handlers validate OAuth state
+      // before exchanging codes, so allowing navigation requests here is safe.
+      if (oauthCallbackNavigationRequest) {
+        next();
+        return;
+      }
+
+      log.warn("Blocked cross-origin HTTP request", {
+        method: req.method,
+        path: req.path,
+        origin: originHeader,
+        expectedOrigins,
+      });
+      res.sendStatus(403);
+      return;
+    }
+
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    next();
+  });
+
   // OAuth providers may use POST redirects (307/308) or response_mode=form_post.
   // Support both JSON API requests and form-encoded callback payloads.
   app.use(express.json({ limit: "50mb" }));
@@ -185,6 +561,148 @@ export async function createOrpcServer({
     res.json({ ...VERSION, mode: "server" });
   });
 
+  function getRequestIpAddress(
+    req: Pick<express.Request, "headers" | "socket">
+  ): string | undefined {
+    const forwardedFor = getFirstHeaderValue(req, "x-forwarded-for");
+    if (forwardedFor) {
+      const first = forwardedFor.split(",")[0]?.trim();
+      if (first) {
+        return first;
+      }
+    }
+
+    const remoteAddress = req.socket.remoteAddress?.trim();
+    return remoteAddress?.length ? remoteAddress : undefined;
+  }
+
+  function isSecureRequest(req: OriginValidationRequest): boolean {
+    return getPreferredPublicProtocol(req, allowHttpOrigin) === "https";
+  }
+
+  function parsePathnameFromRequestValue(value: string | null | undefined): string | null {
+    if (!value) {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    try {
+      if (trimmed.startsWith("/")) {
+        return new URL(trimmed, "http://localhost").pathname;
+      }
+
+      return new URL(trimmed).pathname;
+    } catch {
+      return null;
+    }
+  }
+
+  function normalizeCookiePath(pathname: string | null): string | null {
+    if (!pathname) {
+      return null;
+    }
+
+    const trimmed = pathname.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const withLeadingSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+    const withoutTrailing = withLeadingSlash.replace(/\/+$/, "");
+
+    return withoutTrailing.length > 0 ? withoutTrailing : "/";
+  }
+
+  function getAppProxyBasePathFromPathname(pathname: string | null): string | null {
+    if (!pathname) {
+      return null;
+    }
+
+    const match = APP_PROXY_BASE_PATH_RE.exec(pathname);
+    if (!match) {
+      return null;
+    }
+
+    return normalizeCookiePath(match[1]);
+  }
+
+  function getServerSessionCookiePath(req: express.Request): string {
+    const forwardedPrefix = normalizeCookiePath(getFirstHeaderValue(req, "x-forwarded-prefix"));
+    if (forwardedPrefix) {
+      return forwardedPrefix;
+    }
+
+    const forwardedUriPath = parsePathnameFromRequestValue(
+      getFirstHeaderValue(req, "x-forwarded-uri") ?? getFirstHeaderValue(req, "x-original-uri")
+    );
+    const forwardedUriBasePath = getAppProxyBasePathFromPathname(forwardedUriPath);
+    if (forwardedUriBasePath) {
+      return forwardedUriBasePath;
+    }
+
+    const originalUrlBasePath = getAppProxyBasePathFromPathname(
+      parsePathnameFromRequestValue(req.originalUrl)
+    );
+    if (originalUrlBasePath) {
+      return originalUrlBasePath;
+    }
+
+    // Browser mode requests include Referer by default; this keeps cookie scope
+    // aligned with app-proxy base paths even when the reverse proxy strips prefixes
+    // before forwarding to mux.
+    const refererBasePath = getAppProxyBasePathFromPathname(
+      parsePathnameFromRequestValue(req.header("referer"))
+    );
+    if (refererBasePath) {
+      return refererBasePath;
+    }
+
+    return "/";
+  }
+
+  function buildServerSessionCookie(
+    sessionToken: string,
+    secure: boolean,
+    cookiePath: string
+  ): string {
+    const encoded = encodeURIComponent(sessionToken);
+    return `${SERVER_AUTH_SESSION_COOKIE_NAME}=${encoded}; Path=${cookiePath}; HttpOnly; SameSite=Strict; Max-Age=${SERVER_AUTH_SESSION_MAX_AGE_SECONDS}${secure ? "; Secure" : ""}`;
+  }
+
+  async function isHttpRequestAuthenticated(req: express.Request): Promise<boolean> {
+    if (!authToken?.trim()) {
+      return true;
+    }
+
+    const expectedToken = authToken.trim();
+    const presentedToken = extractBearerToken(req.header("authorization"));
+    if (presentedToken && safeEq(presentedToken, expectedToken)) {
+      return true;
+    }
+
+    const sessionTokens = extractCookieValues(req.headers.cookie, SERVER_AUTH_SESSION_COOKIE_NAME);
+    if (sessionTokens.length === 0) {
+      return false;
+    }
+
+    for (const sessionToken of sessionTokens) {
+      const validation = await context.serverAuthService.validateSessionToken(sessionToken, {
+        userAgent: req.header("user-agent") ?? undefined,
+        ipAddress: getRequestIpAddress(req),
+      });
+
+      if (validation != null) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   function getStringParamFromQueryOrBody(req: express.Request, key: string): string | null {
     const queryValue = req.query[key];
     if (typeof queryValue === "string") return queryValue;
@@ -193,17 +711,96 @@ export async function createOrpcServer({
     const bodyValue = bodyRecord?.[key];
     return typeof bodyValue === "string" ? bodyValue : null;
   }
+  app.get("/auth/server-login/options", (_req, res) => {
+    res.json({ githubDeviceFlowEnabled: context.serverAuthService.isGithubDeviceFlowEnabled() });
+  });
+
+  app.post("/auth/server-login/github/start", async (_req, res) => {
+    const startResult = await context.serverAuthService.startGithubDeviceFlow();
+    if (!startResult.success) {
+      const status = startResult.error.includes("Too many concurrent GitHub login attempts")
+        ? 429
+        : 400;
+      res.status(status).json({ error: startResult.error });
+      return;
+    }
+
+    res.json(startResult.data);
+  });
+
+  app.post("/auth/server-login/github/wait", async (req, res) => {
+    const flowId = getStringParamFromQueryOrBody(req, "flowId");
+    if (!flowId) {
+      res.status(400).json({ error: "Missing flowId" });
+      return;
+    }
+
+    let canceledByDisconnect = false;
+    const cancelFlowForDisconnect = () => {
+      if (canceledByDisconnect) {
+        return;
+      }
+
+      canceledByDisconnect = true;
+      context.serverAuthService.cancelGithubDeviceFlow(flowId);
+    };
+
+    const handleRequestAborted = () => {
+      cancelFlowForDisconnect();
+    };
+    const handleRequestClose = () => {
+      if (req.aborted && !res.writableEnded) {
+        cancelFlowForDisconnect();
+      }
+    };
+    const handleResponseClose = () => {
+      if (!res.writableEnded) {
+        cancelFlowForDisconnect();
+      }
+    };
+
+    req.once("aborted", handleRequestAborted);
+    req.once("close", handleRequestClose);
+    res.once("close", handleResponseClose);
+
+    try {
+      const waitResult = await context.serverAuthService.waitForGithubDeviceFlow(flowId, {
+        userAgent: req.header("user-agent") ?? undefined,
+        ipAddress: getRequestIpAddress(req),
+      });
+
+      if (canceledByDisconnect || res.writableEnded) {
+        return;
+      }
+
+      if (!waitResult.success) {
+        res.status(400).json({ error: waitResult.error });
+        return;
+      }
+
+      res.setHeader(
+        "Set-Cookie",
+        buildServerSessionCookie(
+          waitResult.data.sessionToken,
+          isSecureRequest(req),
+          getServerSessionCookiePath(req)
+        )
+      );
+      res.json({ ok: true });
+    } finally {
+      req.off("aborted", handleRequestAborted);
+      req.off("close", handleRequestClose);
+      res.off("close", handleResponseClose);
+    }
+  });
+
   // --- Mux Gateway OAuth (unauthenticated bootstrap routes) ---
   // These are raw Express routes (not oRPC) because the OAuth provider cannot
   // send a mux Bearer token during the redirect callback.
-  app.get("/auth/mux-gateway/start", (req, res) => {
-    if (authToken?.trim()) {
-      const expectedToken = authToken.trim();
-      const presentedToken = extractBearerToken(req.header("authorization"));
-      if (!presentedToken || !safeEq(presentedToken, expectedToken)) {
-        res.status(401).json({ error: "Invalid or missing auth token" });
-        return;
-      }
+  app.get("/auth/mux-gateway/start", async (req, res) => {
+    if (!(await isHttpRequestAuthenticated(req))) {
+      res.status(401).json({ error: "Invalid or missing auth token/session" });
+      return;
     }
 
     const hostHeader = req.get("x-forwarded-host") ?? req.get("host");
@@ -213,14 +810,12 @@ export async function createOrpcServer({
       return;
     }
 
-    // When mux is running behind a reverse proxy, the terminating proxy may set
-    // X-Forwarded-Proto / X-Forwarded-Host, while the direct connection to mux
-    // is plain HTTP.
-    const protoHeader = req.get("x-forwarded-proto");
-    const forwardedProto = protoHeader?.split(",")[0]?.trim();
-    const proto = forwardedProto?.length ? forwardedProto : req.protocol;
-
-    const redirectUri = `${proto}://${host}/auth/mux-gateway/callback`;
+    // Keep callback scheme selection aligned with origin compatibility handling.
+    // Some proxy chains overwrite X-Forwarded-Proto to http on the final hop
+    // even when the browser-visible origin is https.
+    const protocol = getPreferredPublicProtocol(req, allowHttpOrigin);
+    const callbackHost = normalizeHostForProtocol(host, protocol) ?? host;
+    const redirectUri = `${protocol}://${callbackHost}/auth/mux-gateway/callback`;
     const { authorizeUrl, state } = context.muxGatewayOauthService.startServerFlow({ redirectUri });
     res.json({ authorizeUrl, state });
   });
@@ -348,14 +943,10 @@ export async function createOrpcServer({
 
   // --- Mux Governor OAuth (unauthenticated bootstrap routes) ---
   // Similar to Mux Gateway OAuth but accepts user-provided governorUrl.
-  app.get("/auth/mux-governor/start", (req, res) => {
-    if (authToken?.trim()) {
-      const expectedToken = authToken.trim();
-      const presentedToken = extractBearerToken(req.header("authorization"));
-      if (!presentedToken || !safeEq(presentedToken, expectedToken)) {
-        res.status(401).json({ error: "Invalid or missing auth token" });
-        return;
-      }
+  app.get("/auth/mux-governor/start", async (req, res) => {
+    if (!(await isHttpRequestAuthenticated(req))) {
+      res.status(401).json({ error: "Invalid or missing auth token/session" });
+      return;
     }
 
     const governorUrl = typeof req.query.governorUrl === "string" ? req.query.governorUrl : null;
@@ -371,11 +962,9 @@ export async function createOrpcServer({
       return;
     }
 
-    const protoHeader = req.get("x-forwarded-proto");
-    const forwardedProto = protoHeader?.split(",")[0]?.trim();
-    const proto = forwardedProto?.length ? forwardedProto : req.protocol;
-
-    const redirectUri = `${proto}://${host}/auth/mux-governor/callback`;
+    const protocol = getPreferredPublicProtocol(req, allowHttpOrigin);
+    const callbackHost = normalizeHostForProtocol(host, protocol) ?? host;
+    const redirectUri = `${protocol}://${callbackHost}/auth/mux-governor/callback`;
     const result = context.muxGovernorOauthService.startServerFlow({
       governorOrigin: governorUrl,
       redirectUri,
@@ -755,7 +1344,7 @@ export async function createOrpcServer({
       return;
     }
 
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     const code =
       error && typeof error === "object" && "code" in error && typeof error.code === "string"
         ? error.code
@@ -771,7 +1360,36 @@ export async function createOrpcServer({
   });
 
   // oRPC WebSocket handler
-  const wsServer = new WebSocketServer({ server: httpServer, path: "/orpc/ws" });
+  const wsServer = new WebSocketServer({ noServer: true });
+
+  httpServer.on("upgrade", (req, socket, head) => {
+    const pathname = getPathnameFromRequestUrl(req.url);
+    if (pathname !== "/orpc/ws") {
+      socket.destroy();
+      return;
+    }
+
+    const expectedOrigins = getExpectedOrigins(req, allowHttpOrigin);
+    if (!isOriginAllowed(req, expectedOrigins)) {
+      log.warn("Blocked cross-origin WebSocket upgrade request", {
+        origin: getFirstHeaderValue(req, "origin"),
+        expectedOrigins,
+        url: req.url,
+      });
+
+      try {
+        socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+      } finally {
+        socket.destroy();
+      }
+
+      return;
+    }
+
+    wsServer.handleUpgrade(req, socket, head, (ws) => {
+      wsServer.emit("connection", ws, req);
+    });
+  });
 
   attachStreamErrorHandler(wsServer, "orpc-ws-server", { logger: log });
 

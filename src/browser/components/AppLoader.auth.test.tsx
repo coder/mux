@@ -1,10 +1,14 @@
+import "../../../tests/ui/dom";
+
 import React from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { GlobalWindow } from "happy-dom";
 import { cleanup, render } from "@testing-library/react";
 import { useTheme } from "../contexts/ThemeContext";
+import { installDom } from "../../../tests/ui/dom";
 
-let apiStatus: "auth_required" | "connecting" = "auth_required";
+let cleanupDom: (() => void) | null = null;
+
+let apiStatus: "auth_required" | "connecting" | "error" = "auth_required";
 let apiError: string | null = "Authentication required";
 
 void mock.module("@/browser/contexts/API", () => ({
@@ -15,6 +19,16 @@ void mock.module("@/browser/contexts/API", () => ({
         api: null,
         status: "auth_required" as const,
         error: apiError,
+        authenticate: () => undefined,
+        retry: () => undefined,
+      };
+    }
+
+    if (apiStatus === "error") {
+      return {
+        api: null,
+        status: "error" as const,
+        error: apiError ?? "Connection error",
         authenticate: () => undefined,
         retry: () => undefined,
       };
@@ -37,6 +51,12 @@ void mock.module("./LoadingScreen", () => ({
   },
 }));
 
+void mock.module("./StartupConnectionError", () => ({
+  StartupConnectionError: (props: { error: string }) => (
+    <div data-testid="StartupConnectionErrorMock">{props.error}</div>
+  ),
+}));
+
 void mock.module("@/browser/components/AuthTokenModal", () => ({
   // Note: Module mocks leak between bun test files.
   // Export all commonly-used symbols to avoid cross-test import errors.
@@ -54,15 +74,13 @@ import { AppLoader } from "./AppLoader";
 
 describe("AppLoader", () => {
   beforeEach(() => {
-    const dom = new GlobalWindow();
-    globalThis.window = dom as unknown as Window & typeof globalThis;
-    globalThis.document = globalThis.window.document;
+    cleanupDom = installDom();
   });
 
   afterEach(() => {
     cleanup();
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    globalThis.document = undefined as unknown as Document;
+    cleanupDom?.();
+    cleanupDom = null;
   });
 
   test("renders AuthTokenModal when API status is auth_required (before workspaces load)", () => {
@@ -73,6 +91,17 @@ describe("AppLoader", () => {
 
     expect(queryByText("Loading workspaces...")).toBeNull();
     expect(getByTestId("AuthTokenModalMock").textContent).toContain("Authentication required");
+  });
+
+  test("renders StartupConnectionError when API status is error (before workspaces load)", () => {
+    apiStatus = "error";
+    apiError = "Connection error";
+
+    const { getByTestId, queryByTestId } = render(<AppLoader />);
+
+    expect(queryByTestId("LoadingScreenMock")).toBeNull();
+    expect(queryByTestId("AuthTokenModalMock")).toBeNull();
+    expect(getByTestId("StartupConnectionErrorMock").textContent).toContain("Connection error");
   });
 
   test("wraps LoadingScreen in ThemeProvider", () => {

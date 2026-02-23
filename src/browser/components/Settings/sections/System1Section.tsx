@@ -27,9 +27,14 @@ import {
   type TaskSettings,
 } from "@/common/types/tasks";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
-import { THINKING_LEVELS, coerceThinkingLevel } from "@/common/types/thinking";
+import {
+  THINKING_LEVELS,
+  coerceThinkingLevel,
+  getThinkingOptionLabel,
+} from "@/common/types/thinking";
 
 import { SearchableModelSelect } from "../components/SearchableModelSelect";
+import { getErrorMessage } from "@/common/utils/errors";
 
 export function System1Section() {
   const { api } = useAPI();
@@ -117,7 +122,7 @@ export function System1Section() {
         setLoaded(true);
       })
       .catch((error: unknown) => {
-        setSaveError(error instanceof Error ? error.message : String(error));
+        setSaveError(getErrorMessage(error));
         setLoadFailed(true);
         setLoaded(true);
       });
@@ -174,7 +179,7 @@ export function System1Section() {
             setSaveError(null);
           })
           .catch((error: unknown) => {
-            setSaveError(error instanceof Error ? error.message : String(error));
+            setSaveError(getErrorMessage(error));
           })
           .finally(() => {
             savingRef.current = false;
@@ -345,7 +350,7 @@ export function System1Section() {
                 <SelectContent>
                   {allowedThinkingLevels.map((level) => (
                     <SelectItem key={level} value={level}>
-                      {level}
+                      {getThinkingOptionLabel(level, effectiveSystem1ModelStringForThinking)}
                     </SelectItem>
                   ))}
                 </SelectContent>

@@ -31,6 +31,7 @@ import { log } from "@/node/services/log";
 import { execBuffered } from "@/node/utils/runtime/helpers";
 import { expandTildeForSSH } from "./tildeExpansion";
 import * as path from "path";
+import { getErrorMessage } from "@/common/utils/errors";
 
 export interface CoderSSHRuntimeConfig extends SSHRuntimeConfig {
   /** Coder-specific configuration */
@@ -333,7 +334,7 @@ export class CoderSSHRuntime extends SSHRuntime {
       emitStatus("ready");
       return { ready: true };
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getErrorMessage(error);
 
       emitStatus("error");
 
@@ -445,7 +446,7 @@ export class CoderSSHRuntime extends SSHRuntime {
       if (!coder.existingWorkspace) {
         await this.coderService.disposeProvisioningSession(workspaceName);
       }
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(
         `Failed to read Coder deployment SSH config. ` +
           `Make sure you're logged in with the Coder CLI. ` +
@@ -525,15 +526,39 @@ export class CoderSSHRuntime extends SSHRuntime {
     force: boolean,
     abortSignal?: AbortSignal
   ): Promise<{ success: true; deletedPath: string } | { success: false; error: string }> {
+    // Deleting a Coder workspace is dangerous; CoderService refuses to delete workspaces
+    // without the mux- prefix to avoid accidentally deleting user-owned Coder workspaces.
+
     // If this workspace is an existing Coder workspace that mux didn't create, just do SSH cleanup.
     if (this.coderConfig.existingWorkspace) {
       return super.deleteWorkspace(projectPath, workspaceName, force, abortSignal);
     }
 
     const coderWorkspaceName = this.coderConfig.workspaceName;
+
     if (!coderWorkspaceName) {
       log.warn("Coder workspace name not set, falling back to SSH-only deletion");
       return super.deleteWorkspace(projectPath, workspaceName, force, abortSignal);
+    }
+
+    // For force deletes ("cancel creation"), skip SSH cleanup and focus on deleting the
+    // underlying Coder workspace. During provisioning, the SSH host may not be reachable yet.
+    if (force) {
+      const deleteResult = await this.coderService.deleteWorkspaceEventually(coderWorkspaceName, {
+        timeoutMs: 60_000,
+        signal: abortSignal,
+        // Avoid races where coder create finishes server-side after we abort the local CLI.
+        waitForExistence: true,
+        // If the workspace never appears on the server within 10s, assume it was never created
+        // and return early instead of waiting the full 60s timeout.
+        waitForExistenceTimeoutMs: 10_000,
+      });
+
+      if (!deleteResult.success) {
+        return { success: false, error: `Failed to delete Coder workspace: ${deleteResult.error}` };
+      }
+
+      return { success: true, deletedPath: this.getWorkspacePath(projectPath, workspaceName) };
     }
 
     // Check if Coder workspace still exists before attempting SSH operations.
@@ -565,13 +590,28 @@ export class CoderSSHRuntime extends SSHRuntime {
           log.debug("Coder workspace is stopped; deleting without SSH cleanup", {
             coderWorkspaceName,
           });
-          await this.coderService.deleteWorkspace(coderWorkspaceName);
+          const deleteResult = await this.coderService.deleteWorkspaceEventually(
+            coderWorkspaceName,
+            {
+              timeoutMs: 60_000,
+              signal: abortSignal,
+              waitForExistence: false,
+            }
+          );
+
+          if (!deleteResult.success) {
+            return {
+              success: false,
+              error: `Failed to delete Coder workspace: ${deleteResult.error}`,
+            };
+          }
+
           return {
             success: true,
             deletedPath: this.getWorkspacePath(projectPath, workspaceName),
           };
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message = getErrorMessage(error);
           log.error("Failed to delete stopped Coder workspace", {
             coderWorkspaceName,
             error: message,
@@ -601,9 +641,17 @@ export class CoderSSHRuntime extends SSHRuntime {
 
     try {
       log.debug(`Deleting Coder workspace "${coderWorkspaceName}"`);
-      await this.coderService.deleteWorkspace(coderWorkspaceName);
+      const deleteResult = await this.coderService.deleteWorkspaceEventually(coderWorkspaceName, {
+        timeoutMs: 60_000,
+        signal: abortSignal,
+        waitForExistence: false,
+      });
+
+      if (!deleteResult.success) {
+        throw new Error(deleteResult.error);
+      }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       log.error("Failed to delete Coder workspace", {
         coderWorkspaceName,
         error: message,
@@ -700,7 +748,7 @@ export class CoderSSHRuntime extends SSHRuntime {
           initLogger.logStdout(line);
         }
       } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
+        const errorMsg = getErrorMessage(error);
         log.error("Failed to create Coder workspace", { error, config: this.coderConfig });
         initLogger.logStderr(`Failed to create Coder workspace: ${errorMsg}`);
         throw new Error(`Failed to create Coder workspace: ${errorMsg}`);
@@ -746,7 +794,7 @@ export class CoderSSHRuntime extends SSHRuntime {
           initLogger.logStdout(line);
         }
       } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
+        const errorMsg = getErrorMessage(error);
         log.error("Failed waiting for Coder workspace", { error, config: this.coderConfig });
         initLogger.logStderr(`Failed connecting to Coder workspace: ${errorMsg}`);
         throw new Error(`Failed connecting to Coder workspace: ${errorMsg}`);
@@ -758,7 +806,7 @@ export class CoderSSHRuntime extends SSHRuntime {
     try {
       await this.coderService.ensureSSHConfig();
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getErrorMessage(error);
       log.error("Failed to configure SSH for Coder", { error });
       initLogger.logStderr(`Failed to configure SSH: ${errorMsg}`);
       throw new Error(`Failed to configure SSH for Coder: ${errorMsg}`);

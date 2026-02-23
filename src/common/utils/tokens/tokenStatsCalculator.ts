@@ -7,6 +7,8 @@
  */
 
 import type { MuxMessage } from "@/common/types/message";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
+import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
 import type { ChatStats, TokenConsumer } from "@/common/types/chatStats";
 import {
   getTokenizerForModel,
@@ -14,6 +16,7 @@ import {
   getToolDefinitionTokens,
   type Tokenizer,
 } from "@/node/utils/main/tokenizer";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { createDisplayUsage } from "./displayUsage";
 import type { ChatUsageDisplay } from "./usageAggregator";
 
@@ -119,22 +122,13 @@ async function countToolOutputTokens(
   return countTokensForData(outputData, tokenizer);
 }
 
-/** Tools that operate on files - all use file_path property */
+/** Tools that operate on files - canonical input uses `path` (with legacy `file_path` fallback). */
 const FILE_PATH_TOOLS = new Set([
   "file_read",
   "file_edit_insert",
   "file_edit_replace_string",
   "file_edit_replace_lines",
 ]);
-
-function hasFilePath(input: unknown): input is { file_path: string } {
-  return (
-    typeof input === "object" &&
-    input !== null &&
-    "file_path" in input &&
-    typeof (input as { file_path: unknown }).file_path === "string"
-  );
-}
 
 /**
  * Extracts file path from tool input for file operations.
@@ -143,7 +137,8 @@ function extractFilePathFromToolInput(toolName: string, input: unknown): string 
   if (!FILE_PATH_TOOLS.has(toolName)) {
     return undefined;
   }
-  return hasFilePath(input) ? input.file_path : undefined;
+
+  return extractToolFilePath(input);
 }
 
 /**
@@ -257,11 +252,12 @@ export function collectUniqueToolNames(messages: MuxMessage[]): Set<string> {
  */
 export async function fetchAllToolDefinitions(
   toolNames: Set<string>,
-  model: string
+  model: string,
+  metadataModelOverride?: string
 ): Promise<Map<string, number>> {
   const entries = await Promise.all(
     Array.from(toolNames).map(async (toolName) => {
-      const tokens = await getToolDefinitionTokens(toolName, model);
+      const tokens = await getToolDefinitionTokens(toolName, model, metadataModelOverride);
       return [toolName, tokens] as const;
     })
   );
@@ -280,7 +276,11 @@ interface SyncMetadata {
 /**
  * Extracts synchronous metadata from messages (no token counting needed)
  */
-export function extractSyncMetadata(messages: MuxMessage[], model: string): SyncMetadata {
+export function extractSyncMetadata(
+  messages: MuxMessage[],
+  model: string,
+  providersConfig: ProvidersConfigMap | null = null
+): SyncMetadata {
   let systemMessageTokens = 0;
   const usageHistory: ChatUsageDisplay[] = [];
 
@@ -293,10 +293,13 @@ export function extractSyncMetadata(messages: MuxMessage[], model: string): Sync
 
       // Store usage history for comparison with estimates
       if (message.metadata?.usage) {
+        const runtimeModel = message.metadata.model ?? model; // Use actual model from request
+        const metadataModel = resolveModelForMetadata(runtimeModel, providersConfig);
         const usage = createDisplayUsage(
           message.metadata.usage,
-          message.metadata.model ?? model, // Use actual model from request, not UI model
-          message.metadata.providerMetadata
+          runtimeModel,
+          message.metadata.providerMetadata,
+          metadataModel
         );
         if (usage) {
           usageHistory.push(usage);
@@ -394,7 +397,8 @@ export function mergeResults(
  */
 export async function calculateTokenStats(
   messages: MuxMessage[],
-  model: string
+  model: string,
+  providersConfig: ProvidersConfigMap | null = null
 ): Promise<ChatStats> {
   if (messages.length === 0) {
     return {
@@ -408,14 +412,26 @@ export async function calculateTokenStats(
 
   performance.mark("calculateTokenStatsStart");
 
-  const tokenizer = await getTokenizerForModel(model);
+  const metadataModel = resolveModelForMetadata(model, providersConfig);
+  const tokenizer = await getTokenizerForModel(
+    model,
+    metadataModel !== model ? metadataModel : undefined
+  );
 
   // Phase 1: Fetch all tool definitions in parallel (first await point)
   const toolNames = collectUniqueToolNames(messages);
-  const toolDefinitions = await fetchAllToolDefinitions(toolNames, model);
+  const toolDefinitions = await fetchAllToolDefinitions(
+    toolNames,
+    model,
+    metadataModel !== model ? metadataModel : undefined
+  );
 
   // Phase 2: Extract sync metadata (no awaits)
-  const { systemMessageTokens, usageHistory } = extractSyncMetadata(messages, model);
+  const { systemMessageTokens, usageHistory } = extractSyncMetadata(
+    messages,
+    model,
+    providersConfig
+  );
 
   // Phase 3: Create all token counting jobs (promises start immediately)
   const jobs = createTokenCountingJobs(messages, tokenizer);

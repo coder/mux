@@ -23,7 +23,6 @@ import { InitStateManager } from "@/node/services/initStateManager";
 import { AIService } from "@/node/services/aiService";
 import { ProviderService } from "@/node/services/providerService";
 import { HistoryService } from "@/node/services/historyService";
-import { PartialService } from "@/node/services/partialService";
 
 const { positionals, values } = parseArgs({
   args: process.argv.slice(2),
@@ -126,16 +125,9 @@ async function main() {
   // Initialize services - AIService creates its own StreamManager
   const config = defaultConfig;
   const historyService = new HistoryService(config);
-  const partialService = new PartialService(config, historyService);
   const initStateManager = new InitStateManager(config);
   const providerService = new ProviderService(config);
-  const aiService = new AIService(
-    config,
-    historyService,
-    partialService,
-    initStateManager,
-    providerService
-  );
+  const aiService = new AIService(config, historyService, initStateManager, providerService);
 
   const modelString = values.model ?? "openai:gpt-5-codex";
   const thinkingLevel = enforceThinkingPolicy(
@@ -145,7 +137,12 @@ async function main() {
 
   try {
     // Stream the message - pass all messages including the new one
-    const result = await aiService.streamMessage(messages, workspaceId, modelString, thinkingLevel);
+    const result = await aiService.streamMessage({
+      messages,
+      workspaceId,
+      modelString,
+      thinkingLevel,
+    });
 
     if (!result.success) {
       console.error(`\n❌ Error:`, JSON.stringify(result.error, null, 2));

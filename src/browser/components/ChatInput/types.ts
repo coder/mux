@@ -1,6 +1,5 @@
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { TelemetryRuntimeType } from "@/common/telemetry/payload";
-import type { AutoCompactionCheckResult } from "@/browser/utils/compaction/autoCompactionCheck";
 import type { Review } from "@/common/types/review";
 import type { EditingMessageState, PendingUserMessage } from "@/browser/utils/chatEditing";
 
@@ -37,9 +36,6 @@ export interface ChatInputWorkspaceVariant {
   /** Optional explanation displayed when input is disabled */
   disabledReason?: string;
   onReady?: (api: ChatInputAPI) => void;
-  autoCompactionCheck?: AutoCompactionCheckResult; // Computed in parent (AIView) to avoid duplicate calculation
-  /** True if there's already a compaction request queued (prevents double-compaction) */
-  hasQueuedCompaction?: boolean;
   /** Reviews currently attached to chat (from useReviews hook) */
   attachedReviews?: Review[];
   /** Detach a review from chat input (sets status to pending) */

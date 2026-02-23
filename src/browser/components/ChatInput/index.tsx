@@ -44,6 +44,7 @@ import {
   getInputAttachmentsKey,
   AGENT_AI_DEFAULTS_KEY,
   VIM_ENABLED_KEY,
+  RUNTIME_ENABLEMENT_KEY,
   getProjectScopeId,
   getPendingScopeId,
   getDraftScopeId,
@@ -51,13 +52,11 @@ import {
   getWorkspaceLastReadKey,
 } from "@/common/constants/storage";
 import {
-  executeCompaction,
   prepareCompactionMessage,
   processSlashCommand,
   type SlashCommandContext,
 } from "@/browser/utils/chatCommands";
 import { Button } from "../ui/button";
-import { shouldTriggerAutoCompaction } from "@/browser/utils/compaction/shouldTriggerAutoCompaction";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { findAtMentionAtCursor } from "@/common/utils/atMentions";
 import {
@@ -69,6 +68,7 @@ import { AgentModePicker } from "../AgentModePicker";
 import { ContextUsageIndicatorButton } from "../ContextUsageIndicatorButton";
 import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
 import { useIdleCompactionHours } from "@/browser/hooks/useIdleCompactionHours";
 import { calculateTokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
@@ -95,13 +95,18 @@ import type { PendingUserMessage } from "@/browser/utils/chatEditing";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import { DEFAULT_RUNTIME_ENABLEMENT, normalizeRuntimeEnablement } from "@/common/types/runtime";
+import { resolveThinkingInput } from "@/common/utils/thinking/policy";
 import {
-  type MuxFrontendMetadata,
+  type MuxMessageMetadata,
   type ReviewNoteDataForDisplay,
   prepareUserMessageForSend,
 } from "@/common/types/message";
 import type { Review } from "@/common/types/review";
-import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
+import {
+  getModelCapabilities,
+  getModelCapabilitiesResolved,
+} from "@/common/utils/ai/modelCapabilities";
 import { KNOWN_MODELS, MODEL_ABBREVIATION_EXAMPLES } from "@/common/constants/knownModels";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 import { trackCommandUsed } from "@/common/telemetry";
@@ -111,6 +116,7 @@ import { CreationCenterContent } from "./CreationCenterContent";
 import { cn } from "@/common/lib/utils";
 import type { ChatInputProps, ChatInputAPI } from "./types";
 import { CreationControls } from "./CreationControls";
+import { CodexOauthWarningBanner } from "./CodexOauthWarningBanner";
 import { useCreationWorkspace } from "./useCreationWorkspace";
 import { useCoderWorkspace } from "@/browser/hooks/useCoderWorkspace";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
@@ -130,6 +136,7 @@ import {
   filePartsToChatAttachments,
   type SkillResolutionTarget,
 } from "./utils";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 // localStorage quotas are environment-dependent and relatively small.
 // Be conservative here so we can warn the user before writes start failing.
@@ -178,9 +185,25 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const editingMessage = variant === "workspace" ? props.editingMessage : undefined;
   const isStreamStarting = variant === "workspace" ? (props.isStreamStarting ?? false) : false;
   const isCompacting = variant === "workspace" ? (props.isCompacting ?? false) : false;
-  const canInterrupt = variant === "workspace" ? (props.canInterrupt ?? false) : false;
-  const hasQueuedCompaction =
-    variant === "workspace" ? (props.hasQueuedCompaction ?? false) : false;
+  const [isMobileTouch, setIsMobileTouch] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches
+  );
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const mobileTouchMediaQuery = window.matchMedia("(max-width: 768px) and (pointer: coarse)");
+    const handleMobileTouchChange = () => {
+      setIsMobileTouch(mobileTouchMediaQuery.matches);
+    };
+
+    handleMobileTouchChange();
+    mobileTouchMediaQuery.addEventListener("change", handleMobileTouchChange);
+    return () => {
+      mobileTouchMediaQuery.removeEventListener("change", handleMobileTouchChange);
+    };
+  }, []);
   // runtimeType for telemetry - defaults to "worktree" if not provided
   const runtimeType = variant === "workspace" ? (props.runtimeType ?? "worktree") : "worktree";
 
@@ -206,6 +229,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       modelKey: getModelKey(props.workspaceId),
     };
   })();
+
+  // User request: keep creation runtime controls synced with Settings enablement toggles.
+  const [rawRuntimeEnablement] = usePersistedState(
+    RUNTIME_ENABLEMENT_KEY,
+    DEFAULT_RUNTIME_ENABLEMENT,
+    { listener: true }
+  );
+  const runtimeEnablement = normalizeRuntimeEnablement(rawRuntimeEnablement);
 
   const [input, setInput] = usePersistedState(storageKeys.inputKey, "", { listener: true });
 
@@ -349,7 +380,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   }, [input.length]);
 
   const handleInputChange = useCallback(
-    (next: string) => {
+    (next: string, caretFromEvent?: number) => {
       if (powerMode.enabled) {
         const prev = latestInputValueRef.current;
         const delta = next.length - prev.length;
@@ -363,7 +394,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           const kind = delta < 0 ? "delete" : "insert";
           // Capture the caret index now (before rAF) so bursts queued within the same frame
           // don't all measure the latest caret position and appear "ahead" during fast typing.
-          const caretIndex = inputRef.current?.selectionStart ?? next.length;
+          const caretIndex = caretFromEvent ?? inputRef.current?.selectionStart ?? next.length;
 
           requestAnimationFrame(() => {
             const el = inputRef.current;
@@ -371,7 +402,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               return;
             }
 
-            powerMode.burstFromTextarea(el, intensity, kind, caretIndex);
+            const emit = () => powerMode.burstFromTextarea(el, intensity, kind, caretIndex);
+
+            // When the textarea is scrollable, scrollTop may settle one frame after
+            // the layout shift, so defer measurement to a second rAF.
+            if (el.scrollHeight > el.clientHeight) {
+              requestAnimationFrame(emit);
+              return;
+            }
+
+            emit();
           });
         }
       }
@@ -407,8 +447,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   // Use current agent's uiColor, or neutral border until agents load
   const focusBorderColor = currentAgent?.uiColor ?? "var(--color-border-light)";
-  const { models, hiddenModels, ensureModelInSettings, defaultModel, setDefaultModel } =
-    useModelsFromSettings();
+  const {
+    models,
+    hiddenModelsForSelector,
+    ensureModelInSettings,
+    defaultModel,
+    setDefaultModel,
+    codexOauthSet,
+  } = useModelsFromSettings();
 
   const [agentAiDefaults] = usePersistedState<AgentAiDefaults>(
     AGENT_AI_DEFAULTS_KEY,
@@ -425,8 +471,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   });
   const { startSequence: startTutorial } = useTutorial();
 
-  // Track if OpenAI API key is configured for voice input
+  // Track transcription provider prerequisites from Settings → Providers.
   const [openAIKeySet, setOpenAIKeySet] = useState(false);
+  const [openAIProviderEnabled, setOpenAIProviderEnabled] = useState(true);
+  const [muxGatewayCouponSet, setMuxGatewayCouponSet] = useState(false);
+  const [muxGatewayEnabled, setMuxGatewayEnabled] = useState(true);
+  const isTranscriptionAvailable =
+    (openAIProviderEnabled && openAIKeySet) || (muxGatewayEnabled && muxGatewayCouponSet);
 
   // Voice input - appends transcribed text to input
   const voiceInput = useVoiceInput({
@@ -440,10 +491,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       pushToast({ type: "error", message: error });
     },
     onSend: () => void handleSend(),
-    openAIKeySet,
+    isTranscriptionAvailable,
     useRecordingKeybinds: true,
     api,
   });
+
+  const voiceInputUnavailableMessage =
+    "Voice input requires a Mux Gateway login or an OpenAI API key. Configure in Settings → Providers.";
 
   // Start creation tutorial when entering creation mode
   useEffect(() => {
@@ -471,16 +525,20 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const workspaceIdForUsage = variant === "workspace" ? props.workspaceId : "";
   const usage = useWorkspaceUsage(workspaceIdForUsage);
   const { has1MContext } = useProviderOptions();
+  const { config: providersConfig } = useProvidersConfig();
   const lastUsage = usage?.liveUsage ?? usage?.lastContextUsage;
-  const usageModel = lastUsage?.model ?? null;
-  const use1M = has1MContext(usageModel ?? "");
+  // Token counts come from usage metadata, but context limits/1M eligibility should
+  // follow the currently selected model unless a stream is actively running.
+  const activeUsageModel = usage?.liveUsage?.model ?? null;
+  const contextDisplayModel = activeUsageModel ?? baseModel;
+  const use1M = has1MContext(contextDisplayModel);
   const contextUsageData = useMemo(() => {
     return lastUsage
-      ? calculateTokenMeterData(lastUsage, usageModel ?? "unknown", use1M, false)
+      ? calculateTokenMeterData(lastUsage, contextDisplayModel, use1M, false, providersConfig)
       : { segments: [], totalTokens: 0, totalPercentage: 0 };
-  }, [lastUsage, usageModel, use1M]);
+  }, [lastUsage, contextDisplayModel, use1M, providersConfig]);
   const { threshold: autoCompactThreshold, setThreshold: setAutoCompactThreshold } =
-    useAutoCompactionSettings(workspaceIdForUsage, usageModel);
+    useAutoCompactionSettings(workspaceIdForUsage, contextDisplayModel);
   const autoCompactionProps = useMemo(
     () => ({ threshold: autoCompactThreshold, setThreshold: setAutoCompactThreshold }),
     [autoCompactThreshold, setAutoCompactThreshold]
@@ -602,6 +660,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { projects } = useProjectContext();
   const pendingSectionId = variant === "creation" ? (props.pendingSectionId ?? null) : null;
   const creationProject = variant === "creation" ? projects.get(props.projectPath) : undefined;
+  const hasCreationRuntimeOverrides =
+    creationProject?.runtimeOverridesEnabled === true ||
+    Boolean(creationProject?.runtimeEnablement) ||
+    creationProject?.defaultRuntime !== undefined;
+  // Keep workspace creation in sync with Settings → Runtimes project overrides.
+  const creationRuntimeEnablement =
+    variant === "creation" && hasCreationRuntimeOverrides
+      ? normalizeRuntimeEnablement(creationProject?.runtimeEnablement)
+      : runtimeEnablement;
   const creationSections = creationProject?.sections ?? [];
 
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(() => pendingSectionId);
@@ -744,6 +811,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           projectName: props.projectName,
           nameState: creationState.nameState,
           runtimeAvailabilityState: creationState.runtimeAvailabilityState,
+          runtimeEnablement: creationRuntimeEnablement,
           sections: creationSections,
           selectedSectionId,
           onSectionChange: handleCreationSectionChange,
@@ -1039,18 +1107,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return;
     }
 
-    // Prefer slash command suggestions when the input is a command.
-    if (input.trimStart().startsWith("/")) {
-      // Invalidate any in-flight completion request.
-      atMentionRequestIdRef.current++;
-      lastAtMentionScopeIdRef.current = null;
-      lastAtMentionQueryRef.current = null;
-      setAtMentionSuggestions([]);
-      setShowAtMentionSuggestions(false);
-      return;
-    }
-
-    const cursor = inputRef.current?.selectionStart ?? input.length;
+    const cursor = Math.min(inputRef.current?.selectionStart ?? input.length, input.length);
     const match = findAtMentionAtCursor(input, cursor);
 
     if (!match) {
@@ -1213,7 +1270,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     };
   }, [api, variant, workspaceId, atMentionProjectPath, sendMessageOptions.disableWorkspaceAgents]);
 
-  // Voice input: track whether OpenAI API key is configured (subscribe to provider config changes)
+  // Voice input: track transcription provider availability (subscribe to provider config changes)
   useEffect(() => {
     if (!api) return;
 
@@ -1224,11 +1281,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     // Ensure we `return()` them so backend subscriptions clean up EventEmitter listeners.
     let iterator: AsyncIterator<unknown> | null = null;
 
-    const checkOpenAIKey = async () => {
+    const checkTranscriptionConfig = async () => {
       try {
         const config = await api.providers.getConfig();
         if (!signal.aborted) {
           setOpenAIKeySet(config?.openai?.apiKeySet ?? false);
+          setOpenAIProviderEnabled(config?.openai?.isEnabled ?? true);
+          setMuxGatewayCouponSet(config?.["mux-gateway"]?.couponCodeSet ?? false);
+          setMuxGatewayEnabled(config?.["mux-gateway"]?.isEnabled ?? true);
         }
       } catch {
         // Ignore errors fetching config
@@ -1236,7 +1296,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     };
 
     // Initial fetch
-    void checkOpenAIKey();
+    void checkTranscriptionConfig();
 
     // Subscribe to provider config changes via oRPC
     (async () => {
@@ -1252,7 +1312,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
         for await (const _ of subscribedIterator) {
           if (signal.aborted) break;
-          void checkOpenAIKey();
+          void checkTranscriptionConfig();
         }
       } catch {
         // Subscription cancelled via abort signal - expected on cleanup
@@ -1355,15 +1415,38 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       window.removeEventListener(CUSTOM_EVENTS.THINKING_LEVEL_TOAST, handler as EventListener);
   }, [variant, props, pushToast]);
 
+  // Show toast feedback for analytics rebuild command palette action.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{ type: "success" | "error"; message: string; title?: string }>
+      ).detail;
+
+      if (!detail || (detail.type !== "success" && detail.type !== "error")) {
+        return;
+      }
+
+      pushToast({
+        type: detail.type,
+        title: detail.title,
+        message: detail.message,
+      });
+    };
+
+    window.addEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handler as EventListener);
+    return () =>
+      window.removeEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handler as EventListener);
+  }, [pushToast]);
+
   // Voice input: command palette toggle + global recording keybinds
   useEffect(() => {
     if (!voiceInput.shouldShowUI) return;
 
     const handleToggle = () => {
-      if (!voiceInput.isApiKeySet) {
+      if (!voiceInput.isAvailable) {
         pushToast({
           type: "error",
-          message: "Voice input requires OpenAI API key. Configure in Settings → Providers.",
+          message: voiceInputUnavailableMessage,
         });
         return;
       }
@@ -1374,7 +1457,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     return () => {
       window.removeEventListener(CUSTOM_EVENTS.TOGGLE_VOICE_INPUT, handleToggle as EventListener);
     };
-  }, [voiceInput, pushToast]);
+  }, [voiceInput, pushToast, voiceInputUnavailableMessage]);
 
   // Auto-focus chat input when workspace changes (workspace only).
   const workspaceIdForFocus = variant === "workspace" ? props.workspaceId : null;
@@ -1632,7 +1715,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   const handleAtMentionSelect = useCallback(
     (suggestion: SlashSuggestion) => {
-      const cursor = inputRef.current?.selectionStart ?? input.length;
+      const cursor = Math.min(inputRef.current?.selectionStart ?? input.length, input.length);
       const match = findAtMentionAtCursor(input, cursor);
       if (!match) {
         return;
@@ -1789,7 +1872,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         (attachment) => getBaseMediaType(attachment.mediaType) === PDF_MEDIA_TYPE
       );
       if (pdfAttachments.length > 0) {
-        const caps = getModelCapabilities(policyModel);
+        const caps = getModelCapabilitiesResolved(policyModel, providersConfig);
         if (caps && !caps.supportsPdfInput) {
           const pdfCapableKnownModels = Object.values(KNOWN_MODELS)
             .map((m) => m.id)
@@ -1832,89 +1915,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const preSendDraft = getDraft();
       const preSendReviews = draftReviews;
 
-      // Auto-compaction check (workspace variant only)
-      // Check if we should auto-compact before sending this message
-      // Result is computed in parent (AIView) and passed down to avoid duplicate calculation
-      if (
-        variant === "workspace" &&
-        shouldTriggerAutoCompaction(
-          props.autoCompactionCheck,
-          isCompacting || isStreamStarting,
-          !!editingMessage,
-          hasQueuedCompaction
-        )
-      ) {
-        // Prepare file parts for the continue message
-        const fileParts = chatAttachmentsToFileParts(attachments);
-
-        // Prepare reviews data for the continue message
-        const reviewsData = reviewData;
-
-        // Capture review IDs for marking as checked on success
-        const sentReviewIds = reviewIdsForCheck;
-
-        // Clear input immediately for responsive UX
-        setInput("");
-        setDraftReviews(null);
-
-        const compactionSendMessageOptions: SendMessageOptions = {
-          ...sendMessageOptions,
-        };
-
-        setAttachments([]);
-        setHideReviewsDuringSend(true);
-
-        try {
-          const result = await executeCompaction({
-            api,
-            workspaceId: props.workspaceId,
-            followUpContent: {
-              text: messageTextForSend,
-              fileParts,
-              reviews: reviewsData,
-              muxMetadata: skillMuxMetadata,
-            },
-            sendMessageOptions: compactionSendMessageOptions,
-          });
-
-          if (!result.success) {
-            // Restore on error
-            setDraft(preSendDraft);
-            setDraftReviews(preSendReviews);
-            pushToast({
-              type: "error",
-              title: "Auto-Compaction Failed",
-              message: result.error ?? "Failed to start auto-compaction",
-            });
-          } else {
-            // Mark reviews as checked on success
-            if (sentReviewIds.length > 0) {
-              props.onCheckReviews?.(sentReviewIds);
-            }
-            pushToast({
-              type: "success",
-              message: "Context threshold reached - auto-compacting...",
-            });
-            props.onMessageSent?.();
-          }
-        } catch (error) {
-          // Restore on unexpected error
-          setDraft(preSendDraft);
-          setDraftReviews(preSendReviews);
-          pushToast({
-            type: "error",
-            title: "Auto-Compaction Failed",
-            message:
-              error instanceof Error ? error.message : "Unexpected error during auto-compaction",
-          });
-        } finally {
-          setSendingCount((c) => c - 1);
-          setHideReviewsDuringSend(false);
-        }
-
-        return; // Skip normal send
-      }
-
       try {
         // Prepare file parts if any
         const fileParts = chatAttachmentsToFileParts(attachments, { validate: true });
@@ -1929,7 +1929,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
         // When editing a /compact command, regenerate the actual summarization request
         let actualMessageText = messageTextForSend;
-        let muxMetadata: MuxFrontendMetadata | undefined = skillMuxMetadata;
+        let muxMetadata: MuxMessageMetadata | undefined = skillMuxMetadata;
         let compactionOptions: Partial<SendMessageOptions> = {};
 
         if (editingMessage && actualMessageText.startsWith("/")) {
@@ -1975,11 +1975,28 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         muxMetadata = reviewMetadata;
 
         const effectiveModel = modelOverride ?? compactionOptions.model ?? sendMessageOptions.model;
+        // For one-shot overrides, store the original input as rawCommand so the
+        // command prefix (e.g., "/opus+high") stays visible in the user message.
+        const oneshotCommandPrefix = modelOneShot
+          ? messageText
+              .trim()
+              .slice(0, messageText.trim().length - modelOneShot.message.length)
+              .trimEnd()
+          : undefined;
         muxMetadata = muxMetadata
-          ? { ...muxMetadata, requestedModel: effectiveModel }
+          ? {
+              ...muxMetadata,
+              requestedModel: effectiveModel,
+              ...(oneshotCommandPrefix
+                ? { rawCommand: messageText.trim(), commandPrefix: oneshotCommandPrefix }
+                : {}),
+            }
           : {
               type: "normal",
               requestedModel: effectiveModel,
+              ...(oneshotCommandPrefix
+                ? { rawCommand: messageText.trim(), commandPrefix: oneshotCommandPrefix }
+                : {}),
             };
 
         // Capture review IDs before clearing (for marking as checked on success)
@@ -1997,11 +2014,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           inputRef.current.style.height = "";
         }
 
-        // One-shot models shouldn't update the persisted session defaults.
+        // One-shot models/thinking shouldn't update the persisted session defaults.
+        // Resolve thinking level: numeric indices are model-relative (0 = model's lowest allowed level)
+        const rawThinkingOverride = modelOneShot?.thinkingLevel;
+        const thinkingOverride =
+          rawThinkingOverride != null
+            ? resolveThinkingInput(rawThinkingOverride, policyModel)
+            : undefined;
         const sendOptions = {
           ...sendMessageOptions,
           ...compactionOptions,
           ...(modelOverride ? { model: modelOverride } : {}),
+          ...(thinkingOverride ? { thinkingLevel: thinkingOverride } : {}),
           ...(modelOneShot ? { skipAiSettingsPersistence: true } : {}),
           additionalSystemInstructions,
           editMessageId: editingMessage?.id,
@@ -2028,7 +2052,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           telemetry.messageSent(
             props.workspaceId,
             effectiveModel,
-            sendMessageOptions.agentId ?? agentId ?? "exec",
+            sendMessageOptions.agentId ?? agentId ?? WORKSPACE_DEFAULTS.agentId,
             finalMessageText.length,
             runtimeType,
             sendMessageOptions.thinkingLevel ?? "off"
@@ -2095,10 +2119,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     // Handle voice input toggle (Ctrl+D / Cmd+D)
     if (matchesKeybind(e, KEYBINDS.TOGGLE_VOICE_INPUT) && voiceInput.shouldShowUI) {
       e.preventDefault();
-      if (!voiceInput.isApiKeySet) {
+      if (!voiceInput.isAvailable) {
         pushToast({
           type: "error",
-          message: "Voice input requires OpenAI API key. Configure in Settings → Providers.",
+          message: voiceInputUnavailableMessage,
         });
         return;
       }
@@ -2112,7 +2136,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       !e.repeat &&
       input.trim() === "" &&
       voiceInput.shouldShowUI &&
-      voiceInput.isApiKeySet &&
+      voiceInput.isAvailable &&
       voiceInput.state === "idle"
     ) {
       e.preventDefault();
@@ -2173,20 +2197,31 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     // Handle send message (Shift+Enter for newline is default behavior)
     if (matchesKeybind(e, KEYBINDS.SEND_MESSAGE)) {
+      // Mobile keyboards should keep Enter for newlines; sending remains button-driven.
+      if (isMobileTouch) {
+        return;
+      }
       e.preventDefault();
       void handleSend();
     }
   };
 
+  const interruptKeybind = vimEnabled
+    ? KEYBINDS.INTERRUPT_STREAM_VIM
+    : KEYBINDS.INTERRUPT_STREAM_NORMAL;
+
   // Build placeholder text based on current state
   const placeholder = (() => {
-    // Creation variant has simple placeholder
+    // Creation view keeps the onboarding prompt; workspace stays concise for the inline hints.
     if (variant === "creation") {
-      return `Type your first message to create a workspace... (${formatKeybind(KEYBINDS.SEND_MESSAGE)} to send, ${formatKeybind(KEYBINDS.CANCEL)} to cancel)`;
+      return "Type your first message to create a workspace...";
     }
 
     // Workspace variant placeholders
     if (editingMessage) {
+      if (isMobileTouch) {
+        return "Edit your message...";
+      }
       const cancelHint = vimEnabled
         ? `${formatKeybind(KEYBINDS.CANCEL_EDIT)}×2 to cancel`
         : `${formatKeybind(KEYBINDS.CANCEL_EDIT)} to cancel`;
@@ -2199,25 +2234,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       }
     }
     if (isCompacting) {
-      const interruptKeybind = vimEnabled
-        ? KEYBINDS.INTERRUPT_STREAM_VIM
-        : KEYBINDS.INTERRUPT_STREAM_NORMAL;
+      if (isMobileTouch) {
+        return "Compacting...";
+      }
       return `Compacting... (${formatKeybind(interruptKeybind)} cancel | ${formatKeybind(KEYBINDS.SEND_MESSAGE)} to queue)`;
     }
 
-    // Build hints for normal input
-    const hints: string[] = [];
-    if (canInterrupt) {
-      const interruptKeybind = vimEnabled
-        ? KEYBINDS.INTERRUPT_STREAM_VIM
-        : KEYBINDS.INTERRUPT_STREAM_NORMAL;
-      hints.push(`${formatKeybind(interruptKeybind)} to interrupt`);
-    }
-    hints.push(`${formatKeybind(KEYBINDS.SEND_MESSAGE)} to ${canInterrupt ? "queue" : "send"}`);
-    hints.push(`Click model to choose, ${formatKeybind(KEYBINDS.CYCLE_MODEL)} to cycle`);
-    hints.push(`/vim to toggle Vim mode (${vimEnabled ? "on" : "off"})`);
-
-    return `Type a message... (${hints.join(", ")})`;
+    // Keep placeholder minimal; shortcut hints are rendered below the input.
+    return "Type a message...";
   })();
 
   const activeToast = toast ?? (variant === "creation" ? creationState.toast : null);
@@ -2282,6 +2306,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           {/* Creation header controls - shown above textarea for creation variant */}
           {creationControlsProps && <CreationControls {...creationControlsProps} />}
 
+          <CodexOauthWarningBanner
+            activeModel={baseModel}
+            codexOauthSet={codexOauthSet}
+            onOpenProviders={() => open("providers", { expandProvider: "openai" })}
+          />
+
           {/* File path suggestions (@src/foo.ts) */}
           <CommandSuggestions
             suggestions={atMentionSuggestions}
@@ -2318,8 +2348,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               />
             ) : (
               <>
+                {/* Give the input more vertical room so the shortcut hints sit above the footer. */}
                 <VimTextArea
                   ref={inputRef}
+                  data-escape-interrupts-stream="true"
                   value={input}
                   isEditing={!!editingMessage}
                   focusBorderColor={focusBorderColor}
@@ -2344,23 +2376,41 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   aria-label={editingMessage ? "Edit your last message" : "Message Claude"}
                   aria-autocomplete="list"
                   aria-controls={
-                    showCommandSuggestions && commandSuggestions.length > 0
-                      ? commandListId
-                      : showAtMentionSuggestions && atMentionSuggestions.length > 0
-                        ? atMentionListId
+                    showAtMentionSuggestions && atMentionSuggestions.length > 0
+                      ? atMentionListId
+                      : showCommandSuggestions && commandSuggestions.length > 0
+                        ? commandListId
                         : undefined
                   }
                   aria-expanded={
                     (showCommandSuggestions && commandSuggestions.length > 0) ||
                     (showAtMentionSuggestions && atMentionSuggestions.length > 0)
                   }
-                  className={variant === "creation" ? "min-h-24" : undefined}
+                  className={variant === "creation" ? "min-h-28" : "min-h-16"}
                 />
+                {/* Keep shortcuts visible in both creation + workspace without bloating the footer or crowding it. */}
+                {input.trim() === "" && !editingMessage && (
+                  <div className="mobile-hide-shortcut-hints text-muted pointer-events-none absolute right-12 bottom-3 left-2 flex items-center gap-4 text-[11px]">
+                    <span>
+                      <span className="font-mono">{formatKeybind(KEYBINDS.FOCUS_CHAT)}</span>
+                      <span> - focus chat</span>
+                    </span>
+                    <span>
+                      <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_MODEL)}</span>
+                      <span> - change model</span>
+                    </span>
+                    <span>
+                      <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_AGENT)}</span>
+                      <span> - change agent</span>
+                    </span>
+                  </div>
+                )}
+
                 {/* Floating voice input button inside textarea */}
                 <div className="absolute right-2 bottom-2">
                   <VoiceInputButton
                     state={voiceInput.state}
-                    isApiKeySet={voiceInput.isApiKeySet}
+                    isAvailable={voiceInput.isAvailable}
                     shouldShowUI={voiceInput.shouldShowUI}
                     requiresSecureContext={voiceInput.requiresSecureContext}
                     onToggle={voiceInput.toggle}
@@ -2379,8 +2429,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             {/* Editing indicator - workspace only */}
             {variant === "workspace" && editingMessage && (
               <div className="text-edit-mode text-[11px] font-medium">
-                Editing message ({formatKeybind(KEYBINDS.CANCEL_EDIT)}
-                {vimEnabled ? "×2" : ""} to cancel)
+                Editing message{" "}
+                <span className="mobile-hide-shortcut-hints">
+                  ({formatKeybind(KEYBINDS.CANCEL_EDIT)}
+                  {vimEnabled ? "×2" : ""} to cancel)
+                </span>
               </div>
             )}
 
@@ -2399,7 +2452,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     onComplete={() => inputRef.current?.focus()}
                     defaultModel={defaultModel}
                     onSetDefaultModel={setDefaultModel}
-                    hiddenModels={hiddenModels}
+                    hiddenModels={hiddenModelsForSelector}
                     onOpenSettings={() => open("models")}
                     className="w-[clamp(5.5rem,28vw,8rem)] min-w-0"
                   />
@@ -2451,7 +2504,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     data={contextUsageData}
                     autoCompaction={autoCompactionProps}
                     idleCompaction={idleCompactionProps}
-                    model={usageModel ?? undefined}
+                    model={contextDisplayModel}
                   />
                 )}
 
@@ -2484,7 +2537,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent align="center">
-                    Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})
+                    Send message{" "}
+                    <span className="mobile-hide-shortcut-hints">
+                      ({formatKeybind(KEYBINDS.SEND_MESSAGE)})
+                    </span>
                   </TooltipContent>
                 </Tooltip>
               </div>

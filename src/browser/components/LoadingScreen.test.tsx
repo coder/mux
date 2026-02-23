@@ -1,19 +1,22 @@
+import "../../../tests/ui/dom";
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { GlobalWindow } from "happy-dom";
 import { cleanup, render } from "@testing-library/react";
+import { installDom } from "../../../tests/ui/dom";
 
 import { LoadingScreen } from "./LoadingScreen";
 
+let cleanupDom: (() => void) | null = null;
+
 describe("LoadingScreen", () => {
   beforeEach(() => {
-    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
-    globalThis.document = globalThis.window.document;
+    cleanupDom = installDom();
   });
 
   afterEach(() => {
     cleanup();
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    globalThis.document = undefined as unknown as Document;
+    cleanupDom?.();
+    cleanupDom = null;
   });
 
   test("renders the boot loader markup", () => {
@@ -22,5 +25,11 @@ describe("LoadingScreen", () => {
     expect(getByRole("status")).toBeTruthy();
     expect(getByText("Loading workspaces...")).toBeTruthy();
     expect(container.querySelector(".boot-loader__spinner")).toBeTruthy();
+  });
+
+  test("renders custom statusText", () => {
+    const { getByText } = render(<LoadingScreen statusText="Reconnecting..." />);
+
+    expect(getByText("Reconnecting...")).toBeTruthy();
   });
 });

@@ -14,10 +14,11 @@ import { z } from "zod";
 import * as path from "path";
 import * as fs from "fs/promises";
 import * as fsSync from "fs";
-import { Config } from "@/node/config";
-import { DisposableTempDir } from "@/node/services/tempDir";
-import { AgentSession, type AgentSessionChatEvent } from "@/node/services/agentSession";
-import { createCoreServices } from "@/node/services/coreServices";
+import { Config } from "../node/config";
+import { DisposableTempDir } from "../node/services/tempDir";
+import { AgentSession, type AgentSessionChatEvent } from "../node/services/agentSession";
+import { CodexOauthService } from "../node/services/codexOauthService";
+import { createCoreServices } from "../node/services/coreServices";
 import {
   isCaughtUpMessage,
   isReasoningDelta,
@@ -33,14 +34,14 @@ import {
   isUsageDelta,
   type SendMessageOptions,
   type WorkspaceChatMessage,
-} from "@/common/orpc/types";
-import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
+} from "../common/orpc/types";
+import { createDisplayUsage } from "../common/utils/tokens/displayUsage";
 import {
   getTotalCost,
   formatCostWithDollar,
   sumUsageHistory,
   type ChatUsageDisplay,
-} from "@/common/utils/tokens/usageAggregator";
+} from "../common/utils/tokens/usageAggregator";
 import {
   formatToolStart,
   formatToolEnd,
@@ -48,27 +49,32 @@ import {
   formatGenericToolEnd,
   isMultilineResultTool,
 } from "./toolFormatters";
-import { defaultModel, resolveModelAlias } from "@/common/utils/ai/models";
-import { buildProvidersFromEnv, hasAnyConfiguredProvider } from "@/node/utils/providerRequirements";
+import { defaultModel, resolveModelAlias } from "../common/utils/ai/models";
+import {
+  buildProvidersFromEnv,
+  hasAnyConfiguredProvider,
+} from "../node/utils/providerRequirements";
 
 import {
   DEFAULT_THINKING_LEVEL,
   THINKING_DISPLAY_LABELS,
-  parseThinkingDisplayLabel,
-  type ThinkingLevel,
-} from "@/common/types/thinking";
-import type { RuntimeConfig } from "@/common/types/runtime";
-import { parseRuntimeModeAndHost, RUNTIME_MODE } from "@/common/types/runtime";
-import assert from "@/common/utils/assert";
+  parseThinkingInput,
+  type ParsedThinkingInput,
+} from "../common/types/thinking";
+import { resolveThinkingInput } from "../common/utils/thinking/policy";
+import type { RuntimeConfig } from "../common/types/runtime";
+import { parseRuntimeModeAndHost, RUNTIME_MODE } from "../common/types/runtime";
+import assert from "../common/utils/assert";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
-import { log, type LogLevel } from "@/node/services/log";
+import { log, type LogLevel } from "../node/services/log";
 import chalk from "chalk";
-import type { InitLogger, WorkspaceInitResult } from "@/node/runtime/Runtime";
-import { DockerRuntime } from "@/node/runtime/DockerRuntime";
-import { runFullInit } from "@/node/runtime/runtimeFactory";
+import type { InitLogger, WorkspaceInitResult } from "../node/runtime/Runtime";
+import { DockerRuntime } from "../node/runtime/DockerRuntime";
+import { runFullInit } from "../node/runtime/runtimeFactory";
 import { execSync } from "child_process";
 import { getParseOptions } from "./argv";
-import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { EXPERIMENT_IDS } from "../common/constants/experiments";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // Display labels for CLI help (OFF, LOW, MED, HIGH, MAX)
 const THINKING_LABELS_LIST = Object.values(THINKING_DISPLAY_LABELS).join(", ");
@@ -102,16 +108,15 @@ function parseRuntimeConfig(value: string | undefined, srcBaseDir: string): Runt
   }
 }
 
-function parseThinkingLevel(value: string | undefined): ThinkingLevel | undefined {
+function parseThinkingLevel(value: string | undefined): ParsedThinkingInput {
   if (!value) return DEFAULT_THINKING_LEVEL; // Default for mux run
 
-  const level = parseThinkingDisplayLabel(value);
-  if (level) {
+  // Accepts named levels (off, low, med, high, max, xhigh) and numeric (0–N)
+  const level = parseThinkingInput(value);
+  if (level != null) {
     return level;
   }
-  throw new Error(
-    `Invalid thinking level "${value}". Expected: ${THINKING_LABELS_LIST} (or legacy: medium, max)`
-  );
+  throw new Error(`Invalid thinking level "${value}". Expected: ${THINKING_LABELS_LIST}, or 0–N`);
 }
 
 function parseMode(value: string | undefined): CLIMode {
@@ -254,6 +259,11 @@ program
   .option("-e, --experiment <id>", "enable experiment (can be repeated)", collectExperiments, [])
   .option("-b, --budget <usd>", "stop when session cost exceeds budget (USD)", parseFloat)
   .option("--service-tier <tier>", "OpenAI service tier: auto, default, flex, priority", "auto")
+  .option("--use-1m", "enable 1M context window for supported Anthropic models")
+  .option(
+    "--keep-background-processes",
+    "do not terminate background processes on exit (for CI/bench)"
+  )
   .addHelpText(
     "after",
     `
@@ -288,9 +298,13 @@ interface CLIOptions {
   experiment: string[];
   budget?: number;
   serviceTier: "auto" | "default" | "flex" | "priority";
+  use1m?: boolean;
+  keepBackgroundProcesses?: boolean;
 }
 
 const opts = program.opts<CLIOptions>();
+const keepBackgroundProcesses =
+  opts.keepBackgroundProcesses === true || process.env.MUX_KEEP_BACKGROUND_PROCESSES === "1";
 const messageArg = program.args.join(" ");
 
 async function main(): Promise<number> {
@@ -346,7 +360,8 @@ async function main(): Promise<number> {
 
   const model: string = resolveModelAlias(opts.model);
   const runtimeConfig = parseRuntimeConfig(opts.runtime, config.srcDir);
-  const thinkingLevel = parseThinkingLevel(opts.thinking);
+  // Resolve thinking: numeric indices map to the model's allowed levels (0 = lowest)
+  const thinkingLevel = resolveThinkingInput(parseThinkingLevel(opts.thinking), model);
   const initialMode = parseMode(opts.mode);
   const emitJson = opts.json === true;
   const quiet = opts.quiet === true;
@@ -416,10 +431,10 @@ async function main(): Promise<number> {
   const {
     aiService,
     historyService,
-    partialService,
     initStateManager,
     backgroundProcessManager,
     mcpServerManager,
+    providerService,
     workspaceService,
   } = createCoreServices({
     config,
@@ -430,6 +445,12 @@ async function main(): Promise<number> {
       ignoreConfigFile: !opts.mcpConfig,
     },
   });
+
+  // `mux run` uses createCoreServices directly (without ServiceContainer), so wire
+  // Codex OAuth explicitly to ensure Codex-routed OpenAI requests can load/refresh
+  // OAuth tokens from providers.jsonc.
+  const codexOauthService = new CodexOauthService(config, providerService);
+  aiService.setCodexOauthService(codexOauthService);
 
   // CLI-only exit code control: allows agent to set the process exit code
   // Useful for CI workflows where the agent should block merge on failure
@@ -460,10 +481,10 @@ async function main(): Promise<number> {
     workspaceId,
     config,
     historyService,
-    partialService,
     aiService,
     initStateManager,
     backgroundProcessManager,
+    keepBackgroundProcesses,
   });
   // Register with WorkspaceService so TaskService operations that target the parent
   // workspace (e.g. resumeStream after sub-agent completion) reuse this session
@@ -513,7 +534,7 @@ async function main(): Promise<number> {
         initLogger,
       });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       initLogger.logStderr(`Initialization failed: ${errorMessage}`);
       initLogger.logComplete(-1);
       initResult = { success: false, error: errorMessage };
@@ -552,6 +573,7 @@ async function main(): Promise<number> {
     agentId: cliMode,
     experiments,
     providerOptions: {
+      ...(opts.use1m && { anthropic: { use1MContext: true } }),
       openai: { serviceTier: opts.serviceTier },
     },
     // Disable UI-only tools that have no effect in CLI mode:
@@ -1059,7 +1081,10 @@ async function main(): Promise<number> {
     unsubscribe();
     session.dispose();
     mcpServerManager.dispose();
-    await backgroundProcessManager.terminateAll();
+    await codexOauthService.dispose();
+    if (!keepBackgroundProcesses) {
+      await backgroundProcessManager.terminateAll();
+    }
   }
 
   // Exit codes: 2 for budget exceeded, agent-specified exit code, or 0 for success
@@ -1075,10 +1100,22 @@ const keepAliveInterval = setInterval(() => {
 main()
   .then((exitCode) => {
     clearInterval(keepAliveInterval);
-    process.exit(exitCode);
+    // Flush stdout before exiting — process.exit() kills immediately and may
+    // drop buffered writes (e.g. the run-complete JSON line piped to tee in benchmarks).
+    if (process.stdout.writableNeedDrain) {
+      const exit = () => process.exit(exitCode);
+      process.stdout.once("drain", exit);
+      // Safety: if the downstream consumer closes (broken pipe) or backpressure
+      // never resolves, exit anyway after 1s to avoid hanging.
+      process.stdout.once("error", exit);
+      process.stdout.once("close", exit);
+      setTimeout(exit, 1000).unref();
+    } else {
+      process.exit(exitCode);
+    }
   })
   .catch((error) => {
     clearInterval(keepAliveInterval);
-    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`Error: ${getErrorMessage(error)}`);
     process.exit(1);
   });

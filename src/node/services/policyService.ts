@@ -16,6 +16,7 @@ import type { MCPServerTransport } from "@/common/types/mcp";
 import { compareVersions } from "@/node/services/coderService";
 
 import packageJson from "../../../package.json";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const POLICY_FETCH_TIMEOUT_MS = 10 * 1000;
 const POLICY_MAX_BYTES = 1024 * 1024;
@@ -89,7 +90,7 @@ async function loadPolicyText(source: string): Promise<string> {
     try {
       return await readFile(source, "utf8");
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       throw new Error(`Failed to read policy file: ${message}`);
     }
   }
@@ -117,7 +118,7 @@ async function loadPolicyText(source: string): Promise<string> {
 
     return text;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     throw new Error(`Failed to fetch policy URL (${formatPolicySourceForLog(source)}): ${message}`);
   } finally {
     clearTimeout(timeout);
@@ -154,7 +155,7 @@ async function loadGovernorPolicyText(input: {
 
     return text;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     throw new Error(
       `Failed to fetch Governor policy (${formatPolicySourceForLog(policyUrl)}): ${message}`
     );
@@ -459,7 +460,7 @@ export class PolicyService {
       this.updateState({ source: schemaSource, status: { state: "enforced" }, policy: effective });
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
 
       // Fail closed on startup, or if there's no existing enforced policy (e.g., first fetch
       // after enrollment). This ensures enrollment can't silently bypass policy on a bad first fetch.

@@ -295,6 +295,143 @@ export const SkillIndicator_InvalidSkills: AppStory = {
   },
 };
 
+/** Shows runtime skill load errors in the SkillIndicator popover ("Load errors" section) */
+export const SkillIndicator_LoadErrors: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-skill-indicator-load-errors",
+          // Messages include failed agent_skill_read tool calls,
+          // which the StreamingMessageAggregator tracks as load errors
+          messages: [
+            createUserMessage("u1", "Load the deployment skill", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 60000,
+            }),
+            createAssistantMessage("a1", "Trying to load skills:", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 59000,
+              toolCalls: [
+                createGenericTool(
+                  "tc1",
+                  "agent_skill_read",
+                  { name: "deployment" },
+                  {
+                    success: false,
+                    error: "Agent skill not found: deployment",
+                  }
+                ),
+                createGenericTool(
+                  "tc2",
+                  "agent_skill_read",
+                  { name: "staging-env" },
+                  {
+                    success: false,
+                    error: "Failed to read SKILL.md: Permission denied (os error 13)",
+                  }
+                ),
+              ],
+            }),
+          ],
+          agentSkills: ALL_SKILLS,
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForChatMessagesLoaded(canvasElement);
+
+    const doc = canvasElement.ownerDocument;
+    const storyRoot = doc.getElementById("storybook-root") ?? canvasElement;
+    await waitFor(() => {
+      const skillButton = storyRoot.querySelector('button[aria-label*="skill"]');
+      if (!skillButton) throw new Error("Skill indicator not found");
+    });
+
+    const skillButton = storyRoot.querySelector('button[aria-label*="skill"]')!;
+    await userEvent.hover(skillButton);
+
+    await waitFor(() => {
+      const popover = doc.querySelector("[data-radix-popper-content-wrapper]");
+      if (!popover) throw new Error("Popover not visible");
+      if (!popover.textContent?.includes("Load errors")) {
+        throw new Error("Load errors section not visible");
+      }
+      if (!popover.textContent?.includes("deployment")) {
+        throw new Error("Failed skill name not visible");
+      }
+    });
+
+    await waitForChatInputAutofocusDone(canvasElement);
+    blurActiveElement();
+  },
+};
+
+/** Shows both invalid skills and runtime load errors together in the popover */
+export const SkillIndicator_AllErrors: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-skill-indicator-all-errors",
+          messages: [
+            createUserMessage("u1", "Load the deployment skill", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 60000,
+            }),
+            createAssistantMessage("a1", "Trying to load skills:", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 59000,
+              toolCalls: [
+                createGenericTool(
+                  "tc1",
+                  "agent_skill_read",
+                  { name: "deployment" },
+                  {
+                    success: false,
+                    error: "Agent skill not found: deployment",
+                  }
+                ),
+              ],
+            }),
+          ],
+          agentSkills: ALL_SKILLS,
+          invalidAgentSkills: INVALID_SKILLS,
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForChatMessagesLoaded(canvasElement);
+
+    const doc = canvasElement.ownerDocument;
+    const storyRoot = doc.getElementById("storybook-root") ?? canvasElement;
+    await waitFor(() => {
+      const skillButton = storyRoot.querySelector('button[aria-label*="skill"]');
+      if (!skillButton) throw new Error("Skill indicator not found");
+    });
+
+    const skillButton = storyRoot.querySelector('button[aria-label*="skill"]')!;
+    await userEvent.hover(skillButton);
+
+    await waitFor(() => {
+      const popover = doc.querySelector("[data-radix-popper-content-wrapper]");
+      if (!popover) throw new Error("Popover not visible");
+      // Both sections should be visible
+      if (!popover.textContent?.includes("Invalid skills")) {
+        throw new Error("Invalid skills section not visible");
+      }
+      if (!popover.textContent?.includes("Load errors")) {
+        throw new Error("Load errors section not visible");
+      }
+    });
+
+    await waitForChatInputAutofocusDone(canvasElement);
+    blurActiveElement();
+  },
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SKILL TOOL CALLS
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -1,4 +1,14 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { useRouter } from "@/browser/contexts/RouterContext";
 
 interface OpenSettingsOptions {
   /** When opening the Providers settings, expand the given provider. */
@@ -11,6 +21,9 @@ interface SettingsContextValue {
   open: (section?: string, options?: OpenSettingsOptions) => void;
   close: () => void;
   setActiveSection: (section: string) => void;
+
+  /** Subscribe to settings close events. Returns an unsubscribe function. */
+  registerOnClose: (callback: () => void) => () => void;
 
   /** One-shot hint for ProvidersSection to expand a provider. */
   providersExpandedProvider: string | null;
@@ -28,37 +41,60 @@ export function useSettings(): SettingsContextValue {
 const DEFAULT_SECTION = "general";
 
 export function SettingsProvider(props: { children: ReactNode }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [activeSection, setActiveSection] = useState(DEFAULT_SECTION);
+  const router = useRouter();
   const [providersExpandedProvider, setProvidersExpandedProvider] = useState<string | null>(null);
 
-  const setSection = useCallback((section: string) => {
-    setActiveSection(section);
+  const closeCallbacksRef = useRef(new Set<() => void>());
 
-    if (section !== "providers") {
-      setProvidersExpandedProvider(null);
-    }
-  }, []);
+  const isOpen = router.currentSettingsSection != null;
+  const activeSection = router.currentSettingsSection ?? DEFAULT_SECTION;
 
   const open = useCallback(
     (section?: string, options?: OpenSettingsOptions) => {
-      if (section) {
-        setSection(section);
-      }
-
-      if (section === "providers") {
+      const nextSection = section ?? DEFAULT_SECTION;
+      if (nextSection === "providers") {
         setProvidersExpandedProvider(options?.expandProvider ?? null);
+      } else {
+        setProvidersExpandedProvider(null);
       }
-
-      setIsOpen(true);
+      router.navigateToSettings(nextSection);
     },
-    [setSection]
+    [router]
   );
 
-  const close = useCallback(() => {
-    setIsOpen(false);
-    setProvidersExpandedProvider(null);
+  const registerOnClose = useCallback((callback: () => void) => {
+    closeCallbacksRef.current.add(callback);
+    return () => {
+      closeCallbacksRef.current.delete(callback);
+    };
   }, []);
+
+  // Fire close subscribers whenever settings transitions from open → closed,
+  // regardless of how the navigation happened (explicit close, back button, etc.).
+  const wasOpenRef = useRef(isOpen);
+  useEffect(() => {
+    if (wasOpenRef.current && !isOpen) {
+      for (const callback of closeCallbacksRef.current) {
+        callback();
+      }
+    }
+    wasOpenRef.current = isOpen;
+  }, [isOpen]);
+
+  const close = useCallback(() => {
+    setProvidersExpandedProvider(null);
+    router.navigateFromSettings();
+  }, [router]);
+
+  const setActiveSection = useCallback(
+    (section: string) => {
+      if (section !== "providers") {
+        setProvidersExpandedProvider(null);
+      }
+      router.navigateToSettings(section);
+    },
+    [router]
+  );
 
   const value = useMemo<SettingsContextValue>(
     () => ({
@@ -66,11 +102,20 @@ export function SettingsProvider(props: { children: ReactNode }) {
       activeSection,
       open,
       close,
-      setActiveSection: setSection,
+      setActiveSection,
+      registerOnClose,
       providersExpandedProvider,
       setProvidersExpandedProvider,
     }),
-    [isOpen, activeSection, open, close, setSection, providersExpandedProvider]
+    [
+      isOpen,
+      activeSection,
+      open,
+      close,
+      setActiveSection,
+      registerOnClose,
+      providersExpandedProvider,
+    ]
   );
 
   return <SettingsContext.Provider value={value}>{props.children}</SettingsContext.Provider>;

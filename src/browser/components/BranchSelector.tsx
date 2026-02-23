@@ -5,7 +5,7 @@ import { useAPI } from "@/browser/contexts/API";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
-import { invalidateGitStatus } from "@/browser/stores/GitStatusStore";
+import { invalidateGitStatus, useGitStatus } from "@/browser/stores/GitStatusStore";
 import { createLRUCache } from "@/browser/utils/lruCache";
 
 // LRU cache for persisting branch names across app restarts
@@ -57,6 +57,20 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
   const [isSwitching, setIsSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { copied, copyToClipboard } = useCopyToClipboard();
+
+  // Subscribe to GitStatusStore for branch changes detected during periodic refresh
+  // (e.g., focus events, file-modifying tools). This keeps the branch selector in sync
+  // when the user or mux changes the branch outside of the branch selector UI.
+  const gitStatus = useGitStatus(workspaceId);
+  const gitStatusBranch = gitStatus?.branch;
+  useEffect(() => {
+    if (!gitStatusBranch) return;
+    setCurrentBranch((prev) => {
+      if (prev === gitStatusBranch) return prev;
+      branchCache.set(workspaceId, gitStatusBranch);
+      return gitStatusBranch;
+    });
+  }, [gitStatusBranch, workspaceId]);
 
   // Track if we're refreshing with a cached value (for optimistic UI pulse effect)
   const isRefreshing = currentBranch !== null && currentBranch !== false && isSwitching;

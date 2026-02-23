@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -23,16 +24,18 @@ import {
   getInputKey,
   getModelKey,
   getPendingScopeId,
+  getRightSidebarLayoutKey,
+  getTerminalTitlesKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
   getWorkspaceNameStateKey,
   migrateWorkspaceStorage,
   AGENT_AI_DEFAULTS_KEY,
   DEFAULT_MODEL_KEY,
-  GATEWAY_ENABLED_KEY,
-  GATEWAY_MODELS_KEY,
+  DEFAULT_RUNTIME_KEY,
   HIDDEN_MODELS_KEY,
   PREFERRED_COMPACTION_MODEL_KEY,
+  RUNTIME_ENABLEMENT_KEY,
   SELECTED_WORKSPACE_KEY,
   WORKSPACE_DRAFTS_BY_PROJECT_KEY,
 } from "@/common/constants/storage";
@@ -46,16 +49,24 @@ import {
 } from "@/browser/hooks/usePersistedState";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+import { isTerminalTab } from "@/browser/types/rightSidebar";
+import {
+  collectAllTabs,
+  isRightSidebarLayoutState,
+  removeTabEverywhere,
+} from "@/browser/utils/rightSidebarLayout";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
 import { resolveProjectPathFromProjectQuery } from "@/common/utils/deepLink";
 import { shouldApplyWorkspaceAiSettingsFromBackend } from "@/browser/utils/workspaceAiSettingsSync";
 import { isAbortError } from "@/browser/utils/isAbortError";
+import { findAdjacentWorkspaceId } from "@/browser/utils/ui/workspaceDomNav";
 import { useRouter } from "@/browser/contexts/RouterContext";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { APIClient } from "@/browser/contexts/API";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * One-time best-effort migration: if the backend doesn't have model preferences yet,
@@ -110,6 +121,44 @@ function migrateLocalModelPrefsToBackend(
     api.config.updateModelPreferences(patch).catch(() => {
       // Best-effort only.
     });
+  }
+}
+
+/**
+ * One-time best-effort migration for gateway preferences.
+ * Users upgrading from builds that only stored gateway state in localStorage
+ * (keys: "gateway-enabled", "gateway-models") need their preferences migrated
+ * to config.json so they aren't lost when localStorage is no longer read.
+ */
+function migrateLocalGatewayPrefsToBackend(
+  api: APIClient,
+  cfg: { muxGatewayEnabled?: boolean; muxGatewayModels?: string[] }
+): void {
+  // Only migrate if the backend doesn't have these values yet
+  if (cfg.muxGatewayEnabled !== undefined && cfg.muxGatewayModels !== undefined) return;
+
+  // Read legacy localStorage keys (inline strings — these constants were removed from storage.ts)
+  const localEnabled = readPersistedState<boolean>("gateway-enabled", true);
+  const localModels = readPersistedState<string[]>("gateway-models", []);
+
+  const shouldMigrateEnabled = cfg.muxGatewayEnabled === undefined && localEnabled === false;
+  const shouldMigrateModels = cfg.muxGatewayModels === undefined && localModels.length > 0;
+
+  const clearLegacyGatewayPrefs = () => {
+    updatePersistedState<boolean | undefined>("gateway-enabled", undefined);
+    updatePersistedState<string[] | undefined>("gateway-models", undefined);
+  };
+
+  if (shouldMigrateEnabled || shouldMigrateModels) {
+    api.config
+      .updateMuxGatewayPrefs({
+        muxGatewayEnabled: cfg.muxGatewayEnabled ?? localEnabled,
+        muxGatewayModels: cfg.muxGatewayModels ?? localModels,
+      })
+      .then(clearLegacyGatewayPrefs)
+      .catch(() => {
+        // Best-effort only.
+      });
   }
 }
 
@@ -181,7 +230,10 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
   }
 
   // Seed the active agent into the existing keys to avoid UI flash.
-  const activeAgentId = readPersistedState<string>(getAgentIdKey(workspaceId), "exec");
+  const activeAgentId = readPersistedState<string>(
+    getAgentIdKey(workspaceId),
+    WORKSPACE_DEFAULTS.agentId
+  );
   const active = nextByAgent[activeAgentId] ?? nextByAgent.exec ?? nextByAgent.plan;
   if (!active) {
     return;
@@ -403,9 +455,9 @@ export interface WorkspaceContext extends WorkspaceMetadataContextValue {
     workspaceId: string,
     options?: { force?: boolean }
   ) => Promise<{ success: boolean; error?: string }>;
-  renameWorkspace: (
+  updateWorkspaceTitle: (
     workspaceId: string,
-    newName: string
+    newTitle: string
   ) => Promise<{ success: boolean; error?: string }>;
   archiveWorkspace: (workspaceId: string) => Promise<{ success: boolean; error?: string }>;
   unarchiveWorkspace: (workspaceId: string) => Promise<{ success: boolean; error?: string }>;
@@ -465,14 +517,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           normalizeAgentAiDefaults(cfg.agentAiDefaults ?? {})
         );
 
-        // Seed Mux Gateway prefs from backend so switching ports doesn't reset the UI.
-        if (cfg.muxGatewayEnabled !== undefined) {
-          updatePersistedState(GATEWAY_ENABLED_KEY, cfg.muxGatewayEnabled);
-        }
-        if (cfg.muxGatewayModels !== undefined) {
-          updatePersistedState(GATEWAY_MODELS_KEY, cfg.muxGatewayModels);
-        }
-
         // Seed global model preferences from backend so switching ports doesn't reset the UI.
         if (cfg.defaultModel !== undefined) {
           updatePersistedState(DEFAULT_MODEL_KEY, cfg.defaultModel);
@@ -484,31 +528,24 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           updatePersistedState(PREFERRED_COMPACTION_MODEL_KEY, cfg.preferredCompactionModel);
         }
 
-        // One-time best-effort migration: if the backend doesn't have gateway prefs yet,
-        // persist non-default localStorage values so future port changes keep them.
-        if (api.config.updateMuxGatewayPrefs) {
-          const localEnabled = readPersistedState<boolean>(GATEWAY_ENABLED_KEY, true);
-          const localModels = readPersistedState<string[]>(GATEWAY_MODELS_KEY, []);
+        // Seed runtime enablement from backend so switching ports doesn't reset the UI.
+        if (cfg.runtimeEnablement !== undefined) {
+          updatePersistedState(RUNTIME_ENABLEMENT_KEY, cfg.runtimeEnablement);
+        }
 
-          const shouldMigrateEnabled =
-            cfg.muxGatewayEnabled === undefined && localEnabled === false;
-          const shouldMigrateModels = cfg.muxGatewayModels === undefined && localModels.length > 0;
-
-          if (shouldMigrateEnabled || shouldMigrateModels) {
-            api.config
-              .updateMuxGatewayPrefs({
-                muxGatewayEnabled: cfg.muxGatewayEnabled ?? localEnabled,
-                muxGatewayModels: cfg.muxGatewayModels ?? localModels,
-              })
-              .catch(() => {
-                // Best-effort only.
-              });
-          }
+        // Seed global default runtime so workspace defaults survive port changes.
+        if (cfg.defaultRuntime !== undefined) {
+          updatePersistedState(DEFAULT_RUNTIME_KEY, cfg.defaultRuntime);
         }
 
         // One-time best-effort migration: if the backend doesn't have model prefs yet,
         // persist non-default localStorage values so future port changes keep them.
         migrateLocalModelPrefsToBackend(api, cfg);
+
+        // One-time gateway pref migration: if the backend doesn't have gateway prefs yet,
+        // check if the user had non-default values in the old localStorage keys.
+        // This covers users upgrading from builds that only stored gateway state locally.
+        migrateLocalGatewayPrefsToBackend(api, cfg);
       })
       .catch(() => {
         // Best-effort only.
@@ -524,11 +561,28 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     currentWorkspaceId,
     currentProjectId,
     currentProjectPathFromState,
+    currentSettingsSection,
+    isAnalyticsOpen,
     pendingSectionId,
     pendingDraftId,
   } = useRouter();
 
   const workspaceStore = useWorkspaceStoreRaw();
+
+  useLayoutEffect(() => {
+    // When the user navigates to settings, currentWorkspaceId becomes null
+    // (URL is /settings/...). Preserve the active workspace subscription so
+    // chat messages aren't cleared. Only null it out when truly leaving a
+    // workspace context (e.g., navigating to Home).
+    if (currentWorkspaceId) {
+      workspaceStore.setActiveWorkspaceId(currentWorkspaceId);
+    } else if (!currentSettingsSection && !isAnalyticsOpen) {
+      // Only null out the active workspace when truly leaving a workspace
+      // context (e.g., navigating to Home). Settings and analytics pages
+      // should preserve the subscription so chat messages aren't cleared.
+      workspaceStore.setActiveWorkspaceId(null);
+    }
+  }, [workspaceStore, currentWorkspaceId, currentSettingsSection, isAnalyticsOpen]);
   const [workspaceMetadata, setWorkspaceMetadataState] = useState<
     Map<string, FrontendWorkspaceMetadata>
   >(new Map());
@@ -835,6 +889,20 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     [navigateToWorkspace, navigateToHome]
   );
 
+  /**
+   * Clear the workspace selection and navigate to a specific project page
+   * instead of home.  Use this when deselecting a workspace where we know
+   * which project the user was working in (archive, delete fallback, etc.).
+   */
+  const clearSelectionToProject = useCallback(
+    (projectPath: string) => {
+      selectedWorkspaceRef.current = null;
+      updatePersistedState(SELECTED_WORKSPACE_KEY, null);
+      navigateToProject(projectPath);
+    },
+    [navigateToProject]
+  );
+
   // Used by async subscription handlers to safely access the most recent metadata map
   // without triggering render-phase state updates.
   const workspaceMetadataRef = useRef(workspaceMetadata);
@@ -918,6 +986,13 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     // Skip if we already have a selected workspace (from localStorage or URL hash)
     if (selectedWorkspace) return;
 
+    // Skip if user is on the settings or analytics page — navigating to
+    // /settings/:section or /analytics clears the workspace from the URL,
+    // making selectedWorkspace null. Without this guard the effect would
+    // auto-select a workspace and navigate away immediately.
+    if (currentSettingsSection) return;
+    if (isAnalyticsOpen) return;
+
     // Skip if user is in the middle of creating a workspace
     if (pendingNewWorkspaceProject) return;
 
@@ -961,6 +1036,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     api,
     loading,
     selectedWorkspace,
+    currentSettingsSection,
+    isAnalyticsOpen,
     pendingNewWorkspaceProject,
     workspaceMetadata,
     setSelectedWorkspace,
@@ -993,12 +1070,20 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           // If the currently-selected workspace is being archived, navigate away *before*
           // removing it from the active metadata map. Otherwise we can briefly render the
           // welcome screen while still on `/workspace/:id`.
+          //
+          // Prefer the next workspace in sidebar DOM order (like Ctrl+J) so the user
+          // stays in flow; fall back to the project page when no siblings remain.
           if (meta !== null && isNowArchived) {
             const currentSelection = selectedWorkspaceRef.current;
             if (currentSelection?.workspaceId === event.workspaceId) {
-              selectedWorkspaceRef.current = null;
-              updatePersistedState(SELECTED_WORKSPACE_KEY, null);
-              navigateToProject(meta.projectPath);
+              const nextId = findAdjacentWorkspaceId(event.workspaceId);
+              const nextMeta = nextId ? workspaceMetadataRef.current.get(nextId) : null;
+
+              if (nextMeta) {
+                setSelectedWorkspace(toWorkspaceSelection(nextMeta));
+              } else {
+                clearSelectionToProject(meta.projectPath);
+              }
             }
           }
 
@@ -1010,8 +1095,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
             const updated = new Map(prev);
             const isNewWorkspace = !prev.has(event.workspaceId) && meta !== null;
             const existingMeta = prev.get(event.workspaceId);
-            const wasCreating = existingMeta?.status === "creating";
-            const isNowReady = meta !== null && meta.status !== "creating";
+            const wasInitializing = existingMeta?.isInitializing === true;
+            const isNowReady = meta !== null && meta.isInitializing !== true;
 
             if (meta === null || isNowArchived) {
               // Remove deleted or newly-archived workspaces from active map
@@ -1023,8 +1108,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
             // Reload projects when:
             // 1. New workspace appears (e.g., from fork)
-            // 2. Workspace transitions from "creating" to ready (now saved to config)
-            if (isNewWorkspace || (wasCreating && isNowReady)) {
+            // 2. Workspace transitions from initializing to ready (init completed)
+            if (isNewWorkspace || (wasInitializing && isNowReady)) {
               void refreshProjects();
             }
 
@@ -1068,14 +1153,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
               );
 
             if (fallbackMeta) {
-              setSelectedWorkspace({
-                workspaceId: fallbackMeta.id,
-                projectPath: fallbackMeta.projectPath,
-                projectName: fallbackMeta.projectName,
-                namedWorkspacePath: fallbackMeta.namedWorkspacePath,
-              });
+              setSelectedWorkspace(toWorkspaceSelection(fallbackMeta));
             } else if (projectPath) {
-              navigateToProject(projectPath);
+              clearSelectionToProject(projectPath);
             } else {
               setSelectedWorkspace(null);
             }
@@ -1091,7 +1171,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     return () => {
       controller.abort();
     };
-  }, [navigateToProject, refreshProjects, setSelectedWorkspace, setWorkspaceMetadata, api]);
+  }, [clearSelectionToProject, refreshProjects, setSelectedWorkspace, setWorkspaceMetadata, api]);
 
   const createWorkspace = useCallback(
     async (
@@ -1157,6 +1237,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           // Clean up workspace-specific localStorage keys
           deleteWorkspaceStorage(workspaceId);
 
+          // Optimistically remove from the local metadata map so the sidebar updates immediately.
+          // Relying on the metadata subscription can leave the item visible until the next refresh.
+          setWorkspaceMetadata((prev) => {
+            const updated = new Map(prev);
+            updated.delete(workspaceId);
+            return updated;
+          });
+
           // Backend has already updated the config - reload projects to get updated state
           await refreshProjects();
 
@@ -1176,12 +1264,19 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           return { success: false, error: result.error };
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         console.error("Failed to remove workspace:", errorMessage);
         return { success: false, error: errorMessage };
       }
     },
-    [currentWorkspaceId, navigateToProject, refreshProjects, selectedWorkspace, api]
+    [
+      currentWorkspaceId,
+      navigateToProject,
+      refreshProjects,
+      selectedWorkspace,
+      api,
+      setWorkspaceMetadata,
+    ]
   );
 
   /**
@@ -1193,7 +1288,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
    * We just reload metadata after the update - no need to update selectedWorkspace
    * since the ID stays the same and the metadata map refresh handles the title update.
    */
-  const renameWorkspace = useCallback(
+  const updateWorkspaceTitle = useCallback(
     async (
       workspaceId: string,
       newTitle: string
@@ -1211,7 +1306,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           return { success: false, error: result.error };
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         console.error("Failed to update workspace title:", errorMessage);
         return { success: false, error: errorMessage };
       }
@@ -1226,6 +1321,23 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       try {
         const result = await api.workspace.archive({ workspaceId });
         if (result.success) {
+          // Terminal PTYs are killed on archive; clear persisted terminal tabs so
+          // unarchive doesn't briefly flash dead terminal tabs.
+          const layoutKey = getRightSidebarLayoutKey(workspaceId);
+          const rawLayout = readPersistedState<unknown>(layoutKey, null);
+
+          if (isRightSidebarLayoutState(rawLayout)) {
+            const terminalTabs = collectAllTabs(rawLayout.root).filter(isTerminalTab);
+            let cleanedLayout = rawLayout;
+            for (const tab of terminalTabs) {
+              cleanedLayout = removeTabEverywhere(cleanedLayout, tab);
+            }
+            updatePersistedState(layoutKey, cleanedLayout);
+          }
+
+          // Also clear persisted terminal titles since those sessions are gone.
+          updatePersistedState(getTerminalTitlesKey(workspaceId), {});
+
           // Workspace list + navigation are driven by the workspace metadata subscription.
           return { success: true };
         }
@@ -1233,7 +1345,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         console.error("Failed to archive workspace:", result.error);
         return { success: false, error: result.error };
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         console.error("Failed to archive workspace:", errorMessage);
         return { success: false, error: errorMessage };
       }
@@ -1254,7 +1366,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           return { success: false, error: result.error };
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         console.error("Failed to unarchive workspace:", errorMessage);
         return { success: false, error: errorMessage };
       }
@@ -1474,7 +1586,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     () => ({
       createWorkspace,
       removeWorkspace,
-      renameWorkspace,
+      updateWorkspaceTitle,
       archiveWorkspace,
       unarchiveWorkspace,
       refreshWorkspaceMetadata,
@@ -1497,7 +1609,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     [
       createWorkspace,
       removeWorkspace,
-      renameWorkspace,
+      updateWorkspaceTitle,
       archiveWorkspace,
       unarchiveWorkspace,
       refreshWorkspaceMetadata,

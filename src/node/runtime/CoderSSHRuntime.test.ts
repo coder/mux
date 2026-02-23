@@ -32,6 +32,9 @@ function createMockCoderService(overrides?: Partial<CoderService>): CoderService
       })()
     ),
     deleteWorkspace: mock(() => Promise.resolve()),
+    deleteWorkspaceEventually: mock(() =>
+      Promise.resolve({ success: true as const, data: undefined })
+    ),
     ensureProvisioningSession: mock(() => Promise.resolve(provisioningSession)),
     takeProvisioningSession: mock(() => provisioningSession),
     disposeProvisioningSession: mock(() => Promise.resolve()),
@@ -286,9 +289,11 @@ describe("CoderSSHRuntime.deleteWorkspace", () => {
     sshDeleteSpy.mockRestore();
   });
 
-  it("never calls coderService.deleteWorkspace when existingWorkspace=true", async () => {
-    const deleteWorkspace = mock(() => Promise.resolve());
-    const coderService = createMockCoderService({ deleteWorkspace });
+  it("never calls coderService.deleteWorkspaceEventually when existingWorkspace=true", async () => {
+    const deleteWorkspaceEventually = mock(() =>
+      Promise.resolve({ success: true as const, data: undefined })
+    );
+    const coderService = createMockCoderService({ deleteWorkspaceEventually });
 
     const runtime = createRuntime(
       { existingWorkspace: true, workspaceName: "existing-ws" },
@@ -296,26 +301,30 @@ describe("CoderSSHRuntime.deleteWorkspace", () => {
     );
 
     await runtime.deleteWorkspace("/project", "ws", false);
-    expect(deleteWorkspace).not.toHaveBeenCalled();
+    expect(deleteWorkspaceEventually).not.toHaveBeenCalled();
   });
 
   it("skips Coder deletion when workspaceName is not set", async () => {
-    const deleteWorkspace = mock(() => Promise.resolve());
-    const coderService = createMockCoderService({ deleteWorkspace });
+    const deleteWorkspaceEventually = mock(() =>
+      Promise.resolve({ success: true as const, data: undefined })
+    );
+    const coderService = createMockCoderService({ deleteWorkspaceEventually });
 
     // No workspaceName provided
     const runtime = createRuntime({ existingWorkspace: false }, coderService);
 
     const result = await runtime.deleteWorkspace("/project", "ws", false);
-    expect(deleteWorkspace).not.toHaveBeenCalled();
+    expect(deleteWorkspaceEventually).not.toHaveBeenCalled();
     expect(result.success).toBe(true);
   });
 
   it("skips Coder deletion when SSH delete fails and force=false", async () => {
     sshDeleteSpy.mockResolvedValue({ success: false, error: "dirty workspace" });
 
-    const deleteWorkspace = mock(() => Promise.resolve());
-    const coderService = createMockCoderService({ deleteWorkspace });
+    const deleteWorkspaceEventually = mock(() =>
+      Promise.resolve({ success: true as const, data: undefined })
+    );
+    const coderService = createMockCoderService({ deleteWorkspaceEventually });
 
     const runtime = createRuntime(
       { existingWorkspace: false, workspaceName: "my-ws" },
@@ -323,15 +332,17 @@ describe("CoderSSHRuntime.deleteWorkspace", () => {
     );
 
     const result = await runtime.deleteWorkspace("/project", "ws", false);
-    expect(deleteWorkspace).not.toHaveBeenCalled();
+    expect(deleteWorkspaceEventually).not.toHaveBeenCalled();
     expect(result.success).toBe(false);
   });
 
-  it("calls Coder deletion when SSH delete fails but force=true", async () => {
+  it("calls Coder deletion (no SSH) when force=true", async () => {
     sshDeleteSpy.mockResolvedValue({ success: false, error: "dirty workspace" });
 
-    const deleteWorkspace = mock(() => Promise.resolve());
-    const coderService = createMockCoderService({ deleteWorkspace });
+    const deleteWorkspaceEventually = mock(() =>
+      Promise.resolve({ success: true as const, data: undefined })
+    );
+    const coderService = createMockCoderService({ deleteWorkspaceEventually });
 
     const runtime = createRuntime(
       { existingWorkspace: false, workspaceName: "my-ws" },
@@ -339,12 +350,18 @@ describe("CoderSSHRuntime.deleteWorkspace", () => {
     );
 
     await runtime.deleteWorkspace("/project", "ws", true);
-    expect(deleteWorkspace).toHaveBeenCalledWith("my-ws");
+    expect(sshDeleteSpy).not.toHaveBeenCalled();
+    expect(deleteWorkspaceEventually).toHaveBeenCalledWith(
+      "my-ws",
+      expect.objectContaining({ waitForExistence: true, waitForExistenceTimeoutMs: 10_000 })
+    );
   });
 
-  it("returns combined error when SSH succeeds but Coder delete throws", async () => {
-    const deleteWorkspace = mock(() => Promise.reject(new Error("Coder API error")));
-    const coderService = createMockCoderService({ deleteWorkspace });
+  it("returns combined error when SSH succeeds but Coder delete fails", async () => {
+    const deleteWorkspaceEventually = mock(() =>
+      Promise.resolve({ success: false as const, error: "Coder API error" })
+    );
+    const coderService = createMockCoderService({ deleteWorkspaceEventually });
 
     const runtime = createRuntime(
       { existingWorkspace: false, workspaceName: "my-ws" },
@@ -362,8 +379,10 @@ describe("CoderSSHRuntime.deleteWorkspace", () => {
   it("succeeds immediately when Coder workspace is already deleted", async () => {
     // getWorkspaceStatus returns { kind: "not_found" } when workspace doesn't exist
     const getWorkspaceStatus = mock(() => Promise.resolve({ kind: "not_found" as const }));
-    const deleteWorkspace = mock(() => Promise.resolve());
-    const coderService = createMockCoderService({ getWorkspaceStatus, deleteWorkspace });
+    const deleteWorkspaceEventually = mock(() =>
+      Promise.resolve({ success: true as const, data: undefined })
+    );
+    const coderService = createMockCoderService({ getWorkspaceStatus, deleteWorkspaceEventually });
 
     const runtime = createRuntime(
       { existingWorkspace: false, workspaceName: "my-ws" },
@@ -375,7 +394,7 @@ describe("CoderSSHRuntime.deleteWorkspace", () => {
     // Should succeed without calling SSH delete or Coder delete
     expect(result.success).toBe(true);
     expect(sshDeleteSpy).not.toHaveBeenCalled();
-    expect(deleteWorkspace).not.toHaveBeenCalled();
+    expect(deleteWorkspaceEventually).not.toHaveBeenCalled();
   });
 
   it("proceeds with SSH cleanup when status check fails with API error", async () => {
@@ -383,8 +402,10 @@ describe("CoderSSHRuntime.deleteWorkspace", () => {
     const getWorkspaceStatus = mock(() =>
       Promise.resolve({ kind: "error" as const, error: "coder timed out" })
     );
-    const deleteWorkspace = mock(() => Promise.resolve());
-    const coderService = createMockCoderService({ getWorkspaceStatus, deleteWorkspace });
+    const deleteWorkspaceEventually = mock(() =>
+      Promise.resolve({ success: true as const, data: undefined })
+    );
+    const coderService = createMockCoderService({ getWorkspaceStatus, deleteWorkspaceEventually });
 
     const runtime = createRuntime(
       { existingWorkspace: false, workspaceName: "my-ws" },
@@ -395,7 +416,7 @@ describe("CoderSSHRuntime.deleteWorkspace", () => {
 
     // Should proceed with SSH cleanup (which succeeds), then Coder delete
     expect(sshDeleteSpy).toHaveBeenCalled();
-    expect(deleteWorkspace).toHaveBeenCalled();
+    expect(deleteWorkspaceEventually).toHaveBeenCalled();
     expect(result.success).toBe(true);
   });
 
@@ -403,8 +424,10 @@ describe("CoderSSHRuntime.deleteWorkspace", () => {
     const getWorkspaceStatus = mock(() =>
       Promise.resolve({ kind: "ok" as const, status: "stopped" as const })
     );
-    const deleteWorkspace = mock(() => Promise.resolve());
-    const coderService = createMockCoderService({ getWorkspaceStatus, deleteWorkspace });
+    const deleteWorkspaceEventually = mock(() =>
+      Promise.resolve({ success: true as const, data: undefined })
+    );
+    const coderService = createMockCoderService({ getWorkspaceStatus, deleteWorkspaceEventually });
 
     const runtime = createRuntime(
       { existingWorkspace: false, workspaceName: "my-ws" },
@@ -415,14 +438,19 @@ describe("CoderSSHRuntime.deleteWorkspace", () => {
 
     expect(result.success).toBe(true);
     expect(sshDeleteSpy).not.toHaveBeenCalled();
-    expect(deleteWorkspace).toHaveBeenCalledWith("my-ws");
+    expect(deleteWorkspaceEventually).toHaveBeenCalledWith(
+      "my-ws",
+      expect.objectContaining({ waitForExistence: false })
+    );
   });
   it("succeeds immediately when Coder workspace status is 'deleting'", async () => {
     const getWorkspaceStatus = mock(() =>
       Promise.resolve({ kind: "ok" as const, status: "deleting" as const })
     );
-    const deleteWorkspace = mock(() => Promise.resolve());
-    const coderService = createMockCoderService({ getWorkspaceStatus, deleteWorkspace });
+    const deleteWorkspaceEventually = mock(() =>
+      Promise.resolve({ success: true as const, data: undefined })
+    );
+    const coderService = createMockCoderService({ getWorkspaceStatus, deleteWorkspaceEventually });
 
     const runtime = createRuntime(
       { existingWorkspace: false, workspaceName: "my-ws" },
@@ -434,7 +462,7 @@ describe("CoderSSHRuntime.deleteWorkspace", () => {
     // Should succeed without calling SSH delete or Coder delete (workspace already dying)
     expect(result.success).toBe(true);
     expect(sshDeleteSpy).not.toHaveBeenCalled();
-    expect(deleteWorkspace).not.toHaveBeenCalled();
+    expect(deleteWorkspaceEventually).not.toHaveBeenCalled();
   });
 });
 

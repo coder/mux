@@ -9,6 +9,7 @@ import { AssistantMessage } from "./AssistantMessage";
 import { ToolMessage } from "./ToolMessage";
 import { ReasoningMessage } from "./ReasoningMessage";
 import { StreamErrorMessage } from "./StreamErrorMessage";
+import { CompactionBoundaryMessage } from "./CompactionBoundaryMessage";
 import { HistoryHiddenMessage } from "./HistoryHiddenMessage";
 import { InitMessage } from "./InitMessage";
 import { ProposePlanToolCall } from "../tools/ProposePlanToolCall";
@@ -84,6 +85,8 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
         return <ReasoningMessage message={message} className={className} />;
       case "stream-error":
         return <StreamErrorMessage message={message} className={className} />;
+      case "compaction-boundary":
+        return <CompactionBoundaryMessage message={message} className={className} />;
       case "history-hidden":
         return (
           <HistoryHiddenMessage message={message} className={className} workspaceId={workspaceId} />

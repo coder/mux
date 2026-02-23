@@ -4,14 +4,18 @@
  */
 
 import type z from "zod";
-import type { SendMessageErrorSchema, StreamErrorTypeSchema } from "../orpc/schemas";
+import type {
+  NameGenerationErrorSchema,
+  SendMessageErrorSchema,
+  StreamErrorTypeSchema,
+} from "../orpc/schemas";
 
 /**
  * Discriminated union for all possible sendMessage errors.
  *
  * The frontend is responsible for language and messaging for api_key_not_found,
- * oauth_not_connected, and provider_not_supported errors. Other error types include
- * details needed for display.
+ * oauth_not_connected, provider_disabled, and provider_not_supported errors.
+ * Other error types include details needed for display.
  */
 export type SendMessageError = z.infer<typeof SendMessageErrorSchema>;
 
@@ -20,3 +24,5 @@ export type SendMessageError = z.infer<typeof SendMessageErrorSchema>;
  * Used across backend (StreamManager) and frontend (StreamErrorMessage)
  */
 export type StreamErrorType = z.infer<typeof StreamErrorTypeSchema>;
+
+export type NameGenerationError = z.infer<typeof NameGenerationErrorSchema>;

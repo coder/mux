@@ -1,6 +1,7 @@
 import React from "react";
 import { FileIcon } from "@/browser/components/FileIcon";
 import { parsePatch } from "diff";
+import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
 import type {
   FileEditInsertToolArgs,
   FileEditInsertToolResult,
@@ -109,7 +110,7 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
 
   const uiOnlyDiff = getToolOutputUiOnly(result)?.file_edit?.diff;
   const diff = result && result.success ? (uiOnlyDiff ?? result.diff) : undefined;
-  const filePath = "file_path" in args ? args.file_path : undefined;
+  const filePath = extractToolFilePath(args);
 
   // Copy to clipboard with feedback
   const { copied, copyToClipboard } = useCopyToClipboard();

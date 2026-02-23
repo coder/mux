@@ -65,11 +65,21 @@ export function toolHookEnvVarName(
 }
 
 /**
+ * Legacy env var aliases emitted for backward compatibility.
+ * When the canonical key is present in the flattened output, the legacy key
+ * is also set to the same value so existing hooks keep working.
+ */
+const LEGACY_ENV_ALIASES: ReadonlyArray<{ canonical: string; legacy: string }> = [
+  // file tools renamed `file_path` → `path` (canonical); keep the old env var around.
+  { canonical: "_PATH", legacy: "_FILE_PATH" },
+];
+
+/**
  * Flatten a tool input/result value into env vars.
  *
  * Example:
- *   flattenToolHookValueToEnv({ file_path: "a.ts" }, "MUX_TOOL_INPUT")
- *     -> { MUX_TOOL_INPUT_FILE_PATH: "a.ts" }
+ *   flattenToolHookValueToEnv({ path: "a.ts" }, "MUX_TOOL_INPUT")
+ *     -> { MUX_TOOL_INPUT_PATH: "a.ts", MUX_TOOL_INPUT_FILE_PATH: "a.ts" }
  */
 export function flattenToolHookValueToEnv(
   value: unknown,
@@ -142,5 +152,14 @@ export function flattenToolHookValueToEnv(
   }
 
   recurse(value, []);
+
+  // Emit legacy env var aliases so existing hooks keep working after field renames.
+  for (const { canonical, legacy } of LEGACY_ENV_ALIASES) {
+    const canonicalKey = prefix + canonical;
+    if (canonicalKey in out) {
+      out[prefix + legacy] = out[canonicalKey];
+    }
+  }
+
   return out;
 }

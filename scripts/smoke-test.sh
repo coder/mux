@@ -41,6 +41,11 @@ cleanup() {
     rm -rf "$TEST_DIR"
   fi
 
+  # Remove repack directory (created when SKIP_SHRINKWRAP=1)
+  if [[ -n "${REPACK_DIR:-}" ]] && [[ -d "$REPACK_DIR" ]]; then
+    rm -rf "$REPACK_DIR"
+  fi
+
   if [[ $exit_code -eq 0 ]]; then
     log_info "✅ Smoke test completed successfully"
   else
@@ -58,6 +63,11 @@ SERVER_PORT="${SERVER_PORT:-3000}"
 SERVER_HOST="${SERVER_HOST:-localhost}"
 STARTUP_TIMEOUT="${STARTUP_TIMEOUT:-30}"
 HEALTHCHECK_TIMEOUT="${HEALTHCHECK_TIMEOUT:-10}"
+AUTH_TOKEN="smoke-test-token-$(date +%s)"
+# When set to "1", strip npm-shrinkwrap.json from the package before installing.
+# This simulates package managers like `bun x` that ignore shrinkwrap, catching
+# dependency resolution issues that the lockfile would otherwise mask.
+SKIP_SHRINKWRAP="${SKIP_SHRINKWRAP:-0}"
 
 # Validate required arguments
 if [[ -z "$PACKAGE_TARBALL" ]]; then
@@ -91,6 +101,26 @@ cat >package.json <<EOF
 }
 EOF
 
+# Optionally strip shrinkwrap to simulate `bun x` / lockfile-free resolution.
+# When a user runs `bun x mux@latest`, bun ignores npm-shrinkwrap.json and resolves
+# dependencies from scratch. This can resolve to different (potentially broken) versions
+# than what the shrinkwrap locks to. Testing without shrinkwrap catches these mismatches.
+if [[ "$SKIP_SHRINKWRAP" == "1" ]]; then
+  log_warning "SKIP_SHRINKWRAP=1: stripping npm-shrinkwrap.json from package (simulating bun x)"
+  REPACK_DIR=$(mktemp -d)
+  tar -xzf "$PACKAGE_TARBALL" -C "$REPACK_DIR"
+  if [[ -f "$REPACK_DIR/package/npm-shrinkwrap.json" ]]; then
+    rm "$REPACK_DIR/package/npm-shrinkwrap.json"
+    log_info "Removed npm-shrinkwrap.json from package"
+  else
+    log_warning "No npm-shrinkwrap.json found in package (nothing to strip)"
+  fi
+  STRIPPED_TARBALL="$REPACK_DIR/mux-no-shrinkwrap.tgz"
+  tar -czf "$STRIPPED_TARBALL" -C "$REPACK_DIR" package
+  PACKAGE_TARBALL="$STRIPPED_TARBALL"
+  log_info "Repacked tarball without shrinkwrap: $PACKAGE_TARBALL"
+fi
+
 # Install the package
 log_info "Installing package..."
 if ! npm install --no-save "$PACKAGE_TARBALL"; then
@@ -119,7 +149,7 @@ log_info "✅ mux api subcommand works"
 
 # Start the server in background
 log_info "Starting mux server on $SERVER_HOST:$SERVER_PORT..."
-node_modules/.bin/mux server --host "$SERVER_HOST" --port "$SERVER_PORT" >server.log 2>&1 &
+node_modules/.bin/mux server --host "$SERVER_HOST" --port "$SERVER_PORT" --auth-token "$AUTH_TOKEN" >server.log 2>&1 &
 SERVER_PID=$!
 
 log_info "Server started with PID: $SERVER_PID"
@@ -209,7 +239,10 @@ const PROJECT_DIR = '$PROJECT_DIR';
 async function runTests() {
   // Test 1: HTTP oRPC client - create project
   console.log('Testing oRPC project creation via HTTP...');
-  const httpLink = new RPCLink({ url: ORPC_URL });
+  const httpLink = new RPCLink({
+    url: ORPC_URL,
+    headers: { 'Authorization': 'Bearer ${AUTH_TOKEN}' }
+  });
   const client = createORPCClient(httpLink);
 
   const projectResult = await client.projects.create({ projectPath: PROJECT_DIR });
@@ -233,7 +266,7 @@ async function runTests() {
   // Test 3: WebSocket connection
   console.log('Testing oRPC WebSocket connection...');
   await new Promise((resolve, reject) => {
-    const ws = new WebSocket(WS_URL);
+    const ws = new WebSocket(WS_URL, { headers: { 'Authorization': 'Bearer ${AUTH_TOKEN}' } });
     const timeout = setTimeout(() => {
       ws.close();
       reject(new Error('WebSocket connection timed out'));

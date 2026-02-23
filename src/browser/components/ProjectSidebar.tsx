@@ -1,22 +1,24 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import MuxLogoDark from "@/browser/assets/logos/mux-logo-dark.svg?react";
 import MuxLogoLight from "@/browser/assets/logos/mux-logo-light.svg?react";
 import { useTheme } from "@/browser/contexts/ThemeContext";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  readPersistedState,
+  updatePersistedState,
+  usePersistedState,
+} from "@/browser/hooks/usePersistedState";
 import { useDebouncedValue } from "@/browser/hooks/useDebouncedValue";
-import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
-import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import {
-  DEFAULT_MODEL_KEY,
   EXPANDED_PROJECTS_KEY,
+  MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY,
   getDraftScopeId,
   getInputKey,
-  getModelKey,
   getWorkspaceNameStateKey,
 } from "@/common/constants/storage";
 import { getDisplayTitleFromPersistedState } from "@/browser/hooks/useWorkspaceName";
@@ -28,7 +30,14 @@ import {
   reorderProjects,
   normalizeOrder,
 } from "@/common/utils/projectOrdering";
-import { matchesKeybind, formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import {
+  matchesKeybind,
+  formatKeybind,
+  isEditableElement,
+  KEYBINDS,
+} from "@/browser/utils/ui/keybinds";
+import { useAPI } from "@/browser/contexts/API";
+import { CUSTOM_EVENTS, type CustomEventType } from "@/common/constants/events";
 import { PlatformPaths } from "@/common/utils/paths";
 import {
   partitionWorkspacesByAge,
@@ -50,13 +59,15 @@ import type { Secret } from "@/common/types/secrets";
 
 import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
-import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
+import { TitleEditProvider, useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
+import { useConfirmDialog } from "@/browser/contexts/ConfirmDialogContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { ChevronRight, CircleHelp, KeyRound } from "lucide-react";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
 import { useRouter } from "@/browser/contexts/RouterContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
+import { forkWorkspace } from "@/browser/utils/chatCommands";
 import { PopoverError } from "./PopoverError";
 import { SectionHeader } from "./SectionHeader";
 import { AddSectionButton } from "./AddSectionButton";
@@ -65,6 +76,7 @@ import { WorkspaceDragLayer } from "./WorkspaceDragLayer";
 import { SectionDragLayer } from "./SectionDragLayer";
 import { DraggableSection } from "./DraggableSection";
 import type { SectionConfig } from "@/common/types/project";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // Re-export WorkspaceSelection for backwards compatibility
 export type { WorkspaceSelection } from "./WorkspaceListItem";
@@ -311,28 +323,7 @@ const ProjectDragLayer: React.FC = () => {
 };
 
 function MuxChatStatusIndicator() {
-  // Subscribe to the global default model preference so backend-seeded values apply immediately
-  // on fresh origins (e.g., when switching ports).
-  const [defaultModelPref] = usePersistedState<string>(
-    DEFAULT_MODEL_KEY,
-    WORKSPACE_DEFAULTS.model,
-    { listener: true }
-  );
-  const defaultModel = migrateGatewayModel(defaultModelPref).trim() || WORKSPACE_DEFAULTS.model;
-
-  // Workspace-scoped model preference. If unset, fall back to the global default model.
-  // Note: we intentionally *don't* pass defaultModel as the usePersistedState initialValue;
-  // initialValue is sticky and would lock in the fallback before startup seeding.
-  const [preferredModel] = usePersistedState<string | null>(
-    getModelKey(MUX_HELP_CHAT_WORKSPACE_ID),
-    null,
-    { listener: true }
-  );
-
-  const fallbackModel =
-    typeof preferredModel === "string" && preferredModel.trim().length > 0
-      ? migrateGatewayModel(preferredModel.trim())
-      : defaultModel;
+  const fallbackModel = useWorkspaceFallbackModel(MUX_HELP_CHAT_WORKSPACE_ID);
 
   return (
     <WorkspaceStatusIndicator
@@ -341,6 +332,86 @@ function MuxChatStatusIndicator() {
       isCreating={false}
     />
   );
+}
+
+/**
+ * Handles F2 (edit title) and Shift+F2 (generate new title) keybinds.
+ * Rendered inside TitleEditProvider so it can access useTitleEdit().
+ */
+function SidebarTitleEditKeybinds(props: {
+  selectedWorkspace: WorkspaceSelection | undefined;
+  sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>;
+  collapsed: boolean;
+}) {
+  const { requestEdit, wrapGenerateTitle } = useTitleEdit();
+  const { api } = useAPI();
+
+  const regenerateTitleForWorkspace = useCallback(
+    (workspaceId: string) => {
+      if (workspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
+        return;
+      }
+      wrapGenerateTitle(workspaceId, () => {
+        if (!api) {
+          return Promise.resolve({ success: false, error: "Not connected to server" });
+        }
+        return api.workspace.regenerateTitle({ workspaceId });
+      });
+    },
+    [wrapGenerateTitle, api]
+  );
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (props.collapsed) return;
+      if (!props.selectedWorkspace) return;
+      if (isEditableElement(e.target)) return;
+      const wsId = props.selectedWorkspace.workspaceId;
+      if (wsId === MUX_HELP_CHAT_WORKSPACE_ID) return;
+
+      if (matchesKeybind(e, KEYBINDS.EDIT_WORKSPACE_TITLE)) {
+        e.preventDefault();
+        const meta = props.sortedWorkspacesByProject
+          .get(props.selectedWorkspace.projectPath)
+          ?.find((m) => m.id === wsId);
+        const displayTitle = meta?.title ?? meta?.name ?? "";
+        requestEdit(wsId, displayTitle);
+      } else if (matchesKeybind(e, KEYBINDS.GENERATE_WORKSPACE_TITLE)) {
+        e.preventDefault();
+        regenerateTitleForWorkspace(wsId);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    props.collapsed,
+    props.selectedWorkspace,
+    props.sortedWorkspacesByProject,
+    requestEdit,
+    regenerateTitleForWorkspace,
+  ]);
+
+  useEffect(() => {
+    const handleGenerateTitleRequest: EventListener = (event) => {
+      const customEvent = event as CustomEventType<
+        typeof CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED
+      >;
+      regenerateTitleForWorkspace(customEvent.detail.workspaceId);
+    };
+
+    window.addEventListener(
+      CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED,
+      handleGenerateTitleRequest
+    );
+    return () => {
+      window.removeEventListener(
+        CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED,
+        handleGenerateTitleRequest
+      );
+    };
+  }, [regenerateTitleForWorkspace]);
+
+  return null;
 }
 
 interface ProjectSidebarProps {
@@ -367,7 +438,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     selectedWorkspace,
     setSelectedWorkspace: onSelectWorkspace,
     archiveWorkspace: onArchiveWorkspace,
-    renameWorkspace: onRenameWorkspace,
+    removeWorkspace,
+    updateWorkspaceTitle: onUpdateTitle,
     refreshWorkspaceMetadata,
     pendingNewWorkspaceProject,
     pendingNewWorkspaceDraftId,
@@ -379,6 +451,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   } = useWorkspaceActions();
   const workspaceStore = useWorkspaceStoreRaw();
   const { navigateToProject } = useRouter();
+  const { api } = useAPI();
+  const { confirm: confirmDialog } = useConfirmDialog();
 
   // Get project state and operations from context
   const {
@@ -400,16 +474,70 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   // Mobile breakpoint for auto-closing sidebar
   const MOBILE_BREAKPOINT = 768;
+  const projectListScrollRef = useRef<HTMLDivElement | null>(null);
+  const mobileScrollTopRef = useRef(0);
+  const wasCollapsedRef = useRef(collapsed);
+
+  const normalizeMobileScrollTop = useCallback((scrollTop: number): number => {
+    return Number.isFinite(scrollTop) ? Math.max(0, Math.round(scrollTop)) : 0;
+  }, []);
+
+  const persistMobileSidebarScrollTop = useCallback(
+    (scrollTop: number) => {
+      if (window.innerWidth > MOBILE_BREAKPOINT) {
+        return;
+      }
+
+      // Keep the last viewed list position so reopening the touch sidebar returns
+      // users to where they were browsing instead of jumping back to the top.
+      const normalizedScrollTop = normalizeMobileScrollTop(scrollTop);
+      updatePersistedState<number>(MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY, normalizedScrollTop, 0);
+    },
+    [MOBILE_BREAKPOINT, normalizeMobileScrollTop]
+  );
+
+  useEffect(() => {
+    if (collapsed || window.innerWidth > MOBILE_BREAKPOINT) {
+      return;
+    }
+
+    const persistedScrollTop = readPersistedState<unknown>(MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY, 0);
+    const normalizedScrollTop =
+      typeof persistedScrollTop === "number" ? normalizeMobileScrollTop(persistedScrollTop) : 0;
+    mobileScrollTopRef.current = normalizedScrollTop;
+
+    if (projectListScrollRef.current) {
+      projectListScrollRef.current.scrollTop = normalizedScrollTop;
+    }
+  }, [collapsed, MOBILE_BREAKPOINT, normalizeMobileScrollTop]);
+
+  useEffect(() => {
+    const wasCollapsed = wasCollapsedRef.current;
+
+    if (!wasCollapsed && collapsed) {
+      persistMobileSidebarScrollTop(mobileScrollTopRef.current);
+    }
+
+    wasCollapsedRef.current = collapsed;
+  }, [collapsed, persistMobileSidebarScrollTop]);
+
+  const handleProjectListScroll = useCallback(
+    (event: React.UIEvent<HTMLDivElement>) => {
+      mobileScrollTopRef.current = normalizeMobileScrollTop(event.currentTarget.scrollTop);
+    },
+    [normalizeMobileScrollTop]
+  );
 
   // Wrapper to close sidebar on mobile after workspace selection
   const handleSelectWorkspace = useCallback(
     (selection: WorkspaceSelection) => {
       onSelectWorkspace(selection);
       if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
+        persistMobileSidebarScrollTop(mobileScrollTopRef.current);
         onToggleCollapsed();
       }
     },
-    [onSelectWorkspace, collapsed, onToggleCollapsed]
+    [onSelectWorkspace, collapsed, onToggleCollapsed, persistMobileSidebarScrollTop]
   );
 
   // Wrapper to close sidebar on mobile after adding workspace
@@ -417,10 +545,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     (projectPath: string, sectionId?: string) => {
       createWorkspaceDraft(projectPath, sectionId);
       if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
+        persistMobileSidebarScrollTop(mobileScrollTopRef.current);
         onToggleCollapsed();
       }
     },
-    [createWorkspaceDraft, collapsed, onToggleCollapsed]
+    [createWorkspaceDraft, collapsed, onToggleCollapsed, persistMobileSidebarScrollTop]
   );
 
   // Wrapper to close sidebar on mobile after opening an existing draft
@@ -428,10 +557,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     (projectPath: string, draftId: string, sectionId?: string | null) => {
       openWorkspaceDraft(projectPath, draftId, sectionId);
       if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
+        persistMobileSidebarScrollTop(mobileScrollTopRef.current);
         onToggleCollapsed();
       }
     },
-    [openWorkspaceDraft, collapsed, onToggleCollapsed]
+    [openWorkspaceDraft, collapsed, onToggleCollapsed, persistMobileSidebarScrollTop]
   );
 
   const handleOpenMuxChat = useCallback(() => {
@@ -488,7 +618,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   );
 
   const [archivingWorkspaceIds, setArchivingWorkspaceIds] = useState<Set<string>>(new Set());
+  const [removingWorkspaceIds, setRemovingWorkspaceIds] = useState<Set<string>>(new Set());
   const workspaceArchiveError = usePopoverError();
+  const workspaceForkError = usePopoverError();
+  const workspaceRemoveError = usePopoverError();
   const [archiveConfirmation, setArchiveConfirmation] = useState<{
     workspaceId: string;
     displayTitle: string;
@@ -542,6 +675,40 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       setExpandedSections((prev) => ({ ...prev, [key]: true }));
     }
   };
+
+  const handleForkWorkspace = useCallback(
+    async (workspaceId: string, buttonElement?: HTMLElement) => {
+      if (!api) {
+        workspaceForkError.showError(workspaceId, "Not connected to server");
+        return;
+      }
+
+      let anchor: { top: number; left: number } | undefined;
+      if (buttonElement) {
+        const rect = buttonElement.getBoundingClientRect();
+        anchor = {
+          top: rect.top + window.scrollY,
+          left: rect.right + 10,
+        };
+      }
+
+      try {
+        const result = await forkWorkspace({
+          client: api,
+          sourceWorkspaceId: workspaceId,
+        });
+        if (result.success) {
+          return;
+        }
+        workspaceForkError.showError(workspaceId, result.error ?? "Failed to fork chat", anchor);
+      } catch (error) {
+        // IPC/transport failures throw instead of returning { success: false }
+        const message = getErrorMessage(error);
+        workspaceForkError.showError(workspaceId, message, anchor);
+      }
+    },
+    [api, workspaceForkError]
+  );
 
   const performArchiveWorkspace = useCallback(
     async (workspaceId: string, buttonElement?: HTMLElement) => {
@@ -621,11 +788,53 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     setArchiveConfirmation(null);
   }, []);
 
+  const handleCancelWorkspaceCreation = useCallback(
+    async (workspaceId: string) => {
+      // Give immediate UI feedback (spinner / disabled row) while deletion is in-flight.
+      setRemovingWorkspaceIds((prev) => new Set(prev).add(workspaceId));
+
+      try {
+        const result = await removeWorkspace(workspaceId, { force: true });
+        if (!result.success) {
+          workspaceRemoveError.showError(
+            workspaceId,
+            result.error ?? "Failed to cancel workspace creation"
+          );
+        }
+      } finally {
+        setRemovingWorkspaceIds((prev) => {
+          const next = new Set(prev);
+          next.delete(workspaceId);
+          return next;
+        });
+      }
+    },
+    [removeWorkspace, workspaceRemoveError]
+  );
+
   const handleRemoveSection = async (
     projectPath: string,
     sectionId: string,
     buttonElement: HTMLElement
   ) => {
+    // removeSection unsections every workspace in the project (including archived),
+    // so confirmation needs to count from the full project config.
+    const workspacesInSection = (projects.get(projectPath)?.workspaces ?? []).filter(
+      (workspace) => workspace.sectionId === sectionId
+    );
+
+    if (workspacesInSection.length > 0) {
+      const ok = await confirmDialog({
+        title: "Delete section?",
+        description: `${workspacesInSection.length} workspace(s) in this section will be moved to unsectioned.`,
+        confirmLabel: "Delete",
+        confirmVariant: "destructive",
+      });
+      if (!ok) {
+        return;
+      }
+    }
+
     const result = await removeSection(projectPath, sectionId);
     if (!result.success) {
       const error = result.error ?? "Failed to remove section";
@@ -737,7 +946,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   }, [selectedWorkspace, handleAddWorkspace, handleArchiveWorkspace]);
 
   return (
-    <RenameProvider onRenameWorkspace={onRenameWorkspace}>
+    <TitleEditProvider onUpdateTitle={onUpdateTitle}>
+      <SidebarTitleEditKeybinds
+        selectedWorkspace={selectedWorkspace ?? undefined}
+        sortedWorkspacesByProject={sortedWorkspacesByProject}
+        collapsed={collapsed}
+      />
       <DndProvider backend={HTML5Backend}>
         <ProjectDragLayer />
         <WorkspaceDragLayer />
@@ -778,10 +992,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                   className="text-secondary hover:bg-hover hover:border-border-light flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded border border-transparent bg-transparent px-1.5 text-xs transition-all duration-200"
                 >
                   <span className="text-base leading-none">+</span>
-                  <span>New Project</span>
+                  <span>Add Project</span>
                 </button>
               </div>
-              <div className="flex-1 overflow-y-auto">
+              <div
+                ref={projectListScrollRef}
+                onScroll={handleProjectListScroll}
+                className="flex-1 overflow-x-hidden overflow-y-auto"
+              >
                 {visibleProjectPaths.length === 0 ? (
                   <div className="px-4 py-8 text-center">
                     <p className="text-muted mb-4 text-[13px]">No projects</p>
@@ -903,17 +1121,24 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             </TooltipTrigger>
                             <TooltipContent align="end">Remove project</TooltipContent>
                           </Tooltip>
-                          <button
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              handleAddWorkspace(projectPath);
-                            }}
-                            aria-label={`New chat in ${projectName}`}
-                            data-project-path={projectPath}
-                            className="text-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none transition-all duration-200"
-                          >
-                            +
-                          </button>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleAddWorkspace(projectPath);
+                                }}
+                                aria-label={`New chat in ${projectName}`}
+                                data-project-path={projectPath}
+                                className="text-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none transition-all duration-200"
+                              >
+                                +
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              New chat ({formatKeybind(KEYBINDS.NEW_WORKSPACE)})
+                            </TooltipContent>
+                          </Tooltip>
                         </DraggableProjectItem>
 
                         {isExpanded && (
@@ -996,8 +1221,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   projectName={projectName}
                                   isSelected={selectedWorkspace?.workspaceId === metadata.id}
                                   isArchiving={archivingWorkspaceIds.has(metadata.id)}
+                                  isRemoving={
+                                    removingWorkspaceIds.has(metadata.id) ||
+                                    metadata.isRemoving === true
+                                  }
                                   onSelectWorkspace={handleSelectWorkspace}
+                                  onForkWorkspace={handleForkWorkspace}
                                   onArchiveWorkspace={handleArchiveWorkspace}
+                                  onCancelCreation={handleCancelWorkspaceCreation}
                                   depth={depthByWorkspaceId[metadata.id] ?? 0}
                                   sectionId={sectionId}
                                 />
@@ -1363,6 +1594,16 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             onDismiss={workspaceArchiveError.clearError}
           />
           <PopoverError
+            error={workspaceForkError.error}
+            prefix="Failed to fork chat"
+            onDismiss={workspaceForkError.clearError}
+          />
+          <PopoverError
+            error={workspaceRemoveError.error}
+            prefix="Failed to cancel workspace creation"
+            onDismiss={workspaceRemoveError.clearError}
+          />
+          <PopoverError
             error={projectRemoveError.error}
             prefix="Failed to remove project"
             onDismiss={projectRemoveError.clearError}
@@ -1374,7 +1615,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           />
         </div>
       </DndProvider>
-    </RenameProvider>
+    </TitleEditProvider>
   );
 };
 

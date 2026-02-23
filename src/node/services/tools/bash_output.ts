@@ -42,8 +42,8 @@ export const createBashOutputTool: ToolFactory = (config: ToolConfiguration) => 
       // Pass workspaceId so getOutput can check for queued messages
       return await config.backgroundProcessManager.getOutput(
         process_id,
-        filter,
-        filter_exclude,
+        filter ?? undefined,
+        filter_exclude ?? undefined,
         timeout_secs,
         abortSignal,
         config.workspaceId

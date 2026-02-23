@@ -19,11 +19,33 @@ describe("formatModelDisplayName", () => {
       expect(formatModelDisplayName("gpt-4o")).toBe("GPT-4o");
       expect(formatModelDisplayName("gpt-4o-mini")).toBe("GPT-4o Mini");
     });
+
+    test("formats Codex models with Codex branding", () => {
+      expect(formatModelDisplayName("gpt-5.3-codex")).toBe("Codex 5.3");
+      expect(formatModelDisplayName("gpt-5.2-codex")).toBe("Codex 5.2");
+      expect(formatModelDisplayName("gpt-5.1-codex-mini")).toBe("Codex Mini 5.1");
+      expect(formatModelDisplayName("gpt-5.1-codex-max")).toBe("Codex Max 5.1");
+    });
+
+    test("ignores date suffixes on Codex models", () => {
+      expect(formatModelDisplayName("gpt-5.1-codex-max-2025-12-01")).toBe("Codex Max 5.1");
+      expect(formatModelDisplayName("gpt-5.3-codex-2025-06-15")).toBe("Codex 5.3");
+    });
+
+    test("preserves unknown Codex qualifiers", () => {
+      expect(formatModelDisplayName("gpt-5.3-codex-preview")).toBe("Codex Preview 5.3");
+      expect(formatModelDisplayName("gpt-5.3-codex-preview-2")).toBe("Codex Preview 2 5.3");
+    });
+
+    test("formats Codex Spark models with Spark branding", () => {
+      expect(formatModelDisplayName("gpt-5.3-codex-spark")).toBe("Spark 5.3");
+    });
   });
 
   describe("Gemini models", () => {
     test("formats Gemini models", () => {
       expect(formatModelDisplayName("gemini-2-0-flash-exp")).toBe("Gemini 2.0 Flash Exp");
+      expect(formatModelDisplayName("gemini-3.1-pro-preview")).toBe("Gemini 3.1 Pro Preview");
     });
   });
 

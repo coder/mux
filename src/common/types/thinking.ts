@@ -39,6 +39,20 @@ export function getThinkingDisplayLabel(level: ThinkingLevel, modelString?: stri
 }
 
 /**
+ * UI option label for thinking levels.
+ *
+ * Settings dropdowns use lowercase labels for most levels, but xhigh/max should
+ * remain provider-aware to match the model's terminology.
+ */
+export function getThinkingOptionLabel(level: ThinkingLevel, modelString?: string): string {
+  if (level !== "xhigh" && level !== "max") {
+    return level;
+  }
+
+  return getThinkingDisplayLabel(level, modelString) === "XHIGH" ? "xhigh" : "max";
+}
+
+/**
  * Reverse mapping from display labels/aliases to internal ThinkingLevel values.
  * Accepts both canonical names and shorthand aliases (e.g., "med" → "medium").
  */
@@ -59,6 +73,47 @@ const DISPLAY_LABEL_TO_LEVEL: Record<string, ThinkingLevel> = {
 export function parseThinkingDisplayLabel(value: string): ThinkingLevel | undefined {
   const normalized = value.trim().toLowerCase();
   return DISPLAY_LABEL_TO_LEVEL[normalized];
+}
+
+/**
+ * Result of parsing a thinking level input. Named levels resolve to a
+ * ThinkingLevel string immediately; numeric indices are deferred and
+ * resolved against the target model's thinking policy at send time
+ * (since different models have different allowed level sets).
+ */
+export type ParsedThinkingInput = ThinkingLevel | number;
+
+/**
+ * Maximum numeric thinking index (inclusive). Indices 0–N map to
+ * the model's allowed levels sorted from lowest to highest.
+ * Kept generous — out-of-range indices are clamped to the model's max.
+ */
+export const MAX_THINKING_INDEX = 9;
+
+/**
+ * Parse a thinking level from user input — accepts both named levels
+ * ("off", "low", "med", "medium", "high", "max", "xhigh") and numeric
+ * indices (0–N). Named levels resolve immediately; numeric indices are
+ * returned as numbers for model-aware resolution later via
+ * `resolveThinkingInput()` in policy.ts.
+ *
+ * Used by both `mux run --thinking` and `/model+level` oneshot.
+ */
+export function parseThinkingInput(value: string): ParsedThinkingInput | undefined {
+  const normalized = value.trim().toLowerCase();
+
+  // Named level first (e.g., "off", "low", "med", "high", "max", "xhigh")
+  const named = DISPLAY_LABEL_TO_LEVEL[normalized];
+  if (named) return named;
+
+  // Numeric index — resolved later against the model's thinking policy
+  // (e.g., 0 = lowest allowed level, which is "medium" for gpt-5.2-pro)
+  const num = parseInt(normalized, 10);
+  if (!Number.isNaN(num) && String(num) === normalized && num >= 0 && num <= MAX_THINKING_INDEX) {
+    return num;
+  }
+
+  return undefined;
 }
 
 /**

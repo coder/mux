@@ -366,22 +366,17 @@ export const GitStatusVariations: AppStory = {
     const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-diverged"]')!;
     const plus = within(row).getByText("+12.3k");
 
-    // Hover to open tooltip
-    await userEvent.hover(plus);
+    // Click to open the divergence details dialog.
+    await userEvent.click(plus);
 
-    // HoverCard content is portaled with data-state="open" when visible
-    const getVisibleTooltip = () =>
-      document.body.querySelector<HTMLElement>('.bg-modal-bg[data-state="open"]');
-
-    // Wait for tooltip (portaled) and toggle to commits mode
     await waitFor(() => {
-      const tooltip = getVisibleTooltip();
-      if (!tooltip) throw new Error("git status tooltip not visible");
-      within(tooltip).getByText("Commits");
+      within(document.body).getByText("Git divergence details");
     });
 
-    const tooltip = getVisibleTooltip()!;
-    await userEvent.click(within(tooltip).getByText("Commits"));
+    const dialog = within(document.body).getByRole("dialog", {
+      name: "Git divergence details",
+    });
+    await userEvent.click(within(dialog).getByText("Commits"));
 
     // Verify indicator switches to divergence view for the same workspace row
     await waitFor(() => {
@@ -512,9 +507,8 @@ export const RuntimeBadgeVariations: AppStory = {
 };
 
 /**
- * Workspace title hover card with runtime badge.
- * Shows the HoverCard that appears when hovering over a workspace title,
- * containing the RuntimeBadge which can be further hovered for details.
+ * Workspace title hover behavior.
+ * Verifies that hovering a workspace title no longer opens a preview card.
  */
 export const WorkspaceTitleHoverCard: AppStory = {
   render: () => (
@@ -547,19 +541,19 @@ export const WorkspaceTitleHoverCard: AppStory = {
 
     const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-ssh-hover"]')!;
 
-    // Find the workspace title span and hover it
+    // Hovering titles should no longer open a workspace preview card.
     const titleSpan = within(row).getByText("Implement new feature with detailed description");
     await userEvent.hover(titleSpan);
 
-    // Wait for HoverCard to appear (portaled to body)
-    await waitFor(() => {
-      const hoverCard = document.body.querySelector<HTMLElement>(
-        "[data-radix-popper-content-wrapper] .bg-modal-bg"
-      );
-      if (!hoverCard) throw new Error("HoverCard not visible");
-      // Verify it contains the project name (WorkspaceHoverPreview content)
-      within(hoverCard).getByText("hover-demo");
-    });
+    // Wait past the prior HoverCard openDelay window to prove no delayed preview appears.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    const hoverCard = document.body.querySelector<HTMLElement>(
+      "[data-radix-popper-content-wrapper] .bg-modal-bg"
+    );
+    if (hoverCard) {
+      throw new Error("Workspace title hover preview should not be visible");
+    }
   },
 };
 
@@ -664,5 +658,98 @@ export const WorkspaceDraftSelected: AppStory = {
 
     const row = canvasElement.querySelector<HTMLElement>('[data-draft-id="selected-draft"]')!;
     await userEvent.click(row);
+  },
+};
+
+/**
+ * Archiving workspace alignment regression test.
+ *
+ * When a workspace enters the "archiving" transient state, the overflow menu
+ * button is hidden. Without a spacer, the title shifts ~24px to the left.
+ * This story triggers archive on one workspace so the "Archiving..." row
+ * stays visible (the mock archive call never resolves).
+ */
+export const ArchivingWorkspaceAlignment: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const projectPath = "/home/user/projects/my-app";
+        const workspaces = [
+          createWorkspace({
+            id: "ws-active-1",
+            name: "main",
+            title: "Main development branch",
+            projectName: "my-app",
+            projectPath,
+            createdAt: new Date(NOW - 3600000).toISOString(),
+          }),
+          createWorkspace({
+            id: "ws-to-archive",
+            name: "feature/old-experiment",
+            title: "Old experiment workspace",
+            projectName: "my-app",
+            projectPath,
+            createdAt: new Date(NOW - 7200000).toISOString(),
+          }),
+          createWorkspace({
+            id: "ws-active-2",
+            name: "bugfix/login",
+            title: "Fix login redirect",
+            projectName: "my-app",
+            projectPath,
+            createdAt: new Date(NOW - 10800000).toISOString(),
+          }),
+        ];
+
+        expandProjects([projectPath]);
+
+        const client = createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+        });
+
+        // Make archive hang forever so the workspace stays in "Archiving..." state
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        client.workspace.archive = () => new Promise(() => {});
+
+        return client;
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    // Wait for the target workspace row to appear
+    await waitFor(() => {
+      const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-to-archive"]');
+      if (!row) throw new Error("ws-to-archive row not found");
+    });
+
+    const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-to-archive"]')!;
+
+    // Hover to reveal the overflow (ellipsis) button
+    await userEvent.hover(row);
+
+    // Click the overflow menu button
+    const menuButton = within(row).getByLabelText("Workspace actions for Old experiment workspace");
+    await userEvent.click(menuButton);
+
+    // Wait for the popover to open, then click "Archive chat"
+    await waitFor(() => {
+      const archiveButton = document.body.querySelector<HTMLElement>(
+        "[data-radix-popper-content-wrapper] button"
+      );
+      if (!archiveButton) throw new Error("popover not open yet");
+    });
+
+    // Find and click the Archive chat button in the popover
+    const popoverContent = document.body.querySelector<HTMLElement>(
+      "[data-radix-popper-content-wrapper]"
+    )!;
+    const archiveButton = within(popoverContent).getByText("Archive chat").closest("button")!;
+    await userEvent.click(archiveButton);
+
+    // Wait for the "Archiving..." text to appear (confirms the transient state is active)
+    await waitFor(() => {
+      within(canvasElement).getByText("Archiving...");
+    });
   },
 };

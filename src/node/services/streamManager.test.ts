@@ -1,11 +1,11 @@
-import { describe, test, expect, beforeEach, mock } from "bun:test";
+import { describe, test, expect, afterEach, beforeEach } from "bun:test";
 import * as fs from "node:fs/promises";
 
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import { StreamManager } from "./streamManager";
+import { StreamManager, stripEncryptedContent } from "./streamManager";
 import { APICallError, RetryError, type ModelMessage } from "ai";
 import type { HistoryService } from "./historyService";
-import type { PartialService } from "./partialService";
+import { createTestHistoryService } from "./testHistoryService";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { shouldRunIntegrationTests, validateApiKeys } from "../../../tests/testUtils";
 import { DisposableTempDir } from "@/node/services/tempDir";
@@ -19,26 +19,17 @@ if (shouldRunIntegrationTests()) {
   validateApiKeys(["ANTHROPIC_API_KEY"]);
 }
 
-// Mock HistoryService
-const createMockHistoryService = (): HistoryService => {
-  return {
-    appendToHistory: mock(() => Promise.resolve({ success: true })),
-    getHistory: mock(() => Promise.resolve({ success: true, data: [] })),
-    updateHistory: mock(() => Promise.resolve({ success: true })),
-    truncateAfterMessage: mock(() => Promise.resolve({ success: true })),
-    clearHistory: mock(() => Promise.resolve({ success: true })),
-  } as unknown as HistoryService;
-};
+// Real HistoryService backed by a temp directory (created fresh per test)
+let historyService: HistoryService;
+let historyCleanup: () => Promise<void>;
 
-// Mock PartialService
-const createMockPartialService = (): PartialService => {
-  return {
-    writePartial: mock(() => Promise.resolve({ success: true })),
-    readPartial: mock(() => Promise.resolve(null)),
-    deletePartial: mock(() => Promise.resolve({ success: true })),
-    commitToHistory: mock(() => Promise.resolve({ success: true })),
-  } as unknown as PartialService;
-};
+beforeEach(async () => {
+  ({ historyService, cleanup: historyCleanup } = await createTestHistoryService());
+});
+
+afterEach(async () => {
+  await historyCleanup();
+});
 
 describe("StreamManager - createTempDirForStream", () => {
   test("creates ~/.mux-tmp/<token> under the runtime's home", async () => {
@@ -51,10 +42,7 @@ describe("StreamManager - createTempDirForStream", () => {
     process.env.USERPROFILE = home.path;
 
     try {
-      const streamManager = new StreamManager(
-        createMockHistoryService(),
-        createMockPartialService()
-      );
+      const streamManager = new StreamManager(historyService);
       const runtime = createRuntime({ type: "local", srcBaseDir: "/tmp" });
 
       const token = streamManager.generateStreamToken();
@@ -83,16 +71,359 @@ describe("StreamManager - createTempDirForStream", () => {
   });
 });
 
+describe("StreamManager - stopWhen configuration", () => {
+  type StopWhenCondition = (options: { steps: unknown[] }) => boolean;
+  type BuildStopWhenCondition = (request: {
+    toolChoice?: { type: "tool"; toolName: string } | "required";
+    hasQueuedMessage?: () => boolean;
+    stopAfterSuccessfulProposePlan?: boolean;
+  }) => StopWhenCondition | StopWhenCondition[];
+
+  test("uses single-step stopWhen when a tool is required", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({ toolChoice: { type: "tool", toolName: "bash" } });
+    if (typeof stopWhen !== "function") {
+      throw new Error("Expected required-tool stopWhen to be a single condition function");
+    }
+
+    expect(stopWhen({ steps: [] })).toBe(false);
+    expect(stopWhen({ steps: [{}] })).toBe(true);
+    expect(stopWhen({ steps: [{}, {}] })).toBe(false);
+  });
+
+  test("uses autonomous step cap and queued-message interrupt conditions", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    let queued = false;
+    const stopWhen = buildStopWhen!({ hasQueuedMessage: () => queued });
+    if (!Array.isArray(stopWhen)) {
+      throw new Error("Expected autonomous stopWhen to be an array of conditions");
+    }
+    expect(stopWhen).toHaveLength(4);
+
+    const [maxStepCondition, queuedMessageCondition, agentReportCondition, switchAgentCondition] =
+      stopWhen;
+    expect(maxStepCondition({ steps: new Array(99999) })).toBe(false);
+    expect(maxStepCondition({ steps: new Array(100000) })).toBe(true);
+
+    expect(queuedMessageCondition({ steps: [] })).toBe(false);
+    queued = true;
+    expect(queuedMessageCondition({ steps: [] })).toBe(true);
+
+    expect(
+      agentReportCondition({
+        steps: [{ toolResults: [{ toolName: "agent_report", output: { success: true } }] }],
+      })
+    ).toBe(true);
+
+    expect(
+      switchAgentCondition({
+        steps: [{ toolResults: [{ toolName: "switch_agent", output: { ok: true } }] }],
+      })
+    ).toBe(true);
+  });
+
+  test("stops only after successful agent_report tool result in autonomous mode", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({ hasQueuedMessage: () => false });
+    if (!Array.isArray(stopWhen)) {
+      throw new Error("Expected autonomous stopWhen to be an array of conditions");
+    }
+
+    const [, , reportStop] = stopWhen;
+    if (!reportStop) {
+      throw new Error("Expected autonomous stopWhen to include agent_report condition");
+    }
+
+    // Returns true when step contains successful agent_report tool result.
+    expect(
+      reportStop({
+        steps: [{ toolResults: [{ toolName: "agent_report", output: { success: true } }] }],
+      })
+    ).toBe(true);
+
+    // Returns false when step contains failed agent_report output.
+    expect(
+      reportStop({
+        steps: [{ toolResults: [{ toolName: "agent_report", output: { success: false } }] }],
+      })
+    ).toBe(false);
+
+    // Returns false when step only contains agent_report tool call (no successful result yet).
+    expect(
+      reportStop({
+        steps: [{ toolCalls: [{ toolName: "agent_report" }] }],
+      })
+    ).toBe(false);
+
+    // Returns false when step contains other tool results.
+    expect(
+      reportStop({
+        steps: [{ toolResults: [{ toolName: "bash", output: { success: true } }] }],
+      })
+    ).toBe(false);
+
+    // Returns false when no steps.
+    expect(reportStop({ steps: [] })).toBe(false);
+  });
+
+  test("stops only after successful switch_agent tool result in autonomous mode", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({ hasQueuedMessage: () => false });
+    if (!Array.isArray(stopWhen)) {
+      throw new Error("Expected autonomous stopWhen to be an array of conditions");
+    }
+
+    const [, , , switchStop] = stopWhen;
+    if (!switchStop) {
+      throw new Error("Expected autonomous stopWhen to include switch_agent condition");
+    }
+
+    // Returns true when step contains successful switch_agent tool result.
+    expect(
+      switchStop({
+        steps: [{ toolResults: [{ toolName: "switch_agent", output: { ok: true } }] }],
+      })
+    ).toBe(true);
+
+    // Returns false when step contains failed switch_agent output.
+    expect(
+      switchStop({
+        steps: [{ toolResults: [{ toolName: "switch_agent", output: { ok: false } }] }],
+      })
+    ).toBe(false);
+
+    // Returns false when step only contains switch_agent tool call (no successful result yet).
+    expect(
+      switchStop({
+        steps: [{ toolCalls: [{ toolName: "switch_agent" }] }],
+      })
+    ).toBe(false);
+
+    // Returns false when step contains other tool results.
+    expect(
+      switchStop({
+        steps: [{ toolResults: [{ toolName: "bash", output: { ok: true } }] }],
+      })
+    ).toBe(false);
+
+    // Returns false when no steps.
+    expect(switchStop({ steps: [] })).toBe(false);
+  });
+
+  test("stops when propose_plan succeeds and flag is enabled", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      stopAfterSuccessfulProposePlan: true,
+    });
+    if (!Array.isArray(stopWhen)) {
+      throw new Error("Expected autonomous stopWhen to be an array of conditions");
+    }
+    expect(stopWhen).toHaveLength(5);
+
+    const proposePlanSuccessSteps = [
+      {
+        toolResults: [
+          {
+            toolName: "propose_plan",
+            output: { success: true, planPath: "/tmp/plan.md" },
+          },
+        ],
+      },
+    ];
+
+    const proposePlanCondition = stopWhen[4];
+    if (!proposePlanCondition) {
+      throw new Error("Expected stopWhen to include propose_plan condition");
+    }
+
+    expect(proposePlanCondition({ steps: proposePlanSuccessSteps })).toBe(true);
+    expect(stopWhen.some((condition) => condition({ steps: proposePlanSuccessSteps }))).toBe(true);
+  });
+
+  test("does not stop when propose_plan fails", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      stopAfterSuccessfulProposePlan: true,
+    });
+    if (!Array.isArray(stopWhen)) {
+      throw new Error("Expected autonomous stopWhen to be an array of conditions");
+    }
+
+    const proposePlanFailedSteps = [
+      {
+        toolResults: [
+          {
+            toolName: "propose_plan",
+            output: { success: false },
+          },
+        ],
+      },
+    ];
+
+    const proposePlanCondition = stopWhen[4];
+    if (!proposePlanCondition) {
+      throw new Error("Expected stopWhen to include propose_plan condition");
+    }
+
+    expect(proposePlanCondition({ steps: proposePlanFailedSteps })).toBe(false);
+    expect(stopWhen.some((condition) => condition({ steps: proposePlanFailedSteps }))).toBe(false);
+  });
+
+  test("does not stop for propose_plan when flag is false/absent", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const proposePlanSuccessSteps = [
+      {
+        toolResults: [
+          {
+            toolName: "propose_plan",
+            output: { success: true, planPath: "/tmp/plan.md" },
+          },
+        ],
+      },
+    ];
+
+    const stopWhenWithoutProposePlanFlag = [
+      buildStopWhen!({ hasQueuedMessage: () => false, stopAfterSuccessfulProposePlan: false }),
+      buildStopWhen!({ hasQueuedMessage: () => false }),
+    ];
+
+    for (const stopWhen of stopWhenWithoutProposePlanFlag) {
+      if (!Array.isArray(stopWhen)) {
+        throw new Error("Expected autonomous stopWhen to be an array of conditions");
+      }
+      expect(stopWhen).toHaveLength(4);
+      expect(stopWhen.some((condition) => condition({ steps: proposePlanSuccessSteps }))).toBe(
+        false
+      );
+    }
+  });
+
+  test("treats missing queued-message callback as not queued", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({});
+    if (!Array.isArray(stopWhen)) {
+      throw new Error("Expected autonomous stopWhen to remain array-based without callback");
+    }
+
+    const [, queuedMessageCondition] = stopWhen;
+    expect(queuedMessageCondition({ steps: [] })).toBe(false);
+  });
+});
+
+describe("StreamManager - stripEncryptedContent", () => {
+  test("strips encryptedContent from array output shape", () => {
+    const output = [
+      {
+        url: "https://example.com/a",
+        title: "Result A",
+        pageAge: "2d",
+        encryptedContent: "secret-a",
+      },
+      {
+        url: "https://example.com/b",
+        title: "Result B",
+      },
+      "non-object-item",
+    ];
+
+    expect(stripEncryptedContent(output)).toEqual([
+      {
+        url: "https://example.com/a",
+        title: "Result A",
+        pageAge: "2d",
+      },
+      {
+        url: "https://example.com/b",
+        title: "Result B",
+      },
+      "non-object-item",
+    ]);
+  });
+
+  test("strips encryptedContent from json value output shape", () => {
+    const output = {
+      type: "json",
+      value: [
+        {
+          url: "https://example.com/c",
+          title: "Result C",
+          encryptedContent: "secret-c",
+        },
+        {
+          url: "https://example.com/d",
+          title: "Result D",
+          pageAge: "5h",
+        },
+      ],
+      source: "web_search",
+    };
+
+    expect(stripEncryptedContent(output)).toEqual({
+      type: "json",
+      value: [
+        {
+          url: "https://example.com/c",
+          title: "Result C",
+        },
+        {
+          url: "https://example.com/d",
+          title: "Result D",
+          pageAge: "5h",
+        },
+      ],
+      source: "web_search",
+    });
+  });
+});
+
 describe("StreamManager - Concurrent Stream Prevention", () => {
   let streamManager: StreamManager;
-  let mockHistoryService: HistoryService;
-  let mockPartialService: PartialService;
   const runtime = createRuntime({ type: "local", srcBaseDir: "/tmp" });
 
   beforeEach(() => {
-    mockHistoryService = createMockHistoryService();
-    mockPartialService = createMockPartialService();
-    streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    streamManager = new StreamManager(historyService);
     // Suppress error events from bubbling up as uncaught exceptions during tests
     streamManager.on("error", () => undefined);
   });
@@ -475,13 +806,9 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
 
 describe("StreamManager - Unavailable Tool Handling", () => {
   let streamManager: StreamManager;
-  let mockHistoryService: HistoryService;
-  let mockPartialService: PartialService;
 
   beforeEach(() => {
-    mockHistoryService = createMockHistoryService();
-    mockPartialService = createMockPartialService();
-    streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    streamManager = new StreamManager(historyService);
     // Suppress error events - processStreamWithCleanup may throw due to tokenizer worker issues in test env
     streamManager.on("error", () => undefined);
   });
@@ -514,7 +841,7 @@ describe("StreamManager - Unavailable Tool Handling", () => {
           type: "tool-call",
           toolCallId: "test-call-1",
           toolName: "file_edit_replace",
-          input: { file_path: "/test", old_string: "foo", new_string: "bar" },
+          input: { path: "/test", old_string: "foo", new_string: "bar" },
         };
         // SDK emits tool-error when tool execution fails
         yield {
@@ -564,11 +891,154 @@ describe("StreamManager - Unavailable Tool Handling", () => {
   });
 });
 
+describe("StreamManager - TTFT metadata persistence", () => {
+  const runtime = createRuntime({ type: "local", srcBaseDir: "/tmp" });
+
+  async function finalizeStreamAndReadMessage(params: {
+    workspaceId: string;
+    messageId: string;
+    historySequence: number;
+    startTime: number;
+    parts: unknown[];
+  }) {
+    const streamManager = new StreamManager(historyService);
+    // Suppress error events from bubbling up as uncaught exceptions during tests
+    streamManager.on("error", () => undefined);
+
+    const replaceTokenTrackerResult = Reflect.set(streamManager, "tokenTracker", {
+      setModel: () => Promise.resolve(undefined),
+      countTokens: () => Promise.resolve(0),
+    });
+    if (!replaceTokenTrackerResult) {
+      throw new Error("Failed to mock StreamManager.tokenTracker");
+    }
+
+    const appendResult = await historyService.appendToHistory(params.workspaceId, {
+      id: params.messageId,
+      role: "assistant",
+      metadata: {
+        historySequence: params.historySequence,
+        partial: true,
+      },
+      parts: [],
+    });
+    expect(appendResult.success).toBe(true);
+    if (!appendResult.success) {
+      throw new Error(appendResult.error);
+    }
+
+    const processStreamWithCleanup = Reflect.get(streamManager, "processStreamWithCleanup") as (
+      workspaceId: string,
+      streamInfo: unknown,
+      historySequence: number
+    ) => Promise<void>;
+    expect(typeof processStreamWithCleanup).toBe("function");
+
+    const streamInfo = {
+      state: "streaming",
+      streamResult: {
+        fullStream: (async function* () {
+          // No-op stream: tests verify stream-end finalization behavior from pre-populated parts.
+        })(),
+        totalUsage: Promise.resolve({ inputTokens: 4, outputTokens: 6, totalTokens: 10 }),
+        usage: Promise.resolve({ inputTokens: 4, outputTokens: 6, totalTokens: 10 }),
+        providerMetadata: Promise.resolve(undefined),
+        steps: Promise.resolve([]),
+      },
+      abortController: new AbortController(),
+      messageId: params.messageId,
+      token: "test-token",
+      startTime: params.startTime,
+      lastPartTimestamp: params.startTime,
+      toolCompletionTimestamps: new Map<string, number>(),
+      model: KNOWN_MODELS.SONNET.id,
+      historySequence: params.historySequence,
+      parts: params.parts,
+      lastPartialWriteTime: 0,
+      partialWriteTimer: undefined,
+      partialWritePromise: undefined,
+      processingPromise: Promise.resolve(),
+      softInterrupt: { pending: false as const },
+      runtimeTempDir: "",
+      runtime,
+      cumulativeUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      cumulativeProviderMetadata: undefined,
+      didRetryPreviousResponseIdAtStep: false,
+      currentStepStartIndex: 0,
+      stepTracker: {},
+    };
+
+    await processStreamWithCleanup.call(
+      streamManager,
+      params.workspaceId,
+      streamInfo,
+      params.historySequence
+    );
+
+    const historyResult = await historyService.getHistoryFromLatestBoundary(params.workspaceId);
+    expect(historyResult.success).toBe(true);
+    if (!historyResult.success) {
+      throw new Error(historyResult.error);
+    }
+
+    const updatedMessage = historyResult.data.find((message) => message.id === params.messageId);
+    expect(updatedMessage).toBeDefined();
+    if (!updatedMessage) {
+      throw new Error(`Expected updated message ${params.messageId} in history`);
+    }
+
+    return updatedMessage;
+  }
+
+  test("persists ttftMs in final assistant metadata when first-token timing is available", async () => {
+    const startTime = Date.now() - 1000;
+    const updatedMessage = await finalizeStreamAndReadMessage({
+      workspaceId: "ttft-present-workspace",
+      messageId: "ttft-present-message",
+      historySequence: 1,
+      startTime,
+      parts: [
+        {
+          type: "text",
+          text: "hello",
+          timestamp: startTime + 250,
+        },
+      ],
+    });
+
+    expect(updatedMessage.metadata?.ttftMs).toBe(250);
+  });
+
+  test("omits ttftMs in final assistant metadata when first-token timing is unavailable", async () => {
+    const startTime = Date.now() - 1000;
+    const updatedMessage = await finalizeStreamAndReadMessage({
+      workspaceId: "ttft-missing-workspace",
+      messageId: "ttft-missing-message",
+      historySequence: 1,
+      startTime,
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "tool-1",
+          toolName: "bash",
+          state: "output-available",
+          input: { script: "echo hi" },
+          output: { ok: true },
+          timestamp: startTime + 100,
+        },
+      ],
+    });
+
+    expect(updatedMessage.metadata?.ttftMs).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(updatedMessage.metadata ?? {}, "ttftMs")).toBe(
+      false
+    );
+  });
+});
+
 describe("StreamManager - previousResponseId recovery", () => {
   test("isResponseIdLost returns false for unknown IDs", () => {
-    const mockHistoryService = createMockHistoryService();
-    const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService);
 
     // Verify the ID is not lost initially
     expect(streamManager.isResponseIdLost("resp_123abc")).toBe(false);
@@ -576,9 +1046,7 @@ describe("StreamManager - previousResponseId recovery", () => {
   });
 
   test("extractPreviousResponseIdFromError extracts ID from various error formats", () => {
-    const mockHistoryService = createMockHistoryService();
-    const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService);
 
     // Get the private method via reflection
     const extractMethod = Reflect.get(streamManager, "extractPreviousResponseIdFromError") as (
@@ -610,9 +1078,7 @@ describe("StreamManager - previousResponseId recovery", () => {
   });
 
   test("recordLostResponseIdIfApplicable records IDs for explicit OpenAI errors", () => {
-    const mockHistoryService = createMockHistoryService();
-    const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService);
 
     const recordMethod = Reflect.get(streamManager, "recordLostResponseIdIfApplicable") as (
       workspaceId: string,
@@ -641,9 +1107,7 @@ describe("StreamManager - previousResponseId recovery", () => {
   });
 
   test("recordLostResponseIdIfApplicable records IDs for 500 errors referencing previous responses", () => {
-    const mockHistoryService = createMockHistoryService();
-    const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService);
 
     const recordMethod = Reflect.get(streamManager, "recordLostResponseIdIfApplicable") as (
       workspaceId: string,
@@ -672,9 +1136,7 @@ describe("StreamManager - previousResponseId recovery", () => {
   });
 
   test("retryStreamWithoutPreviousResponseId retries at step boundary with existing parts", async () => {
-    const mockHistoryService = createMockHistoryService();
-    const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService);
 
     const retryMethod = Reflect.get(streamManager, "retryStreamWithoutPreviousResponseId") as (
       workspaceId: string,
@@ -760,9 +1222,7 @@ describe("StreamManager - previousResponseId recovery", () => {
   });
 
   test("resolveTotalUsageForStreamEnd prefers cumulative usage after step retry", () => {
-    const mockHistoryService = createMockHistoryService();
-    const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService);
 
     const resolveMethod = Reflect.get(streamManager, "resolveTotalUsageForStreamEnd") as (
       streamInfo: unknown,
@@ -783,9 +1243,7 @@ describe("StreamManager - previousResponseId recovery", () => {
   });
 
   test("resolveTotalUsageForStreamEnd treats non-zero fields as valid usage", () => {
-    const mockHistoryService = createMockHistoryService();
-    const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService);
 
     const resolveMethod = Reflect.get(streamManager, "resolveTotalUsageForStreamEnd") as (
       streamInfo: unknown,
@@ -806,9 +1264,7 @@ describe("StreamManager - previousResponseId recovery", () => {
   });
 
   test("resolveTotalUsageForStreamEnd keeps stream total without step retry", () => {
-    const mockHistoryService = createMockHistoryService();
-    const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService);
 
     const resolveMethod = Reflect.get(streamManager, "resolveTotalUsageForStreamEnd") as (
       streamInfo: unknown,
@@ -831,9 +1287,7 @@ describe("StreamManager - previousResponseId recovery", () => {
 
 describe("StreamManager - replayStream", () => {
   test("replayStream snapshots parts so reconnect doesn't block until stream ends", async () => {
-    const mockHistoryService = createMockHistoryService();
-    const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService);
 
     // Suppress error events from bubbling up as uncaught exceptions during tests
     streamManager.on("error", () => undefined);
@@ -901,13 +1355,227 @@ describe("StreamManager - replayStream", () => {
     // If replayStream iterates the live array, it would also emit "b".
     expect(deltas).toEqual(["a"]);
   });
+
+  test("replayStream filters output-available tool parts using completion timestamps", async () => {
+    const streamManager = new StreamManager(historyService);
+
+    // Suppress error events from bubbling up as uncaught exceptions during tests
+    streamManager.on("error", () => undefined);
+
+    const workspaceId = "ws-replay-tool-filter";
+
+    const replayedToolEnds: string[] = [];
+    streamManager.on(
+      "tool-call-end",
+      (event: { replay?: boolean | undefined; toolCallId: string }) => {
+        expect(event.replay).toBe(true);
+        replayedToolEnds.push(event.toolCallId);
+      }
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
+    if (!(workspaceStreamsValue instanceof Map)) {
+      throw new Error("StreamManager.workspaceStreams is not a Map");
+    }
+    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
+
+    const streamInfo = {
+      state: "streaming",
+      messageId: "msg-tools",
+      model: "claude-sonnet-4",
+      historySequence: 1,
+      startTime: 123,
+      initialMetadata: {},
+      toolCompletionTimestamps: new Map([
+        ["tool-old", 15],
+        ["tool-new", 30],
+      ]),
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "tool-old",
+          toolName: "bash",
+          input: {},
+          state: "output-available",
+          output: { ok: true },
+          timestamp: 10,
+        },
+        {
+          type: "dynamic-tool",
+          toolCallId: "tool-new",
+          toolName: "bash",
+          input: {},
+          state: "output-available",
+          output: { ok: true },
+          timestamp: 12,
+        },
+      ],
+    };
+
+    workspaceStreams.set(workspaceId, streamInfo);
+
+    const tokenTracker = Reflect.get(streamManager, "tokenTracker") as {
+      setModel: (model: string) => Promise<void>;
+      countTokens: (text: string) => Promise<number>;
+    };
+
+    tokenTracker.setModel = () => Promise.resolve();
+    tokenTracker.countTokens = () => Promise.resolve(1);
+
+    await streamManager.replayStream(workspaceId, { afterTimestamp: 20 });
+
+    expect(replayedToolEnds).toEqual(["tool-new"]);
+  });
+  test("replayStream emits replay usage-delta from tracked step/cumulative usage", async () => {
+    const streamManager = new StreamManager(historyService);
+
+    // Suppress error events from bubbling up as uncaught exceptions during tests
+    streamManager.on("error", () => undefined);
+
+    const workspaceId = "ws-replay-usage";
+    const usageEvents: Array<{
+      replay?: boolean;
+      usage: { inputTokens: number; outputTokens: number; totalTokens: number };
+      cumulativeUsage: { inputTokens: number; outputTokens: number; totalTokens: number };
+    }> = [];
+
+    streamManager.on(
+      "usage-delta",
+      (event: {
+        replay?: boolean;
+        usage: { inputTokens: number; outputTokens: number; totalTokens: number };
+        cumulativeUsage: { inputTokens: number; outputTokens: number; totalTokens: number };
+      }) => {
+        usageEvents.push(event);
+      }
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
+    if (!(workspaceStreamsValue instanceof Map)) {
+      throw new Error("StreamManager.workspaceStreams is not a Map");
+    }
+    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
+
+    workspaceStreams.set(workspaceId, {
+      state: "streaming",
+      messageId: "msg-usage",
+      model: "claude-sonnet-4",
+      metadataModel: "claude-sonnet-4",
+      historySequence: 1,
+      startTime: 123,
+      initialMetadata: {},
+      toolCompletionTimestamps: new Map<string, number>(),
+      parts: [{ type: "text", text: "hello", timestamp: 10 }],
+      lastStepUsage: { inputTokens: 21, outputTokens: 3, totalTokens: 24 },
+      cumulativeUsage: { inputTokens: 55, outputTokens: 11, totalTokens: 66 },
+      lastStepProviderMetadata: { anthropic: { cacheReadInputTokens: 2 } },
+      cumulativeProviderMetadata: { anthropic: { cacheCreationInputTokens: 9 } },
+    });
+
+    const tokenTracker = Reflect.get(streamManager, "tokenTracker") as {
+      setModel: (model: string) => Promise<void>;
+      countTokens: (text: string) => Promise<number>;
+    };
+
+    tokenTracker.setModel = () => Promise.resolve();
+    tokenTracker.countTokens = () => Promise.resolve(1);
+
+    await streamManager.replayStream(workspaceId);
+
+    expect(usageEvents).toHaveLength(1);
+    expect(usageEvents[0]?.replay).toBe(true);
+    expect(usageEvents[0]?.usage).toEqual({ inputTokens: 21, outputTokens: 3, totalTokens: 24 });
+    expect(usageEvents[0]?.cumulativeUsage).toEqual({
+      inputTokens: 55,
+      outputTokens: 11,
+      totalTokens: 66,
+    });
+  });
+  test("replayStream skips replay usage-delta for incremental afterTimestamp replays", async () => {
+    const streamManager = new StreamManager(historyService);
+
+    // Suppress error events from bubbling up as uncaught exceptions during tests
+    streamManager.on("error", () => undefined);
+
+    const workspaceId = "ws-replay-usage-incremental";
+    const usageEvents: Array<{ replay?: boolean }> = [];
+
+    streamManager.on("usage-delta", (event: { replay?: boolean }) => {
+      usageEvents.push(event);
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
+    if (!(workspaceStreamsValue instanceof Map)) {
+      throw new Error("StreamManager.workspaceStreams is not a Map");
+    }
+    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
+
+    workspaceStreams.set(workspaceId, {
+      state: "streaming",
+      messageId: "msg-usage-incremental",
+      model: "claude-sonnet-4",
+      metadataModel: "claude-sonnet-4",
+      historySequence: 1,
+      startTime: 123,
+      initialMetadata: {},
+      toolCompletionTimestamps: new Map<string, number>(),
+      parts: [{ type: "text", text: "hello", timestamp: 10 }],
+      lastStepUsage: { inputTokens: 21, outputTokens: 3, totalTokens: 24 },
+      cumulativeUsage: { inputTokens: 55, outputTokens: 11, totalTokens: 66 },
+      lastStepProviderMetadata: { anthropic: { cacheReadInputTokens: 2 } },
+      cumulativeProviderMetadata: { anthropic: { cacheCreationInputTokens: 9 } },
+    });
+
+    const tokenTracker = Reflect.get(streamManager, "tokenTracker") as {
+      setModel: (model: string) => Promise<void>;
+      countTokens: (text: string) => Promise<number>;
+    };
+
+    tokenTracker.setModel = () => Promise.resolve();
+    tokenTracker.countTokens = () => Promise.resolve(1);
+
+    await streamManager.replayStream(workspaceId, { afterTimestamp: 999 });
+
+    expect(usageEvents).toHaveLength(0);
+  });
+});
+
+describe("StreamManager - getStreamInfo", () => {
+  test("returns startTime so reconnect cursors can preserve live-only boundaries", () => {
+    const streamManager = new StreamManager(historyService);
+    const workspaceId = "ws-get-stream-info";
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
+    if (!(workspaceStreamsValue instanceof Map)) {
+      throw new Error("StreamManager.workspaceStreams is not a Map");
+    }
+    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
+
+    workspaceStreams.set(workspaceId, {
+      state: "starting",
+      messageId: "msg-starting",
+      model: "claude-sonnet-4",
+      historySequence: 1,
+      startTime: 4_321,
+      initialMetadata: {},
+      parts: [],
+      toolCompletionTimestamps: new Map<string, number>(),
+    });
+
+    const streamInfo = streamManager.getStreamInfo(workspaceId);
+
+    expect(streamInfo?.messageId).toBe("msg-starting");
+    expect(streamInfo?.startTime).toBe(4_321);
+  });
 });
 
 describe("StreamManager - categorizeError", () => {
   test("unwraps RetryError.lastError to classify model_not_found", () => {
-    const mockHistoryService = createMockHistoryService();
-    const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService);
 
     const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
       error: unknown
@@ -936,9 +1604,7 @@ describe("StreamManager - categorizeError", () => {
   });
 
   test("classifies model_not_found via message fallback", () => {
-    const mockHistoryService = createMockHistoryService();
-    const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService);
 
     const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
       error: unknown
@@ -953,9 +1619,7 @@ describe("StreamManager - categorizeError", () => {
   });
 
   test("classifies 402 payment required as quota (avoid auto-retry)", () => {
-    const mockHistoryService = createMockHistoryService();
-    const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService);
 
     const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
       error: unknown
@@ -978,6 +1642,73 @@ describe("StreamManager - categorizeError", () => {
 
     expect(categorizeMethod.call(streamManager, apiError)).toBe("quota");
   });
+
+  test("classifies 429 insufficient_quota responses as quota", () => {
+    const streamManager = new StreamManager(historyService);
+
+    const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
+      error: unknown
+    ) => unknown;
+    expect(typeof categorizeMethod).toBe("function");
+
+    const apiError = new APICallError({
+      message: "Request failed",
+      url: "https://api.openai.com/v1/responses",
+      requestBodyValues: {},
+      statusCode: 429,
+      responseHeaders: {},
+      responseBody:
+        '{"error":{"code":"insufficient_quota","message":"You exceeded your current quota"}}',
+      isRetryable: false,
+      data: {
+        error: { code: "insufficient_quota", message: "You exceeded your current quota" },
+      },
+    });
+
+    expect(categorizeMethod.call(streamManager, apiError)).toBe("quota");
+  });
+
+  test("classifies generic 429 throttling as rate_limit", () => {
+    const streamManager = new StreamManager(historyService);
+
+    const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
+      error: unknown
+    ) => unknown;
+    expect(typeof categorizeMethod).toBe("function");
+
+    const apiError = new APICallError({
+      message: "Too many requests, please retry shortly",
+      url: "https://api.openai.com/v1/responses",
+      requestBodyValues: {},
+      statusCode: 429,
+      responseHeaders: {},
+      responseBody: '{"error":{"message":"Too many requests"}}',
+      isRetryable: true,
+    });
+
+    expect(categorizeMethod.call(streamManager, apiError)).toBe("rate_limit");
+  });
+
+  test("classifies 429 mentioning quota limits as rate_limit (not billing)", () => {
+    const streamManager = new StreamManager(historyService);
+
+    const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
+      error: unknown
+    ) => unknown;
+    expect(typeof categorizeMethod).toBe("function");
+
+    const apiError = new APICallError({
+      message: "Per-minute quota limit reached. Retry in 10s.",
+      url: "https://api.openai.com/v1/responses",
+      requestBodyValues: {},
+      statusCode: 429,
+      responseHeaders: {},
+      responseBody: '{"error":{"message":"Per-minute quota limit reached"}}',
+      isRetryable: true,
+    });
+
+    expect(categorizeMethod.call(streamManager, apiError)).toBe("rate_limit");
+  });
 });
 
 describe("StreamManager - ask_user_question Partial Persistence", () => {
@@ -994,9 +1725,7 @@ describe("StreamManager - ask_user_question Partial Persistence", () => {
   // Instead, we verify the StreamManager has the expected method signature.
 
   test("flushPartialWrite is a callable method", () => {
-    const mockHistoryService = createMockHistoryService();
-    const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService);
 
     // Verify the private method exists and is callable
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -1007,9 +1736,7 @@ describe("StreamManager - ask_user_question Partial Persistence", () => {
 
 describe("StreamManager - stopStream", () => {
   test("emits stream-abort when stopping non-existent stream", async () => {
-    const mockHistoryService = createMockHistoryService();
-    const mockPartialService = createMockPartialService();
-    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+    const streamManager = new StreamManager(historyService);
 
     // Track emitted events
     const abortEvents: Array<{ workspaceId: string; messageId: string }> = [];

@@ -2,6 +2,7 @@ import { parseGitRevList } from "./parseGitStatus";
 
 // Base result shape with zero line deltas (parseGitRevList doesn't compute these)
 const base = {
+  branch: "",
   dirty: false,
   outgoingAdditions: 0,
   outgoingDeletions: 0,

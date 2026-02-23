@@ -27,7 +27,7 @@ jobs:
     uses: ./.github/workflows/terminal-bench.yml
     with:
       model_name: "anthropic/claude-sonnet-4-5"
-      thinking_level: "high"
+      mux_run_args: "--thinking high"
       dataset: "terminal-bench@2.0"
       concurrency: "1"
       env: "daytona"
@@ -36,7 +36,7 @@ jobs:
     secrets: inherit # zizmor: ignore[secrets-inherit]
 
   # Smoke tests for Harbor SWE-style datasets (single task each).
-  # These validate that mux can run inside the dataset's repo checkout (MUX_RUNTIME=local)
+  # These validate that mux can run inside the dataset's repo checkout (--runtime local)
   # and that we target the verifier's expected working directory (MUX_PROJECT_PATH).
   swebench-verified-smoke-test:
     name: "Smoke test (swebench-verified: django__django-10097)"
@@ -44,13 +44,12 @@ jobs:
     uses: ./.github/workflows/terminal-bench.yml
     with:
       model_name: "anthropic/claude-sonnet-4-5"
-      thinking_level: "high"
+      mux_run_args: "--thinking high --runtime local"
       dataset: "swebench-verified@1.0"
       concurrency: "1"
       env: "daytona"
       task_names: "django__django-10097"
       mux_project_path: "/testbed"
-      mux_runtime: "local"
       timeout: "3000"
       experiments: ${{ inputs.experiments }}
     secrets: inherit # zizmor: ignore[secrets-inherit]
@@ -61,13 +60,12 @@ jobs:
     uses: ./.github/workflows/terminal-bench.yml
     with:
       model_name: "anthropic/claude-sonnet-4-5"
-      thinking_level: "high"
+      mux_run_args: "--thinking high --runtime local"
       dataset: "swe-gen-js@1.0"
       concurrency: "1"
       env: "daytona"
       task_names: "biomejs__biome-7314"
       mux_project_path: "/app/src"
-      mux_runtime: "local"
       timeout: "600"
       experiments: ${{ inputs.experiments }}
     secrets: inherit # zizmor: ignore[secrets-inherit]
@@ -78,13 +76,12 @@ jobs:
     uses: ./.github/workflows/terminal-bench.yml
     with:
       model_name: "anthropic/claude-sonnet-4-5"
-      thinking_level: "high"
+      mux_run_args: "--thinking high --runtime local"
       dataset: "aider-polyglot@1.0"
       concurrency: "1"
       env: "daytona"
       task_names: "polyglot_cpp_all-your-base"
       mux_project_path: "/app"
-      mux_runtime: "local"
       timeout: "1800"
       experiments: ${{ inputs.experiments }}
     secrets: inherit # zizmor: ignore[secrets-inherit]
@@ -120,8 +117,8 @@ jobs:
     uses: ./.github/workflows/terminal-bench.yml
     with:
       model_name: ${{ matrix.model }}
-      # gpt-5 class models use xhigh thinking, others use high
-      thinking_level: ${{ contains(matrix.model, 'gpt-5') && 'xhigh' || 'high' }}
+      # gpt-5 class and opus-4-6 models use xhigh thinking, others use high
+      mux_run_args: "--thinking ${{ (contains(matrix.model, 'gpt-5') || contains(matrix.model, 'opus-4-6')) && 'xhigh' || 'high' }}"
       dataset: "terminal-bench@2.0"
       concurrency: "48"
       env: "daytona"

@@ -12,10 +12,12 @@ module.exports = {
   ],
   setupFilesAfterEnv: ["<rootDir>/tests/setup.ts"],
   moduleNameMapper: {
-    // Vite query suffixes must be matched BEFORE the @/ alias
+    // Vite query suffixes and binary assets must be matched BEFORE the @/ alias
     "^@/(.+)\\.svg\\?react$": "<rootDir>/tests/__mocks__/svgReactMock.js",
     "^@/(.+)\\.txt\\?raw$": "<rootDir>/tests/__mocks__/textMock.js",
     "^@/(.*)$": "<rootDir>/src/$1",
+    // lottie-web probes canvas on import, which crashes in happy-dom/jsdom
+    "^lottie-react$": "<rootDir>/tests/__mocks__/lottieReactMock.js",
     "^chalk$": "<rootDir>/tests/__mocks__/chalk.js",
     "^jsdom$": "<rootDir>/tests/__mocks__/jsdom.js",
     // Mock static assets for full App rendering

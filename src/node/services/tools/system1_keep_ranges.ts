@@ -1,14 +1,14 @@
 import { tool } from "ai";
 import type { Tool } from "ai";
 
+import type { z } from "zod";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 
 import type { System1KeepRange } from "@/node/services/system1/bashOutputFiltering";
 
-export interface System1KeepRangesToolArgs {
-  keep_ranges: System1KeepRange[];
-}
+// Derived from the Zod schema (single source of truth) to avoid drift.
+export type System1KeepRangesToolArgs = z.infer<typeof TOOL_DEFINITIONS.system1_keep_ranges.schema>;
 
 export type System1KeepRangesToolResult =
   | {

@@ -16,7 +16,12 @@ import {
 import { copyToClipboard } from "@/browser/utils/clipboard";
 import { getDefaultModel, useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { updatePersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
-import { AGENT_AI_DEFAULTS_KEY, getModelKey } from "@/common/constants/storage";
+import {
+  AGENT_AI_DEFAULTS_KEY,
+  GLOBAL_SCOPE_ID,
+  getAgentIdKey,
+  getModelKey,
+} from "@/common/constants/storage";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import {
@@ -27,11 +32,15 @@ import {
 import {
   DEFAULT_TASK_SETTINGS,
   TASK_SETTINGS_LIMITS,
+  isPlanSubagentExecutorRouting,
   normalizeTaskSettings,
+  type PlanSubagentExecutorRouting,
   type TaskSettings,
 } from "@/common/types/tasks";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import { getThinkingOptionLabel, type ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
+import { getErrorMessage } from "@/common/utils/errors";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 const INHERIT = "__inherit__";
 
@@ -42,7 +51,7 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     name: "Plan",
     description: "Create a plan before coding",
     uiSelectable: true,
-    subagentRunnable: false,
+    subagentRunnable: true,
     base: "plan",
   },
   {
@@ -52,6 +61,25 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     description: "Implement changes in the repository",
     uiSelectable: true,
     subagentRunnable: true,
+  },
+  {
+    id: "auto",
+    scope: "built-in",
+    name: "Auto",
+    description: "Automatically route to the best agent for the task",
+    uiSelectable: true,
+    subagentRunnable: false,
+    base: "exec",
+  },
+  {
+    // Keep Ask visible when workspace agent discovery is unavailable.
+    id: "ask",
+    scope: "built-in",
+    name: "Ask",
+    description: "Delegate questions to Explore sub-agents and synthesize an answer.",
+    uiSelectable: true,
+    subagentRunnable: false,
+    base: "exec",
   },
   {
     id: "compact",
@@ -69,6 +97,33 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     uiSelectable: false,
     subagentRunnable: true,
     base: "exec",
+  },
+  {
+    id: "mux",
+    scope: "built-in",
+    name: "Mux",
+    description: "Configure mux global behavior (system workspace)",
+    uiSelectable: false,
+    subagentRunnable: false,
+  },
+  {
+    // Keep every built-in agent ID in the fallback list so user overrides don't
+    // get mislabeled as "Unknown agents" when workspace discovery is unavailable.
+    id: "orchestrator",
+    scope: "built-in",
+    name: "Orchestrator",
+    description: "Coordinate sub-agent implementation and apply patches",
+    uiSelectable: true,
+    subagentRunnable: false,
+    base: "exec",
+  },
+  {
+    id: "system1_bash",
+    scope: "built-in",
+    name: "System1 Bash",
+    description: "Fast bash-output filtering (internal)",
+    uiSelectable: false,
+    subagentRunnable: false,
   },
 ];
 
@@ -198,6 +253,8 @@ function areTaskSettingsEqual(a: TaskSettings, b: TaskSettings): boolean {
     a.maxParallelAgentTasks === b.maxParallelAgentTasks &&
     a.maxTaskNestingDepth === b.maxTaskNestingDepth &&
     a.proposePlanImplementReplacesChatHistory === b.proposePlanImplementReplacesChatHistory &&
+    a.planSubagentExecutorRouting === b.planSubagentExecutorRouting &&
+    a.planSubagentDefaultsToOrchestrator === b.planSubagentDefaultsToOrchestrator &&
     a.bashOutputCompactionMinLines === b.bashOutputCompactionMinLines &&
     a.bashOutputCompactionMinTotalBytes === b.bashOutputCompactionMinTotalBytes &&
     a.bashOutputCompactionMaxKeptLines === b.bashOutputCompactionMaxKeptLines &&
@@ -237,6 +294,11 @@ function areAgentAiDefaultsEqual(a: AgentAiDefaults, b: AgentAiDefaults): boolea
 
   return true;
 }
+function coerceAgentId(value: unknown): string {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim().toLowerCase()
+    : WORKSPACE_DEFAULTS.agentId;
+}
 
 export function TasksSection() {
   const { api } = useAPI();
@@ -266,7 +328,15 @@ export function TasksSection() {
     agentAiDefaults: AgentAiDefaults;
   } | null>(null);
 
-  const { models, hiddenModels } = useModelsFromSettings();
+  const { models, hiddenModelsForSelector } = useModelsFromSettings();
+  const [globalDefaultAgentIdRaw, setGlobalDefaultAgentIdRaw] = usePersistedState<string>(
+    getAgentIdKey(GLOBAL_SCOPE_ID),
+    WORKSPACE_DEFAULTS.agentId,
+    {
+      listener: true,
+    }
+  );
+  const newWorkspaceDefaultAgentId = coerceAgentId(globalDefaultAgentIdRaw);
 
   // Resolve the workspace's active model so that when a sub-agent's model is
   // "Inherit", we show thinking levels for the workspace model (falling back to
@@ -308,7 +378,7 @@ export function TasksSection() {
         setLoaded(true);
       })
       .catch((error: unknown) => {
-        setSaveError(error instanceof Error ? error.message : String(error));
+        setSaveError(getErrorMessage(error));
         setLoadFailed(true);
         setLoaded(true);
       });
@@ -443,7 +513,7 @@ export function TasksSection() {
             }
           })
           .catch((error: unknown) => {
-            setSaveError(error instanceof Error ? error.message : String(error));
+            setSaveError(getErrorMessage(error));
           })
           .finally(() => {
             savingRef.current = false;
@@ -508,6 +578,25 @@ export function TasksSection() {
     );
   };
 
+  const setPlanSubagentExecutorRouting = (value: string) => {
+    if (!isPlanSubagentExecutorRouting(value)) {
+      return;
+    }
+
+    setTaskSettings((prev) =>
+      normalizeTaskSettings({
+        ...prev,
+        planSubagentExecutorRouting: value,
+      })
+    );
+  };
+  const setNewWorkspaceDefaultAgentId = (agentId: string) => {
+    setGlobalDefaultAgentIdRaw(coerceAgentId(agentId));
+  };
+
+  const planSubagentExecutorRouting: PlanSubagentExecutorRouting =
+    taskSettings.planSubagentExecutorRouting ?? "exec";
+
   const setAgentModel = (agentId: string, value: string) => {
     setAgentAiDefaults((prev) =>
       updateAgentDefaultEntry(prev, agentId, (updated) => {
@@ -559,6 +648,21 @@ export function TasksSection() {
         .sort((a, b) => a.name.localeCompare(b.name)),
     [listedAgents]
   );
+  const newWorkspaceDefaultAgentOptions = useMemo(() => {
+    const options = uiAgents.map((agent) => ({
+      id: agent.id,
+      label: agent.name,
+    }));
+
+    if (!options.some((option) => option.id === newWorkspaceDefaultAgentId)) {
+      options.unshift({
+        id: newWorkspaceDefaultAgentId,
+        label: `${newWorkspaceDefaultAgentId} (unavailable)`,
+      });
+    }
+
+    return options;
+  }, [newWorkspaceDefaultAgentId, uiAgents]);
 
   const subagents = useMemo(
     () =>
@@ -719,7 +823,7 @@ export function TasksSection() {
                 emptyLabel="Inherit"
                 onChange={(value) => setAgentModel(agent.id, value)}
                 models={models}
-                hiddenModels={hiddenModels}
+                hiddenModels={hiddenModelsForSelector}
                 variant="box"
                 className="bg-modal-bg"
               />
@@ -750,7 +854,7 @@ export function TasksSection() {
                 <SelectItem value={INHERIT}>Inherit</SelectItem>
                 {allowedThinkingLevels.map((level) => (
                   <SelectItem key={level} value={level}>
-                    {level}
+                    {getThinkingOptionLabel(level, effectiveModel)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -786,7 +890,7 @@ export function TasksSection() {
                 emptyLabel="Inherit"
                 onChange={(value) => setAgentModel(agentId, value)}
                 models={models}
-                hiddenModels={hiddenModels}
+                hiddenModels={hiddenModelsForSelector}
                 variant="box"
                 className="bg-modal-bg"
               />
@@ -817,7 +921,7 @@ export function TasksSection() {
                 <SelectItem value={INHERIT}>Inherit</SelectItem>
                 {allowedThinkingLevels.map((level) => (
                   <SelectItem key={level} value={level}>
-                    {level}
+                    {getThinkingOptionLabel(level, effectiveModel)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -833,6 +937,30 @@ export function TasksSection() {
       <div>
         <h3 className="text-foreground mb-4 text-sm font-medium">Task Settings</h3>
         <div className="space-y-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <div className="text-foreground text-sm">Default new-workspace agent</div>
+              <div className="text-muted text-xs">
+                Applies when a project does not have its own agent preference yet.
+              </div>
+            </div>
+            <Select
+              value={newWorkspaceDefaultAgentId}
+              onValueChange={setNewWorkspaceDefaultAgentId}
+            >
+              <SelectTrigger className="border-border-medium bg-background-secondary h-9 w-56">
+                <SelectValue placeholder="Select agent" />
+              </SelectTrigger>
+              <SelectContent>
+                {newWorkspaceDefaultAgentOptions.map((option) => (
+                  <SelectItem key={option.id} value={option.id}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1">
               <div className="text-foreground text-sm">Max Parallel Agent Tasks</div>
@@ -890,6 +1018,28 @@ export function TasksSection() {
               onCheckedChange={setProposePlanImplementReplacesChatHistory}
               aria-label="Toggle plan Implement replaces conversation with plan"
             />
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <div className="text-foreground text-sm">Plan sub-agents: executor routing</div>
+              <div className="text-muted text-xs">
+                Choose how plan sub-agent tasks route after propose_plan.
+              </div>
+            </div>
+            <Select
+              value={planSubagentExecutorRouting}
+              onValueChange={setPlanSubagentExecutorRouting}
+            >
+              <SelectTrigger className="border-border-medium bg-background-secondary h-9 w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="exec">Exec</SelectItem>
+                <SelectItem value="orchestrator">Orchestrator</SelectItem>
+                <SelectItem value="auto">Auto (LLM decides)</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
 

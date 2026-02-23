@@ -66,7 +66,7 @@ describe("file_edit_replace_string tool", () => {
     });
 
     const payload: FileEditReplaceStringToolArgs = {
-      file_path: "test.txt", // Use relative path
+      path: "test.txt", // Use relative path
       old_string: "Hello world",
       new_string: "Hello universe",
     };
@@ -91,7 +91,7 @@ describe("file_edit_replace_string tool", () => {
     });
 
     const payload: FileEditReplaceStringToolArgs = {
-      file_path: "test.txt",
+      path: "test.txt",
       old_string: "Hello world\nThis is a test\n",
       new_string: "Hello universe\nThis is a CRLF test\n",
     };
@@ -115,7 +115,7 @@ describe("file_edit_replace_string tool", () => {
     });
 
     const payload: FileEditReplaceStringToolArgs = {
-      file_path: "test.txt",
+      path: "test.txt",
       old_string: "Goodbye world\n",
       new_string: "replaced\n",
     };
@@ -137,7 +137,7 @@ describe("file_edit_replace_string tool", () => {
     });
 
     const payload: FileEditReplaceStringToolArgs = {
-      file_path: "test.txt",
+      path: "test.txt",
       old_string: "repeat",
       new_string: "REPLACED",
     };
@@ -172,7 +172,7 @@ describe("file_edit_replace_lines tool", () => {
     });
 
     const payload: FileEditReplaceLinesToolArgs = {
-      file_path: "test.txt", // Use relative path
+      path: "test.txt", // Use relative path
       start_line: 2,
       end_line: 3,
       new_lines: ["LINE2", "LINE3"],
@@ -199,7 +199,7 @@ describe("file_edit_replace_lines tool", () => {
     });
 
     const payload: FileEditReplaceLinesToolArgs = {
-      file_path: "test.txt",
+      path: "test.txt",
       start_line: 2,
       end_line: 3,
       new_lines: ["LINE2", "LINE3"],

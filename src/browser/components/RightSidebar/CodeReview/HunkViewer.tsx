@@ -8,10 +8,7 @@ import { Check, Circle } from "lucide-react";
 import type { DiffHunk, Review, ReviewNoteData } from "@/common/types/review";
 import { SelectableDiffRenderer } from "../../shared/DiffRenderer";
 import type { ReviewActionCallbacks } from "../../shared/InlineReviewNote";
-import {
-  type SearchHighlightConfig,
-  highlightSearchInText,
-} from "@/browser/utils/highlighting/highlightSearchTerms";
+import { type SearchHighlightConfig } from "@/browser/utils/highlighting/highlightSearchTerms";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../../ui/tooltip";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getReviewExpandStateKey } from "@/common/constants/storage";
@@ -46,6 +43,67 @@ interface HunkViewerProps {
   reviewActions?: ReviewActionCallbacks;
   /** Callback to open a file in a new tab */
   onOpenFile?: (relativePath: string) => void;
+}
+
+function escapeRegexForHighlight(term: string): string {
+  return term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function renderHighlightedFilePath(
+  filePath: string,
+  searchConfig?: SearchHighlightConfig
+): React.ReactNode {
+  if (!searchConfig?.searchTerm.trim()) {
+    return filePath;
+  }
+
+  const flags = searchConfig.matchCase ? "g" : "gi";
+  let pattern: RegExp;
+  try {
+    pattern = searchConfig.useRegex
+      ? new RegExp(searchConfig.searchTerm, flags)
+      : new RegExp(escapeRegexForHighlight(searchConfig.searchTerm), flags);
+  } catch {
+    return filePath;
+  }
+
+  const highlightedSegments: React.ReactNode[] = [];
+  let lastIndex = 0;
+  pattern.lastIndex = 0;
+
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(filePath)) !== null) {
+    if (match.index > lastIndex) {
+      highlightedSegments.push(filePath.slice(lastIndex, match.index));
+    }
+
+    highlightedSegments.push(
+      <mark
+        // Keep filename highlighting safe: render React nodes instead of HTML strings
+        key={`file-path-match-${match.index}-${match[0]}-${highlightedSegments.length}`}
+        className="search-highlight"
+      >
+        {match[0]}
+      </mark>
+    );
+
+    lastIndex = match.index + match[0].length;
+
+    // Prevent infinite loops when matching zero-length regex patterns
+    if (match[0].length === 0) {
+      pattern.lastIndex++;
+    }
+  }
+
+  if (highlightedSegments.length === 0) {
+    return filePath;
+  }
+
+  if (lastIndex < filePath.length) {
+    highlightedSegments.push(filePath.slice(lastIndex));
+  }
+
+  return highlightedSegments;
 }
 
 export const HunkViewer = React.memo<HunkViewerProps>(
@@ -124,13 +182,11 @@ export const HunkViewer = React.memo<HunkViewerProps>(
       };
     }, [hunk.content]);
 
-    // Highlight filePath if search is active
-    const highlightedFilePath = useMemo(() => {
-      if (!searchConfig) {
-        return hunk.filePath;
-      }
-      return highlightSearchInText(hunk.filePath, searchConfig);
-    }, [hunk.filePath, searchConfig]);
+    // Keep file path highlighting in React nodes so file names are always escaped.
+    const highlightedFilePath = useMemo(
+      () => renderHighlightedFilePath(hunk.filePath, searchConfig),
+      [hunk.filePath, searchConfig]
+    );
 
     const handleOpenFile = React.useCallback(
       (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -288,13 +344,10 @@ export const HunkViewer = React.memo<HunkViewerProps>(
               title={hunk.filePath}
               aria-label={`Open ${hunk.filePath} in new tab`}
             >
-              <span dangerouslySetInnerHTML={{ __html: highlightedFilePath }} />
+              <span>{highlightedFilePath}</span>
             </button>
           ) : (
-            <div
-              className="text-foreground min-w-0 truncate"
-              dangerouslySetInnerHTML={{ __html: highlightedFilePath }}
-            />
+            <div className="text-foreground min-w-0 truncate">{highlightedFilePath}</div>
           )}
           <div className="text-muted ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap">
             {!isPureRename && (

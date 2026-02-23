@@ -2,7 +2,7 @@
  * Compaction options transformation
  *
  * Single source of truth for converting compaction metadata into SendMessageOptions.
- * Used by both ChatInput (initial send) and useResumeManager (resume after interruption).
+ * Used by both ChatInput (initial send) and RetryBarrier manual resume actions.
  */
 
 import { readPersistedState } from "@/browser/hooks/usePersistedState";

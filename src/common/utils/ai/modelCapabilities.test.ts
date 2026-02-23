@@ -17,6 +17,17 @@ describe("getModelCapabilities", () => {
     expect(caps?.supportsPdfInput).toBe(true);
   });
 
+  it("keeps explicit PDF support for Opus 4.6 from models-extra", () => {
+    const caps = getModelCapabilities("anthropic:claude-opus-4-6");
+    expect(caps).not.toBeNull();
+    expect(caps?.supportsPdfInput).toBe(true);
+  });
+
+  it("resolves provider key aliases (github-copilot -> github_copilot)", () => {
+    const caps = getModelCapabilities("github-copilot:gpt-41-copilot");
+    expect(caps).not.toBeNull();
+  });
+
   it("returns capabilities for models present only in models-extra", () => {
     // This model is defined in models-extra.ts but not (yet) in upstream models.json.
     const caps = getModelCapabilities("openrouter:z-ai/glm-4.6");

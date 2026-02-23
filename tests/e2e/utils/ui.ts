@@ -138,7 +138,7 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       // a transcript immediately. Waiting on the transcript alone is no longer sufficient to
       // confirm that the click actually navigated to the demo workspace.
       const expectedProjectName = path.basename(context.projectPath);
-      await expect(page.getByTestId("workspace-header")).toContainText(expectedProjectName, {
+      await expect(page.getByTestId("workspace-menu-bar")).toContainText(expectedProjectName, {
         timeout: 20_000,
       });
 
@@ -621,27 +621,47 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
 
   const settings = {
     async open(): Promise<void> {
-      // Click the settings gear button in the title bar
-      const settingsButton = page.getByRole("button", { name: /settings/i });
+      // Click the settings gear button in the title bar.
+      const settingsButton = page.getByTestId("settings-button");
       await expect(settingsButton).toBeVisible();
       await settingsButton.click();
       await settings.expectOpen();
     },
 
     async close(): Promise<void> {
-      // Press Escape to close
-      await page.keyboard.press("Escape");
+      const closeControl = page
+        .getByRole("button", { name: /Close settings|Back to previous page/i })
+        .first();
+
+      await expect(closeControl).toBeVisible({ timeout: 5000 });
+      await closeControl.click();
       await settings.expectClosed();
     },
 
     async expectOpen(): Promise<void> {
       const dialog = page.getByRole("dialog", { name: "Settings" });
-      await expect(dialog).toBeVisible({ timeout: 5000 });
+      const routeCloseControl = page
+        .getByRole("button", { name: /Close settings|Back to previous page/i })
+        .first();
+
+      await expect
+        .poll(async () => (await dialog.isVisible()) || (await routeCloseControl.isVisible()), {
+          timeout: 5000,
+        })
+        .toBe(true);
     },
 
     async expectClosed(): Promise<void> {
       const dialog = page.getByRole("dialog", { name: "Settings" });
-      await expect(dialog).not.toBeVisible({ timeout: 5000 });
+      const routeCloseControl = page
+        .getByRole("button", { name: /Close settings|Back to previous page/i })
+        .first();
+
+      await expect
+        .poll(async () => !(await dialog.isVisible()) && !(await routeCloseControl.isVisible()), {
+          timeout: 5000,
+        })
+        .toBe(true);
     },
 
     async selectSection(section: "General" | "Providers" | "Models"): Promise<void> {

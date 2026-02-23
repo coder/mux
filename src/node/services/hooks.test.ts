@@ -434,7 +434,7 @@ exit 1
         hookPath,
         {
           tool: "file_edit_replace_string",
-          toolInput: '{"file_path": "test.ts"}',
+          toolInput: '{"path": "test.ts"}',
           workspaceId: "test-workspace",
           projectDir: tempDir,
         },

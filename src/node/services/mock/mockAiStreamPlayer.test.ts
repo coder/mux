@@ -1,42 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, beforeEach, afterEach, spyOn } from "bun:test";
 import { EventEmitter } from "events";
 import { MockAiStreamPlayer } from "./mockAiStreamPlayer";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import { Ok } from "@/common/types/result";
 import type { HistoryService } from "@/node/services/historyService";
 import type { AIService } from "@/node/services/aiService";
-
-class InMemoryHistoryService {
-  public appended: Array<{ workspaceId: string; message: MuxMessage }> = [];
-  public messages = new Map<string, MuxMessage[]>();
-  private nextSequence = 0;
-
-  appendToHistory(workspaceId: string, message: MuxMessage) {
-    message.metadata ??= {};
-
-    if (message.metadata.historySequence === undefined) {
-      message.metadata.historySequence = this.nextSequence++;
-    } else if (message.metadata.historySequence >= this.nextSequence) {
-      this.nextSequence = message.metadata.historySequence + 1;
-    }
-
-    this.appended.push({ workspaceId, message });
-
-    const existing = this.messages.get(workspaceId) ?? [];
-    this.messages.set(workspaceId, [...existing, message]);
-
-    return Promise.resolve(Ok(undefined));
-  }
-
-  deleteMessage(workspaceId: string, messageId: string) {
-    const existing = this.messages.get(workspaceId) ?? [];
-    this.messages.set(
-      workspaceId,
-      existing.filter((message) => message.id !== messageId)
-    );
-    return Promise.resolve(Ok(undefined));
-  }
-}
+import { createTestHistoryService } from "../testHistoryService";
 
 function readWorkspaceId(payload: unknown): string | undefined {
   if (!payload || typeof payload !== "object") return undefined;
@@ -47,12 +16,24 @@ function readWorkspaceId(payload: unknown): string | undefined {
 }
 
 describe("MockAiStreamPlayer", () => {
+  let historyService: HistoryService;
+  let cleanup: () => Promise<void>;
+
+  beforeEach(async () => {
+    const testHistory = await createTestHistoryService();
+    historyService = testHistory.historyService;
+    cleanup = testHistory.cleanup;
+  });
+
+  afterEach(async () => {
+    await cleanup();
+  });
+
   test("appends assistant placeholder even when router turn ends with stream error", async () => {
-    const historyStub = new InMemoryHistoryService();
     const aiServiceStub = new EventEmitter();
 
     const player = new MockAiStreamPlayer({
-      historyService: historyStub as unknown as HistoryService,
+      historyService,
       aiService: aiServiceStub as unknown as AIService,
     });
 
@@ -71,7 +52,9 @@ describe("MockAiStreamPlayer", () => {
     expect(firstResult.success).toBe(true);
     player.stop(workspaceId);
 
-    const historyBeforeSecondTurn = historyStub.appended.map((entry) => entry.message);
+    // Read back what was appended during the first turn
+    const historyResult = await historyService.getLastMessages(workspaceId, 100);
+    const historyBeforeSecondTurn = historyResult.success ? historyResult.data : [];
 
     const secondTurnUser = createMuxMessage(
       "user-2",
@@ -88,49 +71,54 @@ describe("MockAiStreamPlayer", () => {
     );
     expect(secondResult.success).toBe(true);
 
-    expect(historyStub.appended).toHaveLength(2);
-    const [firstAppend, secondAppend] = historyStub.appended;
+    // Read back all messages and check the assistant placeholders
+    const allResult = await historyService.getLastMessages(workspaceId, 100);
+    const allMessages = allResult.success ? allResult.data : [];
+    const assistantMessages = allMessages.filter((m) => m.role === "assistant");
 
-    expect(firstAppend.message.id).not.toBe(secondAppend.message.id);
+    expect(assistantMessages).toHaveLength(2);
+    const [firstAppend, secondAppend] = assistantMessages;
 
-    const firstSeq = firstAppend.message.metadata?.historySequence ?? -1;
-    const secondSeq = secondAppend.message.metadata?.historySequence ?? -1;
+    expect(firstAppend.id).not.toBe(secondAppend.id);
+
+    const firstSeq = firstAppend.metadata?.historySequence ?? -1;
+    const secondSeq = secondAppend.metadata?.historySequence ?? -1;
     expect(secondSeq).toBe(firstSeq + 1);
 
     player.stop(workspaceId);
   });
 
   test("removes assistant placeholder when aborted before stream scheduling", async () => {
-    type AppendGateResult = Awaited<ReturnType<InMemoryHistoryService["appendToHistory"]>>;
-    type AppendGatePromise = ReturnType<InMemoryHistoryService["appendToHistory"]>;
+    type AppendResult = Awaited<ReturnType<HistoryService["appendToHistory"]>>;
 
-    class DeferredHistoryService extends InMemoryHistoryService {
-      private appendGateResolve?: (result: AppendGateResult) => void;
-      public appendGate: AppendGatePromise = new Promise<AppendGateResult>((resolve) => {
-        this.appendGateResolve = resolve;
-      });
+    // Control when appendToHistory resolves to test the abort race condition.
+    // The real service writes to disk immediately; we gate the returned promise
+    // so the player sees a pending append while we trigger abort.
+    let appendResolve!: (result: AppendResult) => void;
+    const appendGate = new Promise<AppendResult>((resolve) => {
+      appendResolve = resolve;
+    });
 
-      private appendedMessageResolve?: (message: MuxMessage) => void;
-      public appendedMessage = new Promise<MuxMessage>((resolve) => {
-        this.appendedMessageResolve = resolve;
-      });
+    let appendedMessageResolve!: (msg: MuxMessage) => void;
+    const appendedMessage = new Promise<MuxMessage>((resolve) => {
+      appendedMessageResolve = resolve;
+    });
 
-      override appendToHistory(workspaceId: string, message: MuxMessage) {
-        void super.appendToHistory(workspaceId, message);
-        this.appendedMessageResolve?.(message);
-        return this.appendGate;
+    const originalAppend = historyService.appendToHistory.bind(historyService);
+    spyOn(historyService, "appendToHistory").mockImplementation(
+      async (wId: string, message: MuxMessage) => {
+        // Write to disk so deleteMessage can find it later
+        await originalAppend(wId, message);
+        appendedMessageResolve(message);
+        // Delay returning to the caller until the gate opens
+        return appendGate;
       }
+    );
 
-      resolveAppend() {
-        this.appendGateResolve?.(Ok(undefined));
-      }
-    }
-
-    const historyStub = new DeferredHistoryService();
     const aiServiceStub = new EventEmitter();
 
     const player = new MockAiStreamPlayer({
-      historyService: historyStub as unknown as HistoryService,
+      historyService,
       aiService: aiServiceStub as unknown as AIService,
     });
 
@@ -150,24 +138,25 @@ describe("MockAiStreamPlayer", () => {
       abortSignal: abortController.signal,
     });
 
-    const assistantMessage = await historyStub.appendedMessage;
+    const assistantMsg = await appendedMessage;
 
-    historyStub.resolveAppend();
+    appendResolve(Ok(undefined));
     abortController.abort();
 
     const result = await playPromise;
     expect(result.success).toBe(true);
 
-    const storedMessages = historyStub.messages.get(workspaceId) ?? [];
-    expect(storedMessages.some((msg) => msg.id === assistantMessage.id)).toBe(false);
+    // Verify the placeholder was deleted from history
+    const storedResult = await historyService.getLastMessages(workspaceId, 100);
+    const storedMessages = storedResult.success ? storedResult.data : [];
+    expect(storedMessages.some((msg) => msg.id === assistantMsg.id)).toBe(false);
   });
 
   test("stop prevents queued stream events from emitting", async () => {
-    const historyStub = new InMemoryHistoryService();
     const aiServiceStub = new EventEmitter();
 
     const player = new MockAiStreamPlayer({
-      historyService: historyStub as unknown as HistoryService,
+      historyService,
       aiService: aiServiceStub as unknown as AIService,
     });
 

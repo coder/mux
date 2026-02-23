@@ -26,6 +26,7 @@ import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCod
 import { DisposableProcess, killProcessTree } from "@/node/utils/disposableExec";
 import { expandTilde } from "./tildeExpansion";
 import { getInitHookPath, createLineBufferedLoggers } from "./initHook";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * Abstract base class for local runtimes (both WorktreeRuntime and LocalRuntime).
@@ -215,7 +216,7 @@ export abstract class LocalBaseRuntime implements Runtime {
         } catch (err) {
           controller.error(
             new RuntimeErrorClass(
-              `Failed to read file ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+              `Failed to read file ${filePath}: ${getErrorMessage(err)}`,
               "file_io",
               err instanceof Error ? err : undefined
             )
@@ -272,7 +273,7 @@ export abstract class LocalBaseRuntime implements Runtime {
           await fsPromises.rename(tempPath, resolvedPath);
         } catch (err) {
           throw new RuntimeErrorClass(
-            `Failed to write file ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+            `Failed to write file ${filePath}: ${getErrorMessage(err)}`,
             "file_io",
             err instanceof Error ? err : undefined
           );
@@ -307,7 +308,7 @@ export abstract class LocalBaseRuntime implements Runtime {
       };
     } catch (err) {
       throw new RuntimeErrorClass(
-        `Failed to stat ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+        `Failed to stat ${filePath}: ${getErrorMessage(err)}`,
         "file_io",
         err instanceof Error ? err : undefined
       );
@@ -320,7 +321,7 @@ export abstract class LocalBaseRuntime implements Runtime {
       await fsPromises.mkdir(expandedPath, { recursive: true });
     } catch (err) {
       throw new RuntimeErrorClass(
-        `Failed to create directory ${dirPath}: ${err instanceof Error ? err.message : String(err)}`,
+        `Failed to create directory ${dirPath}: ${getErrorMessage(err)}`,
         "file_io",
         err instanceof Error ? err : undefined
       );
@@ -399,16 +400,23 @@ export abstract class LocalBaseRuntime implements Runtime {
    * @param workspacePath - Path to the workspace directory
    * @param muxEnv - MUX_ environment variables (from getMuxEnv)
    * @param initLogger - Logger for streaming output
+   * @param abortSignal - Optional abort signal
    */
   protected async runInitHook(
     workspacePath: string,
     muxEnv: Record<string, string>,
-    initLogger: InitLogger
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal
   ): Promise<void> {
     // Hook path is derived from MUX_PROJECT_PATH in muxEnv
     const projectPath = muxEnv.MUX_PROJECT_PATH;
     const hookPath = getInitHookPath(projectPath);
     initLogger.logStep(`Running init hook: ${hookPath}`);
+
+    if (abortSignal?.aborted) {
+      initLogger.logComplete(EXIT_CODE_ABORTED);
+      return;
+    }
 
     // Create line-buffered loggers
     const loggers = createLineBufferedLoggers(initLogger);
@@ -424,7 +432,31 @@ export abstract class LocalBaseRuntime implements Runtime {
         },
         // Prevent console window from appearing on Windows
         windowsHide: true,
+        // Spawn as a detached process group leader so we can reliably cancel the hook.
+        detached: true,
       });
+
+      let aborted = false;
+
+      const onAbort = () => {
+        aborted = true;
+
+        if (proc.pid !== undefined) {
+          killProcessTree(proc.pid);
+          return;
+        }
+
+        try {
+          proc.kill("SIGKILL");
+        } catch {
+          // ignore
+        }
+      };
+
+      abortSignal?.addEventListener("abort", onAbort, { once: true });
+      if (abortSignal?.aborted) {
+        onAbort();
+      }
 
       proc.stdout.on("data", (data: Buffer) => {
         loggers.stdout.append(data.toString());
@@ -435,15 +467,25 @@ export abstract class LocalBaseRuntime implements Runtime {
       });
 
       proc.on("close", (code) => {
+        abortSignal?.removeEventListener("abort", onAbort);
+
         // Flush any remaining buffered output
         loggers.stdout.flush();
         loggers.stderr.flush();
 
-        initLogger.logComplete(code ?? 0);
+        initLogger.logComplete(aborted || abortSignal?.aborted ? EXIT_CODE_ABORTED : (code ?? 0));
         resolve();
       });
 
       proc.on("error", (err) => {
+        abortSignal?.removeEventListener("abort", onAbort);
+
+        if (aborted || abortSignal?.aborted) {
+          initLogger.logComplete(EXIT_CODE_ABORTED);
+          resolve();
+          return;
+        }
+
         initLogger.logStderr(`Error running init hook: ${err.message}`);
         initLogger.logComplete(-1);
         resolve();

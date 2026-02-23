@@ -5,6 +5,7 @@ import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { validateFileSize, validateAndCorrectPath } from "./fileCommon";
 import { RuntimeError } from "@/node/runtime/Runtime";
 import { readFileString } from "@/node/utils/runtime/helpers";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * File read tool factory for AI assistant
@@ -16,12 +17,12 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
     description: TOOL_DEFINITIONS.file_read.description,
     inputSchema: TOOL_DEFINITIONS.file_read.schema,
     execute: async (
-      { file_path, offset, limit },
+      { path, offset, limit },
       { abortSignal: _abortSignal }
     ): Promise<FileReadToolResult> => {
       // Note: abortSignal available but not used - file reads are fast and complete quickly
 
-      let filePath = file_path;
+      let filePath = path;
       try {
         // Validate and auto-correct redundant path prefix
         const { correctedPath: validatedPath, warning: pathWarning } = validateAndCorrectPath(
@@ -81,7 +82,7 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
         const startLineNumber = offset ?? 1;
 
         // Validate offset
-        if (offset !== undefined && offset < 1) {
+        if (offset != null && offset < 1) {
           return {
             success: false,
             error: `Offset must be positive (got ${offset})`,
@@ -93,7 +94,7 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
         const lines = fullContent === "" ? [] : fullContent.split("\n");
 
         // Validate offset
-        if (offset !== undefined && offset > lines.length) {
+        if (offset != null && offset > lines.length) {
           return {
             success: false,
             error: `Offset ${offset} is beyond file length`,
@@ -108,7 +109,7 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
 
         // Process lines with offset and limit
         const startIdx = startLineNumber - 1; // Convert to 0-based index
-        const endIdx = limit !== undefined ? startIdx + limit : lines.length;
+        const endIdx = limit != null ? startIdx + limit : lines.length;
 
         for (let i = startIdx; i < Math.min(endIdx, lines.length); i++) {
           const line = lines[i];
@@ -178,7 +179,7 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
         }
 
         // Generic error
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         return {
           success: false,
           error: `Failed to read file: ${message}`,

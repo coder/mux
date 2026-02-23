@@ -1,10 +1,12 @@
 import assert from "@/common/utils/assert";
 
 import { AlertTriangle, Check } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
-import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { useAPI } from "@/browser/contexts/API";
+import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
+import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
 import { useAutoResizeTextarea } from "@/browser/hooks/useAutoResizeTextarea";
 import { Checkbox } from "@/browser/components/ui/checkbox";
 import { cn } from "@/common/lib/utils";
@@ -31,6 +33,8 @@ import type {
   ToolErrorResult,
 } from "@/common/types/tools";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
+import { getErrorMessage } from "@/common/utils/errors";
+import { formatSendMessageError } from "@/common/utils/errors/formatSendError";
 
 const OTHER_VALUE = "__other__";
 
@@ -228,6 +232,137 @@ export function AskUserQuestionToolCall(props: {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  const workspaceStore = useWorkspaceStoreRaw();
+  const workspaceState = useSyncExternalStore(
+    (listener) => {
+      if (!props.workspaceId) {
+        return () => undefined;
+      }
+
+      return workspaceStore.subscribeKey(props.workspaceId, listener);
+    },
+    () => {
+      if (!props.workspaceId) {
+        return null;
+      }
+
+      // Some render paths (nested tool rendering) do not have workspace context.
+      // Fail-soft so ask_user_question still renders instead of crashing the tree.
+      try {
+        return workspaceStore.getWorkspaceState(props.workspaceId);
+      } catch {
+        return null;
+      }
+    }
+  );
+  const autoRetryRollbackWorkspaceIdRef = useRef<string | null>(null);
+  const autoRetryRollbackPendingRef = useRef(false);
+  const autoRetryRollbackArmedRef = useRef(false);
+  const autoRetryRollbackBaselineMessageCountRef = useRef<number | null>(null);
+  const isMountedRef = useRef(true);
+  const apiRef = useRef(api);
+
+  useEffect(() => {
+    apiRef.current = api;
+  }, [api]);
+
+  const rollbackAutoRetryIfNeeded = useCallback(
+    async (options?: { suppressErrors?: boolean }): Promise<void> => {
+      if (!autoRetryRollbackPendingRef.current) {
+        return;
+      }
+
+      const rollbackWorkspaceId = autoRetryRollbackWorkspaceIdRef.current;
+
+      autoRetryRollbackPendingRef.current = false;
+      autoRetryRollbackArmedRef.current = false;
+      autoRetryRollbackBaselineMessageCountRef.current = null;
+      autoRetryRollbackWorkspaceIdRef.current = null;
+
+      const activeApi = apiRef.current;
+      if (!activeApi || !rollbackWorkspaceId) {
+        return;
+      }
+
+      const rollbackResult = await activeApi.workspace.setAutoRetryEnabled?.({
+        workspaceId: rollbackWorkspaceId,
+        enabled: false,
+        persist: false,
+      });
+      if (rollbackResult && !rollbackResult.success && !options?.suppressErrors) {
+        setSubmitError(rollbackResult.error);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!autoRetryRollbackPendingRef.current) {
+      return;
+    }
+
+    // If rendering moves away from the workspace that enabled temporary retry,
+    // rollback immediately so the prior workspace preference is restored.
+    const rollbackWorkspaceId = autoRetryRollbackWorkspaceIdRef.current;
+    if (!rollbackWorkspaceId || rollbackWorkspaceId === props.workspaceId) {
+      return;
+    }
+
+    void rollbackAutoRetryIfNeeded();
+  }, [props.workspaceId, rollbackAutoRetryIfNeeded]);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    return () => {
+      isMountedRef.current = false;
+      if (!autoRetryRollbackPendingRef.current) {
+        return;
+      }
+
+      // Teardown-safe rollback: if the tool component unmounts before stream-state
+      // transitions fire (workspace switch/removal/app exit), restore preference now.
+      void rollbackAutoRetryIfNeeded({ suppressErrors: true });
+    };
+  }, [rollbackAutoRetryIfNeeded]);
+
+  useEffect(() => {
+    if (!autoRetryRollbackPendingRef.current) {
+      return;
+    }
+
+    const autoRetryStatusType = workspaceState?.autoRetryStatus?.type;
+    const autoRetryActive =
+      autoRetryStatusType === "auto-retry-scheduled" ||
+      autoRetryStatusType === "auto-retry-starting";
+    const streamInFlight =
+      workspaceState?.isStreamStarting === true || workspaceState?.canInterrupt === true;
+
+    // Wait until the resumed stream has actually reached an in-flight state before
+    // considering rollback. This avoids disabling auto-retry immediately after
+    // resumeStream() resolves but before the resumed attempt's outcome is known.
+    if (autoRetryActive || streamInFlight) {
+      autoRetryRollbackArmedRef.current = true;
+      return;
+    }
+
+    const baselineMessageCount = autoRetryRollbackBaselineMessageCountRef.current;
+    const hasObservedPostResumeMessage =
+      baselineMessageCount !== null &&
+      (workspaceState?.messages.length ?? 0) > baselineMessageCount;
+    if (!autoRetryRollbackArmedRef.current && !hasObservedPostResumeMessage) {
+      return;
+    }
+
+    void rollbackAutoRetryIfNeeded();
+  }, [
+    rollbackAutoRetryIfNeeded,
+    workspaceState?.autoRetryStatus,
+    workspaceState?.isStreamStarting,
+    workspaceState?.canInterrupt,
+    workspaceState?.messages.length,
+  ]);
+
   const [draftAnswers, setDraftAnswers] = useState<Record<string, DraftAnswer>>(() => {
     if (cachedState) {
       return cachedState.draftAnswers;
@@ -326,7 +461,7 @@ export function AskUserQuestionToolCall(props: {
       assert(props.workspaceId, "workspaceId is required");
       workspaceId = props.workspaceId;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       setSubmitError(errorMessage);
       setIsSubmitting(false);
       return;
@@ -338,24 +473,84 @@ export function AskUserQuestionToolCall(props: {
         toolCallId: props.toolCallId,
         answers,
       })
-      .then((result) => {
+      .then(async (result) => {
         if (!result.success) {
           setSubmitError(result.error);
           return;
         }
 
-        // If the stream was interrupted (e.g. app restart) we need to explicitly
-        // kick the resume manager so the assistant continues after answers.
-        window.dispatchEvent(
-          createCustomEvent(CUSTOM_EVENTS.RESUME_CHECK_REQUESTED, {
-            workspaceId,
-            isManual: true,
-          })
-        );
+        // If the stream was interrupted (e.g. app restart), explicitly resume using
+        // the latest persisted send options for this workspace.
+        let sendOptions = getSendOptionsFromStorage(workspaceId);
+        const lastUserMessage = [...(workspaceState?.messages ?? [])]
+          .reverse()
+          .find(
+            (message): message is Extract<typeof message, { type: "user" }> =>
+              message.type === "user"
+          );
+
+        if (lastUserMessage?.compactionRequest) {
+          sendOptions = applyCompactionOverrides(
+            sendOptions,
+            lastUserMessage.compactionRequest.parsed
+          );
+        }
+
+        const enableResult = await api.workspace.setAutoRetryEnabled?.({
+          workspaceId,
+          enabled: true,
+          persist: false,
+        });
+        if (enableResult && !enableResult.success) {
+          setSubmitError(enableResult.error);
+          return;
+        }
+
+        if (enableResult?.success && enableResult.data.previousEnabled === false) {
+          // Ask-user resume temporarily enables auto-retry for this attempt.
+          // Roll back only after the resumed stream reaches a terminal outcome.
+          if (!isMountedRef.current) {
+            await api.workspace.setAutoRetryEnabled?.({
+              workspaceId,
+              enabled: false,
+              persist: false,
+            });
+          } else {
+            autoRetryRollbackWorkspaceIdRef.current = workspaceId;
+            autoRetryRollbackPendingRef.current = true;
+            autoRetryRollbackArmedRef.current = false;
+            autoRetryRollbackBaselineMessageCountRef.current = workspaceState?.messages.length ?? 0;
+          }
+        }
+
+        const resumeResult = await api.workspace.resumeStream({
+          workspaceId,
+          options: sendOptions,
+        });
+        if (!resumeResult.success) {
+          const formatted = formatSendMessageError(resumeResult.error);
+          const detail = formatted.resolutionHint
+            ? `${formatted.message} ${formatted.resolutionHint}`
+            : formatted.message;
+          setSubmitError(detail);
+
+          // Keep retry preference consistent when resume fails before stream events.
+          await rollbackAutoRetryIfNeeded();
+          return;
+        }
+
+        if (
+          autoRetryRollbackPendingRef.current &&
+          !autoRetryRollbackArmedRef.current &&
+          resumeResult.data.started === false
+        ) {
+          await rollbackAutoRetryIfNeeded({ suppressErrors: true });
+        }
       })
-      .catch((error) => {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+      .catch(async (error) => {
+        const errorMessage = getErrorMessage(error);
         setSubmitError(errorMessage);
+        await rollbackAutoRetryIfNeeded();
       })
       .finally(() => {
         setIsSubmitting(false);

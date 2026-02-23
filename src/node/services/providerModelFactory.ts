@@ -1,6 +1,7 @@
 import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 import type { LanguageModel } from "ai";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import { Ok, Err } from "@/common/types/result";
 import type { Result } from "@/common/types/result";
 import type { SendMessageError } from "@/common/types/errors";
@@ -18,12 +19,18 @@ import {
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 import type { Config, ProviderConfig } from "@/node/config";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
 import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
-import { normalizeGatewayModel, supports1MContext } from "@/common/utils/ai/models";
+import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import type { AnthropicCacheTtl } from "@/common/utils/ai/cacheStrategy";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
+import {
+  normalizeGatewayStreamUsage,
+  normalizeGatewayGenerateResult,
+} from "@/node/utils/gatewayStreamNormalization";
 import { EnvHttpProxyAgent, type Dispatcher } from "undici";
 
 // ---------------------------------------------------------------------------
@@ -85,6 +92,29 @@ if (typeof globalFetchWithExtras.certificate === "function") {
 // Fetch wrappers
 // ---------------------------------------------------------------------------
 
+function mergeAnthropicCacheControl(
+  existing: unknown,
+  cacheTtl?: AnthropicCacheTtl | null
+): Record<string, string> {
+  const merged: Record<string, string> = { type: "ephemeral" };
+
+  if (typeof existing === "object" && existing !== null) {
+    const existingRecord = existing as Record<string, unknown>;
+    if (typeof existingRecord.type === "string") {
+      merged.type = existingRecord.type;
+    }
+    if (typeof existingRecord.ttl === "string") {
+      merged.ttl = existingRecord.ttl;
+    }
+  }
+
+  if (cacheTtl) {
+    merged.ttl = cacheTtl;
+  }
+
+  return merged;
+}
+
 /**
  * Wrap fetch to inject Anthropic cache_control directly into the request body.
  * The AI SDK's providerOptions.anthropic.cacheControl doesn't get translated
@@ -95,7 +125,10 @@ if (typeof globalFetchWithExtras.certificate === "function") {
  * 1. Last tool (caches all tool definitions)
  * 2. Last message's last content part (caches entire conversation)
  */
-function wrapFetchWithAnthropicCacheControl(baseFetch: typeof fetch): typeof fetch {
+function wrapFetchWithAnthropicCacheControl(
+  baseFetch: typeof fetch,
+  cacheTtl?: AnthropicCacheTtl | null
+): typeof fetch {
   const cachingFetch = async (
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1]
@@ -108,10 +141,12 @@ function wrapFetchWithAnthropicCacheControl(baseFetch: typeof fetch): typeof fet
     try {
       const json = JSON.parse(init.body) as Record<string, unknown>;
 
-      // Inject cache_control on the last tool if tools array exists
+      // Inject cache_control on the last tool if tools array exists.
+      // If the SDK already populated cache_control, preserve it but override ttl
+      // when a higher-level cacheTtl is configured.
       if (Array.isArray(json.tools) && json.tools.length > 0) {
         const lastTool = json.tools[json.tools.length - 1] as Record<string, unknown>;
-        lastTool.cache_control ??= { type: "ephemeral" };
+        lastTool.cache_control = mergeAnthropicCacheControl(lastTool.cache_control, cacheTtl);
       }
 
       // Inject cache_control on last message's last content part
@@ -133,7 +168,10 @@ function wrapFetchWithAnthropicCacheControl(baseFetch: typeof fetch): typeof fet
         if (Array.isArray(json.prompt)) {
           const providerOpts = (lastMsg.providerOptions ?? {}) as Record<string, unknown>;
           const anthropicOpts = (providerOpts.anthropic ?? {}) as Record<string, unknown>;
-          anthropicOpts.cacheControl ??= { type: "ephemeral" };
+          anthropicOpts.cacheControl = mergeAnthropicCacheControl(
+            anthropicOpts.cacheControl,
+            cacheTtl
+          );
           providerOpts.anthropic = anthropicOpts;
           lastMsg.providerOptions = providerOpts;
         }
@@ -142,7 +180,7 @@ function wrapFetchWithAnthropicCacheControl(baseFetch: typeof fetch): typeof fet
         const content = lastMsg.content;
         if (Array.isArray(content) && content.length > 0) {
           const lastPart = content[content.length - 1] as Record<string, unknown>;
-          lastPart.cache_control ??= { type: "ephemeral" };
+          lastPart.cache_control = mergeAnthropicCacheControl(lastPart.cache_control, cacheTtl);
         }
       }
 
@@ -222,8 +260,10 @@ export function normalizeAnthropicBaseURL(baseURL: string): string {
   return `${trimmed}/v1`;
 }
 
-/** Header value for Anthropic 1M context beta */
-export const ANTHROPIC_1M_CONTEXT_HEADER = "context-1m-2025-08-07";
+// Canonical definition lives in providerOptions; import for local use + re-export for backward compat.
+import { ANTHROPIC_1M_CONTEXT_HEADER } from "@/common/utils/ai/providerOptions";
+import { getErrorMessage } from "@/common/utils/errors";
+export { ANTHROPIC_1M_CONTEXT_HEADER };
 
 /**
  * Build headers for Anthropic provider, optionally including the 1M context beta header.
@@ -300,6 +340,13 @@ export function parseModelString(modelString: string): [string, string] {
   const providerName = colonIndex !== -1 ? modelString.slice(0, colonIndex) : modelString;
   const modelId = colonIndex !== -1 ? modelString.slice(colonIndex + 1) : "";
   return [providerName, modelId];
+}
+
+function parseAnthropicCacheTtl(value: unknown): AnthropicCacheTtl | undefined {
+  if (value === "5m" || value === "1h") {
+    return value;
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -390,8 +437,17 @@ export class ProviderModelFactory {
     muxProviderOptions?: MuxProviderOptions
   ): Promise<Result<LanguageModel, SendMessageError>> {
     try {
+      // Gateway routing is resolved here so every caller gets correct behavior
+      // automatically. resolveGatewayModelString is idempotent — already-resolved
+      // strings (e.g. "mux-gateway:anthropic/model") pass through unchanged.
+      const explicitlyRequestedGateway = modelString.trim().startsWith("mux-gateway:");
+      modelString = this.resolveGatewayModelString(
+        modelString,
+        undefined,
+        explicitlyRequestedGateway
+      );
+
       // Parse model string (format: "provider:model-id")
-      // Parse provider and model ID from model string
       const [providerName, modelId] = parseModelString(modelString);
 
       if (!providerName || !modelId) {
@@ -428,8 +484,33 @@ export class ProviderModelFactory {
       }
 
       // Load providers configuration - the ONLY source of truth
-      const providersConfig = this.config.loadProvidersConfig();
-      let providerConfig = providersConfig?.[providerName] ?? {};
+      const providersConfig = this.config.loadProvidersConfig() ?? {};
+
+      // Backend config is authoritative for Anthropic prompt cache TTL on any
+      // Anthropic-routed model (direct Anthropic, mux-gateway:anthropic/*,
+      // openrouter:anthropic/*). We still allow request-level values when config
+      // is unset for backward compatibility with older clients.
+      const configAnthropicCacheTtl = parseAnthropicCacheTtl(providersConfig.anthropic?.cacheTtl);
+      const isAnthropicRoutedModel =
+        providerName === "anthropic" || modelId.startsWith("anthropic/");
+      if (isAnthropicRoutedModel && configAnthropicCacheTtl && muxProviderOptions) {
+        muxProviderOptions.anthropic = {
+          ...(muxProviderOptions.anthropic ?? {}),
+          cacheTtl: configAnthropicCacheTtl,
+        };
+      }
+      const effectiveAnthropicCacheTtl =
+        muxProviderOptions?.anthropic?.cacheTtl ?? configAnthropicCacheTtl;
+
+      let providerConfig = providersConfig[providerName] ?? {};
+
+      // Providers can be disabled in providers.jsonc without deleting credentials.
+      if (
+        providerName !== "mux-gateway" &&
+        isProviderDisabledInConfig(providerConfig as { enabled?: unknown })
+      ) {
+        return Err({ type: "provider_disabled", provider: providerName });
+      }
 
       // Map baseUrl to baseURL if present (SDK expects baseURL)
       const { baseUrl, ...configWithoutBaseUrl } = providerConfig;
@@ -471,14 +552,9 @@ export class ProviderModelFactory {
           ? { ...configWithApiKey, baseURL: normalizeAnthropicBaseURL(effectiveBaseURL) }
           : configWithApiKey;
 
-        // Add 1M context beta header if requested and model supports it.
-        // Check both per-model list (use1MContextModels) and legacy global flag (use1MContext).
-        const fullModelId = `anthropic:${modelId}`;
-        const is1MEnabled =
-          ((muxProviderOptions?.anthropic?.use1MContextModels?.includes(fullModelId) ?? false) ||
-            muxProviderOptions?.anthropic?.use1MContext === true) &&
-          supports1MContext(fullModelId);
-        const headers = buildAnthropicHeaders(normalizedConfig.headers, is1MEnabled);
+        // 1M context beta header is injected per-request via buildRequestHeaders() →
+        // streamText({ headers }), not at provider creation time. This avoids duplicating
+        // header logic across direct and gateway handlers.
 
         // Lazy-load Anthropic provider to reduce startup time
         const { createAnthropic } = await PROVIDER_REGISTRY.anthropic();
@@ -486,10 +562,12 @@ export class ProviderModelFactory {
         // (SDK doesn't translate providerOptions to cache_control for these)
         // Use getProviderFetch to preserve any user-configured custom fetch (e.g., proxies)
         const baseFetch = getProviderFetch(providerConfig);
-        const fetchWithCacheControl = wrapFetchWithAnthropicCacheControl(baseFetch);
+        const fetchWithCacheControl = wrapFetchWithAnthropicCacheControl(
+          baseFetch,
+          effectiveAnthropicCacheTtl
+        );
         const provider = createAnthropic({
           ...normalizedConfig,
-          headers,
           fetch: fetchWithCacheControl,
         });
         return Ok(provider(modelId));
@@ -640,6 +718,7 @@ export class ProviderModelFactory {
                     "parallel_tool_calls",
                     "stream",
                     "store",
+                    "prompt_cache_key",
                     "reasoning",
                     "temperature",
                     "top_p",
@@ -1000,7 +1079,7 @@ export class ProviderModelFactory {
         const baseFetch = getProviderFetch(providerConfig);
         const isAnthropicModel = modelId.startsWith("anthropic/");
         const fetchWithCacheControl = isAnthropicModel
-          ? wrapFetchWithAnthropicCacheControl(baseFetch)
+          ? wrapFetchWithAnthropicCacheControl(baseFetch, effectiveAnthropicCacheTtl)
           : baseFetch;
         const fetchWithAutoLogout = wrapFetchWithMuxGatewayAutoLogout(
           fetchWithCacheControl,
@@ -1009,12 +1088,43 @@ export class ProviderModelFactory {
         // Use configured baseURL or fall back to default gateway URL
         const gatewayBaseURL =
           providerConfig.baseURL ?? "https://gateway.mux.coder.com/api/v1/ai-gateway/v1/ai";
+
+        // 1M context beta header is injected per-request via buildRequestHeaders() →
+        // streamText({ headers }), not at provider creation time.
         const gateway = createGateway({
           apiKey: couponCode,
           baseURL: gatewayBaseURL,
           fetch: fetchWithAutoLogout,
         });
-        return Ok(gateway(modelId));
+        const model = gateway(modelId);
+
+        // Normalize usage format from the gateway server.
+        // The gateway SDK declares specificationVersion "v3", so the AI SDK core
+        // expects nested v3 usage: { inputTokens: { total, ... }, outputTokens: { total, ... } }.
+        // However the gateway server may return flat v2-style usage
+        // (e.g. { inputTokens: 123, outputTokens: 456 }), causing
+        // asLanguageModelUsage to produce undefined → 0 for all token counts.
+        // These wrappers detect flat usage and convert to v3 nested format.
+        const originalDoStream = model.doStream.bind(model);
+        model.doStream = async (options) => {
+          const result = await originalDoStream(options);
+          return {
+            ...result,
+            // Type assertion safe: the transform only modifies the shape of usage/finishReason
+            // fields within existing chunks, it doesn't change the stream part types.
+            stream: result.stream.pipeThrough(
+              normalizeGatewayStreamUsage()
+            ) as typeof result.stream,
+          };
+        };
+
+        const originalDoGenerate = model.doGenerate.bind(model);
+        model.doGenerate = async (options) => {
+          const result = await originalDoGenerate(options);
+          return normalizeGatewayGenerateResult(result);
+        };
+
+        return Ok(model);
       }
 
       // GitHub Copilot — OpenAI-compatible with custom auth headers
@@ -1093,11 +1203,76 @@ export class ProviderModelFactory {
         provider: providerName,
       });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       return Err({ type: "unknown", raw: `Failed to create model: ${errorMessage}` });
     }
   }
 
+  /**
+   * Resolve model string (xAI variant mapping + gateway routing) and create the model.
+   *
+   * Combines the xAI thinking-level variant swap, gateway resolution, and model
+   * creation into a single call. Previously this logic was inlined in
+   * `AIService.streamMessage()`.
+   *
+   * @returns On success: the created model + resolution metadata.
+   */
+  async resolveAndCreateModel(
+    modelString: string,
+    thinkingLevel: ThinkingLevel,
+    muxProviderOptions?: MuxProviderOptions
+  ): Promise<
+    Result<
+      {
+        model: LanguageModel;
+        /** Model string after gateway routing (may have `mux-gateway:` prefix). */
+        effectiveModelString: string;
+        /** Model string with gateway prefix stripped (canonical provider:model). */
+        canonicalModelString: string;
+        /** Provider name from the canonical model string. */
+        canonicalProviderName: string;
+        /** Model ID from the canonical model string. */
+        canonicalModelId: string;
+        /** Whether the request is being routed through the Mux gateway. */
+        routedThroughGateway: boolean;
+      },
+      SendMessageError
+    >
+  > {
+    const explicitlyRequestedGateway = modelString.trim().startsWith("mux-gateway:");
+    const canonicalModelString = normalizeGatewayModel(modelString);
+    let effectiveModelString = canonicalModelString;
+    const [canonicalProviderName, canonicalModelId] = parseModelString(canonicalModelString);
+
+    // xAI Grok: swap between reasoning and non-reasoning variants based on thinking level.
+    // xAI only supports full reasoning (no medium/low).
+    if (canonicalProviderName === "xai" && canonicalModelId === "grok-4-1-fast") {
+      const variant =
+        thinkingLevel !== "off" ? "grok-4-1-fast-reasoning" : "grok-4-1-fast-non-reasoning";
+      effectiveModelString = `xai:${variant}`;
+    }
+
+    effectiveModelString = this.resolveGatewayModelString(
+      effectiveModelString,
+      canonicalModelString,
+      explicitlyRequestedGateway
+    );
+
+    const routedThroughGateway = effectiveModelString.startsWith("mux-gateway:");
+    const modelResult = await this.createModel(effectiveModelString, muxProviderOptions);
+    if (!modelResult.success) {
+      return Err(modelResult.error);
+    }
+
+    return Ok({
+      model: modelResult.data,
+      effectiveModelString,
+      canonicalModelString,
+      canonicalProviderName,
+      canonicalModelId,
+      routedThroughGateway,
+    });
+  }
   resolveGatewayModelString(
     modelString: string,
     modelKey?: string,

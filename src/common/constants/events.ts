@@ -47,19 +47,6 @@ export const CUSTOM_EVENTS = {
   AGENTS_REFRESH_REQUESTED: "mux:agentsRefreshRequested",
 
   /**
-   * Event to trigger resume check for a workspace
-   * Detail: { workspaceId: string }
-   *
-   * Emitted when:
-   * - Stream error occurs
-   * - Stream aborted
-   * - App startup (for all workspaces with interrupted streams)
-   *
-   * useResumeManager handles this idempotently - safe to emit multiple times
-   */
-  RESUME_CHECK_REQUESTED: "mux:resumeCheckRequested",
-
-  /**
    * Event emitted when the mux gateway session expires.
    * No detail
    */
@@ -70,6 +57,12 @@ export const CUSTOM_EVENTS = {
    * Detail: { workspaceId: string, projectPath: string, projectName: string, workspacePath: string, branch: string }
    */
   WORKSPACE_FORK_SWITCH: "mux:workspaceForkSwitch",
+
+  /**
+   * Event to request AI title regeneration for a workspace.
+   * Detail: { workspaceId: string }
+   */
+  WORKSPACE_GENERATE_TITLE_REQUESTED: "mux:workspaceGenerateTitleRequested",
 
   /**
    * Event to execute a command from the command palette
@@ -87,6 +80,12 @@ export const CUSTOM_EVENTS = {
    * No detail
    */
   TOGGLE_VOICE_INPUT: "mux:toggleVoiceInput",
+
+  /**
+   * Event to show toast feedback for analytics database rebuild commands.
+   * Detail: { type: "success" | "error", message: string, title?: string }
+   */
+  ANALYTICS_REBUILD_TOAST: "mux:analyticsRebuildToast",
 
   /**
    * Event to open the debug LLM request modal
@@ -114,10 +113,6 @@ export interface CustomEventPayloads {
   [CUSTOM_EVENTS.CLOSE_AGENT_PICKER]: never; // No payload
   [CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED]: never; // No payload
   [CUSTOM_EVENTS.OPEN_MODEL_SELECTOR]: never; // No payload
-  [CUSTOM_EVENTS.RESUME_CHECK_REQUESTED]: {
-    workspaceId: string;
-    isManual?: boolean; // true when user explicitly clicks retry (bypasses eligibility checks)
-  };
   [CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED]: never; // No payload
   [CUSTOM_EVENTS.WORKSPACE_FORK_SWITCH]: {
     workspaceId: string;
@@ -125,6 +120,9 @@ export interface CustomEventPayloads {
     projectName: string;
     workspacePath: string;
     branch: string;
+  };
+  [CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED]: {
+    workspaceId: string;
   };
   [CUSTOM_EVENTS.EXECUTE_COMMAND]: {
     commandId: string;
@@ -137,12 +135,17 @@ export interface CustomEventPayloads {
     runtime?: string;
   };
   [CUSTOM_EVENTS.TOGGLE_VOICE_INPUT]: never; // No payload
+  [CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST]: {
+    type: "success" | "error";
+    message: string;
+    title?: string;
+  };
   [CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST]: never; // No payload
 }
 
 /**
  * Type-safe custom event type
- * Usage: CustomEventType<typeof CUSTOM_EVENTS.RESUME_CHECK_REQUESTED>
+ * Usage: CustomEventType<typeof CUSTOM_EVENTS.THINKING_LEVEL_TOAST>
  */
 export type CustomEventType<K extends keyof CustomEventPayloads> = CustomEvent<
   CustomEventPayloads[K]
@@ -153,9 +156,9 @@ export type CustomEventType<K extends keyof CustomEventPayloads> = CustomEvent<
  *
  * @example
  * ```typescript
- * const event = createCustomEvent(CUSTOM_EVENTS.RESUME_CHECK_REQUESTED, {
- *   workspaceId: 'abc123',
- *   isManual: true
+ * const event = createCustomEvent(CUSTOM_EVENTS.THINKING_LEVEL_TOAST, {
+ *   workspaceId: "abc123",
+ *   level: "high",
  * });
  * window.dispatchEvent(event);
  * ```

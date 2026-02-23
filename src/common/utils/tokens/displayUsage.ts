@@ -18,7 +18,8 @@ import type { ChatUsageDisplay } from "./usageAggregator";
 export function createDisplayUsage(
   usage: LanguageModelV2Usage | undefined,
   model: string,
-  providerMetadata?: Record<string, unknown>
+  providerMetadata?: Record<string, unknown>,
+  metadataModelOverride?: string
 ): ChatUsageDisplay | undefined {
   if (!usage) return undefined;
 
@@ -51,7 +52,7 @@ export function createDisplayUsage(
   const outputWithoutReasoning = Math.max(0, (usage.outputTokens ?? 0) - reasoningTokens);
 
   // Get model stats for cost calculation
-  const modelStats = getModelStats(model);
+  const modelStats = getModelStats(metadataModelOverride ?? model);
 
   const costsIncluded =
     (providerMetadata?.mux as { costsIncluded?: boolean } | undefined)?.costsIncluded === true;
@@ -78,7 +79,9 @@ export function createDisplayUsage(
     outputCost = 0;
     reasoningCost = 0;
   }
+
   return {
+    ...(costsIncluded ? { costsIncluded: true } : {}),
     input: {
       tokens: inputTokens,
       cost_usd: inputCost,
@@ -100,5 +103,55 @@ export function createDisplayUsage(
       cost_usd: reasoningCost,
     },
     model, // Include model for display purposes
+  };
+}
+
+/**
+ * Recompute cost_usd values in an existing ChatUsageDisplay using updated model pricing.
+ *
+ * Used when provider config changes (e.g., model mapping updated) to refresh
+ * persisted session cost aggregates without discarding the raw token counts.
+ */
+export function recomputeUsageCosts(
+  usage: ChatUsageDisplay,
+  metadataModel: string
+): ChatUsageDisplay {
+  const modelStats = getModelStats(metadataModel);
+
+  if (!modelStats) {
+    // Unknown model — strip costs and flag as unknown
+    return {
+      input: { tokens: usage.input.tokens },
+      cached: { tokens: usage.cached.tokens },
+      cacheCreate: { tokens: usage.cacheCreate.tokens },
+      output: { tokens: usage.output.tokens },
+      reasoning: { tokens: usage.reasoning.tokens },
+      model: usage.model,
+      hasUnknownCosts: true,
+    };
+  }
+
+  return {
+    input: {
+      tokens: usage.input.tokens,
+      cost_usd: usage.input.tokens * modelStats.input_cost_per_token,
+    },
+    cached: {
+      tokens: usage.cached.tokens,
+      cost_usd: usage.cached.tokens * (modelStats.cache_read_input_token_cost ?? 0),
+    },
+    cacheCreate: {
+      tokens: usage.cacheCreate.tokens,
+      cost_usd: usage.cacheCreate.tokens * (modelStats.cache_creation_input_token_cost ?? 0),
+    },
+    output: {
+      tokens: usage.output.tokens,
+      cost_usd: usage.output.tokens * modelStats.output_cost_per_token,
+    },
+    reasoning: {
+      tokens: usage.reasoning.tokens,
+      cost_usd: usage.reasoning.tokens * modelStats.output_cost_per_token,
+    },
+    model: usage.model,
   };
 }

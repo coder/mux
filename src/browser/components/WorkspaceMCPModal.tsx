@@ -285,10 +285,21 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
           </div>
         ) : (
           <div className="space-y-4">
-            <p className="text-muted text-sm">
-              Customize which MCP servers and tools are available in this workspace. Changes only
-              affect this workspace.
-            </p>
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-muted flex-1 pr-3 text-sm">
+                Customize which MCP servers and tools are available in this workspace. Changes only
+                affect this workspace.
+              </p>
+              <div className="flex shrink-0 items-center gap-2 pt-0.5">
+                <Button variant="ghost" onClick={() => onOpenChange(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={() => void handleSave()} disabled={saving}>
+                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  Save
+                </Button>
+              </div>
+            </div>
 
             {error && (
               <div className="bg-danger-soft/10 text-danger-soft rounded-md p-3 text-sm">
@@ -370,16 +381,6 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
                   </div>
                 );
               })}
-            </div>
-
-            <div className="flex justify-end gap-2 pt-4">
-              <Button variant="ghost" onClick={() => onOpenChange(false)}>
-                Cancel
-              </Button>
-              <Button onClick={() => void handleSave()} disabled={saving}>
-                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Save
-              </Button>
             </div>
           </div>
         )}

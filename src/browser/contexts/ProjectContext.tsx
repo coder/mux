@@ -19,6 +19,7 @@ import {
   deleteWorkspaceStorage,
   getDraftScopeId,
 } from "@/common/constants/storage";
+import { getErrorMessage } from "@/common/utils/errors";
 
 interface WorkspaceModalState {
   isOpen: boolean;
@@ -81,6 +82,15 @@ function deriveProjectName(projectPath: string): string {
   }
   const segments = projectPath.split(/[\\/]/).filter(Boolean);
   return segments[segments.length - 1] ?? projectPath;
+}
+
+const PROJECT_REMOVE_ACTIVE_WORKSPACES_ERROR_PREFIX =
+  "Cannot remove project with active workspaces";
+
+function isExpectedProjectRemovalValidationError(error: string | undefined): boolean {
+  return (
+    typeof error === "string" && error.startsWith(PROJECT_REMOVE_ACTIVE_WORKSPACES_ERROR_PREFIX)
+  );
 }
 
 export function ProjectProvider(props: { children: ReactNode }) {
@@ -192,11 +202,17 @@ export function ProjectProvider(props: { children: ReactNode }) {
 
           return { success: true };
         } else {
-          console.error("Failed to remove project:", result.error);
+          if (isExpectedProjectRemovalValidationError(result.error)) {
+            // Expected user-facing validation failures (for example, active workspaces still present)
+            // should surface in UI without polluting error-level console output.
+            console.warn("Failed to remove project:", result.error);
+          } else {
+            console.error("Failed to remove project:", result.error);
+          }
           return { success: false, error: result.error };
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         console.error("Failed to remove project:", errorMessage);
         return { success: false, error: errorMessage };
       }

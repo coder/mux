@@ -130,4 +130,6 @@ mobile/.expo/
 .mux/mcp.jsonc
 # Terminal-Bench leaderboard cache
 benchmarks/terminal_bench/.leaderboard_cache/
+# Terminal-Bench job output
+jobs/
 

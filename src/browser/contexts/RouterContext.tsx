@@ -18,7 +18,14 @@ export interface RouterContext {
   navigateToWorkspace: (workspaceId: string) => void;
   navigateToProject: (projectPath: string, sectionId?: string, draftId?: string) => void;
   navigateToHome: () => void;
+  navigateToSettings: (section?: string) => void;
+  navigateFromSettings: () => void;
+  navigateToAnalytics: () => void;
+  navigateFromAnalytics: () => void;
   currentWorkspaceId: string | null;
+
+  /** Settings section from URL (null when not on settings page). */
+  currentSettingsSection: string | null;
 
   /** Project identifier from URL (does not include full filesystem path). */
   currentProjectId: string | null;
@@ -31,6 +38,9 @@ export interface RouterContext {
 
   /** Draft ID for UI-only workspace creation drafts (from URL) */
   pendingDraftId: string | null;
+
+  /** True when the analytics dashboard route is active. */
+  isAnalyticsOpen: boolean;
 }
 
 const RouterContext = createContext<RouterContext | undefined>(undefined);
@@ -107,6 +117,41 @@ function RouterContextInner(props: { children: ReactNode }) {
       : null;
   const currentProjectPathFromState =
     location.pathname === "/project" ? getProjectPathFromLocationState(location.state) : null;
+  const settingsMatch = /^\/settings\/([^/]+)$/.exec(location.pathname);
+  const currentSettingsSection = settingsMatch ? decodeURIComponent(settingsMatch[1]) : null;
+  const isAnalyticsOpen = location.pathname === "/analytics";
+
+  interface NonSettingsLocationSnapshot {
+    url: string;
+    state: unknown;
+  }
+
+  // When leaving settings, we need to restore the *full* previous location including
+  // any in-memory navigation state (e.g. /project relies on { projectPath } state, and
+  // the legacy ?path= deep link rewrite stores that path in location.state).
+  // Include /analytics so Settings opened from Analytics can close back to Analytics.
+  const lastNonSettingsLocationRef = useRef<NonSettingsLocationSnapshot>({
+    url: getInitialRoute(),
+    state: null,
+  });
+  // Keep a separate "close analytics" snapshot that intentionally excludes /analytics so
+  // closing analytics still returns to the last non-analytics route.
+  const lastNonAnalyticsLocationRef = useRef<NonSettingsLocationSnapshot>({
+    url: getInitialRoute(),
+    state: null,
+  });
+  useEffect(() => {
+    if (!location.pathname.startsWith("/settings")) {
+      const locationSnapshot: NonSettingsLocationSnapshot = {
+        url: location.pathname + location.search,
+        state: location.state,
+      };
+      lastNonSettingsLocationRef.current = locationSnapshot;
+      if (location.pathname !== "/analytics") {
+        lastNonAnalyticsLocationRef.current = locationSnapshot;
+      }
+    }
+  }, [location.pathname, location.search, location.state]);
 
   // Back-compat: if we ever land on a legacy deep link (/project?path=<full path>),
   // immediately replace it with the non-path project id URL.
@@ -159,35 +204,83 @@ function RouterContextInner(props: { children: ReactNode }) {
     void navigateRef.current("/");
   }, []);
 
+  const navigateToSettings = useCallback((section?: string) => {
+    const nextSection = section ?? "general";
+    void navigateRef.current(`/settings/${encodeURIComponent(nextSection)}`);
+  }, []);
+
+  const navigateFromSettings = useCallback(() => {
+    const lastLocation = lastNonSettingsLocationRef.current;
+    if (!lastLocation.url || lastLocation.url.startsWith("/settings")) {
+      void navigateRef.current("/");
+      return;
+    }
+    void navigateRef.current(lastLocation.url, { state: lastLocation.state });
+  }, []);
+
+  const navigateToAnalytics = useCallback(() => {
+    void navigateRef.current("/analytics");
+  }, []);
+
+  const navigateFromAnalytics = useCallback(() => {
+    const lastLocation = lastNonAnalyticsLocationRef.current;
+    if (
+      !lastLocation.url ||
+      lastLocation.url.startsWith("/settings") ||
+      lastLocation.url === "/analytics"
+    ) {
+      void navigateRef.current("/");
+      return;
+    }
+    void navigateRef.current(lastLocation.url, { state: lastLocation.state });
+  }, []);
+
   const value = useMemo<RouterContext>(
     () => ({
       navigateToWorkspace,
       navigateToProject,
       navigateToHome,
+      navigateToSettings,
+      navigateFromSettings,
+      navigateToAnalytics,
+      navigateFromAnalytics,
       currentWorkspaceId,
+      currentSettingsSection,
       currentProjectId,
       currentProjectPathFromState,
       pendingSectionId,
       pendingDraftId,
+      isAnalyticsOpen,
     }),
     [
       navigateToHome,
       navigateToProject,
+      navigateToSettings,
+      navigateFromSettings,
+      navigateToAnalytics,
+      navigateFromAnalytics,
       navigateToWorkspace,
+      currentWorkspaceId,
+      currentSettingsSection,
       currentProjectId,
       currentProjectPathFromState,
-      currentWorkspaceId,
       pendingSectionId,
       pendingDraftId,
+      isAnalyticsOpen,
     ]
   );
 
   return <RouterContext.Provider value={value}>{props.children}</RouterContext.Provider>;
 }
 
+// Disable startTransition wrapping for navigation state updates so they
+// batch with other normal-priority React state updates in the same tick.
+// Without this, React processes navigation at transition (lower) priority,
+// causing a flash of stale UI between normal-priority updates (e.g.
+// setIsSending(false)) and the deferred route change.
 export function RouterProvider(props: { children: ReactNode }) {
   return (
-    <MemoryRouter initialEntries={[getInitialRoute()]}>
+    <MemoryRouter initialEntries={[getInitialRoute()]} unstable_useTransitions={false}>
       <RouterContextInner>{props.children}</RouterContextInner>
     </MemoryRouter>
   );

@@ -6,6 +6,8 @@
  */
 import { describe, test, expect, beforeAll } from "bun:test";
 import { spawn } from "child_process";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "path";
 
 const CLI_PATH = path.resolve(__dirname, "index.ts");
@@ -35,6 +37,37 @@ async function runCli(args: string[], timeoutMs = 5000): Promise<ExecResult> {
     proc.stderr?.on("data", (data: Buffer) => {
       stderr += data.toString();
     });
+
+    proc.on("close", (code) => {
+      resolve({ stdout, stderr, output: stdout + stderr, exitCode: code ?? 1 });
+    });
+
+    proc.on("error", () => {
+      resolve({ stdout, stderr, output: stdout + stderr, exitCode: 1 });
+    });
+  });
+}
+
+async function runCliWithClosedStdin(args: string[], timeoutMs = 5000): Promise<ExecResult> {
+  return new Promise((resolve) => {
+    const proc = spawn("bun", [CLI_PATH, ...args], {
+      timeout: timeoutMs,
+      env: { ...process.env, NO_COLOR: "1" },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    proc.stdout?.on("data", (data: Buffer) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr?.on("data", (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    proc.stdin?.end();
 
     proc.on("close", (code) => {
       resolve({ stdout, stderr, output: stdout + stderr, exitCode: code ?? 1 });
@@ -242,7 +275,37 @@ describe("mux CLI", () => {
       expect(result.stdout).toContain("--host");
       expect(result.stdout).toContain("--port");
       expect(result.stdout).toContain("--auth-token");
+      expect(result.stdout).toContain("--no-auth");
+      expect(result.stdout).toContain("--print-auth-token");
+      expect(result.stdout).toContain("--allow-http-origin");
       expect(result.stdout).toContain("--add-project");
     });
+  });
+
+  describe("mux acp", () => {
+    test("--help shows ACP options", async () => {
+      const result = await runCli(["acp", "--help"]);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("Usage: mux acp");
+      expect(result.stdout).toContain("--server-url");
+      expect(result.stdout).toContain("--auth-token");
+      expect(result.stdout).toContain("--log-file");
+    });
+
+    test("--log-file redirects ACP logs away from stderr", async () => {
+      const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-acp-log-file-test-"));
+      const logFilePath = path.join(tempDir, "acp.log");
+
+      try {
+        const result = await runCliWithClosedStdin(["acp", "--log-file", logFilePath], 10_000);
+
+        expect(result.stderr).not.toContain("[acp]");
+
+        const logContents = await fs.readFile(logFilePath, "utf8");
+        expect(logContents).toContain("[acp] Logging redirected to");
+      } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      }
+    }, 15_000);
   });
 });

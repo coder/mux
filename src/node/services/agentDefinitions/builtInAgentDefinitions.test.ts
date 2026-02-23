@@ -22,6 +22,16 @@ describe("built-in agent definitions", () => {
     expect(orchestrator?.body).toContain("counts as having read the referenced files");
   });
 
+  test("includes auto router built-in", () => {
+    const pkgs = getBuiltInAgentDefinitions();
+    const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));
+
+    const auto = byId.get("auto");
+    expect(auto).toBeTruthy();
+    expect(auto?.frontmatter.tools?.remove ?? []).toContain(".*");
+    expect(auto?.body).toContain("Immediately call `switch_agent`");
+  });
+
   test("orchestrator includes an exec task brief template", () => {
     const pkgs = getBuiltInAgentDefinitions();
     const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));

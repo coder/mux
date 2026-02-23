@@ -2,6 +2,7 @@ import React from "react";
 import {
   RIGHT_SIDEBAR_COLLAPSED_KEY,
   RIGHT_SIDEBAR_TAB_KEY,
+  getReviewImmersiveKey,
   getRightSidebarLayoutKey,
   getTerminalTitlesKey,
 } from "@/common/constants/storage";
@@ -18,8 +19,15 @@ import { CostsTab } from "./RightSidebar/CostsTab";
 import { ReviewPanel } from "./RightSidebar/CodeReview/ReviewPanel";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { StatsTab } from "./RightSidebar/StatsTab";
+import { OutputTab } from "./OutputTab";
 
-import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
+import {
+  matchesKeybind,
+  KEYBINDS,
+  formatKeybind,
+  isDialogOpen,
+  isEditableElement,
+} from "@/browser/utils/ui/keybinds";
 import { SidebarCollapseButton } from "./ui/SidebarCollapseButton";
 import { cn } from "@/common/lib/utils";
 import type { ReviewNoteData } from "@/common/types/review";
@@ -50,6 +58,7 @@ import {
   removeTabEverywhere,
   reorderTabInTabset,
   selectTabByIndex,
+  selectOrAddTab,
   selectTabInTabset,
   setFocusedTabset,
   updateSplitSizes,
@@ -69,6 +78,7 @@ import {
 import {
   CostsTabLabel,
   ExplorerTabLabel,
+  OutputTabLabel,
   FileTabLabel,
   ReviewTabLabel,
   StatsTabLabel,
@@ -101,6 +111,8 @@ interface SidebarContainerProps {
   isResizing?: boolean;
   /** Whether running in Electron desktop mode (hides border when collapsed) */
   isDesktop?: boolean;
+  /** Hide + inactivate sidebar while immersive review overlay is active. */
+  immersiveHidden?: boolean;
   children: React.ReactNode;
   role: string;
   "aria-label": string;
@@ -119,14 +131,35 @@ const SidebarContainer: React.FC<SidebarContainerProps> = ({
   customWidth,
   isResizing,
   isDesktop,
+  immersiveHidden = false,
   children,
   role,
   "aria-label": ariaLabel,
 }) => {
+  const containerRef = React.useRef<HTMLDivElement>(null);
   const width = collapsed ? "20px" : customWidth ? `${customWidth}px` : "400px";
+
+  React.useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+
+    if (immersiveHidden) {
+      container.setAttribute("inert", "");
+    } else {
+      container.removeAttribute("inert");
+    }
+
+    return () => {
+      container.removeAttribute("inert");
+    };
+  }, [immersiveHidden]);
 
   return (
     <div
+      ref={containerRef}
+      aria-hidden={immersiveHidden || undefined}
       className={cn(
         "bg-sidebar border-l border-border-light flex flex-col overflow-hidden flex-shrink-0",
         // Hide on mobile touch devices - too narrow for useful interaction
@@ -163,6 +196,8 @@ interface RightSidebarProps {
   onReviewNote?: (data: ReviewNoteData) => void;
   /** Workspace is still being created (git operations in progress) */
   isCreating?: boolean;
+  /** Hide + inactivate sidebar while immersive review overlay is active. */
+  immersiveHidden?: boolean;
   /** Ref callback to expose addTerminal function to parent */
   addTerminalRef?: React.MutableRefObject<
     ((options?: TerminalSessionCreateOptions) => void) | null
@@ -186,6 +221,14 @@ const DragAwarePanelResizeHandle: React.FC<{
 
   return <PanelResizeHandle className={className} />;
 };
+
+function hasMountedReviewPanel(node: RightSidebarLayoutNode): boolean {
+  if (node.type === "tabset") {
+    return node.activeTab === "review";
+  }
+
+  return node.children.some((child) => hasMountedReviewPanel(child));
+}
 
 type TabsetNode = Extract<RightSidebarLayoutNode, { type: "tabset" }>;
 
@@ -345,6 +388,8 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       label = <ExplorerTabLabel />;
     } else if (tab === "stats") {
       label = <StatsTabLabel workspaceId={props.workspaceId} />;
+    } else if (tab === "output") {
+      label = <OutputTabLabel />;
     } else if (isTerminal) {
       const terminalIndex = terminalTabs.indexOf(tab);
       label = (
@@ -385,11 +430,13 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
   const reviewPanelId = `${tabsetBaseId}-panel-review`;
   const explorerPanelId = `${tabsetBaseId}-panel-explorer`;
   const statsPanelId = `${tabsetBaseId}-panel-stats`;
+  const outputPanelId = `${tabsetBaseId}-panel-output`;
 
   const costsTabId = `${tabsetBaseId}-tab-costs`;
   const reviewTabId = `${tabsetBaseId}-tab-review`;
   const explorerTabId = `${tabsetBaseId}-tab-explorer`;
   const statsTabId = `${tabsetBaseId}-tab-stats`;
+  const outputTabId = `${tabsetBaseId}-tab-output`;
 
   // Generate sortable IDs for tabs in this tabset
   const sortableIds = items.map((item) => `${props.node.id}:${item.tab}`);
@@ -464,6 +511,12 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
         {props.node.activeTab === "costs" && (
           <div role="tabpanel" id={costsPanelId} aria-labelledby={costsTabId}>
             <CostsTab workspaceId={props.workspaceId} />
+          </div>
+        )}
+
+        {props.node.activeTab === "output" && (
+          <div role="tabpanel" id={outputPanelId} aria-labelledby={outputTabId} className="h-full">
+            <OutputTab workspaceId={props.workspaceId} />
           </div>
         )}
 
@@ -582,6 +635,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   isResizing = false,
   onReviewNote,
   isCreating = false,
+  immersiveHidden = false,
   addTerminalRef,
 }) => {
   // Trigger for focusing Review panel (preserves hunk selection)
@@ -599,6 +653,11 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const [collapsed, setCollapsed] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false, {
     listener: true,
   });
+  const [isReviewImmersive, setIsReviewImmersive] = usePersistedState<boolean>(
+    getReviewImmersiveKey(workspaceId),
+    false,
+    { listener: true }
+  );
 
   // Stats tab feature flag
   const { statsTabState } = useFeatureFlags();
@@ -658,6 +717,21 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     () => parseRightSidebarLayoutState(layoutDraft ?? layoutRaw, initialActiveTab),
     [layoutDraft, layoutRaw, initialActiveTab]
   );
+
+  const hasReviewPanelMounted = React.useMemo(
+    () => !collapsed && hasMountedReviewPanel(layout.root),
+    [collapsed, layout.root]
+  );
+
+  // If immersive mode is active but no ReviewPanel is mounted (e.g., user switched tabs),
+  // clear the persisted immersive flag to avoid leaving a blank overlay mounted.
+  React.useEffect(() => {
+    if (!isReviewImmersive || hasReviewPanelMounted) {
+      return;
+    }
+
+    setIsReviewImmersive(false);
+  }, [hasReviewPanelMounted, isReviewImmersive, setIsReviewImmersive]);
 
   // If the Stats tab feature is enabled, ensure it exists in the layout.
   // If disabled, ensure it doesn't linger in persisted layouts.
@@ -723,6 +797,11 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     [initialActiveTab, setLayoutRaw]
   );
 
+  const selectOrOpenReviewTab = React.useCallback(() => {
+    setLayout((prev) => selectOrAddTab(prev, "review"));
+    _setFocusTrigger((prev) => prev + 1);
+  }, [setLayout]);
+
   // Keyboard shortcuts for tab switching by position (Cmd/Ctrl+1-9)
   // Auto-expands sidebar if collapsed
   React.useEffect(() => {
@@ -770,6 +849,26 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [initialActiveTab, setAutoFocusTerminalSession, setCollapsed, setLayout, _setFocusTrigger]);
+
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!matchesKeybind(e, KEYBINDS.TOGGLE_REVIEW_IMMERSIVE)) {
+        return;
+      }
+
+      if (isEditableElement(e.target)) {
+        return;
+      }
+
+      e.preventDefault();
+      setCollapsed(false);
+      selectOrOpenReviewTab();
+      setIsReviewImmersive((prev) => !prev);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isReviewImmersive, selectOrOpenReviewTab, setCollapsed, setIsReviewImmersive]);
 
   const baseId = `right-sidebar-${workspaceId}`;
 
@@ -819,6 +918,9 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!matchesKeybind(e, KEYBINDS.CLOSE_TAB)) return;
+      // Always prevent platform default (Cmd/Ctrl+W closes window), even during dialogs.
+      e.preventDefault();
+      if (isDialogOpen()) return;
 
       const focusedTabset = findTabset(layout.root, layout.focusedTabsetId);
       if (focusedTabset?.type !== "tabset") return;
@@ -1203,6 +1305,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         collapsed={collapsed}
         isResizing={isResizing}
         isDesktop={isDesktopMode()}
+        immersiveHidden={immersiveHidden}
         customWidth={width} // Unified width from AIView (applies to all tabs)
         role="complementary"
         aria-label="Workspace insights"

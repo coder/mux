@@ -91,12 +91,14 @@ test.describe("slash command flows", () => {
 
     await ui.chat.expectStatusMessageContains("Compaction started");
 
-    // Compaction now uses direct text streaming instead of a tool call
-    // Verify the summary text appears in the transcript
+    // Compaction now appends a summary boundary to the existing transcript.
     const transcript = page.getByRole("log", { name: "Conversation transcript" });
     await ui.chat.expectTranscriptContains(MOCK_COMPACTION_SUMMARY_PREFIX);
     await expect(transcript).toContainText(MOCK_COMPACTION_SUMMARY_PREFIX);
-    // Note: The old "📦 compacted" label was removed - compaction now shows only summary text
+    await expect(transcript).toContainText("Compaction boundary");
+    // With skip=0 (latest boundary only) replay, compaction prunes pre-boundary
+    // messages from the live view. They are accessible via "Load older messages".
+    await expect(transcript).not.toContainText("Resume after compaction");
     await expect(transcript).not.toContainText("Mock README content");
     await expect(transcript).not.toContainText("Directory listing:");
   });
@@ -109,18 +111,18 @@ test.describe("slash command flows", () => {
     await expect(modeToggles.getByText("Opus 4.6", { exact: true })).toBeVisible();
 
     await ui.chat.sendMessage("/model sonnet");
-    await ui.chat.expectStatusMessageContains("Model changed to anthropic:claude-sonnet-4-5");
+    await ui.chat.expectStatusMessageContains("Model changed to anthropic:claude-sonnet-4-6");
     // Model is displayed as formatted name
-    await expect(modeToggles.getByText("Sonnet 4.5", { exact: true })).toBeVisible();
+    await expect(modeToggles.getByText("Sonnet 4.6", { exact: true })).toBeVisible();
 
     const timeline = await ui.chat.captureStreamTimeline(async () => {
       await ui.chat.sendMessage(MOCK_SLASH_COMMAND_PROMPTS.MODEL_STATUS);
     });
 
     const streamStart = timeline.events.find((event) => event.type === "stream-start");
-    expect(streamStart?.model).toBe("anthropic:claude-sonnet-4-5");
+    expect(streamStart?.model).toBe("anthropic:claude-sonnet-4-6");
     await ui.chat.expectTranscriptContains(
-      "Claude Sonnet 4.5 is now responding with standard reasoning capacity."
+      "Claude Sonnet 4.6 is now responding with standard reasoning capacity."
     );
   });
 });

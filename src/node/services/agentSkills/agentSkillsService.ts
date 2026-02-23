@@ -4,6 +4,7 @@ import * as path from "node:path";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { SSHRuntime } from "@/node/runtime/SSHRuntime";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
+import { getErrorMessage } from "@/common/utils/errors";
 import { execBuffered, readFileString } from "@/node/utils/runtime/helpers";
 
 import {
@@ -24,10 +25,12 @@ import { AgentSkillParseError, parseSkillMarkdown } from "./parseSkillMarkdown";
 import { getBuiltInSkillByName, getBuiltInSkillDescriptors } from "./builtInSkillDefinitions";
 
 const GLOBAL_SKILLS_ROOT = "~/.mux/skills";
+const UNIVERSAL_SKILLS_ROOT = "~/.agents/skills";
 
 export interface AgentSkillsRoots {
   projectRoot: string;
   globalRoot: string;
+  universalRoot?: string;
 }
 
 export function getDefaultAgentSkillsRoots(
@@ -41,17 +44,25 @@ export function getDefaultAgentSkillsRoots(
   return {
     projectRoot: runtime.normalizePath(".mux/skills", workspacePath),
     globalRoot: GLOBAL_SKILLS_ROOT,
+    universalRoot: UNIVERSAL_SKILLS_ROOT,
   };
 }
 
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function getGlobalSkillRoots(roots: AgentSkillsRoots): string[] {
+  const orderedRoots = [roots.globalRoot, roots.universalRoot].filter(
+    (root): root is string => root != null && root.length > 0
+  );
+
+  return Array.from(new Set(orderedRoots));
 }
 
 async function listSkillDirectoriesFromLocalFs(root: string): Promise<string[]> {
   try {
     const entries = await fs.readdir(root, { withFileTypes: true });
-    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+    // Include symlinks to directories — users commonly symlink skill dirs
+    return entries
+      .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
+      .map((entry) => entry.name);
   } catch {
     return [];
   }
@@ -67,9 +78,10 @@ async function listSkillDirectoriesFromRuntime(
   }
 
   const quotedRoot = shellQuote(root);
+  // -L follows symlinks so symlinked skill directories are discovered
   const command =
     `if [ -d ${quotedRoot} ]; then ` +
-    `find ${quotedRoot} -mindepth 1 -maxdepth 1 -type d -exec basename {} \\; ; ` +
+    `find -L ${quotedRoot} -mindepth 1 -maxdepth 1 -type d -exec basename {} \\; ; ` +
     `fi`;
 
   const result = await execBuffered(runtime, command, { cwd: options.cwd, timeout: 10 });
@@ -136,7 +148,7 @@ async function readSkillDescriptorFromDir(
   try {
     content = await readFileString(runtime, skillFilePath);
   } catch (err) {
-    const message = formatError(err);
+    const message = getErrorMessage(err);
     log.warn(`Failed to read SKILL.md for ${directoryName}: ${message}`);
     options?.invalidSkills?.push({
       directoryName,
@@ -177,7 +189,7 @@ async function readSkillDescriptorFromDir(
 
     return validated.data;
   } catch (err) {
-    const message = err instanceof AgentSkillParseError ? err.message : formatError(err);
+    const message = err instanceof AgentSkillParseError ? err.message : getErrorMessage(err);
     log.warn(`Skipping invalid skill '${directoryName}' (${scope}): ${message}`);
     options?.invalidSkills?.push({
       directoryName,
@@ -203,10 +215,10 @@ export async function discoverAgentSkills(
 
   const byName = new Map<SkillName, AgentSkillDescriptor>();
 
-  // Project skills take precedence over global.
+  // Project skills take precedence over global roots.
   const scans: Array<{ scope: AgentSkillScope; root: string }> = [
     { scope: "project", root: roots.projectRoot },
-    { scope: "global", root: roots.globalRoot },
+    ...getGlobalSkillRoots(roots).map((root) => ({ scope: "global" as const, root })),
   ];
 
   for (const scan of scans) {
@@ -214,7 +226,7 @@ export async function discoverAgentSkills(
     try {
       resolvedRoot = await runtime.resolvePath(scan.root);
     } catch (err) {
-      log.warn(`Failed to resolve skills root ${scan.root}: ${formatError(err)}`);
+      log.warn(`Failed to resolve skills root ${scan.root}: ${getErrorMessage(err)}`);
       continue;
     }
 
@@ -279,10 +291,10 @@ export async function discoverAgentSkillsDiagnostics(
   const byName = new Map<SkillName, AgentSkillDescriptor>();
   const invalidSkills: AgentSkillIssue[] = [];
 
-  // Project skills take precedence over global.
+  // Project skills take precedence over global roots.
   const scans: Array<{ scope: AgentSkillScope; root: string }> = [
     { scope: "project", root: roots.projectRoot },
-    { scope: "global", root: roots.globalRoot },
+    ...getGlobalSkillRoots(roots).map((root) => ({ scope: "global" as const, root })),
   ];
 
   for (const scan of scans) {
@@ -290,7 +302,7 @@ export async function discoverAgentSkillsDiagnostics(
     try {
       resolvedRoot = await runtime.resolvePath(scan.root);
     } catch (err) {
-      log.warn(`Failed to resolve skills root ${scan.root}: ${formatError(err)}`);
+      log.warn(`Failed to resolve skills root ${scan.root}: ${getErrorMessage(err)}`);
       continue;
     }
 
@@ -425,10 +437,10 @@ export async function readAgentSkill(
 
   const roots = options?.roots ?? getDefaultAgentSkillsRoots(runtime, workspacePath);
 
-  // Project overrides global.
+  // Project overrides all global roots.
   const candidates: Array<{ scope: AgentSkillScope; root: string }> = [
     { scope: "project", root: roots.projectRoot },
-    { scope: "global", root: roots.globalRoot },
+    ...getGlobalSkillRoots(roots).map((root) => ({ scope: "global" as const, root })),
   ];
 
   for (const candidate of candidates) {

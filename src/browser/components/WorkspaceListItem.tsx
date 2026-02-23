@@ -1,45 +1,31 @@
-import { useRename } from "@/browser/contexts/WorkspaceRenameContext";
+import { useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
-import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
-import { DEFAULT_MODEL_KEY, getModelKey } from "@/common/constants/storage";
+import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { useDrag } from "react-dnd";
 import { getEmptyImage } from "react-dnd-html5-backend";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 
-import { WorkspaceHoverPreview } from "./WorkspaceHoverPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
-import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
-import { Pencil, Trash2, Ellipsis, Link2 } from "lucide-react";
-import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
-import { formatKeybind, matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import { ShareTranscriptDialog } from "./ShareTranscriptDialog";
-
-const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
-
-/** Prevent HoverCard from closing when interacting with nested Radix portals (e.g., RuntimeBadge tooltip) */
-function preventHoverCardDismissForRadixPortals(e: {
-  target: EventTarget | null;
-  preventDefault: () => void;
-}) {
-  const target = e.target;
-  if (target instanceof HTMLElement && target.closest(RADIX_PORTAL_WRAPPER_SELECTOR)) {
-    e.preventDefault();
-  }
-}
+import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
+import { PositionedMenu, PositionedMenuItem } from "./ui/positioned-menu";
+import { Trash2, Ellipsis, Loader2, Sparkles } from "lucide-react";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
 import { WORKSPACE_DRAG_TYPE, type WorkspaceDragItem } from "./WorkspaceSectionDropZone";
+import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
+import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import { ShareTranscriptDialog } from "./ShareTranscriptDialog";
+import { WorkspaceActionsMenuContent } from "./WorkspaceActionsMenuContent";
+import { useAPI } from "@/browser/contexts/API";
 
 export interface WorkspaceSelection {
   projectPath: string;
@@ -73,10 +59,14 @@ export interface WorkspaceListItemProps extends WorkspaceListItemBaseProps {
   metadata: FrontendWorkspaceMetadata;
   projectName: string;
   isArchiving?: boolean;
+  /** True when deletion is in-flight (optimistic UI while backend removes). */
+  isRemoving?: boolean;
   /** Section ID this workspace belongs to (for drag-drop targeting) */
   sectionId?: string;
   onSelectWorkspace: (selection: WorkspaceSelection) => void;
+  onForkWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
   onArchiveWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
+  onCancelCreation: (workspaceId: string) => Promise<void>;
 }
 
 /** Props for draft (UI-only placeholder) items */
@@ -159,6 +149,8 @@ function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
   const paddingLeft = getItemPaddingLeft(depth);
   const hasPromptPreview = draft.promptPreview.length > 0;
 
+  const ctxMenu = useContextMenuPosition({ longPress: true });
+
   return (
     <div
       className={cn(
@@ -167,7 +159,12 @@ function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
         isSelected && "bg-hover"
       )}
       style={{ paddingLeft }}
-      onClick={draft.onOpen}
+      onClick={() => {
+        if (ctxMenu.suppressClickIfLongPress()) return;
+        draft.onOpen();
+      }}
+      {...ctxMenu.touchHandlers}
+      onContextMenu={ctxMenu.onContextMenu}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
@@ -184,10 +181,18 @@ function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
       <SelectionBar isSelected={isSelected} isDraft />
 
       <ActionButtonWrapper hasSubtitle={hasPromptPreview}>
+        {/* Desktop: direct-delete button (hidden on touch devices) */}
         <Tooltip>
           <TooltipTrigger asChild>
             <button
-              className="text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200"
+              type="button"
+              className={cn(
+                "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200",
+                // On touch devices, fully hide so it can't intercept taps.
+                // Long-press opens the context menu instead.
+                "[@media(hover:none)_and_(pointer:coarse)]:invisible [@media(hover:none)_and_(pointer:coarse)]:pointer-events-none"
+              )}
+              onKeyDown={stopKeyboardPropagation}
               onClick={(e) => {
                 e.stopPropagation();
                 draft.onDelete();
@@ -201,6 +206,23 @@ function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
           </TooltipTrigger>
           <TooltipContent align="start">Delete draft</TooltipContent>
         </Tooltip>
+
+        {/* Mobile: context menu opened by long-press / right-click */}
+        <PositionedMenu
+          open={ctxMenu.isOpen}
+          onOpenChange={ctxMenu.onOpenChange}
+          position={ctxMenu.position}
+          className="w-[150px]"
+        >
+          <PositionedMenuItem
+            icon={<Trash2 />}
+            label="Delete draft"
+            onClick={() => {
+              ctxMenu.close();
+              draft.onDelete();
+            }}
+          />
+        </PositionedMenu>
       </ActionButtonWrapper>
 
       <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -226,23 +248,36 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     projectName,
     isSelected,
     isArchiving,
+    isRemoving: isRemovingProp,
     depth,
     sectionId,
     onSelectWorkspace,
+    onForkWorkspace,
     onArchiveWorkspace,
+    onCancelCreation,
   } = props;
 
   // Destructure metadata for convenience
-  const { id: workspaceId, namedWorkspacePath, status } = metadata;
+  const { id: workspaceId, namedWorkspacePath } = metadata;
   const isMuxHelpChat = workspaceId === MUX_HELP_CHAT_WORKSPACE_ID;
-  const isCreating = status === "creating";
-  const isDisabled = isCreating || isArchiving;
+  const isInitializing = metadata.isInitializing === true;
+  const isRemoving = isRemovingProp === true || metadata.isRemoving === true;
+  const isDisabled = isRemoving || isArchiving === true;
 
   const { isUnread } = useWorkspaceUnread(workspaceId);
   const gitStatus = useGitStatus(workspaceId);
 
-  // Get title edit context (renamed from rename context since we now edit titles, not names)
-  const { editingWorkspaceId, requestRename, confirmRename, cancelRename } = useRename();
+  // Get title edit context — manages inline title editing state across the sidebar
+  const {
+    editingWorkspaceId,
+    requestEdit,
+    confirmEdit,
+    cancelEdit,
+    generatingTitleWorkspaceIds,
+    wrapGenerateTitle,
+  } = useTitleEdit();
+  const isGeneratingTitle = generatingTitleWorkspaceIds.has(workspaceId);
+  const { api } = useAPI();
 
   // Local state for title editing
   const [editingTitle, setEditingTitle] = useState<string>("");
@@ -254,37 +289,51 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
 
   const linkSharingEnabled = useLinkSharingEnabled();
   const [shareTranscriptOpen, setShareTranscriptOpen] = useState(false);
+  const [isOverflowMenuPlaced, setIsOverflowMenuPlaced] = useState(false);
 
-  // Hover hamburger menu for discoverable title editing (requested to replace the double-click hint).
-  const [isTitleMenuOpen, setIsTitleMenuOpen] = useState(false);
-  const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(
-    null
-  );
+  // Context menu via right-click / long-press. The hook manages position + long-press state.
+  // The regular item also has a ⋮ trigger button, so we bridge the hook's isOpen into a
+  // Popover that can be anchored either at the cursor position or the trigger button.
+  const canOpenMenu = useCallback(() => !isDisabled && !isEditing, [isDisabled, isEditing]);
+  const ctxMenu = useContextMenuPosition({ longPress: true, canOpen: canOpenMenu });
+  // Hide menu content for one frame while Radix/Floating UI recalculates anchor
+  // placement. This avoids first-frame flashes at stale trigger/fallback coords.
+  useLayoutEffect(() => {
+    if (!ctxMenu.isOpen) {
+      setIsOverflowMenuPlaced(false);
+      return;
+    }
+
+    setIsOverflowMenuPlaced(false);
+    const frame = requestAnimationFrame(() => {
+      setIsOverflowMenuPlaced(true);
+    });
+
+    return () => {
+      cancelAnimationFrame(frame);
+    };
+  }, [ctxMenu.isOpen, ctxMenu.position?.x, ctxMenu.position?.y]);
 
   useEffect(() => {
     if (isEditing) {
-      setIsTitleMenuOpen(false);
-      setContextMenuPosition(null);
+      ctxMenu.close();
     }
-  }, [isEditing]);
+  }, [isEditing, ctxMenu]);
 
-  // Keybind for opening transcript share popover (only for the selected workspace)
+  const wasEditingRef = useRef(false);
   useEffect(() => {
-    if (!isSelected || linkSharingEnabled !== true) return;
+    if (isEditing && !wasEditingRef.current) {
+      setEditingTitle(displayTitle);
+      setTitleError(null);
+    }
+    wasEditingRef.current = isEditing;
+  }, [isEditing, displayTitle]);
 
-    const handler = (e: KeyboardEvent) => {
-      if (matchesKeybind(e, KEYBINDS.SHARE_TRANSCRIPT)) {
-        e.preventDefault();
-        setShareTranscriptOpen(true);
-      }
-    };
-
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [isSelected, linkSharingEnabled]);
+  // SHARE_TRANSCRIPT keybind is handled in WorkspaceMenuBar (always mounted),
+  // so it works even when the sidebar is collapsed and list items are unmounted.
 
   const startEditing = () => {
-    if (requestRename(workspaceId, displayTitle)) {
+    if (requestEdit(workspaceId, displayTitle)) {
       setEditingTitle(displayTitle);
       setTitleError(null);
     }
@@ -296,7 +345,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
       return;
     }
 
-    const result = await confirmRename(workspaceId, editingTitle);
+    const result = await confirmEdit(workspaceId, editingTitle);
     if (!result.success) {
       setTitleError(result.error ?? "Failed to update title");
     } else {
@@ -305,7 +354,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   };
 
   const handleCancelEdit = () => {
-    cancelRename();
+    cancelEdit();
     setEditingTitle("");
     setTitleError(null);
   };
@@ -325,33 +374,15 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   const { canInterrupt, awaitingUserQuestion, isStarting, agentStatus } =
     useWorkspaceSidebarState(workspaceId);
 
-  // Subscribe to the global default model preference so backend-seeded values apply immediately
-  // on fresh origins (e.g., when switching ports).
-  const [defaultModelPref] = usePersistedState<string>(
-    DEFAULT_MODEL_KEY,
-    WORKSPACE_DEFAULTS.model,
-    { listener: true }
-  );
-  const defaultModel = migrateGatewayModel(defaultModelPref).trim() || WORKSPACE_DEFAULTS.model;
-
-  // Workspace-scoped model preference. If unset, fall back to the global default model.
-  // Note: we intentionally *don't* pass defaultModel as the usePersistedState initialValue;
-  // initialValue is sticky and would lock in the fallback before startup seeding.
-  const [preferredModel] = usePersistedState<string | null>(getModelKey(workspaceId), null, {
-    listener: true,
-  });
-
-  const fallbackModel =
-    typeof preferredModel === "string" && preferredModel.trim().length > 0
-      ? migrateGatewayModel(preferredModel.trim())
-      : defaultModel;
+  const fallbackModel = useWorkspaceFallbackModel(workspaceId);
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
-  const hasStatusText = Boolean(agentStatus) || awaitingUserQuestion || isWorking || isCreating;
+  const hasStatusText =
+    Boolean(agentStatus) || awaitingUserQuestion || isWorking || isInitializing || isRemoving;
   // Note: we intentionally render the secondary row even while the workspace is still
-  // "creating" so users can see early streaming/status information immediately.
+  // initializing so users can see early streaming/status information immediately.
   const hasSecondaryRow = isArchiving === true || hasStatusText;
 
-  const showUnreadBar = !isCreating && !isEditing && isUnread && !(isSelected && !isDisabled);
+  const showUnreadBar = !isInitializing && !isEditing && isUnread && !(isSelected && !isDisabled);
   const paddingLeft = getItemPaddingLeft(depth);
 
   // Drag handle for moving workspace between sections
@@ -387,15 +418,17 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
         className={cn(
           LIST_ITEM_BASE_CLASSES,
           isDragging && "opacity-50",
-          isDisabled
-            ? "cursor-default opacity-70"
-            : "cursor-pointer hover:bg-hover [&:hover_button]:opacity-100",
-          isSelected && !isDisabled && "bg-hover",
-          isArchiving && "pointer-events-none"
+          isRemoving && "opacity-70",
+          // Keep hover styles enabled for initializing workspaces so the row feels interactive.
+          !isArchiving && "hover:bg-hover [&:hover_button]:opacity-100",
+          isArchiving && "pointer-events-none opacity-70",
+          isDisabled ? "cursor-default" : "cursor-pointer",
+          isSelected && !isDisabled && "bg-hover"
         )}
         style={{ paddingLeft }}
         onClick={() => {
           if (isDisabled) return;
+          if (ctxMenu.suppressClickIfLongPress()) return;
           onSelectWorkspace({
             projectPath,
             projectName,
@@ -403,6 +436,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
             workspaceId,
           });
         }}
+        {...ctxMenu.touchHandlers}
         onKeyDown={(e) => {
           if (isDisabled || isEditing) return;
           if (e.key === "Enter" || e.key === " ") {
@@ -415,23 +449,18 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
             });
           }
         }}
-        onContextMenu={(e) => {
-          if (isDisabled || isEditing) return;
-
-          e.preventDefault();
-          e.stopPropagation();
-          setContextMenuPosition({ x: e.clientX, y: e.clientY });
-          setIsTitleMenuOpen(true);
-        }}
+        onContextMenu={ctxMenu.onContextMenu}
         role="button"
         tabIndex={isDisabled ? -1 : 0}
         aria-current={isSelected ? "true" : undefined}
         aria-label={
-          isCreating
-            ? `Creating workspace ${displayTitle}`
-            : isArchiving
-              ? `Archiving workspace ${displayTitle}`
-              : `Select workspace ${displayTitle}`
+          isRemoving
+            ? `Deleting workspace ${displayTitle}`
+            : isInitializing
+              ? `Initializing workspace ${displayTitle}`
+              : isArchiving
+                ? `Archiving workspace ${displayTitle}`
+                : `Select workspace ${displayTitle}`
         }
         aria-disabled={isDisabled}
         data-workspace-path={namedWorkspacePath}
@@ -441,125 +470,150 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
       >
         <SelectionBar isSelected={isSelected && !isDisabled} showUnread={showUnreadBar} />
 
-        {!isCreating && !isEditing && !isDisabled && (
+        {/* Action button: cancel/delete spinner for initializing workspaces, overflow menu otherwise */}
+        {isInitializing ? (
           <ActionButtonWrapper hasSubtitle={hasStatusText}>
-            {/* Keep the overflow menu in the left action slot to avoid duplicate affordances. */}
-            <Popover
-              open={isTitleMenuOpen}
-              onOpenChange={(open) => {
-                setIsTitleMenuOpen(open);
-                if (!open) setContextMenuPosition(null);
-              }}
-            >
-              {/* When opened via right-click, anchor at click position */}
-              {contextMenuPosition && (
-                <PopoverAnchor asChild>
-                  <span
-                    style={{
-                      position: "fixed",
-                      left: contextMenuPosition.x,
-                      top: contextMenuPosition.y,
-                      width: 0,
-                      height: 0,
-                    }}
-                  />
-                </PopoverAnchor>
-              )}
-              <PopoverTrigger asChild>
+            <Tooltip>
+              <TooltipTrigger asChild>
                 <button
+                  type="button"
                   className={cn(
-                    "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 transition-colors duration-200",
-                    // Hidden until row hover, but remain visible while open.
-                    isTitleMenuOpen ? "opacity-100" : "opacity-0"
+                    "text-muted inline-flex h-4 w-4 items-center justify-center border-none bg-transparent p-0 transition-colors duration-200",
+                    // Keep cancel affordance hidden until row-hover while initializing,
+                    // but force it visible as a spinner once deletion starts.
+                    isRemoving
+                      ? "cursor-default opacity-100"
+                      : "cursor-pointer opacity-0 hover:text-destructive focus-visible:opacity-100"
                   )}
-                  onClick={(e) => e.stopPropagation()}
-                  aria-label={`Workspace actions for ${displayTitle}`}
-                  data-workspace-id={workspaceId}
-                >
-                  <Ellipsis className="h-3 w-3" />
-                </button>
-              </PopoverTrigger>
-
-              <PopoverContent
-                align={contextMenuPosition ? "start" : "end"}
-                side={contextMenuPosition ? "right" : "bottom"}
-                sideOffset={contextMenuPosition ? 0 : 6}
-                className="w-[250px] !min-w-0 p-1"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <button
-                  className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
+                  disabled={isRemoving}
+                  onKeyDown={stopKeyboardPropagation}
                   onClick={(e) => {
                     e.stopPropagation();
-                    setIsTitleMenuOpen(false);
-                    startEditing();
+                    if (isRemoving) return;
+                    void onCancelCreation(workspaceId);
                   }}
+                  aria-label={
+                    isRemoving
+                      ? `Deleting workspace ${displayTitle}`
+                      : `Cancel workspace creation ${displayTitle}`
+                  }
+                  data-workspace-id={workspaceId}
                 >
-                  <span className="flex items-center gap-2">
-                    <Pencil className="h-3 w-3 shrink-0" />
-                    Edit chat title
-                  </span>
+                  {isRemoving ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3 w-3" />
+                  )}
                 </button>
-                {/* Share transcript link (gated on telemetry/link-sharing being enabled). */}
-                {linkSharingEnabled === true && !isMuxHelpChat && (
-                  <button
-                    className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsTitleMenuOpen(false);
-                      setShareTranscriptOpen(true);
-                    }}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Link2 className="h-3 w-3 shrink-0" />
-                      Share transcript{" "}
-                      <span className="text-muted text-[10px]">
-                        ({formatKeybind(KEYBINDS.SHARE_TRANSCRIPT)})
-                      </span>
-                    </span>
-                  </button>
-                )}
-                {/* Archive stays in the overflow menu to keep the sidebar row uncluttered. */}
-                {!isMuxHelpChat && (
-                  <button
-                    className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsTitleMenuOpen(false);
-                      void onArchiveWorkspace(workspaceId, e.currentTarget);
-                    }}
-                  >
-                    <span className="flex items-center gap-2">
-                      <ArchiveIcon className="h-3 w-3 shrink-0" />
-                      Archive chat{" "}
-                      <span className="text-muted text-[10px]">
-                        ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
-                      </span>
-                    </span>
-                  </button>
-                )}
-              </PopoverContent>
-            </Popover>
-            {/* Share transcript dialog – rendered as a sibling to the overflow menu.
-                Triggered by the menu item above or the Ctrl+Shift+L keybind.
-                Uses a Dialog (modal) so it stays visible regardless of popover dismissal. */}
-            {linkSharingEnabled === true && (
-              <ShareTranscriptDialog
-                workspaceId={workspaceId}
-                workspaceName={metadata.name}
-                workspaceTitle={displayTitle}
-                open={shareTranscriptOpen}
-                onOpenChange={setShareTranscriptOpen}
-              />
-            )}
+              </TooltipTrigger>
+              <TooltipContent align="start">
+                {isRemoving ? "Deleting..." : "Cancel creation"}
+              </TooltipContent>
+            </Tooltip>
           </ActionButtonWrapper>
+        ) : isDisabled ? (
+          // Invisible spacer preserves title alignment during archive/remove transitions
+          <div className="h-4 w-4 shrink-0" />
+        ) : (
+          !isEditing && (
+            <ActionButtonWrapper hasSubtitle={hasStatusText}>
+              {/* Overflow menu: opens from ⋮ button (dropdown) or right-click/long-press (positioned).
+                  Uses a Popover so it can anchor at either the trigger button or the cursor. */}
+              <Popover open={ctxMenu.isOpen} onOpenChange={ctxMenu.onOpenChange}>
+                {/* When opened via right-click/long-press, anchor at cursor position */}
+                {ctxMenu.position && (
+                  <PopoverAnchor asChild>
+                    <span
+                      style={{
+                        position: "fixed",
+                        left: ctxMenu.position.x,
+                        top: ctxMenu.position.y,
+                        width: 0,
+                        height: 0,
+                      }}
+                    />
+                  </PopoverAnchor>
+                )}
+                <PopoverTrigger asChild>
+                  <button
+                    className={cn(
+                      "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 transition-colors duration-200",
+                      ctxMenu.isOpen ? "opacity-100" : "opacity-0",
+                      "[@media(hover:none)_and_(pointer:coarse)]:invisible [@media(hover:none)_and_(pointer:coarse)]:pointer-events-none"
+                    )}
+                    onClick={(e) => e.stopPropagation()}
+                    aria-label={`Workspace actions for ${displayTitle}`}
+                    data-workspace-id={workspaceId}
+                  >
+                    <Ellipsis className="h-3 w-3" />
+                  </button>
+                </PopoverTrigger>
+
+                <PopoverContent
+                  align={ctxMenu.position ? "start" : "end"}
+                  side={ctxMenu.position ? "right" : "bottom"}
+                  sideOffset={ctxMenu.position ? 0 : 6}
+                  className="w-[250px] !min-w-0 p-1"
+                  style={{
+                    visibility: !ctxMenu.isOpen || isOverflowMenuPlaced ? "visible" : "hidden",
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <WorkspaceActionsMenuContent
+                    onEditTitle={startEditing}
+                    onForkChat={(anchorEl) => {
+                      void onForkWorkspace(workspaceId, anchorEl);
+                    }}
+                    onShareTranscript={() => setShareTranscriptOpen(true)}
+                    onArchiveChat={(anchorEl) => {
+                      void onArchiveWorkspace(workspaceId, anchorEl);
+                    }}
+                    onCloseMenu={() => ctxMenu.close()}
+                    linkSharingEnabled={linkSharingEnabled === true}
+                    isMuxHelpChat={isMuxHelpChat}
+                  />
+                  <PositionedMenuItem
+                    icon={<Sparkles />}
+                    label="Generate new title"
+                    shortcut={formatKeybind(KEYBINDS.GENERATE_WORKSPACE_TITLE)}
+                    onClick={() => {
+                      ctxMenu.close();
+                      wrapGenerateTitle(workspaceId, () => {
+                        if (!api) {
+                          return Promise.resolve({
+                            success: false,
+                            error: "Not connected to server",
+                          });
+                        }
+                        return api.workspace.regenerateTitle({ workspaceId });
+                      });
+                    }}
+                  />
+                </PopoverContent>
+              </Popover>
+              {/* Share transcript dialog – rendered as a sibling to the overflow menu.
+                  Triggered by the menu item above or the Ctrl+Shift+L keybind.
+                  Uses a Dialog (modal) so it stays visible regardless of popover dismissal. */}
+              {linkSharingEnabled === true && (
+                <ShareTranscriptDialog
+                  workspaceId={workspaceId}
+                  workspaceName={metadata.name}
+                  workspaceTitle={displayTitle}
+                  open={shareTranscriptOpen}
+                  onOpenChange={setShareTranscriptOpen}
+                />
+              )}
+            </ActionButtonWrapper>
+          )
         )}
 
         {/* Split row spacing when there's no secondary line to keep titles centered. */}
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div
             className={cn(
-              "grid min-w-0 grid-cols-[1fr_auto] items-center gap-1.5",
+              // Keep the title column shrinkable on narrow/mobile viewports so the
+              // right-side git indicator never forces horizontal sidebar scrolling.
+              "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5",
               !hasSecondaryRow && "py-0.5"
             )}
           >
@@ -576,51 +630,32 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 data-workspace-id={workspaceId}
               />
             ) : (
-              <HoverCard openDelay={300} closeDelay={100}>
-                <HoverCardTrigger asChild>
-                  <span
-                    className={cn(
-                      "text-foreground block truncate text-left text-[13px] transition-colors duration-200",
-                      !isDisabled && "cursor-pointer"
-                    )}
-                    onDoubleClick={(e) => {
-                      if (isDisabled) return;
-                      e.stopPropagation();
-                      startEditing();
-                    }}
-                  >
-                    {/* Always render text in same structure; Shimmer just adds animation class */}
-                    <Shimmer
-                      className={cn("w-full truncate", !(isWorking || isCreating) && "no-shimmer")}
-                      colorClass="var(--color-foreground)"
-                    >
-                      {displayTitle}
-                    </Shimmer>
-                  </span>
-                </HoverCardTrigger>
-                <HoverCardContent
-                  align="start"
-                  side="top"
-                  sideOffset={8}
-                  className="border-separator-light bg-modal-bg w-auto max-w-[420px] px-[10px] py-[6px] text-[11px] shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
-                  onPointerDownOutside={preventHoverCardDismissForRadixPortals}
-                  onFocusOutside={preventHoverCardDismissForRadixPortals}
+              <span
+                className={cn(
+                  "text-foreground block truncate text-left text-[13px] transition-colors duration-200",
+                  !isDisabled && "cursor-pointer",
+                  isGeneratingTitle && "italic"
+                )}
+                onDoubleClick={(e) => {
+                  if (isDisabled) return;
+                  e.stopPropagation();
+                  startEditing();
+                }}
+              >
+                {/* Keep row selection on single-click and remove hover-triggered chat preview popups. */}
+                <Shimmer
+                  className={cn(
+                    "w-full truncate",
+                    !(isWorking || isInitializing || isGeneratingTitle) && "no-shimmer"
+                  )}
+                  colorClass="var(--color-foreground)"
                 >
-                  <div className="flex flex-col gap-1">
-                    <WorkspaceHoverPreview
-                      workspaceId={workspaceId}
-                      projectName={projectName}
-                      workspaceName={metadata.name}
-                      namedWorkspacePath={namedWorkspacePath}
-                      runtimeConfig={metadata.runtimeConfig}
-                      isWorking={isWorking}
-                    />
-                  </div>
-                </HoverCardContent>
-              </HoverCard>
+                  {displayTitle}
+                </Shimmer>
+              </span>
             )}
 
-            {!isCreating && !isEditing && (
+            {!isInitializing && !isEditing && (
               <div className="flex items-center gap-1">
                 <GitStatusIndicator
                   gitStatus={gitStatus}
@@ -634,7 +669,12 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           </div>
           {hasSecondaryRow && (
             <div className="min-w-0">
-              {isArchiving ? (
+              {isRemoving ? (
+                <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
+                  <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+                  <span className="min-w-0 truncate">Deleting...</span>
+                </div>
+              ) : isArchiving ? (
                 <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
                   <ArchiveIcon className="h-3 w-3 shrink-0" />
                   <span className="min-w-0 truncate">Archiving...</span>
@@ -643,7 +683,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 <WorkspaceStatusIndicator
                   workspaceId={workspaceId}
                   fallbackModel={fallbackModel}
-                  isCreating={isCreating}
+                  isCreating={isInitializing}
                 />
               )}
             </div>

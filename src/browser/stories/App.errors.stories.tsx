@@ -15,7 +15,6 @@ import {
   createFileEditTool,
   createStaticChatHandler,
 } from "./mockFactory";
-import { disableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
 import {
   collapseRightSidebar,
   createOnChatAdapter,
@@ -178,14 +177,11 @@ export const ContextExceededSuggestion: AppStory = {
     <AppWithMocks
       setup={() => {
         const workspaceId = "ws-context-exceeded";
-        // Disable auto-retry to keep this story deterministic (no countdown timer)
-        disableAutoRetryPreference(workspaceId);
-
         return setupCustomChatStory({
           workspaceId,
           providersConfig: {
-            openai: { apiKeySet: true, isConfigured: true },
-            xai: { apiKeySet: true, isConfigured: true },
+            openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+            xai: { apiKeySet: true, isEnabled: true, isConfigured: true },
           },
           chatHandler: (callback: (event: WorkspaceChatMessage) => void) => {
             setTimeout(() => {
@@ -231,7 +227,6 @@ export const DebugLlmRequestModal: AppStory = {
     <AppWithMocks
       setup={() => {
         const workspaceId = "ws-debug-request";
-        disableAutoRetryPreference(workspaceId);
 
         const workspaces = [
           createWorkspace({ id: workspaceId, name: "debug", projectName: "my-app" }),
@@ -306,8 +301,6 @@ export const StreamError: AppStory = {
     <AppWithMocks
       setup={() => {
         const workspaceId = "ws-error";
-        // Disable auto-retry to show deterministic "Retry" button instead of countdown timer
-        disableAutoRetryPreference(workspaceId);
 
         return setupCustomChatStory({
           workspaceId,
@@ -343,8 +336,6 @@ export const AnthropicOverloaded: AppStory = {
     <AppWithMocks
       setup={() => {
         const workspaceId = "ws-anthropic-overloaded";
-        // Disable auto-retry to show deterministic "Retry" button instead of countdown timer
-        disableAutoRetryPreference(workspaceId);
 
         return setupCustomChatStory({
           workspaceId,
@@ -530,16 +521,12 @@ export const ProjectRemovalError: AppStory = {
       if (!removeButton) throw new Error("Remove button not found");
     });
 
-    // Get the project row container and hover to reveal the button
-    const removeButton = canvasElement.querySelector('button[aria-label="Remove project my-app"]')!;
-    const projectRow = removeButton.closest("[data-project-path]")!;
-    await userEvent.hover(projectRow);
-
-    // Small delay for hover state to apply
-    await new Promise((r) => setTimeout(r, 100));
-
-    // Click the remove button
-    await userEvent.click(removeButton);
+    // Trigger removal directly so this interaction remains stable across Chromatic snapshot modes,
+    // where hover-driven opacity transitions can be flaky.
+    const removeButton = canvasElement.querySelector<HTMLButtonElement>(
+      'button[aria-label="Remove project my-app"]'
+    )!;
+    removeButton.click();
 
     // Wait for the error popover to appear
     await waitFor(() => {

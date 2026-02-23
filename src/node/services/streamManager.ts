@@ -28,13 +28,13 @@ import type { SendMessageError, StreamErrorType } from "@/common/types/errors";
 import type { MuxMetadata, MuxMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { NestedToolCall } from "@/common/orpc/schemas/message";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 import {
   coerceStreamErrorTypeForMessage,
   createErrorEvent,
   stripNoisyErrorPrefix,
   type StreamErrorPayload,
 } from "@/node/services/utils/sendMessageError";
-import type { PartialService } from "./partialService";
 import type { HistoryService } from "./historyService";
 import { addUsage, accumulateProviderMetadata } from "@/common/utils/tokens/usageHelpers";
 import { linkAbortSignal } from "@/node/utils/abort";
@@ -47,6 +47,7 @@ import type { Runtime } from "@/node/runtime/Runtime";
 import {
   createCachedSystemMessage,
   applyCacheControlToTools,
+  type AnthropicCacheTtl,
 } from "@/common/utils/ai/cacheStrategy";
 import type { SessionUsageService } from "./sessionUsageService";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
@@ -54,6 +55,9 @@ import { extractToolMediaAsUserMessagesFromModelMessages } from "@/node/utils/me
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 import { getModelStats } from "@/common/utils/tokens/modelStats";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
+import { getErrorMessage } from "@/common/utils/errors";
+import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
 
 // Disable AI SDK warning logging (e.g., "setting `toolChoice` to `none` is not supported")
 globalThis.AI_SDK_LOG_WARNINGS = false;
@@ -98,8 +102,40 @@ interface StreamRequestConfig {
   tools?: Record<string, Tool>;
   toolChoice?: StreamToolChoice;
   providerOptions?: Record<string, unknown>;
+  /** Per-request HTTP headers (e.g., anthropic-beta for 1M context). */
+  headers?: Record<string, string | undefined>;
   maxOutputTokens?: number;
   hasQueuedMessage?: () => boolean;
+  stopAfterSuccessfulProposePlan?: boolean;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isAnthropicCacheTtl(value: unknown): value is AnthropicCacheTtl {
+  return value === "5m" || value === "1h";
+}
+
+function getAnthropicCacheTtl(
+  providerOptions?: Record<string, unknown>
+): AnthropicCacheTtl | undefined {
+  if (!providerOptions) {
+    return undefined;
+  }
+
+  const anthropicOptions = providerOptions.anthropic;
+  if (!isRecord(anthropicOptions)) {
+    return undefined;
+  }
+
+  const cacheControl = anthropicOptions.cacheControl;
+  if (!isRecord(cacheControl)) {
+    return undefined;
+  }
+
+  const ttl = cacheControl.ttl;
+  return isAnthropicCacheTtl(ttl) ? ttl : undefined;
 }
 
 // Stream state enum for exhaustive checking
@@ -117,8 +153,24 @@ enum StreamState {
  * The encrypted page content can be massive (4000+ chars per result) and isn't
  * needed for model context. Keep URL, title, and pageAge for reference.
  */
-function stripEncryptedContent(output: unknown): unknown {
-  // Check if output is JSON with a value array (web search results)
+function stripEncryptedContentFromArray(output: unknown[]): unknown[] {
+  return output.map((item: unknown) => {
+    if (item && typeof item === "object" && "encryptedContent" in item) {
+      // Remove encryptedContent but keep other fields
+      const { encryptedContent, ...rest } = item as Record<string, unknown>;
+      return rest;
+    }
+
+    return item;
+  });
+}
+
+export function stripEncryptedContent(output: unknown): unknown {
+  if (Array.isArray(output)) {
+    return stripEncryptedContentFromArray(output);
+  }
+
+  // Handle SDK json output shape: { type: "json", value: unknown[] }
   if (
     typeof output === "object" &&
     output !== null &&
@@ -127,23 +179,76 @@ function stripEncryptedContent(output: unknown): unknown {
     "value" in output &&
     Array.isArray(output.value)
   ) {
-    // Strip encryptedContent from each search result
-    const strippedValue = output.value.map((item: unknown) => {
-      if (item && typeof item === "object" && "encryptedContent" in item) {
-        // Remove encryptedContent but keep other fields
-        const { encryptedContent, ...rest } = item as Record<string, unknown>;
-        return rest;
-      }
-      return item;
-    });
-
     return {
       ...output,
-      value: strippedValue,
+      value: stripEncryptedContentFromArray(output.value),
     };
   }
 
   return output;
+}
+
+const MAX_ORPHAN_TOOL_RESULT_WARNINGS_PER_STREAM = 3;
+const ORPHAN_TOOL_RESULT_PREVIEW_CHARS = 160;
+const ORPHAN_TOOL_RESULT_MAX_KEYS = 8;
+
+function summarizeToolResultForLog(output: unknown): Record<string, unknown> {
+  if (output === null) {
+    return { outputType: "null" };
+  }
+
+  if (typeof output === "string") {
+    return {
+      outputType: "string",
+      outputLength: output.length,
+      outputPreview: output.slice(0, ORPHAN_TOOL_RESULT_PREVIEW_CHARS),
+    };
+  }
+
+  if (typeof output === "number" || typeof output === "boolean") {
+    return {
+      outputType: typeof output,
+      outputPreview: String(output),
+    };
+  }
+
+  if (Array.isArray(output)) {
+    return {
+      outputType: "array",
+      outputLength: output.length,
+      firstItemType:
+        output.length > 0 && output[0] !== null
+          ? typeof output[0]
+          : output.length > 0
+            ? "null"
+            : undefined,
+    };
+  }
+
+  if (typeof output === "object") {
+    const outputRecord = output as Record<string, unknown>;
+    const keys = Object.keys(outputRecord);
+    const summary: Record<string, unknown> = {
+      outputType: "object",
+      outputKeyCount: keys.length,
+      outputKeys: keys.slice(0, ORPHAN_TOOL_RESULT_MAX_KEYS),
+    };
+
+    if (typeof outputRecord.type === "string") {
+      summary.outputFormat = outputRecord.type;
+    }
+
+    if (Array.isArray(outputRecord.value)) {
+      summary.outputValueLength = outputRecord.value.length;
+    }
+
+    return summary;
+  }
+
+  return {
+    outputType: typeof output,
+    outputPreview: JSON.stringify(output),
+  };
 }
 
 function markProviderMetadataCostsIncluded(
@@ -182,7 +287,14 @@ interface WorkspaceStreamInfo {
   // (messageId, timestamp, delta).
   lastPartTimestamp: number;
 
+  // Timestamp when each tool call reached output-available (tool-call-end emission).
+  // Needed for reconnect replay filtering because dynamic-tool parts keep their
+  // original start timestamp even after they gain output.
+  toolCompletionTimestamps: Map<string, number>;
+
   model: string;
+  /** Metadata model resolved from provider mapping for cost/token metadata lookups. */
+  metadataModel: string;
   /** Effective thinking level after model policy clamping */
   thinkingLevel?: string;
   initialMetadata?: Partial<MuxMetadata>;
@@ -248,9 +360,9 @@ export class StreamManager extends EventEmitter {
   private streamLocks = new Map<WorkspaceId, AsyncMutex>();
   private readonly PARTIAL_WRITE_THROTTLE_MS = 500;
   private readonly historyService: HistoryService;
-  private readonly partialService: PartialService;
   private mcpServerManager?: MCPServerManager;
   private readonly sessionUsageService?: SessionUsageService;
+  private readonly getProvidersConfig: () => ProvidersConfigMap | null;
   // Token tracker for live streaming statistics
   private tokenTracker = new StreamingTokenTracker();
   // Track OpenAI previousResponseIds that have been invalidated
@@ -259,13 +371,13 @@ export class StreamManager extends EventEmitter {
 
   constructor(
     historyService: HistoryService,
-    partialService: PartialService,
-    sessionUsageService?: SessionUsageService
+    sessionUsageService?: SessionUsageService,
+    getProvidersConfig?: () => ProvidersConfigMap | null
   ) {
     super();
     this.historyService = historyService;
-    this.partialService = partialService;
     this.sessionUsageService = sessionUsageService;
+    this.getProvidersConfig = getProvidersConfig ?? (() => null);
   }
 
   private getWorkspaceLogger(
@@ -278,6 +390,18 @@ export class StreamManager extends EventEmitter {
     }
     return log.withFields(fields);
   }
+  private resolveMetadataModel(modelString: string): string {
+    try {
+      return resolveModelForMetadata(modelString, this.getProvidersConfig());
+    } catch (error) {
+      log.debug("Failed to resolve metadata model override", {
+        modelString,
+        error: getErrorMessage(error),
+      });
+      return modelString;
+    }
+  }
+
   setMCPServerManager(manager: MCPServerManager | undefined): void {
     this.mcpServerManager = manager;
   }
@@ -358,7 +482,7 @@ export class StreamManager extends EventEmitter {
           parts: streamInfo.parts, // Parts array includes reasoning, text, and tools
         };
 
-        await this.partialService.writePartial(workspaceId as string, partialMessage);
+        await this.historyService.writePartial(workspaceId as string, partialMessage);
         streamInfo.lastPartialWriteTime = Date.now();
       } catch (error) {
         log.error("Failed to write partial message:", error);
@@ -426,7 +550,7 @@ export class StreamManager extends EventEmitter {
     try {
       await runtime.ensureDir(resolvedPath);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       throw new Error(`Failed to create temp directory ${resolvedPath}: ${msg}`);
     }
 
@@ -551,6 +675,33 @@ export class StreamManager extends EventEmitter {
     }
 
     return totalUsage;
+  }
+
+  private resolveTtftMsForStreamEnd(streamInfo: WorkspaceStreamInfo): number | undefined {
+    const firstTokenPart = streamInfo.parts.find(
+      (
+        part
+      ): part is Extract<
+        CompletedMessagePart,
+        { type: "text" | "reasoning"; timestamp?: number }
+      > => (part.type === "text" || part.type === "reasoning") && part.text.length > 0
+    );
+
+    if (!firstTokenPart) {
+      return undefined;
+    }
+
+    if (!Number.isFinite(streamInfo.startTime)) {
+      return undefined;
+    }
+
+    const firstTokenTimestamp = firstTokenPart.timestamp;
+    if (typeof firstTokenTimestamp !== "number" || !Number.isFinite(firstTokenTimestamp)) {
+      return undefined;
+    }
+
+    const ttftMs = Math.max(0, firstTokenTimestamp - streamInfo.startTime);
+    return Number.isFinite(ttftMs) ? ttftMs : undefined;
   }
 
   /**
@@ -823,7 +974,8 @@ export class StreamManager extends EventEmitter {
       streamInfo.messageId,
       { usage, contextUsage, duration, providerMetadata, contextProviderMetadata },
       abortReason,
-      abandonPartial
+      abandonPartial,
+      streamInfo.initialMetadata?.acpPromptId
     );
 
     // Clean up immediately
@@ -837,12 +989,17 @@ export class StreamManager extends EventEmitter {
     providerMetadata: Record<string, unknown> | undefined,
     logMessage: string,
     logLevel: "warn" | "error",
-    streamInfo?: Pick<WorkspaceStreamInfo, "workspaceName">
+    streamInfo?: Pick<WorkspaceStreamInfo, "workspaceName" | "metadataModel">
   ): Promise<void> {
     if (!this.sessionUsageService || !usage) {
       return;
     }
-    const messageUsage = createDisplayUsage(usage, model, providerMetadata);
+    const messageUsage = createDisplayUsage(
+      usage,
+      model,
+      providerMetadata,
+      streamInfo?.metadataModel
+    );
     if (!messageUsage) {
       return;
     }
@@ -861,13 +1018,17 @@ export class StreamManager extends EventEmitter {
   private buildStreamRequestConfig(
     model: LanguageModel,
     modelString: string,
+    _metadataModel: string,
     messages: ModelMessage[],
     system: string,
     tools?: Record<string, Tool>,
     providerOptions?: Record<string, unknown>,
     maxOutputTokens?: number,
     toolPolicy?: ToolPolicy,
-    hasQueuedMessage?: () => boolean
+    hasQueuedMessage?: () => boolean,
+    headers?: Record<string, string | undefined>,
+    anthropicCacheTtlOverride?: AnthropicCacheTtl,
+    stopAfterSuccessfulProposePlan?: boolean
   ): StreamRequestConfig {
     // Determine toolChoice based on toolPolicy.
     //
@@ -912,9 +1073,11 @@ export class StreamManager extends EventEmitter {
     let finalMessages = messages;
     let finalTools = tools;
     let finalSystem: string | undefined = system;
+    const anthropicCacheTtl =
+      anthropicCacheTtlOverride ?? getAnthropicCacheTtl(finalProviderOptions);
 
     // For Anthropic models, convert system message to a cached message at the start
-    const cachedSystemMessage = createCachedSystemMessage(system, modelString);
+    const cachedSystemMessage = createCachedSystemMessage(system, modelString, anthropicCacheTtl);
     if (cachedSystemMessage) {
       // Prepend cached system message and set system parameter to undefined
       // Note: Must be undefined, not empty string, to avoid Anthropic API error
@@ -924,14 +1087,17 @@ export class StreamManager extends EventEmitter {
 
     // Apply cache control to tools for Anthropic models
     if (tools) {
-      finalTools = applyCacheControlToTools(tools, modelString);
+      finalTools = applyCacheControlToTools(tools, modelString, anthropicCacheTtl);
     }
 
-    // Use model's max_output_tokens if available and caller didn't specify.
-    // If no metadata exists for the model, omit the parameter entirely to let
-    // the provider use its default (Anthropic requires this but has low defaults).
-    const modelStats = getModelStats(modelString);
-    const effectiveMaxOutputTokens = maxOutputTokens ?? modelStats?.max_output_tokens;
+    // Use the runtime model's max_output_tokens if available and caller didn't
+    // specify. This must be the runtime model (not the mapped metadata model)
+    // because max_output_tokens is a request parameter sent to the provider —
+    // a custom model's provider may not support the mapped model's output cap.
+    // If no metadata exists, omit the parameter to let the provider use its
+    // default (Anthropic requires this but has low defaults).
+    const runtimeModelStats = getModelStats(modelString);
+    const effectiveMaxOutputTokens = maxOutputTokens ?? runtimeModelStats?.max_output_tokens;
 
     return {
       model,
@@ -940,9 +1106,91 @@ export class StreamManager extends EventEmitter {
       tools: finalTools,
       toolChoice,
       providerOptions: finalProviderOptions,
+      headers,
       maxOutputTokens: effectiveMaxOutputTokens,
       hasQueuedMessage,
+      stopAfterSuccessfulProposePlan,
     };
+  }
+
+  private createStopWhenCondition(
+    request: Pick<
+      StreamRequestConfig,
+      "toolChoice" | "hasQueuedMessage" | "stopAfterSuccessfulProposePlan"
+    >
+  ): ReturnType<typeof stepCountIs> | Array<ReturnType<typeof stepCountIs>> {
+    if (request.toolChoice) {
+      // Required tool calls must stop after a single step to avoid recursive loops.
+      return stepCountIs(1);
+    }
+
+    // For autonomous loops: cap steps, check for queued messages, and stop after
+    // successful agent control tools so streams end naturally (preserving usage accounting)
+    // without executing unrelated tools after handoff/report completion.
+    const isSuccessfulAgentReportOutput = (value: unknown): boolean => {
+      return (
+        typeof value === "object" &&
+        value !== null &&
+        "success" in value &&
+        (value as { success?: unknown }).success === true
+      );
+    };
+
+    const isOkSwitchAgentOutput = (value: unknown): boolean => {
+      return (
+        typeof value === "object" &&
+        value !== null &&
+        "ok" in value &&
+        (value as { ok?: unknown }).ok === true
+      );
+    };
+
+    const hasSuccessfulAgentReportResult: ReturnType<typeof stepCountIs> = ({ steps }) => {
+      const lastStep = steps[steps.length - 1];
+      return (
+        lastStep?.toolResults?.some(
+          (toolResult) =>
+            toolResult.toolName === "agent_report" &&
+            isSuccessfulAgentReportOutput(toolResult.output)
+        ) ?? false
+      );
+    };
+
+    const hasSuccessfulSwitchAgentResult: ReturnType<typeof stepCountIs> = ({ steps }) => {
+      const lastStep = steps[steps.length - 1];
+      return (
+        lastStep?.toolResults?.some(
+          (toolResult) =>
+            toolResult.toolName === "switch_agent" && isOkSwitchAgentOutput(toolResult.output)
+        ) ?? false
+      );
+    };
+
+    const hasSuccessfulProposePlanResult: ReturnType<typeof stepCountIs> = ({ steps }) => {
+      const lastStep = steps[steps.length - 1];
+      return (
+        lastStep?.toolResults?.some(
+          (toolResult) =>
+            toolResult.toolName === "propose_plan" &&
+            typeof toolResult.output === "object" &&
+            toolResult.output !== null &&
+            (toolResult.output as { success?: unknown }).success === true
+        ) ?? false
+      );
+    };
+
+    const stopConditions: Array<ReturnType<typeof stepCountIs>> = [
+      stepCountIs(100000),
+      () => request.hasQueuedMessage?.() ?? false,
+      hasSuccessfulAgentReportResult,
+      hasSuccessfulSwitchAgentResult,
+    ];
+
+    if (request.stopAfterSuccessfulProposePlan) {
+      stopConditions.push(hasSuccessfulProposePlanResult);
+    }
+
+    return stopConditions;
   }
 
   private createStreamResult(
@@ -969,16 +1217,12 @@ export class StreamManager extends EventEmitter {
       tools: request.tools,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
       toolChoice: request.toolChoice as any, // Force tool use when required by policy
-      // When toolChoice is set (required tool), limit to 1 step to prevent infinite loops
-      // Otherwise allow effectively unlimited steps (100k) for autonomous multi-turn workflows.
-      // IMPORTANT: Models should be able to run for hours or even days calling tools repeatedly
-      // to complete complex tasks. The stopWhen condition allows the model to decide when it's done.
-      // Also stop at step boundaries when a message is queued to allow immediate handling.
-      ...(request.toolChoice
-        ? { maxSteps: 1 }
-        : { stopWhen: [stepCountIs(100000), () => request.hasQueuedMessage?.() ?? false] }),
+      // Explicit stopWhen configuration keeps continuation policy visible for both
+      // required-tool and autonomous tool-loop flows.
+      stopWhen: this.createStopWhenCondition(request),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
       providerOptions: request.providerOptions as any, // Pass provider-specific options (thinking/reasoning config)
+      headers: request.headers, // Per-request HTTP headers (e.g., anthropic-beta for 1M context)
       maxOutputTokens: request.maxOutputTokens,
     });
   }
@@ -1005,21 +1249,29 @@ export class StreamManager extends EventEmitter {
     toolPolicy?: ToolPolicy,
     hasQueuedMessage?: () => boolean,
     workspaceName?: string,
-    thinkingLevel?: string
+    thinkingLevel?: string,
+    headers?: Record<string, string | undefined>,
+    anthropicCacheTtlOverride?: AnthropicCacheTtl,
+    stopAfterSuccessfulProposePlan?: boolean
   ): WorkspaceStreamInfo {
     // abortController is created and linked to the caller-provided abortSignal in startStream().
 
     const stepTracker: StepMessageTracker = {};
+    const metadataModel = this.resolveMetadataModel(modelString);
     const request = this.buildStreamRequestConfig(
       model,
       modelString,
+      metadataModel,
       messages,
       system,
       tools,
       providerOptions,
       maxOutputTokens,
       toolPolicy,
-      hasQueuedMessage
+      hasQueuedMessage,
+      headers,
+      anthropicCacheTtlOverride,
+      stopAfterSuccessfulProposePlan
     );
 
     // Start streaming - this can throw immediately if API key is missing
@@ -1043,7 +1295,9 @@ export class StreamManager extends EventEmitter {
       token: streamToken,
       startTime,
       lastPartTimestamp: startTime,
+      toolCompletionTimestamps: new Map(),
       model: modelString,
+      metadataModel,
       thinkingLevel,
       initialMetadata,
       didRetryPreviousResponseIdAtStep: false,
@@ -1097,28 +1351,30 @@ export class StreamManager extends EventEmitter {
         };
       }
     } else {
-      // Fallback: part not found (shouldn't happen for errors, but can happen for results)
-      // This case exists in tool-result but we'll keep it for robustness
+      // Fallback: if the matching tool-call part is missing, still persist output so the UI
+      // does not stay stuck in input-available. Input may be missing for provider-native tools.
       const toolCall = toolCalls.get(toolCallId);
-      if (toolCall) {
-        streamInfo.parts.push({
-          type: "dynamic-tool" as const,
-          toolCallId,
-          toolName,
-          state: "output-available" as const,
-          input: toolCall.input,
-          output,
-        });
-      }
+      streamInfo.parts.push({
+        type: "dynamic-tool" as const,
+        toolCallId,
+        toolName,
+        state: "output-available" as const,
+        input: toolCall?.input ?? null,
+        output,
+        timestamp: nextPartTimestamp(streamInfo),
+      });
     }
 
     // CRITICAL: Flush partial to disk BEFORE emitting event
     // This ensures listeners (like sendQueuedMessages) see the tool result when they
-    // read partial.json via commitToHistory. Without this await, there's a race condition
+    // read partial.json via commitPartial. Without this await, there's a race condition
     // where the partial is read before the tool result is written, causing "amnesia".
     await this.flushPartialWrite(workspaceId, streamInfo);
 
     // Emit tool-call-end event (listeners can now safely read partial)
+    const completionTimestamp = nextPartTimestamp(streamInfo);
+    streamInfo.toolCompletionTimestamps ??= new Map();
+    streamInfo.toolCompletionTimestamps.set(toolCallId, completionTimestamp);
     this.emit("tool-call-end", {
       type: "tool-call-end",
       workspaceId: workspaceId as string,
@@ -1126,7 +1382,7 @@ export class StreamManager extends EventEmitter {
       toolCallId,
       toolName,
       result: output,
-      timestamp: nextPartTimestamp(streamInfo),
+      timestamp: completionTimestamp,
     } as ToolCallEndEvent);
   }
 
@@ -1140,6 +1396,44 @@ export class StreamManager extends EventEmitter {
   ): Promise<void> {
     await this.completeToolCall(workspaceId, streamInfo, toolCalls, toolCallId, toolName, output);
     await this.checkSoftCancelStream(workspaceId, streamInfo);
+  }
+
+  private logOrphanToolResult(
+    workspaceLog: Logger,
+    streamInfo: WorkspaceStreamInfo,
+    part: { toolCallId: string; toolName: string },
+    output: unknown,
+    orphanCount: number,
+    trackedToolCallCount: number
+  ): void {
+    if (orphanCount > MAX_ORPHAN_TOOL_RESULT_WARNINGS_PER_STREAM) {
+      return;
+    }
+
+    workspaceLog.warn(
+      "[streamManager] Received tool-result without matching tool-call map entry; persisting fallback output",
+      {
+        messageId: streamInfo.messageId,
+        model: streamInfo.model,
+        toolCallId: part.toolCallId,
+        toolName: part.toolName,
+        orphanCount,
+        trackedToolCallCount,
+        isWebSearch: part.toolName === "web_search",
+        ...summarizeToolResultForLog(output),
+      }
+    );
+
+    if (orphanCount === MAX_ORPHAN_TOOL_RESULT_WARNINGS_PER_STREAM) {
+      workspaceLog.warn(
+        "[streamManager] Suppressing additional orphan tool-result warnings for this stream",
+        {
+          messageId: streamInfo.messageId,
+          model: streamInfo.model,
+          suppressedAfter: orphanCount,
+        }
+      );
+    }
   }
 
   /**
@@ -1261,6 +1555,9 @@ export class StreamManager extends EventEmitter {
       ...(streamStartAgentId && { agentId: streamStartAgentId }),
       ...(streamStartMode && { mode: streamStartMode }),
       ...(streamInfo.thinkingLevel && { thinkingLevel: streamInfo.thinkingLevel }),
+      ...(streamInfo.initialMetadata?.acpPromptId != null
+        ? { acpPromptId: streamInfo.initialMetadata.acpPromptId }
+        : {}),
     } as StreamStartEvent);
   }
 
@@ -1269,7 +1566,8 @@ export class StreamManager extends EventEmitter {
     messageId: string,
     metadata: Record<string, unknown>,
     abortReason: StreamAbortReason,
-    abandonPartial?: boolean
+    abandonPartial?: boolean,
+    acpPromptId?: string
   ): void {
     this.emit("stream-abort", {
       type: "stream-abort",
@@ -1278,6 +1576,7 @@ export class StreamManager extends EventEmitter {
       abortReason,
       metadata,
       abandonPartial,
+      acpPromptId,
     });
   }
 
@@ -1299,9 +1598,11 @@ export class StreamManager extends EventEmitter {
       this.emitStreamStart(workspaceId, streamInfo, historySequence);
 
       // Initialize token tracker for this model
-      await this.tokenTracker.setModel(streamInfo.model);
+      await this.tokenTracker.setModel(streamInfo.model, streamInfo.metadataModel);
 
       let didRetryPreviousResponseId = false;
+      const workspaceLog = this.getWorkspaceLogger(workspaceId, streamInfo);
+      let orphanToolResultCount = 0;
 
       while (true) {
         // Use fullStream to capture all events including tool calls
@@ -1472,25 +1773,45 @@ export class StreamManager extends EventEmitter {
               }
 
               case "tool-result": {
-                // Tool call completed successfully
-                const toolCall = toolCalls.get(part.toolCallId);
-                if (toolCall) {
-                  // Strip encrypted content from web search results before storing
-                  const strippedOutput = stripInternalToolResultFields(
-                    stripEncryptedContent(part.output)
-                  );
-                  toolCall.output = strippedOutput;
+                const toolResultPart = part as {
+                  toolCallId: string;
+                  toolName: string;
+                  output: unknown;
+                };
 
-                  // Use shared completion logic (await to ensure partial is flushed before event)
-                  await this.finishToolCall(
-                    workspaceId,
+                // Strip encrypted content from web search results before storing
+                const strippedOutput = stripInternalToolResultFields(
+                  stripEncryptedContent(toolResultPart.output)
+                );
+
+                // Tool call completed successfully
+                const toolCall = toolCalls.get(toolResultPart.toolCallId);
+                if (toolCall) {
+                  toolCall.output = strippedOutput;
+                } else {
+                  orphanToolResultCount += 1;
+                  this.logOrphanToolResult(
+                    workspaceLog,
                     streamInfo,
-                    toolCalls,
-                    part.toolCallId,
-                    part.toolName,
-                    strippedOutput
+                    {
+                      toolCallId: toolResultPart.toolCallId,
+                      toolName: toolResultPart.toolName,
+                    },
+                    strippedOutput,
+                    orphanToolResultCount,
+                    toolCalls.size
                   );
                 }
+
+                // Use shared completion logic (await to ensure partial is flushed before event)
+                await this.finishToolCall(
+                  workspaceId,
+                  streamInfo,
+                  toolCalls,
+                  toolResultPart.toolCallId,
+                  toolResultPart.toolName,
+                  strippedOutput
+                );
                 break;
               }
 
@@ -1653,6 +1974,7 @@ export class StreamManager extends EventEmitter {
             const contextProviderMetadata =
               streamMeta.contextProviderMetadata ?? streamInfo.lastStepProviderMetadata;
             const duration = streamMeta.duration;
+            const ttftMs = this.resolveTtftMsForStreamEnd(streamInfo);
             // Aggregated provider metadata across all steps (for cost calculation with cache tokens)
             const providerMetadata = markProviderMetadataCostsIncluded(
               await this.getAggregatedProviderMetadata(streamInfo),
@@ -1668,6 +1990,9 @@ export class StreamManager extends EventEmitter {
               type: "stream-end",
               workspaceId: workspaceId as string,
               messageId: streamInfo.messageId,
+              ...(streamInfo.initialMetadata?.acpPromptId != null
+                ? { acpPromptId: streamInfo.initialMetadata.acpPromptId }
+                : {}),
               metadata: {
                 ...streamInfo.initialMetadata, // AIService-provided metadata (systemMessageTokens, etc)
                 model: canonicalModel,
@@ -1680,6 +2005,7 @@ export class StreamManager extends EventEmitter {
                 providerMetadata, // Aggregated (for cost calculation)
                 contextProviderMetadata, // Last step (for context window display)
                 duration,
+                ...(ttftMs !== undefined && { ttftMs }),
               },
               parts: streamInfo.parts, // Parts array with temporal ordering (includes reasoning)
             };
@@ -1701,10 +2027,23 @@ export class StreamManager extends EventEmitter {
 
               // CRITICAL: Delete partial.json before updating chat.jsonl
               // On successful completion, partial.json becomes stale and must be removed
-              await this.partialService.deletePartial(workspaceId as string);
+              const deleteResult = await this.historyService.deletePartial(workspaceId as string);
+              if (!deleteResult.success) {
+                workspaceLog.warn("Failed to delete partial on stream end", {
+                  error: deleteResult.error,
+                });
+              }
 
               // Update the placeholder message in chat.jsonl with final content
-              await this.historyService.updateHistory(workspaceId as string, finalAssistantMessage);
+              const updateResult = await this.historyService.updateHistory(
+                workspaceId as string,
+                finalAssistantMessage
+              );
+              if (!updateResult.success) {
+                workspaceLog.warn("Failed to update history on stream end", {
+                  error: updateResult.error,
+                });
+              }
 
               // Update cumulative session usage (if service is available)
               // Wrapped in try-catch: usage recording is non-critical and shouldn't block stream completion
@@ -1810,9 +2149,7 @@ export class StreamManager extends EventEmitter {
   ): StreamErrorPayload & { errorType: StreamErrorType } {
     // Extract error message (errors thrown from 'error' parts already have the correct message)
     // Apply prefix stripping to remove noisy "undefined: " prefixes from provider errors
-    let errorMessage: string = stripNoisyErrorPrefix(
-      error instanceof Error ? error.message : String(error)
-    );
+    let errorMessage: string = stripNoisyErrorPrefix(getErrorMessage(error));
     let actualError: unknown = error;
 
     // For categorization, use the cause if available (preserves the original error structure)
@@ -1888,6 +2225,7 @@ export class StreamManager extends EventEmitter {
       messageId: streamInfo.messageId,
       error: errorMessage,
       errorType,
+      acpPromptId: streamInfo.initialMetadata?.acpPromptId,
     };
   }
 
@@ -1929,7 +2267,7 @@ export class StreamManager extends EventEmitter {
     await this.awaitPendingPartialWrite(streamInfo);
 
     // Write error state to disk - await to ensure consistent state before any resume.
-    await this.partialService.writePartial(workspaceId as string, errorPartialMessage);
+    await this.historyService.writePartial(workspaceId as string, errorPartialMessage);
 
     // Emit error event.
     this.emit("error", createErrorEvent(workspaceId as string, payload));
@@ -2004,7 +2342,7 @@ export class StreamManager extends EventEmitter {
 
     if (!preserveParts) {
       try {
-        await this.partialService.deletePartial(workspaceId as string);
+        await this.historyService.deletePartial(workspaceId as string);
       } catch (deleteError) {
         const logger = options?.workspaceLog ?? this.getWorkspaceLogger(workspaceId, streamInfo);
         logger.warn("Failed to clear partial state before retry", { error: deleteError });
@@ -2128,7 +2466,7 @@ export class StreamManager extends EventEmitter {
     // }
 
     // Fallback for unknown errors
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     return { type: "unknown", raw: message };
   }
 
@@ -2144,9 +2482,16 @@ export class StreamManager extends EventEmitter {
       if (error.statusCode === 401) return "authentication";
       // 402 (Payment Required) is used by mux gateway for billing/credits issues
       // (e.g. "Insufficient balance. Please add credits to continue.").
-      // Treat as non-retryable quota; 429 (rate_limit) covers RPM/time-based throttling.
+      // Treat as non-retryable quota. Some providers also encode quota failures as
+      // 429, so classify 429 by payload intent instead of status code alone.
       if (error.statusCode === 402) return "quota";
-      if (error.statusCode === 429) return "rate_limit";
+      if (error.statusCode === 429) {
+        return classify429Capacity({
+          message: error.message,
+          data: error.data,
+          responseBody: error.responseBody,
+        });
+      }
       if (error.statusCode && error.statusCode >= 500) return "server_error";
 
       // Check for model_not_found errors (OpenAI and Anthropic)
@@ -2179,8 +2524,17 @@ export class StreamManager extends EventEmitter {
         return "model_not_found";
       }
 
-      // Check for Anthropic context exceeded errors
-      if (error.message.includes("prompt is too long:")) {
+      // Check for context exceeded errors (Anthropic + OpenAI-compatible / Copilot)
+      const msgLower = error.message.toLowerCase();
+
+      // Anthropic: "prompt is too long" / "input is too long"
+      // Copilot / OpenAI-compatible: "prompt token count of X exceeds the limit of Y"
+      const isContextExceeded =
+        msgLower.includes("prompt is too long") ||
+        msgLower.includes("input is too long") ||
+        (msgLower.includes("token") && msgLower.includes("exceeds") && msgLower.includes("limit"));
+
+      if (isContextExceeded) {
         return "context_exceeded";
       }
 
@@ -2303,7 +2657,10 @@ export class StreamManager extends EventEmitter {
     providedStreamToken?: StreamToken,
     hasQueuedMessage?: () => boolean,
     workspaceName?: string,
-    thinkingLevel?: string
+    thinkingLevel?: string,
+    headers?: Record<string, string | undefined>,
+    anthropicCacheTtlOverride?: AnthropicCacheTtl,
+    stopAfterSuccessfulProposePlan?: boolean
   ): Promise<Result<StreamToken, SendMessageError>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
@@ -2378,7 +2735,10 @@ export class StreamManager extends EventEmitter {
           toolPolicy,
           hasQueuedMessage,
           workspaceName,
-          thinkingLevel
+          thinkingLevel,
+          headers,
+          anthropicCacheTtlOverride,
+          stopAfterSuccessfulProposePlan
         );
 
         // Guard against a narrow race:
@@ -2599,7 +2959,7 @@ export class StreamManager extends EventEmitter {
       }
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to stop stream: ${message}`);
     }
   }
@@ -2633,10 +2993,15 @@ export class StreamManager extends EventEmitter {
    * Returns undefined if no active stream exists
    * Used to re-establish streaming context on frontend reconnection
    */
-  getStreamInfo(
-    workspaceId: string
-  ):
-    | { messageId: string; model: string; historySequence: number; parts: CompletedMessagePart[] }
+  getStreamInfo(workspaceId: string):
+    | {
+        messageId: string;
+        model: string;
+        historySequence: number;
+        startTime: number;
+        parts: CompletedMessagePart[];
+        toolCompletionTimestamps: Map<string, number>;
+      }
     | undefined {
     const typedWorkspaceId = workspaceId as WorkspaceId;
     const streamInfo = this.workspaceStreams.get(typedWorkspaceId);
@@ -2650,6 +3015,8 @@ export class StreamManager extends EventEmitter {
         messageId: streamInfo.messageId,
         model: streamInfo.model,
         historySequence: streamInfo.historySequence,
+        startTime: streamInfo.startTime,
+        toolCompletionTimestamps: streamInfo.toolCompletionTimestamps ?? new Map(),
         parts: streamInfo.parts,
       };
     }
@@ -2662,7 +3029,7 @@ export class StreamManager extends EventEmitter {
    * Emits the same events (stream-start, stream-delta, etc.) that would be emitted during live streaming
    * This allows replay to flow through the same event path as live streaming (no duplication)
    */
-  async replayStream(workspaceId: string): Promise<void> {
+  async replayStream(workspaceId: string, opts?: { afterTimestamp?: number }): Promise<void> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
     const streamInfo = this.workspaceStreams.get(typedWorkspaceId);
 
@@ -2675,7 +3042,7 @@ export class StreamManager extends EventEmitter {
     }
 
     // Initialize token tracker for this model (required for tokenization)
-    await this.tokenTracker.setModel(streamInfo.model);
+    await this.tokenTracker.setModel(streamInfo.model, streamInfo.metadataModel);
 
     // Emit stream-start event (include mode from initialMetadata if available)
     this.emitStreamStart(typedWorkspaceId, streamInfo, streamInfo.historySequence, {
@@ -2692,9 +3059,67 @@ export class StreamManager extends EventEmitter {
     // That blocks AgentSession.emitHistoricalEvents() from sending "caught-up" on reconnect,
     // leaving the renderer stuck in "Loading workspace" and suppressing the streaming indicator.
     const replayParts = streamInfo.parts.slice();
+    const afterTimestamp = opts?.afterTimestamp;
+    const filteredReplayParts =
+      afterTimestamp != null
+        ? replayParts.filter((part) => {
+            const partTimestamp = part.timestamp;
+
+            // Missing timestamps should be replayed defensively rather than dropped.
+            if (partTimestamp === undefined) {
+              return true;
+            }
+
+            if (partTimestamp > afterTimestamp) {
+              return true;
+            }
+
+            // Dynamic tool parts keep their original start timestamp even when they later
+            // transition to output-available. Use the recorded tool completion timestamp
+            // (from tool-call-end emission) to decide whether completion happened after
+            // the reconnect cursor.
+            if (part.type === "dynamic-tool" && part.state === "output-available") {
+              const completionTimestamp = streamInfo.toolCompletionTimestamps.get(part.toolCallId);
+              if (completionTimestamp === undefined) {
+                log.warn(
+                  "[streamManager] Missing tool completion timestamp during replay; dropping replayed completion to avoid duplicate side effects",
+                  {
+                    workspaceId,
+                    messageId: streamInfo.messageId,
+                    toolCallId: part.toolCallId,
+                  }
+                );
+                return false;
+              }
+
+              return completionTimestamp > afterTimestamp;
+            }
+
+            return false;
+          })
+        : replayParts;
+
     const replayMessageId = streamInfo.messageId;
-    for (const part of replayParts) {
+    for (const part of filteredReplayParts) {
       await this.emitPartAsEvent(typedWorkspaceId, replayMessageId, part, { replay: true });
+    }
+
+    // Live streams emit usage-delta after each finish-step. Replay part snapshots do not
+    // include finish-step boundaries, so full replays emit the latest accumulated usage
+    // explicitly. Incremental/live-mode replays pass afterTimestamp and should only replay
+    // stream context (not stale usage snapshots) to avoid duplicate usage updates.
+    if (streamInfo.lastStepUsage && afterTimestamp == null) {
+      const usageEvent: UsageDeltaEvent = {
+        type: "usage-delta",
+        workspaceId,
+        messageId: streamInfo.messageId,
+        replay: true,
+        usage: streamInfo.lastStepUsage,
+        providerMetadata: streamInfo.lastStepProviderMetadata,
+        cumulativeUsage: streamInfo.cumulativeUsage,
+        cumulativeProviderMetadata: streamInfo.cumulativeProviderMetadata,
+      };
+      this.emit("usage-delta", usageEvent);
     }
   }
 

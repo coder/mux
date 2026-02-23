@@ -27,14 +27,16 @@ Always check `$MUX_MODEL_STRING`, `$MUX_THINKING_LEVEL`, and `$MUX_COSTS_USD` vi
 - Reuse existing PRs; never close or recreate without instruction.
 - Force-push minor PR updates; otherwise add a new commit to preserve the change timeline.
 - If a PR is already open for your change, keep it up to date with the latest commits; don't leave it stale.
+- When updating a PR, ensure the title and body describe the **entire** diff against the base branch—not just the most recent commit or push.
 - Never enable auto-merge or merge into `main` yourself. The user must explicitly merge PRs.
 
 ## CI & Validation
 
-- After pushing, you may use `./scripts/wait_pr_checks.sh <pr_number>` to wait for CI to pass.
-- Use `wait_pr_checks` only when there's no more useful work to do.
-- Waiting for PR checks can take 10+ minutes, so prefer local validation (e.g., run a subset of integration tests) to catch issues early.
-- If asked to fix an issue in CI, first replicate it locally, get it to pass locally, then use `wait_pr_checks` to wait for CI to pass.
+- Prefer local validation first (e.g., `make static-check` or a targeted test subset) because CI waiting can take 10+ minutes.
+- Use `./scripts/wait_pr_ready.sh <pr_number>` as the default last-step helper when there's no more useful local work left.
+- `wait_pr_ready.sh` polls the Codex and checks gates together and fails fast when either gate reaches a terminal failure.
+- Use `./scripts/wait_pr_checks.sh <pr_number>` and `./scripts/wait_pr_codex.sh <pr_number>` directly only when you need to debug a specific gate.
+- If asked to fix an issue in CI, first replicate it locally, get it to pass locally, then use `wait_pr_ready.sh`.
 
 ## Status Decoding
 
@@ -67,14 +69,20 @@ Use these scripts to check, resolve, and wait on Codex review comments:
 
 - `./scripts/check_codex_comments.sh <pr_number>` — Lists unresolved Codex comments (both regular comments and review threads). Outputs thread IDs needed for resolution.
 - `./scripts/resolve_pr_comment.sh <thread_id>` — Resolves a review thread by its ID (e.g., `PRRT_abc123`).
-- `./scripts/wait_pr_codex.sh <pr_number>` — Waits for Codex to respond to the latest `@codex review` request. When the PR looks good, Codex leaves an explicit approval comment (e.g., it will say `Didn't find any major issues`).
+- `./scripts/wait_pr_codex.sh <pr_number>` — Waits for Codex-only status (or one-shot status with `--once`).
+- `./scripts/wait_pr_ready.sh <pr_number>` — Unified Codex + CI gate poller (preferred for normal PR readiness loops).
 
-When Codex leaves review comments, you **must** address them before the PR can merge:
+> PR readiness is mandatory. You MUST keep iterating until the PR is fully ready.
+> A PR is fully ready only when: (1) Codex explicitly approves, (2) all Codex review threads are resolved, and (3) all required CI checks pass.
+> You MUST NOT report success or stop the loop before these conditions are met.
 
-1. Push your fixes
-2. Resolve each review thread: `./scripts/resolve_pr_comment.sh <thread_id>`
-3. Comment `@codex review` to re-request review
-4. Run `./scripts/wait_pr_codex.sh <pr_number>` to wait for the next Codex response (either new comments to address, or an explicit approval comment)
+When a PR exists, stay in this loop until it is fully ready:
+
+1. Push your fixes.
+2. Resolve each review thread: `./scripts/resolve_pr_comment.sh <thread_id>`.
+3. Comment `@codex review` to re-request review.
+4. Run `./scripts/wait_pr_ready.sh <pr_number>`.
+5. If Codex or checks fail, fix locally, push, and repeat.
 
 ## PR Title Conventions
 
@@ -87,7 +95,7 @@ When Codex leaves review comments, you **must** address them before the PR can m
 
 ### Structure
 
-PR bodies should generally follow this structure; omit sections that are N/A or trivially inferable for the change.
+PR bodies should generally follow this structure; omit sections that are N/A or trivially inferable from the code.
 
 - Summary
   - Single-paragraph executive summary of the change
@@ -96,6 +104,8 @@ PR bodies should generally follow this structure; omit sections that are N/A or 
   - What problem this solves
   - Relevant commits, issues, or PRs that capture more context
 - Implementation
+  - Explain anything novel or unclear about the implementation approach
+  - Keep it generally high-level and architectural
 - Validation
   - Steps taken to prove the change works as intended
   - Avoid boilerplate like `ran tests`; include this section only for novel, change-specific steps
@@ -103,6 +113,17 @@ PR bodies should generally follow this structure; omit sections that are N/A or 
 - Risks
   - PRs that touch intricate logic must include an assessment of regression risk
   - Explain regression risk in terms of severity and affected product areas
+- Pains
+  - Only include for non-trivial changes that that took multiple iteration cycles
+  - Explain codebase or environment pains that slowed down planning, implementation, or validation
+
+### Edits
+
+Prefer storing the body in an out-of-tree file such as `/tmp/pr-<num>.txt`, using
+file edit tools to modify it, and then `gh pr edit [num] --body-file <file>` to update it.
+
+When updating the PR body, consider condensing information that is no longer important
+into a toggle.
 
 ## Upkeep
 

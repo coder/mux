@@ -105,6 +105,22 @@ describe("createChatEventExpander", () => {
     });
   });
 
+  it("ignores desktop-only compaction and retry status events", () => {
+    const expander = createChatEventExpander();
+
+    const events = expander.expand([
+      { type: "idle-compaction-needed" } as WorkspaceChatEvent,
+      { type: "idle-compaction-started" } as WorkspaceChatEvent,
+      { type: "auto-compaction-triggered" } as WorkspaceChatEvent,
+      { type: "auto-compaction-completed" } as WorkspaceChatEvent,
+      { type: "auto-retry-scheduled" } as WorkspaceChatEvent,
+      { type: "auto-retry-starting" } as WorkspaceChatEvent,
+      { type: "auto-retry-abandoned" } as WorkspaceChatEvent,
+    ]);
+
+    expect(events).toEqual([]);
+  });
+
   it("emits displayable entries for mux messages replayed from history", () => {
     const expander = createChatEventExpander();
 

@@ -4,6 +4,7 @@ import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
 import { SplashScreen } from "@/browser/components/splashScreens/SplashScreen";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
+import { getErrorMessage } from "@/common/utils/errors";
 
 function getServerAuthToken(): string | null {
   const urlToken = new URLSearchParams(window.location.search).get("token")?.trim();
@@ -116,7 +117,7 @@ export function MuxGatewaySessionExpiredDialog() {
       popup.location.href = json.authorizeUrl;
       dismiss();
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       setIsStartingLogin(false);
       setLoginError(message);
     }

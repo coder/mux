@@ -17,12 +17,12 @@ if (process.platform === "darwin") {
 import { randomBytes } from "crypto";
 import { RPCHandler } from "@orpc/server/message-port";
 import { onError } from "@orpc/server";
-import { router } from "@/node/orpc/router";
-import { formatOrpcError } from "@/node/orpc/formatOrpcError";
-import { ServerLockfile } from "@/node/services/serverLockfile";
+import { router } from "../node/orpc/router";
+import { formatOrpcError } from "../node/orpc/formatOrpcError";
+import { ServerLockfile } from "../node/services/serverLockfile";
 import "disposablestack/auto";
 
-import type { MenuItemConstructorOptions } from "electron";
+import type { MenuItemConstructorOptions, MessageBoxOptions } from "electron";
 import {
   app,
   BrowserWindow,
@@ -44,18 +44,22 @@ app.commandLine.appendSwitch("js-flags", "--max-old-space-size=8192");
 
 import * as fs from "fs";
 import * as path from "path";
-import type { Config } from "@/node/config";
-import type { ServiceContainer } from "@/node/services/serviceContainer";
-import { VERSION } from "@/version";
-import { getMuxHome, migrateLegacyMuxHome } from "@/common/constants/paths";
-import type { MuxDeepLinkPayload } from "@/common/types/deepLink";
-import { parseMuxDeepLink } from "@/common/utils/deepLink";
+import type { Config } from "../node/config";
+import type { ServiceContainer } from "../node/services/serviceContainer";
+import { VERSION } from "../version";
+import { getMuxHome, migrateLegacyMuxHome } from "../common/constants/paths";
+import type { MuxDeepLinkPayload } from "../common/types/deepLink";
+import type { UpdateStatus } from "../common/orpc/types";
+import { parseMuxDeepLink } from "../common/utils/deepLink";
 
-import assert from "@/common/utils/assert";
-import { loadTokenizerModules } from "@/node/utils/main/tokenizer";
-import { isBashAvailable } from "@/node/utils/main/bashPath";
+import assert from "../common/utils/assert";
+import { setOpenSSHHostKeyPolicyMode } from "@/node/runtime/sshConnectionPool";
+import { loadTokenizerModules } from "../node/utils/main/tokenizer";
+import { isBashAvailable } from "../node/utils/main/bashPath";
 import windowStateKeeper from "electron-window-state";
-import { getTitleBarOptions } from "@/desktop/titleBarOptions";
+import { getTitleBarOptions } from "./titleBarOptions";
+import { isUpdateInstallInProgress } from "./updateInstallState";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // React DevTools for development profiling
 // Using dynamic import() to avoid loading electron-devtools-installer at module init time
@@ -109,7 +113,7 @@ if (process.env.MUX_DEBUG_START_TIME === "1") {
 process.on("uncaughtException", (error: unknown) => {
   console.error("Uncaught Exception:", error);
 
-  const message = error instanceof Error ? error.message : String(error);
+  const message = getErrorMessage(error);
   const stack = error instanceof Error ? error.stack : undefined;
 
   console.error("Stack:", stack);
@@ -128,7 +132,7 @@ process.on("unhandledRejection", (reason, promise) => {
   console.error("Reason:", reason);
 
   if (app.isPackaged) {
-    const message = reason instanceof Error ? reason.message : String(reason);
+    const message = getErrorMessage(reason);
     const stack = reason instanceof Error ? reason.stack : undefined;
     dialog.showErrorBox(
       "Unhandled Promise Rejection",
@@ -167,6 +171,8 @@ let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
+let latestUpdateStatus: UpdateStatus = { type: "idle" };
+let isUpdateClosePromptOpen = false;
 
 // mux:// deep links can arrive before the main window exists / finishes loading.
 const bufferedMuxDeepLinks: MuxDeepLinkPayload[] = [];
@@ -175,6 +181,8 @@ let mainWindowFinishedLoading = false;
 function focusMainWindow() {
   if (!mainWindow) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
+  // Closing Mux on Windows hides to tray; show it again when a second-instance launch occurs.
+  mainWindow.show();
   mainWindow.focus();
 }
 
@@ -293,7 +301,8 @@ function createMenu() {
         { role: "toggleDevTools" },
         { type: "separator" },
         { role: "resetZoom" },
-        { role: "zoomIn" },
+        // Bind zoom-in to Ctrl/Cmd+= so the standard shortcut works without requiring Shift.
+        { role: "zoomIn", accelerator: "CommandOrControl+=" },
         { role: "zoomOut" },
         { type: "separator" },
         {
@@ -358,11 +367,11 @@ function getTrayIconPath(): string {
 
 function loadTrayIconImage() {
   const iconPath = getTrayIconPath();
-  const icon2xPath = iconPath.replace(/\.png$/, "@2x.png");
 
-  // Try to create an image with both 1x and 2x representations for Retina support.
-  // Electron's nativeImage.createFromPath handles @2x naming conventions on macOS
-  // but only if both files exist. Fall back to single-resolution if 2x is missing.
+  // Tray icons are 24×24 PNGs with cropped viewBox. We manually add @2x and
+  // @3x representations so macOS picks the sharpest variant for the display's
+  // scale factor. Electron auto-detects @2x from the path naming convention
+  // but only when both files exist – and it doesn't look for @3x at all.
   const image = nativeImage.createFromPath(iconPath);
 
   if (image.isEmpty()) {
@@ -370,13 +379,12 @@ function loadTrayIconImage() {
     return null;
   }
 
-  // Add @2x representation if available (for Retina displays)
-  const image2x = nativeImage.createFromPath(icon2xPath);
-  if (!image2x.isEmpty()) {
-    image.addRepresentation({
-      scaleFactor: 2,
-      buffer: image2x.toPNG(),
-    });
+  for (const scaleFactor of [2, 3] as const) {
+    const hqPath = iconPath.replace(/\.png$/, `@${scaleFactor}x.png`);
+    const hqImage = nativeImage.createFromPath(hqPath);
+    if (!hqImage.isEmpty()) {
+      image.addRepresentation({ scaleFactor, buffer: hqImage.toPNG() });
+    }
   }
 
   if (process.platform === "darwin") {
@@ -537,15 +545,21 @@ async function loadServices(): Promise<void> {
     { ServiceContainer: ServiceContainerClass },
     { TerminalWindowManager: TerminalWindowManagerClass },
   ] = await Promise.all([
-    import("@/node/config"),
-    import("@/node/services/serviceContainer"),
-    import("@/desktop/terminalWindowManager"),
+    import("../node/config"),
+    import("../node/services/serviceContainer"),
+    import("./terminalWindowManager"),
   ]);
   /* eslint-enable no-restricted-syntax */
   config = new ConfigClass();
 
   services = new ServiceContainerClass(config);
+  // Desktop bootstrap owns interactive host-key trust policy
+  setOpenSSHHostKeyPolicyMode("strict");
   await services.initialize();
+  // Keep the latest update status in main so close-to-tray can prompt for installs.
+  services.updateService.onStatus((status) => {
+    latestUpdateStatus = status;
+  });
 
   // Generate auth token (use env var or random per-session)
   const authToken = process.env.MUX_SERVER_AUTH_TOKEN ?? randomBytes(32).toString("hex");
@@ -696,7 +710,8 @@ async function loadServices(): Promise<void> {
     if (!win) return null;
 
     const res = await dialog.showOpenDialog(win, {
-      properties: ["openDirectory", "createDirectory", "showHiddenFiles"],
+      // Hide hidden entries so the new-project picker stays focused on visible folders.
+      properties: ["openDirectory", "createDirectory"],
       title: "Select Project Directory",
       buttonLabel: "Select Project",
     });
@@ -766,7 +781,47 @@ function createWindow() {
     //
     // Only hide when the tray exists to avoid trapping the user with no UI path
     // to restore the app.
-    if (isQuitting || !tray) {
+    if (isQuitting || isUpdateInstallInProgress() || !tray) {
+      return;
+    }
+
+    if (latestUpdateStatus.type === "downloaded") {
+      // If an update is ready, prompt before hiding to tray so users can install immediately.
+      event.preventDefault();
+
+      if (isUpdateClosePromptOpen) {
+        return;
+      }
+
+      isUpdateClosePromptOpen = true;
+      const messageBoxOptions: MessageBoxOptions = {
+        type: "question",
+        buttons: ["Install & restart", "Later", "Cancel"],
+        defaultId: 0,
+        cancelId: 2,
+        message: "An update is ready to install.",
+        detail: "Install now to restart and apply the update, or keep Mux running in the tray.",
+      };
+
+      const promptWindow = mainWindow;
+      const prompt = promptWindow
+        ? dialog.showMessageBox(promptWindow, messageBoxOptions)
+        : dialog.showMessageBox(messageBoxOptions);
+
+      void prompt
+        .then(({ response }) => {
+          if (response === 0) {
+            services?.updateService.install();
+            return;
+          }
+
+          if (response === 1) {
+            mainWindow?.hide();
+          }
+        })
+        .finally(() => {
+          isUpdateClosePromptOpen = false;
+        });
       return;
     }
 
@@ -911,6 +966,17 @@ if (gotTheLock) {
     // Ensure window close handlers don't block an explicit quit.
     // IMPORTANT: must be set before any early returns.
     isQuitting = true;
+    if (isUpdateInstallInProgress()) {
+      // Don't block updater-driven quitAndInstall() — let Electron quit immediately
+      // so the platform installer can take over. Best-effort cleanup only.
+      if (services && !isDisposing) {
+        isDisposing = true;
+        void services.dispose().catch((err) => {
+          console.error("Error during ServiceContainer dispose (update install):", err);
+        });
+      }
+      return;
+    }
 
     // Skip if already disposing or no services to clean up
     if (isDisposing || !services) {

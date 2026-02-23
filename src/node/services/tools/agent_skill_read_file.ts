@@ -6,6 +6,7 @@ import { tool } from "ai";
 import type { AgentSkillReadFileToolResult } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+import { getErrorMessage } from "@/common/utils/errors";
 import { SkillNameSchema } from "@/common/orpc/schemas";
 import {
   readAgentSkill,
@@ -20,8 +21,8 @@ function readContentWithFileReadLimits(input: {
   fullContent: string;
   fileSize: number;
   modifiedTime: string;
-  offset?: number;
-  limit?: number;
+  offset?: number | null;
+  limit?: number | null;
 }): AgentSkillReadFileToolResult {
   if (input.fileSize > MAX_FILE_SIZE) {
     const sizeMB = (input.fileSize / (1024 * 1024)).toFixed(2);
@@ -34,7 +35,7 @@ function readContentWithFileReadLimits(input: {
 
   const lines = input.fullContent === "" ? [] : input.fullContent.split("\n");
 
-  if (input.offset !== undefined && input.offset > lines.length) {
+  if (input.offset != null && input.offset > lines.length) {
     return {
       success: false,
       error: `Offset ${input.offset} is beyond file length`,
@@ -43,7 +44,7 @@ function readContentWithFileReadLimits(input: {
 
   const startLineNumber = input.offset ?? 1;
   const startIdx = startLineNumber - 1;
-  const endIdx = input.limit !== undefined ? startIdx + input.limit : lines.length;
+  const endIdx = input.limit != null ? startIdx + input.limit : lines.length;
 
   const numberedLines: string[] = [];
   let totalBytesAccumulated = 0;
@@ -91,9 +92,6 @@ function readContentWithFileReadLimits(input: {
     content: numberedLines.join("\n"),
   };
 }
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /**
  * Agent Skill read_file tool factory.
@@ -122,7 +120,7 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
       }
 
       try {
-        if (offset !== undefined && offset < 1) {
+        if (offset != null && offset < 1) {
           return {
             success: false,
             error: `Offset must be positive (got ${offset})`,
@@ -222,7 +220,7 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
       } catch (error) {
         return {
           success: false,
-          error: `Failed to read file: ${formatError(error)}`,
+          error: `Failed to read file: ${getErrorMessage(error)}`,
         };
       }
     },

@@ -247,8 +247,9 @@ export const CoderExistingWorkspace: AppStory = {
     // Wait for Coder controls
     await canvas.findByTestId("coder-controls-inner");
 
-    // Click "Existing" button
-    const existingButton = canvas.getByRole("button", { name: "Existing" });
+    // Click "Existing" button — use findByRole (retry-capable) to handle
+    // transient DOM gaps between awaits.
+    const existingButton = await canvas.findByRole("button", { name: "Existing" });
     await userEvent.click(existingButton);
 
     // Wait for workspace dropdown to appear
@@ -296,8 +297,9 @@ export const CoderExistingWorkspaceParseError: AppStory = {
     // Wait for Coder controls
     await canvas.findByTestId("coder-controls-inner");
 
-    // Click "Existing" button
-    const existingButton = canvas.getByRole("button", { name: "Existing" });
+    // Click "Existing" button — use findByRole (retry-capable) to handle
+    // transient DOM gaps between awaits.
+    const existingButton = await canvas.findByRole("button", { name: "Existing" });
     await userEvent.click(existingButton);
 
     // Error message should appear for workspace listing
@@ -466,8 +468,9 @@ export const CoderOutdated: AppStory = {
       }
     });
 
-    // Hover over Coder button to trigger tooltip with version error
-    const coderButton = canvas.getByRole("button", { name: /Coder/i });
+    // Hover over Coder button to trigger tooltip with version error.
+    // Use findByRole (retry-capable) to handle transient DOM gaps between awaits.
+    const coderButton = await canvas.findByRole("button", { name: /Coder/i });
     await userEvent.hover(coderButton);
 
     // Wait for tooltip to appear with version info

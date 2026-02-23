@@ -51,26 +51,14 @@ export const createCommandToast = (parsed: ParsedCommand): Toast | null => {
             /haiku explain this code
             <br />
             /opus review my changes
-          </>
-        ),
-      };
-
-    case "fork-help":
-      return {
-        id: Date.now().toString(),
-        type: "error",
-        title: "Fork Command",
-        message: "Fork current workspace with a new name",
-        solution: (
-          <>
-            <SolutionLabel>Usage:</SolutionLabel>
-            /fork &lt;new-name&gt; [optional start message]
             <br />
             <br />
-            <SolutionLabel>Examples:</SolutionLabel>
-            /fork experiment-branch
+            <SolutionLabel>With thinking override:</SolutionLabel>
+            /opus+high deep review
             <br />
-            /fork refactor Continue with refactoring approach
+            /haiku+0 quick answer (0=lowest for model)
+            <br />
+            /+2 use current model, thinking level 2
           </>
         ),
       };
@@ -151,6 +139,24 @@ export const createErrorToast = (error: SendMessageErrorType): Toast => {
           <>
             <SolutionLabel>Fix:</SolutionLabel>
             {formatted.resolutionHint ?? "Open Settings → Providers and connect your account."}
+            <br />
+            <DocsLink path="/config/providers">mux.coder.com/providers</DocsLink>
+          </>
+        ),
+      };
+    }
+
+    case "provider_disabled": {
+      const formatted = formatSendMessageError(error);
+      return {
+        id: Date.now().toString(),
+        type: "error",
+        title: "Provider Disabled",
+        message: formatted.message,
+        solution: (
+          <>
+            <SolutionLabel>Fix:</SolutionLabel>
+            {formatted.resolutionHint ?? "Open Settings → Providers and enable this provider."}
             <br />
             <DocsLink path="/config/providers">mux.coder.com/providers</DocsLink>
           </>

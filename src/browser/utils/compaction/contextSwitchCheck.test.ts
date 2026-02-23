@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { checkContextSwitch } from "./contextSwitchCheck";
-import { getEffectiveContextLimit } from "./contextLimit";
+import { getEffectiveContextLimit } from "@/common/utils/compaction/contextLimit";
 
 const OPTIONS = { providersConfig: null, policy: null };
 
@@ -58,5 +58,24 @@ describe("checkContextSwitch", () => {
     );
     expect(warning).not.toBeNull();
     expect(warning?.targetModel).toBe(targetModel);
+  });
+
+  test("uses custom context overrides for unknown custom models", () => {
+    const targetModel = "openai:custom-context-model";
+    const warning = checkContextSwitch(95_000, targetModel, "anthropic:claude-sonnet-4-5", false, {
+      providersConfig: {
+        openai: {
+          apiKeySet: true,
+          isEnabled: true,
+          isConfigured: true,
+          models: [{ id: "custom-context-model", contextWindowTokens: 100_000 }],
+        },
+      },
+      policy: null,
+    });
+
+    expect(warning).not.toBeNull();
+    expect(warning?.targetModel).toBe(targetModel);
+    expect(warning?.targetLimit).toBe(100_000);
   });
 });

@@ -93,11 +93,11 @@ function buildTopLevelSuggestions(
     };
   });
 
-  // Model alias one-shot suggestions (e.g., /haiku, /sonnet)
+  // Model alias one-shot suggestions (e.g., /haiku, /sonnet, /opus+high)
   const modelAliasDefinitions: SuggestionDefinition[] = Object.entries(MODEL_ABBREVIATIONS).map(
     ([alias, modelId]) => ({
       key: alias,
-      description: `Send with ${formatModelDisplayName(modelId.split(":")[1] ?? modelId)} (one message)`,
+      description: `Send with ${formatModelDisplayName(modelId.split(":")[1] ?? modelId)} (one message, +level for thinking)`,
       appendSpace: true,
     })
   );

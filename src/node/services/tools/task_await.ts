@@ -12,6 +12,7 @@ import {
   requireTaskService,
   requireWorkspaceId,
 } from "./toolUtils";
+import { getErrorMessage } from "@/common/utils/errors";
 
 function coerceTimeoutMs(timeoutSecs: unknown): number | undefined {
   if (typeof timeoutSecs !== "number" || !Number.isFinite(timeoutSecs)) return undefined;
@@ -29,7 +30,9 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
       const taskService = requireTaskService(config, "task_await");
 
       const timeoutMs = coerceTimeoutMs(args.timeout_secs);
-      const timeoutSecsForBash = args.timeout_secs;
+      // Preserve the documented 600s default when the model sends null
+      // (Zod .default() only replaces undefined, not null).
+      const timeoutSecsForBash = args.timeout_secs ?? 600;
 
       const requestedIds: string[] | null =
         args.task_ids && args.task_ids.length > 0 ? args.task_ids : null;
@@ -64,9 +67,9 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
         }
       ).filterDescendantAgentTaskIds;
 
-      // Read patch artifacts lazily (after waiting) to avoid stale results. Patch generation is
-      // started after `resolveWaiters` in `handleAgentReport`, so reading once up-front can miss
-      // artifacts that appear while we're awaiting reports.
+      // Read patch artifacts lazily (after waiting) to avoid stale results. Patch generation
+      // runs asynchronously (started in `finalizeAgentTaskReport` before waiters resolve), so
+      // the artifact may still be "pending" at read time — task_apply_git_patch does a fresh read.
       const readGitFormatPatchArtifact = async (childTaskId: string) => {
         if (!config.workspaceSessionDir) return null;
         return await readSubagentGitPatchArtifact(config.workspaceSessionDir, childTaskId);
@@ -115,8 +118,8 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
 
             const outputResult = await config.backgroundProcessManager.getOutput(
               maybeProcessId,
-              args.filter,
-              args.filter_exclude,
+              args.filter ?? undefined,
+              args.filter_exclude ?? undefined,
               timeoutSecsForBash,
               abortSignal,
               workspaceId,
@@ -184,7 +187,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
                 ...(gitFormatPatch ? { artifacts: { gitFormatPatch } } : {}),
               };
             } catch (error: unknown) {
-              const message = error instanceof Error ? error.message : String(error);
+              const message = getErrorMessage(error);
               if (/not found/i.test(message)) {
                 return { status: "not_found" as const, taskId };
               }
@@ -212,7 +215,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               return { status: "error" as const, taskId, error: "Interrupted" };
             }
 
-            const message = error instanceof Error ? error.message : String(error);
+            const message = getErrorMessage(error);
             if (/not found/i.test(message)) {
               return { status: "not_found" as const, taskId };
             }

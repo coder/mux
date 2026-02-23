@@ -1,5 +1,5 @@
 import React from "react";
-import type { WebFetchToolArgs, WebFetchToolResult } from "@/common/types/tools";
+import type { WebFetchToolArgs } from "@/common/types/tools";
 import {
   ToolContainer,
   ToolHeader,
@@ -17,8 +17,21 @@ import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 
 interface WebFetchToolCallProps {
   args: WebFetchToolArgs;
-  result?: WebFetchToolResult;
+  // result is unknown because we handle two formats:
+  //   1. Built-in:  { success: boolean, title?, content?, length?, error? }
+  //   2. Anthropic native success:  { type: 'web_fetch_result', url, content: { title, source: { data } } }
+  //   3. Anthropic native error:    { type: 'web_fetch_tool_result_error', errorCode: string }
+  result?: unknown;
   status?: ToolStatus;
+}
+
+/** Normalized display data extracted from any web_fetch result format */
+interface NormalizedResult {
+  success: boolean;
+  title?: string;
+  content?: string;
+  length?: number;
+  error?: string;
 }
 
 function formatBytes(bytes: number): string {
@@ -39,12 +52,77 @@ function getDomain(url: string): string {
   }
 }
 
+/**
+ * Unwrap JSON container from streamManager's stripEncryptedContent.
+ * Results arrive as { type: "json", value: [...] } or direct object.
+ */
+function unwrapResult(result: unknown): unknown {
+  if (
+    result !== null &&
+    typeof result === "object" &&
+    "type" in result &&
+    (result as { type: string }).type === "json" &&
+    "value" in result
+  ) {
+    return (result as { value: unknown }).value;
+  }
+  return result;
+}
+
+/**
+ * Normalize any web_fetch result to a display-friendly format.
+ * Handles both our built-in format and Anthropic's native web_fetch format.
+ */
+function normalizeResult(result: unknown): NormalizedResult | null {
+  if (result == null) return null;
+  const r = unwrapResult(result);
+  if (r == null || typeof r !== "object") return null;
+  const obj = r as Record<string, unknown>;
+
+  // Anthropic native success: { type: 'web_fetch_result', url, content: { title, source: { data } } }
+  if (obj.type === "web_fetch_result") {
+    const contentBlock = obj.content as Record<string, unknown> | undefined;
+    const source = contentBlock?.source as Record<string, unknown> | undefined;
+    // Only text sources have readable content; PDFs (base64) are not rendered
+    const text = source?.type === "text" ? (source.data as string) : undefined;
+    return {
+      success: true,
+      title: (contentBlock?.title as string | null | undefined) ?? undefined,
+      content: text,
+      length: text?.length,
+    };
+  }
+
+  // Anthropic native error: { type: 'web_fetch_tool_result_error', errorCode: string }
+  if (obj.type === "web_fetch_tool_result_error") {
+    const errorCode = obj.errorCode as string | undefined;
+    return {
+      success: false,
+      error: errorCode ? `Fetch failed (${errorCode})` : "Fetch failed",
+    };
+  }
+
+  // Built-in format: { success: boolean, title?, content?, length?, error? }
+  if (typeof obj.success === "boolean") {
+    return {
+      success: obj.success,
+      title: obj.title as string | undefined,
+      content: obj.content as string | undefined,
+      length: obj.length as number | undefined,
+      error: obj.error as string | undefined,
+    };
+  }
+
+  return null;
+}
+
 export const WebFetchToolCall: React.FC<WebFetchToolCallProps> = ({
   args,
   result,
   status = "pending",
 }) => {
   const { expanded, toggleExpanded } = useToolExpansion();
+  const normalized = normalizeResult(result);
 
   const domain = getDomain(args.url);
 
@@ -56,10 +134,10 @@ export const WebFetchToolCall: React.FC<WebFetchToolCallProps> = ({
         <div className="text-text flex max-w-96 min-w-0 items-center gap-1.5">
           <span className="font-monospace truncate">{domain}</span>
         </div>
-        {result && result.success && (
+        {normalized?.success && normalized.length != null && (
           <span className="text-secondary ml-2 text-[10px] whitespace-nowrap">
             <span className="hidden @sm:inline">fetched </span>
-            {formatBytes(result.length)}
+            {formatBytes(normalized.length)}
           </span>
         )}
         <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
@@ -80,37 +158,37 @@ export const WebFetchToolCall: React.FC<WebFetchToolCallProps> = ({
                   {args.url}
                 </a>
               </div>
-              {result && result.success && result.title && (
+              {normalized?.success && normalized.title && (
                 <div className="flex min-w-0 gap-1.5">
                   <span className="text-secondary font-medium">Title:</span>
-                  <span className="text-text truncate">{result.title}</span>
+                  <span className="text-text truncate">{normalized.title}</span>
                 </div>
               )}
             </div>
           </DetailSection>
 
-          {result && (
+          {normalized && (
             <>
-              {result.success === false && result.error && (
+              {normalized.success === false && normalized.error && (
                 <DetailSection>
                   <DetailLabel>Error</DetailLabel>
-                  <ErrorBox>{result.error}</ErrorBox>
+                  <ErrorBox>{normalized.error}</ErrorBox>
                 </DetailSection>
               )}
 
               {/* Show content for both success and error responses (error pages may have parsed content) */}
-              {result.content && (
+              {normalized.content && (
                 <DetailSection>
-                  <DetailLabel>{result.success ? "Content" : "Error Page Content"}</DetailLabel>
+                  <DetailLabel>{normalized.success ? "Content" : "Error Page Content"}</DetailLabel>
                   <div className="bg-code-bg max-h-[300px] overflow-y-auto rounded px-3 py-2 text-[12px]">
-                    <MarkdownRenderer content={result.content} />
+                    <MarkdownRenderer content={normalized.content} />
                   </div>
                 </DetailSection>
               )}
             </>
           )}
 
-          {status === "executing" && !result && (
+          {status === "executing" && !normalized && (
             <DetailSection>
               <div className="text-secondary text-[11px]">
                 Fetching page

@@ -4,12 +4,13 @@ import { z } from "zod";
  * Discriminated union for all possible sendMessage errors.
  *
  * The frontend is responsible for language and messaging for api_key_not_found,
- * oauth_not_connected, and provider_not_supported errors. Other error types include
- * details needed for display.
+ * oauth_not_connected, provider_disabled, and provider_not_supported errors.
+ * Other error types include details needed for display.
  */
 export const SendMessageErrorSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("api_key_not_found"), provider: z.string() }),
   z.object({ type: z.literal("oauth_not_connected"), provider: z.string() }),
+  z.object({ type: z.literal("provider_disabled"), provider: z.string() }),
   z.object({ type: z.literal("provider_not_supported"), provider: z.string() }),
   z.object({ type: z.literal("invalid_model_string"), message: z.string() }),
   z.object({ type: z.literal("incompatible_workspace"), message: z.string() }),
@@ -37,4 +38,29 @@ export const StreamErrorTypeSchema = z.enum([
   "runtime_not_ready", // Container/runtime doesn't exist or failed to start (permanent)
   "runtime_start_failed", // Runtime is starting or temporarily unavailable (retryable)
   "unknown", // Catch-all
+]);
+
+export const NameGenerationErrorSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("authentication"),
+    authKind: z.enum(["api_key_missing", "oauth_not_connected", "invalid_credentials"]),
+    provider: z.string().nullish(),
+    raw: z.string().nullish(),
+  }),
+  z.object({
+    type: z.literal("permission_denied"),
+    provider: z.string().nullish(),
+    raw: z.string().nullish(),
+  }),
+  z.object({
+    type: z.literal("policy"),
+    provider: z.string().nullish(),
+    raw: z.string().nullish(),
+  }),
+  z.object({ type: z.literal("rate_limit"), raw: z.string().nullish() }),
+  z.object({ type: z.literal("quota"), raw: z.string().nullish() }),
+  z.object({ type: z.literal("service_unavailable"), raw: z.string().nullish() }),
+  z.object({ type: z.literal("network"), raw: z.string().nullish() }),
+  z.object({ type: z.literal("configuration"), raw: z.string().nullish() }),
+  z.object({ type: z.literal("unknown"), raw: z.string() }),
 ]);

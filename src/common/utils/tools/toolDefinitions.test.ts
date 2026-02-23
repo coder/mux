@@ -55,6 +55,92 @@ describe("TOOL_DEFINITIONS", () => {
     expect(parsed.success).toBe(false);
   });
 
+  const filePathAliasCases = [
+    {
+      toolName: "file_read",
+      args: {
+        offset: 1,
+        limit: 10,
+      },
+    },
+    {
+      toolName: "file_edit_replace_string",
+      args: {
+        old_string: "before",
+        new_string: "after",
+      },
+    },
+    {
+      toolName: "file_edit_replace_lines",
+      args: {
+        start_line: 1,
+        end_line: 1,
+        new_lines: ["line"],
+      },
+    },
+    {
+      toolName: "file_edit_insert",
+      args: {
+        insert_after: "marker",
+        content: "text",
+      },
+    },
+  ] as const;
+
+  it.each(filePathAliasCases)(
+    "accepts file_path alias for $toolName and normalizes to path",
+    ({ toolName, args }) => {
+      const parsed = TOOL_DEFINITIONS[toolName].schema.safeParse({
+        ...args,
+        file_path: "src/example.ts",
+      });
+
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data.path).toBe("src/example.ts");
+        expect("file_path" in parsed.data).toBe(false);
+      }
+    }
+  );
+
+  it.each(filePathAliasCases)(
+    "prefers canonical path over file_path for $toolName",
+    ({ toolName, args }) => {
+      const parsed = TOOL_DEFINITIONS[toolName].schema.safeParse({
+        ...args,
+        path: "src/canonical.ts",
+        file_path: "src/legacy.ts",
+      });
+
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data.path).toBe("src/canonical.ts");
+        expect("file_path" in parsed.data).toBe(false);
+      }
+    }
+  );
+
+  it.each(filePathAliasCases)(
+    "rejects $toolName when path is present but invalid, even if file_path is provided",
+    ({ toolName, args }) => {
+      const parsed = TOOL_DEFINITIONS[toolName].schema.safeParse({
+        ...args,
+        path: 123,
+        file_path: "src/fallback.ts",
+      });
+
+      expect(parsed.success).toBe(false);
+    }
+  );
+
+  it.each(filePathAliasCases)(
+    "rejects $toolName calls missing both path and file_path",
+    ({ toolName, args }) => {
+      const parsed = TOOL_DEFINITIONS[toolName].schema.safeParse(args);
+      expect(parsed.success).toBe(false);
+    }
+  );
+
   it("asks for clarification via ask_user_question (instead of emitting open questions)", () => {
     expect(TOOL_DEFINITIONS.ask_user_question.description).toContain(
       "MUST be used when you need user clarification"

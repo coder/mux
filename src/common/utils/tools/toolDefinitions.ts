@@ -3,6 +3,27 @@
  *
  * Single source of truth for all tool definitions.
  * Zod schemas are defined here and JSON schemas are auto-generated.
+ *
+ * ## Schema convention: `.nullish()` for optional tool parameters
+ *
+ * All optional fields in **tool input schemas** (i.e. parameters the model
+ * provides) MUST use `.nullish()` instead of `.optional()`.
+ *
+ * Why: OpenAI's Responses API normalizes tool schemas into strict mode, which
+ * forces every field into `required` and expects optional fields to accept
+ * `null` (via `"type": ["string", "null"]`).  Using `.optional()` alone
+ * produces a schema without a null type, so the model is forced to hallucinate
+ * values for fields it would normally skip.  `.nullish()` (= `.optional().nullable()`)
+ * emits both `null` in the type union AND keeps the field out of `required`,
+ * which satisfies strict-mode providers (OpenAI) while remaining compatible
+ * with non-strict providers (Anthropic, Google).
+ *
+ * Implementation handlers that consume these values should use `!= null`
+ * (loose equality) instead of `!== undefined` to correctly treat both
+ * `null` and `undefined` as "not provided".
+ *
+ * This does NOT apply to tool **output/result** schemas — those are constructed
+ * by our own backend code and always use `undefined` for absent fields.
  */
 
 import { z } from "zod";
@@ -18,6 +39,7 @@ import { TOOL_EDIT_WARNING } from "@/common/types/tools";
 import { SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS } from "@/common/types/tasks";
 
 import { zodToJsonSchema } from "zod-to-json-schema";
+import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
 
 // -----------------------------------------------------------------------------
 // ask_user_question (plan-mode interactive questions)
@@ -87,7 +109,7 @@ export const AskUserQuestionToolArgsSchema = z
   .object({
     questions: z.array(AskUserQuestionQuestionSchema).min(1).max(4),
     // Optional prefilled answers (Claude Code supports this, though Mux typically won't use it)
-    answers: z.record(z.string(), z.string()).optional(),
+    answers: z.record(z.string(), z.string()).nullish(),
   })
   .strict()
   .superRefine((args, ctx) => {
@@ -137,8 +159,8 @@ const TaskAgentIdSchema = z.preprocess(
 const TaskToolAgentArgsSchema = z
   .object({
     // Prefer agentId. subagent_type is a deprecated alias for backwards compatibility.
-    agentId: TaskAgentIdSchema.optional(),
-    subagent_type: SubagentTypeSchema.optional(),
+    agentId: TaskAgentIdSchema.nullish(),
+    subagent_type: SubagentTypeSchema.nullish(),
     prompt: z.string().min(1),
     title: z.string().min(1),
     run_in_background: z.boolean().default(false),
@@ -157,10 +179,12 @@ const TaskToolAgentArgsSchema = z
       return;
     }
 
-    if (hasAgentId && hasSubagentType) {
+    // GPT models often send both fields with identical values — allow that.
+    // Only reject when they conflict, since the handler silently prefers agentId.
+    if (hasAgentId && hasSubagentType && args.agentId !== args.subagent_type) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Provide only one of agentId or subagent_type (not both)",
+        message: "agentId and subagent_type must match when both are provided",
         path: ["agentId"],
       });
       return;
@@ -204,13 +228,13 @@ export const TaskAwaitToolArgsSchema = z
   .object({
     task_ids: z
       .array(z.string().min(1))
-      .optional()
+      .nullish()
       .describe(
         "List of task IDs to await. When omitted, waits for all active descendant tasks of the current workspace."
       ),
     filter: z
       .string()
-      .optional()
+      .nullish()
       .describe(
         "Optional regex to filter bash task output lines. By default, only matching lines are returned. " +
           "When filter_exclude is true, matching lines are excluded instead. " +
@@ -218,7 +242,7 @@ export const TaskAwaitToolArgsSchema = z
       ),
     filter_exclude: z
       .boolean()
-      .optional()
+      .nullish()
       .describe(
         "When true, lines matching 'filter' are excluded instead of kept. " +
           "Requires 'filter' to be set."
@@ -226,7 +250,7 @@ export const TaskAwaitToolArgsSchema = z
     timeout_secs: z
       .number()
       .min(0)
-      .optional()
+      .nullish()
       .default(600)
       .describe(
         "Maximum time to wait in seconds for each task. " +
@@ -347,14 +371,14 @@ export const TaskApplyGitPatchToolArgsSchema = z
     task_id: z.string().min(1).describe("Child task ID whose patch artifact should be applied"),
     dry_run: z
       .boolean()
-      .optional()
+      .nullish()
       .describe(
         "When true, attempt to apply the patch in a temporary git worktree and then discard it (does not modify the current workspace)."
       ),
-    three_way: z.boolean().optional().default(true).describe("When true, run git am with --3way"),
+    three_way: z.boolean().nullish().default(true).describe("When true, run git am with --3way"),
     force: z
       .boolean()
-      .optional()
+      .nullish()
       .describe(
         "When true, allow apply even if the patch was previously applied (and skip clean-tree checks)."
       ),
@@ -457,14 +481,20 @@ export const TaskTerminateToolResultSchema = z
 // task_list (list descendant sub-agent tasks)
 // -----------------------------------------------------------------------------
 
-const TaskListStatusSchema = z.enum(["queued", "running", "awaiting_report", "reported"]);
+const TaskListStatusSchema = z.enum([
+  "queued",
+  "running",
+  "awaiting_report",
+  "interrupted",
+  "reported",
+]);
 const TaskListThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh", "max"]);
 
 export const TaskListToolArgsSchema = z
   .object({
     statuses: z
       .array(TaskListStatusSchema)
-      .optional()
+      .nullish()
       .describe(
         "Task statuses to include. Defaults to active tasks: queued, running, awaiting_report."
       ),
@@ -499,14 +529,45 @@ export const TaskListToolResultSchema = z
 export const AgentReportToolArgsSchema = z
   .object({
     reportMarkdown: z.string().min(1),
-    title: z.string().optional(),
+    title: z.string().nullish(),
+  })
+  .strict();
+
+// -----------------------------------------------------------------------------
+// switch_agent (agent switching for Auto agent)
+// -----------------------------------------------------------------------------
+
+export const SwitchAgentToolArgsSchema = z
+  .object({
+    agentId: AgentIdSchema,
+    reason: z.string().max(512).nullish(),
+    followUp: z.string().nullish(),
   })
   .strict();
 
 export const AgentReportToolResultSchema = z.object({ success: z.literal(true) }).strict();
-const FILE_EDIT_FILE_PATH = z
+const FILE_TOOL_PATH = z
   .string()
   .describe("Path to the file to edit (absolute or relative to the current workspace)");
+
+/**
+ * Zod preprocessor: normalizes legacy `file_path` / `filePath` keys to canonical `path`.
+ * Signature is `unknown → unknown` because `z.preprocess` requires it.
+ */
+function normalizeFilePath(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+
+  const obj = value as Record<string, unknown>;
+
+  // Canonical `path` already present — let schema validation handle it.
+  if ("path" in obj) return value;
+
+  const resolved = extractToolFilePath(value);
+  if (resolved == null) return value;
+
+  const { file_path: _, filePath: __, ...rest } = obj;
+  return { ...rest, path: resolved };
+}
 
 interface ToolSchema {
   name: string;
@@ -517,6 +578,30 @@ interface ToolSchema {
     required: string[];
   };
 }
+
+/**
+ * Schema for a single keep-range item in the system1_keep_ranges tool.
+ * Extracted as a named export so internal code can derive the type via z.infer<>
+ * instead of maintaining a hand-written interface.
+ *
+ * Note: the tool schema applies .passthrough() on top of this to tolerate extra
+ * keys from models, but the inferred type is the strict shape.
+ */
+export const System1KeepRangeSchema = z.object({
+  start: z.coerce
+    .number()
+    .finite()
+    .min(1)
+    .describe("1-based start line (inclusive) in the numbered output"),
+  end: z.coerce
+    .number()
+    .finite()
+    .min(1)
+    .describe("1-based end line (inclusive) in the numbered output"),
+  // .nullish() accepts both null and undefined, so the preprocess
+  // hack that mapped null→undefined is no longer needed.
+  reason: z.string().nullish().describe("Optional short reason for keeping this range"),
+});
 
 /**
  * Tool definitions: single source of truth
@@ -586,21 +671,26 @@ export const TOOL_DEFINITIONS = {
   file_read: {
     description:
       "Read the contents of a file from the file system. Read as little as possible to complete the task.",
-    schema: z.object({
-      file_path: z.string().describe("The path to the file to read (absolute or relative)"),
-      offset: z
-        .number()
-        .int()
-        .positive()
-        .optional()
-        .describe("1-based starting line number (optional, defaults to 1)"),
-      limit: z
-        .number()
-        .int()
-        .positive()
-        .optional()
-        .describe("Number of lines to return from offset (optional, returns all if not specified)"),
-    }),
+    schema: z.preprocess(
+      normalizeFilePath,
+      z.object({
+        path: z.string().describe("The path to the file to read (absolute or relative)"),
+        offset: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe("1-based starting line number (optional, defaults to 1)"),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe(
+            "Number of lines to return from offset (optional, returns all if not specified)"
+          ),
+      })
+    ),
   },
   mux_global_agents_read: {
     description:
@@ -625,7 +715,7 @@ export const TOOL_DEFINITIONS = {
   agent_skill_read: {
     description:
       "Load an Agent Skill's SKILL.md (YAML frontmatter + markdown body) by name. " +
-      "Skills are discovered from <projectRoot>/.mux/skills/<name>/SKILL.md and ~/.mux/skills/<name>/SKILL.md.",
+      "Skills are discovered from <projectRoot>/.mux/skills/<name>/SKILL.md, ~/.mux/skills/<name>/SKILL.md, and ~/.agents/skills/<name>/SKILL.md.",
     schema: z
       .object({
         name: SkillNameSchema.describe("Skill name (directory name under the skills root)"),
@@ -648,13 +738,13 @@ export const TOOL_DEFINITIONS = {
           .number()
           .int()
           .positive()
-          .optional()
+          .nullish()
           .describe("1-based starting line number (optional, defaults to 1)"),
         limit: z
           .number()
           .int()
           .positive()
-          .optional()
+          .nullish()
           .describe(
             "Number of lines to return from offset (optional, returns all if not specified)"
           ),
@@ -666,41 +756,47 @@ export const TOOL_DEFINITIONS = {
     description:
       "⚠️ CRITICAL: Always check tool results - edits WILL fail if old_string is not found or unique. Do not proceed with dependent operations (commits, pushes, builds) until confirming success.\n\n" +
       "Apply one or more edits to a file by replacing exact text matches. All edits are applied sequentially. Each old_string must be unique in the file unless replace_count > 1 or replace_count is -1.",
-    schema: z.object({
-      file_path: FILE_EDIT_FILE_PATH,
-      old_string: z
-        .string()
-        .describe(
-          "The exact text to replace (must be unique in file if replace_count is 1). Include enough context (indentation, surrounding lines) to make it unique."
-        ),
-      new_string: z.string().describe("The replacement text"),
-      replace_count: z
-        .number()
-        .int()
-        .optional()
-        .describe(
-          "Number of occurrences to replace (default: 1). Use -1 to replace all occurrences. If 1, old_string must be unique in the file."
-        ),
-    }),
+    schema: z.preprocess(
+      normalizeFilePath,
+      z.object({
+        path: FILE_TOOL_PATH,
+        old_string: z
+          .string()
+          .describe(
+            "The exact text to replace (must be unique in file if replace_count is 1). Include enough context (indentation, surrounding lines) to make it unique."
+          ),
+        new_string: z.string().describe("The replacement text"),
+        replace_count: z
+          .number()
+          .int()
+          .nullish()
+          .describe(
+            "Number of occurrences to replace (default: 1). Use -1 to replace all occurrences. If 1, old_string must be unique in the file."
+          ),
+      })
+    ),
   },
   file_edit_replace_lines: {
     description:
       "⚠️ CRITICAL: Always check tool results - edits WILL fail if line numbers are invalid or file content has changed. Do not proceed with dependent operations (commits, pushes, builds) until confirming success.\n\n" +
       "Replace a range of lines in a file. Use this for line-based edits when you know the exact line numbers to modify.",
-    schema: z.object({
-      file_path: FILE_EDIT_FILE_PATH,
-      start_line: z.number().int().min(1).describe("1-indexed start line (inclusive) to replace"),
-      end_line: z.number().int().min(1).describe("1-indexed end line (inclusive) to replace"),
-      new_lines: z
-        .array(z.string())
-        .describe("Replacement lines. Provide an empty array to delete the specified range."),
-      expected_lines: z
-        .array(z.string())
-        .optional()
-        .describe(
-          "Optional safety check. When provided, the current lines in the specified range must match exactly."
-        ),
-    }),
+    schema: z.preprocess(
+      normalizeFilePath,
+      z.object({
+        path: FILE_TOOL_PATH,
+        start_line: z.number().int().min(1).describe("1-indexed start line (inclusive) to replace"),
+        end_line: z.number().int().min(1).describe("1-indexed end line (inclusive) to replace"),
+        new_lines: z
+          .array(z.string())
+          .describe("Replacement lines. Provide an empty array to delete the specified range."),
+        expected_lines: z
+          .array(z.string())
+          .nullish()
+          .describe(
+            "Optional safety check. When provided, the current lines in the specified range must match exactly."
+          ),
+      })
+    ),
   },
   file_edit_insert: {
     description:
@@ -710,29 +806,32 @@ export const TOOL_DEFINITIONS = {
       "Optional before/after substrings must uniquely match surrounding content. " +
       "Avoid short guards like `}` or `}\\n` that match multiple locations — " +
       `use longer patterns like full function signatures or unique comments. ${TOOL_EDIT_WARNING}`,
-    schema: z
-      .object({
-        file_path: FILE_EDIT_FILE_PATH,
-        insert_before: z
-          .string()
-          .min(1)
-          .optional()
-          .describe(
-            "Anchor text to insert before. Content will be placed immediately before this substring."
-          ),
-        insert_after: z
-          .string()
-          .min(1)
-          .optional()
-          .describe(
-            "Anchor text to insert after. Content will be placed immediately after this substring."
-          ),
-        content: z.string().describe("The content to insert"),
-      })
-      .refine((data) => !(data.insert_before !== undefined && data.insert_after !== undefined), {
-        message: "Provide only one of insert_before or insert_after (not both).",
-        path: ["insert_before"],
-      }),
+    schema: z.preprocess(
+      normalizeFilePath,
+      z
+        .object({
+          path: FILE_TOOL_PATH,
+          insert_before: z
+            .string()
+            .min(1)
+            .nullish()
+            .describe(
+              "Anchor text to insert before. Content will be placed immediately before this substring."
+            ),
+          insert_after: z
+            .string()
+            .min(1)
+            .nullish()
+            .describe(
+              "Anchor text to insert after. Content will be placed immediately after this substring."
+            ),
+          content: z.string().describe("The content to insert"),
+        })
+        .refine((data) => !(data.insert_before != null && data.insert_after != null), {
+          message: "Provide only one of insert_before or insert_after (not both).",
+          path: ["insert_before"],
+        })
+    ),
   },
   ask_user_question: {
     description:
@@ -805,6 +904,13 @@ export const TOOL_DEFINITIONS = {
       "Call this exactly once when you have a final answer (after any spawned sub-tasks complete).",
     schema: AgentReportToolArgsSchema,
   },
+  switch_agent: {
+    description:
+      "Switch to a different agent and restart the stream. " +
+      "Only UI-selectable agents can be targeted. " +
+      "The current stream will end and a new stream will start with the selected agent.",
+    schema: SwitchAgentToolArgsSchema,
+  },
   system1_keep_ranges: {
     description:
       "Internal tool used by mux to record which line ranges to keep when filtering large bash output.",
@@ -812,25 +918,7 @@ export const TOOL_DEFINITIONS = {
       .object({
         keep_ranges: z
           .array(
-            z
-              .object({
-                start: z.coerce
-                  .number()
-                  .finite()
-                  .min(1)
-                  .describe("1-based start line (inclusive) in the numbered output"),
-                end: z.coerce
-                  .number()
-                  .finite()
-                  .min(1)
-                  .describe("1-based end line (inclusive) in the numbered output"),
-                reason: z
-                  .preprocess(
-                    (value) => (value === null ? undefined : value),
-                    z.string().optional()
-                  )
-                  .describe("Optional short reason for keeping this range"),
-              })
+            System1KeepRangeSchema
               // Providers/models sometimes include extra keys in tool arguments; be permissive and
               // ignore them rather than failing the whole compaction call.
               .passthrough()
@@ -907,7 +995,7 @@ export const TOOL_DEFINITIONS = {
         url: z
           .string()
           .url()
-          .optional()
+          .nullish()
           .describe(
             "Optional URL to external resource with more details (e.g., Pull Request URL). The URL persists and is displayed to the user for easy access."
           ),
@@ -928,7 +1016,7 @@ export const TOOL_DEFINITIONS = {
       process_id: z.string().describe("The ID of the background process to retrieve output from"),
       filter: z
         .string()
-        .optional()
+        .nullish()
         .describe(
           "Optional regex to filter output lines. By default, only matching lines are returned. " +
             "When filter_exclude is true, matching lines are excluded instead. " +
@@ -936,7 +1024,7 @@ export const TOOL_DEFINITIONS = {
         ),
       filter_exclude: z
         .boolean()
-        .optional()
+        .nullish()
         .describe(
           "When true, lines matching 'filter' are excluded instead of kept. " +
             "Key behavior: excluded lines do NOT cause early return from timeout - " +
@@ -1009,7 +1097,7 @@ export const TOOL_DEFINITIONS = {
         message: z
           .string()
           .max(200)
-          .optional()
+          .nullish()
           .describe(
             "Optional notification body with more details (max 200 chars). " +
               "Keep it brief - users may only see a preview."
@@ -1282,6 +1370,9 @@ export type BridgeableToolName =
   | "agent_skill_read_file"
   | "file_edit_insert"
   | "file_edit_replace_string"
+  // Note: for Anthropic models, web_fetch is replaced by a provider-native tool
+  // (webFetch_20250910) that has no execute(). ToolBridge's hasExecute filter will drop it
+  // from the PTC sandbox for those sessions. That silent absence is intentional and accepted.
   | "web_fetch"
   | "task"
   | "task_await"
@@ -1366,6 +1457,7 @@ export function getAvailableTools(
     "task_terminate",
     "task_list",
     ...(enableAgentReport ? ["agent_report"] : []),
+    "switch_agent",
     "system1_keep_ranges",
     "todo_write",
     "todo_read",

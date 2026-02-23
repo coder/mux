@@ -58,6 +58,7 @@ make benchmark-terminal TB_ENV=daytona TB_CONCURRENCY=48 TB_TASK_NAMES="chess-be
 - `TB_ENV`: Environment to run in (`local` or `daytona`)
 - `TB_TASK_NAMES`: Space-separated task names to run (default: all tasks)
 - `TB_ARGS`: Additional arguments passed to harbor
+- `MUX_RUN_ARGS`: CLI flags passed directly to `mux run` inside the container (e.g., `--thinking high --use-1m --budget 5.00`). This is the primary mechanism for all `mux run` flags — avoids per-flag plumbing.
 
 ### Timeout Handling
 
@@ -87,21 +88,35 @@ TB_TIMEOUT=600 make benchmark-terminal TB_SAMPLE_SIZE=5
 
 ## Agent Configuration
 
-The mux agent supports the following kwargs (passed via `--agent-kwarg`):
+The agent adapter accepts a few Harbor kwargs (passed via `--agent-kwarg`):
 
 - `model_name`: Model to use (e.g., `anthropic/claude-sonnet-4-5`, `openai/gpt-5-codex`)
-- `thinking_level`: Thinking level (`off`, `low`, `medium`, `high`)
-- `mode`: Agent mode (`plan`, `exec`)
 - `experiments`: Experiments to enable, comma-separated (e.g., `programmatic-tool-calling`)
 
-**Example:**
+All other `mux run` CLI flags (thinking level, mode, runtime, budget, etc.) are passed via `MUX_RUN_ARGS` — no per-flag plumbing needed.
+
+**CI dispatch (primary method):**
 
 ```bash
-# Run with specific model and thinking level
-make benchmark-terminal TB_ARGS="--agent-kwarg model_name=openai/gpt-5-codex --agent-kwarg thinking_level=high"
+# Run with model, thinking, and 1M context
+gh workflow run terminal-bench.yml \
+  -f model_name=anthropic/claude-opus-4-6 \
+  -f mux_run_args="--thinking xhigh --use-1m"
 
-# Run with multiple experiments
-make benchmark-terminal TB_ARGS="--agent-kwarg experiments=programmatic-tool-calling-exclusive,post-compaction-context"
+# Run with budget cap
+gh workflow run terminal-bench.yml \
+  -f model_name=anthropic/claude-opus-4-6 \
+  -f mux_run_args="--thinking high --budget 5.00"
+```
+
+**Local runs:**
+
+```bash
+# Pass flags via MUX_RUN_ARGS env var
+MUX_RUN_ARGS="--thinking high --use-1m" make benchmark-terminal
+
+# Model and experiments via TB_ARGS
+make benchmark-terminal TB_ARGS="--agent-kwarg model_name=openai/gpt-5-codex --agent-kwarg experiments=programmatic-tool-calling"
 ```
 
 ## Results
@@ -136,15 +151,24 @@ To submit mux results to the [Terminal-Bench 2.0 leaderboard](https://tbench.ai/
 
 ### Step 1: Prepare Submission
 
+The leaderboard computes pass@k from multiple attempts per task. Provide
+multiple runs so each becomes its own job folder inside the submission.
+
 ```bash
-# Download latest successful nightly run and prepare submission folder
+# Download latest 5 successful nightly runs (recommended for submission)
+python3 benchmarks/terminal_bench/prepare_leaderboard_submission.py --n-runs 5
+
+# Use specific run IDs (each becomes a separate job folder)
+python3 benchmarks/terminal_bench/prepare_leaderboard_submission.py --run-id 111 222 333 444 555
+
+# Use multiple existing artifact directories
+python3 benchmarks/terminal_bench/prepare_leaderboard_submission.py --artifacts-dir ./run1 ./run2
+
+# Download latest single run (quick iteration)
 python3 benchmarks/terminal_bench/prepare_leaderboard_submission.py
 
-# Use a specific run ID
-python3 benchmarks/terminal_bench/prepare_leaderboard_submission.py --run-id 20939412042
-
 # Only prepare specific models
-python3 benchmarks/terminal_bench/prepare_leaderboard_submission.py --models anthropic/claude-opus-4-5
+python3 benchmarks/terminal_bench/prepare_leaderboard_submission.py --n-runs 5 --models anthropic/claude-opus-4-5
 ```
 
 This creates a properly structured submission folder at `leaderboard_submission/` containing:
@@ -152,7 +176,7 @@ This creates a properly structured submission folder at `leaderboard_submission/
 ```
 submissions/terminal-bench/2.0/Mux__<model>/
   metadata.yaml       # Agent and model info
-  <job-folder>/       # Results from the run
+  <job-folder-1>/     # Results from run 1
     config.json
     result.json
     <trial-1>/
@@ -161,27 +185,52 @@ submissions/terminal-bench/2.0/Mux__<model>/
       agent/
       verifier/
     ...
+  <job-folder-2>/     # Results from run 2
+    ...
 ```
 
-### Step 2: Submit via HuggingFace CLI
+### Step 2: Submit via HuggingFace Python API
+
+The `hf upload` CLI tends to timeout on large submissions due to LFS file handling.
+Use the Python API with an extended timeout instead:
 
 ```bash
-# Install hf CLI (via uv or pip)
-uv tool install huggingface_hub
-# or: pip install huggingface_hub
+# Install huggingface_hub (via uv or pip)
+pip install huggingface_hub
 
 # Authenticate (one-time setup)
 hf auth login
+```
 
-# Upload and create PR
-hf upload alexgshaw/terminal-bench-2-leaderboard \
-  ./leaderboard_submission/submissions submissions \
-  --repo-type dataset \
-  --create-pr \
-  --commit-message "Mux submission (YYYY-MM-DD)"
+```python
+import httpx
+from huggingface_hub import HfApi
+from huggingface_hub.utils import configure_http_backend
+
+configure_http_backend(
+    backend_factory=lambda: httpx.Client(timeout=httpx.Timeout(300.0, connect=60.0))
+)
+
+api = HfApi()
+api.upload_folder(
+    repo_id="alexgshaw/terminal-bench-2-leaderboard",
+    folder_path="./leaderboard_submission/submissions",
+    path_in_repo="submissions",
+    repo_type="dataset",
+    create_pr=True,
+    commit_message="Add Mux + <Model> submission",
+    commit_description="- Agent: Mux (Coder)\n- Model: <model>\n- <N> tasks × <K> attempts",
+)
 ```
 
 The PR will be automatically validated by the leaderboard bot. Once merged, results appear on the leaderboard.
+
+**Tips from past submissions:**
+
+- The prepare script already strips `*.log` files (they trigger HF LFS and cause timeouts)
+- `--artifacts-dir` accepts raw job folders directly (e.g., an extracted tarball root)
+- To update an existing PR, pass `revision="refs/pr/<N>"` instead of `create_pr=True`
+- To remove stale files from a PR, use `api.delete_folder(..., revision="refs/pr/<N>")`
 
 ## Files
 

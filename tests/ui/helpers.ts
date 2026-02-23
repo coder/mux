@@ -154,6 +154,14 @@ export async function setupWorkspaceView(
     { timeout: 10_000 }
   );
   fireEvent.click(workspaceElement);
+
+  // Ensure the workspace is registered and activated in the store so that
+  // runOnChatSubscription starts. In the real app, WorkspaceContext handles
+  // registration via syncWorkspaces and activation via useLayoutEffect, but
+  // in happy-dom tests these may not have completed by the time the test
+  // asserts on transcript content. Both calls are idempotent.
+  workspaceStore.addWorkspace(metadata);
+  workspaceStore.setActiveWorkspaceId(workspaceId);
 }
 
 /**
@@ -440,6 +448,24 @@ export function waitForAheadStatus(
     workspaceId,
     (s) => (s.ahead ?? 0) >= minAhead,
     `ahead >= ${minAhead}`,
+    timeoutMs
+  );
+}
+
+/**
+ * Wait for git status to report a specific branch name.
+ */
+export function waitForBranchStatus(
+  container: HTMLElement,
+  workspaceId: string,
+  expectedBranch: string,
+  timeoutMs: number = 60_000
+): Promise<GitStatus> {
+  return waitForGitStatus(
+    container,
+    workspaceId,
+    (s) => s.branch === expectedBranch,
+    `branch === "${expectedBranch}"`,
     timeoutMs
   );
 }

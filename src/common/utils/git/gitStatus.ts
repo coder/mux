@@ -91,7 +91,12 @@ if [ -n "$MERGE_BASE" ]; then
   fi
 fi
 
+# Detect current HEAD branch (for branch selector updates)
+HEAD_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+
 # Output sections
+echo "---HEAD_BRANCH---"
+echo "$HEAD_BRANCH"
 echo "---PRIMARY---"
 echo "$PRIMARY_BRANCH"
 echo "---AHEAD_BEHIND---"
@@ -113,6 +118,8 @@ export const GIT_STATUS_SCRIPT = generateGitStatusScript();
  * Frontend-safe parsing function.
  */
 export interface ParsedGitStatusOutput {
+  /** The current HEAD branch (empty string if detached HEAD) */
+  headBranch: string;
   primaryBranch: string;
   ahead: number;
   behind: number;
@@ -125,11 +132,13 @@ export interface ParsedGitStatusOutput {
 
 export function parseGitStatusScriptOutput(output: string): ParsedGitStatusOutput | null {
   // Split by section markers using regex to get content between markers
+  const headBranchRegex = /---HEAD_BRANCH---\s*([\s\S]*?)---PRIMARY---/;
   const primaryRegex = /---PRIMARY---\s*([\s\S]*?)---AHEAD_BEHIND---/;
   const aheadBehindRegex = /---AHEAD_BEHIND---\s*(\d+)\s+(\d+)/;
   const dirtyRegex = /---DIRTY---\s*(\d+)/;
   const lineDeltaRegex = /---LINE_DELTA---\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/;
 
+  const headBranchMatch = headBranchRegex.exec(output);
   const primaryMatch = primaryRegex.exec(output);
   const aheadBehindMatch = aheadBehindRegex.exec(output);
   const dirtyMatch = dirtyRegex.exec(output);
@@ -152,6 +161,7 @@ export function parseGitStatusScriptOutput(output: string): ParsedGitStatusOutpu
   const incomingDeletions = lineDeltaMatch ? parseInt(lineDeltaMatch[4], 10) : 0;
 
   return {
+    headBranch: headBranchMatch ? headBranchMatch[1].trim() : "",
     primaryBranch: primaryMatch[1].trim(),
     ahead,
     behind,

@@ -12,7 +12,7 @@ import type { VoiceInputState } from "@/browser/hooks/useVoiceInput";
 
 interface VoiceInputButtonProps {
   state: VoiceInputState;
-  isApiKeySet: boolean;
+  isAvailable: boolean;
   shouldShowUI: boolean;
   requiresSecureContext: boolean;
   onToggle: () => void;
@@ -31,14 +31,17 @@ const STATE_COLORS: Record<Exclude<VoiceInputState, "recording">, string> = {
 export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
   if (!props.shouldShowUI) return null;
 
+  // Allow stop/cancel controls while actively recording or transcribing,
+  // even if voice input became unavailable mid-session (e.g. from another window).
+  const isActiveSession = props.state === "recording" || props.state === "transcribing";
   const needsHttps = props.requiresSecureContext;
-  const needsApiKey = !needsHttps && !props.isApiKeySet;
-  const isDisabled = needsHttps || needsApiKey;
+  const notConfigured = !needsHttps && !props.isAvailable;
+  const isDisabled = !isActiveSession && (needsHttps || notConfigured);
 
   const label = isDisabled
     ? needsHttps
       ? "Voice input (requires HTTPS)"
-      : "Voice input (requires OpenAI API key)"
+      : "Voice input (not configured)"
     : props.state === "recording"
       ? "Stop recording"
       : props.state === "transcribing"
@@ -81,20 +84,25 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
             <br />
             Use HTTPS or access via localhost.
           </>
-        ) : needsApiKey ? (
+        ) : notConfigured ? (
           <>
-            Voice input requires OpenAI API key.
+            Voice input requires a Mux Gateway login or an OpenAI API key.
             <br />
             Configure in Settings → Providers.
           </>
         ) : (
           <>
-            <strong>Voice input</strong> — press space on empty input
+            <strong>Voice input</strong> —{" "}
+            <span className="mobile-hide-shortcut-hints">press space on empty input</span>
             <br />
-            or {formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT)} anytime
+            <span className="mobile-hide-shortcut-hints">
+              or {formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT)} anytime
+            </span>
             <br />
             <br />
-            While recording: space sends, esc cancels
+            <span className="mobile-hide-shortcut-hints">
+              While recording: space sends, esc cancels
+            </span>
           </>
         )}
       </TooltipContent>

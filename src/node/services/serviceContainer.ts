@@ -39,19 +39,24 @@ import type {
 } from "@/common/types/stream";
 import { FeatureFlagService } from "@/node/services/featureFlagService";
 import { SessionTimingService } from "@/node/services/sessionTimingService";
+import { AnalyticsService } from "@/node/services/analytics/analyticsService";
 import { ExperimentsService } from "@/node/services/experimentsService";
 import { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import { McpOauthService } from "@/node/services/mcpOauthService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
 import { getSigningService, type SigningService } from "@/node/services/signingService";
 import { coderService, type CoderService } from "@/node/services/coderService";
+import { SshPromptService } from "@/node/services/sshPromptService";
 import { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
 import {
   createStartCoderOnUnarchiveHook,
   createStopCoderOnArchiveHook,
 } from "@/node/runtime/coderLifecycleHooks";
 import { setGlobalCoderService } from "@/node/runtime/runtimeFactory";
+import { setSshPromptService } from "@/node/runtime/sshConnectionPool";
+import { setSshPromptService as setSSH2SshPromptService } from "@/node/runtime/SSH2ConnectionPool";
 import { PolicyService } from "@/node/services/policyService";
+import { ServerAuthService } from "@/node/services/serverAuthService";
 import type { ORPCContext } from "@/node/orpc/context";
 
 const MUX_HELP_CHAT_WELCOME_MESSAGE_ID = "mux-chat-welcome";
@@ -108,10 +113,13 @@ export class ServiceContainer {
   public readonly telemetryService: TelemetryService;
   public readonly featureFlagService: FeatureFlagService;
   public readonly sessionTimingService: SessionTimingService;
+  public readonly analyticsService: AnalyticsService;
   public readonly experimentsService: ExperimentsService;
   public readonly signingService: SigningService;
   public readonly policyService: PolicyService;
   public readonly coderService: CoderService;
+  public readonly serverAuthService: ServerAuthService;
+  public readonly sshPromptService = new SshPromptService();
   private readonly ptyService: PTYService;
   public readonly idleCompactionService: IdleCompactionService;
 
@@ -127,6 +135,7 @@ export class ServiceContainer {
       muxHome: config.rootDir,
     });
     this.sessionTimingService = new SessionTimingService(config, this.telemetryService);
+    this.analyticsService = new AnalyticsService(config);
 
     // Desktop passes WorkspaceMcpOverridesService explicitly so AIService uses
     // the persistent config rather than creating a default with an ephemeral one.
@@ -154,14 +163,14 @@ export class ServiceContainer {
     this.extensionMetadata = core.extensionMetadata;
     this.backgroundProcessManager = core.backgroundProcessManager;
 
-    this.projectService = new ProjectService(config);
+    this.projectService = new ProjectService(config, this.sshPromptService);
 
     // Idle compaction service - auto-compacts workspaces after configured idle period
     this.idleCompactionService = new IdleCompactionService(
       config,
       this.historyService,
       this.extensionMetadata,
-      (workspaceId) => this.workspaceService.emitIdleCompactionNeeded(workspaceId)
+      (workspaceId) => this.workspaceService.executeIdleCompaction(workspaceId)
     );
     this.windowService = new WindowService();
     this.mcpOauthService = new McpOauthService(
@@ -195,14 +204,16 @@ export class ServiceContainer {
     this.workspaceService.setTerminalService(this.terminalService);
     // Editor service for opening workspaces in code editors
     this.editorService = new EditorService(config);
-    this.updateService = new UpdateService();
+    this.updateService = new UpdateService(this.config);
     this.tokenizerService = new TokenizerService(this.sessionUsageService);
     this.serverService = new ServerService();
     this.menuEventService = new MenuEventService();
-    this.voiceService = new VoiceService(config);
+    this.voiceService = new VoiceService(config, this.providerService, this.policyService);
     this.featureFlagService = new FeatureFlagService(config, this.telemetryService);
     this.signingService = getSigningService();
     this.coderService = coderService;
+
+    this.serverAuthService = new ServerAuthService(config);
 
     const workspaceLifecycleHooks = new WorkspaceLifecycleHooks();
     workspaceLifecycleHooks.registerBeforeArchive(
@@ -223,6 +234,8 @@ export class ServiceContainer {
 
     // Register globally so all createRuntime calls can create CoderSSHRuntime
     setGlobalCoderService(this.coderService);
+    setSshPromptService(this.sshPromptService);
+    setSSH2SshPromptService(this.sshPromptService);
 
     // Backend timing stats (behind feature flag).
     this.aiService.on("stream-start", (data: StreamStartEvent) =>
@@ -243,9 +256,29 @@ export class ServiceContainer {
     this.aiService.on("tool-call-end", (data: ToolCallEndEvent) =>
       this.sessionTimingService.handleToolCallEnd(data)
     );
-    this.aiService.on("stream-end", (data: StreamEndEvent) =>
-      this.sessionTimingService.handleStreamEnd(data)
-    );
+    this.aiService.on("stream-end", (data: StreamEndEvent) => {
+      this.sessionTimingService.handleStreamEnd(data);
+
+      const workspaceLookup = this.config.findWorkspace(data.workspaceId);
+      const sessionDir = this.config.getSessionDir(data.workspaceId);
+      this.analyticsService.ingestWorkspace(data.workspaceId, sessionDir, {
+        projectPath: workspaceLookup?.projectPath,
+        projectName: workspaceLookup?.projectPath
+          ? path.basename(workspaceLookup.projectPath)
+          : undefined,
+      });
+    });
+    // WorkspaceService emits metadata:null after successful remove().
+    // Clear analytics rows immediately so deleted workspaces disappear from stats
+    // without waiting for a future ingest pass.
+    this.workspaceService.on("metadata", (event) => {
+      if (event.metadata !== null) {
+        return;
+      }
+
+      this.analyticsService.clearWorkspace(event.workspaceId);
+    });
+
     this.aiService.on("stream-abort", (data: StreamAbortEvent) =>
       this.sessionTimingService.handleStreamAbort(data)
     );
@@ -293,6 +326,50 @@ export class ServiceContainer {
     await fsPromises.mkdir(projectPath, { recursive: true });
 
     await this.config.editConfig((config) => {
+      // Dev builds can run with a different MUX_ROOT (for example ~/.mux-dev).
+      // If config.json still has the built-in mux-chat workspace under an older root
+      // (for example ~/.mux), the sidebar can show duplicate "Chat with Mux" entries.
+      // Only treat entries as stale when they still look like a system Mux project so
+      // we do not delete unrelated legacy user workspaces whose generated ID happened
+      // to collide with "mux-chat" (e.g. project basename "mux" + workspace "chat").
+      const staleProjectPaths: string[] = [];
+      for (const [existingProjectPath, existingProjectConfig] of config.projects) {
+        if (existingProjectPath === projectPath) {
+          continue;
+        }
+
+        const isSystemMuxProjectPath =
+          path.basename(existingProjectPath) === "Mux" &&
+          path.basename(path.dirname(existingProjectPath)) === "system";
+
+        if (!isSystemMuxProjectPath) {
+          continue;
+        }
+
+        existingProjectConfig.workspaces = existingProjectConfig.workspaces.filter((workspace) => {
+          const isMuxChatWorkspace = workspace.id === MUX_HELP_CHAT_WORKSPACE_ID;
+          if (!isMuxChatWorkspace) {
+            return true;
+          }
+
+          const looksLikeSystemMuxChat =
+            workspace.agentId === MUX_HELP_CHAT_AGENT_ID ||
+            workspace.path === existingProjectPath ||
+            workspace.name === MUX_HELP_CHAT_WORKSPACE_NAME ||
+            workspace.title === MUX_HELP_CHAT_WORKSPACE_TITLE;
+
+          return !looksLikeSystemMuxChat;
+        });
+
+        if (existingProjectConfig.workspaces.length === 0) {
+          staleProjectPaths.push(existingProjectPath);
+        }
+      }
+
+      for (const staleProjectPath of staleProjectPaths) {
+        config.projects.delete(staleProjectPath);
+      }
+
       let projectConfig = config.projects.get(projectPath);
       if (!projectConfig) {
         projectConfig = { workspaces: [] };
@@ -300,27 +377,28 @@ export class ServiceContainer {
       }
 
       const existing = projectConfig.workspaces.find((w) => w.id === MUX_HELP_CHAT_WORKSPACE_ID);
-      if (!existing) {
-        projectConfig.workspaces.push({
-          path: projectPath,
-          id: MUX_HELP_CHAT_WORKSPACE_ID,
-          name: MUX_HELP_CHAT_WORKSPACE_NAME,
-          title: MUX_HELP_CHAT_WORKSPACE_TITLE,
-          agentId: MUX_HELP_CHAT_AGENT_ID,
-          createdAt: new Date().toISOString(),
-          runtimeConfig: { type: "local" },
-        });
-        return config;
-      }
 
-      // Self-heal: enforce invariants for the system workspace.
-      existing.path = projectPath;
-      existing.name = MUX_HELP_CHAT_WORKSPACE_NAME;
-      existing.title = MUX_HELP_CHAT_WORKSPACE_TITLE;
-      existing.agentId = MUX_HELP_CHAT_AGENT_ID;
-      existing.createdAt ??= new Date().toISOString();
-      existing.runtimeConfig = { type: "local" };
-      existing.archivedAt = undefined;
+      // Self-heal: enforce invariants for the system workspace and collapse duplicates
+      // in the active system project down to exactly one mux-chat entry.
+      const muxChatWorkspace = {
+        ...existing,
+        path: projectPath,
+        id: MUX_HELP_CHAT_WORKSPACE_ID,
+        name: MUX_HELP_CHAT_WORKSPACE_NAME,
+        title: MUX_HELP_CHAT_WORKSPACE_TITLE,
+        agentId: MUX_HELP_CHAT_AGENT_ID,
+        createdAt: existing?.createdAt ?? new Date().toISOString(),
+        runtimeConfig: { type: "local" } as const,
+        archivedAt: undefined,
+        unarchivedAt: undefined,
+      };
+
+      projectConfig.workspaces = [
+        ...projectConfig.workspaces.filter(
+          (workspace) => workspace.id !== MUX_HELP_CHAT_WORKSPACE_ID
+        ),
+        muxChatWorkspace,
+      ];
 
       return config;
     });
@@ -329,15 +407,8 @@ export class ServiceContainer {
   }
 
   private async ensureMuxChatWelcomeMessage(): Promise<void> {
-    const historyResult = await this.historyService.getHistory(MUX_HELP_CHAT_WORKSPACE_ID);
-    if (!historyResult.success) {
-      log.warn("[ServiceContainer] Failed to read mux-chat history for welcome message", {
-        error: historyResult.error,
-      });
-      return;
-    }
-
-    if (historyResult.data.length > 0) {
+    // Only need to check if any history exists — avoid parsing the entire file
+    if (await this.historyService.hasHistory(MUX_HELP_CHAT_WORKSPACE_ID)) {
       return;
     }
 
@@ -397,6 +468,9 @@ export class ServiceContainer {
       policyService: this.policyService,
       signingService: this.signingService,
       coderService: this.coderService,
+      serverAuthService: this.serverAuthService,
+      sshPromptService: this.sshPromptService,
+      analyticsService: this.analyticsService,
     };
   }
 
@@ -405,6 +479,7 @@ export class ServiceContainer {
    */
   async shutdown(): Promise<void> {
     this.idleCompactionService.stop();
+    await this.analyticsService.dispose();
     await this.telemetryService.shutdown();
   }
 
@@ -421,6 +496,7 @@ export class ServiceContainer {
    * Terminates all background processes to prevent orphans.
    */
   async dispose(): Promise<void> {
+    await this.analyticsService.dispose();
     this.policyService.dispose();
     this.mcpServerManager.dispose();
     await this.mcpOauthService.dispose();
@@ -429,6 +505,7 @@ export class ServiceContainer {
     await this.codexOauthService.dispose();
 
     this.copilotOauthService.dispose();
+    this.serverAuthService.dispose();
     await this.backgroundProcessManager.terminateAll();
   }
 }

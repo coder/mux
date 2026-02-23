@@ -288,6 +288,188 @@ mux.file_read({ path: "wrong" });`,
     expect(result.errors.some((e) => e.message.includes("count"))).toBe(true);
   });
 
+  test("allows reads from {} after bracket writes", () => {
+    // The exact pattern that triggered this fix: bracket writes then dot reads
+    const result = validateTypes(
+      `
+      const results = {};
+      const files = [{ label: "a" }, { label: "b" }];
+      for (const f of files) { results[f.label] = mux.file_read({ filePath: f.label }); }
+      return results.a.success;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("allows multiple dot reads from {} bag after bracket writes", () => {
+    // The full pattern: bracket writes then multiple dot reads with chained access
+    const result = validateTypes(
+      `
+      const results = {};
+      const files = [{ path: "a.go", label: "conn" }, { path: "b.go", label: "sdk" }];
+      for (const f of files) { results[f.label] = mux.file_read({ filePath: f.path }); }
+      return results.conn.success ? results.conn.content : results.sdk.error;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("catches bag reads in bracket-write RHS before assignment applies", () => {
+    const result = validateTypes(
+      `
+      const r = {};
+      r["a"] = r.typo;
+    `,
+      muxTypes
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("typo"))).toBe(true);
+  });
+
+  test("catches bag reads in bracket-write index expression before assignment applies", () => {
+    const result = validateTypes(
+      `
+      const r = {};
+      r[r.typo] = 1;
+    `,
+      muxTypes
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("typo"))).toBe(true);
+  });
+  test("does not suppress bag reads in nested function due to outer writes", () => {
+    const result = validateTypes(
+      `
+      const r = {};
+      r["a"] = 1;
+      function f() { return r.typo; }
+    `,
+      muxTypes
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("typo"))).toBe(true);
+  });
+
+  test("allows bag reads inside nested function after in-scope bracket write", () => {
+    const result = validateTypes(
+      `
+      const r = {};
+      function f() {
+        r["a"] = 1;
+        return r.a;
+      }
+      return f();
+    `,
+      muxTypes
+    );
+
+    expect(result.valid).toBe(true);
+  });
+  test("catches bag reads before first bracket write", () => {
+    const result = validateTypes(
+      `
+      const r = {};
+      return r.typo;
+      r["a"] = 1;
+    `,
+      muxTypes
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("typo"))).toBe(true);
+  });
+
+  test("catches bag reads when only nested function writes exist", () => {
+    const result = validateTypes(
+      `
+      const r = {};
+      function fill() { r["a"] = 1; }
+      return r.typo;
+    `,
+      muxTypes
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("typo"))).toBe(true);
+  });
+  test("does not suppress TS2339 for shadowed bag name in inner scope", () => {
+    const result = validateTypes(
+      `
+      const results = {};
+      results["a"] = 1;
+      {
+        const results = {};
+        return results.typo;
+      }
+    `,
+      muxTypes
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("typo"))).toBe(true);
+  });
+
+  test("does not treat let {} + bracket writes as a dynamic bag (reassignment hazard)", () => {
+    const result = validateTypes(
+      `
+      let results = {};
+      results["a"] = 1;
+      results = { ok: true };
+      return results.typo;
+    `,
+      muxTypes
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("typo"))).toBe(true);
+  });
+
+  test("still catches mux shadowing with {}", () => {
+    // const mux = {} must NOT be treated as a dynamic bag — shadowing mux is a real bug
+    const result = validateTypes(
+      `
+      const mux = {};
+      mux.file_read({ filePath: "test.txt" });
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("file_read"))).toBe(true);
+  });
+
+  test("catches reads on {} without bracket writes (not a dynamic bag)", () => {
+    // Only dot-notation writes — no bracket writes — should NOT suppress reads
+    const result = validateTypes(
+      `
+      const data = {};
+      data.x = 1;
+      return data.y;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("y"))).toBe(true);
+  });
+
+  test("catches compound assignment on {} bag (+=)", () => {
+    // Even on a dynamic bag variable, compound assignment reads first — should error
+    const result = validateTypes(
+      `
+      const results = {};
+      results["key"] = 1;
+      results.count += 1;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("count"))).toBe(true);
+  });
+
   test("accepts ES2021+ features (replaceAll, at, etc.)", () => {
     const result = validateTypes(
       `

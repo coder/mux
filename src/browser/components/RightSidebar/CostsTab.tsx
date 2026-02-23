@@ -1,6 +1,6 @@
 import React from "react";
 import { useWorkspaceUsage, useWorkspaceConsumers } from "@/browser/stores/WorkspaceStore";
-import { getModelStats } from "@/common/utils/tokens/modelStats";
+import { getModelStatsResolved } from "@/common/utils/tokens/modelStats";
 import {
   sumUsageHistory,
   formatCostWithDollar,
@@ -11,6 +11,7 @@ import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
 import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
 import { ToggleGroup, type ToggleOption } from "../ToggleGroup";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
+import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { supports1MContext } from "@/common/utils/ai/models";
 import {
   TOKEN_COMPONENT_COLORS,
@@ -20,7 +21,10 @@ import {
 import { ConsumerBreakdown } from "./ConsumerBreakdown";
 import { FileBreakdown } from "./FileBreakdown";
 import { ContextUsageBar } from "./ContextUsageBar";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
+import { getEffectiveContextLimit } from "@/common/utils/compaction/contextLimit";
+
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { PostCompactionSection } from "./PostCompactionSection";
 import { usePostCompactionState } from "@/browser/hooks/usePostCompactionState";
@@ -60,6 +64,8 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
     listener: true,
   });
   const { has1MContext } = useProviderOptions();
+  const pendingSendOptions = useSendMessageOptions(workspaceId);
+  const { config: providersConfig } = useProvidersConfig();
 
   // Post-compaction context state for UI display
   const postCompactionState = usePostCompactionState(workspaceId);
@@ -68,16 +74,16 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   const workspaceContext = useOptionalWorkspaceContext();
   const runtimeConfig = workspaceContext?.workspaceMetadata.get(workspaceId)?.runtimeConfig;
 
-  // Get model from context usage for per-model threshold storage
-  // Use lastContextUsage for context window display (last step's usage)
-  const contextUsageForModel = usage.liveUsage ?? usage.lastContextUsage;
-  const currentModel = contextUsageForModel?.model ?? null;
+  // Token counts come from usage metadata, but context limits/1M eligibility should
+  // follow the currently selected model unless a stream is actively running.
+  const contextDisplayModel = usage.liveUsage?.model ?? pendingSendOptions.baseModel;
   // Align warning with /compact model resolution so it matches actual compaction behavior.
-  const effectiveCompactionModel = resolveCompactionModel(preferredCompactionModel) ?? currentModel;
+  const effectiveCompactionModel =
+    resolveCompactionModel(preferredCompactionModel) ?? contextDisplayModel;
 
   // Auto-compaction settings: threshold per-model (100 = disabled)
   const { threshold: autoCompactThreshold, setThreshold: setAutoCompactThreshold } =
-    useAutoCompactionSettings(workspaceId, currentModel);
+    useAutoCompactionSettings(workspaceId, contextDisplayModel);
 
   // Session usage for cost calculation
   // Uses sessionTotal (pre-computed) + liveCostUsage (cumulative during streaming)
@@ -121,10 +127,15 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
           <div data-testid="context-usage-list" className="flex flex-col gap-3">
             {(() => {
               const contextUsage = usage.liveUsage ?? usage.lastContextUsage;
-              const model = contextUsage?.model ?? "unknown";
 
               const contextUsageData = contextUsage
-                ? calculateTokenMeterData(contextUsage, model, has1MContext(model), false)
+                ? calculateTokenMeterData(
+                    contextUsage,
+                    contextDisplayModel,
+                    has1MContext(contextDisplayModel),
+                    false,
+                    providersConfig
+                  )
                 : { segments: [], totalTokens: 0, totalPercentage: 0 };
 
               // Warn when the compaction model can't fit the auto-compact threshold to avoid failures.
@@ -134,12 +145,11 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                   return undefined;
 
                 const thresholdTokens = Math.round((autoCompactThreshold / 100) * maxTokens);
-                const compactionStats = getModelStats(effectiveCompactionModel);
-                const compactionMaxTokens =
-                  has1MContext(effectiveCompactionModel) &&
-                  supports1MContext(effectiveCompactionModel)
-                    ? 1_000_000
-                    : compactionStats?.max_input_tokens;
+                const compactionMaxTokens = getEffectiveContextLimit(
+                  effectiveCompactionModel,
+                  has1MContext(effectiveCompactionModel),
+                  providersConfig
+                );
 
                 if (compactionMaxTokens && compactionMaxTokens < thresholdTokens) {
                   return { compactionModelMaxTokens: compactionMaxTokens, thresholdTokens };
@@ -151,7 +161,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                 <ContextUsageBar
                   testId="context-usage"
                   data={contextUsageData}
-                  model={model}
+                  model={contextDisplayModel}
                   autoCompaction={{
                     threshold: autoCompactThreshold,
                     setThreshold: setAutoCompactThreshold,
@@ -179,7 +189,8 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
               // Cost and Details use viewMode-dependent data
               // Get model from the displayUsage (which could be last request or session sum)
               const model = displayUsage?.model ?? lastRequestUsage?.model ?? "unknown";
-              const modelStats = getModelStats(model);
+              const modelStats = getModelStatsResolved(model, providersConfig);
+              // 1M pricing is provider-level (Anthropic/Gemini), gated on runtime model.
               const is1MActive = has1MContext(model) && supports1MContext(model);
 
               // Helper to calculate cost percentage

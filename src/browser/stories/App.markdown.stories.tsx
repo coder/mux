@@ -116,6 +116,39 @@ Code blocks without language (regression: avoid extra vertical spacing):
 65d02772b 🤖 feat: Settings-driven model selector with visibility controls
 \`\`\``;
 
+const BLOCKQUOTE_CONTENT = `Here are blockquote examples:
+
+## Simple Blockquote
+
+> This is a simple blockquote. It should look clean and visually distinct from the surrounding text.
+
+## Multi-line Blockquote
+
+> This is a longer blockquote that spans multiple lines. It demonstrates how the styling
+> holds up with more content. The background and border should make it easy to distinguish
+> from normal paragraph text.
+
+## Blockquote with Inline Formatting
+
+> **Important:** You can use \`inline code\`, **bold**, and *italic* inside blockquotes.
+> They should all render correctly within the styled container.
+
+## Nested Blockquotes
+
+> Outer blockquote
+>
+> > Inner nested blockquote with additional context.
+>
+> Back to the outer level.
+
+## Blockquote after a Paragraph
+
+Here is some regular text before a blockquote.
+
+> And here is the blockquote that follows.
+
+And some text after.`;
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // STORIES
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -481,4 +514,27 @@ export const LongLinesOverflow: AppStory = {
     const hasHorizontalScroll = scrollContainer.scrollWidth > scrollContainer.clientWidth;
     await expect(hasHorizontalScroll).toBe(false);
   },
+};
+
+/** Blockquotes - styled with background tint, left border accent, and rounded corners */
+export const Blockquotes: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-blockquotes",
+          messages: [
+            createUserMessage("msg-1", "Show me blockquote examples", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 100000,
+            }),
+            createAssistantMessage("msg-2", BLOCKQUOTE_CONTENT, {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 90000,
+            }),
+          ],
+        })
+      }
+    />
+  ),
 };

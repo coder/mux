@@ -20,7 +20,7 @@ import { useResizableSidebar } from "./hooks/useResizableSidebar";
 import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
 import { handleLayoutSlotHotkeys } from "./utils/ui/layoutSlotHotkeys";
 import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
-import { useResumeManager } from "./hooks/useResumeManager";
+import { getVisibleWorkspaceIds } from "./utils/ui/workspaceDomNav";
 import { useUnreadTracking } from "./hooks/useUnreadTracking";
 import { useWorkspaceStoreRaw, useWorkspaceRecency } from "./stores/WorkspaceStore";
 
@@ -43,6 +43,7 @@ import {
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
+  getWorkspaceLastReadKey,
   EXPANDED_PROJECTS_KEY,
   LEFT_SIDEBAR_COLLAPSED_KEY,
   LEFT_SIDEBAR_WIDTH_KEY,
@@ -63,8 +64,13 @@ import { Button } from "./components/ui/button";
 import { ProjectPage } from "@/browser/components/ProjectPage";
 
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
-import { SettingsModal } from "./components/Settings/SettingsModal";
+import { AboutDialogProvider } from "./contexts/AboutDialogContext";
+import { ConfirmDialogProvider, useConfirmDialog } from "./contexts/ConfirmDialogContext";
+import { AboutDialog } from "./components/About/AboutDialog";
+import { SettingsPage } from "@/browser/components/Settings/SettingsPage";
+import { AnalyticsDashboard } from "@/browser/components/analytics/AnalyticsDashboard";
 import { MuxGatewaySessionExpiredDialog } from "./components/MuxGatewaySessionExpiredDialog";
+import { SshPromptDialog } from "./components/SshPromptDialog";
 import { SplashScreenProvider } from "./components/splashScreens/SplashScreenProvider";
 import { TutorialProvider } from "./contexts/TutorialContext";
 import { PowerModeProvider } from "./contexts/PowerModeContext";
@@ -79,6 +85,8 @@ import { WindowsToolchainBanner } from "./components/WindowsToolchainBanner";
 import { RosettaBanner } from "./components/RosettaBanner";
 import { isDesktopMode } from "./hooks/useDesktopTitlebar";
 import { cn } from "@/common/lib/utils";
+import { getErrorMessage } from "@/common/utils/errors";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 function AppInner() {
   // Get workspace state from context
@@ -87,7 +95,8 @@ function AppInner() {
     loading,
     setWorkspaceMetadata,
     removeWorkspace,
-    renameWorkspace,
+    updateWorkspaceTitle,
+    refreshWorkspaceMetadata,
     selectedWorkspace,
     setSelectedWorkspace,
     pendingNewWorkspaceProject,
@@ -95,9 +104,16 @@ function AppInner() {
     pendingNewWorkspaceDraftId,
     beginWorkspaceCreation,
   } = useWorkspaceContext();
-  const { currentWorkspaceId } = useRouter();
+  const {
+    currentWorkspaceId,
+    currentSettingsSection,
+    isAnalyticsOpen,
+    navigateToAnalytics,
+    navigateFromAnalytics,
+  } = useRouter();
   const { theme, setTheme, toggleTheme } = useTheme();
   const { open: openSettings, isOpen: isSettingsOpen } = useSettings();
+  const { confirm: confirmDialog } = useConfirmDialog();
   const setThemePreference = useCallback(
     (nextTheme: ThemeMode) => {
       setTheme(nextTheme);
@@ -105,7 +121,7 @@ function AppInner() {
     [setTheme]
   );
   const { layoutPresets, applySlotToWorkspace, saveCurrentWorkspaceToSlot } = useUILayouts();
-  const { api, status, error, authenticate } = useAPI();
+  const { api, status, error, authenticate, retry } = useAPI();
 
   const {
     projects,
@@ -194,6 +210,9 @@ function AppInner() {
   // Ref for selectedWorkspace to access in callbacks without stale closures
   const selectedWorkspaceRef = useRef(selectedWorkspace);
   selectedWorkspaceRef.current = selectedWorkspace;
+  // Ref for route-level workspace visibility to avoid stale closure in response callbacks
+  const currentWorkspaceIdRef = useRef(currentWorkspaceId);
+  currentWorkspaceIdRef.current = currentWorkspaceId;
   useEffect(() => {
     const prev = prevWorkspaceRef.current;
     if (prev && selectedWorkspace && prev.workspaceId !== selectedWorkspace.workspaceId) {
@@ -202,16 +221,35 @@ function AppInner() {
     prevWorkspaceRef.current = selectedWorkspace;
   }, [selectedWorkspace, telemetry]);
 
-  // Track last-read timestamps for unread indicators
-  useUnreadTracking(selectedWorkspace);
+  // Track last-read timestamps for unread indicators.
+  // Read-marking is gated on chat-route visibility (currentWorkspaceId).
+  useUnreadTracking(selectedWorkspace, currentWorkspaceId);
 
   const workspaceMetadataRef = useRef(workspaceMetadata);
   useEffect(() => {
     workspaceMetadataRef.current = workspaceMetadata;
   }, [workspaceMetadata]);
 
-  // Auto-resume interrupted streams on app startup and when failures occur
-  useResumeManager();
+  const handleOpenMuxChat = useCallback(() => {
+    // User requested an F1 shortcut to jump straight into Chat with Mux.
+    const metadata = workspaceMetadataRef.current.get(MUX_HELP_CHAT_WORKSPACE_ID);
+    setSelectedWorkspace(
+      metadata
+        ? toWorkspaceSelection(metadata)
+        : {
+            workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+            projectPath: "",
+            projectName: "Mux",
+            namedWorkspacePath: "",
+          }
+    );
+
+    if (!metadata) {
+      refreshWorkspaceMetadata().catch((error) => {
+        console.error("Failed to refresh workspace metadata", error);
+      });
+    }
+  }, [refreshWorkspaceMetadata, setSelectedWorkspace]);
 
   // Update window title based on selected workspace
   // URL syncing is now handled by RouterContext
@@ -294,11 +332,8 @@ function AppInner() {
 
   const handleNavigateWorkspace = useCallback(
     (direction: "next" | "prev") => {
-      // Read actual rendered workspace order from DOM - impossible to drift from sidebar
-      // Use compound selector to target only row elements (not archive buttons or edit inputs)
-      const els = document.querySelectorAll("[data-workspace-id][data-workspace-path]");
-      const visibleIds = Array.from(els).map((el) => el.getAttribute("data-workspace-id")!);
-
+      // Read actual rendered workspace order from DOM — impossible to drift from sidebar.
+      const visibleIds = getVisibleWorkspaceIds();
       if (visibleIds.length === 0) return;
 
       const currentIndex = selectedWorkspace
@@ -384,8 +419,9 @@ function AppInner() {
       >;
 
       const normalizedAgentId =
-        readPersistedState<string>(getAgentIdKey(workspaceId), "exec").trim().toLowerCase() ||
-        "exec";
+        readPersistedState<string>(getAgentIdKey(workspaceId), WORKSPACE_DEFAULTS.agentId)
+          .trim()
+          .toLowerCase() || WORKSPACE_DEFAULTS.agentId;
 
       updatePersistedState<WorkspaceAISettingsByAgentCache>(
         getWorkspaceAISettingsByAgentKey(workspaceId),
@@ -489,7 +525,7 @@ function AppInner() {
           }
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         if (typeof window !== "undefined") {
           window.alert(message);
         }
@@ -533,9 +569,9 @@ function AppInner() {
     [removeWorkspace]
   );
 
-  const renameWorkspaceFromPalette = useCallback(
-    async (workspaceId: string, newName: string) => renameWorkspace(workspaceId, newName),
-    [renameWorkspace]
+  const updateTitleFromPalette = useCallback(
+    async (workspaceId: string, newTitle: string) => updateWorkspaceTitle(workspaceId, newTitle),
+    [updateWorkspaceTitle]
   );
 
   const addProjectFromPalette = useCallback(() => {
@@ -572,7 +608,7 @@ function AppInner() {
     getBranchesForProject,
     onSelectWorkspace: selectWorkspaceFromPalette,
     onRemoveWorkspace: removeWorkspaceFromPalette,
-    onRenameWorkspace: renameWorkspaceFromPalette,
+    onUpdateTitle: updateTitleFromPalette,
     onAddProject: addProjectFromPalette,
     onRemoveProject: removeProjectFromPalette,
     onToggleSidebar: toggleSidebarFromPalette,
@@ -601,6 +637,7 @@ function AppInner() {
     },
     onClearTimingStats: (workspaceId: string) => workspaceStore.clearTimingStats(workspaceId),
     api,
+    confirmDialog,
   };
 
   useEffect(() => {
@@ -637,25 +674,47 @@ function AppInner() {
   // Handle keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) {
+        return;
+      }
+
       if (matchesKeybind(e, KEYBINDS.NEXT_WORKSPACE)) {
         e.preventDefault();
         handleNavigateWorkspace("next");
       } else if (matchesKeybind(e, KEYBINDS.PREV_WORKSPACE)) {
         e.preventDefault();
         handleNavigateWorkspace("prev");
-      } else if (matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE)) {
+      } else if (
+        matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE) ||
+        matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE_ACTIONS)
+      ) {
         e.preventDefault();
         if (isCommandPaletteOpen) {
           closeCommandPalette();
         } else {
-          openCommandPalette();
+          // Alternate palette shortcut opens in command mode (with ">") while the
+          // primary Ctrl/Cmd+Shift+P shortcut opens default workspace-switch mode.
+          const initialQuery = matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE_ACTIONS)
+            ? ">"
+            : undefined;
+          openCommandPalette(initialQuery);
         }
+      } else if (matchesKeybind(e, KEYBINDS.OPEN_MUX_CHAT)) {
+        e.preventDefault();
+        handleOpenMuxChat();
       } else if (matchesKeybind(e, KEYBINDS.TOGGLE_SIDEBAR)) {
         e.preventDefault();
         setSidebarCollapsed((prev) => !prev);
       } else if (matchesKeybind(e, KEYBINDS.OPEN_SETTINGS)) {
         e.preventDefault();
         openSettings();
+      } else if (matchesKeybind(e, KEYBINDS.OPEN_ANALYTICS)) {
+        e.preventDefault();
+        if (isAnalyticsOpen) {
+          navigateFromAnalytics();
+        } else {
+          navigateToAnalytics();
+        }
       } else if (matchesKeybind(e, KEYBINDS.NAVIGATE_BACK)) {
         e.preventDefault();
         void navigate(-1);
@@ -669,12 +728,15 @@ function AppInner() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     handleNavigateWorkspace,
+    handleOpenMuxChat,
     setSidebarCollapsed,
     isCommandPaletteOpen,
     closeCommandPalette,
     openCommandPalette,
-    creationProjectPath,
     openSettings,
+    isAnalyticsOpen,
+    navigateToAnalytics,
+    navigateFromAnalytics,
     navigate,
   ]);
   // Mouse back/forward buttons (buttons 3 and 4)
@@ -805,17 +867,31 @@ function AppInner() {
       _messageId: string,
       isFinal: boolean,
       finalText: string,
-      compaction?: { hasContinueMessage: boolean }
+      compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
+      completedAt?: number | null
     ) => {
       // Only notify on final message (when assistant is done with all work)
       if (!isFinal) return;
+
+      // Only mark read when the user is actively viewing this workspace's chat.
+      // Checking currentWorkspaceIdRef ensures we don't advance lastRead when
+      // a non-chat route (e.g. /settings) is active — the workspace remains
+      // "selected" but the chat content is not visible.
+      const isChatVisible = document.hasFocus() && currentWorkspaceIdRef.current === workspaceId;
+      if (completedAt != null && isChatVisible) {
+        updatePersistedState(getWorkspaceLastReadKey(workspaceId), completedAt);
+      }
+
+      // Skip notification for idle compaction (background maintenance, not user-initiated).
+      if (compaction?.isIdle) return;
 
       // Skip notification if compaction completed with a continue message.
       // We use the compaction metadata instead of queued state since the queue
       // can be drained before compaction finishes.
       if (compaction?.hasContinueMessage) return;
 
-      // Skip notification if workspace is focused (like Slack behavior)
+      // Skip notification if the selected workspace is focused (Slack-like behavior).
+      // Notification suppression intentionally follows selection state, not chat-route visibility.
       const isWorkspaceFocused =
         document.hasFocus() && selectedWorkspaceRef.current?.workspaceId === workspaceId;
       if (isWorkspaceFocused) return;
@@ -871,7 +947,14 @@ function AppInner() {
 
   // Show auth modal if authentication is required
   if (status === "auth_required") {
-    return <AuthTokenModal isOpen={true} onSubmit={authenticate} error={error} />;
+    return (
+      <AuthTokenModal
+        isOpen={true}
+        onSubmit={authenticate}
+        onSessionAuthenticated={retry}
+        error={error}
+      />
+    );
   }
 
   return (
@@ -894,7 +977,18 @@ function AppInner() {
           <WindowsToolchainBanner />
           <RosettaBanner />
           <div className="mobile-layout flex flex-1 overflow-hidden">
-            {selectedWorkspace ? (
+            {/* Route-driven settings and analytics render in the main pane so project/workspace navigation stays visible. */}
+            {isAnalyticsOpen ? (
+              <AnalyticsDashboard
+                leftSidebarCollapsed={sidebarCollapsed}
+                onToggleLeftSidebarCollapsed={handleToggleSidebar}
+              />
+            ) : currentSettingsSection ? (
+              <SettingsPage
+                leftSidebarCollapsed={sidebarCollapsed}
+                onToggleLeftSidebarCollapsed={handleToggleSidebar}
+              />
+            ) : selectedWorkspace ? (
               (() => {
                 const currentMetadata = workspaceMetadata.get(selectedWorkspace.workspaceId);
                 // Guard: Don't render AIView if workspace metadata not found.
@@ -927,7 +1021,7 @@ function AppInner() {
                       namedWorkspacePath={workspacePath}
                       runtimeConfig={currentMetadata.runtimeConfig}
                       incompatibleRuntime={currentMetadata.incompatibleRuntime}
-                      status={currentMetadata.status}
+                      isInitializing={currentMetadata.isInitializing === true}
                     />
                   </ErrorBoundary>
                 );
@@ -1042,8 +1136,9 @@ function AppInner() {
             beginWorkspaceCreation(normalizedPath);
           }}
         />
-        <SettingsModal />
+        <AboutDialog />
         <MuxGatewaySessionExpiredDialog />
+        <SshPromptDialog />
       </div>
     </>
   );
@@ -1056,17 +1151,21 @@ function App() {
         <UILayoutsProvider>
           <TooltipProvider delayDuration={200}>
             <SettingsProvider>
-              <ProviderOptionsProvider>
-                <SplashScreenProvider>
-                  <TutorialProvider>
-                    <CommandRegistryProvider>
-                      <PowerModeProvider>
-                        <AppInner />
-                      </PowerModeProvider>
-                    </CommandRegistryProvider>
-                  </TutorialProvider>
-                </SplashScreenProvider>
-              </ProviderOptionsProvider>
+              <AboutDialogProvider>
+                <ProviderOptionsProvider>
+                  <SplashScreenProvider>
+                    <TutorialProvider>
+                      <CommandRegistryProvider>
+                        <PowerModeProvider>
+                          <ConfirmDialogProvider>
+                            <AppInner />
+                          </ConfirmDialogProvider>
+                        </PowerModeProvider>
+                      </CommandRegistryProvider>
+                    </TutorialProvider>
+                  </SplashScreenProvider>
+                </ProviderOptionsProvider>
+              </AboutDialogProvider>
             </SettingsProvider>
           </TooltipProvider>
         </UILayoutsProvider>

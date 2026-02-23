@@ -10,16 +10,23 @@
  */
 
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
+import type { ParsedThinkingInput } from "@/common/types/thinking";
 
 export type ParsedCommand =
   | { type: "model-set"; modelString: string }
-  | { type: "model-oneshot"; modelString: string; message: string }
+  | {
+      type: "model-oneshot";
+      /** Resolved model string (e.g. "anthropic:claude-haiku-4"). Undefined when only thinking is overridden (e.g. "/+2"). */
+      modelString?: string;
+      /** One-shot thinking level override — named (ThinkingLevel) or numeric index (resolved at send time against the model's policy). */
+      thinkingLevel?: ParsedThinkingInput;
+      message: string;
+    }
   | { type: "model-help" }
   | { type: "clear" }
   | { type: "truncate"; percentage: number }
   | { type: "compact"; maxOutputTokens?: number; continueMessage?: string; model?: string }
-  | { type: "fork"; newName: string; startMessage?: string }
-  | { type: "fork-help" }
+  | { type: "fork"; startMessage?: string }
   | {
       type: "new";
       workspaceName?: string;

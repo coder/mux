@@ -8,6 +8,7 @@ import type { MuxMessage } from "@/common/types/message";
 import type { EditedFileAttachment } from "@/node/services/agentSession";
 import type { PostCompactionAttachment } from "@/common/types/attachment";
 import { MAX_POST_COMPACTION_INJECTION_CHARS } from "@/common/constants/attachments";
+import { findLatestCompactionBoundaryIndex } from "@/common/utils/messages/compactionBoundary";
 import { renderAttachmentsToContentWithBudget } from "./attachmentRenderer";
 
 /**
@@ -300,6 +301,24 @@ export function injectFileChangeNotifications(
   return [...messages, syntheticMessage];
 }
 
+function findLatestLegacyCompactionSummaryIndex(messages: MuxMessage[]): number {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message.role !== "assistant") {
+      continue;
+    }
+
+    const compacted = message.metadata?.compacted;
+    if (compacted === undefined || compacted === false) {
+      continue;
+    }
+
+    return i;
+  }
+
+  return -1;
+}
+
 /**
  * Inject post-compaction attachments as a synthetic user message.
  * When compaction occurs, this injects a message containing plan file content
@@ -320,8 +339,13 @@ export function injectPostCompactionAttachments(
     return messages;
   }
 
-  // Find the compaction summary message (marked with metadata.compacted)
-  const compactionIndex = messages.findIndex((msg) => msg.metadata?.compacted);
+  const durableCompactionIndex = findLatestCompactionBoundaryIndex(messages);
+  // Durable boundaries are authoritative for current histories. Legacy histories
+  // only have metadata.compacted, so fall back to that marker when needed.
+  const compactionIndex =
+    durableCompactionIndex !== -1
+      ? durableCompactionIndex
+      : findLatestLegacyCompactionSummaryIndex(messages);
 
   if (compactionIndex === -1) {
     // No compaction message found - this shouldn't happen if attachments are provided,
@@ -1191,12 +1215,6 @@ export function transformModelMessages(
   provider: string,
   options?: {
     anthropicThinkingEnabled?: boolean;
-    /**
-     * Append [CONTINUE] user message if conversation ends with an assistant message.
-     * Required for models that don't support prefill (e.g., Opus 4.6).
-     * Uses a sentinel instead of stripping to avoid silent context loss.
-     */
-    noPrefill?: boolean;
   }
 ): ModelMessage[] {
   // Pass 0: Coalesce consecutive parts to reduce JSON overhead from streaming (applies to all providers)
@@ -1234,16 +1252,6 @@ export function transformModelMessages(
 
   // Pass 5: Merge consecutive user messages (applies to all providers)
   const merged = mergeConsecutiveUserMessages(reasoningHandled);
-
-  // Pass 6: Ensure conversation doesn't end with an assistant message (prefill).
-  // Some models (e.g., Opus 4.6) reject prefilled assistant messages with a 400 error.
-  // Earlier transforms (stripOrphanedToolCalls, filterReasoningOnlyMessages, etc.) can
-  // remove messages and re-expose a trailing assistant after addInterruptedSentinel ran.
-  // Appending a [CONTINUE] user sentinel preserves the assistant context while ensuring
-  // the conversation ends with a user message.
-  if (options?.noPrefill && merged.length > 0 && merged[merged.length - 1].role === "assistant") {
-    merged.push({ role: "user", content: [{ type: "text", text: "[CONTINUE]" }] });
-  }
 
   return merged;
 }

@@ -17,13 +17,20 @@ import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { SearchableModelSelect } from "../components/SearchableModelSelect";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { isCodexOauthRequiredModelId } from "@/common/constants/codexOAuth";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
-import { supports1MContext } from "@/common/utils/ai/models";
+import { getModelProvider, supports1MContext } from "@/common/utils/ai/models";
 import { getAllowedProvidersForUi, isModelAllowedByPolicy } from "@/browser/utils/policyUi";
 import {
   LAST_CUSTOM_MODEL_PROVIDER_KEY,
   PREFERRED_COMPACTION_MODEL_KEY,
 } from "@/common/constants/storage";
+import type { ProviderModelEntry } from "@/common/orpc/types";
+import {
+  getProviderModelEntryContextWindowTokens,
+  getProviderModelEntryId,
+  getProviderModelEntryMappedTo,
+} from "@/common/utils/providers/modelEntries";
 import { ModelRow } from "./ModelRow";
 
 // Providers to exclude from the custom models UI (handled specially or internal)
@@ -50,6 +57,55 @@ interface EditingState {
   provider: string;
   originalModelId: string;
   newModelId: string;
+  contextWindowTokens: string;
+  mappedToModel: string;
+  focus?: "model" | "context";
+}
+
+function parseContextWindowTokensInput(value: string): number | null {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function buildProviderModelEntry(
+  modelId: string,
+  contextWindowTokens: number | null,
+  mappedToModel: string | null
+): ProviderModelEntry {
+  if (contextWindowTokens === null && mappedToModel === null) {
+    return modelId;
+  }
+
+  const entry: Exclude<ProviderModelEntry, string> = { id: modelId };
+  if (contextWindowTokens !== null) {
+    entry.contextWindowTokens = contextWindowTokens;
+  }
+  if (mappedToModel !== null) {
+    entry.mappedToModel = mappedToModel;
+  }
+
+  return entry;
+}
+
+export function shouldShowModelInSettings(modelId: string, codexOauthConfigured: boolean): boolean {
+  // OpenAI OAuth gating only applies to OpenAI-routed models; other providers can
+  // reuse the same providerModelId string without requiring OpenAI OAuth.
+  if (getModelProvider(modelId) !== "openai") {
+    return true;
+  }
+
+  // Keep OAuth-required OpenAI models out of Settings until OAuth is connected,
+  // so users don't pick defaults that fail at send time.
+  return codexOauthConfigured || !isCodexOauthRequiredModelId(modelId);
 }
 
 export function ModelsSection() {
@@ -99,10 +155,23 @@ export function ModelsSection() {
     [api, setCompactionModel]
   );
 
+  // Read OAuth state from this component's provider config source to avoid
+  // cross-hook timing mismatches while settings are loading/refetching.
+  const codexOauthConfigured = config?.openai?.codexOauthSet === true;
+
+  // "Treat as" dropdown should only list known models — custom models don't have
+  // the metadata (pricing, context window, tokenizer) that mapping inherits.
+  // Static list — React Compiler handles memoization; no manual useMemo needed.
+  const knownModelIds = Object.values(KNOWN_MODELS)
+    .map((model) => model.id)
+    .sort();
+
   // All models (including hidden) for the settings dropdowns.
   // PolicyService enforces model access on the backend, but we also filter here so users can't
   // select models that will be denied at send time.
-  const allModels = getSuggestedModels(config);
+  const allModels = getSuggestedModels(config).filter((model) =>
+    shouldShowModelInSettings(model, codexOauthConfigured)
+  );
   const selectableModels = effectivePolicy
     ? allModels.filter((model) => isModelAllowedByPolicy(effectivePolicy, model))
     : allModels;
@@ -112,7 +181,10 @@ export function ModelsSection() {
     (provider: string, modelId: string, excludeOriginal?: string): boolean => {
       if (!config) return false;
       const currentModels = config[provider]?.models ?? [];
-      return currentModels.some((m) => m === modelId && m !== excludeOriginal);
+      return currentModels.some((entry) => {
+        const currentModelId = getProviderModelEntryId(entry);
+        return currentModelId === modelId && currentModelId !== excludeOriginal;
+      });
     },
     [config]
   );
@@ -153,7 +225,7 @@ export function ModelsSection() {
 
       // Optimistic update - returns new models array for API call
       const updatedModels = updateModelsOptimistically(provider, (models) =>
-        models.filter((m) => m !== modelId)
+        models.filter((entry) => getProviderModelEntryId(entry) !== modelId)
       );
 
       // Save in background
@@ -162,10 +234,45 @@ export function ModelsSection() {
     [api, config, updateModelsOptimistically]
   );
 
-  const handleStartEdit = useCallback((provider: string, modelId: string) => {
-    setEditing({ provider, originalModelId: modelId, newModelId: modelId });
-    setError(null);
-  }, []);
+  const handleStartEdit = useCallback(
+    (
+      provider: string,
+      modelId: string,
+      contextWindowTokens: number | null,
+      mappedToModel: string | null
+    ) => {
+      setEditing({
+        provider,
+        originalModelId: modelId,
+        newModelId: modelId,
+        contextWindowTokens: contextWindowTokens === null ? "" : String(contextWindowTokens),
+        mappedToModel: mappedToModel ?? "",
+        focus: "model",
+      });
+      setError(null);
+    },
+    []
+  );
+
+  const handleStartContextEdit = useCallback(
+    (
+      provider: string,
+      modelId: string,
+      contextWindowTokens: number | null,
+      mappedToModel: string | null
+    ) => {
+      setEditing({
+        provider,
+        originalModelId: modelId,
+        newModelId: modelId,
+        contextWindowTokens: contextWindowTokens === null ? "" : String(contextWindowTokens),
+        mappedToModel: mappedToModel ?? "",
+        focus: "context",
+      });
+      setError(null);
+    },
+    []
+  );
 
   const handleCancelEdit = useCallback(() => {
     setEditing(null);
@@ -181,6 +288,13 @@ export function ModelsSection() {
       return;
     }
 
+    const contextWindowTokensInput = editing.contextWindowTokens.trim();
+    const parsedContextWindowTokens = parseContextWindowTokensInput(contextWindowTokensInput);
+    if (contextWindowTokensInput.length > 0 && parsedContextWindowTokens === null) {
+      setError("Context window must be a positive integer");
+      return;
+    }
+
     // Only validate duplicates if the model ID actually changed
     if (trimmedModelId !== editing.originalModelId) {
       if (modelExists(editing.provider, trimmedModelId)) {
@@ -191,10 +305,34 @@ export function ModelsSection() {
 
     setError(null);
 
-    // Optimistic update - returns new models array for API call
-    const updatedModels = updateModelsOptimistically(editing.provider, (models) =>
-      models.map((m) => (m === editing.originalModelId ? trimmedModelId : m))
+    const mappedTo = editing.mappedToModel.trim() || null;
+    const replacementEntry = buildProviderModelEntry(
+      trimmedModelId,
+      parsedContextWindowTokens,
+      mappedTo
     );
+
+    // Optimistic update - returns new models array for API call
+    const updatedModels = updateModelsOptimistically(editing.provider, (models) => {
+      const nextModels: ProviderModelEntry[] = [];
+      let replaced = false;
+
+      for (const modelEntry of models) {
+        if (!replaced && getProviderModelEntryId(modelEntry) === editing.originalModelId) {
+          nextModels.push(replacementEntry);
+          replaced = true;
+          continue;
+        }
+
+        nextModels.push(modelEntry);
+      }
+
+      if (!replaced) {
+        nextModels.push(replacementEntry);
+      }
+
+      return nextModels;
+    });
     setEditing(null);
 
     // Save in background
@@ -212,17 +350,38 @@ export function ModelsSection() {
   }
 
   // Get all custom models across providers (excluding hidden providers like mux-gateway)
-  const getCustomModels = (): Array<{ provider: string; modelId: string; fullId: string }> => {
-    const models: Array<{ provider: string; modelId: string; fullId: string }> = [];
+  const getCustomModels = (): Array<{
+    provider: string;
+    modelId: string;
+    fullId: string;
+    contextWindowTokens: number | null;
+    mappedToModel: string | null;
+  }> => {
+    const models: Array<{
+      provider: string;
+      modelId: string;
+      fullId: string;
+      contextWindowTokens: number | null;
+      mappedToModel: string | null;
+    }> = [];
+
     for (const [provider, providerConfig] of Object.entries(config)) {
       // Skip hidden providers (mux-gateway models are accessed via the cloud toggle, not listed separately)
       if (HIDDEN_PROVIDERS.has(provider)) continue;
-      if (providerConfig.models) {
-        for (const modelId of providerConfig.models) {
-          models.push({ provider, modelId, fullId: `${provider}:${modelId}` });
-        }
+      if (!providerConfig.models) continue;
+
+      for (const modelEntry of providerConfig.models) {
+        const modelId = getProviderModelEntryId(modelEntry);
+        models.push({
+          provider,
+          modelId,
+          fullId: `${provider}:${modelId}`,
+          contextWindowTokens: getProviderModelEntryContextWindowTokens(modelEntry),
+          mappedToModel: getProviderModelEntryMappedTo(modelEntry),
+        });
       }
     }
+
     return models;
   };
 
@@ -235,6 +394,7 @@ export function ModelsSection() {
       fullId: model.id,
       aliases: model.aliases,
     }))
+    .filter((model) => shouldShowModelInSettings(model.fullId, codexOauthConfigured))
     .filter((model) => isModelAllowedByPolicy(effectivePolicy, model.fullId));
 
   const customModels = getCustomModels();
@@ -350,21 +510,50 @@ export function ModelsSection() {
                       provider={model.provider}
                       modelId={model.modelId}
                       fullId={model.fullId}
+                      mappedToModel={model.mappedToModel}
                       isCustom={true}
                       isDefault={defaultModel === model.fullId}
                       isEditing={isModelEditing}
-                      editValue={isModelEditing ? editing.newModelId : undefined}
+                      editModelValue={isModelEditing ? editing.newModelId : undefined}
+                      editContextValue={isModelEditing ? editing.contextWindowTokens : undefined}
+                      editMappedToModel={isModelEditing ? editing.mappedToModel : undefined}
+                      editAutofocus={isModelEditing ? editing.focus : undefined}
+                      customContextWindowTokens={model.contextWindowTokens}
+                      allModels={knownModelIds}
                       editError={isModelEditing ? error : undefined}
                       saving={false}
                       hasActiveEdit={editing !== null}
                       isGatewayEnabled={gateway.modelUsesGateway(model.fullId)}
                       is1MContextEnabled={has1MContext(model.fullId)}
                       onSetDefault={() => setDefaultModel(model.fullId)}
-                      onStartEdit={() => handleStartEdit(model.provider, model.modelId)}
+                      onStartEdit={() =>
+                        handleStartEdit(
+                          model.provider,
+                          model.modelId,
+                          model.contextWindowTokens,
+                          model.mappedToModel
+                        )
+                      }
+                      onStartContextEdit={() =>
+                        handleStartContextEdit(
+                          model.provider,
+                          model.modelId,
+                          model.contextWindowTokens,
+                          model.mappedToModel
+                        )
+                      }
                       onSaveEdit={handleSaveEdit}
                       onCancelEdit={handleCancelEdit}
-                      onEditChange={(value) =>
+                      onEditModelChange={(value) =>
                         setEditing((prev) => (prev ? { ...prev, newModelId: value } : null))
+                      }
+                      onEditContextChange={(value) =>
+                        setEditing((prev) =>
+                          prev ? { ...prev, contextWindowTokens: value } : null
+                        )
+                      }
+                      onEditMappedToModelChange={(value) =>
+                        setEditing((prev) => (prev ? { ...prev, mappedToModel: value } : null))
                       }
                       onRemove={() => handleRemoveModel(model.provider, model.modelId)}
                       isHiddenFromSelector={hiddenModels.includes(model.fullId)}
@@ -434,6 +623,40 @@ export function ModelsSection() {
               ))}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* Oneshot Tips */}
+      <div className="space-y-2">
+        <div className="text-muted text-xs font-medium tracking-wide uppercase">
+          Quick Shortcuts
+        </div>
+        <div className="border-border-medium bg-background-secondary/50 rounded-md border px-3 py-2.5 text-xs leading-relaxed">
+          <p className="text-foreground mb-1.5 font-medium">
+            Use model aliases as slash commands for one-shot overrides:
+          </p>
+          <div className="text-muted space-y-0.5 font-mono">
+            <div>
+              <span className="text-accent">/sonnet</span> explain this code
+              <span className="text-muted/60 ml-2">— send one message with Sonnet</span>
+            </div>
+            <div>
+              <span className="text-accent">/opus+high</span> deep review
+              <span className="text-muted/60 ml-2">— Opus with high thinking</span>
+            </div>
+            <div>
+              <span className="text-accent">/haiku+0</span> quick answer
+              <span className="text-muted/60 ml-2">— Haiku with thinking off</span>
+            </div>
+            <div>
+              <span className="text-accent">/+2</span> analyze this
+              <span className="text-muted/60 ml-2">— current model, thinking level 2</span>
+            </div>
+          </div>
+          <p className="text-muted mt-1.5">
+            Numeric levels are relative to each model (0=lowest allowed, 1=next, etc.). Named
+            levels: off, low, med, high, max.
+          </p>
         </div>
       </div>
     </div>

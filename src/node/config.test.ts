@@ -75,6 +75,64 @@ describe("Config", () => {
     });
   });
 
+  describe("update channel preference", () => {
+    it("defaults to stable when no channel is configured", () => {
+      expect(config.getUpdateChannel()).toBe("stable");
+    });
+
+    it("persists nightly channel selection", async () => {
+      await config.setUpdateChannel("nightly");
+
+      const restartedConfig = new Config(tempDir);
+      expect(restartedConfig.getUpdateChannel()).toBe("nightly");
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        updateChannel?: unknown;
+      };
+      expect(raw.updateChannel).toBe("nightly");
+    });
+
+    it("persists explicit stable channel selection", async () => {
+      await config.setUpdateChannel("nightly");
+      await config.setUpdateChannel("stable");
+
+      const restartedConfig = new Config(tempDir);
+      expect(restartedConfig.getUpdateChannel()).toBe("stable");
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        updateChannel?: unknown;
+      };
+      expect(raw.updateChannel).toBe("stable");
+    });
+  });
+
+  describe("server GitHub owner auth setting", () => {
+    it("persists serverAuthGithubOwner", async () => {
+      await config.editConfig((cfg) => {
+        cfg.serverAuthGithubOwner = "octocat";
+        return cfg;
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.serverAuthGithubOwner).toBe("octocat");
+      expect(config.getServerAuthGithubOwner()).toBe("octocat");
+    });
+
+    it("ignores empty serverAuthGithubOwner values on load", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [],
+          serverAuthGithubOwner: "   ",
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.serverAuthGithubOwner).toBeUndefined();
+    });
+  });
+
   describe("model preferences", () => {
     it("should normalize and persist defaultModel, hiddenModels, and preferredCompactionModel", async () => {
       await config.editConfig((cfg) => {
@@ -278,7 +336,7 @@ describe("Config", () => {
       expect(parsed.__global__).toEqual([{ key: "GLOBAL_A", value: "1" }]);
     });
 
-    it("merges global + project secrets with project overriding by key", async () => {
+    it("does not inherit global secrets by default", async () => {
       await config.updateGlobalSecrets([
         { key: "TOKEN", value: "global" },
         { key: "A", value: "1" },
@@ -295,7 +353,6 @@ describe("Config", () => {
 
       expect(record).toEqual({
         TOKEN: "project",
-        A: "1",
         B: "2",
       });
     });
@@ -310,8 +367,21 @@ describe("Config", () => {
 
       const record = secretsToRecord(config.getEffectiveSecrets(projectPath));
       expect(record).toEqual({
-        GLOBAL_TOKEN: "abc",
         TOKEN: "abc",
+      });
+    });
+
+    it("resolves same-key project secret references to global values", async () => {
+      await config.updateGlobalSecrets([{ key: "OPENAI_API_KEY", value: "abc" }]);
+
+      const projectPath = "/fake/project";
+      await config.updateProjectSecrets(projectPath, [
+        { key: "OPENAI_API_KEY", value: { secret: "OPENAI_API_KEY" } },
+      ]);
+
+      const record = secretsToRecord(config.getEffectiveSecrets(projectPath));
+      expect(record).toEqual({
+        OPENAI_API_KEY: "abc",
       });
     });
 

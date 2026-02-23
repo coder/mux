@@ -1,7 +1,12 @@
 import { describe, it, expect } from "@jest/globals";
 
-import { shouldShowInterruptedBarrier } from "./messageUtils";
-import { mergeConsecutiveStreamErrors, computeBashOutputGroupInfo } from "./messageUtils";
+import {
+  shouldShowInterruptedBarrier,
+  mergeConsecutiveStreamErrors,
+  computeBashOutputGroupInfo,
+  computeBashOutputGroupInfos,
+  shouldBypassDeferredMessages,
+} from "./messageUtils";
 import type { DisplayedMessage } from "@/common/types/message";
 
 describe("shouldShowInterruptedBarrier", () => {
@@ -18,6 +23,17 @@ describe("shouldShowInterruptedBarrier", () => {
       historySequence: 2,
       streamSequence: 0,
       isLastPartOfMessage: true,
+    };
+
+    expect(shouldShowInterruptedBarrier(msg)).toBe(false);
+  });
+
+  it("returns false for decorative compaction boundary rows", () => {
+    const msg: DisplayedMessage = {
+      type: "compaction-boundary",
+      id: "boundary-1",
+      historySequence: 2,
+      position: "start",
     };
 
     expect(shouldShowInterruptedBarrier(msg)).toBe(false);
@@ -41,6 +57,59 @@ describe("shouldShowInterruptedBarrier", () => {
     expect(shouldShowInterruptedBarrier(msg)).toBe(true);
   });
 });
+describe("shouldBypassDeferredMessages", () => {
+  const executingBash: DisplayedMessage = {
+    type: "tool",
+    id: "t-executing",
+    historyId: "h-tool",
+    toolCallId: "call-1",
+    toolName: "bash",
+    args: { script: "echo hi", timeout_secs: 10, display_name: "test" },
+    status: "executing",
+    isPartial: false,
+    historySequence: 1,
+  };
+
+  const completedBash: DisplayedMessage = {
+    ...executingBash,
+    id: "t-completed",
+    status: "completed",
+    result: { success: true, output: "hi", exitCode: 0, wall_duration_ms: 5 },
+  };
+
+  it("returns true when immediate snapshot has active rows", () => {
+    expect(shouldBypassDeferredMessages([executingBash], [executingBash])).toBe(true);
+  });
+
+  it("returns true when deferred snapshot is stale and still executing", () => {
+    // Regression scenario: immediate list is completed, but deferred list still has
+    // stale executing tool state from the previous render.
+    expect(shouldBypassDeferredMessages([completedBash], [executingBash])).toBe(true);
+  });
+
+  it("returns true when deferred length is out of sync", () => {
+    expect(shouldBypassDeferredMessages([completedBash], [])).toBe(true);
+  });
+
+  it("returns true when snapshots have same length but different row identity/order", () => {
+    const userRow: DisplayedMessage = {
+      type: "user",
+      id: "u-1",
+      historyId: "h-user",
+      content: "hello",
+      historySequence: 0,
+    };
+
+    expect(shouldBypassDeferredMessages([completedBash, userRow], [userRow, completedBash])).toBe(
+      true
+    );
+  });
+
+  it("returns false when both snapshots are settled and in sync", () => {
+    expect(shouldBypassDeferredMessages([completedBash], [completedBash])).toBe(false);
+  });
+});
+
 describe("mergeConsecutiveStreamErrors", () => {
   it("returns empty array for empty input", () => {
     const result = mergeConsecutiveStreamErrors([]);
@@ -519,5 +588,31 @@ describe("computeBashOutputGroupInfo", () => {
     expect(computeBashOutputGroupInfo(messages, 1)?.firstIndex).toBe(0); // middle
     expect(computeBashOutputGroupInfo(messages, 2)?.firstIndex).toBe(0); // middle
     expect(computeBashOutputGroupInfo(messages, 3)?.firstIndex).toBe(0); // last
+  });
+
+  it("precomputes per-index group info in one pass", () => {
+    const messages: DisplayedMessage[] = [
+      createBashOutputMessage("1", "bash_1", 1),
+      createBashOutputMessage("2", "bash_1", 2),
+      createBashOutputMessage("3", "bash_1", 3),
+      {
+        type: "user",
+        id: "u1",
+        historyId: "hu1",
+        content: "between groups",
+        historySequence: 4,
+      },
+      createBashOutputMessage("4", "bash_2", 5),
+      createBashOutputMessage("5", "bash_2", 6),
+      createBashOutputMessage("6", "bash_2", 7),
+      createBashOutputMessage("7", "bash_2", 8),
+    ];
+
+    const precomputed = computeBashOutputGroupInfos(messages);
+    expect(precomputed).toHaveLength(messages.length);
+
+    for (let index = 0; index < messages.length; index++) {
+      expect(precomputed[index]).toEqual(computeBashOutputGroupInfo(messages, index));
+    }
   });
 });

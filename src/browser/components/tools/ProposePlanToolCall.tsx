@@ -28,9 +28,24 @@ import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "../PopoverError";
-import { getAgentIdKey, getPlanContentKey } from "@/common/constants/storage";
+import {
+  AGENT_AI_DEFAULTS_KEY,
+  getAgentIdKey,
+  getModelKey,
+  getPlanContentKey,
+  getThinkingLevelKey,
+  getWorkspaceAISettingsByAgentKey,
+} from "@/common/constants/storage";
+import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
+import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
+import {
+  resolveWorkspaceAiSettingsForAgent,
+  type WorkspaceAISettingsCache,
+} from "@/browser/utils/workspaceModeAi";
+import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import {
   Clipboard,
   ClipboardCheck,
@@ -43,6 +58,7 @@ import {
   X,
 } from "lucide-react";
 import { ShareMessagePopover } from "../ShareMessagePopover";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * Check if the result is a successful file-based propose_plan result.
@@ -346,6 +362,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       const result = await api.workspace.replaceChatHistory({
         workspaceId,
         summaryMessage,
+        mode: "append-compaction-boundary",
         deletePlanFile: false,
       });
 
@@ -355,6 +372,49 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     } catch (err) {
       console.error(args.errorContext, err);
     }
+  };
+
+  // User request: propose_plan primary actions send immediately after agent switch.
+  // Resolve and persist model/thinking synchronously here so the follow-up message
+  // uses the target agent defaults instead of stale planning-mode preferences.
+  const resolveAndPersistTargetAgentSettings = (args: {
+    workspaceId: string;
+    targetAgentId: "exec" | "orchestrator";
+  }): { resolvedModel: string; resolvedThinking: ThinkingLevel } => {
+    const modelKey = getModelKey(args.workspaceId);
+    const thinkingKey = getThinkingLevelKey(args.workspaceId);
+    const fallbackModel = getDefaultModel();
+
+    const existingModel = readPersistedState<string>(modelKey, fallbackModel);
+    const existingThinking = readPersistedState<ThinkingLevel>(thinkingKey, "off");
+    const agentAiDefaults = readPersistedState<AgentAiDefaults>(AGENT_AI_DEFAULTS_KEY, {});
+    const workspaceByAgent = readPersistedState<WorkspaceAISettingsCache>(
+      getWorkspaceAISettingsByAgentKey(args.workspaceId),
+      {}
+    );
+
+    const { resolvedModel, resolvedThinking } = resolveWorkspaceAiSettingsForAgent({
+      agentId: args.targetAgentId,
+      agentAiDefaults,
+      // Propose-plan actions are explicit mode switches; honor any per-agent
+      // workspace override before inheriting the previously active plan settings.
+      workspaceByAgent,
+      useWorkspaceByAgentFallback: true,
+      fallbackModel,
+      existingModel,
+      existingThinking,
+    });
+
+    updatePersistedState(getAgentIdKey(args.workspaceId), args.targetAgentId);
+
+    if (existingModel !== resolvedModel) {
+      setWorkspaceModelWithOrigin(args.workspaceId, resolvedModel, "agent");
+    }
+    if (existingThinking !== resolvedThinking) {
+      updatePersistedState(thinkingKey, resolvedThinking);
+    }
+
+    return { resolvedModel, resolvedThinking };
   };
 
   const handleStartOrchestrator = async () => {
@@ -384,15 +444,23 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
         });
       }
 
-      // Switch to orchestrator before sending so send options (agentId/mode) match.
-      updatePersistedState(getAgentIdKey(workspaceId), "orchestrator");
+      const targetAgentId = "orchestrator";
+      const { resolvedModel, resolvedThinking } = resolveAndPersistTargetAgentSettings({
+        workspaceId,
+        targetAgentId,
+      });
 
       const sendMessageOptions = getSendOptionsFromStorage(workspaceId);
 
       await api.workspace.sendMessage({
         workspaceId,
         message: "Start orchestrating the implementation of this plan.",
-        options: { ...sendMessageOptions, agentId: "orchestrator" },
+        options: {
+          ...sendMessageOptions,
+          agentId: targetAgentId,
+          model: resolvedModel,
+          thinkingLevel: resolvedThinking,
+        },
       });
     } catch (err) {
       console.error("Failed to start orchestrator:", err);
@@ -425,40 +493,28 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       }
 
       if (shouldReplaceChatHistory) {
-        try {
-          const summaryMessage = createMuxMessage(
-            `start-here-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-            "assistant",
-            startHereContent,
-            {
-              timestamp: Date.now(),
-              compacted: "user",
-              // Preserve the source agent so exec can detect a plan→exec transition.
-              agentId: "plan",
-            }
-          );
-
-          const result = await api.workspace.replaceChatHistory({
-            workspaceId,
-            summaryMessage,
-            deletePlanFile: false,
-          });
-
-          if (!result.success) {
-            console.error("Failed to replace chat history before implementing:", result.error);
-          }
-        } catch (err) {
-          console.error("Failed to replace chat history before implementing:", err);
-        }
+        await replaceChatHistoryWithPlan({
+          idPrefix: "start-here",
+          errorContext: "Failed to replace chat history before implementing:",
+        });
       }
 
-      // Switch to exec before sending so send options (agentId/mode) match.
-      updatePersistedState(getAgentIdKey(workspaceId), "exec");
+      const targetAgentId = "exec";
+      const { resolvedModel, resolvedThinking } = resolveAndPersistTargetAgentSettings({
+        workspaceId,
+        targetAgentId,
+      });
+      const sendMessageOptions = getSendOptionsFromStorage(workspaceId);
 
       await api.workspace.sendMessage({
         workspaceId,
         message: "Implement the plan",
-        options: getSendOptionsFromStorage(workspaceId),
+        options: {
+          ...sendMessageOptions,
+          agentId: targetAgentId,
+          model: resolvedModel,
+          thinkingLevel: resolvedThinking,
+        },
       });
     } catch {
       // Best-effort: user can retry manually if sending fails.
@@ -489,7 +545,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
         editorError.showError("plan-editor", result.error, anchorPosition);
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       editorError.showError("plan-editor", message, anchorPosition);
     }
   };

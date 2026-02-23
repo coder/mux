@@ -24,8 +24,9 @@ export const CommandIds = {
   workspaceNewInProject: () => "ws:new-in-project" as const,
   workspaceRemove: () => "ws:remove" as const,
   workspaceRemoveAny: () => "ws:remove-any" as const,
-  workspaceRename: () => "ws:rename" as const,
-  workspaceRenameAny: () => "ws:rename-any" as const,
+  workspaceEditTitle: () => "ws:edit-title" as const,
+  workspaceEditTitleAny: () => "ws:edit-title-any" as const,
+  workspaceGenerateTitle: () => "ws:generate-title" as const,
   workspaceOpenTerminal: () => "ws:open-terminal" as const,
   workspaceOpenTerminalCurrent: () => "ws:open-terminal-current" as const,
   workspaceArchiveMergedInProject: () => "ws:archive-merged-in-project" as const,
@@ -38,6 +39,8 @@ export const CommandIds = {
   navRightSidebarSplitHorizontal: () => "nav:rightSidebar:splitHorizontal" as const,
   navRightSidebarSplitVertical: () => "nav:rightSidebar:splitVertical" as const,
   navRightSidebarAddTool: () => "nav:rightSidebar:addTool" as const,
+  navToggleOutput: () => "nav:toggle-output" as const,
+  navOpenLogFile: () => "nav:open-log-file" as const,
 
   // Chat commands
   chatClear: () => "chat:clear" as const,
@@ -60,6 +63,9 @@ export const CommandIds = {
   // Appearance commands
   themeToggle: () => "appearance:theme:toggle" as const,
   themeSet: (theme: string) => `appearance:theme:set:${theme}` as const,
+
+  // Analytics commands
+  analyticsRebuildDatabase: () => "analytics:rebuild-database" as const,
 
   // Layout commands
   layoutApplySlot: (slot: number) => `layout:apply-slot:${slot}` as const,

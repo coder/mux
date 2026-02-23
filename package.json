@@ -1,6 +1,6 @@
 {
   "name": "mux",
-  "version": "0.16.0",
+  "version": "0.18.0",
   "description": "mux - coder multiplexer",
   "author": "Coder",
   "main": "dist/cli/index.js",
@@ -45,6 +45,7 @@
     "postinstall": "sh scripts/postinstall.sh"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^0.14.1",
     "@ai-sdk/amazon-bedrock": "^4.0.49",
     "@ai-sdk/anthropic": "^3.0.37",
     "@ai-sdk/deepseek": "^2.0.17",
@@ -54,10 +55,11 @@
     "@ai-sdk/openai-compatible": "^2.0.27",
     "@ai-sdk/xai": "^3.0.47",
     "@aws-sdk/credential-providers": "^3.940.0",
-    "@coder/mux-md-client": "^0.1.0-main.28",
+    "@coder/mux-md-client": "0.1.0-main.29",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@duckdb/node-api": "^1.4.4-r.1",
     "@homebridge/ciao": "^1.3.4",
     "@jitl/quickjs-wasmfile-release-asyncify": "^0.31.0",
     "@lydell/node-pty": "1.1.0",
@@ -97,11 +99,12 @@
     "electron-window-state": "^5.0.3",
     "express": "^5.1.0",
     "fix-path": "5.0.0",
-    "ghostty-web": "^0.3.0-next.13.g3dd4aef",
+    "ghostty-web": "^0.4.0-next.7.g03ead6e",
     "ignore": "^7.0.5",
     "jsdom": "^27.2.0",
     "json-schema-to-typescript": "^15.0.4",
     "jsonc-parser": "^3.3.1",
+    "lottie-react": "^2.4.1",
     "lru-cache": "^11.2.2",
     "lucide-react": "^0.553.0",
     "markdown-it": "^14.1.0",
@@ -116,6 +119,7 @@
     "react-colorful": "^5.6.1",
     "react-resizable-panels": "^3.0.6",
     "react-router-dom": "^7.11.0",
+    "recharts": "^2.15.3",
     "rehype-harden": "^1.1.5",
     "rehype-sanitize": "^6.0.0",
     "remark-breaks": "^4.0.0",
@@ -271,7 +275,8 @@
     "asarUnpack": [
       "dist/**/*.wasm",
       "dist/**/*.map",
-      "**/node_modules/node-pty/build/**/*"
+      "**/node_modules/node-pty/build/**/*",
+      "**/node_modules/@duckdb/**/*.node"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",

@@ -416,6 +416,14 @@ export function collectActiveTabs(node: RightSidebarLayoutNode): TabType[] {
   return [...collectActiveTabs(node.children[0]), ...collectActiveTabs(node.children[1])];
 }
 
+export function hasTab(state: RightSidebarLayoutState, tab: TabType): boolean {
+  return collectAllTabs(state.root).includes(tab);
+}
+
+export function toggleTab(state: RightSidebarLayoutState, tab: TabType): RightSidebarLayoutState {
+  return hasTab(state, tab) ? removeTabEverywhere(state, tab) : selectOrAddTab(state, tab);
+}
+
 /**
  * Collect all tabs from all tabsets with their tabset IDs.
  * Returns tabs in layout order (depth-first, left-to-right/top-to-bottom).
@@ -497,6 +505,21 @@ export function addTabToFocusedTabset(
       activeTab: activate ? tab : ts.activeTab,
     })),
   };
+}
+
+/**
+ * Select an existing tab anywhere in the layout, or add it to the focused tabset if missing.
+ */
+export function selectOrAddTab(
+  state: RightSidebarLayoutState,
+  tab: TabType
+): RightSidebarLayoutState {
+  const found = collectAllTabsWithTabset(state.root).find((t) => t.tab === tab);
+  if (found) {
+    return selectTabInTabset(setFocusedTabset(state, found.tabsetId), found.tabsetId, found.tab);
+  }
+
+  return addTabToFocusedTabset(state, tab);
 }
 
 /**

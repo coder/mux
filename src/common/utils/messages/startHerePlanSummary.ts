@@ -32,8 +32,11 @@ function getPlanBodyText(startHereText: string): string {
 }
 
 /**
- * The ProposePlanToolCall "Start Here" flow replaces chat history with a single
+ * The ProposePlanToolCall "Start Here" flow writes a durable compaction boundary
  * assistant message that contains the full plan and a plan-path footer.
+ *
+ * Historically this replaced history destructively; now it preserves full history
+ * on disk and starts request payloads from the new boundary.
  *
  * We detect that message so we can avoid re-injecting the plan (and avoid telling
  * the exec agent to re-read the plan file), which would waste tokens and often

@@ -74,6 +74,36 @@ function getPx(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+const MIRROR_STYLE_PROPS = [
+  "font-family",
+  "font-size",
+  "font-weight",
+  "font-style",
+  "line-height",
+  "letter-spacing",
+  "text-transform",
+  "text-align",
+  "direction",
+  "white-space",
+  "word-break",
+  "overflow-wrap",
+  "tab-size",
+  "padding-top",
+  "padding-right",
+  "padding-bottom",
+  "padding-left",
+  // Border widths only contribute to layout when border style is non-none.
+  // Copy styles too so mirror geometry stays aligned with the textarea.
+  "border-top-style",
+  "border-right-style",
+  "border-bottom-style",
+  "border-left-style",
+  "border-top-width",
+  "border-right-width",
+  "border-bottom-width",
+  "border-left-width",
+] as const;
+
 function ensureMirror(mirrorRef: React.MutableRefObject<MirrorState | null>) {
   if (mirrorRef.current) {
     return mirrorRef.current;
@@ -147,19 +177,9 @@ function syncMirrorStyles(
     mirror.lastLeftPx = rect.left;
   }
 
-  const styleSignature = [
-    computed.padding,
-    computed.border,
-    computed.font,
-    computed.letterSpacing,
-    computed.lineHeight,
-    computed.tabSize,
-    computed.textTransform,
-    computed.textAlign,
-    computed.wordBreak,
-    computed.overflowWrap,
-    computed.direction,
-  ].join("|");
+  const styleSignature = MIRROR_STYLE_PROPS.map((prop) => computed.getPropertyValue(prop)).join(
+    "|"
+  );
 
   if (mirror.lastStyleSignature !== styleSignature) {
     mirror.lastStyleSignature = styleSignature;
@@ -168,25 +188,15 @@ function syncMirrorStyles(
     // Use a content-box mirror so we can size it directly from textarea.clientWidth/clientHeight
     // (which account for scrollbars), and keep wrapping behavior consistent.
     mirror.el.style.boxSizing = "content-box";
-    mirror.el.style.padding = computed.padding;
-    mirror.el.style.border = computed.border;
-    mirror.el.style.font = computed.font;
-    mirror.el.style.letterSpacing = computed.letterSpacing;
-    mirror.el.style.lineHeight = computed.lineHeight;
-    mirror.el.style.tabSize = computed.tabSize;
-    mirror.el.style.textTransform = computed.textTransform;
-    mirror.el.style.textAlign = computed.textAlign;
-    mirror.el.style.direction = computed.direction;
 
-    // Match wrapping behavior.
-    mirror.el.style.whiteSpace = "pre-wrap";
-    mirror.el.style.wordBreak = computed.wordBreak;
-    mirror.el.style.overflowWrap = computed.overflowWrap;
+    for (const prop of MIRROR_STYLE_PROPS) {
+      mirror.el.style.setProperty(prop, computed.getPropertyValue(prop));
+    }
 
-    mirror.paddingLeftPx = getPx(computed.paddingLeft);
-    mirror.paddingRightPx = getPx(computed.paddingRight);
-    mirror.paddingTopPx = getPx(computed.paddingTop);
-    mirror.paddingBottomPx = getPx(computed.paddingBottom);
+    mirror.paddingLeftPx = getPx(computed.getPropertyValue("padding-left"));
+    mirror.paddingRightPx = getPx(computed.getPropertyValue("padding-right"));
+    mirror.paddingTopPx = getPx(computed.getPropertyValue("padding-top"));
+    mirror.paddingBottomPx = getPx(computed.getPropertyValue("padding-bottom"));
 
     mirror.lineHeightPx = getLineHeightPx(computed);
   }

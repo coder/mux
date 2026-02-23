@@ -29,8 +29,9 @@ export function parseGitRevList(output: string): GitStatus | null {
     return null;
   }
 
-  // Note: dirty + line deltas are computed separately in the caller
+  // Note: dirty + line deltas + branch are computed separately in the caller
   return {
+    branch: "",
     ahead,
     behind,
     dirty: false,
@@ -110,8 +111,9 @@ export function parseGitShowBranchForStatus(output: string): GitStatus | null {
     }
   }
 
-  // Note: dirty + line deltas are computed separately in the caller
+  // Note: dirty + line deltas + branch are computed separately in the caller
   return {
+    branch: "",
     ahead,
     behind,
     dirty: false,

@@ -7,11 +7,8 @@ import type { AgentSkillReadToolResult } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { SkillNameSchema } from "@/common/orpc/schemas";
+import { getErrorMessage } from "@/common/utils/errors";
 import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
-
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /**
  * Build dynamic agent_skill_read tool description with available skills.
@@ -97,7 +94,7 @@ export const createAgentSkillReadTool: ToolFactory = (config: ToolConfiguration)
       } catch (error) {
         return {
           success: false,
-          error: formatError(error),
+          error: getErrorMessage(error),
         };
       }
     },

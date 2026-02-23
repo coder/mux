@@ -10,7 +10,7 @@ import type { EffectivePolicy, ProvidersConfigMap } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import { getPreferredCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
-import { getEffectiveContextLimit } from "./contextLimit";
+import { getEffectiveContextLimit } from "@/common/utils/compaction/contextLimit";
 import { getExplicitCompactionSuggestion } from "./suggestion";
 
 /** Safety buffer - warn if context exceeds 90% of target model's limit */
@@ -61,7 +61,7 @@ function resolveCompactionModel(
       providersConfig: options.providersConfig,
       policy: options.policy,
     });
-    const limit = getEffectiveContextLimit(preferred, use1M);
+    const limit = getEffectiveContextLimit(preferred, use1M, options.providersConfig);
     if (accessible && limit && limit > currentTokens) return preferred;
   }
   if (previousModel) {
@@ -70,7 +70,7 @@ function resolveCompactionModel(
       providersConfig: options.providersConfig,
       policy: options.policy,
     });
-    const limit = getEffectiveContextLimit(previousModel, use1M);
+    const limit = getEffectiveContextLimit(previousModel, use1M, options.providersConfig);
     if (accessible && limit && limit > currentTokens) return previousModel;
   }
   return null;
@@ -100,7 +100,7 @@ export function checkContextSwitch(
     return null;
   }
 
-  const targetLimit = getEffectiveContextLimit(targetModel, use1M);
+  const targetLimit = getEffectiveContextLimit(targetModel, use1M, options.providersConfig);
 
   // Unknown model or context fits with 10% buffer - no warning
   if (!targetLimit || currentTokens <= targetLimit * CONTEXT_FIT_THRESHOLD) {

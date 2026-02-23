@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { MessageQueue } from "./messageQueue";
-import type { MuxFrontendMetadata } from "@/common/types/message";
+import type { MuxMessageMetadata } from "@/common/types/message";
 import type { SendMessageOptions } from "@/common/orpc/types";
 
 describe("MessageQueue", () => {
@@ -19,7 +19,7 @@ describe("MessageQueue", () => {
     });
 
     it("should return rawCommand for compaction request", () => {
-      const metadata: MuxFrontendMetadata = {
+      const metadata: MuxMessageMetadata = {
         type: "compaction-request",
         rawCommand: "/compact -t 3000",
         parsed: { maxOutputTokens: 3000 },
@@ -39,7 +39,7 @@ describe("MessageQueue", () => {
     it("should throw when adding compaction after normal message", () => {
       queue.add("First message");
 
-      const metadata: MuxFrontendMetadata = {
+      const metadata: MuxMessageMetadata = {
         type: "compaction-request",
         rawCommand: "/compact",
         parsed: {},
@@ -59,7 +59,7 @@ describe("MessageQueue", () => {
     });
 
     it("should return joined messages when metadata type is not compaction-request", () => {
-      const metadata: MuxFrontendMetadata = {
+      const metadata: MuxMessageMetadata = {
         type: "normal",
       };
 
@@ -79,7 +79,7 @@ describe("MessageQueue", () => {
     });
 
     it("should return joined messages after clearing compaction metadata", () => {
-      const metadata: MuxFrontendMetadata = {
+      const metadata: MuxMessageMetadata = {
         type: "compaction-request",
         rawCommand: "/compact",
         parsed: {},
@@ -101,7 +101,7 @@ describe("MessageQueue", () => {
 
   describe("getMessages", () => {
     it("should return raw messages even for compaction requests", () => {
-      const metadata: MuxFrontendMetadata = {
+      const metadata: MuxMessageMetadata = {
         type: "compaction-request",
         rawCommand: "/compact",
         parsed: {},
@@ -133,7 +133,7 @@ describe("MessageQueue", () => {
     });
 
     it("should return true when compaction request is queued", () => {
-      const metadata: MuxFrontendMetadata = {
+      const metadata: MuxMessageMetadata = {
         type: "compaction-request",
         rawCommand: "/compact",
         parsed: {},
@@ -149,7 +149,7 @@ describe("MessageQueue", () => {
     });
 
     it("should return false after clearing", () => {
-      const metadata: MuxFrontendMetadata = {
+      const metadata: MuxMessageMetadata = {
         type: "compaction-request",
         rawCommand: "/compact",
         parsed: {},
@@ -198,7 +198,7 @@ describe("MessageQueue", () => {
     });
 
     it("should preserve compaction metadata when follow-up is added", () => {
-      const metadata: MuxFrontendMetadata = {
+      const metadata: MuxMessageMetadata = {
         type: "compaction-request",
         rawCommand: "/compact",
         parsed: {},
@@ -220,7 +220,7 @@ describe("MessageQueue", () => {
       // produceMessage preserves compaction metadata from first message
       const { message, options } = queue.produceMessage();
       expect(message).toBe("Summarize...\nAnd then do this follow-up task");
-      const muxMeta = options?.muxMetadata as MuxFrontendMetadata;
+      const muxMeta = options?.muxMetadata as MuxMessageMetadata;
       expect(muxMeta.type).toBe("compaction-request");
       if (muxMeta.type === "compaction-request") {
         expect(muxMeta.rawCommand).toBe("/compact");
@@ -230,7 +230,7 @@ describe("MessageQueue", () => {
     it("should throw when adding agent-skill invocation after normal message", () => {
       queue.add("First message");
 
-      const metadata: MuxFrontendMetadata = {
+      const metadata: MuxMessageMetadata = {
         type: "agent-skill",
         rawCommand: "/init",
         skillName: "init",
@@ -249,7 +249,7 @@ describe("MessageQueue", () => {
     });
 
     it("should throw when adding normal message after agent-skill invocation", () => {
-      const metadata: MuxFrontendMetadata = {
+      const metadata: MuxMessageMetadata = {
         type: "agent-skill",
         rawCommand: "/init",
         skillName: "init",
@@ -306,6 +306,36 @@ describe("MessageQueue", () => {
       expect(queue.getDisplayText()).toBe(
         "Message with image\nFollow-up without image\nAnother with image"
       );
+    });
+  });
+
+  describe("internal flags", () => {
+    it("should preserve synthetic flag for queued backend messages", () => {
+      queue.add(
+        "Background maintenance message",
+        { model: "gpt-4", agentId: "exec" },
+        { synthetic: true }
+      );
+
+      const { internal } = queue.produceMessage();
+      expect(internal).toEqual({ synthetic: true });
+    });
+
+    it("should not mark mixed synthetic + user batches as synthetic", () => {
+      queue.add("Idle compaction", { model: "gpt-4", agentId: "compact" }, { synthetic: true });
+      queue.add("User follow-up", { model: "gpt-4", agentId: "exec" });
+
+      const { internal } = queue.produceMessage();
+      expect(internal).toBeUndefined();
+    });
+
+    it("should clear synthetic flag when queue is cleared", () => {
+      queue.add("Synthetic one", { model: "gpt-4", agentId: "exec" }, { synthetic: true });
+      queue.clear();
+
+      queue.add("User message", { model: "gpt-4", agentId: "exec" });
+      const { internal } = queue.produceMessage();
+      expect(internal).toBeUndefined();
     });
   });
 

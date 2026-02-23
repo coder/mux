@@ -1,0 +1,57 @@
+---
+title: Mux Governor
+description: Our upcoming enterprise platform for Mux.
+---
+
+Mux Governor is an early access platform that enables teams and enterprises to
+manage their fleet of Mux installations. It currently provides policy
+enforcement tools to control runtimes, MCP, and provider access.
+
+Policies can be written in JavaScript, with variables injected on a per-user
+basis to allow for per-user policy variability. These policy scripts are
+securely executed on the Mux Governor server.
+
+### Deployment
+
+Mux Governor is a self-hosted platform written in Go, similarly to our other
+enterprise offering, [Coder](https://github.com/coder/coder). It is currently
+not open source.
+
+Please reach out to us if you're interested in trying Mux Governor.
+
+### Policies
+
+Currently, our policy document enables admins to control the following:
+
+- Which providers a user can access (including proxy providers like
+  `mux-gateway`)
+- The base URL of each provider
+- Which models a user can access on each provider
+- Whether or not users can configure MCP via stdio or HTTP
+- Which Mux runtimes the user can use to create workspaces
+
+We have plans to expand the policy format to support more capabilities,
+including:
+
+- Tool control
+- Budgeting
+- Observability
+
+### Client Usage
+
+Currently, Mux Governor is an opt-in configuration on Mux clients. In the
+future, we expect it will be enrolled to the Mux Governor via MDM.
+
+To enroll a Mux client into Mux Governor, follow these steps:
+
+1. Open **Settings** > **Experiments**, and enable the **Mux Governor**
+   experiment.
+2. Open **Settings** > **Governor**, and click **Enroll in Mux Governor**.
+3. Enter the URL of your Mux Governor deployment, e.g.
+   `https://governor.corp.com`.
+4. Authorize Mux to access your account on Mux Governor in the popup window.
+5. The Mux client should show a green shield badge and the rendered policy
+   document. The policy is now in effect.
+
+If you need to unenroll, you can go to **Settings** > **Governor**, and click
+**Unenroll from Mux Governor**.

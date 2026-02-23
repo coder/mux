@@ -1587,6 +1587,7 @@ describe("muxEnv environment variables", () => {
     const args: BashToolArgs = {
       script: 'echo "PROJECT:$MUX_PROJECT_PATH RUNTIME:$MUX_RUNTIME WORKSPACE:$MUX_WORKSPACE_NAME"',
       timeout_secs: 5,
+      run_in_background: false,
       display_name: "test",
     };
 
@@ -1616,6 +1617,7 @@ describe("muxEnv environment variables", () => {
     const args: BashToolArgs = {
       script: 'echo "MUX:$MUX_PROJECT_PATH CUSTOM:$CUSTOM_VAR"',
       timeout_secs: 5,
+      run_in_background: false,
       display_name: "test",
     };
 

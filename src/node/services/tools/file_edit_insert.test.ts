@@ -39,7 +39,7 @@ describe("file_edit_insert tool", () => {
   it("inserts content using insert_after guard", async () => {
     const tool = createTestTool(testDir);
     const args: FileEditInsertToolArgs = {
-      file_path: path.relative(testDir, testFilePath),
+      path: path.relative(testDir, testFilePath),
       content: "Line 2\n",
       insert_after: "Line 1\n",
     };
@@ -56,7 +56,7 @@ describe("file_edit_insert tool", () => {
 
     const tool = createTestTool(testDir);
     const args: FileEditInsertToolArgs = {
-      file_path: path.relative(testDir, testFilePath),
+      path: path.relative(testDir, testFilePath),
       content: "Line 2\n",
       insert_after: "Line 1\n",
     };
@@ -71,7 +71,7 @@ describe("file_edit_insert tool", () => {
   it("inserts content using insert_before guard", async () => {
     const tool = createTestTool(testDir);
     const args: FileEditInsertToolArgs = {
-      file_path: path.relative(testDir, testFilePath),
+      path: path.relative(testDir, testFilePath),
       content: "Header\n",
       insert_before: "Line 1",
     };
@@ -85,7 +85,7 @@ describe("file_edit_insert tool", () => {
     await fs.writeFile(testFilePath, "repeat\nrepeat\nrepeat\n");
     const tool = createTestTool(testDir);
     const args: FileEditInsertToolArgs = {
-      file_path: path.relative(testDir, testFilePath),
+      path: path.relative(testDir, testFilePath),
       content: "middle\n",
       insert_after: "repeat\n",
     };
@@ -102,7 +102,7 @@ describe("file_edit_insert tool", () => {
 
     const tool = createTestTool(testDir);
     const args: FileEditInsertToolArgs = {
-      file_path: path.relative(testDir, testFilePath),
+      path: path.relative(testDir, testFilePath),
       content: "Line 2\n",
       insert_after: "does not exist\n",
     };
@@ -116,7 +116,7 @@ describe("file_edit_insert tool", () => {
   it("fails when both insert_before and insert_after are provided", async () => {
     const tool = createTestTool(testDir);
     const args: FileEditInsertToolArgs = {
-      file_path: path.relative(testDir, testFilePath),
+      path: path.relative(testDir, testFilePath),
       content: "oops",
       insert_after: "Line 1",
       insert_before: "Line 3",
@@ -133,7 +133,7 @@ describe("file_edit_insert tool", () => {
     const newFile = path.join(testDir, "new.txt");
     const tool = createTestTool(testDir);
     const args: FileEditInsertToolArgs = {
-      file_path: path.relative(testDir, newFile),
+      path: path.relative(testDir, newFile),
       content: "Hello world!\n",
     };
 
@@ -145,7 +145,7 @@ describe("file_edit_insert tool", () => {
   it("fails when no guards are provided", async () => {
     const tool = createTestTool(testDir);
     const args: FileEditInsertToolArgs = {
-      file_path: path.relative(testDir, testFilePath),
+      path: path.relative(testDir, testFilePath),
       content: "noop",
     };
 
@@ -186,7 +186,7 @@ describe("file_edit_insert plan mode enforcement", () => {
     });
 
     const args: FileEditInsertToolArgs = {
-      file_path: otherFilePath,
+      path: otherFilePath,
       content: "console.log('test');",
     };
 
@@ -215,7 +215,7 @@ describe("file_edit_insert plan mode enforcement", () => {
     });
 
     const args: FileEditInsertToolArgs = {
-      file_path: planFilePath,
+      path: planFilePath,
       content: "# My Plan\n\n- Step 1\n- Step 2\n",
     };
 
@@ -237,7 +237,7 @@ describe("file_edit_insert plan mode enforcement", () => {
     });
 
     const args: FileEditInsertToolArgs = {
-      file_path: testFilePath,
+      path: testFilePath,
       content: "// header\n",
       insert_before: "const x = 1;",
     };
@@ -271,7 +271,7 @@ describe("file_edit_insert plan mode enforcement", () => {
 
     // Agent mistakenly tries to create ".mux/plan.md" in workspace
     const args: FileEditInsertToolArgs = {
-      file_path: ".mux/plan.md", // Wrong path - relative to cwd
+      path: ".mux/plan.md", // Wrong path - relative to cwd
       content: "# My Plan\n\n- Step 1\n",
     };
 

@@ -199,7 +199,7 @@ export const Comprehensive: AppStory = {
               pendingTool: {
                 toolCallId: "call-s1",
                 toolName: "file_read",
-                args: { file_path: "src/db/connection.ts" },
+                args: { path: "src/db/connection.ts" },
               },
             }),
           ],

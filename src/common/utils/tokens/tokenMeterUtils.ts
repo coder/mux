@@ -1,3 +1,8 @@
+import type { ProvidersConfigMap } from "@/common/orpc/types";
+import {
+  getModelContextWindowOverride,
+  resolveModelForMetadata,
+} from "@/common/utils/providers/modelEntries";
 import type { ChatUsageDisplay } from "./usageAggregator";
 import { getModelStats } from "./modelStats";
 import { supports1MContext } from "../ai/models";
@@ -59,12 +64,18 @@ export function calculateTokenMeterData(
   usage: ChatUsageDisplay | undefined,
   model: string,
   use1M: boolean,
-  verticalProportions = false
+  verticalProportions = false,
+  providersConfig: ProvidersConfigMap | null = null
 ): TokenMeterData {
   if (!usage) return { segments: [], totalTokens: 0, totalPercentage: 0 };
 
-  const modelStats = getModelStats(model);
-  const maxTokens = use1M && supports1MContext(model) ? 1_000_000 : modelStats?.max_input_tokens;
+  const metadataModel = resolveModelForMetadata(model, providersConfig);
+  const modelStats = getModelStats(metadataModel);
+  const customContextWindow = getModelContextWindowOverride(model, providersConfig);
+  const maxTokens =
+    use1M && supports1MContext(model)
+      ? 1_000_000
+      : (customContextWindow ?? modelStats?.max_input_tokens);
 
   // Total tokens used in the request.
   // For Anthropic prompt caching, cacheCreate tokens are reported separately but still

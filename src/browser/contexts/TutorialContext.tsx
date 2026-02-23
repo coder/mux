@@ -48,6 +48,14 @@ const TUTORIAL_SEQUENCES: Record<TutorialSequence, TutorialStep[]> = {
       position: "bottom",
     },
   ],
+  review: [
+    {
+      target: "immersive-review",
+      title: "Immersive Review",
+      content: "Try our new immersive keyboard-driven code review experience.",
+      position: "bottom",
+    },
+  ],
 };
 
 interface TutorialContextValue {

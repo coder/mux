@@ -2,7 +2,9 @@ import { countTokens, countTokensBatch } from "@/node/utils/main/tokenizer";
 import { calculateTokenStats } from "@/common/utils/tokens/tokenStatsCalculator";
 import type { MuxMessage } from "@/common/types/message";
 import type { ChatStats } from "@/common/types/chatStats";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 import assert from "@/common/utils/assert";
+import { computeProvidersConfigFingerprint } from "@/common/utils/providers/configFingerprint";
 import type { SessionUsageService, SessionUsageTokenStatsCacheV1 } from "./sessionUsageService";
 import { log } from "./log";
 
@@ -63,7 +65,8 @@ export class TokenizerService {
   async calculateStats(
     workspaceId: string,
     messages: MuxMessage[],
-    model: string
+    model: string,
+    providersConfig: ProvidersConfigMap | null = null
   ): Promise<ChatStats> {
     assert(
       typeof workspaceId === "string" && workspaceId.length > 0,
@@ -78,7 +81,7 @@ export class TokenizerService {
     const calcId = ++this.nextCalcId;
     this.latestCalcIdByWorkspace.set(workspaceId, calcId);
 
-    const stats = await calculateTokenStats(messages, model);
+    const stats = await calculateTokenStats(messages, model, providersConfig);
 
     // Only persist the cache for the most recently-started calculation.
     // Older calculations can finish later and would otherwise overwrite a newer cache.
@@ -89,6 +92,7 @@ export class TokenizerService {
     const cache: SessionUsageTokenStatsCacheV1 = {
       version: 1,
       computedAt: Date.now(),
+      providersConfigVersion: computeProvidersConfigFingerprint(providersConfig),
       model: stats.model,
       tokenizerName: stats.tokenizerName,
       history: {

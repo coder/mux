@@ -108,6 +108,43 @@ def extract_token_counts_and_cost(
     return n_input_tokens, n_output_tokens, cost_usd
 
 
+def extract_task_timestamps(trial_result: dict) -> tuple[str | None, str | None]:
+    """Extract agent execution timestamps from trial result.
+
+    Harbor's trial runner records started_at/finished_at around agent execution.
+    Prefer agent_execution timing (excludes env setup + verification),
+    falling back to top-level trial timing if agent_execution is missing.
+
+    Returns ISO 8601 timestamp strings suitable for BQ TIMESTAMP columns.
+    Duration can be computed at query time: TIMESTAMP_DIFF(task_completed_at, task_started_at, SECOND).
+    """
+    agent_execution = trial_result.get("agent_execution") or {}
+    started = agent_execution.get("started_at")
+    finished = agent_execution.get("finished_at")
+
+    # Fall back to top-level trial timing
+    if not started or not finished:
+        started = trial_result.get("started_at")
+        finished = trial_result.get("finished_at")
+
+    if not started or not finished:
+        return None, None
+
+    # Normalize RFC3339 'Z' suffix to '+00:00' for fromisoformat compatibility
+    # (Python < 3.11 rejects trailing 'Z', common in JS/Harbor output)
+    started = started.replace("Z", "+00:00") if isinstance(started, str) else started
+    finished = finished.replace("Z", "+00:00") if isinstance(finished, str) else finished
+
+    # Validate timestamps parse correctly before sending to BQ
+    try:
+        datetime.fromisoformat(started)
+        datetime.fromisoformat(finished)
+    except (ValueError, TypeError):
+        return None, None
+
+    return started, finished
+
+
 def build_rows(job_folder: Path) -> list[dict]:
     """Build BigQuery rows for all trials in a job folder."""
     rows = []
@@ -201,6 +238,9 @@ def build_rows(job_folder: Path) -> list[dict]:
             trial_result
         )
 
+        # Agent execution timestamps from Harbor's trial runner
+        task_started_at, task_completed_at = extract_task_timestamps(trial_result)
+
         row = {
             "run_id": run_id,
             "task_id": task_id,
@@ -220,6 +260,8 @@ def build_rows(job_folder: Path) -> list[dict]:
             "n_input_tokens": n_input_tokens,
             "n_output_tokens": n_output_tokens,
             "cost_usd": cost_usd,
+            "task_started_at": task_started_at,
+            "task_completed_at": task_completed_at,
             "run_result_json": run_result_json,
             "run_metadata_json": run_metadata_json,
             "task_result_json": json.dumps(trial_result),
@@ -235,12 +277,32 @@ def build_rows(job_folder: Path) -> list[dict]:
     return rows
 
 
+def _filter_rows_for_table_schema(
+    client: "bigquery.Client", table_id: str, rows: list[dict]
+) -> list[dict]:
+    """Drop unknown keys to avoid insert_rows_json schema errors.
+
+    This lets us safely add new fields to the upload script before
+    the corresponding BQ column exists — unknown keys are silently dropped.
+    """
+    table = client.get_table(table_id)
+    allowed = {field.name for field in table.schema}
+
+    filtered: list[dict] = []
+    for row in rows:
+        filtered.append({k: v for k, v in row.items() if k in allowed})
+
+    return filtered
+
+
 def upload_to_bigquery(rows: list[dict], project_id: str, dataset: str) -> None:
     """Upload rows to BigQuery using the Python client."""
     from google.cloud import bigquery
 
     client = bigquery.Client(project=project_id)
     table_id = f"{project_id}.{dataset}.tbench_results"
+
+    rows = _filter_rows_for_table_schema(client, table_id, rows)
 
     errors = client.insert_rows_json(table_id, rows)
     if errors:

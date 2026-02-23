@@ -165,6 +165,18 @@ describe("matchesKeybind", () => {
     expect(matchesKeybind(event, keybind)).toBe(true);
   });
 
+  it("should match Ctrl/Cmd+Shift+P for OPEN_COMMAND_PALETTE", () => {
+    const event = createEvent({ key: "P", ctrlKey: true, shiftKey: true });
+
+    expect(matchesKeybind(event, KEYBINDS.OPEN_COMMAND_PALETTE)).toBe(true);
+  });
+
+  it("should match F4 for OPEN_COMMAND_PALETTE_ACTIONS", () => {
+    const event = createEvent({ key: "F4" });
+
+    expect(matchesKeybind(event, KEYBINDS.OPEN_COMMAND_PALETTE_ACTIONS)).toBe(true);
+  });
+
   it("should match complex multi-modifier combination", () => {
     const event = createEvent({ key: "P", ctrlKey: true, shiftKey: true });
     const keybind: Keybind = { key: "P", ctrl: true, shift: true };

@@ -8,6 +8,8 @@
  * Examples:
  * - "claude-sonnet-4-5" -> "Sonnet 4.5"
  * - "claude-opus-4-1" -> "Opus 4.1"
+ * - "gpt-5.3-codex" -> "Codex 5.3"
+ * - "gpt-5.3-codex-spark" -> "Spark 5.3"
  * - "gpt-5-pro" -> "GPT-5 Pro"
  * - "gpt-4o" -> "GPT-4o"
  * - "gemini-2-0-flash-exp" -> "Gemini 2.0 Flash Exp"
@@ -64,13 +66,33 @@ export function formatModelDisplayName(modelName: string): string {
 
   // GPT models
   if (lower.startsWith("gpt-")) {
-    // "gpt-5-pro" -> "GPT-5 Pro"
-    // "gpt-4o" -> "GPT-4o"
-    // "gpt-4o-mini" -> "GPT-4o Mini"
     const parts = lower.split("-");
 
     if (parts.length >= 2) {
-      // Keep "gpt" and first part together (gpt-5, gpt-4o)
+      // Codex Spark models: "gpt-5.3-codex-spark" -> "Spark 5.3"
+      if (parts.includes("codex") && parts.includes("spark")) {
+        const version = parts[1]; // e.g., "5.3"
+        return `Spark ${version}`;
+      }
+
+      // Codex models: "gpt-5.3-codex" -> "Codex 5.3", "gpt-5.1-codex-mini" -> "Codex Mini 5.1"
+      // Keep all suffixes as qualifiers but strip trailing date stamps (YYYYMMDD or
+      // YYYY-MM-DD split across segments). A trailing date is detected as a 4-digit
+      // year followed by any remaining segments, e.g. "-2025-12-01" or "-20251201".
+      const codexIdx = parts.indexOf("codex");
+      if (codexIdx >= 2) {
+        const version = parts[1]; // e.g., "5.3"
+        const afterCodex = parts.slice(codexIdx + 1);
+        // Find where a trailing date stamp begins (4-digit year segment like "2025")
+        const dateStart = afterCodex.findIndex((p) => /^\d{4,}$/.test(p));
+        const qualifierParts = dateStart >= 0 ? afterCodex.slice(0, dateStart) : afterCodex;
+        const qualifiers = qualifierParts.map(capitalize).join(" ");
+        return qualifiers ? `Codex ${qualifiers} ${version}` : `Codex ${version}`;
+      }
+
+      // "gpt-5-pro" -> "GPT-5 Pro"
+      // "gpt-4o" -> "GPT-4o"
+      // "gpt-4o-mini" -> "GPT-4o Mini"
       const base = `GPT-${parts[1]}`;
 
       // Capitalize remaining parts

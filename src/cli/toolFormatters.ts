@@ -5,6 +5,7 @@
  * with emoji prefixes and structured output similar to the frontend UI.
  */
 
+import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
 import chalk from "chalk";
 import type { ToolCallStartEvent, ToolCallEndEvent } from "@/common/types/stream";
 import type {
@@ -12,9 +13,7 @@ import type {
   BashToolResult,
   FileReadToolArgs,
   FileReadToolResult,
-  FileEditReplaceStringToolArgs,
   FileEditReplaceStringToolResult,
-  FileEditInsertToolArgs,
   FileEditInsertToolResult,
   TaskToolArgs,
   TaskToolResult,
@@ -45,6 +44,10 @@ const TOOL_BLOCK_SEPARATOR = chalk.dim("─".repeat(40));
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
+}
+
+function extractFilePathArg(args: unknown): string | undefined {
+  return extractToolFilePath(args);
 }
 
 function formatFilePath(filePath: string): string {
@@ -109,25 +112,26 @@ function renderUnknown(value: unknown): string {
 // ============================================================================
 
 function formatFileEditStart(_toolName: string, args: unknown): string | null {
-  const editArgs = args as FileEditReplaceStringToolArgs | FileEditInsertToolArgs;
-  if (!editArgs?.file_path) return null;
+  const filePath = extractFilePathArg(args);
+  if (!filePath) return null;
 
-  return `✏️  ${formatFilePath(editArgs.file_path)}`;
+  return `✏️  ${formatFilePath(filePath)}`;
 }
 
 function formatFileReadStart(_toolName: string, args: unknown): string | null {
   const readArgs = args as FileReadToolArgs;
-  if (!readArgs?.file_path) return null;
+  const filePath = extractFilePathArg(args);
+  if (!filePath) return null;
 
   let suffix = "";
-  if (readArgs.offset !== undefined || readArgs.limit !== undefined) {
+  if (readArgs.offset != null || readArgs.limit != null) {
     const parts: string[] = [];
-    if (readArgs.offset !== undefined) parts.push(`L${readArgs.offset}`);
-    if (readArgs.limit !== undefined) parts.push(`+${readArgs.limit}`);
+    if (readArgs.offset != null) parts.push(`L${readArgs.offset}`);
+    if (readArgs.limit != null) parts.push(`+${readArgs.limit}`);
     suffix = chalk.dim(` (${parts.join(", ")})`);
   }
 
-  return `📖 ${formatFilePath(readArgs.file_path)}${suffix}`;
+  return `📖 ${formatFilePath(filePath)}${suffix}`;
 }
 
 function formatBashStart(_toolName: string, args: unknown): string | null {
@@ -313,12 +317,37 @@ function formatTaskEnd(_toolName: string, _args: unknown, result: unknown): stri
 }
 
 function formatWebFetchEnd(_toolName: string, _args: unknown, result: unknown): string | null {
-  const fetchResult = result as WebFetchToolResult;
+  if (result == null || typeof result !== "object") return null;
 
+  // Unwrap SDK JSON-wrapper shape: { type: "json", value: ... }
+  const maybeWrapped = result as Record<string, unknown>;
+  const unwrapped =
+    maybeWrapped.type === "json" && "value" in maybeWrapped ? maybeWrapped.value : result;
+
+  if (unwrapped == null || typeof unwrapped !== "object") return null;
+  const r = unwrapped as Record<string, unknown>;
+
+  // Anthropic-native success: { type: "web_fetch_result", url, content: { title, source } }
+  if (r.type === "web_fetch_result") {
+    const content = r.content as Record<string, unknown> | undefined;
+    const title = typeof content?.title === "string" ? chalk.dim(` "${content.title}"`) : "";
+    const source = content?.source as Record<string, unknown> | undefined;
+    const len =
+      typeof source?.data === "string" ? chalk.dim(` ${formatBytes(source.data.length)}`) : "";
+    return `${chalk.green("✓")}${title}${len}`;
+  }
+
+  // Anthropic-native error: { type: "web_fetch_tool_result_error", errorCode }
+  if (r.type === "web_fetch_tool_result_error") {
+    const errorCode = typeof r.errorCode === "string" ? r.errorCode : "fetch error";
+    return `${chalk.red("✗")} ${chalk.red(errorCode)}`;
+  }
+
+  // Built-in format: { success: boolean, title?, content?, length?, error? }
+  const fetchResult = unwrapped as WebFetchToolResult;
   if (fetchResult?.success === false) {
     return `${chalk.red("✗")} ${chalk.red(fetchResult.error ?? "Fetch failed")}`;
   }
-
   if (fetchResult?.success) {
     const title = fetchResult.title ? chalk.dim(` "${fetchResult.title}"`) : "";
     const len = fetchResult.length ? chalk.dim(` ${formatBytes(fetchResult.length)}`) : "";

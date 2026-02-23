@@ -10,6 +10,8 @@ import {
   NOTE_READ_FILE_FIRST_RETRY,
   NOTE_READ_FILE_RETRY,
   NOTE_READ_FILE_AGAIN_RETRY,
+  type FileEditReplaceStringToolArgs,
+  type FileEditReplaceLinesToolArgs,
 } from "@/common/types/tools";
 
 import { convertNewlines, detectFileEol, normalizeNewlinesToLF } from "./eol";
@@ -34,20 +36,10 @@ export interface OperationError {
 
 export type OperationOutcome = OperationResult | OperationError;
 
-export interface StringReplaceArgs {
-  file_path: string;
-  old_string: string;
-  new_string: string;
-  replace_count?: number;
-}
-
-export interface LineReplaceArgs {
-  file_path: string;
-  start_line: number;
-  end_line: number;
-  new_lines: string[];
-  expected_lines?: string[];
-}
+// Re-export schema-derived types for backward compatibility.
+// Local code previously imported StringReplaceArgs / LineReplaceArgs from this module.
+export type StringReplaceArgs = FileEditReplaceStringToolArgs;
+export type LineReplaceArgs = FileEditReplaceLinesToolArgs;
 
 /**
  * Handle string-based replacement

@@ -1,3 +1,8 @@
+import Lottie from "lottie-react";
+import dancingBlinkAnimation from "@/browser/assets/animations/dancing-blink.json";
+import { useTheme } from "@/browser/contexts/ThemeContext";
+import { Shimmer } from "@/browser/components/ai-elements/shimmer";
+
 interface CreationCenterContentProps {
   projectName: string;
   isSending: boolean;
@@ -12,29 +17,38 @@ interface CreationCenterContentProps {
  * Shown as an overlay when isSending is true.
  */
 export function CreationCenterContent(props: CreationCenterContentProps) {
-  // Only render when actually sending/creating
-  if (!props.isSending) {
-    return null;
-  }
+  const { theme } = useTheme();
+  const isDark = theme === "dark" || theme.endsWith("-dark");
 
   return (
-    <div className="bg-bg-dark/80 fixed inset-0 z-10 flex items-center justify-center backdrop-blur-sm">
-      <div className="max-w-xl px-8 text-center">
-        <div className="bg-accent mb-4 inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-current border-r-transparent"></div>
-        <h2 className="text-foreground mb-2 text-lg font-medium">Creating workspace</h2>
-        <p className="text-muted text-sm leading-relaxed">
-          {props.workspaceName ? (
-            <>
-              <code className="bg-separator rounded px-1">{props.workspaceName}</code>
-              {props.workspaceTitle && (
-                <span className="text-muted-foreground ml-1">— {props.workspaceTitle}</span>
+    <>
+      {props.isSending && (
+        <div
+          className={`absolute inset-0 z-10 flex flex-col items-center justify-center pb-[30vh] ${isDark ? "bg-sidebar" : "bg-white"}`}
+        >
+          <Lottie
+            animationData={dancingBlinkAnimation}
+            loop
+            renderer="svg"
+            className={`w-[150px] ${isDark ? "brightness-0 invert" : ""}`}
+          />
+          <div className="mt-8 max-w-xl px-8 text-center">
+            <h2 className="text-foreground mb-2 text-2xl font-medium">Creating workspace</h2>
+            <p className="text-muted text-sm leading-relaxed">
+              {props.workspaceName ? (
+                <>
+                  <code className="bg-separator rounded px-1">{props.workspaceName}</code>
+                  {props.workspaceTitle && (
+                    <span className="text-muted-foreground ml-1">— {props.workspaceTitle}</span>
+                  )}
+                </>
+              ) : (
+                <Shimmer>Generating name…</Shimmer>
               )}
-            </>
-          ) : (
-            "Generating name…"
-          )}
-        </p>
-      </div>
-    </div>
+            </p>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

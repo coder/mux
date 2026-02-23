@@ -4,6 +4,8 @@ import { Err, Ok } from "@/common/types/result";
 import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
 import { log } from "@/node/services/log";
+import { createDeferred } from "@/node/utils/oauthUtils";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const GITHUB_COPILOT_CLIENT_ID = "Ov23liCVKFN3jOo9R7HS";
 const SCOPE = "read:user";
@@ -71,11 +73,8 @@ export class CopilotOauthService {
         return Err("Invalid response from GitHub device code endpoint");
       }
 
-      // Create deferred promise
-      let resolveResult!: (result: Result<void, string>) => void;
-      const resultPromise = new Promise<Result<void, string>>((resolve) => {
-        resolveResult = resolve;
-      });
+      const { promise: resultPromise, resolve: resolveResult } =
+        createDeferred<Result<void, string>>();
 
       const timeout = setTimeout(() => {
         void this.finishFlow(flowId, Err("Timed out waiting for GitHub authorization"));
@@ -101,7 +100,7 @@ export class CopilotOauthService {
         userCode: data.user_code,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to start device flow: ${message}`);
     }
   }
@@ -145,6 +144,9 @@ export class CopilotOauthService {
   cancelDeviceFlow(flowId: string): void {
     const flow = this.flows.get(flowId);
     if (!flow) return;
+
+    // Skip if the flow already completed (e.g. unmount cleanup after success)
+    if (flow.cancelled) return;
 
     log.debug(`Copilot OAuth device flow cancelled (flowId=${flowId})`);
     this.finishFlow(flowId, Err("Device flow cancelled"));
@@ -247,7 +249,7 @@ export class CopilotOauthService {
         }
       } catch (error) {
         if (flow.cancelled) return;
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         log.warn(`Copilot OAuth polling error (will retry): ${message}`);
         // Transient errors — fall through to sleep, then retry
       }

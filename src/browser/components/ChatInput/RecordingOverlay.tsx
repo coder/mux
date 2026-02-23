@@ -96,11 +96,11 @@ export const RecordingOverlay: React.FC<RecordingOverlayProps> = (props) => {
 
 /** Keyboard hint display for recording state */
 const RecordingHints: React.FC = () => (
-  <>
+  <span className="mobile-hide-shortcut-hints">
     <span className="opacity-70">space</span> send ·{" "}
     <span className="opacity-70">{formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT)}</span> review ·{" "}
     <span className="opacity-70">esc</span> cancel
-  </>
+  </span>
 );
 
 // =============================================================================

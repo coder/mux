@@ -1,6 +1,7 @@
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { isProviderSupported } from "@/browser/hooks/useGatewayModels";
+import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
 
 const BUILT_IN_MODELS: string[] = Object.values(KNOWN_MODELS).map((model) => model.id);
 
@@ -10,7 +11,8 @@ export function getEligibleGatewayModels(config: ProvidersConfigMap | null): str
   if (config) {
     for (const [provider, providerConfig] of Object.entries(config)) {
       if (provider === "mux-gateway") continue;
-      for (const modelId of providerConfig.models ?? []) {
+      for (const modelEntry of providerConfig.models ?? []) {
+        const modelId = getProviderModelEntryId(modelEntry);
         customModels.push(`${provider}:${modelId}`);
       }
     }

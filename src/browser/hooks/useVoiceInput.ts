@@ -1,5 +1,5 @@
 /**
- * Voice input via OpenAI transcription (gpt-4o-transcribe).
+ * Voice input via backend transcription (Mux Gateway or OpenAI credentials).
  *
  * State machine: idle → requesting → recording → transcribing → idle
  *
@@ -11,6 +11,7 @@ import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import type { APIClient } from "@/browser/contexts/API";
 import { trackVoiceTranscription } from "@/common/telemetry";
+import { getErrorMessage } from "@/common/utils/errors";
 
 export type VoiceInputState = "idle" | "requesting" | "recording" | "transcribing";
 
@@ -19,7 +20,8 @@ export interface UseVoiceInputOptions {
   onError?: (error: string) => void;
   /** Called after successful transcription if stop({ send: true }) was used */
   onSend?: () => void;
-  openAIKeySet: boolean;
+  /** Whether voice transcription is available (OpenAI key set OR Mux Gateway configured). */
+  isTranscriptionAvailable: boolean;
   /**
    * When true, hook manages global keybinds during recording:
    * - Space: stop and send (requires release after start)
@@ -34,7 +36,7 @@ export interface UseVoiceInputOptions {
 export interface UseVoiceInputResult {
   state: VoiceInputState;
   isSupported: boolean;
-  isApiKeySet: boolean;
+  isAvailable: boolean;
   /** False on touch devices (they have native keyboard dictation) */
   shouldShowUI: boolean;
   /** True when running over HTTP (not localhost) - microphone requires secure context */
@@ -187,7 +189,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
         setTimeout(() => callbacksRef.current.onSend?.(), 0);
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       callbacksRef.current.onError?.(`Transcription failed: ${msg}`);
       trackVoiceTranscription(audioDurationSecs, false);
     } finally {
@@ -215,7 +217,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
       HAS_GET_USER_MEDIA &&
       !HAS_TOUCH_DICTATION &&
       state === "idle" &&
-      callbacksRef.current.openAIKeySet;
+      callbacksRef.current.isTranscriptionAvailable;
 
     if (!canStart) return;
 
@@ -265,7 +267,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
       recordingStartTimeRef.current = Date.now();
       setState("recording");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       const isPermissionDenied = msg.includes("Permission denied") || msg.includes("NotAllowed");
 
       callbacksRef.current.onError?.(
@@ -370,7 +372,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
   return {
     state,
     isSupported: HAS_MEDIA_RECORDER && HAS_GET_USER_MEDIA,
-    isApiKeySet: callbacksRef.current.openAIKeySet,
+    isAvailable: options.isTranscriptionAvailable,
     shouldShowUI: HAS_MEDIA_RECORDER && !HAS_TOUCH_DICTATION,
     requiresSecureContext: HAS_MEDIA_RECORDER && !HAS_GET_USER_MEDIA,
     mediaRecorder,

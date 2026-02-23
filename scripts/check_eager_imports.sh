@@ -16,6 +16,7 @@ BANNED_IMPORTS=(
   "@ai-sdk/anthropic"
   "@ai-sdk/openai"
   "@ai-sdk/google"
+  "@duckdb/node-api"
   "ai"
 )
 

@@ -13,6 +13,7 @@ import { convertNewlines, detectFileEol } from "./eol";
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import { writeFileString } from "@/node/utils/runtime/helpers";
 import { RuntimeError } from "@/node/runtime/Runtime";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const READ_AND_RETRY_NOTE = `${EDIT_FAILED_NOTE_PREFIX} ${NOTE_READ_FILE_RETRY}`;
 
@@ -28,10 +29,7 @@ interface InsertOperationFailure {
   note?: string;
 }
 
-interface InsertContentOptions {
-  insert_before?: string;
-  insert_after?: string;
-}
+type InsertContentOptions = Pick<FileEditInsertToolArgs, "insert_before" | "insert_after">;
 
 interface GuardResolutionSuccess {
   success: true;
@@ -53,20 +51,20 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
     description: TOOL_DEFINITIONS.file_edit_insert.description,
     inputSchema: TOOL_DEFINITIONS.file_edit_insert.schema,
     execute: async (
-      { file_path, content, insert_before, insert_after }: FileEditInsertToolArgs,
+      { path, content, insert_before, insert_after }: FileEditInsertToolArgs,
       { abortSignal }
     ): Promise<FileEditInsertToolResult> => {
       try {
         const { correctedPath, warning: pathWarning } = validateAndCorrectPath(
-          file_path,
+          path,
           config.cwd,
           config.runtime
         );
-        file_path = correctedPath;
-        const resolvedPath = config.runtime.normalizePath(file_path, config.cwd);
+        path = correctedPath;
+        const resolvedPath = config.runtime.normalizePath(path, config.cwd);
 
         // Validate plan mode access restrictions
-        const planModeError = await validatePlanModeAccess(file_path, config);
+        const planModeError = await validatePlanModeAccess(path, config);
         if (planModeError) {
           return planModeError;
         }
@@ -114,7 +112,7 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
 
         return executeFileEditOperation({
           config,
-          filePath: file_path,
+          filePath: path,
           abortSignal,
           operation: (originalContent) =>
             insertContent(originalContent, content, {
@@ -126,11 +124,11 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
         if (error && typeof error === "object" && "code" in error && error.code === "EACCES") {
           return {
             success: false,
-            error: `Permission denied: ${file_path}`,
+            error: `Permission denied: ${path}`,
           };
         }
 
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         return {
           success: false,
           error: `Failed to insert content: ${message}`,
@@ -147,11 +145,11 @@ function insertContent(
 ): InsertOperationSuccess | InsertOperationFailure {
   const { insert_before, insert_after } = options;
 
-  if (insert_before !== undefined && insert_after !== undefined) {
+  if (insert_before != null && insert_after != null) {
     return guardFailure("Provide only one of insert_before or insert_after (not both).");
   }
 
-  if (insert_before === undefined && insert_after === undefined) {
+  if (insert_before == null && insert_after == null) {
     return guardFailure(
       "Provide either insert_before or insert_after guard when editing existing files."
     );
@@ -215,7 +213,7 @@ function resolveGuardAnchor(
   const fileEol = detectFileEol(originalContent);
 
   // insert_after: content goes after this anchor, so insertion point is at end of anchor
-  if (insert_after !== undefined) {
+  if (insert_after != null) {
     const exactResult = findUniqueSubstringIndex(originalContent, insert_after, "insert_after");
     if (exactResult.success) {
       return { success: true, index: exactResult.index + insert_after.length };
@@ -241,7 +239,7 @@ function resolveGuardAnchor(
   }
 
   // insert_before: content goes before this anchor, so insertion point is at start of anchor
-  if (insert_before !== undefined) {
+  if (insert_before != null) {
     const exactResult = findUniqueSubstringIndex(originalContent, insert_before, "insert_before");
     if (exactResult.success) {
       return { success: true, index: exactResult.index };

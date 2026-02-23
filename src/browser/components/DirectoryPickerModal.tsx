@@ -14,6 +14,7 @@ import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import { DirectoryTree } from "./DirectoryTree";
 import { useAPI } from "@/browser/contexts/API";
 import { formatKeybind, isMac } from "@/browser/utils/ui/keybinds";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const OPEN_KEYBIND = { key: "o", ctrl: true };
 
@@ -74,7 +75,7 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
         setPathInput(result.data.path);
         setSelectedIndex(0);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = getErrorMessage(err);
         setError(`Failed to load directory: ${message}`);
         setRoot(null);
       } finally {
@@ -133,7 +134,7 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
         onSelectPath(result.data.path);
         onClose();
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = getErrorMessage(err);
         setError(`Failed to load directory: ${message}`);
         setRoot(null);
       } finally {

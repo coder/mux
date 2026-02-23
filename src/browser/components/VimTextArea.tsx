@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useAutoResizeTextarea } from "@/browser/hooks/useAutoResizeTextarea";
 import * as vim from "@/browser/utils/vim";
-import { Tooltip, TooltipTrigger, TooltipContent, HelpIndicator } from "./ui/tooltip";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
@@ -29,7 +28,7 @@ export interface VimTextAreaProps extends Omit<
   "onChange" | "value"
 > {
   value: string;
-  onChange: (next: string) => void;
+  onChange: (next: string, caretIndex?: number) => void;
   isEditing?: boolean;
   suppressKeys?: string[]; // keys for which Vim should not interfere (e.g. ["Tab","ArrowUp","ArrowDown","Escape"]) when popovers are open
   trailingAction?: React.ReactNode;
@@ -206,7 +205,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
       cursorRef.current = newState.cursor;
 
       if (newState.text !== value) {
-        onChange(newState.text);
+        onChange(newState.text, newState.cursor);
       }
       if (newState.mode !== vimMode) {
         setVimMode(newState.mode);
@@ -246,61 +245,29 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
       setTimeout(() => applyDomSelection(newState), 0);
     };
 
-    // Build mode indicator content
-    const showVimMode = vimEnabled && vimMode !== "insert";
-    const modeLabel =
-      vimMode === "normal" ? "normal" : vimMode === "visual" ? "visual" : "visual line";
-    const pendingCommand = showVimMode ? vim.formatPendingCommand(pending, count) : "";
+    // Screen-reader announcement for vim mode changes (visually hidden)
+    const srModeLabel =
+      vimEnabled && vimMode !== "insert"
+        ? vimMode === "normal"
+          ? "normal mode"
+          : vimMode === "visual"
+            ? "visual mode"
+            : "visual line mode"
+        : "";
 
     return (
       <div style={{ width: "100%" }} data-component="VimTextAreaContainer">
-        <div
-          className="text-vim-status mb-px flex h-[11px] items-center justify-between gap-1 text-[9px] leading-[11px] tracking-[0.8px] select-none"
-          aria-live="polite"
-        >
-          <div className="flex items-center gap-1">
-            {showVimMode && (
-              <>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <HelpIndicator>?</HelpIndicator>
-                  </TooltipTrigger>
-                  <TooltipContent align="start" className="max-w-80 whitespace-normal">
-                    <strong>Vim Mode Enabled</strong>
-                    <br />
-                    <br />
-                    Press <strong>ESC</strong> for normal mode, <strong>i</strong> to return to
-                    insert mode.
-                    <br />
-                    <br />
-                    See{" "}
-                    <a
-                      href="#"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        try {
-                          window.open("https://mux.coder.com/config/vim-mode", "_blank");
-                        } catch {
-                          /* ignore */
-                        }
-                      }}
-                    >
-                      Vim Mode docs
-                    </a>{" "}
-                    for full command reference.
-                  </TooltipContent>
-                </Tooltip>
-                <span className="uppercase">{modeLabel}</span>
-                {pendingCommand && <span>{pendingCommand}</span>}
-              </>
-            )}
-          </div>
+        {/* Visually hidden live region — announces vim mode changes to screen readers */}
+        <div className="sr-only" aria-live="polite">
+          {srModeLabel}
         </div>
         <div style={{ position: "relative" }} data-component="VimTextAreaWrapper">
           <textarea
             ref={textareaRef}
             value={value}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(e) =>
+              onChange(e.target.value, e.target.selectionStart ?? e.target.value.length)
+            }
             onKeyDown={handleKeyDownInternal}
             spellCheck={false}
             autoCorrect="off"

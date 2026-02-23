@@ -1,5 +1,11 @@
 import type { z } from "zod";
 import type * as schemas from "./schemas";
+import type {
+  OnChatCursorSchema,
+  OnChatHistoryCursorSchema,
+  OnChatModeSchema,
+  OnChatStreamCursorSchema,
+} from "./schemas/stream";
 
 import type {
   StreamStartEvent,
@@ -22,11 +28,16 @@ export type SendMessageOptions = z.infer<typeof schemas.SendMessageOptionsSchema
 
 // Provider types (single source of truth - derived from schemas)
 export type AWSCredentialStatus = z.infer<typeof schemas.AWSCredentialStatusSchema>;
+export type ProviderModelEntry = z.infer<typeof schemas.ProviderModelEntrySchema>;
 export type ProviderConfigInfo = z.infer<typeof schemas.ProviderConfigInfoSchema>;
 export type ProvidersConfigMap = z.infer<typeof schemas.ProvidersConfigMapSchema>;
 export type FilePart = z.infer<typeof schemas.FilePartSchema>;
 export type WorkspaceChatMessage = z.infer<typeof schemas.WorkspaceChatMessageSchema>;
 export type CaughtUpMessage = z.infer<typeof schemas.CaughtUpMessageSchema>;
+export type OnChatHistoryCursor = z.infer<typeof OnChatHistoryCursorSchema>;
+export type OnChatStreamCursor = z.infer<typeof OnChatStreamCursorSchema>;
+export type OnChatCursor = z.infer<typeof OnChatCursorSchema>;
+export type OnChatMode = z.infer<typeof OnChatModeSchema>;
 export type StreamErrorMessage = z.infer<typeof schemas.StreamErrorMessageSchema>;
 export type DeleteMessage = z.infer<typeof schemas.DeleteMessageSchema>;
 export type WorkspaceInitEvent = z.infer<typeof schemas.WorkspaceInitEventSchema>;
@@ -40,6 +51,7 @@ export type FrontendWorkspaceMetadataSchemaType = z.infer<
 
 // Server types (single source of truth - derived from schemas)
 export type ApiServerStatus = z.infer<typeof schemas.ApiServerStatusSchema>;
+export type ServerAuthSession = z.infer<typeof schemas.ServerAuthSessionSchema>;
 // Experiment types (single source of truth - derived from schemas)
 
 // Policy types (single source of truth - derived from schemas)

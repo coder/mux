@@ -57,6 +57,42 @@ describe("staticAnalysis", () => {
       expect(result.errors[0].message).toContain("await");
       expect(result.errors[0].message).toContain("not supported");
     });
+    test("await in class field inside async function gets clear error", async () => {
+      const result = await analyzeCode("async function f() { class C { x = await foo(); } }");
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].message).toContain("await");
+      expect(result.errors[0].message).toContain("not supported");
+    });
+
+    test("await in async function default param gets clear error", async () => {
+      // QuickJS gives "await in default expression" (not "expecting ';'"),
+      // so the rewrite doesn't apply — but the message is already clear.
+      const result = await analyzeCode("async function f(a = await foo()) {}");
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].message).toContain("await");
+    });
+
+    test("does not mislabel malformed template literal containing await text", async () => {
+      // Unescaped backticks break the template; `await` appears in string content, not code.
+      const result = await analyzeCode("const s = `x\n1. `file`\nawait x\n`;");
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].type).toBe("syntax");
+      expect(result.errors[0].message).not.toContain("`await` is not supported");
+    });
+
+    test("does not mislabel syntax error when await appears in a comment", async () => {
+      const result = await analyzeCode("const x = 1 +\n// await something\n");
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].type).toBe("syntax");
+      expect(result.errors[0].message).not.toContain("`await` is not supported");
+    });
+
+    test("does not mislabel syntax error when await appears in a string", async () => {
+      const result = await analyzeCode('const x = "await foo"\nconst y = 1 +\n');
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].type).toBe("syntax");
+      expect(result.errors[0].message).not.toContain("`await` is not supported");
+    });
 
     test("allows return statements (wrapped in function)", async () => {
       const result = await analyzeCode(`

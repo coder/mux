@@ -12,8 +12,6 @@ import {
 } from "./mockFactory";
 
 import { setupSimpleChatStory } from "./storyHelpers";
-import { waitForChatMessagesLoaded } from "./storyPlayHelpers";
-import { userEvent, waitFor } from "@storybook/test";
 
 export default {
   ...appMeta,
@@ -21,11 +19,11 @@ export default {
 };
 
 const SAMPLE_CODE = `// Read a file and make an edit
-const content = await mux.file_read({ file_path: "src/config.ts" });
+const content = await mux.file_read({ path: "src/config.ts" });
 console.log("Read file with", content.lines_read, "lines");
 
 await mux.file_edit_replace_string({
-  file_path: "src/config.ts",
+  path: "src/config.ts",
   old_string: "debug: false",
   new_string: "debug: true"
 });
@@ -63,14 +61,14 @@ export const Completed: AppStory = {
                     toolCalls: [
                       {
                         toolName: "file_read",
-                        args: { file_path: "src/config.ts" },
+                        args: { path: "src/config.ts" },
                         result: { success: true, lines_read: 42 },
                         duration_ms: 15,
                       },
                       {
                         toolName: "file_edit_replace_string",
                         args: {
-                          file_path: "src/config.ts",
+                          path: "src/config.ts",
                           old_string: "debug: false",
                           new_string: "debug: true",
                         },
@@ -112,7 +110,7 @@ export const Completed: AppStory = {
                     {
                       toolCallId: "nested-1",
                       toolName: "file_read",
-                      input: { file_path: "src/config.ts" },
+                      input: { path: "src/config.ts" },
                       output: {
                         success: true,
                         lines_read: 4,
@@ -125,7 +123,7 @@ export const Completed: AppStory = {
                       toolCallId: "nested-2",
                       toolName: "file_edit_replace_string",
                       input: {
-                        file_path: "src/config.ts",
+                        path: "src/config.ts",
                         old_string: "debug: false",
                         new_string: "debug: true",
                       },
@@ -192,7 +190,7 @@ export const Executing: AppStory = {
                   {
                     toolCallId: "nested-1",
                     toolName: "file_read",
-                    input: { file_path: "src/config.ts" },
+                    input: { path: "src/config.ts" },
                     output: {
                       success: true,
                       file_size: 1024,
@@ -205,7 +203,7 @@ export const Executing: AppStory = {
                     toolCallId: "nested-2",
                     toolName: "file_edit_replace_string",
                     input: {
-                      file_path: "src/config.ts",
+                      path: "src/config.ts",
                       old_string: "debug: false",
                       new_string: "debug: true",
                     },
@@ -367,7 +365,7 @@ export const NestedToolError: AppStory = {
               toolCalls: [
                 createCodeExecutionTool(
                   "call-1",
-                  `const result = mux.file_read({ file_path: "nonexistent.ts" });
+                  `const result = mux.file_read({ path: "nonexistent.ts" });
 return result;`,
                   {
                     success: false,
@@ -377,7 +375,7 @@ return result;`,
                     toolCalls: [
                       {
                         toolName: "file_read",
-                        args: { file_path: "nonexistent.ts" },
+                        args: { path: "nonexistent.ts" },
                         // Error-only output shape (no success field) - tool threw
                         result: { error: "ENOENT: no such file or directory" },
                         duration_ms: 5,
@@ -414,7 +412,7 @@ export const Interrupted: AppStory = {
                   {
                     toolCallId: "nested-1",
                     toolName: "file_read",
-                    input: { file_path: "src/config.ts" },
+                    input: { path: "src/config.ts" },
                     output: {
                       success: true,
                       file_size: 1024,
@@ -444,7 +442,12 @@ export const Interrupted: AppStory = {
   ),
 };
 
-/** Code execution showing the code view (monospace font test) */
+/**
+ * Code execution showing the code view (monospace font test).
+ *
+ * No play step is needed here: when execution completes without nested tool calls,
+ * CodeExecutionToolCall auto-switches from "tools" to "code" view.
+ */
 export const ShowCodeView: AppStory = {
   render: () => (
     <AppWithMocks
@@ -462,7 +465,7 @@ export const ShowCodeView: AppStory = {
                 createCodeExecutionTool(
                   "call-1",
                   `// Analysis script with various syntax elements
-const data = mux.file_read({ file_path: "data.json" });
+const data = mux.file_read({ path: "data.json" });
 const parsed = JSON.parse(data.content);
 
 function analyze(items) {
@@ -497,32 +500,4 @@ return results;`,
       }
     />
   ),
-  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await waitForChatMessagesLoaded(canvasElement);
-
-    // Find and click the "Show Code" button (CodeIcon)
-    await waitFor(() => {
-      const buttons = canvasElement.querySelectorAll('button[type="button"]');
-      const showCodeBtn = Array.from(buttons).find((btn) => {
-        const svg = btn.querySelector("svg");
-        return svg?.classList.contains("lucide-code");
-      });
-      if (!showCodeBtn) throw new Error("Show Code button not found");
-      return showCodeBtn;
-    });
-
-    const buttons = canvasElement.querySelectorAll('button[type="button"]');
-    const showCodeBtn = Array.from(buttons).find((btn) => {
-      const svg = btn.querySelector("svg");
-      return svg?.classList.contains("lucide-code");
-    }) as HTMLElement;
-
-    await userEvent.click(showCodeBtn);
-
-    // Wait for code view to be displayed (font-mono class should be present)
-    await waitFor(() => {
-      const codeContainer = canvasElement.querySelector(".font-mono");
-      if (!codeContainer) throw new Error("Code view not displayed");
-    });
-  },
 };

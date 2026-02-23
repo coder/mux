@@ -24,19 +24,25 @@ export function resolveForkRuntimeConfigs(
  *
  * This helper centralizes the logic so WorkspaceService and TaskService stay consistent.
  */
+interface ApplyForkRuntimeUpdatesOptions {
+  persistSourceRuntimeConfigUpdate?: boolean;
+}
+
 export async function applyForkRuntimeUpdates(
   config: Config,
   sourceWorkspaceId: string,
   sourceRuntimeConfig: RuntimeConfig,
-  forkResult: WorkspaceForkResult
-): Promise<{ forkedRuntimeConfig: RuntimeConfig }> {
+  forkResult: WorkspaceForkResult,
+  options: ApplyForkRuntimeUpdatesOptions = {}
+): Promise<{ forkedRuntimeConfig: RuntimeConfig; sourceRuntimeConfigUpdate?: RuntimeConfig }> {
   const resolved = resolveForkRuntimeConfigs(sourceRuntimeConfig, forkResult);
+  const persistSourceRuntimeConfigUpdate = options.persistSourceRuntimeConfigUpdate ?? true;
 
-  if (resolved.sourceRuntimeConfigUpdate) {
+  if (persistSourceRuntimeConfigUpdate && resolved.sourceRuntimeConfigUpdate) {
     await config.updateWorkspaceMetadata(sourceWorkspaceId, {
       runtimeConfig: resolved.sourceRuntimeConfigUpdate,
     });
   }
 
-  return { forkedRuntimeConfig: resolved.forkedRuntimeConfig };
+  return resolved;
 }

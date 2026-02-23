@@ -1,17 +1,21 @@
-import { describe, expect, test, mock } from "bun:test";
+import { describe, expect, test, mock, afterEach } from "bun:test";
 import { AgentSession } from "./agentSession";
 import type { Config } from "@/node/config";
-import type { HistoryService } from "./historyService";
-import type { PartialService } from "./partialService";
 import type { AIService } from "./aiService";
 import type { InitStateManager } from "./initStateManager";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
+import { createTestHistoryService } from "./testHistoryService";
 
 // NOTE: These tests focus on the event wiring (tool-call-end -> callback).
 // The actual post-compaction state computation is covered elsewhere.
 
 describe("AgentSession post-compaction refresh trigger", () => {
-  test("triggers callback on file_edit_* tool-call-end", () => {
+  let historyCleanup: (() => Promise<void>) | undefined;
+  afterEach(async () => {
+    await historyCleanup?.();
+  });
+
+  test("triggers callback on file_edit_* tool-call-end", async () => {
     const handlers = new Map<string, (...args: unknown[]) => void>();
 
     const aiService: AIService = {
@@ -25,9 +29,8 @@ describe("AgentSession post-compaction refresh trigger", () => {
       stopStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
     } as unknown as AIService;
 
-    const historyService: HistoryService = {
-      getHistory: mock(() => Promise.resolve({ success: true as const, data: [] })),
-    } as unknown as HistoryService;
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
 
     const initStateManager: InitStateManager = {
       on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
@@ -47,7 +50,6 @@ describe("AgentSession post-compaction refresh trigger", () => {
       srcDir: "/tmp",
       getSessionDir: mock(() => "/tmp"),
     } as unknown as Config;
-    const partialService: PartialService = {} as unknown as PartialService;
 
     const onPostCompactionStateChange = mock(() => undefined);
 
@@ -55,7 +57,6 @@ describe("AgentSession post-compaction refresh trigger", () => {
       workspaceId: "ws",
       config,
       historyService,
-      partialService,
       aiService,
       initStateManager,
       backgroundProcessManager,

@@ -3,6 +3,7 @@ import {
   fuzzySubsequenceMatch,
   matchesAllTerms,
   normalizeFuzzyText,
+  scoreAllTerms,
   splitQueryIntoTerms,
 } from "./fuzzySearch";
 
@@ -39,5 +40,42 @@ describe("fuzzySearch", () => {
     expect(matchesAllTerms(text, "ask→check")).toBe(true);
 
     expect(matchesAllTerms(text, "ask missing")).toBe(false);
+  });
+});
+
+describe("scoreAllTerms", () => {
+  test("exact substring match scores higher than scattered subsequence", () => {
+    // "Show Output" contains "output" as a contiguous substring.
+    // "Layout: Capture current to Slot 1" matches "output" only as a scattered subsequence.
+    const exactScore = scoreAllTerms("Show Output", "output");
+    const scatteredScore = scoreAllTerms("Layout: Capture current to Slot 1", "output");
+
+    expect(exactScore).toBeGreaterThan(0);
+    expect(scatteredScore).toBeGreaterThan(0);
+    expect(exactScore).toBeGreaterThan(scatteredScore);
+  });
+
+  test("returns 0 when any term does not match (AND semantics)", () => {
+    expect(scoreAllTerms("Show Output", "output missing")).toBe(0);
+  });
+
+  test("returns 1 for empty query", () => {
+    expect(scoreAllTerms("anything", "")).toBe(1);
+  });
+
+  test("multi-term query averages scores", () => {
+    const score = scoreAllTerms("Show Output Panel", "show output");
+    expect(score).toBeGreaterThan(0);
+    expect(score).toBeLessThanOrEqual(1);
+  });
+
+  test("no match returns 0", () => {
+    expect(scoreAllTerms("Show Output", "zzz")).toBe(0);
+  });
+
+  test("word-boundary matches score higher than mid-word", () => {
+    const atBoundary = scoreAllTerms("Output Panel", "output");
+    const notAtBoundary = scoreAllTerms("Foutputter", "output");
+    expect(atBoundary).toBeGreaterThan(notAtBoundary);
   });
 });

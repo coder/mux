@@ -12,7 +12,9 @@ mermaid.initialize({
   startOnLoad: false,
   theme: "dark",
   layout: "elk",
-  securityLevel: "loose",
+  // Security hardening: Mermaid content is untrusted (comes from markdown),
+  // so keep Mermaid's strict sanitization and disallow scriptable links.
+  securityLevel: "strict",
   fontFamily: "var(--font-monospace)",
   darkMode: true,
   elk: {
@@ -27,6 +29,113 @@ mermaid.initialize({
     defaultRenderer: "elk",
   },
 });
+
+function decodeNumericCodePoint(codePoint: number): string {
+  if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {
+    // Treat invalid numeric entities as empty content to avoid parser crashes
+    // and collapse obfuscated scheme separators.
+    return "";
+  }
+
+  try {
+    return String.fromCodePoint(codePoint);
+  } catch {
+    return "";
+  }
+}
+
+function decodeEntity(entityBody: string): string | null {
+  if (entityBody.startsWith("#x") || entityBody.startsWith("#X")) {
+    const parsed = Number.parseInt(entityBody.slice(2), 16);
+    return Number.isNaN(parsed) ? "" : decodeNumericCodePoint(parsed);
+  }
+
+  if (entityBody.startsWith("#")) {
+    const parsed = Number.parseInt(entityBody.slice(1), 10);
+    return Number.isNaN(parsed) ? "" : decodeNumericCodePoint(parsed);
+  }
+
+  const named: Record<string, string> = {
+    tab: "\t",
+    newline: "\n",
+    colon: ":",
+    nbsp: " ",
+  };
+
+  return named[entityBody.toLowerCase()] ?? null;
+}
+
+function canonicalizeUrlForSchemeCheck(value: string): string {
+  // Normalize encoded and obfuscated schemes before comparison so payloads like
+  // java&#10;script:, java%0Ascript:, or java\nscript: reduce to javascript:.
+  let normalized = value.toLowerCase();
+
+  normalized = normalized.replace(/&([^;\s]+);?/g, (fullMatch, entityBody: string) => {
+    return decodeEntity(entityBody) ?? fullMatch;
+  });
+
+  normalized = normalized.replace(/%([0-9a-f]{2})/gi, (fullMatch, hex: string) => {
+    const parsed = Number.parseInt(hex, 16);
+    return Number.isNaN(parsed) ? fullMatch : String.fromCodePoint(parsed);
+  });
+
+  let canonical = "";
+  for (const char of normalized) {
+    const charCode = char.charCodeAt(0);
+    const isAsciiControl = charCode <= 0x1f || charCode === 0x7f;
+    if (isAsciiControl || /\s/.test(char)) {
+      continue;
+    }
+
+    canonical += char;
+  }
+
+  return canonical;
+}
+
+export function sanitizeMermaidSvg(svg: string): string | null {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(svg, "image/svg+xml");
+
+  if (doc.querySelector("parsererror")) {
+    return null;
+  }
+
+  const svgRoot = doc.documentElement;
+  if (svgRoot.tagName.toLowerCase() !== "svg") {
+    return null;
+  }
+
+  // Defense in depth: remove active content containers and sanitize remaining attributes.
+  // NOTE: Keep <foreignObject> because Mermaid uses it for wrapped node labels.
+  doc.querySelectorAll("script,iframe,object,embed").forEach((node) => {
+    node.remove();
+  });
+
+  const urlAttributes = new Set(["href", "xlink:href", "src", "action", "formaction"]);
+  const blockedSchemes = ["javascript:", "vbscript:", "data:text/html"];
+
+  doc.querySelectorAll("*").forEach((element) => {
+    for (const attribute of Array.from(element.attributes)) {
+      const attributeName = attribute.name.toLowerCase();
+      const canonicalUrlValue = canonicalizeUrlForSchemeCheck(attribute.value.trim());
+
+      if (attributeName.startsWith("on")) {
+        element.removeAttribute(attribute.name);
+        continue;
+      }
+
+      if (
+        urlAttributes.has(attributeName) &&
+        blockedSchemes.some((scheme) => canonicalUrlValue.startsWith(scheme))
+      ) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  });
+
+  return svgRoot.outerHTML;
+}
 
 // Common button styles
 const getButtonStyle = (disabled = false): CSSProperties => ({
@@ -48,10 +157,13 @@ const DiagramModal: React.FC<{ children: ReactNode; onClose: () => void }> = ({
 }) => {
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
     };
-    window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
+    window.addEventListener("keydown", handleEscape, { capture: true });
+    return () => window.removeEventListener("keydown", handleEscape, { capture: true });
   }, [onClose]);
 
   return (
@@ -159,11 +271,18 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
         const { svg: renderedSvg } = await mermaid.render(id, debouncedChart);
         if (cancelled) return;
 
-        lastValidSvgRef.current = renderedSvg;
-        setSvg(renderedSvg);
+        const sanitizedSvg = sanitizeMermaidSvg(renderedSvg);
+        if (!sanitizedSvg) {
+          throw new Error("Mermaid returned invalid SVG output");
+        }
+
+        lastValidSvgRef.current = sanitizedSvg;
+        setSvg(sanitizedSvg);
         setError(null);
         if (containerRef.current) {
-          containerRef.current.innerHTML = renderedSvg;
+          // SECURITY AUDIT: sanitizedSvg is produced by sanitizeMermaidSvg(),
+          // which strips active SVG/HTML content before insertion.
+          containerRef.current.innerHTML = sanitizedSvg;
         }
       } catch (err) {
         if (cancelled) return;
@@ -186,6 +305,7 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
   // Update modal container when opened
   useEffect(() => {
     if (isModalOpen && modalContainerRef.current && svg) {
+      // SECURITY AUDIT: svg state only stores sanitizeMermaidSvg() output.
       modalContainerRef.current.innerHTML = svg;
     }
   }, [isModalOpen, svg]);

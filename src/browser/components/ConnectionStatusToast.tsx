@@ -37,7 +37,7 @@ export const ConnectionStatusToast: React.FC<ConnectionStatusToastProps> = ({ wr
       <div
         role="status"
         aria-live="polite"
-        className="bg-warning/10 border-warning/30 text-warning flex animate-[toastSlideIn_0.2s_ease-out] items-center gap-2 rounded border px-3 py-1.5 text-xs shadow-[0_4px_12px_rgba(0,0,0,0.3)]"
+        className="bg-background-secondary border-warning text-warning flex animate-[toastSlideIn_0.2s_ease-out] items-center gap-2 rounded border px-3 py-1.5 text-xs shadow-[0_4px_12px_rgba(0,0,0,0.3)]"
       >
         <span className="bg-warning inline-block h-2 w-2 animate-pulse rounded-full" />
         <span>

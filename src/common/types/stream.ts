@@ -5,6 +5,11 @@
 import type { z } from "zod";
 import type { MuxReasoningPart, MuxTextPart, MuxToolPart } from "./message";
 import type {
+  AutoCompactionCompletedEventSchema,
+  AutoCompactionTriggeredEventSchema,
+  AutoRetryAbandonedEventSchema,
+  AutoRetryScheduledEventSchema,
+  AutoRetryStartingEventSchema,
   ErrorEventSchema,
   ReasoningDeltaEventSchema,
   ReasoningEndEventSchema,
@@ -55,24 +60,15 @@ export type ReasoningEndEvent = z.infer<typeof ReasoningEndEventSchema>;
  */
 export type UsageDeltaEvent = z.infer<typeof UsageDeltaEventSchema>;
 
+export type AutoCompactionTriggeredEvent = z.infer<typeof AutoCompactionTriggeredEventSchema>;
+export type AutoCompactionCompletedEvent = z.infer<typeof AutoCompactionCompletedEventSchema>;
+
+export type AutoRetryScheduledEvent = z.infer<typeof AutoRetryScheduledEventSchema>;
+export type AutoRetryStartingEvent = z.infer<typeof AutoRetryStartingEventSchema>;
+export type AutoRetryAbandonedEvent = z.infer<typeof AutoRetryAbandonedEventSchema>;
+
 /**
  * Progress event for runtime readiness checks.
  * Used by Coder workspaces to show "Starting Coder workspace..." while ensureReady() blocks.
  */
 export type RuntimeStatusEvent = z.infer<typeof RuntimeStatusEventSchema>;
-
-export type AIServiceEvent =
-  | StreamStartEvent
-  | StreamDeltaEvent
-  | StreamEndEvent
-  | StreamAbortEvent
-  | ErrorEvent
-  | ToolCallStartEvent
-  | ToolCallDeltaEvent
-  | ToolCallEndEvent
-  | BashOutputEvent
-  | TaskCreatedEvent
-  | ReasoningDeltaEvent
-  | ReasoningEndEvent
-  | UsageDeltaEvent
-  | RuntimeStatusEvent;

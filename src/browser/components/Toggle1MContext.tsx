@@ -1,7 +1,7 @@
 import React from "react";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
-import { supports1MContext } from "@/common/utils/ai/models";
 import { cn } from "@/common/lib/utils";
+import { supports1MContext } from "@/common/utils/ai/models";
 
 interface Toggle1MContextProps {
   /** Model ID to check/toggle 1M context for */
@@ -18,6 +18,8 @@ interface Toggle1MContextProps {
 export const Toggle1MContext: React.FC<Toggle1MContextProps> = (props) => {
   const { has1MContext, toggle1MContext } = useProviderOptions();
 
+  // 1M context is a provider-level capability (Anthropic/Gemini), gated on
+  // the runtime model — not inherited through "Treat as" model mapping.
   if (!supports1MContext(props.model)) return null;
 
   const label = props.label ?? "1M context";
@@ -28,7 +30,7 @@ export const Toggle1MContext: React.FC<Toggle1MContextProps> = (props) => {
       type="button"
       onClick={() => toggle1MContext(props.model)}
       className={cn(
-        "flex items-center gap-1.5 text-[11px] transition-colors",
+        "flex cursor-pointer items-center gap-1.5 text-[11px] transition-colors",
         enabled ? "text-accent" : "text-muted hover:text-foreground"
       )}
       aria-label={enabled ? `Disable ${label}` : `Enable ${label}`}

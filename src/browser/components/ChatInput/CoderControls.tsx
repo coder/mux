@@ -179,11 +179,10 @@ export function CoderWorkspaceForm(props: CoderWorkspaceFormProps) {
     } else {
       // Switch to new workspace mode (workspaceName omitted; backend derives from branch)
       const firstTemplate = templates[0];
-      const firstIsDuplicate = firstTemplate && hasTemplateDuplicateName(firstTemplate, templates);
       onCoderConfigChange({
         existingWorkspace: false,
         template: firstTemplate?.name,
-        templateOrg: firstIsDuplicate ? firstTemplate?.organizationName : undefined,
+        templateOrg: firstTemplate?.organizationName,
       });
     }
   };
@@ -194,7 +193,13 @@ export function CoderWorkspaceForm(props: CoderWorkspaceFormProps) {
     // Value is "org/name" when duplicates exist, otherwise just "name"
     const [orgOrName, maybeName] = value.split("/");
     const templateName = maybeName ?? orgOrName;
-    const templateOrg = maybeName ? orgOrName : undefined;
+
+    // Always resolve the org from the templates list so --org is passed to CLI
+    // even when the user belongs to multiple orgs but template names don't collide
+    const matchedTemplate = templates.find(
+      (t) => t.name === templateName && (maybeName ? t.organizationName === orgOrName : true)
+    );
+    const templateOrg = maybeName ? orgOrName : matchedTemplate?.organizationName;
 
     onCoderConfigChange({
       ...coderConfig,

@@ -54,7 +54,7 @@ include fmt.mk
 .PHONY: all build dev start clean help
 .PHONY: build-renderer version build-icons build-static
 .PHONY: lint lint-fix typecheck typecheck-react-native static-check
-.PHONY: test test-unit test-integration test-watch test-coverage test-e2e smoke-test
+.PHONY: test test-unit test-integration test-watch test-coverage test-e2e test-e2e-perf smoke-test
 .PHONY: dist dist-mac dist-win dist-linux install-mac-arm64
 .PHONY: vscode-ext vscode-ext-install
 .PHONY: docs-server check-docs-links
@@ -112,9 +112,10 @@ mobile/node_modules/.installed: mobile/package.json mobile/bun.lock
 ensure-deps: node_modules/.installed
 
 # Rebuild native modules for Electron
-rebuild-native: node_modules/.installed ## Rebuild native modules (node-pty) for Electron
+rebuild-native: node_modules/.installed ## Rebuild native modules (node-pty, DuckDB) for Electron
 	@echo "Rebuilding native modules for Electron..."
 	@npx @electron/rebuild -f -m node_modules/node-pty
+	@npx @electron/rebuild -f -m node_modules/@duckdb/node-bindings
 	@echo "Native modules rebuilt successfully"
 
 # Run compiled CLI with trailing arguments (builds only if missing)
@@ -165,7 +166,7 @@ dev-server: node_modules/.installed build-main ## Start server mode with hot rel
 	@npm x concurrently -k \
 		"nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules scripts/build-main-watch.js" \
 		'npx esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
-		"set NODE_ENV=development&& nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms dist/cli/index.js server --host $(or $(BACKEND_HOST),127.0.0.1) --port $(or $(BACKEND_PORT),3000)" \
+		"set NODE_ENV=development&& nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms dist/cli/index.js server --no-auth --host $(or $(BACKEND_HOST),127.0.0.1) --port $(or $(BACKEND_PORT),3000)" \
 		"set MUX_VITE_HOST=$(or $(VITE_HOST),127.0.0.1)&& set MUX_VITE_PORT=$(or $(VITE_PORT),5173)&& set MUX_VITE_ALLOWED_HOSTS=$(VITE_ALLOWED_HOSTS)&& set MUX_BACKEND_PORT=$(or $(BACKEND_PORT),3000)&& vite"
 else
 dev-server: node_modules/.installed build-main ## Start server mode with hot reload (backend :3000 + frontend :5173). Use VITE_HOST=0.0.0.0 VITE_ALLOWED_HOSTS=<public-host> for remote access
@@ -177,7 +178,7 @@ dev-server: node_modules/.installed build-main ## Start server mode with hot rel
 	@bun x concurrently -k \
 		"bun x concurrently \"$(TSGO) -w -p tsconfig.main.json\" \"bun x tsc-alias -w -p tsconfig.main.json\"" \
 		'bun x esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
-		"bun x nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms --exec 'NODE_ENV=development node dist/cli/index.js server --host $(or $(BACKEND_HOST),127.0.0.1) --port $(or $(BACKEND_PORT),3000)'" \
+		"bun x nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms --exec 'NODE_ENV=development node dist/cli/index.js server --no-auth --host $(or $(BACKEND_HOST),127.0.0.1) --port $(or $(BACKEND_PORT),3000)'" \
 		"MUX_VITE_HOST=$(or $(VITE_HOST),127.0.0.1) MUX_VITE_PORT=$(or $(VITE_PORT),5173) MUX_VITE_ALLOWED_HOSTS=$(VITE_ALLOWED_HOSTS) MUX_BACKEND_PORT=$(or $(BACKEND_PORT),3000) vite"
 endif
 
@@ -276,7 +277,7 @@ build/icon.png: docs/img/logo-white.svg scripts/generate-icons.ts
 	@bun scripts/generate-icons.ts png
 
 ## Quality checks (can run in parallel)
-static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links check-code-docs-links lint-shellcheck ## Run all static checks (lint + typecheck + fmt-check)
+static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links check-code-docs-links lint-shellcheck flake-hash-check ## Run all static checks (lint + typecheck + fmt-check)
 
 check-bench-agent: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) ## Verify terminal-bench agent configuration and imports
 	@./scripts/check-bench-agent.sh
@@ -363,6 +364,10 @@ test-e2e: ## Run end-to-end tests
 	@$(MAKE) build
 	@MUX_E2E_LOAD_DIST=1 MUX_E2E_SKIP_BUILD=1 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 bun x playwright test --project=electron $(PLAYWRIGHT_ARGS)
 
+test-e2e-perf: ## Run automated workspace-load perf profiling scenarios
+	@$(MAKE) build
+	@MUX_E2E_RUN_PERF=1 MUX_PROFILE_REACT=1 MUX_E2E_LOAD_DIST=1 MUX_E2E_SKIP_BUILD=1 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 bun x playwright test --project=electron tests/e2e/scenarios/perf.workspaceOpen.spec.ts $(PLAYWRIGHT_ARGS)
+
 ## Distribution
 dist: build ## Build distributable packages
 	@bun x electron-builder --publish never
@@ -432,9 +437,14 @@ storybook-build: node_modules/.installed src/version.ts ## Build static Storyboo
 	$(check_node_version)
 	@bun x storybook build
 
+capture-readme-screenshots: node_modules/.installed src/version.ts ## Capture README screenshots from running Storybook
+	@echo "Capturing README screenshots from Storybook (must be running on port 6006)..."
+	@bun run scripts/capture-readme-screenshots.ts
+
 test-storybook: node_modules/.installed ## Run Storybook interaction tests (requires Storybook to be running or built)
 	$(check_node_version)
-	@bun x test-storybook
+	@# Storybook story transitions can exceed Jest's default 15s timeout on loaded CI runners.
+	@bun x test-storybook --testTimeout 30000
 
 chromatic: node_modules/.installed ## Run Chromatic for visual regression testing
 	$(check_node_version)

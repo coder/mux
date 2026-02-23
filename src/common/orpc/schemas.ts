@@ -8,6 +8,7 @@ export { ResultSchema } from "./schemas/result";
 export {
   RuntimeConfigSchema,
   RuntimeModeSchema,
+  RuntimeEnablementIdSchema,
   RuntimeAvailabilitySchema,
   RuntimeAvailabilityStatusSchema,
   DevcontainerConfigInfoSchema,
@@ -35,6 +36,28 @@ export {
   TimingAnomalySchema,
   WorkspaceStatsSnapshotSchema,
 } from "./schemas/workspaceStats";
+
+// Analytics schemas
+export {
+  AgentCostRowSchema,
+  EventRowSchema,
+  HistogramBucketSchema,
+  SpendByModelRowSchema,
+  SpendByProjectRowSchema,
+  SpendOverTimeRowSchema,
+  SummaryRowSchema,
+  TimingPercentilesRowSchema,
+} from "./schemas/analytics";
+export type {
+  AgentCostRow,
+  EventRow,
+  HistogramBucket,
+  SpendByModelRow,
+  SpendByProjectRow,
+  SpendOverTimeRow,
+  SummaryRow,
+  TimingPercentilesRow,
+} from "./schemas/analytics";
 
 // Chat stats schemas
 export {
@@ -65,7 +88,11 @@ export {
   AgentIdSchema,
 } from "./schemas/agentDefinition";
 
-export { SendMessageErrorSchema, StreamErrorTypeSchema } from "./schemas/errors";
+export {
+  SendMessageErrorSchema,
+  StreamErrorTypeSchema,
+  NameGenerationErrorSchema,
+} from "./schemas/errors";
 
 // Tool schemas
 export { BashToolResultSchema, FileTreeNodeSchema } from "./schemas/tools";
@@ -131,6 +158,11 @@ export type { FilePart, MuxFilePart } from "./schemas/message";
 
 // Stream event schemas
 export {
+  AutoCompactionCompletedEventSchema,
+  AutoCompactionTriggeredEventSchema,
+  AutoRetryAbandonedEventSchema,
+  AutoRetryScheduledEventSchema,
+  AutoRetryStartingEventSchema,
   CaughtUpMessageSchema,
   ChatMuxMessageSchema,
   CompletedMessagePartSchema,
@@ -164,6 +196,7 @@ export {
 export {
   ApiServerStatusSchema,
   AWSCredentialStatusSchema,
+  analytics,
   coder,
   CoderInfoSchema,
   CoderPresetSchema,
@@ -185,6 +218,7 @@ export {
   mcp,
   secrets,
   ProviderConfigInfoSchema,
+  ProviderModelEntrySchema,
   muxGateway,
   muxGatewayOauth,
   copilotOauth,
@@ -194,6 +228,8 @@ export {
   providers,
   ProvidersConfigMapSchema,
   server,
+  ServerAuthSessionSchema,
+  serverAuth,
   splashScreens,
   tasks,
   experiments,
@@ -203,6 +239,7 @@ export {
   signing,
   type SigningCapabilities,
   type SignatureEnvelope,
+  ssh,
   terminal,
   tokenizer,
   update,

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { filterCommandsByPrefix } from "@/browser/utils/commandPaletteFiltering";
 import { CommandIds, CommandIdMatchers } from "@/browser/utils/commandIds";
+import { rankByPaletteQuery } from "@/browser/utils/commandPaletteRanking";
 
 /**
  * Tests for command palette filtering logic
@@ -123,5 +124,79 @@ describe("CommandPalette filtering", () => {
 
       expect(resultEmpty).toEqual(resultWithText);
     });
+  });
+});
+
+describe("CommandPalette ranking", () => {
+  test("no-prefix query ranks exact workspace name above weaker match", () => {
+    const workspaces = [
+      { id: "ws:switch:my-app", title: "my-app", section: "Workspaces" },
+      { id: "ws:switch:my-app-legacy", title: "my-app-legacy", section: "Workspaces" },
+      { id: "ws:switch:some-project", title: "some-project", section: "Workspaces" },
+    ];
+
+    const result = rankByPaletteQuery({
+      items: workspaces,
+      query: "my-app",
+      toSearchDoc: (workspace) => ({ primaryText: workspace.title }),
+      tieBreak: (a, b) => a.title.localeCompare(b.title),
+    });
+
+    expect(result[0]?.title).toBe("my-app");
+  });
+
+  test(">output ranks Show Output above false positives", () => {
+    const commands = [
+      {
+        id: "nav:output",
+        title: "Show Output",
+        section: "Navigation",
+        keywords: ["output", "panel"],
+      },
+      { id: "ws:new", title: "New Workspace", section: "Workspaces", keywords: ["create"] },
+      { id: "layout:toggle", title: "Toggle Layout", section: "Layouts", keywords: [] },
+    ];
+
+    const result = rankByPaletteQuery({
+      items: commands,
+      query: "output",
+      toSearchDoc: (command) => ({
+        primaryText: command.title,
+        secondaryText: command.keywords,
+      }),
+      tieBreak: (a, b) => a.title.localeCompare(b.title),
+    });
+
+    expect(result[0]?.title).toBe("Show Output");
+    expect(result.some((command) => command.title === "Toggle Layout")).toBe(false);
+  });
+
+  test("workspace with long metadata still ranks exact title first", () => {
+    const workspaces = [
+      {
+        id: "ws:switch:my-app",
+        title: "my-app",
+        section: "Workspaces",
+        keywords: ["my-app", "my-project", "/home/user/very/long/path/to/project/my-app"],
+      },
+      {
+        id: "ws:switch:my-app-legacy",
+        title: "my-app-legacy",
+        section: "Workspaces",
+        keywords: ["my-app-legacy", "other-project"],
+      },
+    ];
+
+    const result = rankByPaletteQuery({
+      items: workspaces,
+      query: "my-app",
+      toSearchDoc: (workspace) => ({
+        primaryText: workspace.title,
+        secondaryText: workspace.keywords,
+      }),
+      tieBreak: (a, b) => a.title.localeCompare(b.title),
+    });
+
+    expect(result[0]?.title).toBe("my-app");
   });
 });

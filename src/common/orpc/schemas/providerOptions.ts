@@ -12,6 +12,14 @@ export const MuxProviderOptionsSchema = z.object({
         description:
           "Model IDs with 1M context enabled (e.g. ['anthropic:claude-sonnet-4-20250514'])",
       }),
+      // Anthropic prompt cache TTL. "5m" is the default (free refresh on hit).
+      // "1h" costs 2× base input for cache writes but keeps the cache alive longer —
+      // useful for agentic workflows where turns take >5 minutes.
+      // See: https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration
+      cacheTtl: z.enum(["5m", "1h"]).nullish().meta({
+        description:
+          'Anthropic prompt cache TTL: "5m" (default, free refresh) or "1h" (2× write cost, longer cache)',
+      }),
     })
     .optional(),
   openai: z

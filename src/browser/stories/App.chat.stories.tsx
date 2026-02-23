@@ -30,10 +30,28 @@ import { setupSimpleChatStory, setupStreamingChatStory, setWorkspaceInput } from
 import { within, userEvent, waitFor } from "@storybook/test";
 import { warmHashCache, setShareData } from "@/browser/utils/sharedUrlCache";
 
+import { MODEL_ABBREVIATION_EXAMPLES } from "@/common/constants/knownModels";
+import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import {
+  HelpIndicator,
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/browser/components/ui/tooltip";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import {
+  PLAN_AUTO_ROUTING_STATUS_EMOJI,
+  PLAN_AUTO_ROUTING_STATUS_MESSAGE,
+} from "@/common/constants/planAutoRoutingStatus";
+
 export default {
   ...appMeta,
   title: "App/Chat",
 };
+
+const DEFAULT_AGENT_LABEL =
+  WORKSPACE_DEFAULTS.agentId.slice(0, 1).toUpperCase() + WORKSPACE_DEFAULTS.agentId.slice(1);
 
 /** Chat showing loaded skills via agent_skill_read tool calls */
 export const WithLoadedSkills: AppStory = {
@@ -223,6 +241,64 @@ export const Conversation: AppStory = {
 };
 
 /** Chat with reasoning/thinking blocks */
+/** Synthetic auto-resume messages shown with "AUTO" badge and dimmed opacity */
+export const SyntheticAutoResumeMessages: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          messages: [
+            createUserMessage("msg-1", "Run the full test suite and fix any failures", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 300000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "I'll run the tests now. Let me spawn a sub-agent to handle the test execution.",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 295000,
+              }
+            ),
+            createUserMessage(
+              "msg-3",
+              "You have active background sub-agent task(s) (task-abc123). " +
+                "You MUST NOT end your turn while any sub-agent tasks are queued/running/awaiting_report. " +
+                "Call task_await now to wait for them to finish.",
+              {
+                historySequence: 3,
+                timestamp: STABLE_TIMESTAMP - 290000,
+                synthetic: true,
+              }
+            ),
+            createAssistantMessage("msg-4", "I'll wait for the sub-agent to complete its work.", {
+              historySequence: 4,
+              timestamp: STABLE_TIMESTAMP - 285000,
+            }),
+            createUserMessage(
+              "msg-5",
+              "Your background sub-agent task(s) have completed. Use task_await to retrieve their reports and integrate the results.",
+              {
+                historySequence: 5,
+                timestamp: STABLE_TIMESTAMP - 280000,
+                synthetic: true,
+              }
+            ),
+            createAssistantMessage(
+              "msg-6",
+              "The sub-agent has finished. All 47 tests passed successfully — no failures found.",
+              {
+                historySequence: 6,
+                timestamp: STABLE_TIMESTAMP - 275000,
+              }
+            ),
+          ],
+        })
+      }
+    />
+  ),
+};
+
 export const WithReasoning: AppStory = {
   render: () => (
     <AppWithMocks
@@ -354,6 +430,55 @@ export const WithAgentStatus: AppStory = {
   ),
 };
 
+/** switch_agent tool call rendered with custom handoff card UI */
+export const SwitchAgentHandoff: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-switch-agent",
+          messages: [
+            createUserMessage("msg-1", "Should we plan this migration before editing files?", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 100000,
+            }),
+            createAssistantMessage("msg-2", "I'll hand this off to the planning agent first.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 90000,
+              toolCalls: [
+                createGenericTool(
+                  "call-switch-agent-1",
+                  "switch_agent",
+                  {
+                    agentId: "plan",
+                    reason:
+                      "This requires a scoped rollout plan with risk assessment before making code edits.",
+                    followUp:
+                      "Draft a migration plan that lists dependencies, sequencing, and rollback steps.",
+                  },
+                  {
+                    ok: true,
+                    agentId: "plan",
+                  }
+                ),
+              ],
+            }),
+            createUserMessage(
+              "msg-3",
+              "Draft a migration plan that lists dependencies, sequencing, and rollback steps.",
+              {
+                historySequence: 3,
+                timestamp: STABLE_TIMESTAMP - 85000,
+                synthetic: true,
+              }
+            ),
+          ],
+        })
+      }
+    />
+  ),
+};
+
 /** Voice input button shows user education when OpenAI API key is not set */
 export const VoiceInputNoApiKey: AppStory = {
   render: () => (
@@ -363,7 +488,7 @@ export const VoiceInputNoApiKey: AppStory = {
           messages: [],
           // No OpenAI key configured - voice button should be disabled with tooltip
           providersConfig: {
-            anthropic: { apiKeySet: true, isConfigured: true },
+            anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true },
             // openai deliberately missing
           },
         })
@@ -398,7 +523,7 @@ export const Streaming: AppStory = {
           pendingTool: {
             toolCallId: "call-1",
             toolName: "file_read",
-            args: { file_path: "src/db/connection.ts" },
+            args: { path: "src/db/connection.ts" },
           },
           gitStatus: { dirty: 1 },
         })
@@ -465,8 +590,10 @@ export const AskUserQuestionPending: AppStory = {
       await userEvent.click(toolTitle);
     }
 
-    const getSectionButton = (prefix: string): HTMLElement => {
-      const buttons = canvas.getAllByRole("button");
+    // Use findAllByRole (retry-capable) instead of getAllByRole to handle
+    // transient DOM gaps when the Storybook iframe remounts between awaits.
+    const getSectionButton = async (prefix: string): Promise<HTMLElement> => {
+      const buttons = await canvas.findAllByRole("button");
       const btn = buttons.find(
         (el) => el.tagName === "BUTTON" && (el.textContent ?? "").startsWith(prefix)
       );
@@ -475,7 +602,7 @@ export const AskUserQuestionPending: AppStory = {
     };
 
     // Ensure we're on the first question.
-    await userEvent.click(getSectionButton("Approach"));
+    await userEvent.click(await getSectionButton("Approach"));
 
     // Wait for the first question to render.
     try {
@@ -489,11 +616,11 @@ export const AskUserQuestionPending: AppStory = {
     }
 
     // Selecting a single-select option should auto-advance.
-    await userEvent.click(canvas.getByText("Approach A"));
+    await userEvent.click(await canvas.findByText("Approach A"));
     await canvas.findByText("Which platforms do we need to support?");
 
     // Regression: you must be able to jump back to a previous section after answering it.
-    await userEvent.click(getSectionButton("Approach"));
+    await userEvent.click(await getSectionButton("Approach"));
 
     await canvas.findByText("Which approach should we take?");
 
@@ -830,45 +957,61 @@ export const BackgroundProcesses: AppStory = {
  */
 export const ModeHelpTooltip: AppStory = {
   render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          messages: [],
-        })
-      }
-    />
+    <TooltipProvider>
+      <div className="bg-background flex min-h-[180px] items-start p-6">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <HelpIndicator data-testid="mode-help-indicator">?</HelpIndicator>
+          </TooltipTrigger>
+          <TooltipContent align="start" className="max-w-80 whitespace-normal">
+            <strong>Click to edit</strong>
+            <br />
+            <strong>{formatKeybind(KEYBINDS.CYCLE_MODEL)}</strong> to cycle models
+            <br />
+            <br />
+            <strong>Abbreviations:</strong>
+            {MODEL_ABBREVIATION_EXAMPLES.map((ex) => (
+              <span key={ex.abbrev}>
+                <br />• <code>/model {ex.abbrev}</code> - {ex.displayName}
+              </span>
+            ))}
+            <br />
+            <br />
+            <strong>Full format:</strong>
+            <br />
+            <code>/model provider:model-name</code>
+            <br />
+            (e.g., <code>/model anthropic:claude-sonnet-4-5</code>)
+          </TooltipContent>
+        </Tooltip>
+      </div>
+    </TooltipProvider>
   ),
   play: async ({ canvasElement }) => {
-    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
-    const canvas = within(storyRoot);
+    const canvas = within(canvasElement);
+    const helpIndicator = await canvas.findByTestId("mode-help-indicator");
 
-    // Wait for app to fully load - the chat input with mode selector should be present
-    await canvas.findAllByText("Exec", {}, { timeout: 10000 });
-
-    // Find the help indicator "?" - should be a span with cursor-help styling
-    const helpIndicators = canvas.getAllByText("?");
-    const helpIndicator = helpIndicators.find(
-      (el) => el.tagName === "SPAN" && el.className.includes("cursor-help")
-    );
-    if (!helpIndicator) throw new Error("HelpIndicator not found");
-
-    // Hover to open the tooltip and leave it visible for the visual snapshot
     await userEvent.hover(helpIndicator);
 
-    // Wait for tooltip to fully appear (Radix has 200ms delay)
     await waitFor(
       () => {
         const tooltip = document.querySelector('[role="tooltip"]');
-        if (!tooltip) throw new Error("Tooltip not visible");
+        if (!(tooltip instanceof HTMLElement)) {
+          throw new Error("Tooltip not visible");
+        }
+        if (!tooltip.textContent?.includes("Click to edit")) {
+          throw new Error("Expected model help tooltip content to be visible");
+        }
       },
-      { interval: 50 }
+      { interval: 50, timeout: 5000 }
     );
   },
+
   parameters: {
     docs: {
       description: {
         story:
-          "Verifies the HelpIndicator tooltip works by focusing the ? icon. The tooltip should appear with Exec/Plan mode explanations.",
+          "Verifies the model help tooltip trigger works and renders the shortcut/abbreviation guidance content.",
       },
     },
   },
@@ -890,15 +1033,18 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
 
         // Ensure the gateway indicator is active (so the regression would reproduce).
         updatePersistedState(getModelKey(workspaceId), baseModel);
-        updatePersistedState("gateway-enabled", true);
-        updatePersistedState("gateway-available", true);
-        updatePersistedState("gateway-models", [baseModel]);
 
         return setupSimpleChatStory({
           workspaceId,
           messages: [],
           providersConfig: {
-            "mux-gateway": { apiKeySet: false, couponCodeSet: true, isConfigured: true },
+            "mux-gateway": {
+              apiKeySet: false,
+              isEnabled: true,
+              couponCodeSet: true,
+              isConfigured: true,
+              gatewayModels: [baseModel],
+            },
           },
         });
       }}
@@ -908,12 +1054,17 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
     const canvas = within(canvasElement);
 
     // Wait for chat input to mount.
-    await canvas.findAllByText("Exec", {}, { timeout: 10000 });
+    await canvas.findAllByText(DEFAULT_AGENT_LABEL, {}, { timeout: 15000 });
 
     // With gateway enabled, we should still display the *pretty* model name.
-    await waitFor(() => {
-      canvas.getByText("GPT-4o");
-    });
+    // CI can take longer than the default waitFor timeout while workspace/model
+    // state hydrates, so wait explicitly instead of triggering a flaky retry.
+    await waitFor(
+      () => {
+        canvas.getByText("GPT-4o");
+      },
+      { interval: 50, timeout: 10000 }
+    );
 
     // The buggy rendering (mux-gateway:openai/gpt-4o) shows up as "Openai/gpt 4o".
     const ugly = canvas.queryByText("Openai/gpt 4o");
@@ -928,7 +1079,7 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
         if (!el) throw new Error("Gateway indicator not found");
         return el;
       },
-      { interval: 50 }
+      { interval: 50, timeout: 15000 }
     );
 
     // Hover to prove the gateway tooltip is wired up (and keep it visible for snapshot).
@@ -941,7 +1092,7 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
           throw new Error("Gateway tooltip not visible");
         }
       },
-      { interval: 50 }
+      { interval: 50, timeout: 5000 }
     );
   },
   parameters: {
@@ -972,8 +1123,13 @@ export const ModelSelectorDropdownOpen: AppStory = {
           workspaceId,
           messages: [],
           providersConfig: {
-            openai: { apiKeySet: true, couponCodeSet: false, isConfigured: true },
-            anthropic: { apiKeySet: true, couponCodeSet: false, isConfigured: true },
+            openai: { apiKeySet: true, isEnabled: true, couponCodeSet: false, isConfigured: true },
+            anthropic: {
+              apiKeySet: true,
+              isEnabled: true,
+              couponCodeSet: false,
+              isConfigured: true,
+            },
           },
         });
       }}
@@ -983,7 +1139,7 @@ export const ModelSelectorDropdownOpen: AppStory = {
     const canvas = within(canvasElement);
 
     // Wait for chat input to mount
-    await canvas.findAllByText("Exec", {}, { timeout: 10000 });
+    await canvas.findAllByText(DEFAULT_AGENT_LABEL, {}, { timeout: 15000 });
 
     // Wait for model selector to be clickable (shows pretty name "GPT-4o")
     const modelSelector = await waitFor(() => {
@@ -1565,6 +1721,84 @@ graph TD
           "Shows the ProposePlanToolCall component with a completed plan. " +
           "The plan card displays with the title in the header and icon action buttons " +
           "(Copy, Start Here, Show Text) at the bottom, matching the AssistantMessage aesthetic.",
+      },
+    },
+  },
+};
+
+/**
+ * Captures the handoff pause after a plan is presented and before the executor stream starts.
+ *
+ * This reproduces the visual state where the sidebar shows "Deciding execution strategy…"
+ * while the proposed plan remains visible in the conversation.
+ */
+export const ProposePlanAutoRoutingDecisionGap: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-plan-auto-routing-gap",
+          workspaceName: "feature/plan-auto-routing",
+          messages: [
+            createUserMessage(
+              "msg-1",
+              "Plan and implement a safe migration rollout for auth tokens.",
+              {
+                historySequence: 1,
+                timestamp: STABLE_TIMESTAMP - 240000,
+              }
+            ),
+            createAssistantMessage("msg-2", "Here is the implementation plan.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 230000,
+              toolCalls: [
+                createProposePlanTool(
+                  "call-plan-1",
+                  `# Auth Token Migration Rollout
+
+## Goals
+
+- Migrate token validation to the new signing service.
+- Maintain compatibility during rollout.
+- Keep rollback simple and low risk.
+
+## Steps
+
+1. Add dual-read token validation behind a feature flag.
+2. Ship telemetry for token verification outcomes.
+3. Enable new validator for 10% of traffic.
+4. Ramp to 100% after stability checks.
+5. Remove legacy validator once metrics stay healthy.
+
+## Rollback
+
+- Disable the rollout flag to return to legacy validation immediately.
+- Keep telemetry running to confirm recovery.`
+                ),
+              ],
+            }),
+            createAssistantMessage("msg-3", "Selecting the right executor for this plan.", {
+              historySequence: 3,
+              timestamp: STABLE_TIMESTAMP - 220000,
+              toolCalls: [
+                createStatusTool(
+                  "call-status-1",
+                  PLAN_AUTO_ROUTING_STATUS_EMOJI,
+                  PLAN_AUTO_ROUTING_STATUS_MESSAGE
+                ),
+              ],
+            }),
+          ],
+        })
+      }
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Chromatic regression story for the plan auto-routing gap: after `propose_plan` succeeds, " +
+          "the sidebar stays in a working state with a 'Deciding execution strategy…' status before executor kickoff.",
       },
     },
   },

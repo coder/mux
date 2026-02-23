@@ -12,6 +12,15 @@ import { DockerRuntime } from "@/node/runtime/DockerRuntime";
 import { SSHRuntime } from "@/node/runtime/SSHRuntime";
 import { createSSHTransport } from "@/node/runtime/transports";
 import type { SSHServerConfig } from "./ssh-fixture";
+import type { InitLogger } from "@/node/runtime/Runtime";
+
+/** Shared no-op init logger for tests that call initWorkspace / forkWorkspace. */
+export const noopInitLogger: InitLogger = {
+  logStep: () => {},
+  logStdout: () => {},
+  logStderr: () => {},
+  logComplete: () => {},
+};
 
 /**
  * Runtime type for test matrix

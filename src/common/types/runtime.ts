@@ -4,7 +4,7 @@
 
 import type { z } from "zod";
 import type { RuntimeConfigSchema } from "../orpc/schemas";
-import { RuntimeModeSchema } from "../orpc/schemas";
+import { RuntimeEnablementIdSchema, RuntimeModeSchema } from "../orpc/schemas";
 import type { CoderWorkspaceConfig } from "../orpc/schemas/coder";
 
 // Re-export CoderWorkspaceConfig type from schema (single source of truth)
@@ -23,17 +23,44 @@ export const RUNTIME_MODE = {
 } as const;
 
 /**
- * Runtime modes that require a git repository.
- *
- * Worktree/SSH/Docker/Devcontainer all depend on git operations (worktrees, clones, bundles).
- * Local runtime can operate directly in a directory without git.
+ * Runtime IDs that can be enabled/disabled in Settings → Runtimes.
+ * Note: includes "coder" which is a UI-level choice (not a RuntimeMode).
  */
-export const RUNTIME_MODES_REQUIRING_GIT: RuntimeMode[] = [
-  RUNTIME_MODE.WORKTREE,
-  RUNTIME_MODE.SSH,
-  RUNTIME_MODE.DOCKER,
-  RUNTIME_MODE.DEVCONTAINER,
-];
+export const RUNTIME_ENABLEMENT_IDS = RuntimeEnablementIdSchema.options;
+
+export type RuntimeEnablementId = z.infer<typeof RuntimeEnablementIdSchema>;
+
+export type RuntimeEnablement = Record<RuntimeEnablementId, boolean>;
+
+export const DEFAULT_RUNTIME_ENABLEMENT: RuntimeEnablement = {
+  local: true,
+  worktree: true,
+  ssh: true,
+  coder: true,
+  docker: true,
+  devcontainer: true,
+};
+
+/**
+ * Normalize runtime enablement, defaulting missing/invalid keys to true.
+ */
+export function normalizeRuntimeEnablement(value: unknown): RuntimeEnablement {
+  const normalized: RuntimeEnablement = { ...DEFAULT_RUNTIME_ENABLEMENT };
+
+  if (!value || typeof value !== "object") {
+    return normalized;
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const runtimeId of RUNTIME_ENABLEMENT_IDS) {
+    const entry = record[runtimeId];
+    if (typeof entry === "boolean") {
+      normalized[runtimeId] = entry;
+    }
+  }
+
+  return normalized;
+}
 
 /** Runtime string prefix for SSH mode (e.g., "ssh hostname") */
 export const SSH_RUNTIME_PREFIX = "ssh ";
@@ -296,13 +323,4 @@ export function getDevcontainerConfigs(
     return status.configs;
   }
   return [];
-}
-
-/**
- * Helper to check if availability has devcontainer configs.
- */
-export function hasDevcontainerConfigs(
-  status: RuntimeAvailabilityStatus
-): status is { available: true; configs: DevcontainerConfigInfo[]; cliVersion?: string } {
-  return status.available && "configs" in status;
 }

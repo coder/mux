@@ -25,6 +25,7 @@ import type { ToolCallStartEvent, ToolCallEndEvent } from "@/common/types/stream
 import type { ReasoningDeltaEvent } from "@/common/types/stream";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const MOCK_TOKENIZER_MODEL = KNOWN_MODELS.GPT.id;
 const TOKENIZE_TIMEOUT_MS = 150;
@@ -71,7 +72,7 @@ async function tokenizeWithMockModel(text: string, context: string): Promise<num
       );
       return tokens;
     } catch (error) {
-      tokenizerErrorMessage = error instanceof Error ? error.message : String(error);
+      tokenizerErrorMessage = getErrorMessage(error);
       return approximateTokens;
     }
   })();
@@ -227,7 +228,7 @@ export class MockAiStreamPlayer {
       type: "stream-abort",
       workspaceId,
       messageId: active.messageId,
-      reason: "user_cancelled",
+      abortReason: "user",
     });
 
     this.cleanup(workspaceId);
@@ -550,9 +551,10 @@ export class MockAiStreamPlayer {
           parts: event.parts,
         };
 
-        // Update history with completed message (mirrors real StreamManager behavior)
-        // Fetch the current message from history to get its historySequence
-        const historyResult = await this.deps.historyService.getHistory(workspaceId);
+        // Update history with completed message (mirrors real StreamManager behavior).
+        // The target message is always in the current epoch — use boundary-aware read.
+        const historyResult =
+          await this.deps.historyService.getHistoryFromLatestBoundary(workspaceId);
         if (active.cancelled) return;
         if (historyResult.success) {
           const existingMessage = historyResult.data.find((msg) => msg.id === messageId);

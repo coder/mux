@@ -254,7 +254,7 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
           } else {
             controller.error(
               new RuntimeError(
-                `Failed to read file ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+                `Failed to read file ${filePath}: ${getErrorMessage(err)}`,
                 "file_io",
                 err instanceof Error ? err : undefined
               )
@@ -337,7 +337,8 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
   }
 
   private async statViaExec(filePath: string, abortSignal?: AbortSignal): Promise<FileStat> {
-    const stream = await this.exec(`stat -c '%s %Y %F' ${this.quoteForContainer(filePath)}`, {
+    // -L follows symlinks so symlinked paths report the target's type
+    const stream = await this.exec(`stat -L -c '%s %Y %F' ${this.quoteForContainer(filePath)}`, {
       cwd: this.getContainerBasePath(),
       timeout: 10,
       abortSignal,

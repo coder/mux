@@ -292,6 +292,7 @@ export class GitStatusStore {
     if (a === null || b === null) return false;
 
     return (
+      a.branch === b.branch &&
       a.ahead === b.ahead &&
       a.behind === b.behind &&
       a.dirty === b.dirty &&
@@ -363,6 +364,7 @@ export class GitStatusStore {
       }
 
       const {
+        headBranch,
         ahead,
         behind,
         dirtyCount,
@@ -376,6 +378,7 @@ export class GitStatusStore {
       return [
         metadata.id,
         {
+          branch: headBranch,
           ahead,
           behind,
           dirty,

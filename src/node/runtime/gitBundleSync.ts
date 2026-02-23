@@ -11,11 +11,16 @@ import { execAsync } from "@/node/utils/disposableExec";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 
-interface OriginUrlResult {
+export interface OriginUrlResult {
   originUrl: string | null;
 }
 
-async function getOriginUrlForBundle(
+/**
+ * Detect the origin remote URL for a local project.
+ * Returns null if no origin exists, or if the URL points to a bundle file.
+ * Exported for reuse by SSHRuntime's worktree-based sync path.
+ */
+export async function getOriginUrlForBundle(
   projectPath: string,
   initLogger: InitLogger,
   logErrors: boolean

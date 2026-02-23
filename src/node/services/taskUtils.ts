@@ -48,3 +48,37 @@ export function findWorkspaceEntry(
   }
   return null;
 }
+
+/**
+ * Walk the parentWorkspaceId chain to compute task nesting depth.
+ * Detects cycles (max 32 hops).
+ */
+export function getTaskDepthFromConfig(
+  config: ReturnType<Config["loadConfigOrDefault"]>,
+  workspaceId: string
+): number {
+  const parentById = new Map<string, string | undefined>();
+  for (const project of config.projects.values()) {
+    for (const workspace of project.workspaces) {
+      if (!workspace.id) continue;
+      parentById.set(workspace.id, workspace.parentWorkspaceId);
+    }
+  }
+
+  let depth = 0;
+  let current = workspaceId;
+  for (let i = 0; i < 32; i++) {
+    const parent = parentById.get(current);
+    if (!parent) break;
+    depth += 1;
+    current = parent;
+  }
+
+  if (depth >= 32) {
+    throw new Error(
+      `getTaskDepthFromConfig: possible parentWorkspaceId cycle starting at ${workspaceId}`
+    );
+  }
+
+  return depth;
+}

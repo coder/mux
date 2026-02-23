@@ -1,2 +1,2 @@
-export { SettingsModal } from "./SettingsModal";
+export { SettingsPage } from "./SettingsPage";
 export { SettingsProvider, useSettings } from "@/browser/contexts/SettingsContext";

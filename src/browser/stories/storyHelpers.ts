@@ -322,8 +322,9 @@ export function createOnChatAdapter(chatHandlers: Map<string, ChatHandler>) {
     if (handler) {
       return handler(emit);
     }
-    // Default: emit caught-up immediately
-    queueMicrotask(() => emit({ type: "caught-up" }));
+    // Default: emit caught-up immediately. Modern backends include hasOlderHistory
+    // on full replays; default to false in stories to avoid phantom pagination UI.
+    queueMicrotask(() => emit({ type: "caught-up", hasOlderHistory: false }));
     return undefined;
   };
 }
@@ -380,6 +381,15 @@ export interface SimpleChatSetupOptions {
   agentSkills?: AgentSkillDescriptor[];
   /** Agent skills that were discovered but couldn't be loaded (SKILL.md parse errors, etc.) */
   invalidAgentSkills?: AgentSkillIssue[];
+  /** Mock log entries for Output tab */
+  logEntries?: Array<{
+    timestamp: number;
+    level: "error" | "warn" | "info" | "debug";
+    message: string;
+    location: string;
+  }>;
+  /** Mock clearLogs result */
+  clearLogsResult?: { success: boolean; error?: string | null };
 }
 
 /**
@@ -466,6 +476,8 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     signingCapabilities: opts.signingCapabilities,
     agentSkills: opts.agentSkills,
     invalidAgentSkills: opts.invalidAgentSkills,
+    logEntries: opts.logEntries,
+    clearLogsResult: opts.clearLogsResult,
   });
 }
 

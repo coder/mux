@@ -10,9 +10,13 @@ import { useWorkspaceStoreRaw as getWorkspaceStoreRaw } from "@/browser/stores/W
 import {
   SELECTED_WORKSPACE_KEY,
   getModelKey,
+  getRightSidebarLayoutKey,
+  getTerminalTitlesKey,
   getThinkingLevelKey,
 } from "@/common/constants/storage";
 import type { RecursivePartial } from "@/browser/testUtils";
+import { readPersistedState } from "@/browser/hooks/usePersistedState";
+import type { RightSidebarLayoutState } from "@/browser/utils/rightSidebarLayout";
 
 import type { APIClient } from "@/browser/contexts/API";
 
@@ -74,6 +78,13 @@ describe("WorkspaceContext", () => {
     const ctx = await setup();
 
     await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(1));
+
+    // Activate the workspace so onChat subscription starts (required after the
+    // refactor that scoped onChat to the active workspace only).
+    act(() => {
+      getWorkspaceStoreRaw().setActiveWorkspaceId("ws-sync-load");
+    });
+
     await waitFor(() =>
       expect(
         workspaceApi.onChat.mock.calls.some(
@@ -574,7 +585,74 @@ describe("WorkspaceContext", () => {
     expect(result.error).toBe("Failed");
   });
 
-  test("renameWorkspace updates workspace title (now uses updateTitle API)", async () => {
+  describe("archiveWorkspace", () => {
+    test("succeeds even when persisted layout is invalid JSON shape", async () => {
+      const workspaceId = "ws-archive-invalid-layout";
+      const layoutKey = getRightSidebarLayoutKey(workspaceId);
+
+      const { workspace: workspaceApi } = createMockAPI({
+        localStorage: {
+          [layoutKey]: JSON.stringify({ broken: true }),
+        },
+      });
+
+      const ctx = await setup();
+
+      let result: Awaited<ReturnType<WorkspaceContext["archiveWorkspace"]>> | undefined;
+      await act(async () => {
+        result = await ctx().archiveWorkspace(workspaceId);
+      });
+
+      expect(workspaceApi.archive).toHaveBeenCalledWith({ workspaceId });
+      expect(result).toEqual({ success: true });
+    });
+
+    test("strips terminal tabs from valid persisted layout on successful archive", async () => {
+      const workspaceId = "ws-archive-clean-layout";
+      const layoutKey = getRightSidebarLayoutKey(workspaceId);
+      const terminalTitlesKey = getTerminalTitlesKey(workspaceId);
+      const persistedLayout: RightSidebarLayoutState = {
+        version: 1,
+        nextId: 2,
+        focusedTabsetId: "tabset-1",
+        root: {
+          type: "tabset",
+          id: "tabset-1",
+          tabs: ["costs", "terminal:t1"],
+          activeTab: "terminal:t1",
+        },
+      };
+
+      const { workspace: workspaceApi } = createMockAPI({
+        localStorage: {
+          [layoutKey]: JSON.stringify(persistedLayout),
+          [terminalTitlesKey]: JSON.stringify({ t1: "stale-title" }),
+        },
+      });
+
+      const ctx = await setup();
+
+      await act(async () => {
+        await ctx().archiveWorkspace(workspaceId);
+      });
+
+      expect(workspaceApi.archive).toHaveBeenCalledWith({ workspaceId });
+
+      const cleanedLayout = readPersistedState<RightSidebarLayoutState | null>(layoutKey, null);
+      expect(cleanedLayout).not.toBeNull();
+      if (cleanedLayout?.root.type !== "tabset") {
+        throw new Error("Expected cleaned right sidebar layout to be a tabset");
+      }
+
+      expect(cleanedLayout.root.tabs).toEqual(["costs"]);
+      expect(cleanedLayout.root.activeTab).toBe("costs");
+      expect(
+        readPersistedState<Record<string, string>>(terminalTitlesKey, { stale: "title" })
+      ).toEqual({});
+    });
+  });
+
+  test("updateWorkspaceTitle updates workspace title via updateTitle API", async () => {
     const initialWorkspaces = [
       createWorkspaceMetadata({
         id: "ws-title-edit",
@@ -610,7 +688,7 @@ describe("WorkspaceContext", () => {
       }),
     ]);
 
-    await ctx().renameWorkspace("ws-title-edit", "New Title");
+    await ctx().updateWorkspaceTitle("ws-title-edit", "New Title");
 
     expect(workspaceApi.updateTitle).toHaveBeenCalledWith({
       workspaceId: "ws-title-edit",
@@ -618,7 +696,7 @@ describe("WorkspaceContext", () => {
     });
   });
 
-  test("renameWorkspace handles failure gracefully", async () => {
+  test("updateWorkspaceTitle handles failure gracefully", async () => {
     const { workspace: workspaceApi } = createMockAPI();
 
     const ctx = await setup();
@@ -628,7 +706,7 @@ describe("WorkspaceContext", () => {
       error: "Failed",
     });
 
-    const result = await ctx().renameWorkspace("ws-1", "new");
+    const result = await ctx().updateWorkspaceTitle("ws-1", "new");
     expect(result.success).toBe(false);
     expect(result.error).toBe("Failed");
   });
@@ -990,6 +1068,14 @@ function createMockAPI(options: MockAPIOptions = {}) {
     ),
     list: mock(options.workspace?.list ?? (() => Promise.resolve([]))),
     remove: mock(options.workspace?.remove ?? (() => Promise.resolve({ success: true as const }))),
+    archive: mock(
+      options.workspace?.archive ??
+        (() => Promise.resolve({ success: true as const, data: undefined }))
+    ),
+    unarchive: mock(
+      options.workspace?.unarchive ??
+        (() => Promise.resolve({ success: true as const, data: undefined }))
+    ),
     rename: mock(
       options.workspace?.rename ??
         (() => Promise.resolve({ success: true as const, data: { newWorkspaceId: "ws-1" } }))

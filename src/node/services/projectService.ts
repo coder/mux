@@ -2,7 +2,8 @@ import type { Config, ProjectConfig } from "@/node/config";
 import type { SectionConfig } from "@/common/types/project";
 import { DEFAULT_SECTION_COLOR } from "@/common/constants/ui";
 import { sortSectionsByLinkedList } from "@/common/utils/sections";
-import { isWorkspaceArchived } from "@/common/utils/archive";
+import { formatSshEndpoint } from "@/common/utils/ssh/formatSshEndpoint";
+import { spawn } from "child_process";
 import { randomBytes } from "crypto";
 import { validateProjectPath, isGitRepository } from "@/node/utils/pathUtils";
 import { listLocalBranches, detectDefaultTrunkBranch } from "@/node/git";
@@ -11,7 +12,7 @@ import { Ok, Err } from "@/common/types/result";
 import type { Secret } from "@/common/types/secrets";
 import type { Stats } from "fs";
 import * as fsPromises from "fs/promises";
-import { execAsync } from "@/node/utils/disposableExec";
+import { execAsync, killProcessTree } from "@/node/utils/disposableExec";
 import {
   buildFileCompletionsIndex,
   EMPTY_FILE_COMPLETIONS_INDEX,
@@ -19,11 +20,19 @@ import {
   type FileCompletionsIndex,
 } from "@/node/services/fileCompletionsIndex";
 import { log } from "@/node/services/log";
+import type { SshPromptService } from "@/node/services/sshPromptService";
+import { createMediatedAskpassSession } from "@/node/runtime/openSshPromptMediation";
+import {
+  classifySshCloneFailure,
+  summarizeCloneStderr,
+  type CloneErrorCode,
+} from "./sshCloneFailure";
 import type { BranchListResult } from "@/common/orpc/types";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import * as path from "path";
 import { getMuxProjectsDir } from "@/common/constants/paths";
 import { expandTilde } from "@/node/runtime/tildeExpansion";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * List directory contents for the DirectoryPickerModal.
@@ -60,6 +69,205 @@ async function listDirectory(requestedPath: string): Promise<FileTreeNode> {
   };
 }
 
+interface CloneProjectParams {
+  repoUrl: string;
+  cloneParentDir?: string | null;
+}
+
+export type { CloneErrorCode } from "./sshCloneFailure";
+
+export type CloneEvent =
+  | { type: "progress"; line: string }
+  | { type: "success"; projectConfig: ProjectConfig; normalizedPath: string }
+  | { type: "error"; code: CloneErrorCode; error: string };
+
+function isTildePrefixedPath(value: string): boolean {
+  return value === "~" || value.startsWith("~/") || value.startsWith("~\\");
+}
+
+function resolvePathWithTilde(inputPath: string): string {
+  const expanded = isTildePrefixedPath(inputPath) ? expandTilde(inputPath) : inputPath;
+  return path.resolve(expanded);
+}
+
+function resolveProjectParentDir(
+  parentDir: string | null | undefined,
+  defaultProjectDir: string | undefined
+): string {
+  const rawParentDir = parentDir ?? defaultProjectDir ?? getMuxProjectsDir();
+  const trimmedParentDir = rawParentDir.trim();
+
+  if (!trimmedParentDir) {
+    throw new Error("Project parent directory cannot be empty");
+  }
+
+  return resolvePathWithTilde(trimmedParentDir);
+}
+
+// Strip filesystem-unsafe characters (including control chars U+0000–U+001F)
+function sanitizeRepoFolderName(name: string): string {
+  const unsafeCharsPattern = /[<>:"/\\|?*]/g;
+  return name
+    .replace(unsafeCharsPattern, "-")
+    .replace(/^[.\s]+/, "")
+    .replace(/[.\s]+$/, "");
+}
+
+function deriveRepoFolderName(repoUrl: string): string {
+  const trimmedRepoUrl = repoUrl.trim();
+  if (!trimmedRepoUrl) {
+    throw new Error("Repository URL cannot be empty");
+  }
+
+  let candidatePath = trimmedRepoUrl;
+
+  // SSH-style shorthand: git@github.com:owner/repo.git
+  const scpLikeMatch = /^[^@\s]+@[^:\s]+:(.+)$/.exec(trimmedRepoUrl);
+  if (scpLikeMatch) {
+    candidatePath = scpLikeMatch[1];
+  } else if (/^[^/\\\s]+\/[^/\\\s]+$/.test(trimmedRepoUrl)) {
+    // Owner/repo shorthand
+    candidatePath = trimmedRepoUrl;
+  } else {
+    try {
+      // https://..., ssh://..., file://...
+      const parsed = new URL(trimmedRepoUrl);
+      candidatePath = decodeURIComponent(parsed.pathname);
+    } catch {
+      // Not a URL with protocol. Treat as local path-like input.
+    }
+  }
+
+  const normalizedCandidatePath = candidatePath.replace(/\\/g, "/").replace(/\/+$/, "");
+  const repoName = path.posix.basename(normalizedCandidatePath).replace(/\.git$/i, "");
+  const safeFolderName = sanitizeRepoFolderName(repoName);
+
+  if (!safeFolderName) {
+    throw new Error("Could not determine destination folder name from repository URL");
+  }
+
+  return safeFolderName;
+}
+
+const GITHUB_SHORTHAND_PATTERN = /^[a-zA-Z0-9][\w-]*\/[a-zA-Z0-9][\w.-]*$/;
+
+function hasLikelySshCredentials(): boolean {
+  const sshAgentSocket = process.env.SSH_AUTH_SOCK;
+  // Be conservative: only prefer git@github.com shorthand when the session has an active
+  // SSH agent. The mere presence of local key files does not imply GitHub SSH access.
+  return typeof sshAgentSocket === "string" && sshAgentSocket.trim().length > 0;
+}
+
+/**
+ * Normalize a repo URL so git clone receives a valid remote.
+ * Expands "owner/repo" shorthand to either SSH or HTTPS based on likely local credentials.
+ * All other inputs (HTTPS URLs, SSH URLs, SCP-style, etc.) pass through unchanged.
+ */
+function normalizeRepoUrlForClone(repoUrl: string): string {
+  const trimmedRepoUrl = repoUrl.trim();
+  const shorthandCandidate = trimmedRepoUrl.replace(/[\\/]+$/, "");
+
+  // owner/repo shorthand: exactly two non-empty segments separated by a single slash,
+  // where the first segment looks like a GitHub username (letters, digits, hyphens).
+  // Excludes local paths like ../repo, ./foo, foo/bar/baz, and absolute paths.
+  // Note: bare `foo/bar` style local relative paths are intentionally treated as GitHub
+  // shorthand here because this function is only called from the Clone dialog, which is
+  // specifically for remote repos. Users cloning local repos should use the "Local folder" tab.
+  if (GITHUB_SHORTHAND_PATTERN.test(shorthandCandidate)) {
+    // Strip existing .git suffix before appending to avoid double .git (e.g. owner/repo.git → owner/repo.git.git)
+    const withoutGitSuffix = shorthandCandidate.replace(/\.git$/i, "");
+
+    // Prefer SSH for shorthand only when the current session has an active SSH agent.
+    // This avoids assuming GitHub access from unrelated key files on disk.
+    if (hasLikelySshCredentials()) {
+      return `git@github.com:${withoutGitSuffix}.git`;
+    }
+
+    return `https://github.com/${withoutGitSuffix}.git`;
+  }
+
+  // Strip query strings and fragments only from URL-like inputs (protocol:// or git@),
+  // not from local paths where # and ? may be valid filename characters.
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmedRepoUrl) || trimmedRepoUrl.startsWith("git@")) {
+    return trimmedRepoUrl.replace(/[?#].*$/, "");
+  }
+
+  return trimmedRepoUrl;
+}
+
+function parseScpStyleSshUrl(url: string): { host: string } | undefined {
+  const trimmedUrl = url.trim();
+
+  // Keep Windows drive-letter paths (e.g. C:\repo) out of SCP-style SSH matching.
+  if (/^[a-zA-Z]:[\\/]/.test(trimmedUrl)) {
+    return undefined;
+  }
+
+  // Protocol URLs (https://, ssh://, etc.) are handled separately.
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmedUrl)) {
+    return undefined;
+  }
+
+  // SCP-style clone URL: [user@]host:path
+  const scpLikeMatch = /^(?:[a-zA-Z0-9._-]+@)?(\[[^\]]+\]|[^:/\s][^:/\s]*):(.+)$/.exec(trimmedUrl);
+  if (!scpLikeMatch) {
+    return undefined;
+  }
+
+  return { host: scpLikeMatch[1] };
+}
+
+/** Protocol schemes that Git routes through SSH transport. */
+const SSH_PROTOCOL_SCHEMES = new Set(["ssh:", "git+ssh:", "ssh+git:"]);
+
+type CloneTransport =
+  | { kind: "ssh"; hostname: string; port: number }
+  | { kind: "ssh-scp"; hostname: string; port: number }
+  | { kind: "non-ssh" };
+
+/**
+ * Canonical clone-URL transport classifier.
+ * Every SSH-related decision in the clone flow (askpass enablement, prompt
+ * deduplication) should consume this parser so protocol support cannot drift.
+ */
+function parseCloneTransport(rawUrl: string): CloneTransport {
+  const trimmedUrl = rawUrl.trim();
+
+  // SCP-style: [user@]host:path (always SSH, port 22)
+  const parsedScpLikeUrl = parseScpStyleSshUrl(trimmedUrl);
+  if (parsedScpLikeUrl) {
+    return { kind: "ssh-scp", hostname: parsedScpLikeUrl.host, port: 22 };
+  }
+
+  // Protocol URLs: ssh://, git+ssh://, ssh+git://
+  try {
+    const parsed = new URL(trimmedUrl);
+    if (SSH_PROTOCOL_SCHEMES.has(parsed.protocol.toLowerCase()) && parsed.hostname) {
+      const parsedPort = Number.parseInt(parsed.port, 10);
+      const port = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 22;
+      return { kind: "ssh", hostname: parsed.hostname, port };
+    }
+  } catch {
+    // Not a valid protocol URL; treat as non-SSH.
+  }
+
+  return { kind: "non-ssh" };
+}
+
+/** Detect whether a clone URL will use SSH transport. */
+function isSshCloneUrl(url: string): boolean {
+  return parseCloneTransport(url).kind !== "non-ssh";
+}
+
+function deriveSshClonePromptDedupeKey(cloneUrl: string): string | undefined {
+  const transport = parseCloneTransport(cloneUrl);
+  if (transport.kind === "non-ssh") {
+    return undefined;
+  }
+
+  return formatSshEndpoint(transport.hostname, transport.port);
+}
+
 const FILE_COMPLETIONS_CACHE_TTL_MS = 10_000;
 
 interface FileCompletionsCacheEntry {
@@ -71,8 +279,14 @@ interface FileCompletionsCacheEntry {
 export class ProjectService {
   private readonly fileCompletionsCache = new Map<string, FileCompletionsCacheEntry>();
   private directoryPicker?: () => Promise<string | null>;
+  private readonly sshPromptService: SshPromptService | undefined;
 
-  constructor(private readonly config: Config) {}
+  constructor(
+    private readonly config: Config,
+    sshPromptService?: SshPromptService
+  ) {
+    this.sshPromptService = sshPromptService;
+  }
 
   setDirectoryPicker(picker: () => Promise<string | null>) {
     this.directoryPicker = picker;
@@ -102,10 +316,12 @@ export class ProjectService {
         !projectPath.includes("\\") &&
         !projectPath.startsWith("~");
 
+      const config = this.config.loadConfigOrDefault();
       let normalizedPath: string;
       if (isBareProjectName) {
         // Bare project name - put in default projects directory
-        normalizedPath = path.join(getMuxProjectsDir(), projectPath);
+        const parentDir = resolveProjectParentDir(undefined, config.defaultProjectDir);
+        normalizedPath = path.join(parentDir, projectPath);
       } else if (
         projectPath === "~" ||
         projectPath.startsWith("~/") ||
@@ -131,8 +347,6 @@ export class ProjectService {
         return Err("Project path is not a directory");
       }
 
-      const config = this.config.loadConfigOrDefault();
-
       if (config.projects.has(normalizedPath)) {
         return Err("Project already exists");
       }
@@ -146,9 +360,391 @@ export class ProjectService {
 
       return Ok({ projectConfig, normalizedPath });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to create project: ${message}`);
     }
+  }
+
+  getDefaultProjectDir(): string {
+    const config = this.config.loadConfigOrDefault();
+    return resolveProjectParentDir(undefined, config.defaultProjectDir);
+  }
+
+  async setDefaultProjectDir(dirPath: string): Promise<void> {
+    const trimmed = dirPath.trim();
+    await this.config.editConfig((config) => ({
+      ...config,
+      defaultProjectDir: trimmed || undefined,
+    }));
+  }
+
+  private validateAndPrepareClone(
+    input: CloneProjectParams
+  ): Result<{ cloneUrl: string; normalizedPath: string; cloneParentDir: string }> {
+    try {
+      const repoUrl = input.repoUrl.trim();
+      if (!repoUrl) {
+        return Err("Repository URL cannot be empty");
+      }
+
+      const config = this.config.loadConfigOrDefault();
+      const cloneParentDir = resolveProjectParentDir(
+        input.cloneParentDir,
+        config.defaultProjectDir
+      );
+      const repoFolderName = deriveRepoFolderName(repoUrl);
+      const normalizedPath = path.join(cloneParentDir, repoFolderName);
+
+      if (config.projects.has(normalizedPath)) {
+        return Err(`Project already exists at ${normalizedPath}`);
+      }
+
+      return Ok({
+        cloneUrl: normalizeRepoUrlForClone(repoUrl),
+        normalizedPath,
+        cloneParentDir,
+      });
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(message);
+    }
+  }
+
+  async *cloneWithProgress(
+    input: CloneProjectParams,
+    signal?: AbortSignal
+  ): AsyncGenerator<CloneEvent> {
+    const prepared = this.validateAndPrepareClone(input);
+    if (!prepared.success) {
+      yield { type: "error", code: "clone_failed", error: prepared.error };
+      return;
+    }
+
+    const { cloneUrl, normalizedPath, cloneParentDir } = prepared.data;
+    const cloneWorkPath = `${normalizedPath}.mux-clone-${randomBytes(6).toString("hex")}`;
+    let cloneSucceeded = false;
+    // Preserve full stderr so failed clones can surface git's fatal message instead of only exit code 128.
+    let collectedStderr = "";
+    let askpass: Awaited<ReturnType<typeof createMediatedAskpassSession>> | undefined;
+
+    const cleanupPartialClone = async () => {
+      if (cloneSucceeded) {
+        return;
+      }
+
+      try {
+        // Only clean up the temp clone path we created so we never delete
+        // a destination directory that another process created concurrently.
+        await fsPromises.rm(cloneWorkPath, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup errors — the original error is more important.
+      }
+    };
+
+    try {
+      if (signal?.aborted) {
+        yield { type: "error", code: "clone_failed", error: "Clone cancelled" };
+        return;
+      }
+
+      let cloneParentStat: Stats | null = null;
+      try {
+        cloneParentStat = await fsPromises.stat(cloneParentDir);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code !== "ENOENT") {
+          throw error;
+        }
+      }
+
+      if (cloneParentStat && !cloneParentStat.isDirectory()) {
+        yield {
+          type: "error",
+          code: "clone_failed",
+          error: "Clone destination parent directory is not a directory",
+        };
+        return;
+      }
+
+      let destinationStat: Stats | null = null;
+      try {
+        destinationStat = await fsPromises.stat(normalizedPath);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code !== "ENOENT") {
+          throw error;
+        }
+      }
+
+      if (destinationStat) {
+        yield {
+          type: "error",
+          code: "clone_failed",
+          error: `Destination already exists: ${normalizedPath}`,
+        };
+        return;
+      }
+
+      await fsPromises.mkdir(cloneParentDir, { recursive: true });
+
+      // Set up SSH askpass mediation for SSH clone URLs.
+      // This allows clone to surface host-key and credential prompts through the
+      // same in-app dialog used by SSH runtime probes.
+      askpass =
+        isSshCloneUrl(cloneUrl) && this.sshPromptService
+          ? await createMediatedAskpassSession({
+              sshPromptService: this.sshPromptService,
+              promptPolicy: { allowHostKey: true, allowCredential: true },
+              // Deduplicate host-key prompts by SSH endpoint identity (host:port),
+              // not by full repo path, so concurrent clones to the same host coalesce.
+              dedupeKey: deriveSshClonePromptDedupeKey(cloneUrl),
+              getStderrContext: () => collectedStderr,
+            })
+          : undefined;
+
+      const child = spawn("git", ["clone", "--progress", "--", cloneUrl, cloneWorkPath], {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...(askpass?.env ?? {}) },
+        // Detached children become process-group leaders on Unix so we can
+        // reliably terminate clone helpers (ssh, shells) as a full tree.
+        detached: process.platform !== "win32",
+      });
+
+      const stderrChunks: string[] = [];
+      let resolveChunk: (() => void) | null = null;
+      let processEnded = false;
+      let resolveProcessExit: (() => void) | null = null;
+      const processExitPromise = new Promise<void>((resolve) => {
+        resolveProcessExit = resolve;
+      });
+      let spawnErrorMessage: string | null = null;
+
+      const summarizeStderr = (): string | null => summarizeCloneStderr(collectedStderr);
+
+      const notifyChunk = () => {
+        if (!resolveChunk) {
+          return;
+        }
+
+        if (!processEnded && stderrChunks.length === 0) {
+          return;
+        }
+
+        const resolve = resolveChunk;
+        resolveChunk = null;
+        resolve();
+      };
+
+      const markProcessEnded = () => {
+        if (processEnded) {
+          return;
+        }
+
+        processEnded = true;
+        notifyChunk();
+
+        if (resolveProcessExit) {
+          const resolve = resolveProcessExit;
+          resolveProcessExit = null;
+          resolve();
+        }
+      };
+
+      child.stderr?.on("data", (data: Buffer) => {
+        const chunk = data.toString();
+        stderrChunks.push(chunk);
+        collectedStderr += chunk;
+        notifyChunk();
+      });
+
+      child.on("error", (error: Error) => {
+        spawnErrorMessage = error.message;
+        markProcessEnded();
+      });
+
+      child.on("close", () => {
+        markProcessEnded();
+      });
+
+      if (child.exitCode !== null || child.signalCode !== null) {
+        markProcessEnded();
+      }
+
+      const terminateCloneProcess = () => {
+        if (child.killed || child.exitCode !== null || child.signalCode !== null) {
+          return;
+        }
+
+        if (typeof child.pid === "number" && child.pid > 0) {
+          killProcessTree(child.pid);
+          return;
+        }
+
+        try {
+          child.kill();
+        } catch {
+          // Ignore ESRCH races if process exits between checks.
+        }
+      };
+
+      const onAbort = () => {
+        terminateCloneProcess();
+        notifyChunk();
+      };
+
+      if (signal) {
+        if (signal.aborted) {
+          onAbort();
+        } else {
+          signal.addEventListener("abort", onAbort, { once: true });
+        }
+      }
+
+      try {
+        while (!processEnded) {
+          if (stderrChunks.length > 0) {
+            yield { type: "progress", line: stderrChunks.shift()! };
+            continue;
+          }
+
+          await new Promise<void>((resolve) => {
+            resolveChunk = resolve;
+            notifyChunk();
+          });
+        }
+      } finally {
+        signal?.removeEventListener("abort", onAbort);
+        terminateCloneProcess();
+        await processExitPromise;
+      }
+
+      while (stderrChunks.length > 0) {
+        yield { type: "progress", line: stderrChunks.shift()! };
+      }
+
+      if (spawnErrorMessage != null) {
+        await cleanupPartialClone();
+        const errorMessage = summarizeStderr() ?? spawnErrorMessage;
+        yield { type: "error", code: "clone_failed", error: errorMessage };
+        return;
+      }
+
+      if (signal?.aborted) {
+        await cleanupPartialClone();
+        yield { type: "error", code: "clone_failed", error: "Clone cancelled" };
+        return;
+      }
+
+      const exitCode = child.exitCode;
+      const exitSignal = child.signalCode;
+
+      if (exitCode !== 0 || exitSignal != null) {
+        await cleanupPartialClone();
+        const errorMessage =
+          summarizeStderr() ??
+          (exitSignal != null
+            ? `Clone failed: process terminated by signal ${String(exitSignal)}`
+            : `Clone failed with exit code ${exitCode ?? "unknown"}`);
+        yield {
+          type: "error",
+          code: classifySshCloneFailure({
+            stderr: collectedStderr,
+            promptOutcome: askpass?.getLastPromptOutcome() ?? null,
+          }),
+          error: errorMessage,
+        };
+        return;
+      }
+
+      if (signal?.aborted) {
+        await cleanupPartialClone();
+        yield { type: "error", code: "clone_failed", error: "Clone cancelled" };
+        return;
+      }
+
+      try {
+        await fsPromises.rename(cloneWorkPath, normalizedPath);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === "EEXIST" || err.code === "ENOTEMPTY") {
+          await cleanupPartialClone();
+          yield {
+            type: "error",
+            code: "clone_failed",
+            error: `Destination already exists: ${normalizedPath}`,
+          };
+          return;
+        }
+        throw error;
+      }
+
+      if (signal?.aborted) {
+        // Abort won the race after rename but before config mutation.
+        // Remove the newly materialized destination so cancellation remains authoritative.
+        try {
+          await fsPromises.rm(normalizedPath, { recursive: true, force: true });
+        } catch {
+          // Best-effort cleanup only.
+        }
+        yield { type: "error", code: "clone_failed", error: "Clone cancelled" };
+        return;
+      }
+
+      const projectConfig: ProjectConfig = { workspaces: [] };
+      await this.config.editConfig((freshConfig) => {
+        if (freshConfig.projects.has(normalizedPath)) {
+          return freshConfig;
+        }
+        const updatedProjects = new Map(freshConfig.projects);
+        updatedProjects.set(normalizedPath, projectConfig);
+        return { ...freshConfig, projects: updatedProjects };
+      });
+
+      if (!this.config.loadConfigOrDefault().projects.has(normalizedPath)) {
+        // Config.saveConfig logs-and-continues on write failures, so verify persistence
+        // explicitly before reporting success.
+        try {
+          await fsPromises.rm(normalizedPath, { recursive: true, force: true });
+        } catch {
+          // Best-effort rollback only.
+        }
+        yield {
+          type: "error",
+          code: "clone_failed",
+          error: "Failed to persist cloned project configuration",
+        };
+        return;
+      }
+
+      cloneSucceeded = true;
+      yield { type: "success", projectConfig, normalizedPath };
+    } catch (error) {
+      const message = getErrorMessage(error);
+      yield {
+        type: "error",
+        code: "clone_failed",
+        error: `Failed to clone repository: ${message}`,
+      };
+    } finally {
+      askpass?.cleanup();
+      await cleanupPartialClone();
+    }
+  }
+
+  async clone(
+    input: CloneProjectParams
+  ): Promise<Result<{ projectConfig: ProjectConfig; normalizedPath: string }>> {
+    for await (const event of this.cloneWithProgress(input)) {
+      if (event.type === "success") {
+        return Ok({ projectConfig: event.projectConfig, normalizedPath: event.normalizedPath });
+      }
+
+      if (event.type === "error") {
+        return Err(event.error);
+      }
+    }
+
+    return Err("Clone did not return a completion event");
   }
 
   async remove(projectPath: string): Promise<Result<void>> {
@@ -177,7 +773,7 @@ export class ProjectService {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to remove project: ${message}`);
     }
   }
@@ -269,7 +865,7 @@ export class ProjectService {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       log.error("Failed to initialize git repository:", error);
       return Err(`Failed to initialize git repository: ${message}`);
     }
@@ -326,7 +922,7 @@ export class ProjectService {
         } catch (error) {
           log.debug("getFileCompletions: failed to list files", {
             projectPath: normalizedPath,
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           });
         } finally {
           cacheEntry.fetchedAt = Date.now();
@@ -358,7 +954,7 @@ export class ProjectService {
     } catch (error) {
       return {
         success: false as const,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       };
     }
   }
@@ -377,7 +973,7 @@ export class ProjectService {
       await fsPromises.mkdir(normalizedPath, { recursive: true });
       return Ok({ normalizedPath });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to create directory: ${message}`);
     }
   }
@@ -387,7 +983,7 @@ export class ProjectService {
       await this.config.updateProjectSecrets(projectPath, secrets);
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to update project secrets: ${message}`);
     }
   }
@@ -424,7 +1020,7 @@ export class ProjectService {
       await this.config.saveConfig(config);
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to set idle compaction hours: ${message}`);
     }
   }
@@ -484,7 +1080,7 @@ export class ProjectService {
       await this.config.saveConfig(config);
       return Ok(section);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to create section: ${message}`);
     }
   }
@@ -519,14 +1115,13 @@ export class ProjectService {
       await this.config.saveConfig(config);
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to update section: ${message}`);
     }
   }
 
   /**
-   * Remove a section. Only archived workspaces can remain in the section;
-   * active workspaces block removal. Archived workspaces become unsectioned.
+   * Remove a section and unsection any workspaces assigned to it.
    */
   async removeSection(projectPath: string, sectionId: string): Promise<Result<void>> {
     try {
@@ -544,20 +1139,9 @@ export class ProjectService {
         return Err(`Section not found: ${sectionId}`);
       }
 
-      // Check for active (non-archived) workspaces in this section
       const workspacesInSection = project.workspaces.filter((w) => w.sectionId === sectionId);
-      const activeWorkspaces = workspacesInSection.filter(
-        (w) => !isWorkspaceArchived(w.archivedAt, w.unarchivedAt)
-      );
 
-      if (activeWorkspaces.length > 0) {
-        return Err(
-          `Cannot remove section: ${activeWorkspaces.length} active workspace(s) still assigned. ` +
-            `Archive or move workspaces first.`
-        );
-      }
-
-      // Remove sectionId from archived workspaces in this section
+      // Unsection all workspaces in this section
       for (const workspace of workspacesInSection) {
         workspace.sectionId = undefined;
       }
@@ -567,7 +1151,7 @@ export class ProjectService {
       await this.config.saveConfig(config);
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to remove section: ${message}`);
     }
   }
@@ -603,7 +1187,7 @@ export class ProjectService {
       await this.config.saveConfig(config);
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to reorder sections: ${message}`);
     }
   }
@@ -642,7 +1226,7 @@ export class ProjectService {
       await this.config.saveConfig(config);
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to assign workspace to section: ${message}`);
     }
   }

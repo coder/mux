@@ -90,6 +90,16 @@ export const GATEWAY_CONFIGURED_KEY = "gateway-available"; // synced from provid
 export const GATEWAY_ENABLED_KEY = "gateway-enabled"; // global on/off toggle
 
 /**
+ * Storage key for runtime enablement settings (shared via ~/.mux/config.json).
+ */
+export const RUNTIME_ENABLEMENT_KEY = "runtimeEnablement";
+
+/**
+ * Storage key for global default runtime selection (shared via ~/.mux/config.json).
+ */
+export const DEFAULT_RUNTIME_KEY = "defaultRuntime";
+
+/**
  * Get the localStorage key for cached MCP server test results (per project)
  * Format: "mcpTestResults:{projectPath}"
  * Stores: Record<serverName, CachedMCPTestResult>
@@ -189,18 +199,12 @@ export function getPendingWorkspaceSendErrorKey(workspaceId: string): string {
 }
 
 /**
- * Get the localStorage key for auto-retry preference for a workspace
+ * LEGACY: Get the localStorage key for pre-backend auto-retry preference.
+ *
+ * Kept only for one-way migration during onChat subscription.
  */
 export function getAutoRetryKey(workspaceId: string): string {
   return `${workspaceId}-autoRetry`;
-}
-
-/**
- * Get the localStorage key for retry state for a workspace
- * Stores: { attempt, totalRetryTime, retryStartTime }
- */
-export function getRetryStateKey(workspaceId: string): string {
-  return `${workspaceId}-retryState`;
 }
 
 /**
@@ -374,11 +378,11 @@ export const DEFAULT_TERMINAL_FONT_CONFIG: TerminalFontConfig = {
 
 /**
  * Tutorial state storage key (global)
- * Stores: { disabled: boolean, completed: { creation?: true, workspace?: true } }
+ * Stores: { disabled: boolean, completed: { creation?: true, workspace?: true, review?: true } }
  */
 export const TUTORIAL_STATE_KEY = "tutorialState";
 
-export type TutorialSequence = "creation" | "workspace";
+export type TutorialSequence = "creation" | "workspace" | "review";
 
 export interface TutorialState {
   disabled: boolean;
@@ -505,6 +509,15 @@ export const LEFT_SIDEBAR_COLLAPSED_KEY = "sidebarCollapsed";
 export const LEFT_SIDEBAR_WIDTH_KEY = "left-sidebar:width";
 
 /**
+ * Mobile left sidebar scroll position.
+ *
+ * The mobile sidebar content unmounts when collapsed, so we persist scrollTop
+ * to restore the previous browse position when the menu is reopened.
+ * Format: "mobile-left-sidebar:scroll-top"
+ */
+export const MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY = "mobile-left-sidebar:scroll-top";
+
+/**
  * Right sidebar tab selection (global)
  * Format: "right-sidebar-tab"
  */
@@ -560,6 +573,15 @@ export function getReviewsKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for immersive review mode state per workspace
+ * Tracks whether immersive mode is active
+ * Format: "review-immersive:{workspaceId}"
+ */
+export function getReviewImmersiveKey(workspaceId: string): string {
+  return `review-immersive:${workspaceId}`;
+}
+
+/**
  * Get the localStorage key for auto-compaction enabled preference per workspace
  * Format: "autoCompaction:enabled:{workspaceId}"
  */
@@ -588,8 +610,6 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getAgentIdKey,
   getPinnedAgentIdKey,
   getThinkingLevelKey,
-  getAutoRetryKey,
-  getRetryStateKey,
   getReviewStateKey,
   getHunkFirstSeenKey,
   getReviewExpandStateKey,
@@ -597,6 +617,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getFileTreeExpandStateKey,
   getReviewSearchStateKey,
   getReviewsKey,
+  getReviewImmersiveKey,
   getAutoCompactionEnabledKey,
   getWorkspaceLastReadKey,
   getStatusStateKey,

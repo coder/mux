@@ -91,7 +91,7 @@ ${muxTypes}
         .number()
         .int()
         .positive()
-        .optional()
+        .nullish()
         .describe(
           "Execution timeout in seconds (default: 300, max: 3600). " +
             "Increase when spawning subagents that may take 5-15+ minutes."
@@ -104,8 +104,9 @@ ${muxTypes}
     ): Promise<PTCExecutionResult> => {
       const execStartTime = Date.now();
 
-      // Static analysis before execution - catch syntax errors, forbidden patterns, and type errors
-      const analysis = await analyzeCode(code, muxTypes);
+      // Static analysis before execution - catch syntax errors and sandbox-forbidden patterns.
+      // TypeScript typing issues are intentionally non-blocking for one-off runtime scripts.
+      const analysis = await analyzeCode(code);
       if (!analysis.valid) {
         const errorMessages = analysis.errors.map((e) => {
           const location =

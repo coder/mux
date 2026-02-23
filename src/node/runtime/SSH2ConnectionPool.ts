@@ -12,12 +12,19 @@ import * as os from "os";
 import * as path from "path";
 import { spawn, type ChildProcess } from "child_process";
 import { Duplex } from "stream";
-import { Client } from "ssh2";
+import type { Client } from "ssh2";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 import { attachStreamErrorHandler } from "@/node/utils/streamErrors";
 import type { SSHConnectionConfig } from "./sshConnectionPool";
 import { resolveSSHConfig, type ResolvedSSHConfig } from "./sshConfigParser";
+import type { SshPromptService } from "@/node/services/sshPromptService";
+
+let sshPromptService: SshPromptService | undefined;
+
+export function setSshPromptService(svc: SshPromptService): void {
+  sshPromptService = svc;
+}
 
 /**
  * Connection health status
@@ -494,6 +501,9 @@ export class SSH2ConnectionPool {
         const readableKeys = await resolvePrivateKeys(resolvedConfigWithIdentities.identityFiles);
         const keysToTry: Array<Buffer | undefined> =
           readableKeys.length > 0 ? readableKeys : [undefined];
+        // Keep the sshPromptService wiring in place so known_hosts-backed
+        // verification can be restored without changing the public module API.
+        void sshPromptService;
 
         const connectWithKey = async (
           privateKey: Buffer | undefined,
@@ -503,7 +513,11 @@ export class SSH2ConnectionPool {
             ? spawnProxyCommand(resolvedConfigWithIdentities.proxyCommand, proxyTokens)
             : undefined;
 
-          const client = new Client();
+          // Lazy-load ssh2 to avoid loading the native sshcrypto.node module at
+          // startup. Bun doesn't support the libuv functions the NAPI module calls,
+          // so eagerly importing ssh2 crashes the headless CLI in sandboxes.
+          const { Client: SSH2Client } = await import("ssh2");
+          const client = new SSH2Client();
           const entry: SSH2ConnectionEntry = {
             client,
             resolvedConfig: resolvedConfigWithIdentities,
@@ -608,6 +622,10 @@ export class SSH2ConnectionPool {
               keepaliveCountMax: 2,
               ...(privateKey ? { privateKey } : {}),
               ...(config.forwardAgent && { agentForward: true }),
+              // TODO(ethanndickson): Implement known_hosts support for SSH2
+              // and restore interactive host key verification once approvals
+              // can be persisted between connections.
+              hostVerifier: () => true,
             };
 
             client.connect(connectOptions);

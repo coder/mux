@@ -1,6 +1,7 @@
 import { cn } from "@/common/lib/utils";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { getStatusTooltip } from "@/browser/utils/ui/statusTooltip";
+import { isPlanAutoRoutingStatus } from "@/common/constants/planAutoRoutingStatus";
 import { memo, useMemo } from "react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 
@@ -20,7 +21,8 @@ export const WorkspaceStatusDot = memo<{
       recencyTimestamp,
     } = useWorkspaceSidebarState(workspaceId);
 
-    const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
+    const isWorking =
+      (canInterrupt || isStarting || isPlanAutoRoutingStatus(agentStatus)) && !awaitingUserQuestion;
 
     // Compute unread status if lastReadTimestamp provided (sidebar only)
     const unread = useMemo(() => {

@@ -54,17 +54,17 @@ mux run --json "List all TypeScript files" | jq '.type'
 
 ### Options
 
-| Option                | Short | Description                                                     | Default           |
-| --------------------- | ----- | --------------------------------------------------------------- | ----------------- |
-| `--dir <path>`        | `-d`  | Project directory                                               | Current directory |
-| `--model <model>`     | `-m`  | Model to use (e.g., `anthropic:claude-sonnet-4-5`)              | Default model     |
-| `--runtime <runtime>` | `-r`  | Runtime: `local`, `worktree`, `ssh <host>`, or `docker <image>` | `local`           |
-| `--mode <mode>`       |       | Agent mode: `plan` or `exec`                                    | `exec`            |
-| `--thinking <level>`  | `-t`  | Thinking level: `OFF`, `LOW`, `MED`, `HIGH`, `MAX`              | `MED`             |
-| `--budget <usd>`      | `-b`  | Stop when session cost exceeds budget (USD)                     | No limit          |
-| `--experiment <id>`   | `-e`  | Enable experiment (repeatable)                                  | None              |
-| `--json`              |       | Output NDJSON for programmatic use                              | Off               |
-| `--quiet`             | `-q`  | Only output final result                                        | Off               |
+| Option                | Short | Description                                                                                                                   | Default           |
+| --------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `--dir <path>`        | `-d`  | Project directory                                                                                                             | Current directory |
+| `--model <model>`     | `-m`  | Model to use (e.g., `anthropic:claude-sonnet-4-5`)                                                                            | Default model     |
+| `--runtime <runtime>` | `-r`  | Runtime: `local`, `worktree`, `ssh <host>`, or `docker <image>`                                                               | `local`           |
+| `--mode <mode>`       |       | Agent mode: `plan` or `exec`                                                                                                  | `exec`            |
+| `--thinking <level>`  | `-t`  | Thinking level: `OFF`, `LOW`, `MED`, `HIGH`, `MAX`, or `0`–`9` (model-relative, see [Models](/config/models#thinking-levels)) | `MED`             |
+| `--budget <usd>`      | `-b`  | Stop when session cost exceeds budget (USD)                                                                                   | No limit          |
+| `--experiment <id>`   | `-e`  | Enable experiment (repeatable)                                                                                                | None              |
+| `--json`              |       | Output NDJSON for programmatic use                                                                                            | Off               |
+| `--quiet`             | `-q`  | Only output final result                                                                                                      | Off               |
 
 ### Runtimes
 
@@ -100,18 +100,112 @@ mux run --budget 2.00 "Refactor the authentication module"
 
 ## `mux server`
 
-Start the HTTP/WebSocket server for remote access (e.g., from mobile devices):
+Start the HTTP/WebSocket server for remote access (for example, from a phone or another machine):
 
 ```bash
-mux server --port 3000 --host 0.0.0.0
+mux server --host 0.0.0.0 --port 3000
 ```
 
 Options:
 
-- `--host <host>` - Host to bind to (default: `localhost`)
+- `--host <host>` - Host/interface to bind to (default: `localhost`)
 - `--port <port>` - Port to bind to (default: `3000`)
-- `--auth-token <token>` - Optional bearer token for authentication
+- `--auth-token <token>` - Bearer token for HTTP/WS auth
+- `--no-auth` - Disable authentication entirely
+- `--print-auth-token` - Always print the auth token on startup
+- `--allow-http-origin` - Accept HTTPS browser origins when a TLS-terminating proxy forwards `X-Forwarded-Proto=http`
+- `--ssh-host <host>` - SSH hostname/alias used for editor deep links in browser mode
 - `--add-project <path>` - Add and open project at the specified path
+
+Use `--allow-http-origin` only when HTTPS is terminated by an upstream reverse proxy and mux receives rewritten `X-Forwarded-Proto=http` headers. This compatibility mode is disabled by default. For non-CLI server starts (for example desktop/browser mode), set `MUX_SERVER_ALLOW_HTTP_ORIGIN=1` to opt in.
+
+Auth token precedence:
+
+1. `--no-auth`
+2. `--auth-token`
+3. `MUX_SERVER_AUTH_TOKEN`
+4. Auto-generated token
+
+GitHub owner login for browser sessions is configured separately via `MUX_SERVER_AUTH_GITHUB_OWNER` or `serverAuthGithubOwner` in `~/.mux/config.json`. See [Server Access](/config/server-access).
+
+## `mux acp`
+
+Start the ACP (Agent-Client Protocol) stdio bridge used by editor integrations:
+
+```bash
+mux acp
+```
+
+Options:
+
+- `--server-url <url>` - URL of a running mux server
+- `--auth-token <token>` - Optional bearer token for authenticated server connections
+- `--log-file <path>` - Write ACP logs to a file instead of console stderr (helpful when your editor hides subprocess logs)
+
+Environment variable equivalents:
+
+- `MUX_SERVER_URL` - Same as `--server-url`
+- `MUX_SERVER_AUTH_TOKEN` - Same as `--auth-token`
+
+Use `MUX_SERVER_AUTH_TOKEN` for ACP auth; `MUX_AUTH_TOKEN` is not read by `mux acp`.
+
+### Set up Zed
+
+Add a custom agent server in Zed that runs the ACP subcommand.
+
+If `mux` is installed globally:
+
+```json
+{
+  "agent_servers": {
+    "Mux": {
+      "type": "custom",
+      "command": "mux",
+      "args": ["acp"]
+    }
+  }
+}
+```
+
+If you prefer an ephemeral install:
+
+```json
+{
+  "agent_servers": {
+    "Mux": {
+      "type": "custom",
+      "command": "npx",
+      "args": ["-y", "mux", "acp"]
+    }
+  }
+}
+```
+
+### Connect Zed to a remote mux server
+
+You can point ACP at a remote mux server either with flags or environment variables.
+
+Using flags:
+
+```json
+{
+  "agent_servers": {
+    "Mux": {
+      "type": "custom",
+      "command": "mux",
+      "args": ["acp", "--server-url", "https://mux.example.com", "--auth-token", "<token>"]
+    }
+  }
+}
+```
+
+Using environment variables (for any `mux acp` process):
+
+```bash
+MUX_SERVER_URL=https://mux.example.com \
+MUX_SERVER_AUTH_TOKEN=<token> \
+mux acp
+```
 
 ## `mux desktop`
 

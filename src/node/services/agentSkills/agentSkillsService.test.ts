@@ -55,6 +55,44 @@ describe("agentSkillsService", () => {
     expect(bar!.scope).toBe("global");
   });
 
+  test("scans universal root after mux global root", async () => {
+    using project = new DisposableTempDir("agent-skills-project");
+    using global = new DisposableTempDir("agent-skills-global");
+    using universal = new DisposableTempDir("agent-skills-universal");
+
+    const projectSkillsRoot = path.join(project.path, ".mux", "skills");
+    const globalSkillsRoot = global.path;
+    const universalSkillsRoot = universal.path;
+
+    await writeSkill(globalSkillsRoot, "shared", "from global");
+    await writeSkill(universalSkillsRoot, "shared", "from universal");
+    await writeSkill(universalSkillsRoot, "universal-only", "from universal only");
+
+    const roots = {
+      projectRoot: projectSkillsRoot,
+      globalRoot: globalSkillsRoot,
+      universalRoot: universalSkillsRoot,
+    };
+    const runtime = new LocalRuntime(project.path);
+
+    const skills = await discoverAgentSkills(runtime, project.path, { roots });
+
+    const shared = skills.find((s) => s.name === "shared");
+    expect(shared).toBeDefined();
+    expect(shared!.scope).toBe("global");
+    expect(shared!.description).toBe("from global");
+
+    const universalOnly = skills.find((s) => s.name === "universal-only");
+    expect(universalOnly).toBeDefined();
+    expect(universalOnly!.scope).toBe("global");
+    expect(universalOnly!.description).toBe("from universal only");
+
+    const universalOnlyName = SkillNameSchema.parse("universal-only");
+    const resolved = await readAgentSkill(runtime, project.path, universalOnlyName, { roots });
+    expect(resolved.package.scope).toBe("global");
+    expect(resolved.package.frontmatter.description).toBe("from universal only");
+  });
+
   test("readAgentSkill resolves project before global", async () => {
     using project = new DisposableTempDir("agent-skills-project");
     using global = new DisposableTempDir("agent-skills-global");
@@ -185,5 +223,124 @@ describe("agentSkillsService", () => {
     expect(
       diagnostics.invalidSkills.find((i) => i.directoryName === "name-mismatch")?.message
     ).toContain("must match directory name");
+  });
+
+  test("discovers symlinked skill directories", async () => {
+    using project = new DisposableTempDir("agent-skills-symlink");
+    using skillSource = new DisposableTempDir("agent-skills-source");
+
+    const projectSkillsRoot = path.join(project.path, ".mux", "skills");
+    await fs.mkdir(projectSkillsRoot, { recursive: true });
+
+    // Create a real skill in a separate location
+    await writeSkill(skillSource.path, "my-skill", "A symlinked skill");
+
+    // Symlink the skill directory into the project skills root
+    await fs.symlink(
+      path.join(skillSource.path, "my-skill"),
+      path.join(projectSkillsRoot, "my-skill")
+    );
+
+    const roots = { projectRoot: projectSkillsRoot, globalRoot: "/nonexistent" };
+    const runtime = new LocalRuntime(project.path);
+
+    const skills = await discoverAgentSkills(runtime, project.path, { roots });
+    const found = skills.find((s) => s.name === "my-skill");
+    expect(found).toBeDefined();
+    expect(found!.description).toBe("A symlinked skill");
+    expect(found!.scope).toBe("project");
+  });
+
+  test("readAgentSkill reads from symlinked skill directory", async () => {
+    using project = new DisposableTempDir("agent-skills-symlink-read");
+    using skillSource = new DisposableTempDir("agent-skills-source-read");
+
+    const projectSkillsRoot = path.join(project.path, ".mux", "skills");
+    await fs.mkdir(projectSkillsRoot, { recursive: true });
+
+    await writeSkill(skillSource.path, "linked-skill", "Symlinked for reading");
+    await fs.symlink(
+      path.join(skillSource.path, "linked-skill"),
+      path.join(projectSkillsRoot, "linked-skill")
+    );
+
+    const roots = { projectRoot: projectSkillsRoot, globalRoot: "/nonexistent" };
+    const runtime = new LocalRuntime(project.path);
+
+    const parsed = SkillNameSchema.safeParse("linked-skill");
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error("bad name");
+
+    const result = await readAgentSkill(runtime, project.path, parsed.data, { roots });
+    expect(result.package.frontmatter.name).toBe("linked-skill");
+    expect(result.package.frontmatter.description).toBe("Symlinked for reading");
+    expect(result.package.scope).toBe("project");
+  });
+
+  test("discovers skill directory via relative symlink", async () => {
+    // Mirrors a real-world layout:
+    //   <project>/.agents/skills/kalshi-docs/SKILL.md   (real skill)
+    //   <project>/.mux/skills/kalshi-docs -> ../../.agents/skills/kalshi-docs  (relative symlink)
+    using project = new DisposableTempDir("agent-skills-relative-symlink");
+
+    const projectRoot = project.path;
+    const externalSkillsDir = path.join(projectRoot, ".agents", "skills");
+    const muxSkillsRoot = path.join(projectRoot, ".mux", "skills");
+    await fs.mkdir(externalSkillsDir, { recursive: true });
+    await fs.mkdir(muxSkillsRoot, { recursive: true });
+
+    // Write the real skill outside .mux/skills/
+    await writeSkill(externalSkillsDir, "kalshi-docs", "Kalshi API documentation");
+
+    // Create a relative symlink (../../.agents/skills/kalshi-docs)
+    await fs.symlink(
+      path.join("..", "..", ".agents", "skills", "kalshi-docs"),
+      path.join(muxSkillsRoot, "kalshi-docs")
+    );
+
+    const roots = { projectRoot: muxSkillsRoot, globalRoot: "/nonexistent" };
+    const runtime = new LocalRuntime(projectRoot);
+
+    // Discovery should find the symlinked skill
+    const skills = await discoverAgentSkills(runtime, projectRoot, { roots });
+    const found = skills.find((s) => s.name === "kalshi-docs");
+    expect(found).toBeDefined();
+    expect(found!.description).toBe("Kalshi API documentation");
+    expect(found!.scope).toBe("project");
+
+    // readAgentSkill should also resolve through the relative symlink
+    const parsed = SkillNameSchema.safeParse("kalshi-docs");
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error("bad name");
+
+    const result = await readAgentSkill(runtime, projectRoot, parsed.data, { roots });
+    expect(result.package.frontmatter.name).toBe("kalshi-docs");
+    expect(result.package.frontmatter.description).toBe("Kalshi API documentation");
+  });
+
+  test("discovers symlinked SKILL.md inside a real directory", async () => {
+    using project = new DisposableTempDir("agent-skills-symlink-file");
+    using skillSource = new DisposableTempDir("agent-skills-source-file");
+
+    const projectSkillsRoot = path.join(project.path, ".mux", "skills");
+    const skillDir = path.join(projectSkillsRoot, "file-linked");
+    await fs.mkdir(skillDir, { recursive: true });
+
+    // Write SKILL.md to the source location and symlink just the file
+    const sourceSkillMd = path.join(skillSource.path, "SKILL.md");
+    await fs.writeFile(
+      sourceSkillMd,
+      `---\nname: file-linked\ndescription: Symlinked SKILL.md\n---\nBody\n`,
+      "utf-8"
+    );
+    await fs.symlink(sourceSkillMd, path.join(skillDir, "SKILL.md"));
+
+    const roots = { projectRoot: projectSkillsRoot, globalRoot: "/nonexistent" };
+    const runtime = new LocalRuntime(project.path);
+
+    const skills = await discoverAgentSkills(runtime, project.path, { roots });
+    const found = skills.find((s) => s.name === "file-linked");
+    expect(found).toBeDefined();
+    expect(found!.description).toBe("Symlinked SKILL.md");
   });
 });

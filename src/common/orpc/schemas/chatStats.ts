@@ -32,6 +32,7 @@ export const ChatUsageDisplaySchema = z.object({
   output: ChatUsageComponentSchema,
   reasoning: ChatUsageComponentSchema,
   model: z.string().optional(),
+  costsIncluded: z.boolean().optional(),
 });
 
 export const ChatStatsSchema = z.object({
@@ -56,6 +57,10 @@ export const ChatStatsSchema = z.object({
 export const SessionUsageTokenStatsCacheSchema = z.object({
   version: z.literal(1),
   computedAt: z.number().meta({ description: "Unix timestamp (ms) when this cache was computed" }),
+  providersConfigVersion: z
+    .number()
+    .optional()
+    .meta({ description: "Stable provider-config fingerprint used for this cache" }),
   model: z
     .string()
     .meta({ description: "Model used for tokenization (affects tokenizer + tool definitions)" }),
