@@ -40,7 +40,7 @@ describe("OpenSSHTransport.spawnRemoteProcess", () => {
     acquireConnectionSpy.mockRestore();
   });
 
-  function setHostKeyVerificationCapability(configured: boolean): SshPromptService | undefined {
+  function setSshPromptCapability(configured: boolean): SshPromptService | undefined {
     releaseInteractiveResponder?.();
     releaseInteractiveResponder = undefined;
 
@@ -65,7 +65,7 @@ describe("OpenSSHTransport.spawnRemoteProcess", () => {
   }
 
   test("explicit headless (no service) includes host-key fallback options and BatchMode=yes", async () => {
-    setHostKeyVerificationCapability(false);
+    setSshPromptCapability(false);
     setOpenSSHHostKeyPolicyMode("headless-fallback");
 
     const args = await runSpawnRemoteProcess();
@@ -80,7 +80,7 @@ describe("OpenSSHTransport.spawnRemoteProcess", () => {
   });
 
   test("service configured keeps BatchMode=yes but excludes host-key fallback options", async () => {
-    const service = setHostKeyVerificationCapability(true);
+    const service = setSshPromptCapability(true);
     releaseInteractiveResponder = service?.registerInteractiveResponder();
     setOpenSSHHostKeyPolicyMode("strict");
 
@@ -92,7 +92,7 @@ describe("OpenSSHTransport.spawnRemoteProcess", () => {
   });
 
   test("service configured without active responder still excludes host-key fallback options", async () => {
-    setHostKeyVerificationCapability(true);
+    setSshPromptCapability(true);
     setOpenSSHHostKeyPolicyMode("strict");
 
     const args = await runSpawnRemoteProcess();
