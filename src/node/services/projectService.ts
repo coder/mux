@@ -252,8 +252,9 @@ function classifyCloneError(stderr: string): CloneErrorCode {
   if (/permission denied/i.test(stderr) && /passphrase|password/i.test(stderr)) {
     return "ssh_credential_cancelled";
   }
-  // Empty response from askpass = timeout/cancel
-  if (/no such identity|connection closed/i.test(stderr)) return "ssh_prompt_timeout";
+
+  // Preserve stderr context for ambiguous SSH transport failures instead of
+  // misclassifying them as prompt timeouts.
   return "clone_failed";
 }
 

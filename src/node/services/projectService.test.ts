@@ -943,6 +943,69 @@ exit 1
       }
     });
 
+    it("keeps ambiguous SSH transport failures as clone_failed", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "ssh-ambiguous-failure");
+      const fakeBinDir = path.join(tempDir, "fake-bin-ssh-ambiguous-failure");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  echo "Connection closed by remote host" >&2
+  exit 128
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      const sshPromptService = new SshPromptService(5000);
+      const release = sshPromptService.registerInteractiveResponder();
+      const sshCloneService = new ProjectService(config, sshPromptService);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.HOME = tempDir;
+      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
+
+      try {
+        const events = await collectCloneEvents(
+          sshCloneService,
+          "github.com:org/repo-ambiguous.git",
+          cloneParentDir
+        );
+
+        const terminalEvent = events[events.length - 1];
+        expect(terminalEvent?.type).toBe("error");
+        if (terminalEvent?.type !== "error") throw new Error("Expected error event");
+        expect(terminalEvent.code).toBe("clone_failed");
+        expect(terminalEvent.error).toContain("Connection closed by remote host");
+      } finally {
+        release();
+        process.env.PATH = originalPath;
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+      }
+    });
+
     it("SSH clone invokes askpass for credential prompt and succeeds", async () => {
       if (process.platform === "win32") {
         // This test relies on a POSIX shell shim named "git" in PATH.
