@@ -61,6 +61,9 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
         truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
         interruptStream: () => Promise.resolve({ success: true, data: undefined }),
       },
+      analytics: {
+        rebuildDatabase: () => Promise.resolve({ success: true, workspacesIngested: 2 }),
+      },
     } as unknown as APIClient,
     getBranchesForProject: () =>
       Promise.resolve({
@@ -185,6 +188,121 @@ test("archive merged workspaces prompt submits selected project", async () => {
 
   expect(onArchiveMergedWorkspacesInProject).toHaveBeenCalledTimes(1);
   expect(onArchiveMergedWorkspacesInProject).toHaveBeenCalledWith("/repo/a");
+});
+
+test("buildCoreSources includes rebuild analytics database action with discoverable keywords", () => {
+  const sources = mk();
+  const actions = sources.flatMap((s) => s());
+  const rebuildAction = actions.find((a) => a.id === "analytics:rebuild-database");
+
+  expect(rebuildAction).toBeDefined();
+  expect(rebuildAction?.title).toBe("Rebuild Analytics Database");
+  expect(rebuildAction?.keywords).toContain("analytics");
+  expect(rebuildAction?.keywords).toContain("rebuild");
+  expect(rebuildAction?.keywords).toContain("recompute");
+  expect(rebuildAction?.keywords).toContain("database");
+  expect(rebuildAction?.keywords).toContain("stats");
+});
+
+test("analytics rebuild command calls route and dispatches toast feedback", async () => {
+  const rebuildDatabase = mock(() => Promise.resolve({ success: true, workspacesIngested: 4 }));
+
+  const testWindow = new GlobalWindow();
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalCustomEvent = globalThis.CustomEvent;
+
+  globalThis.window = testWindow as unknown as Window & typeof globalThis;
+  globalThis.document = testWindow.document as unknown as Document;
+  globalThis.CustomEvent = testWindow.CustomEvent as unknown as typeof CustomEvent;
+
+  const chatInputHost = document.createElement("div");
+  chatInputHost.setAttribute("data-component", "ChatInputSection");
+  document.body.appendChild(chatInputHost);
+
+  const receivedToasts: Array<{
+    type: "success" | "error";
+    message: string;
+    title?: string;
+  }> = [];
+  const handleToast = (event: Event) => {
+    receivedToasts.push(
+      (event as CustomEvent<{ type: "success" | "error"; message: string; title?: string }>).detail
+    );
+  };
+  window.addEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
+
+  try {
+    const sources = mk({
+      api: {
+        workspace: {
+          truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
+          interruptStream: () => Promise.resolve({ success: true, data: undefined }),
+        },
+        analytics: { rebuildDatabase },
+      } as unknown as APIClient,
+    });
+    const actions = sources.flatMap((s) => s());
+    const rebuildAction = actions.find((a) => a.id === "analytics:rebuild-database");
+
+    expect(rebuildAction).toBeDefined();
+    await rebuildAction!.run();
+
+    expect(rebuildDatabase).toHaveBeenCalledWith({});
+    expect(receivedToasts).toEqual([
+      {
+        type: "success",
+        message: "Analytics database rebuilt successfully (4 workspaces ingested).",
+      },
+    ]);
+  } finally {
+    window.removeEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.CustomEvent = originalCustomEvent;
+  }
+});
+
+test("analytics rebuild command falls back to alert when chat input toast host is unavailable", async () => {
+  const rebuildDatabase = mock(() => Promise.resolve({ success: true, workspacesIngested: 1 }));
+
+  const testWindow = new GlobalWindow();
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalCustomEvent = globalThis.CustomEvent;
+
+  globalThis.window = testWindow as unknown as Window & typeof globalThis;
+  globalThis.document = testWindow.document as unknown as Document;
+  globalThis.CustomEvent = testWindow.CustomEvent as unknown as typeof CustomEvent;
+
+  const alertMock = mock(() => undefined);
+  window.alert = alertMock as unknown as typeof window.alert;
+
+  try {
+    const sources = mk({
+      api: {
+        workspace: {
+          truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
+          interruptStream: () => Promise.resolve({ success: true, data: undefined }),
+        },
+        analytics: { rebuildDatabase },
+      } as unknown as APIClient,
+    });
+    const actions = sources.flatMap((s) => s());
+    const rebuildAction = actions.find((a) => a.id === "analytics:rebuild-database");
+
+    expect(rebuildAction).toBeDefined();
+    await rebuildAction!.run();
+
+    expect(rebuildDatabase).toHaveBeenCalledWith({});
+    expect(alertMock).toHaveBeenCalledWith(
+      "Analytics database rebuilt successfully (1 workspace ingested)."
+    );
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.CustomEvent = originalCustomEvent;
+  }
 });
 
 test("workspace generate title command is hidden for Chat with Mux workspace", () => {

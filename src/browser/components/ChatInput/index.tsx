@@ -1415,6 +1415,29 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       window.removeEventListener(CUSTOM_EVENTS.THINKING_LEVEL_TOAST, handler as EventListener);
   }, [variant, props, pushToast]);
 
+  // Show toast feedback for analytics rebuild command palette action.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{ type: "success" | "error"; message: string; title?: string }>
+      ).detail;
+
+      if (!detail || (detail.type !== "success" && detail.type !== "error")) {
+        return;
+      }
+
+      pushToast({
+        type: detail.type,
+        title: detail.title,
+        message: detail.message,
+      });
+    };
+
+    window.addEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handler as EventListener);
+    return () =>
+      window.removeEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handler as EventListener);
+  }, [pushToast]);
+
   // Voice input: command palette toggle + global recording keybinds
   useEffect(() => {
     if (!voiceInput.shouldShowUI) return;

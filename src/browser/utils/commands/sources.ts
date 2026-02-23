@@ -38,6 +38,7 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { BranchListResult } from "@/common/orpc/types";
 import type { WorkspaceState } from "@/browser/stores/WorkspaceStore";
 import type { RuntimeConfig } from "@/common/types/runtime";
+import { getErrorMessage } from "@/common/utils/errors";
 
 export interface BuildSourcesParams {
   api: APIClient | null;
@@ -167,6 +168,52 @@ function toFileUrl(filePath: string): string {
   // Fall back to treating the string as a path-ish URL segment.
   return `file://${encodeURI(normalized)}`;
 }
+
+interface AnalyticsRebuildNamespace {
+  rebuildDatabase?: (
+    input: Record<string, never>
+  ) => Promise<{ success: boolean; workspacesIngested: number }>;
+}
+
+const getAnalyticsRebuildDatabase = (
+  api: APIClient | null
+): AnalyticsRebuildNamespace["rebuildDatabase"] | null => {
+  const candidate = (api as { analytics?: unknown } | null)?.analytics;
+  if (!candidate || (typeof candidate !== "object" && typeof candidate !== "function")) {
+    return null;
+  }
+
+  const rebuildDatabase = (candidate as AnalyticsRebuildNamespace).rebuildDatabase;
+  return typeof rebuildDatabase === "function" ? rebuildDatabase : null;
+};
+
+const showCommandFeedbackToast = (feedback: {
+  type: "success" | "error";
+  message: string;
+  title?: string;
+}) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  // Analytics view does not mount ChatInput, so keep a basic alert fallback
+  // for command palette actions that need user feedback.
+  const hasChatInputToastHost =
+    typeof document !== "undefined" &&
+    document.querySelector('[data-component="ChatInputSection"]') !== null;
+
+  if (hasChatInputToastHost) {
+    window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, feedback));
+    return;
+  }
+
+  const alertMessage = feedback.title
+    ? `${feedback.title}\n\n${feedback.message}`
+    : feedback.message;
+  if (typeof window.alert === "function") {
+    window.alert(alertMessage);
+  }
+};
 
 const findFirstTerminalSessionTab = (
   node: ReturnType<typeof parseRightSidebarLayoutState>["root"]
@@ -958,6 +1005,54 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     }
     return list;
   });
+
+  // Analytics maintenance
+  actions.push(() => [
+    {
+      id: CommandIds.analyticsRebuildDatabase(),
+      title: "Rebuild Analytics Database",
+      subtitle: "Recompute analytics from workspace history",
+      section: section.settings,
+      keywords: ["analytics", "rebuild", "recompute", "database", "stats"],
+      run: async () => {
+        const rebuildDatabase = getAnalyticsRebuildDatabase(p.api);
+        if (!rebuildDatabase) {
+          showCommandFeedbackToast({
+            type: "error",
+            title: "Analytics Unavailable",
+            message: "Analytics backend is not available in this build.",
+          });
+          return;
+        }
+
+        try {
+          const result = await rebuildDatabase({});
+          if (!result.success) {
+            showCommandFeedbackToast({
+              type: "error",
+              title: "Analytics Rebuild Failed",
+              message: "Analytics database rebuild did not complete successfully.",
+            });
+            return;
+          }
+
+          const workspaceLabel = `${result.workspacesIngested} workspace${
+            result.workspacesIngested === 1 ? "" : "s"
+          }`;
+          showCommandFeedbackToast({
+            type: "success",
+            message: `Analytics database rebuilt successfully (${workspaceLabel} ingested).`,
+          });
+        } catch (error) {
+          showCommandFeedbackToast({
+            type: "error",
+            title: "Analytics Rebuild Failed",
+            message: getErrorMessage(error),
+          });
+        }
+      },
+    },
+  ]);
 
   // Settings
   if (p.onOpenSettings) {

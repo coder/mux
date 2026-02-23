@@ -82,6 +82,12 @@ export const CUSTOM_EVENTS = {
   TOGGLE_VOICE_INPUT: "mux:toggleVoiceInput",
 
   /**
+   * Event to show toast feedback for analytics database rebuild commands.
+   * Detail: { type: "success" | "error", message: string, title?: string }
+   */
+  ANALYTICS_REBUILD_TOAST: "mux:analyticsRebuildToast",
+
+  /**
    * Event to open the debug LLM request modal
    * No detail
    */
@@ -129,6 +135,11 @@ export interface CustomEventPayloads {
     runtime?: string;
   };
   [CUSTOM_EVENTS.TOGGLE_VOICE_INPUT]: never; // No payload
+  [CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST]: {
+    type: "success" | "error";
+    message: string;
+    title?: string;
+  };
   [CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST]: never; // No payload
 }
 
