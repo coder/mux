@@ -419,9 +419,11 @@ export function useDraftWorkspaceSettings(
       ? parsedDefault.configPath
       : lastDevcontainerConfigPath;
 
+  // Only include forwardAgent for non-Coder SSH runtimes; Coder manages its own credential forwarding.
+  const defaultSshForwardAgent = defaultSshCoder ? undefined : lastSsh.forwardAgent;
   const defaultRuntime = buildRuntimeForMode(
     defaultRuntimeMode,
-    { host: defaultSshHost, coder: defaultSshCoder, forwardAgent: lastSsh.forwardAgent },
+    { host: defaultSshHost, coder: defaultSshCoder, forwardAgent: defaultSshForwardAgent },
     defaultDockerImage,
     lastShareCredentials,
     defaultDevcontainerConfigPath,
@@ -447,7 +449,7 @@ export function useDraftWorkspaceSettings(
       setSelectedRuntimeState(
         buildRuntimeForMode(
           defaultRuntimeMode,
-          { host: defaultSshHost, coder: defaultSshCoder, forwardAgent: lastSsh.forwardAgent },
+          { host: defaultSshHost, coder: defaultSshCoder, forwardAgent: defaultSshForwardAgent },
           defaultDockerImage,
           lastShareCredentials,
           defaultDevcontainerConfigPath,
@@ -466,7 +468,7 @@ export function useDraftWorkspaceSettings(
     defaultDockerImage,
     lastShareCredentials,
     defaultSshCoder,
-    lastSsh.forwardAgent,
+    defaultSshForwardAgent,
     defaultDevcontainerConfigPath,
     lastDevcontainerShareCredentials,
   ]);

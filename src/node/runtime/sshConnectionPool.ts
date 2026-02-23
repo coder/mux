@@ -406,6 +406,9 @@ export class SSHConnectionPool {
 
     const args: string[] = ["-T"]; // No PTY needed for probe
 
+    // Forward the local SSH agent so multiplexed sessions inherit the socket.
+    if (config.forwardAgent) args.push("-A");
+
     if (config.port) {
       args.push("-p", config.port.toString());
     }
