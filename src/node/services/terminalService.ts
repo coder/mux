@@ -860,7 +860,7 @@ export class TerminalService {
 
   /**
    * Close all terminal sessions for a workspace.
-   * Called when a workspace is removed to prevent resource leaks.
+   * Called when a workspace is archived or removed to prevent resource leaks.
    */
   closeWorkspaceSessions(workspaceId: string): void {
     const sessionIds = this.getTrackedSessionIdsForWorkspace(workspaceId);

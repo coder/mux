@@ -293,9 +293,7 @@ export class PTYService {
    * Close all terminal sessions for a workspace
    */
   closeWorkspaceSessions(workspaceId: string): void {
-    const sessionIds = Array.from(this.sessions.entries())
-      .filter(([, session]) => session.workspaceId === workspaceId)
-      .map(([id]) => id);
+    const sessionIds = this.getWorkspaceSessionIds(workspaceId);
 
     log.info(`Closing ${sessionIds.length} terminal session(s) for workspace ${workspaceId}`);
 
