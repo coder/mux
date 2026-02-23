@@ -21,7 +21,7 @@ import { spawn } from "child_process";
 import { HOST_KEY_APPROVAL_TIMEOUT_MS } from "@/common/constants/ssh";
 import { formatSshEndpoint } from "@/common/utils/ssh/formatSshEndpoint";
 import { log } from "@/node/services/log";
-import type { HostKeyVerificationService } from "@/node/services/hostKeyVerificationService";
+import type { SshPromptService } from "@/node/services/sshPromptService";
 import { createAskpassSession, parseHostKeyPrompt } from "./sshAskpass";
 
 /**
@@ -41,11 +41,11 @@ function classifyAskpassPrompt(promptText: string): "host-key" | "credential" {
 
 export type OpenSSHHostKeyPolicyMode = "strict" | "headless-fallback";
 
-let hostKeyService: HostKeyVerificationService | undefined;
+let sshPromptService: SshPromptService | undefined;
 let hostKeyPolicyMode: OpenSSHHostKeyPolicyMode = "headless-fallback";
 
-export function setHostKeyVerificationService(svc: HostKeyVerificationService | undefined): void {
-  hostKeyService = svc;
+export function setSshPromptService(svc: SshPromptService | undefined): void {
+  sshPromptService = svc;
 }
 
 export function setOpenSSHHostKeyPolicyMode(mode: OpenSSHHostKeyPolicyMode): void {
@@ -53,7 +53,7 @@ export function setOpenSSHHostKeyPolicyMode(mode: OpenSSHHostKeyPolicyMode): voi
 }
 
 export function isInteractiveHostKeyApprovalAvailable(): boolean {
-  return hostKeyService?.hasInteractiveResponder() === true;
+  return sshPromptService?.hasInteractiveResponder() === true;
 }
 
 export function appendOpenSSHHostKeyPolicyArgs(args: string[]): void {
@@ -414,7 +414,7 @@ export class SSHConnectionPool {
     key: string
   ): Promise<void> {
     const controlPath = getControlPath(config);
-    const verificationService = hostKeyService;
+    const promptService = sshPromptService;
     const canPromptInteractively = isInteractiveHostKeyApprovalAvailable();
 
     const args: string[] = ["-T"]; // No PTY needed for probe
@@ -464,7 +464,7 @@ export class SSHConnectionPool {
     // Non-host-key prompts (passphrase, password) return empty to fail fast —
     // passphrase-protected keys must be agent-unlocked before Mux can use them.
     const askpass =
-      canPromptInteractively && verificationService
+      canPromptInteractively && promptService
         ? await createAskpassSession(async (promptText) => {
             if (classifyAskpassPrompt(promptText) !== "host-key") {
               // Credential prompts (passphrase/password) are not supported during
@@ -478,11 +478,12 @@ export class SSHConnectionPool {
 
             const fullContext = stderr + "\n" + promptText;
             const parsed = parseHostKeyPrompt(fullContext);
-            const accepted = await verificationService.requestVerification({
+            const response = await promptService.requestPrompt({
+              kind: "host-key",
               ...parsed,
               dedupeKey: formatSshEndpoint(config.host, config.port ?? 22),
             });
-            return accepted ? "yes" : "no";
+            return response || "no";
           })
         : undefined;
 

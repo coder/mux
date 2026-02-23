@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import * as childProcess from "child_process";
 
-import { HostKeyVerificationService } from "@/node/services/hostKeyVerificationService";
+import { SshPromptService } from "@/node/services/sshPromptService";
 import {
-  setHostKeyVerificationService,
+  setSshPromptService,
   setOpenSSHHostKeyPolicyMode,
   sshConnectionPool,
 } from "../sshConnectionPool";
@@ -33,26 +33,24 @@ describe("OpenSSHTransport.spawnRemoteProcess", () => {
     releaseInteractiveResponder?.();
     releaseInteractiveResponder = undefined;
     // Reset to a configured service without responders so state does not leak across tests.
-    setHostKeyVerificationService(new HostKeyVerificationService());
+    setSshPromptService(new SshPromptService());
     setOpenSSHHostKeyPolicyMode("headless-fallback");
 
     spawnSpy.mockRestore();
     acquireConnectionSpy.mockRestore();
   });
 
-  function setHostKeyVerificationCapability(
-    configured: boolean
-  ): HostKeyVerificationService | undefined {
+  function setHostKeyVerificationCapability(configured: boolean): SshPromptService | undefined {
     releaseInteractiveResponder?.();
     releaseInteractiveResponder = undefined;
 
     if (!configured) {
-      setHostKeyVerificationService(undefined);
+      setSshPromptService(undefined);
       return undefined;
     }
 
-    const service = new HostKeyVerificationService();
-    setHostKeyVerificationService(service);
+    const service = new SshPromptService();
+    setSshPromptService(service);
     return service;
   }
 

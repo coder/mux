@@ -45,15 +45,15 @@ import { McpOauthService } from "@/node/services/mcpOauthService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
 import { getSigningService, type SigningService } from "@/node/services/signingService";
 import { coderService, type CoderService } from "@/node/services/coderService";
-import { HostKeyVerificationService } from "@/node/services/hostKeyVerificationService";
+import { SshPromptService } from "@/node/services/sshPromptService";
 import { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
 import {
   createStartCoderOnUnarchiveHook,
   createStopCoderOnArchiveHook,
 } from "@/node/runtime/coderLifecycleHooks";
 import { setGlobalCoderService } from "@/node/runtime/runtimeFactory";
-import { setHostKeyVerificationService } from "@/node/runtime/sshConnectionPool";
-import { setHostKeyVerificationService as setSSH2HostKeyVerificationService } from "@/node/runtime/SSH2ConnectionPool";
+import { setSshPromptService } from "@/node/runtime/sshConnectionPool";
+import { setSshPromptService as setSSH2SshPromptService } from "@/node/runtime/SSH2ConnectionPool";
 import { PolicyService } from "@/node/services/policyService";
 import { ServerAuthService } from "@/node/services/serverAuthService";
 import type { ORPCContext } from "@/node/orpc/context";
@@ -117,7 +117,7 @@ export class ServiceContainer {
   public readonly policyService: PolicyService;
   public readonly coderService: CoderService;
   public readonly serverAuthService: ServerAuthService;
-  public readonly hostKeyVerificationService = new HostKeyVerificationService();
+  public readonly sshPromptService = new SshPromptService();
   private readonly ptyService: PTYService;
   public readonly idleCompactionService: IdleCompactionService;
 
@@ -231,8 +231,8 @@ export class ServiceContainer {
 
     // Register globally so all createRuntime calls can create CoderSSHRuntime
     setGlobalCoderService(this.coderService);
-    setHostKeyVerificationService(this.hostKeyVerificationService);
-    setSSH2HostKeyVerificationService(this.hostKeyVerificationService);
+    setSshPromptService(this.sshPromptService);
+    setSSH2SshPromptService(this.sshPromptService);
 
     // Backend timing stats (behind feature flag).
     this.aiService.on("stream-start", (data: StreamStartEvent) =>
@@ -446,7 +446,7 @@ export class ServiceContainer {
       signingService: this.signingService,
       coderService: this.coderService,
       serverAuthService: this.serverAuthService,
-      hostKeyVerificationService: this.hostKeyVerificationService,
+      sshPromptService: this.sshPromptService,
     };
   }
 

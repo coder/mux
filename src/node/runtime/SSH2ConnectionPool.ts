@@ -18,12 +18,12 @@ import { log } from "@/node/services/log";
 import { attachStreamErrorHandler } from "@/node/utils/streamErrors";
 import type { SSHConnectionConfig } from "./sshConnectionPool";
 import { resolveSSHConfig, type ResolvedSSHConfig } from "./sshConfigParser";
-import type { HostKeyVerificationService } from "@/node/services/hostKeyVerificationService";
+import type { SshPromptService } from "@/node/services/sshPromptService";
 
-let hostKeyService: HostKeyVerificationService | undefined;
+let sshPromptService: SshPromptService | undefined;
 
-export function setHostKeyVerificationService(svc: HostKeyVerificationService): void {
-  hostKeyService = svc;
+export function setSshPromptService(svc: SshPromptService): void {
+  sshPromptService = svc;
 }
 
 /**
@@ -501,9 +501,9 @@ export class SSH2ConnectionPool {
         const readableKeys = await resolvePrivateKeys(resolvedConfigWithIdentities.identityFiles);
         const keysToTry: Array<Buffer | undefined> =
           readableKeys.length > 0 ? readableKeys : [undefined];
-        // Keep the hostKeyService wiring in place so known_hosts-backed
+        // Keep the sshPromptService wiring in place so known_hosts-backed
         // verification can be restored without changing the public module API.
-        void hostKeyService;
+        void sshPromptService;
 
         const connectWithKey = async (
           privateKey: Buffer | undefined,

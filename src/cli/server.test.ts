@@ -91,7 +91,7 @@ async function createTestServer(): Promise<TestServerHandle> {
     signingService: services.signingService,
     coderService: services.coderService,
     serverAuthService: services.serverAuthService,
-    hostKeyVerificationService: services.hostKeyVerificationService,
+    sshPromptService: services.sshPromptService,
   };
 
   // Use the actual createOrpcServer function

@@ -6,7 +6,11 @@ import { NameGenerationErrorSchema, SendMessageErrorSchema } from "./errors";
 import { BranchListResultSchema, FilePartSchema, MuxMessageSchema } from "./message";
 import { ProjectConfigSchema, SectionConfigSchema } from "./project";
 import { ResultSchema } from "./result";
-import { HostKeyVerificationEventSchema } from "./ssh";
+import {
+  HostKeyVerificationEventSchema,
+  SshPromptEventSchema,
+  SshPromptResponseInputSchema,
+} from "./ssh";
 import {
   RuntimeConfigSchema,
   RuntimeAvailabilitySchema,
@@ -1832,6 +1836,17 @@ export const debug = {
 };
 
 export const ssh = {
+  prompt: {
+    subscribe: {
+      input: z.void(),
+      output: eventIterator(SshPromptEventSchema),
+    },
+    respond: {
+      input: SshPromptResponseInputSchema,
+      output: ResultSchema(z.void(), z.string()),
+    },
+  },
+  // Compatibility endpoint for host-key-only dialog flows.
   hostKeyVerification: {
     subscribe: {
       input: z.void(),
