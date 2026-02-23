@@ -54,6 +54,27 @@ async function waitForForegroundToolCallId(
   }
 }
 
+async function getActiveTextarea(container: HTMLElement): Promise<HTMLTextAreaElement> {
+  return waitFor(
+    () => {
+      const textareas = Array.from(
+        container.querySelectorAll('textarea[aria-label="Message Claude"]')
+      ) as HTMLTextAreaElement[];
+      if (textareas.length === 0) {
+        throw new Error("Chat textarea not found");
+      }
+
+      const enabled = [...textareas].reverse().find((textarea) => !textarea.disabled);
+      if (!enabled) {
+        throw new Error("Chat textarea is disabled");
+      }
+
+      return enabled;
+    },
+    { timeout: 10_000 }
+  );
+}
+
 async function setDeterministicForceCompactionThreshold(
   env: TestEnvironment,
   workspaceId: string
@@ -212,6 +233,56 @@ describe("Compaction UI (mock AI router)", () => {
         },
         { timeout: 60_000 }
       );
+    } finally {
+      unregister?.();
+      await app.dispose();
+    }
+  }, 60_000);
+
+  test("/compact with Ctrl+Enter (turn-end) does NOT auto-background foreground bash", async () => {
+    const app = await createAppHarness({ branchPrefix: "compaction-ui" });
+
+    let unregister: (() => void) | undefined;
+
+    try {
+      const manager = getBackgroundProcessManager(app.env);
+
+      const toolCallId = "bash-foreground-compact-turn-end";
+      let backgrounded = false;
+
+      const registration = manager.registerForegroundProcess(
+        app.workspaceId,
+        toolCallId,
+        "echo foreground bash for compact turn-end",
+        "foreground bash for compact turn-end",
+        () => {
+          backgrounded = true;
+          unregister?.();
+        }
+      );
+
+      unregister = registration.unregister;
+
+      // Ensure the UI's subscription has observed the foreground bash before sending /compact.
+      await waitForForegroundToolCallId(app.env, app.workspaceId, toolCallId);
+
+      const seedMessage = "Seed conversation for /compact turn-end test";
+
+      const seedResult = await app.env.orpc.workspace.sendMessage({
+        workspaceId: app.workspaceId,
+        message: seedMessage,
+        options: { model: WORKSPACE_DEFAULTS.model, agentId: WORKSPACE_DEFAULTS.agentId },
+      });
+      expect(seedResult.success).toBe(true);
+      await app.chat.expectTranscriptContains(`Mock response: ${seedMessage}`);
+
+      await app.chat.typeWithoutSending("/compact -t 500");
+      const textarea = await getActiveTextarea(app.view.container);
+      fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true });
+
+      await app.chat.expectTranscriptContains("Mock compaction summary:", 60_000);
+
+      expect(backgrounded).toBe(false);
     } finally {
       unregister?.();
       await app.dispose();

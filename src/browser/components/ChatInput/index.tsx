@@ -1550,7 +1550,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const executeParsedCommand = async (
     parsed: ParsedCommand | null,
     restoreInput: string,
-    options?: { skipConfirmation?: boolean }
+    options?: { skipConfirmation?: boolean; queueDispatchMode?: QueueDispatchMode }
   ): Promise<boolean> => {
     if (!parsed) {
       return false;
@@ -1580,6 +1580,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     }
 
     const reviewsData = reviewData;
+    const dispatchMode = options?.queueDispatchMode ?? "tool-end";
+    // Thread dispatch mode into send options so queued command sends stay in sync with normal sends.
+    const commandSendMessageOptions: SendMessageOptions = {
+      ...sendMessageOptions,
+      ...(dispatchMode === "tool-end" ? {} : { queueDispatchMode: dispatchMode }),
+    };
     // Prepare file parts for commands that need to send messages with attachments
     const commandFileParts = chatAttachmentsToFileParts(attachments, { validate: true });
     const commandContext: SlashCommandContext = {
@@ -1588,7 +1594,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       workspaceId: commandWorkspaceId,
       projectPath: commandProjectPath,
       openSettings: open,
-      sendMessageOptions,
+      sendMessageOptions: commandSendMessageOptions,
       setInput,
       setAttachments,
       setSendingState: (increment: boolean) => setSendingCount((c) => c + (increment ? 1 : -1)),
@@ -1620,7 +1626,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         if (reviewIdsForCheck.length > 0) {
           props.onCheckReviews?.(reviewIdsForCheck);
         }
-        props.onMessageSent?.("tool-end");
+        props.onMessageSent?.(dispatchMode);
       }
     }
 
@@ -1825,7 +1831,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     try {
       const modelOneShot = parsed?.type === "model-oneshot" ? parsed : null;
-      const commandHandled = modelOneShot ? false : await executeParsedCommand(parsed, input);
+      const commandHandled = modelOneShot
+        ? false
+        : await executeParsedCommand(parsed, input, {
+            queueDispatchMode: overrides?.queueDispatchMode,
+          });
       if (commandHandled) {
         return;
       }
