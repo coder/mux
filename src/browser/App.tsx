@@ -69,7 +69,7 @@ import { ConfirmDialogProvider, useConfirmDialog } from "./contexts/ConfirmDialo
 import { AboutDialog } from "./components/About/AboutDialog";
 import { SettingsPage } from "@/browser/components/Settings/SettingsPage";
 import { MuxGatewaySessionExpiredDialog } from "./components/MuxGatewaySessionExpiredDialog";
-import { HostKeyVerificationDialog } from "./components/HostKeyVerificationDialog";
+import { SshPromptDialog } from "./components/SshPromptDialog";
 import { SplashScreenProvider } from "./components/splashScreens/SplashScreenProvider";
 import { TutorialProvider } from "./contexts/TutorialContext";
 import { PowerModeProvider } from "./contexts/PowerModeContext";
@@ -1113,7 +1113,7 @@ function AppInner() {
         />
         <AboutDialog />
         <MuxGatewaySessionExpiredDialog />
-        <HostKeyVerificationDialog />
+        <SshPromptDialog />
       </div>
     </>
   );

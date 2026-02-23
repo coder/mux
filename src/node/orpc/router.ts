@@ -16,11 +16,7 @@ import type {
   FrontendWorkspaceMetadataSchemaType,
 } from "@/common/orpc/types";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
-import type {
-  HostKeyVerificationEvent,
-  SshPromptEvent,
-  SshPromptRequest,
-} from "@/common/orpc/schemas/ssh";
+import type { SshPromptEvent, SshPromptRequest } from "@/common/orpc/schemas/ssh";
 import {
   createAuthMiddleware,
   extractClientIpAddress,
@@ -4111,59 +4107,6 @@ export const router = (authToken?: string) => {
           .output(schemas.ssh.prompt.respond.output)
           .handler(({ context, input }) => {
             context.sshPromptService.respond(input.requestId, input.response);
-            return Ok(undefined);
-          }),
-      },
-      // Compatibility endpoint for host-key-only dialog flows.
-      hostKeyVerification: {
-        subscribe: t
-          .input(schemas.ssh.hostKeyVerification.subscribe.input)
-          .output(schemas.ssh.hostKeyVerification.subscribe.output)
-          .handler(async function* ({ context, signal }) {
-            if (signal?.aborted) return;
-
-            const service = context.sshPromptService;
-            const releaseResponder = service.registerInteractiveResponder();
-            const queue = createAsyncEventQueue<HostKeyVerificationEvent>();
-
-            const onRequest = (req: SshPromptRequest) => {
-              if (req.kind !== "host-key") {
-                return;
-              }
-              const { kind: _kind, ...hostKeyRequest } = req;
-              queue.push({ type: "request" as const, ...hostKeyRequest });
-            };
-            const onRemoved = (requestId: string) =>
-              queue.push({ type: "removed" as const, requestId });
-
-            // Atomic handshake: register listener + snapshot in one step.
-            // No requests can be lost between snapshot and subscription.
-            const { snapshot, unsubscribe } = service.subscribeRequests(onRequest, onRemoved);
-            for (const req of snapshot) {
-              if (req.kind !== "host-key") {
-                continue;
-              }
-              const { kind: _kind, ...hostKeyRequest } = req;
-              queue.push({ type: "request" as const, ...hostKeyRequest });
-            }
-
-            const onAbort = () => queue.end();
-            signal?.addEventListener("abort", onAbort, { once: true });
-
-            try {
-              yield* queue.iterate();
-            } finally {
-              signal?.removeEventListener("abort", onAbort);
-              releaseResponder();
-              queue.end();
-              unsubscribe();
-            }
-          }),
-        respond: t
-          .input(schemas.ssh.hostKeyVerification.respond.input)
-          .output(schemas.ssh.hostKeyVerification.respond.output)
-          .handler(({ context, input }) => {
-            context.sshPromptService.respond(input.requestId, input.accept ? "yes" : "no");
             return Ok(undefined);
           }),
       },

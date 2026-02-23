@@ -57,23 +57,3 @@ export const SshPromptResponseInputSchema = z
   .strict();
 
 export type SshPromptResponseInput = z.infer<typeof SshPromptResponseInputSchema>;
-
-// Compatibility aliases for existing host-key-only frontend consumers.
-export const HostKeyVerificationRequestSchema = HostKeyPromptRequestSchemaBase;
-export type HostKeyVerificationRequest = z.infer<typeof HostKeyVerificationRequestSchema>;
-
-const HostKeyVerificationRequestEventSchema = HostKeyVerificationRequestSchema.extend({
-  type: z.literal("request"),
-}).strict();
-
-export const HostKeyVerificationEventSchema = z.discriminatedUnion("type", [
-  HostKeyVerificationRequestEventSchema,
-  z
-    .object({
-      type: z.literal("removed"),
-      requestId: z.string(),
-    })
-    .strict(),
-]);
-
-export type HostKeyVerificationEvent = z.infer<typeof HostKeyVerificationEventSchema>;
