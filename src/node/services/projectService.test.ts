@@ -729,9 +729,9 @@ exit 1
       const sshPromptService = new SshPromptService(5000);
       const release = sshPromptService.registerInteractiveResponder();
       const sshCloneService = new ProjectService(config, sshPromptService);
-      let promptRequest: SshPromptRequest | null = null;
+      const capturedRequests: SshPromptRequest[] = [];
       const onRequest = (request: SshPromptRequest) => {
-        promptRequest = request;
+        capturedRequests.push(request);
         sshPromptService.respond(request.requestId, "yes");
       };
       sshPromptService.on("request", onRequest);
@@ -751,6 +751,7 @@ exit 1
         const successEvent = events.find((event) => event.type === "success");
         expect(successEvent?.type).toBe("success");
 
+        const promptRequest = capturedRequests[0];
         expect(promptRequest?.kind).toBe("host-key");
         if (promptRequest?.kind !== "host-key") throw new Error("Expected host-key prompt request");
         expect(promptRequest.prompt).toContain("continue connecting");
@@ -820,9 +821,9 @@ exit 1
       const sshPromptService = new SshPromptService(5000);
       const release = sshPromptService.registerInteractiveResponder();
       const sshCloneService = new ProjectService(config, sshPromptService);
-      let promptRequest: SshPromptRequest | null = null;
+      const capturedRequests: SshPromptRequest[] = [];
       const onRequest = (request: SshPromptRequest) => {
-        promptRequest = request;
+        capturedRequests.push(request);
         sshPromptService.respond(request.requestId, "no");
       };
       sshPromptService.on("request", onRequest);
@@ -844,7 +845,7 @@ exit 1
         expect(terminalEvent.code).toBe("ssh_host_key_rejected");
         expect(terminalEvent.error).toContain("Host key verification failed");
 
-        expect(promptRequest?.kind).toBe("host-key");
+        expect(capturedRequests[0]?.kind).toBe("host-key");
       } finally {
         sshPromptService.off("request", onRequest);
         release();
@@ -901,9 +902,9 @@ exit 1
       const sshPromptService = new SshPromptService(5000);
       const release = sshPromptService.registerInteractiveResponder();
       const sshCloneService = new ProjectService(config, sshPromptService);
-      let promptRequest: SshPromptRequest | null = null;
+      const capturedRequests: SshPromptRequest[] = [];
       const onRequest = (request: SshPromptRequest) => {
-        promptRequest = request;
+        capturedRequests.push(request);
         sshPromptService.respond(request.requestId, "test-passphrase");
       };
       sshPromptService.on("request", onRequest);
@@ -922,6 +923,7 @@ exit 1
         const successEvent = events.find((event) => event.type === "success");
         expect(successEvent?.type).toBe("success");
 
+        const promptRequest = capturedRequests[0];
         expect(promptRequest?.kind).toBe("credential");
         if (promptRequest?.kind !== "credential")
           throw new Error("Expected credential prompt request");
