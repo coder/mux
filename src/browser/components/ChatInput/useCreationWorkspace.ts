@@ -160,6 +160,8 @@ interface UseCreationWorkspaceReturn {
   coderConfigFallback: CoderWorkspaceConfig;
   /** Fallback SSH host used when leaving the Coder runtime. */
   sshHostFallback: string;
+  /** Fallback SSH forwardAgent setting when switching back to SSH mode. */
+  sshForwardAgentFallback: boolean | undefined;
   defaultRuntimeMode: RuntimeChoice;
   /** Set the currently selected runtime (discriminated union) */
   setSelectedRuntime: (runtime: ParsedRuntime) => void;
@@ -240,6 +242,7 @@ export function useCreationWorkspace({
     settings,
     coderConfigFallback,
     sshHostFallback,
+    sshForwardAgentFallback,
     setSelectedRuntime,
     setDefaultRuntimeChoice,
     setTrunkBranch,
@@ -611,6 +614,7 @@ export function useCreationWorkspace({
     selectedRuntime: settings.selectedRuntime,
     coderConfigFallback,
     sshHostFallback,
+    sshForwardAgentFallback,
     defaultRuntimeMode: settings.defaultRuntimeMode,
     setSelectedRuntime,
     setDefaultRuntimeChoice,

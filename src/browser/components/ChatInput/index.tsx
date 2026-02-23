@@ -803,6 +803,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           selectedRuntime: creationState.selectedRuntime,
           coderConfigFallback: creationState.coderConfigFallback,
           sshHostFallback: creationState.sshHostFallback,
+          sshForwardAgentFallback: creationState.sshForwardAgentFallback,
           defaultRuntimeMode: creationState.defaultRuntimeMode,
           onSelectedRuntimeChange: creationState.setSelectedRuntime,
           onSetDefaultRuntime: creationState.setDefaultRuntimeChoice,

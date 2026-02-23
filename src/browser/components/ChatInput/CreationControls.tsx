@@ -140,6 +140,8 @@ interface CreationControlsProps {
   coderConfigFallback: CoderWorkspaceConfig;
   /** Fallback SSH host to restore when leaving Coder. */
   sshHostFallback: string;
+  /** Fallback SSH forwardAgent to restore when switching back to SSH mode. */
+  sshForwardAgentFallback?: boolean;
   defaultRuntimeMode: RuntimeChoice;
   /** Set the currently selected runtime (discriminated union) */
   onSelectedRuntimeChange: (runtime: ParsedRuntime) => void;
@@ -676,7 +678,9 @@ export function CreationControls(props: CreationControlsProps) {
             ? selectedRuntime.host
             : props.sshHostFallback;
         const sshForwardAgent =
-          selectedRuntime.mode === RUNTIME_MODE.SSH ? selectedRuntime.forwardAgent : undefined;
+          selectedRuntime.mode === RUNTIME_MODE.SSH
+            ? selectedRuntime.forwardAgent
+            : props.sshForwardAgentFallback;
         onSelectedRuntimeChange({
           mode: "ssh",
           host: sshHost,
@@ -722,6 +726,7 @@ export function CreationControls(props: CreationControlsProps) {
     props.coderProps,
     props.runtimeEnablement,
     props.sshHostFallback,
+    props.sshForwardAgentFallback,
     props.allowedRuntimeModes,
     props.allowSshHost,
     props.allowSshCoder,
@@ -911,7 +916,9 @@ export function CreationControls(props: CreationControlsProps) {
                       ? selectedRuntime.host
                       : props.sshHostFallback;
                   const sshForwardAgent =
-                    selectedRuntime.mode === "ssh" ? selectedRuntime.forwardAgent : undefined;
+                    selectedRuntime.mode === "ssh"
+                      ? selectedRuntime.forwardAgent
+                      : props.sshForwardAgentFallback;
                   onSelectedRuntimeChange({
                     mode: "ssh",
                     host: sshHost,
@@ -1011,7 +1018,9 @@ export function CreationControls(props: CreationControlsProps) {
                     mode: "ssh",
                     host: value,
                     forwardAgent:
-                      selectedRuntime.mode === "ssh" ? selectedRuntime.forwardAgent : undefined,
+                      selectedRuntime.mode === "ssh"
+                        ? selectedRuntime.forwardAgent
+                        : props.sshForwardAgentFallback,
                   })
                 }
                 placeholder="user@host"
