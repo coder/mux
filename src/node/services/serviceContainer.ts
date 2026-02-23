@@ -479,6 +479,7 @@ export class ServiceContainer {
    */
   async shutdown(): Promise<void> {
     this.idleCompactionService.stop();
+    await this.analyticsService.dispose();
     await this.telemetryService.shutdown();
   }
 
@@ -495,6 +496,7 @@ export class ServiceContainer {
    * Terminates all background processes to prevent orphans.
    */
   async dispose(): Promise<void> {
+    await this.analyticsService.dispose();
     this.policyService.dispose();
     this.mcpServerManager.dispose();
     await this.mcpOauthService.dispose();

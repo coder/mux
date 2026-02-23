@@ -177,6 +177,8 @@ export class AnalyticsService {
   >();
   private workerError: Error | null = null;
   private initPromise: Promise<void> | null = null;
+  private disposePromise: Promise<void> | null = null;
+  private isDisposed = false;
 
   constructor(private readonly config: Config) {}
 
@@ -300,8 +302,14 @@ export class AnalyticsService {
   };
 
   private async startWorker(): Promise<void> {
+    assert(!this.isDisposed, "Analytics worker cannot start after service disposal");
+
     const dbDir = path.join(this.config.rootDir, "analytics");
     await fs.mkdir(dbDir, { recursive: true });
+
+    if (this.isDisposed) {
+      throw new Error("Analytics worker start aborted because service is disposing");
+    }
 
     const workerPath = this.resolveWorkerPath();
     this.worker = new Worker(workerPath);
@@ -344,6 +352,10 @@ export class AnalyticsService {
   }
 
   private ensureWorker(): Promise<void> {
+    if (this.isDisposed) {
+      return Promise.reject(new Error("Analytics service has been disposed"));
+    }
+
     if (this.workerError) {
       return Promise.reject(this.workerError);
     }
@@ -555,6 +567,39 @@ export class AnalyticsService {
       success: true,
       workspacesIngested: result.workspacesIngested,
     };
+  }
+
+  async dispose(): Promise<void> {
+    this.disposePromise ??= this.disposeInternal();
+    return this.disposePromise;
+  }
+
+  private async disposeInternal(): Promise<void> {
+    this.isDisposed = true;
+
+    const disposedError = new Error("Analytics service is shutting down");
+    this.workerError = disposedError;
+    this.initPromise = null;
+
+    this.rejectPending(disposedError);
+
+    const worker = this.worker;
+    if (worker == null) {
+      return;
+    }
+
+    this.worker = null;
+    worker.off("message", this.onWorkerMessage);
+    worker.off("error", this.onWorkerError);
+    worker.off("exit", this.onWorkerExit);
+
+    try {
+      await worker.terminate();
+    } catch (error) {
+      log.warn("[AnalyticsService] Failed to terminate analytics worker during dispose", {
+        error: getErrorMessage(error),
+      });
+    }
   }
 
   clearWorkspace(workspaceId: string): void {
