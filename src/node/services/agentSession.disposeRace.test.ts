@@ -44,6 +44,9 @@ describe("AgentSession disposal race conditions", () => {
     const appendDeferred = createDeferred<Result<void>>();
     const historyService: HistoryService = {
       appendToHistory: mock(() => appendDeferred.promise),
+      // seedUsageStateFromHistory reads the last few messages on first send;
+      // return empty history so the test exercises the real code path.
+      getLastMessages: mock(() => Promise.resolve(Ok([]))),
     } as unknown as HistoryService;
 
     const initStateManager: InitStateManager = {
@@ -115,5 +118,150 @@ describe("AgentSession disposal race conditions", () => {
         startTime: Date.now(),
       })
     ).not.toThrow();
+  });
+
+  test("does not reset auto-retry intent for synthetic or rejected sends", async () => {
+    const aiService: AIService = {
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      stopStream: mock(() => Promise.resolve(Ok(undefined))),
+      isStreaming: mock(() => false),
+      streamMessage: mock(() => Promise.resolve(Ok(undefined))),
+    } as unknown as AIService;
+
+    const historyService: HistoryService = {
+      appendToHistory: mock(() => Promise.resolve(Ok(undefined))),
+    } as unknown as HistoryService;
+
+    const initStateManager: InitStateManager = {
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      cleanup: mock(() => Promise.resolve()),
+      setMessageQueued: mock(() => undefined),
+    } as unknown as BackgroundProcessManager;
+
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => "/tmp"),
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId: "ws",
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const cancel = mock(() => undefined);
+    const setEnabled = mock((_enabled: boolean) => undefined);
+    (
+      session as unknown as {
+        retryManager: {
+          cancel: typeof cancel;
+          setEnabled: typeof setEnabled;
+        };
+      }
+    ).retryManager = {
+      cancel,
+      setEnabled,
+    };
+
+    const options = {
+      model: "anthropic:claude-sonnet-4-5",
+      agentId: "exec",
+    };
+
+    const syntheticResult = await session.sendMessage("", options, { synthetic: true });
+    expect(syntheticResult.success).toBe(false);
+    expect(cancel).toHaveBeenCalledTimes(0);
+    expect(setEnabled).toHaveBeenCalledTimes(0);
+
+    const userResult = await session.sendMessage("", options);
+    expect(userResult.success).toBe(false);
+    expect(cancel).toHaveBeenCalledTimes(0);
+    expect(setEnabled).toHaveBeenCalledTimes(0);
+  });
+
+  test("preserves synthetic flag when flushing queued messages", () => {
+    const aiService: AIService = {
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      stopStream: mock(() => Promise.resolve(Ok(undefined))),
+      isStreaming: mock(() => false),
+      streamMessage: mock(() => Promise.resolve(Ok(undefined))),
+    } as unknown as AIService;
+
+    const historyService: HistoryService = {
+      appendToHistory: mock(() => Promise.resolve(Ok(undefined))),
+    } as unknown as HistoryService;
+
+    const initStateManager: InitStateManager = {
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      cleanup: mock(() => Promise.resolve()),
+      setMessageQueued: mock(() => undefined),
+    } as unknown as BackgroundProcessManager;
+
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => "/tmp"),
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId: "ws",
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const sendMessage = mock(
+      (
+        _message: string,
+        _options?: { model: string; agentId: string },
+        _internal?: { synthetic?: boolean }
+      ) => Promise.resolve(Ok(undefined))
+    );
+
+    (session as unknown as { sendMessage: typeof sendMessage }).sendMessage = sendMessage;
+
+    session.queueMessage(
+      "Background compaction request",
+      { model: "anthropic:claude-sonnet-4-5", agentId: "compact" },
+      { synthetic: true }
+    );
+    session.sendQueuedMessages();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      "Background compaction request",
+      expect.objectContaining({ model: "anthropic:claude-sonnet-4-5", agentId: "compact" }),
+      { synthetic: true }
+    );
   });
 });

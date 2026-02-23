@@ -25,9 +25,11 @@
 import { LRUCache } from "lru-cache";
 import { AlertTriangle, Lightbulb, Loader2 } from "lucide-react";
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { HunkViewer } from "./HunkViewer";
 import type { ReviewActionCallbacks } from "../../shared/InlineReviewNote";
 import { ReviewControls } from "./ReviewControls";
+import { ImmersiveReviewView } from "./ImmersiveReviewView";
 import { FileTree } from "./FileTree";
 import { UntrackedStatus } from "./UntrackedStatus";
 import { shellQuote } from "@/common/utils/shell";
@@ -38,7 +40,11 @@ import { useReviews } from "@/browser/hooks/useReviews";
 import { useHunkFirstSeen } from "@/browser/hooks/useHunkFirstSeen";
 import { RefreshController, type LastRefreshInfo } from "@/browser/utils/RefreshController";
 import { parseDiff, extractAllHunks, buildGitDiffCommand } from "@/common/utils/git/diffParser";
-import { getReviewSearchStateKey, REVIEW_SORT_ORDER_KEY } from "@/common/constants/storage";
+import {
+  getReviewImmersiveKey,
+  getReviewSearchStateKey,
+  REVIEW_SORT_ORDER_KEY,
+} from "@/common/constants/storage";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
 import { parseNumstat, buildFileTree, extractNewPath } from "@/common/utils/git/numstatParser";
 import { parseNameStatus } from "@/common/utils/git/nameStatusParser";
@@ -61,6 +67,7 @@ import { cn } from "@/common/lib/utils";
 import { useAPI, type APIClient } from "@/browser/contexts/API";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import { invalidateGitStatus } from "@/browser/stores/GitStatusStore";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /** Stats reported to parent for tab display */
 interface ReviewPanelStats {
@@ -362,6 +369,17 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     detachReview,
     removeReview,
   } = useReviews(workspaceId);
+
+  // Immersive review mode - persisted so WorkspaceShell overlay can react
+  const [isImmersive, setIsImmersive] = usePersistedState<boolean>(
+    getReviewImmersiveKey(workspaceId),
+    false,
+    { listener: true }
+  );
+
+  const toggleImmersive = useCallback(() => {
+    setIsImmersive((prev) => !prev);
+  }, [setIsImmersive]);
 
   const reviewsByFilePath = useMemo(() => {
     const grouped = new Map<string, typeof reviews>();
@@ -817,7 +835,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         });
       } catch (err) {
         if (cancelled) return;
-        const errorMsg = `Failed to load diff: ${err instanceof Error ? err.message : String(err)}`;
+        const errorMsg = `Failed to load diff: ${getErrorMessage(err)}`;
         console.error(errorMsg);
         setDiffState({ status: "error", message: errorMsg });
         setDiagnosticInfo(null);
@@ -1080,6 +1098,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         }
       }
 
+      // Immersive mode has its own keyboard handler; don't double-handle
+      if (isImmersive) return;
+
       if (!selectedHunkId) return;
 
       const currentIndex = filteredHunks.findIndex((h) => h.id === selectedHunkId);
@@ -1133,9 +1154,10 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     handleMarkAsRead,
     handleMarkAsUnread,
     handleMarkFileAsRead,
+    isImmersive,
   ]);
 
-  // Global keyboard shortcuts (Ctrl+R / Cmd+R for refresh, Ctrl+F / Cmd+F for search)
+  // Global keyboard shortcuts (refresh/search)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (matchesKeybind(e, KEYBINDS.REFRESH_REVIEW)) {
@@ -1189,6 +1211,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           diffState.status === "loading" || diffState.status === "refreshing" || isLoadingTree
         }
         isRefreshBlocked={isRefreshBlocked}
+        isImmersive={isImmersive}
+        onToggleImmersive={toggleImmersive}
         projectPath={projectPath}
         lastRefreshInfo={lastRefreshInfo}
       />
@@ -1391,6 +1415,35 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           </div>
         </div>
       )}
+
+      {/* Immersive review mode: render into workspace overlay */}
+      {isImmersive &&
+        (() => {
+          const root =
+            typeof document !== "undefined"
+              ? document.getElementById("review-immersive-root")
+              : null;
+          if (!root) return null;
+          return createPortal(
+            <ImmersiveReviewView
+              workspaceId={workspaceId}
+              fileTree={fileTree}
+              hunks={filteredHunks}
+              allHunks={hunks}
+              isLoading={diffState.status === "loading" || isLoadingTree}
+              isRead={isRead}
+              onToggleRead={handleToggleRead}
+              selectedHunkId={selectedHunkId}
+              onSelectHunk={setSelectedHunkId}
+              onExit={toggleImmersive}
+              onReviewNote={onReviewNote}
+              reviewActions={reviewActions}
+              reviewsByFilePath={reviewsByFilePath}
+              firstSeenMap={firstSeenMap}
+            />,
+            root
+          );
+        })()}
     </div>
   );
 };

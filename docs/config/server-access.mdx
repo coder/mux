@@ -1,0 +1,83 @@
+---
+title: Server Access
+description: Configure authentication and session controls for mux server/browser mode
+---
+
+`mux server` can be accessed from browsers, mobile devices, and other machines on your network. This page covers how access control works, including the GitHub owner login allowlist.
+
+## Authentication modes
+
+By default, server access is protected by a bearer token.
+
+Token resolution order:
+
+1. `--no-auth` (disables auth entirely)
+2. `--auth-token <token>`
+3. `MUX_SERVER_AUTH_TOKEN`
+4. Auto-generated token at startup
+
+<Warning>
+  `--no-auth` makes the server open to anyone who can reach it. Use only on trusted/private
+  networks.
+</Warning>
+
+## Configure GitHub owner login
+
+Mux can optionally allow GitHub Device Flow login for exactly one GitHub account.
+
+Set the allowed account with either:
+
+- Environment variable: `MUX_SERVER_AUTH_GITHUB_OWNER`
+- Config file key: `serverAuthGithubOwner` in `~/.mux/config.json`
+
+There is currently no UI control for this setting; configure it via env/config.
+
+Example:
+
+```json
+{
+  "serverAuthGithubOwner": "octocat"
+}
+```
+
+If both are set, `MUX_SERVER_AUTH_GITHUB_OWNER` takes precedence.
+
+When enabled, the auth modal shows **Login with GitHub**. Mux verifies the GitHub `login` value against the configured owner (case-insensitive). Non-matching users are rejected.
+
+<Note>
+  This allowlist currently supports a single GitHub username. It does not support multiple users or
+  GitHub organization membership rules.
+</Note>
+
+## Server Access settings page
+
+Open **Settings → Server Access** to manage browser sessions.
+
+You can:
+
+- Refresh active sessions
+- Revoke a specific session
+- Log out the current session
+- Revoke all other sessions
+
+This page manages cookie-backed browser sessions. Token-based access remains valid until you rotate/change the server token.
+
+## Network exposure and bind settings
+
+To expose Mux beyond localhost and configure bind host/port in the UI:
+
+1. Open **Settings → Experiments**
+2. Enable **Expose API server on LAN/VPN**
+3. Configure bind host, port, and **Serve mux web UI**
+4. Click **Apply**
+
+Equivalent CLI options:
+
+- `--host <host>`
+- `--port <port>`
+- `--ssh-host <host>`
+- `--add-project <path>`
+
+## Related
+
+- [CLI reference](/reference/cli)

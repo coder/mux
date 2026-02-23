@@ -75,6 +75,37 @@ describe("Config", () => {
     });
   });
 
+  describe("update channel preference", () => {
+    it("defaults to stable when no channel is configured", () => {
+      expect(config.getUpdateChannel()).toBe("stable");
+    });
+
+    it("persists nightly channel selection", async () => {
+      await config.setUpdateChannel("nightly");
+
+      const restartedConfig = new Config(tempDir);
+      expect(restartedConfig.getUpdateChannel()).toBe("nightly");
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        updateChannel?: unknown;
+      };
+      expect(raw.updateChannel).toBe("nightly");
+    });
+
+    it("persists explicit stable channel selection", async () => {
+      await config.setUpdateChannel("nightly");
+      await config.setUpdateChannel("stable");
+
+      const restartedConfig = new Config(tempDir);
+      expect(restartedConfig.getUpdateChannel()).toBe("stable");
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        updateChannel?: unknown;
+      };
+      expect(raw.updateChannel).toBe("stable");
+    });
+  });
+
   describe("server GitHub owner auth setting", () => {
     it("persists serverAuthGithubOwner", async () => {
       await config.editConfig((cfg) => {

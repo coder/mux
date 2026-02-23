@@ -39,6 +39,7 @@ import {
 } from "@/browser/utils/mcpHeaders";
 import { ToolSelector } from "@/browser/components/ToolSelector";
 import { KebabMenu, type KebabMenuItem } from "@/browser/components/KebabMenu";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /** Component for managing tool allowlist for a single MCP server */
 const ToolAllowlistSection: React.FC<{
@@ -398,7 +399,7 @@ function useMCPOAuthLogin(input: {
         return;
       }
 
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       setLoginStatus("error");
       setLoginError(message);
     }
@@ -624,7 +625,7 @@ const RemoteMCPOAuthSection: React.FC<{
 
       await refreshAuthStatus();
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       setLogoutError(message);
     } finally {
       setLogoutInProgress(false);

@@ -22,6 +22,10 @@ const mockConfig = {
     ])
   ),
   getEffectiveSecrets: getEffectiveSecretsMock,
+  loadConfigOrDefault: mock(() => ({
+    projects: new Map(),
+    terminalDefaultShell: undefined,
+  })),
   srcDir: "/tmp",
 } as unknown as Config;
 
@@ -263,6 +267,10 @@ describe("TerminalService.openNative", () => {
         },
       ])
     ),
+    loadConfigOrDefault: mock(() => ({
+      projects: new Map(),
+      terminalDefaultShell: undefined,
+    })),
     srcDir: "/tmp",
   } as unknown as Config;
 
@@ -284,6 +292,10 @@ describe("TerminalService.openNative", () => {
         },
       ])
     ),
+    loadConfigOrDefault: mock(() => ({
+      projects: new Map(),
+      terminalDefaultShell: undefined,
+    })),
     srcDir: "/tmp",
   } as unknown as Config;
 

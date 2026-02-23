@@ -28,6 +28,7 @@ import type { SendMessageError, StreamErrorType } from "@/common/types/errors";
 import type { MuxMetadata, MuxMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { NestedToolCall } from "@/common/orpc/schemas/message";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 import {
   coerceStreamErrorTypeForMessage,
   createErrorEvent,
@@ -54,6 +55,8 @@ import { extractToolMediaAsUserMessagesFromModelMessages } from "@/node/utils/me
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 import { getModelStats } from "@/common/utils/tokens/modelStats";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
+import { getErrorMessage } from "@/common/utils/errors";
 import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
 
 // Disable AI SDK warning logging (e.g., "setting `toolChoice` to `none` is not supported")
@@ -103,6 +106,7 @@ interface StreamRequestConfig {
   headers?: Record<string, string | undefined>;
   maxOutputTokens?: number;
   hasQueuedMessage?: () => boolean;
+  stopAfterSuccessfulProposePlan?: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -289,6 +293,8 @@ interface WorkspaceStreamInfo {
   toolCompletionTimestamps: Map<string, number>;
 
   model: string;
+  /** Metadata model resolved from provider mapping for cost/token metadata lookups. */
+  metadataModel: string;
   /** Effective thinking level after model policy clamping */
   thinkingLevel?: string;
   initialMetadata?: Partial<MuxMetadata>;
@@ -356,16 +362,22 @@ export class StreamManager extends EventEmitter {
   private readonly historyService: HistoryService;
   private mcpServerManager?: MCPServerManager;
   private readonly sessionUsageService?: SessionUsageService;
+  private readonly getProvidersConfig: () => ProvidersConfigMap | null;
   // Token tracker for live streaming statistics
   private tokenTracker = new StreamingTokenTracker();
   // Track OpenAI previousResponseIds that have been invalidated
   // When frontend retries, buildProviderOptions will omit these IDs
   private lostResponseIds = new Set<string>();
 
-  constructor(historyService: HistoryService, sessionUsageService?: SessionUsageService) {
+  constructor(
+    historyService: HistoryService,
+    sessionUsageService?: SessionUsageService,
+    getProvidersConfig?: () => ProvidersConfigMap | null
+  ) {
     super();
     this.historyService = historyService;
     this.sessionUsageService = sessionUsageService;
+    this.getProvidersConfig = getProvidersConfig ?? (() => null);
   }
 
   private getWorkspaceLogger(
@@ -378,6 +390,18 @@ export class StreamManager extends EventEmitter {
     }
     return log.withFields(fields);
   }
+  private resolveMetadataModel(modelString: string): string {
+    try {
+      return resolveModelForMetadata(modelString, this.getProvidersConfig());
+    } catch (error) {
+      log.debug("Failed to resolve metadata model override", {
+        modelString,
+        error: getErrorMessage(error),
+      });
+      return modelString;
+    }
+  }
+
   setMCPServerManager(manager: MCPServerManager | undefined): void {
     this.mcpServerManager = manager;
   }
@@ -526,7 +550,7 @@ export class StreamManager extends EventEmitter {
     try {
       await runtime.ensureDir(resolvedPath);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       throw new Error(`Failed to create temp directory ${resolvedPath}: ${msg}`);
     }
 
@@ -937,12 +961,17 @@ export class StreamManager extends EventEmitter {
     providerMetadata: Record<string, unknown> | undefined,
     logMessage: string,
     logLevel: "warn" | "error",
-    streamInfo?: Pick<WorkspaceStreamInfo, "workspaceName">
+    streamInfo?: Pick<WorkspaceStreamInfo, "workspaceName" | "metadataModel">
   ): Promise<void> {
     if (!this.sessionUsageService || !usage) {
       return;
     }
-    const messageUsage = createDisplayUsage(usage, model, providerMetadata);
+    const messageUsage = createDisplayUsage(
+      usage,
+      model,
+      providerMetadata,
+      streamInfo?.metadataModel
+    );
     if (!messageUsage) {
       return;
     }
@@ -961,6 +990,7 @@ export class StreamManager extends EventEmitter {
   private buildStreamRequestConfig(
     model: LanguageModel,
     modelString: string,
+    _metadataModel: string,
     messages: ModelMessage[],
     system: string,
     tools?: Record<string, Tool>,
@@ -969,7 +999,8 @@ export class StreamManager extends EventEmitter {
     toolPolicy?: ToolPolicy,
     hasQueuedMessage?: () => boolean,
     headers?: Record<string, string | undefined>,
-    anthropicCacheTtlOverride?: AnthropicCacheTtl
+    anthropicCacheTtlOverride?: AnthropicCacheTtl,
+    stopAfterSuccessfulProposePlan?: boolean
   ): StreamRequestConfig {
     // Determine toolChoice based on toolPolicy.
     //
@@ -1031,11 +1062,14 @@ export class StreamManager extends EventEmitter {
       finalTools = applyCacheControlToTools(tools, modelString, anthropicCacheTtl);
     }
 
-    // Use model's max_output_tokens if available and caller didn't specify.
-    // If no metadata exists for the model, omit the parameter entirely to let
-    // the provider use its default (Anthropic requires this but has low defaults).
-    const modelStats = getModelStats(modelString);
-    const effectiveMaxOutputTokens = maxOutputTokens ?? modelStats?.max_output_tokens;
+    // Use the runtime model's max_output_tokens if available and caller didn't
+    // specify. This must be the runtime model (not the mapped metadata model)
+    // because max_output_tokens is a request parameter sent to the provider —
+    // a custom model's provider may not support the mapped model's output cap.
+    // If no metadata exists, omit the parameter to let the provider use its
+    // default (Anthropic requires this but has low defaults).
+    const runtimeModelStats = getModelStats(modelString);
+    const effectiveMaxOutputTokens = maxOutputTokens ?? runtimeModelStats?.max_output_tokens;
 
     return {
       model,
@@ -1047,11 +1081,15 @@ export class StreamManager extends EventEmitter {
       headers,
       maxOutputTokens: effectiveMaxOutputTokens,
       hasQueuedMessage,
+      stopAfterSuccessfulProposePlan,
     };
   }
 
   private createStopWhenCondition(
-    request: Pick<StreamRequestConfig, "toolChoice" | "hasQueuedMessage">
+    request: Pick<
+      StreamRequestConfig,
+      "toolChoice" | "hasQueuedMessage" | "stopAfterSuccessfulProposePlan"
+    >
   ): ReturnType<typeof stepCountIs> | Array<ReturnType<typeof stepCountIs>> {
     if (request.toolChoice) {
       // Required tool calls must stop after a single step to avoid recursive loops.
@@ -1059,14 +1097,23 @@ export class StreamManager extends EventEmitter {
     }
 
     // For autonomous loops: cap steps, check for queued messages, and stop after
-    // a successful agent_report result (`output.success === true`) so the stream ends
-    // naturally (preserving usage accounting) without allowing post-report tool execution.
+    // successful agent control tools so streams end naturally (preserving usage accounting)
+    // without executing unrelated tools after handoff/report completion.
     const isSuccessfulAgentReportOutput = (value: unknown): boolean => {
       return (
         typeof value === "object" &&
         value !== null &&
         "success" in value &&
         (value as { success?: unknown }).success === true
+      );
+    };
+
+    const isOkSwitchAgentOutput = (value: unknown): boolean => {
+      return (
+        typeof value === "object" &&
+        value !== null &&
+        "ok" in value &&
+        (value as { ok?: unknown }).ok === true
       );
     };
 
@@ -1081,11 +1128,41 @@ export class StreamManager extends EventEmitter {
       );
     };
 
-    return [
+    const hasSuccessfulSwitchAgentResult: ReturnType<typeof stepCountIs> = ({ steps }) => {
+      const lastStep = steps[steps.length - 1];
+      return (
+        lastStep?.toolResults?.some(
+          (toolResult) =>
+            toolResult.toolName === "switch_agent" && isOkSwitchAgentOutput(toolResult.output)
+        ) ?? false
+      );
+    };
+
+    const hasSuccessfulProposePlanResult: ReturnType<typeof stepCountIs> = ({ steps }) => {
+      const lastStep = steps[steps.length - 1];
+      return (
+        lastStep?.toolResults?.some(
+          (toolResult) =>
+            toolResult.toolName === "propose_plan" &&
+            typeof toolResult.output === "object" &&
+            toolResult.output !== null &&
+            (toolResult.output as { success?: unknown }).success === true
+        ) ?? false
+      );
+    };
+
+    const stopConditions: Array<ReturnType<typeof stepCountIs>> = [
       stepCountIs(100000),
       () => request.hasQueuedMessage?.() ?? false,
       hasSuccessfulAgentReportResult,
+      hasSuccessfulSwitchAgentResult,
     ];
+
+    if (request.stopAfterSuccessfulProposePlan) {
+      stopConditions.push(hasSuccessfulProposePlanResult);
+    }
+
+    return stopConditions;
   }
 
   private createStreamResult(
@@ -1146,14 +1223,17 @@ export class StreamManager extends EventEmitter {
     workspaceName?: string,
     thinkingLevel?: string,
     headers?: Record<string, string | undefined>,
-    anthropicCacheTtlOverride?: AnthropicCacheTtl
+    anthropicCacheTtlOverride?: AnthropicCacheTtl,
+    stopAfterSuccessfulProposePlan?: boolean
   ): WorkspaceStreamInfo {
     // abortController is created and linked to the caller-provided abortSignal in startStream().
 
     const stepTracker: StepMessageTracker = {};
+    const metadataModel = this.resolveMetadataModel(modelString);
     const request = this.buildStreamRequestConfig(
       model,
       modelString,
+      metadataModel,
       messages,
       system,
       tools,
@@ -1162,7 +1242,8 @@ export class StreamManager extends EventEmitter {
       toolPolicy,
       hasQueuedMessage,
       headers,
-      anthropicCacheTtlOverride
+      anthropicCacheTtlOverride,
+      stopAfterSuccessfulProposePlan
     );
 
     // Start streaming - this can throw immediately if API key is missing
@@ -1188,6 +1269,7 @@ export class StreamManager extends EventEmitter {
       lastPartTimestamp: startTime,
       toolCompletionTimestamps: new Map(),
       model: modelString,
+      metadataModel,
       thinkingLevel,
       initialMetadata,
       didRetryPreviousResponseIdAtStep: false,
@@ -1483,7 +1565,7 @@ export class StreamManager extends EventEmitter {
       this.emitStreamStart(workspaceId, streamInfo, historySequence);
 
       // Initialize token tracker for this model
-      await this.tokenTracker.setModel(streamInfo.model);
+      await this.tokenTracker.setModel(streamInfo.model, streamInfo.metadataModel);
 
       let didRetryPreviousResponseId = false;
       const workspaceLog = this.getWorkspaceLogger(workspaceId, streamInfo);
@@ -2029,9 +2111,7 @@ export class StreamManager extends EventEmitter {
   ): StreamErrorPayload & { errorType: StreamErrorType } {
     // Extract error message (errors thrown from 'error' parts already have the correct message)
     // Apply prefix stripping to remove noisy "undefined: " prefixes from provider errors
-    let errorMessage: string = stripNoisyErrorPrefix(
-      error instanceof Error ? error.message : String(error)
-    );
+    let errorMessage: string = stripNoisyErrorPrefix(getErrorMessage(error));
     let actualError: unknown = error;
 
     // For categorization, use the cause if available (preserves the original error structure)
@@ -2347,7 +2427,7 @@ export class StreamManager extends EventEmitter {
     // }
 
     // Fallback for unknown errors
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     return { type: "unknown", raw: message };
   }
 
@@ -2540,7 +2620,8 @@ export class StreamManager extends EventEmitter {
     workspaceName?: string,
     thinkingLevel?: string,
     headers?: Record<string, string | undefined>,
-    anthropicCacheTtlOverride?: AnthropicCacheTtl
+    anthropicCacheTtlOverride?: AnthropicCacheTtl,
+    stopAfterSuccessfulProposePlan?: boolean
   ): Promise<Result<StreamToken, SendMessageError>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
@@ -2617,7 +2698,8 @@ export class StreamManager extends EventEmitter {
           workspaceName,
           thinkingLevel,
           headers,
-          anthropicCacheTtlOverride
+          anthropicCacheTtlOverride,
+          stopAfterSuccessfulProposePlan
         );
 
         // Guard against a narrow race:
@@ -2838,7 +2920,7 @@ export class StreamManager extends EventEmitter {
       }
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to stop stream: ${message}`);
     }
   }
@@ -2921,7 +3003,7 @@ export class StreamManager extends EventEmitter {
     }
 
     // Initialize token tracker for this model (required for tokenization)
-    await this.tokenTracker.setModel(streamInfo.model);
+    await this.tokenTracker.setModel(streamInfo.model, streamInfo.metadataModel);
 
     // Emit stream-start event (include mode from initialMetadata if available)
     this.emitStreamStart(typedWorkspaceId, streamInfo, streamInfo.historySequence, {
@@ -2981,6 +3063,24 @@ export class StreamManager extends EventEmitter {
     const replayMessageId = streamInfo.messageId;
     for (const part of filteredReplayParts) {
       await this.emitPartAsEvent(typedWorkspaceId, replayMessageId, part, { replay: true });
+    }
+
+    // Live streams emit usage-delta after each finish-step. Replay part snapshots do not
+    // include finish-step boundaries, so full replays emit the latest accumulated usage
+    // explicitly. Incremental/live-mode replays pass afterTimestamp and should only replay
+    // stream context (not stale usage snapshots) to avoid duplicate usage updates.
+    if (streamInfo.lastStepUsage && afterTimestamp == null) {
+      const usageEvent: UsageDeltaEvent = {
+        type: "usage-delta",
+        workspaceId,
+        messageId: streamInfo.messageId,
+        replay: true,
+        usage: streamInfo.lastStepUsage,
+        providerMetadata: streamInfo.lastStepProviderMetadata,
+        cumulativeUsage: streamInfo.cumulativeUsage,
+        cumulativeProviderMetadata: streamInfo.cumulativeProviderMetadata,
+      };
+      this.emit("usage-delta", usageEvent);
     }
   }
 

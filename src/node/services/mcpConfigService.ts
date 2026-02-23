@@ -13,6 +13,7 @@ import type { Result } from "@/common/types/result";
 import assert from "@/common/utils/assert";
 import type { Config } from "@/node/config";
 import { log } from "@/node/services/log";
+import { getErrorMessage } from "@/common/utils/errors";
 
 export class MCPConfigService {
   private readonly config: Config;
@@ -288,7 +289,7 @@ export class MCPConfigService {
       return Ok(undefined);
     } catch (error) {
       log.error("Failed to save MCP server", { name, error });
-      return Err(error instanceof Error ? error.message : String(error));
+      return Err(getErrorMessage(error));
     }
   }
 
@@ -304,7 +305,7 @@ export class MCPConfigService {
       return Ok(undefined);
     } catch (error) {
       log.error("Failed to update MCP server enabled state", { name, error });
-      return Err(error instanceof Error ? error.message : String(error));
+      return Err(getErrorMessage(error));
     }
   }
 
@@ -319,7 +320,7 @@ export class MCPConfigService {
       return Ok(undefined);
     } catch (error) {
       log.error("Failed to remove MCP server", { name, error });
-      return Err(error instanceof Error ? error.message : String(error));
+      return Err(getErrorMessage(error));
     }
   }
 
@@ -341,7 +342,7 @@ export class MCPConfigService {
       return Ok(undefined);
     } catch (error) {
       log.error("Failed to update MCP server tool allowlist", { name, error });
-      return Err(error instanceof Error ? error.message : String(error));
+      return Err(getErrorMessage(error));
     }
   }
 }

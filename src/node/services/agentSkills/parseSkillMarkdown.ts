@@ -2,6 +2,7 @@ import { AgentSkillFrontmatterSchema } from "@/common/orpc/schemas";
 import type { AgentSkillFrontmatter, SkillName } from "@/common/types/agentSkill";
 import { MAX_FILE_SIZE } from "@/node/services/tools/fileCommon";
 import YAML from "yaml";
+import { getErrorMessage } from "@/common/utils/errors";
 
 export class AgentSkillParseError extends Error {
   constructor(message: string) {
@@ -85,7 +86,7 @@ export function parseSkillMarkdown(input: {
   try {
     raw = YAML.parse(yamlText);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = getErrorMessage(err);
     throw new AgentSkillParseError(`Failed to parse SKILL.md YAML frontmatter: ${message}`);
   }
 

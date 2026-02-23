@@ -26,6 +26,7 @@ import {
 import { createDeferred } from "@/node/utils/oauthUtils";
 import { startLoopbackServer } from "@/node/utils/oauthLoopbackServer";
 import { OAuthFlowManager } from "@/node/utils/oauthFlowManager";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const DEFAULT_DESKTOP_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_DEVICE_TIMEOUT_MS = 15 * 60 * 1000;
@@ -134,7 +135,7 @@ export class CodexOauthService {
         deferSuccessResponse: true,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to start OAuth callback listener: ${message}`);
     }
 
@@ -276,7 +277,7 @@ export class CodexOauthService {
       this.pollDeviceFlow(flowId).catch((error) => {
         // The polling loop is responsible for resolving the flow; if we reach
         // here something unexpected happened.
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         log.warn(`[Codex OAuth] Device polling crashed (flowId=${flowId}): ${message}`);
         void this.finishDeviceFlow(flowId, Err(`Device polling crashed: ${message}`));
       });
@@ -473,7 +474,7 @@ export class CodexOauthService {
         accountId,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Codex OAuth exchange failed: ${message}`);
     }
   }
@@ -541,7 +542,7 @@ export class CodexOauthService {
 
       return Ok(next);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Codex OAuth refresh failed: ${message}`);
     }
   }
@@ -592,7 +593,7 @@ export class CodexOauthService {
 
       return Ok({ deviceAuthId, userCode, intervalSeconds, expiresAtMs });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Codex OAuth device auth request failed: ${message}`);
     }
   }
@@ -700,7 +701,7 @@ export class CodexOauthService {
         return { kind: "fatal", message: "OAuth flow cancelled" };
       }
 
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return { kind: "fatal", message: `Device authorization failed: ${message}` };
     }
   }

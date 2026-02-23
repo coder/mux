@@ -5,6 +5,7 @@ import {
   type CoderWorkspaceConfig,
   type RuntimeMode,
   type ParsedRuntime,
+  type RuntimeEnablement,
   CODER_RUNTIME_PLACEHOLDER,
 } from "@/common/types/runtime";
 import type { RuntimeAvailabilityMap, RuntimeAvailabilityState } from "./useCreationWorkspace";
@@ -12,7 +13,6 @@ import {
   resolveDevcontainerSelection,
   DEFAULT_DEVCONTAINER_CONFIG_PATH,
 } from "@/browser/utils/devcontainerSelection";
-import { Select } from "../Select";
 import {
   Select as RadixSelect,
   SelectContent,
@@ -20,9 +20,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { Loader2, Wand2, X } from "lucide-react";
+import { GitBranch, Loader2, Wand2, X } from "lucide-react";
 import { PlatformPaths } from "@/common/utils/paths";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
+import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { cn } from "@/common/lib/utils";
 import { formatNameGenerationError } from "@/common/utils/errors/formatNameGenerationError";
@@ -152,6 +153,8 @@ interface CreationControlsProps {
   nameState: WorkspaceNameState;
   /** Runtime availability state for each mode */
   runtimeAvailabilityState: RuntimeAvailabilityState;
+  /** Runtime enablement toggles from Settings (hide disabled runtimes). */
+  runtimeEnablement?: RuntimeEnablement;
   /** Available sections for this project */
   sections?: SectionConfig[];
   /** Currently selected section ID */
@@ -183,6 +186,7 @@ interface RuntimeButtonGroupProps {
   onSetDefault: (mode: RuntimeChoice) => void;
   disabled?: boolean;
   runtimeAvailabilityState?: RuntimeAvailabilityState;
+  runtimeEnablement?: RuntimeEnablement;
   coderInfo?: CoderInfo | null;
   allowedRuntimeModes?: RuntimeMode[] | null;
   allowSshHost?: boolean;
@@ -192,6 +196,15 @@ interface RuntimeButtonGroupProps {
 const RUNTIME_CHOICE_ORDER: RuntimeChoice[] = [
   RUNTIME_MODE.LOCAL,
   RUNTIME_MODE.WORKTREE,
+  RUNTIME_MODE.SSH,
+  "coder",
+  RUNTIME_MODE.DOCKER,
+  RUNTIME_MODE.DEVCONTAINER,
+];
+
+const RUNTIME_FALLBACK_ORDER: RuntimeChoice[] = [
+  RUNTIME_MODE.WORKTREE,
+  RUNTIME_MODE.LOCAL,
   RUNTIME_MODE.SSH,
   "coder",
   RUNTIME_MODE.DOCKER,
@@ -398,6 +411,7 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
   const availabilityMap = state?.status === "loaded" ? state.data : null;
   const coderInfo = props.coderInfo ?? null;
   const coderAvailability = resolveCoderAvailability(coderInfo);
+  const runtimeEnablement = props.runtimeEnablement;
 
   const allowSshHost = props.allowSshHost ?? true;
   const allowSshCoder = props.allowSshCoder ?? true;
@@ -436,6 +450,14 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
       return false;
     }
 
+    // User request: hide Settings-disabled runtimes (selection auto-switches elsewhere).
+    // Keep the currently active runtime visible even if disabled to avoid trapping the user
+    // when the fallback can't find a replacement (e.g., non-git repo with Local disabled).
+    const isEnablementDisabled = runtimeEnablement?.[option.value] === false;
+    if (isEnablementDisabled && option.value !== props.value) {
+      return false;
+    }
+
     const { isPolicyDisabled } = resolveRuntimeButtonState(
       option.value,
       availabilityMap,
@@ -457,24 +479,24 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
     <div className="flex flex-wrap gap-1 " role="group" aria-label="Runtime type">
       {runtimeOptions.map((option) => {
         const isActive = props.value === option.value;
-        const { isModeDisabled, isPolicyDisabled, disabledReason, isDefault } =
-          resolveRuntimeButtonState(
-            option.value,
-            availabilityMap,
-            props.defaultMode,
-            coderAvailability,
-            allowedModeSet,
-            allowSshHost,
-            allowSshCoder
-          );
+        const {
+          isModeDisabled,
+          isPolicyDisabled,
+          disabledReason: resolvedDisabledReason,
+        } = resolveRuntimeButtonState(
+          option.value,
+          availabilityMap,
+          props.defaultMode,
+          coderAvailability,
+          allowedModeSet,
+          allowSshHost,
+          allowSshCoder
+        );
+        const disabledReason = resolvedDisabledReason;
         const isDisabled = Boolean(props.disabled) || isModeDisabled || isPolicyDisabled;
         const showDisabledReason = isModeDisabled || isPolicyDisabled;
 
         const Icon = option.Icon;
-
-        const handleSetDefault = () => {
-          props.onSetDefault(option.value);
-        };
 
         return (
           <Tooltip key={option.value}>
@@ -504,19 +526,10 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
                 <span>{option.description}</span>
                 <DocsLink path={option.docsPath} />
               </div>
+              {/* User request: remove default-runtime toggle from creation tooltip. */}
               {showDisabledReason ? (
                 <p className="mt-1 text-yellow-500">{disabledReason ?? "Unavailable"}</p>
-              ) : (
-                <label className="mt-1.5 flex cursor-pointer items-center gap-1.5 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={isDefault}
-                    onChange={handleSetDefault}
-                    className="accent-accent h-3 w-3"
-                  />
-                  <span className="text-muted">Default for project</span>
-                </label>
-              )}
+              ) : null}
             </TooltipContent>
           </Tooltip>
         );
@@ -531,6 +544,7 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
  */
 export function CreationControls(props: CreationControlsProps) {
   const { projects } = useProjectContext();
+  const settings = useSettings();
   const { beginWorkspaceCreation } = useWorkspaceContext();
   const { nameState, runtimeAvailabilityState } = props;
 
@@ -541,19 +555,14 @@ export function CreationControls(props: CreationControlsProps) {
   const isCoderSelected =
     selectedRuntime.mode === RUNTIME_MODE.SSH && selectedRuntime.coder != null;
   const runtimeChoice: RuntimeChoice = isCoderSelected ? "coder" : runtimeMode;
-  const coderUsername =
-    props.coderProps?.coderInfo?.state === "available"
-      ? props.coderProps.coderInfo.username
-      : undefined;
-  const coderDeploymentUrl =
-    props.coderProps?.coderInfo?.state === "available" ? props.coderProps.coderInfo.url : undefined;
+  const coderInfo = props.coderInfo ?? props.coderProps?.coderInfo ?? null;
+  const coderAvailability = resolveCoderAvailability(coderInfo);
+  const isCoderAvailable = coderAvailability.state === "available";
+  const coderUsername = coderInfo?.state === "available" ? coderInfo.username : undefined;
+  const coderDeploymentUrl = coderInfo?.state === "available" ? coderInfo.url : undefined;
 
-  // Local runtime doesn't need a trunk branch selector (uses project dir as-is)
   const availabilityMap =
     runtimeAvailabilityState.status === "loaded" ? runtimeAvailabilityState.data : null;
-  const showTrunkBranchSelector = props.branches.length > 0 && runtimeMode !== RUNTIME_MODE.LOCAL;
-  // Show loading skeleton while branches are loading to avoid layout flash
-  const showBranchLoadingPlaceholder = !props.branchesLoaded && runtimeMode !== RUNTIME_MODE.LOCAL;
 
   // Centralized devcontainer selection logic
   const devcontainerSelection = resolveDevcontainerSelection({
@@ -571,19 +580,154 @@ export function CreationControls(props: CreationControlsProps) {
       availabilityMap.worktree.reason === "Requires git repository") ||
     (props.branchesLoaded && props.branches.length === 0);
 
-  // Keep selected runtime aligned with availability constraints
+  const branchOptions =
+    props.trunkBranch && !props.branches.includes(props.trunkBranch)
+      ? [props.trunkBranch, ...props.branches]
+      : props.branches;
+  const isBranchSelectorDisabled =
+    Boolean(props.disabled) || isNonGitRepo || branchOptions.length === 0;
+
+  // Keep selected runtime aligned with availability + Settings enablement constraints.
+  // All constraint checks (non-git, devcontainer missing, enablement, policy) are unified
+  // into a single firstEnabled fallback so every edge combination is handled consistently.
   useEffect(() => {
-    if (isNonGitRepo) {
-      if (selectedRuntime.mode !== RUNTIME_MODE.LOCAL) {
-        onSelectedRuntimeChange({ mode: "local" });
-      }
+    const runtimeEnablement = props.runtimeEnablement;
+
+    // Determine if the current selection needs correction.
+    const isCurrentDisabledBySettings = runtimeEnablement?.[runtimeChoice] === false;
+    // In non-git repos all modes except Local are unavailable (not just Worktree).
+    const isCurrentUnavailable =
+      (isNonGitRepo && selectedRuntime.mode !== RUNTIME_MODE.LOCAL) ||
+      (isDevcontainerMissing && selectedRuntime.mode === RUNTIME_MODE.DEVCONTAINER);
+
+    if (!isCurrentDisabledBySettings && !isCurrentUnavailable) {
       return;
     }
 
-    if (isDevcontainerMissing && selectedRuntime.mode === RUNTIME_MODE.DEVCONTAINER) {
-      onSelectedRuntimeChange({ mode: "worktree" });
+    // Build a policy set matching RuntimeButtonGroup's eligibility logic so the
+    // auto-switch fallback never lands on a policy-forbidden runtime.
+    const allowedModes = props.allowedRuntimeModes
+      ? new Set<RuntimeMode>(props.allowedRuntimeModes)
+      : null;
+
+    const firstEnabled = RUNTIME_FALLBACK_ORDER.find((mode) => {
+      if (runtimeEnablement?.[mode] === false) {
+        return false;
+      }
+      if (mode === "coder") {
+        if (!props.coderProps) {
+          return false;
+        }
+        if (!isCoderAvailable) {
+          return false;
+        }
+      }
+      // Filter by availability to avoid selecting unavailable runtimes (e.g., Docker
+      // when daemon is down, devcontainer when config missing, non-git projects).
+      if (isDevcontainerMissing && mode === RUNTIME_MODE.DEVCONTAINER) {
+        return false;
+      }
+      if (isNonGitRepo && mode !== RUNTIME_MODE.LOCAL) {
+        return false;
+      }
+      // Check the general availability map for any other unavailable runtimes.
+      if (mode !== "coder") {
+        const avail = availabilityMap?.[mode];
+        if (avail !== undefined && !avail.available) {
+          return false;
+        }
+      }
+      // Filter by policy constraints to avoid selecting a blocked runtime.
+      if (allowedModes) {
+        if (mode === "coder" && !(props.allowSshCoder ?? true)) {
+          return false;
+        }
+        if (mode === RUNTIME_MODE.SSH && !(props.allowSshHost ?? true)) {
+          return false;
+        }
+        if (mode !== "coder" && mode !== RUNTIME_MODE.SSH && !allowedModes.has(mode)) {
+          return false;
+        }
+      }
+      return true;
+    });
+    if (!firstEnabled || firstEnabled === runtimeChoice) {
+      return;
     }
-  }, [isDevcontainerMissing, isNonGitRepo, selectedRuntime.mode, onSelectedRuntimeChange]);
+
+    // User request: auto-switch away from Settings-disabled runtimes.
+    if (firstEnabled === "coder") {
+      if (!props.coderProps || !isCoderAvailable) {
+        return;
+      }
+      onSelectedRuntimeChange({
+        mode: "ssh",
+        host: CODER_RUNTIME_PLACEHOLDER,
+        coder: props.coderConfigFallback,
+      });
+      return;
+    }
+
+    switch (firstEnabled) {
+      case RUNTIME_MODE.SSH: {
+        const sshHost =
+          selectedRuntime.mode === RUNTIME_MODE.SSH &&
+          selectedRuntime.host !== CODER_RUNTIME_PLACEHOLDER
+            ? selectedRuntime.host
+            : props.sshHostFallback;
+        onSelectedRuntimeChange({
+          mode: "ssh",
+          host: sshHost,
+        });
+        return;
+      }
+      case RUNTIME_MODE.DOCKER:
+        onSelectedRuntimeChange({
+          mode: "docker",
+          image: selectedRuntime.mode === "docker" ? selectedRuntime.image : "",
+        });
+        return;
+      case RUNTIME_MODE.DEVCONTAINER: {
+        const initialSelection = resolveDevcontainerSelection({
+          selectedRuntime: { mode: "devcontainer", configPath: "" },
+          availabilityState: runtimeAvailabilityState,
+        });
+        onSelectedRuntimeChange({
+          mode: "devcontainer",
+          configPath:
+            selectedRuntime.mode === "devcontainer"
+              ? selectedRuntime.configPath
+              : initialSelection.configPath,
+          shareCredentials:
+            selectedRuntime.mode === "devcontainer" ? selectedRuntime.shareCredentials : false,
+        });
+        return;
+      }
+      case RUNTIME_MODE.LOCAL:
+        onSelectedRuntimeChange({ mode: "local" });
+        return;
+      case RUNTIME_MODE.WORKTREE:
+      default:
+        onSelectedRuntimeChange({ mode: "worktree" });
+        return;
+    }
+  }, [
+    isDevcontainerMissing,
+    isNonGitRepo,
+    onSelectedRuntimeChange,
+    props.coderConfigFallback,
+    props.coderProps,
+    props.runtimeEnablement,
+    props.sshHostFallback,
+    props.allowedRuntimeModes,
+    props.allowSshHost,
+    props.allowSshCoder,
+    availabilityMap,
+    runtimeAvailabilityState,
+    runtimeChoice,
+    selectedRuntime,
+    isCoderAvailable,
+  ]);
 
   const handleNameChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -727,7 +871,18 @@ export function CreationControls(props: CreationControlsProps) {
 
       {/* Runtime type - button group */}
       <div className="flex flex-col gap-1.5" data-component="RuntimeTypeGroup">
-        <label className="text-muted-foreground text-xs font-medium">Workspace Type</label>
+        {/* User request: keep the configure shortcut but render it in muted gray. */}
+        <div className="flex items-center gap-1">
+          <label className="text-muted-foreground text-xs font-medium">Workspace Type</label>
+          <span className="text-muted-foreground text-xs">-</span>
+          <button
+            type="button"
+            onClick={() => settings.open("runtimes")}
+            className="text-muted-foreground hover:text-foreground cursor-pointer text-xs font-medium hover:underline"
+          >
+            configure
+          </button>
+        </div>
         <div className="flex flex-col gap-2">
           <RuntimeButtonGroup
             value={runtimeChoice}
@@ -796,39 +951,44 @@ export function CreationControls(props: CreationControlsProps) {
             onSetDefault={props.onSetDefaultRuntime}
             disabled={props.disabled}
             runtimeAvailabilityState={runtimeAvailabilityState}
-            coderInfo={props.coderInfo ?? props.coderProps?.coderInfo ?? null}
+            runtimeEnablement={props.runtimeEnablement}
+            coderInfo={coderInfo}
             allowedRuntimeModes={props.allowedRuntimeModes}
             allowSshHost={props.allowSshHost}
             allowSshCoder={props.allowSshCoder}
           />
 
-          {/* Branch selector - shown for worktree/SSH */}
-          {showTrunkBranchSelector && (
-            <div
-              className="flex items-center gap-2"
-              data-component="TrunkBranchGroup"
-              data-tutorial="trunk-branch"
-            >
-              <label htmlFor="trunk-branch" className="text-muted-foreground text-xs">
-                from
-              </label>
-              <Select
-                id="trunk-branch"
+          {/* User request: restore the branch selector with a git icon label. */}
+          <div
+            className="flex items-center gap-2"
+            data-component="BranchSelector"
+            data-tutorial="trunk-branch"
+          >
+            <label className="text-muted-foreground flex items-center gap-1 text-xs">
+              <GitBranch className="h-3.5 w-3.5" />
+              Branch
+            </label>
+            {props.branchesLoaded ? (
+              <RadixSelect
                 value={props.trunkBranch}
-                options={props.branches}
-                onChange={props.onTrunkBranchChange}
-                disabled={props.disabled}
-                className={INLINE_CONTROL_CLASSES}
-              />
-            </div>
-          )}
-          {/* Loading placeholder - reserves space while branches load to avoid layout flash */}
-          {showBranchLoadingPlaceholder && (
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground text-xs">from</span>
-              <div className="border-border-medium bg-separator/50 h-7 w-[140px] animate-pulse rounded border" />
-            </div>
-          )}
+                onValueChange={props.onTrunkBranchChange}
+                disabled={isBranchSelectorDisabled}
+              >
+                <SelectTrigger className={INLINE_CONTROL_CLASSES} aria-label="Select branch">
+                  <SelectValue placeholder="Select branch" />
+                </SelectTrigger>
+                <SelectContent className="border-border-medium">
+                  {branchOptions.map((branch) => (
+                    <SelectItem key={branch} value={branch}>
+                      {branch}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </RadixSelect>
+            ) : (
+              <Skeleton className="h-7 w-[140px] rounded" />
+            )}
+          </div>
 
           {/* SSH Host Input - hidden when Coder runtime is selected */}
           {selectedRuntime.mode === "ssh" &&

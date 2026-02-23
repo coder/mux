@@ -38,6 +38,11 @@ import {
 } from "@/common/constants/muxChat";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getWorkspaceLastReadKey } from "@/common/constants/storage";
+import {
+  normalizeRuntimeEnablement,
+  RUNTIME_ENABLEMENT_IDS,
+  type RuntimeEnablementId,
+} from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import {
   DEFAULT_TASK_SETTINGS,
@@ -87,6 +92,17 @@ export interface MockSessionUsage {
   version: 1;
 }
 
+export interface MockTerminalSession {
+  sessionId: string;
+  workspaceId: string;
+  cols: number;
+  rows: number;
+  /** Initial snapshot returned by terminal.attach ({ type: "screenState" }). */
+  screenState: string;
+  /** Optional live output chunks yielded after screenState ({ type: "output" }). */
+  outputChunks?: string[];
+}
+
 export interface MockORPCClientOptions {
   /** Layout presets config for Settings → Layouts stories */
   layoutPresets?: LayoutPresetsConfig;
@@ -102,6 +118,10 @@ export interface MockORPCClientOptions {
   subagentAiDefaults?: SubagentAiDefaults;
   /** Coder lifecycle preferences for config.getConfig (e.g., Settings → Coder section) */
   stopCoderWorkspaceOnArchive?: boolean;
+  /** Initial runtime enablement for config.getConfig */
+  runtimeEnablement?: Record<string, boolean>;
+  /** Initial default runtime for config.getConfig (global) */
+  defaultRuntime?: RuntimeEnablementId | null;
   /** Per-workspace chat callback. Return messages to emit, or use the callback for streaming. */
   onChat?: (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => (() => void) | void;
   /** Mock for executeBash per workspace */
@@ -139,6 +159,8 @@ export interface MockORPCClientOptions {
   globalSecrets?: Secret[];
   /** Project secrets per project */
   projectSecrets?: Map<string, Secret[]>;
+  /** Terminal sessions to expose via terminal.listSessions + terminal.attach */
+  terminalSessions?: MockTerminalSession[];
   sessionUsage?: Map<string, MockSessionUsage>;
   /** Debug snapshot per workspace for the last LLM request modal */
   lastLlmRequestSnapshots?: Map<string, DebugLlmRequestSnapshot | null>;
@@ -291,6 +313,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     statsTabVariant = "control",
     globalSecrets = [],
     projectSecrets = new Map<string, Secret[]>(),
+    terminalSessions: initialTerminalSessions = [],
     globalMcpServers = {},
     mcpServers = new Map<string, MockMcpServers>(),
     mcpOverrides = new Map<string, MockMcpOverrides>(),
@@ -300,6 +323,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     subagentAiDefaults: initialSubagentAiDefaults,
     agentAiDefaults: initialAgentAiDefaults,
     stopCoderWorkspaceOnArchive: initialStopCoderWorkspaceOnArchive = true,
+    runtimeEnablement: initialRuntimeEnablement,
+    defaultRuntime: initialDefaultRuntime,
     agentDefinitions: initialAgentDefinitions,
     listBranches: customListBranches,
     gitInit: customGitInit,
@@ -362,6 +387,41 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   }
   const workspaceMap = new Map(workspaces.map((w) => [w.id, w]));
 
+  // Terminal sessions are used by RightSidebar and TerminalView.
+  // Stories can seed deterministic sessions (with screenState) to make the embedded terminal look
+  // data-rich, while still keeping the default mock (no sessions) lightweight.
+  const terminalSessionsById = new Map<string, MockTerminalSession>();
+  const terminalSessionIdsByWorkspace = new Map<string, string[]>();
+
+  const registerTerminalSession = (session: MockTerminalSession) => {
+    terminalSessionsById.set(session.sessionId, session);
+    const existing = terminalSessionIdsByWorkspace.get(session.workspaceId) ?? [];
+    if (!existing.includes(session.sessionId)) {
+      terminalSessionIdsByWorkspace.set(session.workspaceId, [...existing, session.sessionId]);
+    }
+  };
+
+  for (const session of initialTerminalSessions) {
+    registerTerminalSession(session);
+  }
+
+  let terminalSessionCounter = initialTerminalSessions.reduce((max, session) => {
+    const match = /^mock-terminal-(\d+)$/.exec(session.sessionId);
+    if (!match) {
+      return max;
+    }
+    const parsed = Number.parseInt(match[1] ?? "", 10);
+    return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
+  }, 0);
+  const allocTerminalSessionId = () => {
+    let nextSessionId = "";
+    do {
+      terminalSessionCounter += 1;
+      nextSessionId = `mock-terminal-${terminalSessionCounter}`;
+    } while (terminalSessionsById.has(nextSessionId));
+    return nextSessionId;
+  };
+
   let createdWorkspaceCounter = 0;
 
   const agentDefinitions: AgentDefinitionDescriptor[] =
@@ -422,7 +482,16 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   let muxGatewayEnabled: boolean | undefined = undefined;
   let muxGatewayModels: string[] | undefined = undefined;
   let stopCoderWorkspaceOnArchive = initialStopCoderWorkspaceOnArchive;
+  let runtimeEnablement: Record<string, boolean> = initialRuntimeEnablement ?? {
+    local: true,
+    worktree: true,
+    ssh: true,
+    coder: true,
+    docker: true,
+    devcontainer: true,
+  };
 
+  let defaultRuntime: RuntimeEnablementId | null = initialDefaultRuntime ?? null;
   let globalSecretsState: Secret[] = [...globalSecrets];
   const globalMcpServersState: MockMcpServers = { ...globalMcpServers };
 
@@ -578,6 +647,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           muxGatewayEnabled,
           muxGatewayModels,
           stopCoderWorkspaceOnArchive,
+          runtimeEnablement,
+          defaultRuntime,
           agentAiDefaults,
           subagentAiDefaults,
           muxGovernorUrl,
@@ -623,6 +694,82 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       },
       updateCoderPrefs: (input: { stopCoderWorkspaceOnArchive: boolean }) => {
         stopCoderWorkspaceOnArchive = input.stopCoderWorkspaceOnArchive;
+        return Promise.resolve(undefined);
+      },
+      updateRuntimeEnablement: (input: {
+        projectPath?: string | null;
+        runtimeEnablement?: Record<string, boolean> | null;
+        defaultRuntime?: RuntimeEnablementId | null;
+        runtimeOverridesEnabled?: boolean | null;
+      }) => {
+        const shouldUpdateRuntimeEnablement = input.runtimeEnablement !== undefined;
+        const shouldUpdateDefaultRuntime = input.defaultRuntime !== undefined;
+        const shouldUpdateOverridesEnabled = input.runtimeOverridesEnabled !== undefined;
+        const projectPath = input.projectPath?.trim();
+
+        const runtimeEnablementOverrides =
+          input.runtimeEnablement == null
+            ? undefined
+            : (() => {
+                const normalized = normalizeRuntimeEnablement(input.runtimeEnablement);
+                const disabled: Partial<Record<RuntimeEnablementId, false>> = {};
+
+                for (const runtimeId of RUNTIME_ENABLEMENT_IDS) {
+                  if (!normalized[runtimeId]) {
+                    disabled[runtimeId] = false;
+                  }
+                }
+
+                return Object.keys(disabled).length > 0 ? disabled : undefined;
+              })();
+
+        const runtimeOverridesEnabled = input.runtimeOverridesEnabled === true ? true : undefined;
+
+        if (projectPath) {
+          const project = projects.get(projectPath);
+          if (project) {
+            const nextProject = { ...project };
+            if (shouldUpdateRuntimeEnablement) {
+              if (runtimeEnablementOverrides) {
+                nextProject.runtimeEnablement = runtimeEnablementOverrides;
+              } else {
+                delete nextProject.runtimeEnablement;
+              }
+            }
+
+            if (shouldUpdateDefaultRuntime) {
+              if (input.defaultRuntime !== null && input.defaultRuntime !== undefined) {
+                nextProject.defaultRuntime = input.defaultRuntime;
+              } else {
+                delete nextProject.defaultRuntime;
+              }
+            }
+
+            if (shouldUpdateOverridesEnabled) {
+              if (runtimeOverridesEnabled) {
+                nextProject.runtimeOverridesEnabled = true;
+              } else {
+                delete nextProject.runtimeOverridesEnabled;
+              }
+            }
+            projects.set(projectPath, nextProject);
+          }
+
+          return Promise.resolve(undefined);
+        }
+
+        if (shouldUpdateRuntimeEnablement) {
+          if (input.runtimeEnablement == null) {
+            runtimeEnablement = normalizeRuntimeEnablement({});
+          } else {
+            runtimeEnablement = normalizeRuntimeEnablement(input.runtimeEnablement);
+          }
+        }
+
+        if (shouldUpdateDefaultRuntime) {
+          defaultRuntime = input.defaultRuntime ?? null;
+        }
+
         return Promise.resolve(undefined);
       },
       unenrollMuxGovernor: () => Promise.resolve(undefined),
@@ -1111,7 +1258,14 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         }),
       fork: () => Promise.resolve({ success: false, error: "Not implemented in mock" }),
       sendMessage: () => Promise.resolve({ success: true, data: undefined }),
-      resumeStream: () => Promise.resolve({ success: true, data: undefined }),
+      resumeStream: () => Promise.resolve({ success: true, data: { started: true } }),
+      setAutoRetryEnabled: () =>
+        Promise.resolve({
+          success: true,
+          data: { previousEnabled: true, enabled: true },
+        }),
+      getStartupAutoRetryModel: () => Promise.resolve({ success: true, data: null }),
+      setAutoCompactionThreshold: () => Promise.resolve({ success: true, data: undefined }),
       interruptStream: () => Promise.resolve({ success: true, data: undefined }),
       clearQueue: () => Promise.resolve({ success: true, data: undefined }),
       truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
@@ -1139,7 +1293,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         if (!onChat) {
           // Default mock behavior: subscriptions should remain open.
           // If this ends, WorkspaceStore will retry and reset state, which flakes stories.
-          const caughtUp: WorkspaceChatMessage = { type: "caught-up" };
+          const caughtUp: WorkspaceChatMessage = { type: "caught-up", hasOlderHistory: false };
           yield caughtUp;
 
           await new Promise<void>((resolve) => {
@@ -1270,24 +1424,90 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       },
     },
     terminal: {
-      listSessions: (_input: { workspaceId: string }) => Promise.resolve([]),
-      create: () =>
-        Promise.resolve({
-          sessionId: "mock-session",
-          workspaceId: "mock-workspace",
-          cols: 80,
-          rows: 24,
-        }),
-      close: () => Promise.resolve(undefined),
-      resize: () => Promise.resolve(undefined),
+      listSessions: (input: { workspaceId: string }) =>
+        Promise.resolve(terminalSessionIdsByWorkspace.get(input.workspaceId) ?? []),
+      create: (input: {
+        workspaceId: string;
+        cols: number;
+        rows: number;
+        initialCommand?: string;
+      }) => {
+        const sessionId = allocTerminalSessionId();
+        registerTerminalSession({
+          sessionId,
+          workspaceId: input.workspaceId,
+          cols: input.cols,
+          rows: input.rows,
+          // Leave the terminal visually empty by default; data-rich stories can override via
+          // MockTerminalSession.screenState.
+          screenState: "",
+        });
+
+        return Promise.resolve({
+          sessionId,
+          workspaceId: input.workspaceId,
+          cols: input.cols,
+          rows: input.rows,
+        });
+      },
+      close: (input: { sessionId: string }) => {
+        const session = terminalSessionsById.get(input.sessionId);
+        if (session) {
+          terminalSessionsById.delete(input.sessionId);
+          const ids = terminalSessionIdsByWorkspace.get(session.workspaceId) ?? [];
+          terminalSessionIdsByWorkspace.set(
+            session.workspaceId,
+            ids.filter((id) => id !== input.sessionId)
+          );
+        }
+        return Promise.resolve(undefined);
+      },
+      resize: (input: { sessionId: string; cols: number; rows: number }) => {
+        const session = terminalSessionsById.get(input.sessionId);
+        if (session) {
+          terminalSessionsById.set(input.sessionId, {
+            ...session,
+            cols: input.cols,
+            rows: input.rows,
+          });
+        }
+        return Promise.resolve(undefined);
+      },
       sendInput: () => undefined,
-      attach: async function* (_input: { sessionId: string }) {
-        yield { type: "screenState", data: "" };
-        yield* [];
+      attach: async function* (input: { sessionId: string }, opts?: { signal?: AbortSignal }) {
+        const session = terminalSessionsById.get(input.sessionId);
+        yield { type: "screenState", data: session?.screenState ?? "" };
+
+        for (const chunk of session?.outputChunks ?? []) {
+          yield { type: "output", data: chunk };
+        }
+
+        // Keep the iterator alive until the caller aborts. The real backend streams output
+        // indefinitely; Storybook uses abort to clean up on story change.
+        if (opts?.signal) {
+          if (opts.signal.aborted) {
+            return;
+          }
+          await new Promise<void>((resolve) => {
+            opts.signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+          return;
+        }
+
         await new Promise<void>(() => undefined);
       },
-      onExit: async function* () {
+      onExit: async function* (_input: { sessionId: string }, opts?: { signal?: AbortSignal }) {
         yield* [];
+        if (opts?.signal) {
+          if (opts.signal.aborted) {
+            return;
+          }
+          await new Promise<void>((resolve) => {
+            opts.signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+          return;
+        }
+
         await new Promise<void>(() => undefined);
       },
       openWindow: () => Promise.resolve(undefined),
@@ -1302,6 +1522,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         yield* [];
         await new Promise<void>(() => undefined);
       },
+      getChannel: () => Promise.resolve("stable" as const),
+      setChannel: () => Promise.resolve(undefined),
     },
     policy: {
       get: () => Promise.resolve(policyResponse),

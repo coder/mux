@@ -1,17 +1,31 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useAPI } from "@/browser/contexts/API";
-import { usePersistedState, readPersistedState, updatePersistedState } from "./usePersistedState";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "./useProvidersConfig";
-import {
-  GATEWAY_CONFIGURED_KEY,
-  GATEWAY_ENABLED_KEY,
-  GATEWAY_MODELS_KEY,
-} from "@/common/constants/storage";
 import {
   MUX_GATEWAY_SUPPORTED_PROVIDERS,
   isValidProvider,
   type ProviderName,
 } from "@/common/constants/providers";
+import { CUSTOM_EVENTS } from "@/common/constants/events";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
+
+// Queue of canonical model IDs needing gateway enrollment. Populated by
+// migrateGatewayModel (called during render); drained by the useGateway hook
+// effect after provider config loads. Using a Set deduplicates repeated calls.
+// Exported for testing only.
+export const pendingGatewayEnrollments = new Set<string>();
+
+// Registered by useGateway instances so migrateGatewayModel can trigger
+// best-effort enrollment flushes for legacy mux-gateway model strings.
+const gatewayEnrollmentFlushListeners = new Set<() => void>();
+
+function clearLegacyGatewayLocalPrefs(): void {
+  // Gateway localStorage keys are deprecated; clear stale values so migration
+  // logic doesn't overwrite newer backend-driven user preferences.
+  updatePersistedState<boolean | undefined>("gateway-enabled", undefined);
+  updatePersistedState<string[] | undefined>("gateway-models", undefined);
+}
 
 // ============================================================================
 // Pure utility functions (no side effects, used for message sending)
@@ -46,26 +60,13 @@ export function isGatewayFormat(modelId: string): boolean {
 }
 
 /**
- * Convert a canonical model string to mux-gateway format.
- * Example: "anthropic:claude-haiku-4-5" → "mux-gateway:anthropic/claude-haiku-4-5"
- *
- * Unlike toGatewayModel(), this doesn't check if the user enabled gateway for
- * this specific model - use it when gateway should be used unconditionally
- * (e.g., for name generation with small models).
- */
-export function formatAsGatewayModel(modelId: string): string {
-  const provider = getProvider(modelId);
-  if (!provider) return modelId;
-  const model = modelId.slice(provider.length + 1);
-  return `mux-gateway:${provider}/${model}`;
-}
-
-/**
- * Migrate a mux-gateway model to canonical format and enable gateway toggle.
- * Converts "mux-gateway:provider/model" to "provider:model" and marks it for gateway routing.
+ * Migrate a mux-gateway model to canonical format.
+ * Converts "mux-gateway:provider/model" to "provider:model".
  *
  * This provides forward compatibility for users who have directly specified
- * mux-gateway models in their config.
+ * mux-gateway models in their config. When a migration occurs, the canonical
+ * model is queued for gateway enrollment so the useGateway hook can persist it
+ * in muxGatewayModels (preserving routing intent).
  */
 export function migrateGatewayModel(modelId: string): string {
   if (!isGatewayFormat(modelId)) {
@@ -83,20 +84,31 @@ export function migrateGatewayModel(modelId: string): string {
   const model = inner.slice(slashIndex + 1);
   const canonicalId = `${provider}:${model}`;
 
-  // Auto-enable gateway for this model (one-time migration)
-  const gatewayModels = readPersistedState<string[]>(GATEWAY_MODELS_KEY, []);
-  if (!gatewayModels.includes(canonicalId)) {
-    updatePersistedState(GATEWAY_MODELS_KEY, [...gatewayModels, canonicalId]);
+  // Preserve gateway routing intent: queue the canonical model for enrollment.
+  // The useGateway hook drains this queue after provider config loads,
+  // persisting the model in muxGatewayModels so gateway routing continues
+  // to work after the format migration.
+  const beforeSize = pendingGatewayEnrollments.size;
+  pendingGatewayEnrollments.add(canonicalId);
+
+  // Only signal when the queue actually grew.
+  if (pendingGatewayEnrollments.size !== beforeSize && typeof window !== "undefined") {
+    // Deferred via queueMicrotask because migrateGatewayModel can be called
+    // during render; dispatching synchronously would be a React anti-pattern.
+    queueMicrotask(() => {
+      for (const flushPendingEnrollments of gatewayEnrollmentFlushListeners) {
+        flushPendingEnrollments();
+      }
+    });
   }
 
   return canonicalId;
 }
 
 /**
- * Transform a model ID to gateway format for API calls.
- * Returns original modelId if gateway routing shouldn't be used.
+ * Check if a model would route through gateway given the current provider config.
  *
- * Checks (all must pass):
+ * All must pass:
  * 1. Gateway is globally enabled (user hasn't disabled it)
  * 2. Gateway is configured (coupon code set)
  * 3. Provider is supported by gateway
@@ -104,10 +116,14 @@ export function migrateGatewayModel(modelId: string): string {
  *
  * Example: "anthropic:claude-opus-4-5" → "mux-gateway:anthropic/claude-opus-4-5"
  */
-export function toGatewayModel(modelId: string): string {
-  const globallyEnabled = readPersistedState<boolean>(GATEWAY_ENABLED_KEY, true);
-  const configured = readPersistedState<boolean>(GATEWAY_CONFIGURED_KEY, false);
-  const enabledModels = readPersistedState<string[]>(GATEWAY_MODELS_KEY, []);
+export function toGatewayModel(
+  modelId: string,
+  providersConfig: ProvidersConfigMap | null
+): string {
+  const gwConfig = providersConfig?.["mux-gateway"];
+  const globallyEnabled = gwConfig?.isEnabled ?? true;
+  const configured = gwConfig?.couponCodeSet ?? false;
+  const enabledModels = gwConfig?.gatewayModels ?? [];
 
   if (!globallyEnabled || !configured || !isProviderSupported(modelId)) {
     return modelId;
@@ -138,6 +154,10 @@ export interface GatewayState {
   isEnabled: boolean;
   /** Toggle the global enabled state */
   toggleEnabled: () => void;
+  /** Which models are enabled for gateway routing */
+  enabledModels: string[];
+  /** Replace the full set of gateway-enabled models */
+  setEnabledModels: (modelIds: string[]) => void;
   /** Check if a specific model uses gateway routing */
   modelUsesGateway: (modelId: string) => boolean;
   /** Toggle gateway routing for a specific model */
@@ -151,60 +171,153 @@ export interface GatewayState {
 /**
  * Hook for gateway state management.
  *
- * Syncs gateway configuration from provider config to localStorage
- * so that toGatewayModel() can check it synchronously during message sending.
+ * All gateway state is derived from the backend provider config (via useProvidersConfig).
+ * Optimistic updates via updateOptimistically give instant UI feedback; the backend
+ * emits configChanged after persisting, which triggers a re-fetch that confirms.
  */
 export function useGateway(): GatewayState {
   const { api } = useAPI();
-  const { config } = useProvidersConfig();
+  const { config, updateOptimistically } = useProvidersConfig();
 
-  const [enabledModels, setEnabledModels] = usePersistedState<string[]>(GATEWAY_MODELS_KEY, [], {
-    listener: true,
-  });
-  const [isConfigured, setIsConfigured] = usePersistedState<boolean>(
-    GATEWAY_CONFIGURED_KEY,
-    false,
-    { listener: true }
-  );
-  const [isEnabled, setIsEnabled] = usePersistedState<boolean>(GATEWAY_ENABLED_KEY, true, {
-    listener: true,
-  });
-
-  // Sync gateway configuration from provider config
-  useEffect(() => {
-    if (!config) return;
-    const configured = config["mux-gateway"]?.couponCodeSet ?? false;
-    setIsConfigured(configured);
-  }, [config, setIsConfigured]);
-
+  // Derive all state from backend-provided config (single source of truth)
+  const gwConfig = config?.["mux-gateway"];
+  const lastKnownConfiguredRef = useRef<boolean | null>(null);
+  if (gwConfig?.couponCodeSet != null) {
+    lastKnownConfiguredRef.current = gwConfig.couponCodeSet;
+  }
+  const isConfigured =
+    config == null
+      ? (gwConfig?.couponCodeSet ?? lastKnownConfiguredRef.current ?? false)
+      : (gwConfig?.couponCodeSet ?? false);
+  const isEnabled = gwConfig?.isEnabled ?? true;
+  const enabledModels = useMemo(() => gwConfig?.gatewayModels ?? [], [gwConfig?.gatewayModels]);
   const isActive = isConfigured && isEnabled;
 
-  const persistGatewayPrefs = useCallback(
-    (nextEnabled: boolean, nextModels: string[]) => {
-      if (!api?.config?.updateMuxGatewayPrefs) {
-        return;
-      }
+  const flushPendingEnrollments = useCallback(() => {
+    if (!api || pendingGatewayEnrollments.size === 0) {
+      return;
+    }
 
-      api.config
-        .updateMuxGatewayPrefs({
-          muxGatewayEnabled: nextEnabled,
-          muxGatewayModels: nextModels,
-        })
-        .catch(() => {
-          // Best-effort only.
-        });
-    },
-    [api]
-  );
+    if (!gwConfig) {
+      // During hydration, config is null and mux-gateway state is temporarily
+      // unavailable. Keep queued enrollments so they flush once config loads.
+      if (config != null) {
+        pendingGatewayEnrollments.clear();
+      }
+      return;
+    }
+
+    const pendingModels = [...pendingGatewayEnrollments];
+    const existingModels = gwConfig.gatewayModels ?? [];
+    const newModels = pendingModels.filter((modelId) => !existingModels.includes(modelId));
+
+    // No-op flush: pending models are already persisted.
+    if (newModels.length === 0) {
+      pendingGatewayEnrollments.clear();
+      return;
+    }
+
+    const nextModels = [...existingModels, ...newModels];
+    updateOptimistically("mux-gateway", { gatewayModels: nextModels });
+    clearLegacyGatewayLocalPrefs();
+
+    // Clear eagerly to avoid duplicate writes from multiple hook instances.
+    pendingGatewayEnrollments.clear();
+
+    void api.config
+      .updateMuxGatewayPrefs({
+        muxGatewayEnabled: gwConfig.isEnabled ?? true,
+        muxGatewayModels: nextModels,
+      })
+      .catch(() => {
+        // Best-effort persistence. Keep pending models so a future user action or
+        // config refresh can flush them again.
+        for (const modelId of pendingModels) {
+          pendingGatewayEnrollments.add(modelId);
+        }
+      });
+  }, [api, config, gwConfig, updateOptimistically]);
+
+  // Register a best-effort flush callback so migrateGatewayModel can signal
+  // late enrollments that happen after this hook mounts.
+  useEffect(() => {
+    gatewayEnrollmentFlushListeners.add(flushPendingEnrollments);
+    return () => {
+      gatewayEnrollmentFlushListeners.delete(flushPendingEnrollments);
+    };
+  }, [flushPendingEnrollments]);
+
+  // Flush queued legacy enrollments after provider config loads.
+  useEffect(() => {
+    flushPendingEnrollments();
+  }, [flushPendingEnrollments]);
+
+  // Track whether a session-expired event arrived before config was hydrated.
+  // updateOptimistically is a no-op when config is null, so we defer and apply
+  // the update once gwConfig becomes available (see effect below).
+  const sessionExpiredBeforeHydrationRef = useRef(false);
+
+  // When gateway session expires (detected by stream error or account status check),
+  // optimistically mark as unconfigured so routing stops immediately.
+  // The MUX_GATEWAY_SESSION_EXPIRED event is dispatched by the chat event aggregator
+  // and the account status hook; we handle it here to update provider config state.
+  useEffect(() => {
+    const handler = () => {
+      if (config) {
+        updateOptimistically("mux-gateway", { couponCodeSet: false });
+      } else {
+        // Config not loaded yet — defer so we apply it once hydrated
+        sessionExpiredBeforeHydrationRef.current = true;
+      }
+    };
+    window.addEventListener(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED, handler);
+    return () => window.removeEventListener(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED, handler);
+  }, [config, updateOptimistically]);
+
+  // Apply deferred session-expired signal once config is hydrated.
+  useEffect(() => {
+    if (gwConfig && sessionExpiredBeforeHydrationRef.current) {
+      sessionExpiredBeforeHydrationRef.current = false;
+      updateOptimistically("mux-gateway", { couponCodeSet: false });
+    }
+  }, [gwConfig, updateOptimistically]);
 
   const toggleEnabled = useCallback(() => {
     const nextEnabled = !isEnabled;
+    // Optimistic update for instant UI feedback.
+    updateOptimistically("mux-gateway", { isEnabled: nextEnabled });
 
-    // usePersistedState writes to localStorage synchronously.
-    // Avoid double-writes here (which would toggle twice and become a no-op).
-    setIsEnabled(nextEnabled);
-    persistGatewayPrefs(nextEnabled, enabledModels);
-  }, [enabledModels, isEnabled, persistGatewayPrefs, setIsEnabled]);
+    clearLegacyGatewayLocalPrefs();
+
+    api?.config
+      .updateMuxGatewayPrefs({
+        muxGatewayEnabled: nextEnabled,
+        muxGatewayModels: enabledModels,
+      })
+      .catch(() => {
+        // Best-effort only; backend configChanged will reconcile state.
+      });
+  }, [api, enabledModels, isEnabled, updateOptimistically]);
+
+  const setEnabledModels = useCallback(
+    (nextModels: string[]) => {
+      // Keep writes centralized in this hook so all gateway actions (global toggle,
+      // per-model toggle, and "enable all") persist through one API call pattern.
+      updateOptimistically("mux-gateway", { gatewayModels: nextModels });
+
+      clearLegacyGatewayLocalPrefs();
+
+      api?.config
+        .updateMuxGatewayPrefs({
+          muxGatewayEnabled: isEnabled,
+          muxGatewayModels: nextModels,
+        })
+        .catch(() => {
+          // Best-effort only; backend configChanged will reconcile state.
+        });
+    },
+    [api, isEnabled, updateOptimistically]
+  );
 
   const modelUsesGateway = useCallback(
     (modelId: string) => enabledModels.includes(modelId),
@@ -216,13 +329,9 @@ export function useGateway(): GatewayState {
       const nextModels = enabledModels.includes(modelId)
         ? enabledModels.filter((m) => m !== modelId)
         : [...enabledModels, modelId];
-
-      // usePersistedState writes to localStorage synchronously.
-      // Avoid double-writes here (which would toggle twice and become a no-op).
       setEnabledModels(nextModels);
-      persistGatewayPrefs(isEnabled, nextModels);
     },
-    [enabledModels, isEnabled, persistGatewayPrefs, setEnabledModels]
+    [enabledModels, setEnabledModels]
   );
 
   const canToggleModel = useCallback(
@@ -242,6 +351,8 @@ export function useGateway(): GatewayState {
       isConfigured,
       isEnabled,
       toggleEnabled,
+      enabledModels,
+      setEnabledModels,
       modelUsesGateway,
       toggleModelGateway,
       canToggleModel,
@@ -252,6 +363,8 @@ export function useGateway(): GatewayState {
       isConfigured,
       isEnabled,
       toggleEnabled,
+      enabledModels,
+      setEnabledModels,
       modelUsesGateway,
       toggleModelGateway,
       canToggleModel,

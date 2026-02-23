@@ -11,7 +11,6 @@ import {
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { isCompactingStream, cancelCompaction } from "@/browser/utils/compaction/handler";
 import { useAPI } from "@/browser/contexts/API";
-import { disableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
 import type { EditingMessageState } from "@/browser/utils/chatEditing";
 
 interface UseAIViewKeybindsParams {
@@ -20,6 +19,7 @@ interface UseAIViewKeybindsParams {
   showRetryBarrier: boolean;
   chatInputAPI: React.RefObject<ChatInputAPI | null>;
   jumpToBottom: () => void;
+  loadOlderHistory: (() => void) | null;
   handleOpenTerminal: () => void;
   handleOpenInEditor: () => void;
   aggregator: StreamingMessageAggregator | undefined; // For compaction detection
@@ -31,7 +31,8 @@ interface UseAIViewKeybindsParams {
  * Manages keyboard shortcuts for AIView:
  * - Esc (non-vim) or Ctrl+C (vim): Interrupt stream (Escape skips text inputs by default)
  * - Ctrl+I: Focus chat input
- * - Ctrl+G: Jump to bottom
+ * - Shift+H: Load older transcript messages (when available)
+ * - Shift+G: Jump to bottom
  * - Ctrl+T: Open terminal
  * - Ctrl+Shift+E: Open in editor
  * - Ctrl+C (during compaction in vim mode): Cancel compaction, restore command
@@ -44,6 +45,7 @@ export function useAIViewKeybinds({
   showRetryBarrier,
   chatInputAPI,
   jumpToBottom,
+  loadOlderHistory,
   handleOpenTerminal,
   handleOpenInEditor,
   aggregator,
@@ -92,7 +94,7 @@ export function useAIViewKeybinds({
           if (api) {
             void cancelCompaction(api, workspaceId, aggregator, setEditingMessage);
           }
-          disableAutoRetryPreference(workspaceId);
+          void api?.workspace.setAutoRetryEnabled?.({ workspaceId, enabled: false });
           return;
         }
 
@@ -101,7 +103,7 @@ export function useAIViewKeybinds({
         // Non-vim mode: Esc interrupts (except when typing in inputs, unless explicitly opted in)
         if (canInterrupt || showRetryBarrier) {
           e.preventDefault();
-          disableAutoRetryPreference(workspaceId); // User explicitly stopped - don't auto-retry
+          void api?.workspace.setAutoRetryEnabled?.({ workspaceId, enabled: false });
           void api?.workspace.interruptStream({ workspaceId });
           return;
         }
@@ -135,6 +137,12 @@ export function useAIViewKeybinds({
         return;
       }
 
+      if (matchesKeybind(e, KEYBINDS.LOAD_OLDER_MESSAGES) && loadOlderHistory) {
+        e.preventDefault();
+        loadOlderHistory();
+        return;
+      }
+
       if (matchesKeybind(e, KEYBINDS.JUMP_TO_BOTTOM)) {
         e.preventDefault();
         jumpToBottom();
@@ -154,6 +162,7 @@ export function useAIViewKeybinds({
     };
   }, [
     jumpToBottom,
+    loadOlderHistory,
     handleOpenTerminal,
     handleOpenInEditor,
     workspaceId,

@@ -6,7 +6,12 @@ import { NameGenerationErrorSchema, SendMessageErrorSchema } from "./errors";
 import { BranchListResultSchema, FilePartSchema, MuxMessageSchema } from "./message";
 import { ProjectConfigSchema, SectionConfigSchema } from "./project";
 import { ResultSchema } from "./result";
-import { RuntimeConfigSchema, RuntimeAvailabilitySchema } from "./runtime";
+import { HostKeyVerificationEventSchema } from "./ssh";
+import {
+  RuntimeConfigSchema,
+  RuntimeAvailabilitySchema,
+  RuntimeEnablementIdSchema,
+} from "./runtime";
 import { SecretSchema } from "./secrets";
 import {
   CompletedMessagePartSchema,
@@ -128,6 +133,7 @@ export const ProviderModelEntrySchema = z.union([
     .object({
       id: z.string().min(1),
       contextWindowTokens: z.number().int().positive().optional(),
+      mappedToModel: z.string().min(1).optional(),
     })
     .strict(),
 ]);
@@ -155,6 +161,8 @@ export const ProviderConfigInfoSchema = z.object({
   aws: AWSCredentialStatusSchema.optional(),
   /** Mux Gateway-specific fields */
   couponCodeSet: z.boolean().optional(),
+  /** Mux Gateway-specific: which models are enabled for gateway routing */
+  gatewayModels: z.array(z.string()).optional(),
 });
 
 export const ProvidersConfigMapSchema = z.record(z.string(), ProviderConfigInfoSchema);
@@ -913,7 +921,38 @@ export const workspace = {
       workspaceId: z.string(),
       options: SendMessageOptionsSchema,
     }),
-    output: ResultSchema(z.void(), SendMessageErrorSchema),
+    output: ResultSchema(
+      z.object({
+        started: z.boolean(),
+      }),
+      SendMessageErrorSchema
+    ),
+  },
+  setAutoRetryEnabled: {
+    input: z.object({
+      workspaceId: z.string(),
+      enabled: z.boolean(),
+      // Runtime-only toggle for temporary retry flows (do not mutate persisted preference).
+      persist: z.boolean().nullish(),
+    }),
+    output: ResultSchema(
+      z.object({
+        previousEnabled: z.boolean(),
+        enabled: z.boolean(),
+      }),
+      z.string()
+    ),
+  },
+  getStartupAutoRetryModel: {
+    input: z.object({ workspaceId: z.string() }),
+    output: ResultSchema(z.string().nullable(), z.string()),
+  },
+  setAutoCompactionThreshold: {
+    input: z.object({
+      workspaceId: z.string(),
+      threshold: z.number().finite().min(0.1).max(1.0),
+    }),
+    output: ResultSchema(z.void(), z.string()),
   },
   interruptStream: {
     input: z.object({
@@ -976,6 +1015,29 @@ export const workspace = {
     input: z.object({ workspaceId: z.string() }),
     output: z.array(WorkspaceChatMessageSchema),
   },
+  history: {
+    loadMore: {
+      input: z.object({
+        workspaceId: z.string(),
+        cursor: z
+          .object({
+            beforeHistorySequence: z.number(),
+            beforeMessageId: z.string().nullish(),
+          })
+          .nullish(),
+      }),
+      output: z.object({
+        messages: z.array(WorkspaceChatMessageSchema),
+        nextCursor: z
+          .object({
+            beforeHistorySequence: z.number(),
+            beforeMessageId: z.string().nullish(),
+          })
+          .nullable(),
+        hasOlder: z.boolean(),
+      }),
+    },
+  },
   /**
    * Load an archived subagent transcript (chat.jsonl + optional partial.json) from this workspace's
    * session dir.
@@ -1022,6 +1084,9 @@ export const workspace = {
     input: z.object({
       workspaceId: z.string(),
       mode: OnChatModeSchema.optional(),
+      // One-shot migration hint: legacy renderer localStorage opt-out value.
+      // Used only when backend auto-retry preference file is missing.
+      legacyAutoRetryEnabled: z.boolean().optional(),
     }),
     output: eventIterator(WorkspaceChatMessageSchema), // Stream event
   },
@@ -1463,6 +1528,8 @@ export const config = {
         maxParallelAgentTasks: z.number().int(),
         maxTaskNestingDepth: z.number().int(),
         proposePlanImplementReplacesChatHistory: z.boolean().optional(),
+        planSubagentExecutorRouting: z.enum(["exec", "orchestrator", "auto"]).optional(),
+        planSubagentDefaultsToOrchestrator: z.boolean().optional(),
         bashOutputCompactionMinLines: z.number().int().optional(),
         bashOutputCompactionMinTotalBytes: z.number().int().optional(),
         bashOutputCompactionMaxKeptLines: z.number().int().optional(),
@@ -1475,6 +1542,8 @@ export const config = {
       hiddenModels: z.array(z.string()).optional(),
       preferredCompactionModel: z.string().optional(),
       stopCoderWorkspaceOnArchive: z.boolean(),
+      runtimeEnablement: z.record(z.string(), z.boolean()),
+      defaultRuntime: z.string().nullable(),
       agentAiDefaults: AgentAiDefaultsSchema,
       // Legacy fields (downgrade compatibility)
       subagentAiDefaults: SubagentAiDefaultsSchema,
@@ -1489,6 +1558,8 @@ export const config = {
         maxParallelAgentTasks: z.number().int(),
         maxTaskNestingDepth: z.number().int(),
         proposePlanImplementReplacesChatHistory: z.boolean().optional(),
+        planSubagentExecutorRouting: z.enum(["exec", "orchestrator", "auto"]).optional(),
+        planSubagentDefaultsToOrchestrator: z.boolean().optional(),
         bashOutputCompactionMinLines: z.number().int().optional(),
         bashOutputCompactionMinTotalBytes: z.number().int().optional(),
         bashOutputCompactionMaxKeptLines: z.number().int().optional(),
@@ -1530,6 +1601,17 @@ export const config = {
       .strict(),
     output: z.void(),
   },
+  updateRuntimeEnablement: {
+    input: z
+      .object({
+        projectPath: z.string().nullish(),
+        runtimeEnablement: z.record(z.string(), z.boolean()).nullish(),
+        defaultRuntime: RuntimeEnablementIdSchema.nullish(),
+        runtimeOverridesEnabled: z.boolean().nullish(),
+      })
+      .strict(),
+    output: z.void(),
+  },
   unenrollMuxGovernor: {
     input: z.void(),
     output: z.void(),
@@ -1567,6 +1649,8 @@ export const splashScreens = {
 };
 
 // Update
+export const UpdateChannelSchema = z.enum(["stable", "nightly"]);
+
 export const update = {
   check: {
     input: z.object({ source: z.enum(["auto", "manual"]).optional() }).optional(),
@@ -1583,6 +1667,14 @@ export const update = {
   onStatus: {
     input: z.void(),
     output: eventIterator(UpdateStatusSchema),
+  },
+  getChannel: {
+    input: z.void(),
+    output: UpdateChannelSchema,
+  },
+  setChannel: {
+    input: z.object({ channel: UpdateChannelSchema }),
+    output: z.void(),
   },
 };
 
@@ -1736,5 +1828,23 @@ export const debug = {
       errorMessage: z.string().optional(),
     }),
     output: z.boolean(), // true if error was triggered on an active stream
+  },
+};
+
+export const ssh = {
+  hostKeyVerification: {
+    subscribe: {
+      input: z.void(),
+      output: eventIterator(HostKeyVerificationEventSchema),
+    },
+    respond: {
+      input: z
+        .object({
+          requestId: z.string(),
+          accept: z.boolean(),
+        })
+        .strict(),
+      output: ResultSchema(z.void(), z.string()),
+    },
   },
 };

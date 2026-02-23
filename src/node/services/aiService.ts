@@ -7,7 +7,7 @@ import { linkAbortSignal } from "@/node/utils/abort";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
-import type { SendMessageOptions } from "@/common/orpc/types";
+import type { SendMessageOptions, ProvidersConfigMap } from "@/common/orpc/types";
 
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 
@@ -67,6 +67,7 @@ import {
   type SimulationContext,
 } from "./streamSimulation";
 import { applyToolPolicyAndExperiments, captureMcpToolTelemetry } from "./toolAssembly";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // ---------------------------------------------------------------------------
 // streamMessage options
@@ -119,6 +120,7 @@ export class AIService extends EventEmitter {
   private mockAiStreamPlayer?: MockAiStreamPlayer;
   private readonly backgroundProcessManager?: BackgroundProcessManager;
   private readonly sessionUsageService?: SessionUsageService;
+  private readonly providerService: ProviderService;
   private readonly providerModelFactory: ProviderModelFactory;
 
   // Tracks in-flight stream startup (before StreamManager emits stream-start).
@@ -157,7 +159,10 @@ export class AIService extends EventEmitter {
     this.sessionUsageService = sessionUsageService;
     this.policyService = policyService;
     this.telemetryService = telemetryService;
-    this.streamManager = new StreamManager(historyService, sessionUsageService);
+    this.providerService = providerService;
+    this.streamManager = new StreamManager(historyService, sessionUsageService, () =>
+      this.providerService.getConfig()
+    );
     this.providerModelFactory = new ProviderModelFactory(config, providerService, policyService);
     void this.ensureSessionsDir();
     this.setupStreamEventForwarding();
@@ -179,6 +184,10 @@ export class AIService extends EventEmitter {
 
   setTaskService(taskService: TaskService): void {
     this.taskService = taskService;
+  }
+
+  getProvidersConfig(): ProvidersConfigMap | null {
+    return this.providerService.getConfig();
   }
 
   /**
@@ -231,7 +240,7 @@ export class AIService extends EventEmitter {
           }
         }
       } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error);
+        const errMsg = getErrorMessage(error);
         log.warn("Failed to capture debug LLM response snapshot", { error: errMsg });
       }
 
@@ -300,7 +309,7 @@ export class AIService extends EventEmitter {
 
       return Ok(metadata);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to read workspace metadata: ${message}`);
     }
   }
@@ -538,6 +547,7 @@ export class AIService extends EventEmitter {
         workspacePath,
         requestedAgentId: agentId,
         disableWorkspaceAgents: disableWorkspaceAgents ?? false,
+        enableAgentSwitchTool: metadata.agentSwitchingEnabled === true,
         modelString,
         callerToolPolicy: toolPolicy,
         cfg,
@@ -640,6 +650,7 @@ export class AIService extends EventEmitter {
         effectiveAdditionalInstructions,
         modelString,
         cfg,
+        providersConfig: this.providerService.getConfig(),
         mcpServers,
       });
 
@@ -852,6 +863,9 @@ export class AIService extends EventEmitter {
       // This is the single injection site for provider-specific headers, handling
       // both direct and gateway-routed models identically.
       const requestHeaders = buildRequestHeaders(modelString, effectiveMuxProviderOptions);
+      const stopAfterSuccessfulProposePlan = Boolean(
+        metadata.parentWorkspaceId && effectiveMode === "plan"
+      );
 
       // Debug dump: Log the complete LLM request when MUX_DEBUG_LLM_REQUEST is set
       if (process.env.MUX_DEBUG_LLM_REQUEST === "1") {
@@ -904,7 +918,7 @@ export class AIService extends EventEmitter {
       try {
         this.lastLlmRequestByWorkspace.set(workspaceId, safeClone(snapshot));
       } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error);
+        const errMsg = getErrorMessage(error);
         workspaceLog.warn("Failed to capture debug LLM request snapshot", { error: errMsg });
       }
       const toolsForStream =
@@ -957,7 +971,8 @@ export class AIService extends EventEmitter {
         metadata.name,
         effectiveThinkingLevel,
         requestHeaders,
-        effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined
+        effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
+        stopAfterSuccessfulProposePlan
       );
 
       if (!streamResult.success) {
@@ -975,7 +990,7 @@ export class AIService extends EventEmitter {
       // No need for event listener here
       return Ok(undefined);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       log.error("Stream message error:", error);
       // Return as unknown error type
       return Err({ type: "unknown", raw: `Failed to stream message: ${errorMessage}` });
@@ -1123,7 +1138,7 @@ export class AIService extends EventEmitter {
       await fs.rm(workspaceDir, { recursive: true, force: true });
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to delete workspace: ${message}`);
     }
   }

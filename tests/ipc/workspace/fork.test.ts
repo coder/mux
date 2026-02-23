@@ -25,6 +25,7 @@ import {
   type SSHServerConfig,
 } from "../../runtime/test-fixtures/ssh-fixture";
 import type { RuntimeConfig } from "../../../src/common/types/runtime";
+import { getContainerName } from "../../../src/node/runtime/DockerRuntime";
 import { HistoryService } from "../../../src/node/services/historyService";
 import { createMuxMessage, type MuxMessage } from "../../../src/common/types/message";
 import assert from "node:assert";
@@ -472,11 +473,34 @@ describeIntegration("Workspace fork", () => {
             expect(forkResult.success).toBe(true);
             if (!forkResult.success) return;
 
+            // Regression coverage: SSH forks must stay on SSH runtime.
+            if (isSSH) {
+              expect(forkResult.metadata.runtimeConfig.type).toBe("ssh");
+              if (forkResult.metadata.runtimeConfig.type === "ssh") {
+                expect(forkResult.metadata.runtimeConfig.host).toBe("testuser@localhost");
+                expect(forkResult.metadata.runtimeConfig.srcBaseDir).toBe(sshConfig!.workdir);
+              }
+            }
+
             // User expects: both workspaces appear in workspace list
             const workspaces = await client.workspace.list();
             const workspaceIds = workspaces.map((w: { id: string }) => w.id);
             expect(workspaceIds).toContain(sourceWorkspaceId);
             expect(workspaceIds).toContain(forkResult.metadata.id);
+
+            const sourceWorkspace = workspaces.find(
+              (w: { id: string }) => w.id === sourceWorkspaceId
+            );
+            const forkedWorkspace = workspaces.find(
+              (w: { id: string }) => w.id === forkResult.metadata.id
+            );
+            expect(sourceWorkspace).toBeDefined();
+            expect(forkedWorkspace).toBeDefined();
+
+            if (isSSH) {
+              expect(sourceWorkspace?.runtimeConfig.type).toBe("ssh");
+              expect(forkedWorkspace?.runtimeConfig.type).toBe("ssh");
+            }
 
             // Cleanup
             await client.workspace.remove({ workspaceId: sourceWorkspaceId });
@@ -489,6 +513,90 @@ describeIntegration("Workspace fork", () => {
         getTimeout(15000)
       );
     }
+  );
+
+  test(
+    "should fork docker workspace and preserve docker runtime metadata",
+    async () => {
+      const env = await createTestEnvironment();
+      const tempGitRepo = await createTempGitRepo();
+      const client = resolveOrpcClient(env);
+      let sourceWorkspaceId: string | undefined;
+      let forkedWorkspaceId: string | undefined;
+
+      try {
+        const dockerRuntimeConfig: RuntimeConfig = {
+          type: "docker",
+          image: "mux-ssh-test",
+        };
+
+        const createResult = await createWorkspaceWithInit(
+          env,
+          tempGitRepo,
+          "docker-source",
+          dockerRuntimeConfig,
+          true,
+          true
+        );
+        sourceWorkspaceId = createResult.workspaceId;
+
+        const sourceWorkspace = (await client.workspace.list()).find(
+          (workspace: { id: string }) => workspace.id === sourceWorkspaceId
+        );
+        expect(sourceWorkspace).toBeDefined();
+        expect(sourceWorkspace?.runtimeConfig.type).toBe("docker");
+        if (sourceWorkspace?.runtimeConfig.type === "docker") {
+          expect(sourceWorkspace.runtimeConfig.image).toBe(dockerRuntimeConfig.image);
+        }
+
+        const forkResult = await client.workspace.fork({
+          sourceWorkspaceId,
+          newName: "docker-forked",
+        });
+        expect(forkResult.success).toBe(true);
+        if (!forkResult.success) return;
+        forkedWorkspaceId = forkResult.metadata.id;
+
+        // Regression: docker forks must use destination identity, not source container.
+        expect(forkResult.metadata.runtimeConfig.type).toBe("docker");
+        if (forkResult.metadata.runtimeConfig.type === "docker") {
+          expect(forkResult.metadata.runtimeConfig.image).toBe(dockerRuntimeConfig.image);
+          expect(forkResult.metadata.runtimeConfig.containerName).toBe(
+            getContainerName(tempGitRepo, "docker-forked")
+          );
+          expect(forkResult.metadata.runtimeConfig.containerName).not.toBe(
+            getContainerName(tempGitRepo, "docker-source")
+          );
+        }
+
+        const workspaces = await client.workspace.list();
+        const forkedWorkspace = workspaces.find((workspace: { id: string }) => {
+          return workspace.id === forkedWorkspaceId;
+        });
+
+        expect(forkedWorkspace).toBeDefined();
+        expect(forkedWorkspace?.runtimeConfig.type).toBe("docker");
+        if (forkedWorkspace?.runtimeConfig.type === "docker") {
+          expect(forkedWorkspace.runtimeConfig.image).toBe(dockerRuntimeConfig.image);
+          expect(forkedWorkspace.runtimeConfig.containerName).toBe(
+            getContainerName(tempGitRepo, "docker-forked")
+          );
+          expect(forkedWorkspace.runtimeConfig.containerName).not.toBe(
+            getContainerName(tempGitRepo, "docker-source")
+          );
+        }
+      } finally {
+        if (forkedWorkspaceId) {
+          await client.workspace.remove({ workspaceId: forkedWorkspaceId });
+        }
+        if (sourceWorkspaceId) {
+          await client.workspace.remove({ workspaceId: sourceWorkspaceId });
+        }
+        await cleanupTestEnvironment(env);
+        await cleanupTempGitRepo(tempGitRepo);
+      }
+    },
+    TEST_TIMEOUT_SSH_MS
   );
 
   test.concurrent(

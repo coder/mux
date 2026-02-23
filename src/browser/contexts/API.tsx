@@ -16,6 +16,7 @@ import {
   clearStoredAuthToken,
 } from "@/browser/components/AuthTokenModal";
 import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
+import { getErrorMessage } from "@/common/utils/errors";
 
 type APIClient = ReturnType<typeof createClient>;
 
@@ -313,7 +314,7 @@ export const APIProvider = (props: APIProviderProps) => {
             }
 
             forceReconnectInProgressRef.current = false;
-            const errMsg = err instanceof Error ? err.message : String(err);
+            const errMsg = getErrorMessage(err);
             const errMsgLower = errMsg.toLowerCase();
             const isAuthError =
               errMsgLower.includes("unauthorized") ||

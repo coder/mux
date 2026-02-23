@@ -3,6 +3,7 @@ import * as path from "node:path";
 
 import type { Runtime } from "@/node/runtime/Runtime";
 import { SSHRuntime } from "@/node/runtime/SSHRuntime";
+import { getErrorMessage } from "@/common/utils/errors";
 import { execBuffered, readFileString } from "@/node/utils/runtime/helpers";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 
@@ -103,10 +104,6 @@ export function getDefaultAgentDefinitionsRoots(
   };
 }
 
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 async function listAgentFilesFromLocalFs(root: string): Promise<string[]> {
   try {
     const entries = await fs.readdir(root, { withFileTypes: true });
@@ -187,7 +184,7 @@ async function readAgentDescriptorFromFileWithDisabled(
   try {
     content = await readFileString(runtime, filePath);
   } catch (err) {
-    log.warn(`Failed to read agent definition ${filePath}: ${formatError(err)}`);
+    log.warn(`Failed to read agent definition ${filePath}: ${getErrorMessage(err)}`);
     return null;
   }
 
@@ -220,7 +217,7 @@ async function readAgentDescriptorFromFileWithDisabled(
 
     return { descriptor: validated.data, disabled };
   } catch (err) {
-    const message = err instanceof AgentDefinitionParseError ? err.message : formatError(err);
+    const message = err instanceof AgentDefinitionParseError ? err.message : getErrorMessage(err);
     log.warn(`Skipping invalid agent definition '${agentId}' (${scope}): ${message}`);
     return null;
   }
@@ -273,7 +270,7 @@ export async function discoverAgentDefinitions(
     try {
       resolvedRoot = await runtime.resolvePath(scan.root);
     } catch (err) {
-      log.warn(`Failed to resolve agents root ${scan.root}: ${formatError(err)}`);
+      log.warn(`Failed to resolve agents root ${scan.root}: ${getErrorMessage(err)}`);
       continue;
     }
 

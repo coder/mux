@@ -12,6 +12,7 @@ import { log } from "@/node/services/log";
 import { createDeferred, renderOAuthCallbackHtml } from "@/node/utils/oauthUtils";
 import { startLoopbackServer } from "@/node/utils/oauthLoopbackServer";
 import { OAuthFlowManager } from "@/node/utils/oauthFlowManager";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const DEFAULT_DESKTOP_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_SERVER_TIMEOUT_MS = 10 * 60 * 1000;
@@ -53,7 +54,7 @@ export class MuxGatewayOauthService {
           }),
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to start OAuth callback listener: ${message}`);
     }
 
@@ -242,7 +243,7 @@ export class MuxGatewayOauthService {
 
       return Ok(token);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Mux Gateway exchange failed: ${message}`);
     }
   }

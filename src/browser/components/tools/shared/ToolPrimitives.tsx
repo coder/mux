@@ -2,6 +2,7 @@ import React from "react";
 import { cn } from "@/common/lib/utils";
 import type { LucideIcon } from "lucide-react";
 import {
+  ArrowRightLeft,
   Bell,
   BookOpen,
   FileText,
@@ -216,6 +217,7 @@ export const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   file_edit_replace_string: Pencil,
   file_edit_replace_lines: Pencil,
   todo_write: List,
+  switch_agent: ArrowRightLeft,
   web_fetch: Globe,
   web_search: Globe,
   notify: Bell,

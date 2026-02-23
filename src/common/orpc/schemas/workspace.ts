@@ -46,10 +46,13 @@ export const WorkspaceMetadataSchema = z.object({
     description:
       'If set, selects an agent definition for this workspace (e.g., "explore" or "exec").',
   }),
-  taskStatus: z.enum(["queued", "running", "awaiting_report", "reported"]).optional().meta({
-    description:
-      "Agent task lifecycle status for child workspaces (queued|running|awaiting_report|reported).",
-  }),
+  taskStatus: z
+    .enum(["queued", "running", "awaiting_report", "interrupted", "reported"])
+    .optional()
+    .meta({
+      description:
+        "Agent task lifecycle status for child workspaces (queued|running|awaiting_report|interrupted|reported).",
+    }),
   reportedAt: z.string().optional().meta({
     description: "ISO 8601 timestamp for when an agent task reported completion (optional).",
   }),
@@ -75,6 +78,10 @@ export const WorkspaceMetadataSchema = z.object({
     description:
       "ISO 8601 timestamp when workspace was last unarchived. Used for recency calculation to bump restored workspaces to top.",
   }),
+  agentSwitchingEnabled: z.boolean().optional().meta({
+    description:
+      "When true, switch_agent tool is enabled for this workspace (set when session starts from Auto agent).",
+  }),
   sectionId: z.string().optional().meta({
     description: "ID of the section this workspace belongs to (optional, unsectioned if absent)",
   }),
@@ -97,12 +104,22 @@ export const FrontendWorkspaceMetadataSchema = WorkspaceMetadataSchema.extend({
   }),
 });
 
+export const WorkspaceAgentStatusSchema = z.object({
+  emoji: z.string(),
+  message: z.string(),
+  url: z.string().optional(),
+});
+
 export const WorkspaceActivitySnapshotSchema = z.object({
   recency: z.number().meta({ description: "Unix ms timestamp of last user interaction" }),
   streaming: z.boolean().meta({ description: "Whether workspace currently has an active stream" }),
   lastModel: z.string().nullable().meta({ description: "Last model sent from this workspace" }),
   lastThinkingLevel: ThinkingLevelSchema.nullable().meta({
     description: "Last thinking/reasoning level used in this workspace",
+  }),
+  agentStatus: WorkspaceAgentStatusSchema.nullable().optional().meta({
+    description:
+      "Most recent status_set value for this workspace (used to surface background progress in sidebar).",
   }),
 });
 

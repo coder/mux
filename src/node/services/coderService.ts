@@ -20,6 +20,7 @@ import {
   type CoderWorkspace,
   type CoderWorkspaceStatus,
 } from "@/common/orpc/schemas/coder";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // Re-export types for consumers that import from this module
 
@@ -1128,7 +1129,7 @@ export class CoderService {
 
       return { kind: "ok", status: parsed.data };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       log.debug("Failed to get Coder workspace status", { workspaceName, error: message });
       return { kind: "error", error: message };
     }
@@ -1158,7 +1159,7 @@ export class CoderService {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(message);
     }
   }
@@ -1187,7 +1188,7 @@ export class CoderService {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(message);
     }
   }

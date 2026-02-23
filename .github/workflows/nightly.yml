@@ -66,6 +66,7 @@ jobs:
             nightly.yml
             nightly-mac.yml
             nightly-linux.yml
+            nightly-docker.txt
           )
 
           # Re-runs with no new commits may find an existing nightly release.
@@ -88,7 +89,11 @@ jobs:
 
             echo "Release $RELEASE_TAG is incomplete (missing: ${MISSING_ASSETS[*]})"
             echo "Deleting $RELEASE_TAG so this run can rebuild desktop artifacts"
-            gh release delete "$RELEASE_TAG" --yes --cleanup-tag
+            # Use API-only deletion so release cleanup never depends on local git state.
+            if release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$RELEASE_TAG" --jq '.id' 2>/dev/null); then
+              gh api --silent -X DELETE "repos/${GITHUB_REPOSITORY}/releases/$release_id"
+            fi
+            gh api --silent -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/$RELEASE_TAG" || true
           fi
 
           gh release create "$RELEASE_TAG" --prerelease --target "$BUILD_SHA" --title "$RELEASE_TAG" --notes "Automated nightly build from main ($(date -u +%Y-%m-%d))"
@@ -108,13 +113,49 @@ jobs:
       version_override: ${{ needs.compute-version.outputs.nightly_version }}
     secrets: inherit # zizmor: ignore[secrets-inherit] -- reusable workflow needs platform signing secrets
 
+  docker-publish:
+    name: Build and Push Docker Image (Nightly)
+    needs: compute-version
+    if: needs.compute-version.outputs.should_build == 'true'
+    permissions:
+      contents: read
+      id-token: write # Depot OIDC authentication
+      packages: write # Push to GHCR
+    uses: ./.github/workflows/_docker-release.yml
+    with:
+      ref: ${{ needs.compute-version.outputs.build_sha }}
+      # Tag as the nightly version (e.g., 0.18.1-nightly.42) — not :latest
+      version: ${{ needs.compute-version.outputs.nightly_version }}
+      is_latest: false
+
+  # Upload a sentinel asset after Docker publish succeeds so the next rerun
+  # (with no new commits) can detect whether Docker was published. Without this,
+  # a Depot/GHCR outage would leave the nightly tag without a Docker image and
+  # subsequent runs would skip the build (should_build=false).
+  docker-sentinel:
+    name: Upload Docker sentinel
+    needs: [compute-version, docker-publish]
+    if: needs.docker-publish.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Upload release asset
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Upload sentinel asset
+        run: |
+          echo "docker" > nightly-docker.txt
+          gh release upload "${{ needs.compute-version.outputs.release_tag }}" \
+            nightly-docker.txt --clobber \
+            --repo "${{ github.repository }}"
+
   # Clean up old nightly releases after version computation.
   # - Reuse path (should_build=false): run cleanup to enforce single-nightly policy.
-  # - Build path (should_build=true): run cleanup only after desktop-builds succeeds.
+  # - Build path (should_build=true): run cleanup only after all builds succeed.
   cleanup-old-nightlies:
     name: Clean up old nightly releases
-    needs: [compute-version, desktop-builds]
-    if: needs.compute-version.result == 'success' && (needs.compute-version.outputs.should_build != 'true' || needs.desktop-builds.result == 'success')
+    needs: [compute-version, desktop-builds, docker-sentinel]
+    if: needs.compute-version.result == 'success' && (needs.compute-version.outputs.should_build != 'true' || (needs.desktop-builds.result == 'success' && needs.docker-sentinel.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
       contents: write # Delete old pre-releases
@@ -139,5 +180,9 @@ jobs:
               continue
             fi
             echo "Deleting old nightly release $tag"
-            gh release delete "$tag" --yes --cleanup-tag
+            # Keep this cleanup job checkout-free: use API-only deletion (no local git).
+            if release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$tag" --jq '.id' 2>/dev/null); then
+              gh api --silent -X DELETE "repos/${GITHUB_REPOSITORY}/releases/$release_id"
+            fi
+            gh api --silent -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/$tag" || true
           done

@@ -22,7 +22,7 @@ import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 
 export function WorkspaceModeAISync(props: { workspaceId: string }): null {
   const workspaceId = props.workspaceId;
-  const { agentId, agents } = useAgent();
+  const { agentId } = useAgent();
 
   const [agentAiDefaults] = usePersistedState<AgentAiDefaults>(
     AGENT_AI_DEFAULTS_KEY,
@@ -65,9 +65,12 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
 
     const { resolvedModel, resolvedThinking } = resolveWorkspaceAiSettingsForAgent({
       agentId: normalizedAgentId,
-      agents,
       agentAiDefaults,
+      // Keep deterministic handoff behavior: background sync should trust the
+      // currently active workspace model, but explicit mode switches should
+      // restore the selected agent's per-workspace override (if any).
       workspaceByAgent,
+      useWorkspaceByAgentFallback: isExplicitAgentSwitch,
       fallbackModel,
       existingModel,
       existingThinking,
@@ -84,7 +87,7 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
     if (existingThinking !== resolvedThinking) {
       updatePersistedState(thinkingKey, resolvedThinking);
     }
-  }, [agentAiDefaults, agentId, agents, workspaceByAgent, workspaceId]);
+  }, [agentAiDefaults, agentId, workspaceByAgent, workspaceId]);
 
   return null;
 }

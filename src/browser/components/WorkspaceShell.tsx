@@ -1,10 +1,11 @@
 import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
 import React, { useCallback, useRef } from "react";
 import { cn } from "@/common/lib/utils";
-import { RIGHT_SIDEBAR_WIDTH_KEY } from "@/common/constants/storage";
+import { RIGHT_SIDEBAR_WIDTH_KEY, getReviewImmersiveKey } from "@/common/constants/storage";
 import { useResizableSidebar } from "@/browser/hooks/useResizableSidebar";
 import { useResizeObserver } from "@/browser/hooks/useResizeObserver";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { RightSidebar } from "./RightSidebar";
 import { PopoverError } from "./PopoverError";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -127,6 +128,9 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
   );
 
   const workspaceState = useWorkspaceState(props.workspaceId);
+  const [isReviewImmersive] = usePersistedState(getReviewImmersiveKey(props.workspaceId), false, {
+    listener: true,
+  });
   const backgroundBashError = useBackgroundBashError();
 
   if (!workspaceState || workspaceState.loading) {
@@ -147,7 +151,7 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
     <div
       ref={shellRef}
       className={cn(
-        "flex flex-1 flex-row bg-dark text-light overflow-x-auto overflow-y-hidden [@media(max-width:768px)]:flex-col",
+        "relative flex flex-1 flex-row bg-dark text-light overflow-x-auto overflow-y-hidden [@media(max-width:768px)]:flex-col",
         props.className
       )}
       style={{ containerType: "inline-size" }}
@@ -165,6 +169,7 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
         onToggleLeftSidebarCollapsed={props.onToggleLeftSidebarCollapsed}
         runtimeConfig={props.runtimeConfig}
         onOpenTerminal={handleOpenTerminal}
+        immersiveHidden={isReviewImmersive}
       />
 
       <RightSidebar
@@ -177,7 +182,16 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
         isResizing={isResizing}
         onReviewNote={handleReviewNote}
         isCreating={props.isInitializing === true}
+        immersiveHidden={isReviewImmersive}
         addTerminalRef={addTerminalRef}
+      />
+
+      {/* Portal target for immersive review mode overlay */}
+      <div
+        id="review-immersive-root"
+        hidden={!isReviewImmersive}
+        className="bg-dark absolute inset-0 z-50"
+        data-testid="review-immersive-root"
       />
 
       <PopoverError

@@ -1,5 +1,8 @@
 import type { ProvidersConfigMap } from "@/common/orpc/types";
-import { getModelContextWindowOverride } from "@/common/utils/providers/modelEntries";
+import {
+  getModelContextWindowOverride,
+  resolveModelForMetadata,
+} from "@/common/utils/providers/modelEntries";
 import type { ChatUsageDisplay } from "./usageAggregator";
 import { getModelStats } from "./modelStats";
 import { supports1MContext } from "../ai/models";
@@ -66,7 +69,8 @@ export function calculateTokenMeterData(
 ): TokenMeterData {
   if (!usage) return { segments: [], totalTokens: 0, totalPercentage: 0 };
 
-  const modelStats = getModelStats(model);
+  const metadataModel = resolveModelForMetadata(model, providersConfig);
+  const modelStats = getModelStats(metadataModel);
   const customContextWindow = getModelContextWindowOverride(model, providersConfig);
   const maxTokens =
     use1M && supports1MContext(model)

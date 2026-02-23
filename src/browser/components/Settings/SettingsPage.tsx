@@ -1,4 +1,4 @@
-import React from "react";
+import { useEffect } from "react";
 import {
   ArrowLeft,
   Menu,
@@ -10,6 +10,7 @@ import {
   Bot,
   Keyboard,
   Layout,
+  Container,
   BrainCircuit,
   Shield,
   ShieldCheck,
@@ -17,7 +18,9 @@ import {
   Lock,
 } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
+import { useOnboardingPause } from "@/browser/components/splashScreens/SplashScreenProvider";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
+import { isEditableElement, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { GeneralSection } from "./sections/GeneralSection";
 import { TasksSection } from "./sections/TasksSection";
@@ -29,6 +32,7 @@ import { Button } from "@/browser/components/ui/button";
 import { MCPSettingsSection } from "./sections/MCPSettingsSection";
 import { SecretsSection } from "./sections/SecretsSection";
 import { LayoutsSection } from "./sections/LayoutsSection";
+import { RuntimesSection } from "./sections/RuntimesSection";
 import { ExperimentsSection } from "./sections/ExperimentsSection";
 import { ServerAccessSection } from "./sections/ServerAccessSection";
 import { KeybindsSection } from "./sections/KeybindsSection";
@@ -84,6 +88,12 @@ const BASE_SECTIONS: SettingsSection[] = [
     component: LayoutsSection,
   },
   {
+    id: "runtimes",
+    label: "Runtimes",
+    icon: <Container className="h-4 w-4" />,
+    component: RuntimesSection,
+  },
+  {
     id: "experiments",
     label: "Experiments",
     icon: <FlaskConical className="h-4 w-4" />,
@@ -104,11 +114,12 @@ interface SettingsPageProps {
 
 export function SettingsPage(props: SettingsPageProps) {
   const { close, activeSection, setActiveSection } = useSettings();
+  const onboardingPause = useOnboardingPause();
   const system1Enabled = useExperimentValue(EXPERIMENT_IDS.SYSTEM_1);
   const governorEnabled = useExperimentValue(EXPERIMENT_IDS.MUX_GOVERNOR);
 
   // Keep routing on a valid section when an experiment-gated section is disabled.
-  React.useEffect(() => {
+  useEffect(() => {
     if (!system1Enabled && activeSection === "system1") {
       setActiveSection(BASE_SECTIONS[0]?.id ?? "general");
     }
@@ -117,6 +128,23 @@ export function SettingsPage(props: SettingsPageProps) {
     }
   }, [activeSection, setActiveSection, system1Enabled, governorEnabled]);
 
+  // Close settings on Escape. Uses bubble phase so inner surfaces (Select dropdowns,
+  // Popover, Dialog) that call stopPropagation/preventDefault on Escape get first
+  // right of refusal—only an unclaimed Escape navigates away from settings.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!matchesKeybind(e, KEYBINDS.CANCEL)) return;
+      if (e.defaultPrevented) return;
+      if (isEditableElement(e.target)) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [close]);
   let sections: SettingsSection[] = BASE_SECTIONS;
   if (system1Enabled) {
     sections = [
@@ -241,6 +269,14 @@ export function SettingsPage(props: SettingsPageProps) {
           <div className="flex-1 overflow-y-auto p-4 md:p-6">
             {/* Keep settings content width bounded so long forms remain readable on wide screens. */}
             <div className="w-full max-w-4xl">
+              {onboardingPause.paused && (
+                <div className="bg-accent/10 border-accent/30 text-foreground mb-3 flex items-center justify-between rounded-md border px-3 py-2 text-sm">
+                  <span>Setup is paused while you configure providers.</span>
+                  <Button variant="secondary" size="sm" onClick={close}>
+                    Return to setup
+                  </Button>
+                </div>
+              )}
               <SectionComponent />
             </div>
           </div>

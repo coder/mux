@@ -35,11 +35,10 @@ import {
 } from "@/browser/utils/messages/messageUtils";
 import { computeTaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
 import { BashOutputCollapsedIndicator } from "./tools/BashOutputCollapsedIndicator";
-import { enableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
 import {
   getInterruptionContext,
   getLastNonDecorativeMessage,
-} from "@/browser/utils/messages/retryEligibility";
+} from "@/common/utils/messages/retryEligibility";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
@@ -60,16 +59,14 @@ import { CompactionWarning } from "./CompactionWarning";
 import { ContextSwitchWarning as ContextSwitchWarningBanner } from "./ContextSwitchWarning";
 import { ConcurrentLocalWarning } from "./ConcurrentLocalWarning";
 import { BackgroundProcessesBanner } from "./BackgroundProcessesBanner";
-import { checkAutoCompaction } from "@/browser/utils/compaction/autoCompactionCheck";
+import { checkAutoCompaction } from "@/common/utils/compaction/autoCompactionCheck";
 import { cancelCompaction } from "@/browser/utils/compaction/handler";
 import type { ContextSwitchWarning } from "@/browser/utils/compaction/contextSwitchCheck";
-import { executeCompaction } from "@/browser/utils/chatCommands";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "../hooks/useAutoCompactionSettings";
 import { useContextSwitchWarning } from "@/browser/hooks/useContextSwitchWarning";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
-import { useForceCompaction } from "@/browser/hooks/useForceCompaction";
 import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
 import { useAPI } from "@/browser/contexts/API";
 import { useReviews } from "@/browser/hooks/useReviews";
@@ -118,6 +115,21 @@ function PerfRenderMarker(props: { id: string; children: React.ReactNode }): Rea
   return <>{props.children}</>;
 }
 
+function isChromaticStorybookEnvironment(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  // Keep production behavior unchanged while suppressing story-only snapshot churn.
+  const isStorybookPreview = window.location.pathname.endsWith("iframe.html");
+  if (!isStorybookPreview) {
+    return false;
+  }
+
+  const chromaticRuntimeFlag = (window as Window & { chromatic?: boolean }).chromatic;
+  return /Chromatic/i.test(window.navigator.userAgent) || chromaticRuntimeFlag === true;
+}
+
 interface ChatPaneProps {
   workspaceId: string;
   workspaceState: WorkspaceState;
@@ -129,6 +141,8 @@ interface ChatPaneProps {
   onToggleLeftSidebarCollapsed: () => void;
   runtimeConfig?: RuntimeConfig;
   onOpenTerminal: (options?: TerminalSessionCreateOptions) => void;
+  /** Hide + inactivate chat pane while immersive review overlay is active. */
+  immersiveHidden?: boolean;
 }
 
 type ReviewsState = ReturnType<typeof useReviews>;
@@ -145,10 +159,28 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     runtimeConfig,
     onOpenTerminal,
     workspaceState,
+    immersiveHidden = false,
   } = props;
   const { api } = useAPI();
   const { workspaceMetadata } = useWorkspaceContext();
   const chatAreaRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const chatPaneElement = chatAreaRef.current;
+    if (!chatPaneElement) {
+      return;
+    }
+
+    if (immersiveHidden) {
+      chatPaneElement.setAttribute("inert", "");
+    } else {
+      chatPaneElement.removeAttribute("inert");
+    }
+
+    return () => {
+      chatPaneElement.removeAttribute("inert");
+    };
+  }, [immersiveHidden, workspaceId]);
 
   const storeRaw = useWorkspaceStoreRaw();
   const aggregator = useWorkspaceAggregator(workspaceId);
@@ -180,6 +212,19 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     pendingModel
   );
 
+  useEffect(() => {
+    if (!api) {
+      return;
+    }
+
+    // Keep backend session threshold in sync with the persisted per-model slider value.
+    const normalizedThreshold = Math.max(0.1, Math.min(1, autoCompactionThreshold / 100));
+    void api.workspace.setAutoCompactionThreshold({
+      workspaceId,
+      threshold: normalizedThreshold,
+    });
+  }, [api, workspaceId, autoCompactionThreshold]);
+
   const [editingState, setEditingState] = useState(() => ({
     workspaceId,
     message: undefined as EditingMessageState | undefined,
@@ -204,7 +249,18 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   useEffect(() => {
     workspaceStateRef.current = workspaceState;
   }, [workspaceState]);
-  const { messages, canInterrupt, isCompacting, isStreamStarting, loading } = workspaceState;
+  const {
+    messages,
+    canInterrupt,
+    isCompacting,
+    isStreamStarting,
+    loading,
+    isHydratingTranscript,
+    hasOlderHistory,
+    loadingOlderHistory,
+  } = workspaceState;
+  const shouldRenderLoadOlderMessagesButton = hasOlderHistory && !isChromaticStorybookEnvironment();
+  const loadOlderMessagesShortcutLabel = formatKeybind(KEYBINDS.LOAD_OLDER_MESSAGES);
 
   const {
     warning: contextSwitchWarning,
@@ -279,33 +335,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   // Context-switch warning takes priority so we don't show competing banners.
   const shouldShowCompactionWarning =
     !isCompacting && autoCompactionResult.shouldShowWarning && !contextSwitchWarning;
-
-  // Handle force compaction callback - memoized to avoid effect re-runs.
-  // We pass a default continueMessage of "Continue" as a resume sentinel so the backend can
-  // auto-send it after compaction. The compaction prompt builder special-cases this sentinel
-  // to avoid injecting it into the summarization request.
-  const handleForceCompaction = useCallback(() => {
-    if (!api) return;
-
-    // Force compaction queues a message while a stream is active.
-    // Match user-send semantics: background any running foreground bash so we don't block.
-    autoBackgroundOnSend();
-
-    void executeCompaction({
-      api,
-      workspaceId,
-      sendMessageOptions: pendingSendOptions,
-      followUpContent: { text: "Continue" },
-    });
-  }, [api, workspaceId, pendingSendOptions, autoBackgroundOnSend]);
-
-  // Force compaction when live usage shows we're about to hit context limit
-  useForceCompaction({
-    shouldForceCompact: autoCompactionResult.shouldForceCompact,
-    canInterrupt,
-    isCompacting,
-    onTrigger: handleForceCompaction,
-  });
 
   // Vim mode state - needed for keybind selection (Ctrl+C in vim, Esc otherwise)
   const [vimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, { listener: true });
@@ -435,11 +464,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     },
     [addReview]
   );
-
-  // Handler for manual compaction from CompactionWarning click
-  const handleCompactClick = useCallback(() => {
-    chatInputAPI.current?.prependText("/compact\n");
-  }, []);
 
   // Handlers for editing messages
   const handleEditUserMessage = useCallback(
@@ -583,9 +607,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, workspaceState?.loading]);
 
-  // Compute showRetryBarrier once for both keybinds and UI
-  // Track if last message was interrupted or errored (for RetryBarrier)
-  // Uses same logic as useResumeManager for DRY
+  // Compute showRetryBarrier once for both keybinds and UI.
+  // Track if last message was interrupted or errored (for RetryBarrier).
   const interruption = workspaceState
     ? getInterruptionContext(
         workspaceState.messages,
@@ -595,15 +618,31 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       )
     : null;
 
-  const showRetryBarrier = workspaceState
-    ? !workspaceState.canInterrupt && (interruption?.hasInterruptedStream ?? false)
-    : false;
+  const hasInterruptedStream = interruption?.hasInterruptedStream ?? false;
+  // Keep rendering cached transcript rows during incremental catch-up so workspace switches
+  // feel stable; only show the full placeholder when there's no transcript content yet.
+  const showTranscriptHydrationPlaceholder = isHydratingTranscript && deferredMessages.length === 0;
+  const showRetryBarrier =
+    !isHydratingTranscript && !workspaceState.canInterrupt && hasInterruptedStream;
 
   const lastActionableMessage = getLastNonDecorativeMessage(workspaceState.messages);
   const suppressRetryBarrier =
     lastActionableMessage?.type === "stream-error" &&
     lastActionableMessage.errorType === "context_exceeded";
+  // Keep RetryBarrier mounted (but visually hidden) while a resumed stream is in flight
+  // so its temporary auto-retry rollback effect can observe terminal stream outcomes.
+  const shouldMountRetryBarrier = hasInterruptedStream && !suppressRetryBarrier;
   const showRetryBarrierUI = showRetryBarrier && !suppressRetryBarrier;
+
+  const handleLoadOlderHistory = useCallback(() => {
+    if (!shouldRenderLoadOlderMessagesButton || loadingOlderHistory) {
+      return;
+    }
+
+    storeRaw.loadOlderHistory(workspaceId).catch((error) => {
+      console.warn(`[ChatPane] Failed to load older history for ${workspaceId}:`, error);
+    });
+  }, [loadingOlderHistory, shouldRenderLoadOlderMessagesButton, storeRaw, workspaceId]);
 
   // Handle keyboard shortcuts (using optional refs that are safe even if not initialized)
   useAIViewKeybinds({
@@ -615,6 +654,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     showRetryBarrier,
     chatInputAPI,
     jumpToBottom,
+    loadOlderHistory: shouldRenderLoadOlderMessagesButton ? handleLoadOlderHistory : null,
     handleOpenTerminal: onOpenTerminal,
     handleOpenInEditor,
     aggregator,
@@ -678,6 +718,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     <PerfRenderMarker id="chat-pane">
       <div
         ref={chatAreaRef}
+        aria-hidden={immersiveHidden || undefined}
         className="flex min-w-96 flex-1 flex-col [@media(max-width:768px)]:max-h-full [@media(max-width:768px)]:w-full [@media(max-width:768px)]:min-w-0"
       >
         <PerfRenderMarker id="chat-pane.header">
@@ -706,18 +747,29 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               onContextMenu={handleTranscriptContextMenu}
               role="log"
               aria-live={canInterrupt ? "polite" : "off"}
-              aria-busy={canInterrupt}
+              aria-busy={canInterrupt || isHydratingTranscript}
               aria-label="Conversation transcript"
               tabIndex={0}
               data-testid="message-window"
-              data-loaded={!loading}
+              data-loaded={!loading && !isHydratingTranscript}
               className="h-full overflow-x-hidden overflow-y-auto p-[15px] leading-[1.5] break-words whitespace-pre-wrap"
             >
               <div
                 ref={innerRef}
-                className={cn("max-w-4xl mx-auto", deferredMessages.length === 0 && "h-full")}
+                className={cn(
+                  "max-w-4xl mx-auto",
+                  (showTranscriptHydrationPlaceholder || deferredMessages.length === 0) && "h-full"
+                )}
               >
-                {deferredMessages.length === 0 ? (
+                {showTranscriptHydrationPlaceholder ? (
+                  <div
+                    data-testid="transcript-hydration-placeholder"
+                    className="text-placeholder flex h-full flex-1 flex-col items-center justify-center text-center [&_h3]:m-0 [&_h3]:mb-2.5 [&_h3]:text-base [&_h3]:font-medium [&_p]:m-0 [&_p]:text-[13px]"
+                  >
+                    <h3>Loading transcript...</h3>
+                    <p>Syncing recent messages for this workspace</p>
+                  </div>
+                ) : deferredMessages.length === 0 ? (
                   <div className="text-placeholder flex h-full flex-1 flex-col items-center justify-center text-center [&_h3]:m-0 [&_h3]:mb-2.5 [&_h3]:text-base [&_h3]:font-medium [&_p]:m-0 [&_p]:text-[13px]">
                     <h3>No Messages Yet</h3>
                     <p>Send a message below to begin</p>
@@ -737,6 +789,19 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                 ) : (
                   <MessageListProvider value={messageListContextValue}>
                     <>
+                      {shouldRenderLoadOlderMessagesButton && (
+                        <div className="flex justify-center py-3">
+                          <button
+                            type="button"
+                            onClick={handleLoadOlderHistory}
+                            disabled={loadingOlderHistory}
+                            title={`Load older messages (${loadOlderMessagesShortcutLabel})`}
+                            className="text-muted hover:text-foreground text-xs underline underline-offset-2 transition-colors disabled:opacity-50"
+                          >
+                            {loadingOlderHistory ? "Loading..." : "Load older messages"}
+                          </button>
+                        </div>
+                      )}
                       {deferredMessages.map((msg, index) => {
                         const bashOutputGroup = bashOutputGroupInfos[index];
 
@@ -821,7 +886,12 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                         );
                       })}
                       {/* Show RetryBarrier after the last message if needed */}
-                      {showRetryBarrierUI && <RetryBarrier workspaceId={workspaceId} />}
+                      {shouldMountRetryBarrier && (
+                        <RetryBarrier
+                          workspaceId={workspaceId}
+                          className={!showRetryBarrierUI ? "hidden" : undefined}
+                        />
+                      )}
                     </>
                   </MessageListProvider>
                 )}
@@ -901,14 +971,12 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
             onContextSwitchCompact={handleContextSwitchCompact}
             onContextSwitchDismiss={handleContextSwitchDismiss}
             onModelChange={handleModelChange}
-            onCompactClick={handleCompactClick}
             onMessageSent={handleMessageSent}
             onTruncateHistory={handleClearHistory}
             editingMessage={editingMessage}
             onCancelEdit={handleCancelEdit}
             onEditLastUserMessage={handleEditLastUserMessageClick}
             onChatInputReady={handleChatInputReady}
-            hasQueuedCompaction={Boolean(workspaceState.queuedMessage?.hasCompactionRequest)}
             reviews={reviews}
             onCheckReviews={handleCheckReviews}
           />
@@ -933,14 +1001,12 @@ interface ChatInputPaneProps {
   onContextSwitchCompact: () => void;
   onContextSwitchDismiss: () => void;
   onModelChange?: (model: string) => void;
-  onCompactClick: () => void;
   onMessageSent: (dispatchMode: QueueDispatchMode) => void;
   onTruncateHistory: (percentage?: number) => Promise<void>;
   editingMessage: EditingMessageState | undefined;
   onCancelEdit: () => void;
   onEditLastUserMessage: () => void;
   onChatInputReady: (api: ChatInputAPI) => void;
-  hasQueuedCompaction: boolean;
   reviews: ReviewsState;
   onCheckReviews: (ids: string[]) => void;
 }
@@ -955,7 +1021,6 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
           usagePercentage={props.autoCompactionResult.usagePercentage}
           thresholdPercentage={props.autoCompactionResult.thresholdPercentage}
           isStreaming={props.canInterrupt}
-          onCompactClick={props.onCompactClick}
         />
       )}
       {props.contextSwitchWarning && (
@@ -993,8 +1058,6 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         onEditLastUserMessage={props.onEditLastUserMessage}
         canInterrupt={props.canInterrupt}
         onReady={props.onChatInputReady}
-        autoCompactionCheck={props.autoCompactionResult}
-        hasQueuedCompaction={props.hasQueuedCompaction}
         attachedReviews={reviews.attachedReviews}
         onDetachReview={reviews.detachReview}
         onDetachAllReviews={reviews.detachAllAttached}

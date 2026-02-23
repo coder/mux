@@ -16,7 +16,6 @@ import {
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useAPI } from "@/browser/contexts/API";
-import { disableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
 
 type StreamingPhase =
   | "starting" // Message sent, waiting for stream-start
@@ -152,7 +151,7 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
       return;
     }
 
-    disableAutoRetryPreference(workspaceId);
+    void api.workspace.setAutoRetryEnabled?.({ workspaceId, enabled: false });
 
     if (phase === "compacting") {
       // Reuse the established compaction-cancel flow from keyboard shortcuts so we keep

@@ -8,6 +8,7 @@ export { ResultSchema } from "./schemas/result";
 export {
   RuntimeConfigSchema,
   RuntimeModeSchema,
+  RuntimeEnablementIdSchema,
   RuntimeAvailabilitySchema,
   RuntimeAvailabilityStatusSchema,
   DevcontainerConfigInfoSchema,
@@ -135,6 +136,11 @@ export type { FilePart, MuxFilePart } from "./schemas/message";
 
 // Stream event schemas
 export {
+  AutoCompactionCompletedEventSchema,
+  AutoCompactionTriggeredEventSchema,
+  AutoRetryAbandonedEventSchema,
+  AutoRetryScheduledEventSchema,
+  AutoRetryStartingEventSchema,
   CaughtUpMessageSchema,
   ChatMuxMessageSchema,
   CompletedMessagePartSchema,
@@ -210,6 +216,7 @@ export {
   signing,
   type SigningCapabilities,
   type SignatureEnvelope,
+  ssh,
   terminal,
   tokenizer,
   update,

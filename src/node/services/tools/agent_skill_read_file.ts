@@ -6,6 +6,7 @@ import { tool } from "ai";
 import type { AgentSkillReadFileToolResult } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+import { getErrorMessage } from "@/common/utils/errors";
 import { SkillNameSchema } from "@/common/orpc/schemas";
 import {
   readAgentSkill,
@@ -90,9 +91,6 @@ function readContentWithFileReadLimits(input: {
     lines_read: numberedLines.length,
     content: numberedLines.join("\n"),
   };
-}
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -222,7 +220,7 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
       } catch (error) {
         return {
           success: false,
-          error: `Failed to read file: ${formatError(error)}`,
+          error: `Failed to read file: ${getErrorMessage(error)}`,
         };
       }
     },

@@ -6,8 +6,12 @@ import { UpdaterService, type UpdateStatus } from "./updater";
 const mockAutoUpdater = Object.assign(new EventEmitter(), {
   autoDownload: false,
   autoInstallOnAppQuit: true,
+  channel: "latest",
+  allowPrerelease: false,
   checkForUpdates: mock(() => Promise.resolve()),
   downloadUpdate: mock(() => Promise.resolve()),
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  setFeedURL: mock(() => {}),
   quitAndInstall: mock(() => {
     // Mock implementation - does nothing in tests
   }),
@@ -41,8 +45,11 @@ describe("UpdaterService", () => {
     // Reset mocks
     mockAutoUpdater.checkForUpdates.mockClear();
     mockAutoUpdater.downloadUpdate.mockClear();
+    mockAutoUpdater.setFeedURL.mockClear();
     mockAutoUpdater.quitAndInstall.mockClear();
     mockAutoUpdater.removeAllListeners();
+    mockAutoUpdater.channel = "latest";
+    mockAutoUpdater.allowPrerelease = false;
 
     mockUpdateInstallInProgress = false;
 
@@ -84,6 +91,101 @@ describe("UpdaterService", () => {
         throw new Error(`Expected available status, got: ${status.type}`);
       }
       expect(status.info.version).toBe("0.0.1");
+    });
+  });
+
+  describe("channel management", () => {
+    it("defaults to stable channel", () => {
+      expect(service.getChannel()).toBe("stable");
+      expect(mockAutoUpdater.setFeedURL).toHaveBeenCalledWith({
+        provider: "github",
+        owner: "coder",
+        repo: "mux",
+        releaseType: "release",
+      });
+    });
+
+    it("accepts initial channel 'nightly'", () => {
+      mockAutoUpdater.setFeedURL.mockClear();
+
+      const nightlyService = new UpdaterService("nightly");
+
+      expect(nightlyService.getChannel()).toBe("nightly");
+      expect(mockAutoUpdater.setFeedURL).toHaveBeenCalledWith({
+        provider: "github",
+        owner: "coder",
+        repo: "mux",
+        releaseType: "prerelease",
+      });
+      expect(mockAutoUpdater.allowPrerelease).toBe(true);
+      expect(mockAutoUpdater.channel).toBe("nightly");
+    });
+
+    it("setChannel switches from stable to nightly", () => {
+      mockAutoUpdater.setFeedURL.mockClear();
+      const channelService = new UpdaterService();
+
+      mockAutoUpdater.emit("update-available", { version: "2.0.0" });
+      expect(channelService.getStatus().type).toBe("available");
+
+      channelService.setChannel("nightly");
+
+      expect(channelService.getChannel()).toBe("nightly");
+      expect(mockAutoUpdater.setFeedURL).toHaveBeenLastCalledWith({
+        provider: "github",
+        owner: "coder",
+        repo: "mux",
+        releaseType: "prerelease",
+      });
+      expect(mockAutoUpdater.channel).toBe("nightly");
+      expect(channelService.getStatus()).toEqual({ type: "idle" });
+    });
+
+    it("setChannel throws when checking", () => {
+      mockAutoUpdater.setFeedURL.mockClear();
+      const channelService = new UpdaterService();
+
+      channelService.checkForUpdates();
+
+      expect(() => channelService.setChannel("nightly")).toThrow("checking for updates");
+    });
+
+    it("setChannel throws when downloading", () => {
+      mockAutoUpdater.setFeedURL.mockClear();
+      const channelService = new UpdaterService();
+
+      mockAutoUpdater.emit("download-progress", { percent: 50 });
+
+      expect(() => channelService.setChannel("nightly")).toThrow("downloading an update");
+    });
+
+    it("setChannel throws when downloaded", () => {
+      mockAutoUpdater.setFeedURL.mockClear();
+      const channelService = new UpdaterService();
+
+      mockAutoUpdater.emit("update-downloaded", { version: "2.0.0" });
+
+      expect(() => channelService.setChannel("nightly")).toThrow("ready to install");
+    });
+
+    it("setChannel notifies subscribers on switch", () => {
+      mockAutoUpdater.setFeedURL.mockClear();
+      const channelService = new UpdaterService();
+      const updates: UpdateStatus[] = [];
+
+      channelService.subscribe((status) => updates.push(status));
+      channelService.setChannel("nightly");
+
+      expect(updates).toContainEqual({ type: "idle" });
+    });
+
+    it("setChannel is no-op for same channel", () => {
+      mockAutoUpdater.setFeedURL.mockClear();
+      const channelService = new UpdaterService();
+
+      expect(mockAutoUpdater.setFeedURL).toHaveBeenCalledTimes(1);
+      channelService.setChannel("stable");
+      expect(mockAutoUpdater.setFeedURL).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -324,6 +426,11 @@ describe("UpdaterService", () => {
   });
 
   describe("transient error backoff", () => {
+    const missingNightlyManifestError =
+      'Cannot find latest-mac.yml in the latest release artifacts (https://github.com/coder/mux/releases/download/v0.18.1-nightly.16/latest-mac.yml): HttpError: 404 "method: GET url: https://github.com/coder/mux/releases/download/v0.18.1-nightly.16/latest-mac.yml\n\nPlease double check that your authentication token is correct.\n" Headers: { ... }\n    at createHttpError (/path/httpExecutor.ts:31:10)';
+    const nightlyManifestPendingMessage =
+      "Update metadata isn't available yet. The latest release may still be publishing; please try again in a few minutes.";
+
     it("should silently back off on 404 (latest.yml missing) for auto checks", async () => {
       mockAutoUpdater.checkForUpdates.mockImplementation(() => {
         setImmediate(() => {
@@ -359,6 +466,26 @@ describe("UpdaterService", () => {
         type: "error",
         phase: "check",
         message: "HttpError: 404 Not Found",
+      });
+    });
+
+    it("should show a friendly message for missing nightly update metadata", async () => {
+      mockAutoUpdater.checkForUpdates.mockImplementation(() => {
+        setImmediate(() => {
+          mockAutoUpdater.emit("error", new Error(missingNightlyManifestError));
+        });
+        return new Promise(() => {
+          // Never resolves — events drive state
+        });
+      });
+
+      service.checkForUpdates({ source: "manual" });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(statusUpdates[statusUpdates.length - 1]).toEqual({
+        type: "error",
+        phase: "check",
+        message: nightlyManifestPendingMessage,
       });
     });
 
@@ -502,6 +629,21 @@ describe("UpdaterService", () => {
       const lastStatus = statusUpdates[statusUpdates.length - 1];
       expect(lastStatus).toEqual({ type: "idle" });
       expect(statusUpdates.find((s) => s.type === "error")).toBeUndefined();
+    });
+
+    it("should show a friendly message when promise rejects for missing nightly metadata", async () => {
+      mockAutoUpdater.checkForUpdates.mockImplementation(() => {
+        return Promise.reject(new Error(missingNightlyManifestError));
+      });
+
+      service.checkForUpdates({ source: "manual" });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(statusUpdates[statusUpdates.length - 1]).toEqual({
+        type: "error",
+        phase: "check",
+        message: nightlyManifestPendingMessage,
+      });
     });
   });
 

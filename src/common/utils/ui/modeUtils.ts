@@ -61,5 +61,5 @@ If the user suggests that you should make edits to other files, ask them to swit
 export function getPlanFileHint(planFilePath: string, planExists: boolean): string | null {
   if (!planExists) return null;
 
-  return `A plan file exists at: ${planFilePath}. If the plan is already included in the chat history (e.g., after “Replace all chat history with this plan”), do NOT re-read the plan file. Otherwise, if you are continuing previous work—especially after any compaction/context reset (when earlier messages are replaced by a summary)—you MUST read it before proceeding and use it as the source of truth for what remains. If it is unrelated to the current request, ignore it.`;
+  return `A plan file exists at: ${planFilePath}. If the plan is already included in the chat history (e.g., after “Replace all chat history with this plan” or a <plan> block from an agent transition), do NOT re-read the plan file. Otherwise, if you are continuing previous work—especially after any compaction/context reset (when earlier messages are replaced by a summary)—read it before proceeding and use it as the source of truth for what remains. If it is unrelated to the current request, ignore it.`;
 }

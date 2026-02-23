@@ -1,3 +1,5 @@
+import type { ProvidersConfigMap } from "@/common/orpc/types";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import modelsData from "./models.json";
 import { modelsExtra } from "./models-extra";
 import { normalizeGatewayModel } from "../ai/models";
@@ -125,4 +127,12 @@ export function getModelStats(modelString: string): ModelStats | null {
   }
 
   return null;
+}
+
+export function getModelStatsResolved(
+  modelString: string,
+  providersConfig: ProvidersConfigMap | null
+): ModelStats | null {
+  const metadataModel = resolveModelForMetadata(modelString, providersConfig);
+  return getModelStats(metadataModel);
 }

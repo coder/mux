@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
-import { createMuxMessage } from "@/common/types/message";
+import { createMuxMessage, type DisplayedMessage } from "@/common/types/message";
+import { MAX_HISTORY_HIDDEN_SEGMENTS } from "./transcriptTruncationPlan";
 import { StreamingMessageAggregator } from "./StreamingMessageAggregator";
 
 // Test helper: create aggregator with default createdAt for tests
@@ -315,18 +316,23 @@ describe("StreamingMessageAggregator", () => {
       // In those 336: user messages are kept, while assistant/tool/reasoning may be omitted.
       const capped = aggregator.getDisplayedMessages();
 
-      // Verify history-hidden marker is present (some tool calls were filtered)
-      const hiddenIndex = capped.findIndex((msg) => msg.type === "history-hidden");
-      expect(hiddenIndex).toBeGreaterThan(0);
-      expect(hiddenIndex).toBeLessThan(capped.length - 1);
-      if (hiddenIndex !== -1) {
-        expect(capped[hiddenIndex - 1]?.type).toBe("user");
-        expect(capped[hiddenIndex + 1]?.type).toBe("user");
-        expect(capped[hiddenIndex]?.type).toBe("history-hidden");
-        if (capped[hiddenIndex]?.type === "history-hidden") {
-          expect(capped[hiddenIndex].hiddenCount).toBeGreaterThan(0);
+      const expectedHiddenCount = 252;
+      const hiddenMessages = capped.filter(
+        (msg): msg is Extract<DisplayedMessage, { type: "history-hidden" }> => {
+          return msg.type === "history-hidden";
         }
-      }
+      );
+      expect(hiddenMessages).toHaveLength(MAX_HISTORY_HIDDEN_SEGMENTS);
+      expect(hiddenMessages.every((msg) => msg.hiddenCount > 0)).toBe(true);
+      expect(hiddenMessages.reduce((sum, msg) => sum + msg.hiddenCount, 0)).toBe(
+        expectedHiddenCount
+      );
+
+      const firstHiddenIndex = capped.findIndex((msg) => msg.type === "history-hidden");
+      expect(firstHiddenIndex).toBeGreaterThan(0);
+      expect(firstHiddenIndex).toBeLessThan(capped.length - 1);
+      expect(capped[firstHiddenIndex - 1]?.type).toBe("user");
+      expect(capped[firstHiddenIndex + 1]?.type).toBe("user");
 
       // User prompts remain fully visible; older assistant rows can be omitted.
       const userMessages = capped.filter((m) => m.type === "user");
@@ -344,8 +350,82 @@ describe("StreamingMessageAggregator", () => {
       expect(displayed.some((m) => m.type === "history-hidden")).toBe(false);
     });
 
+    test("should cap history-hidden markers for alternating user/assistant history", () => {
+      // Alternating user/assistant history creates many tiny omission runs.
+      // We preserve locality for recent runs while capping marker rows to keep DOM size bounded.
+      const manyMessages: Parameters<
+        typeof StreamingMessageAggregator.prototype.loadHistoricalMessages
+      >[0] = [];
+
+      for (let i = 0; i < 200; i++) {
+        const baseSequence = i * 2;
+        manyMessages.push(
+          createMuxMessage(`u${i}`, "user", `msg-${i}`, {
+            timestamp: baseSequence,
+            historySequence: baseSequence,
+          })
+        );
+        manyMessages.push(
+          createMuxMessage(`a${i}`, "assistant", `response-${i}`, {
+            historySequence: baseSequence + 1,
+            timestamp: baseSequence + 1,
+            model: "claude-3-5-sonnet-20241022",
+          })
+        );
+      }
+
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      aggregator.loadHistoricalMessages(manyMessages, false);
+
+      const displayed = aggregator.getDisplayedMessages();
+      const hiddenMarkers = displayed.filter(
+        (msg): msg is Extract<DisplayedMessage, { type: "history-hidden" }> => {
+          return msg.type === "history-hidden";
+        }
+      );
+
+      expect(hiddenMarkers).toHaveLength(MAX_HISTORY_HIDDEN_SEGMENTS);
+      expect(hiddenMarkers.reduce((sum, marker) => sum + marker.hiddenCount, 0)).toBe(168);
+
+      const hiddenIndices = displayed
+        .map((msg, index) => (msg.type === "history-hidden" ? index : -1))
+        .filter((index) => index !== -1);
+      for (const hiddenIndex of hiddenIndices) {
+        expect(hiddenIndex).toBeGreaterThan(0);
+        expect(hiddenIndex).toBeLessThan(displayed.length - 1);
+        expect(displayed[hiddenIndex - 1]?.type).toBe("user");
+        expect(displayed[hiddenIndex + 1]?.type).toBe("user");
+      }
+
+      const userMessages = displayed.filter(
+        (msg): msg is Extract<DisplayedMessage, { type: "user" }> => {
+          return msg.type === "user";
+        }
+      );
+      expect(userMessages).toHaveLength(200);
+
+      // Rendered rows stay well below full history size because hidden markers are capped.
+      expect(displayed.length).toBeLessThan(260);
+    });
+
+    test("should not show history-hidden when messages are below truncation threshold", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      aggregator.loadHistoricalMessages(
+        [
+          createMuxMessage("u1", "user", "first", { historySequence: 1, timestamp: 1 }),
+          createMuxMessage("u2", "user", "second", { historySequence: 2, timestamp: 2 }),
+          createMuxMessage("u3", "user", "third", { historySequence: 3, timestamp: 3 }),
+        ],
+        false
+      );
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed).toHaveLength(3);
+      expect(displayed.some((msg) => msg.type === "history-hidden")).toBe(false);
+    });
+
     test("should not show history-hidden when only user messages exceed cap", () => {
-      // When all messages are user/assistant (always-keep types), no filtering occurs
+      // When all messages are user rows (always-keep type), no filtering occurs
       const manyMessages = Array.from({ length: 200 }, (_, i) =>
         createMuxMessage(`u${i}`, "user", `msg-${i}`, {
           timestamp: i,
@@ -773,7 +853,7 @@ describe("StreamingMessageAggregator", () => {
       type: "message" as const,
     });
 
-    test("does not prune on first compaction (no penultimate boundary exists)", () => {
+    test("prunes older messages on first compaction and keeps the new boundary", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
       // Simulate messages accumulated during a live session (no prior compaction)
@@ -793,7 +873,6 @@ describe("StreamingMessageAggregator", () => {
       aggregator.handleMessage(msg1);
       aggregator.handleMessage(msg2);
 
-      // First compaction boundary arrives — no penultimate boundary to prune to
       const summary = asChatMessage(
         createMuxMessage("summary-1", "assistant", "Compacted summary", {
           historySequence: 2,
@@ -805,12 +884,14 @@ describe("StreamingMessageAggregator", () => {
       );
       aggregator.handleMessage(summary);
 
-      // All messages retained (first compaction, no penultimate boundary)
+      // Existing messages with sequence < incoming boundary (2) are pruned.
+      // The incoming boundary itself is appended after pruning and remains visible.
       const remaining = aggregator.getAllMessages();
-      expect(remaining).toHaveLength(3);
+      expect(remaining).toHaveLength(1);
+      expect(remaining.map((m) => m.id)).toEqual(["summary-1"]);
     });
 
-    test("prunes pre-penultimate messages on second compaction", () => {
+    test("keeps only the latest boundary epoch start on subsequent compactions", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
       // Epoch 0 messages (before any compaction)
@@ -843,10 +924,11 @@ describe("StreamingMessageAggregator", () => {
       );
       aggregator.handleMessage(epoch1Msg);
 
-      // All 3 messages visible before second compaction
-      expect(aggregator.getAllMessages()).toHaveLength(3);
+      // First boundary already pruned epoch 0; boundary-1 + epoch1-user remain.
+      expect(aggregator.getAllMessages()).toHaveLength(2);
 
-      // Second compaction boundary (epoch 2) — should prune everything before boundary-1
+      // Second compaction boundary (epoch 2): existing messages with sequence < 3
+      // are pruned, then boundary-2 is appended.
       const boundary2 = asChatMessage(
         createMuxMessage("boundary-2", "assistant", "Summary epoch 2", {
           historySequence: 3,
@@ -858,11 +940,46 @@ describe("StreamingMessageAggregator", () => {
       );
       aggregator.handleMessage(boundary2);
 
-      // epoch0-user (seq 0) is before penultimate boundary (seq 1), so it's pruned.
-      // Remaining: boundary-1 (seq 1), epoch1-user (seq 2), boundary-2 (seq 3)
       const remaining = aggregator.getAllMessages();
-      expect(remaining).toHaveLength(3);
-      expect(remaining.map((m) => m.id)).toEqual(["boundary-1", "epoch1-user", "boundary-2"]);
+      expect(remaining).toHaveLength(1);
+      expect(remaining.map((m) => m.id)).toEqual(["boundary-2"]);
+    });
+
+    test("updates reconnect cursor floor when a live compaction boundary arrives", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      // Simulate initial replay window starting at historySequence 40.
+      aggregator.loadHistoricalMessages(
+        [
+          createMuxMessage("history-40", "user", "Historical user", {
+            historySequence: 40,
+            timestamp: 40,
+          }),
+          createMuxMessage("history-41", "assistant", "Historical assistant", {
+            historySequence: 41,
+            timestamp: 41,
+          }),
+        ],
+        false,
+        { mode: "replace" }
+      );
+
+      const beforeCompactionCursor = aggregator.getOnChatCursor();
+      expect(beforeCompactionCursor?.history?.oldestHistorySequence).toBe(40);
+
+      const boundary = asChatMessage(
+        createMuxMessage("boundary-60", "assistant", "Summary epoch 60", {
+          historySequence: 60,
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 60,
+          muxMetadata: { type: "compaction-summary" },
+        })
+      );
+      aggregator.handleMessage(boundary);
+
+      const afterCompactionCursor = aggregator.getOnChatCursor();
+      expect(afterCompactionCursor?.history?.oldestHistorySequence).toBe(60);
     });
 
     test("does not prune messages when a non-boundary message arrives", () => {
@@ -1103,6 +1220,150 @@ describe("StreamingMessageAggregator", () => {
 
       const afterReplayCursor = aggregator.getOnChatCursor();
       expect(afterReplayCursor?.stream?.lastTimestamp).toBe(deltaTimestamp);
+    });
+
+    test("marks streamed assistant rows as replay presentation when stream-start is replayed", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-replay-presentation",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+        startTime: 1_000,
+        replay: true,
+      });
+
+      aggregator.handleStreamDelta({
+        type: "stream-delta",
+        workspaceId: "test-workspace",
+        messageId: "msg-replay-presentation",
+        delta: "replayed partial",
+        tokens: 1,
+        timestamp: 1_100,
+        replay: true,
+      });
+
+      const displayed = aggregator.getDisplayedMessages();
+      const assistant = displayed.find(
+        (message): message is Extract<(typeof displayed)[number], { type: "assistant" }> =>
+          message.type === "assistant" && message.historyId === "msg-replay-presentation"
+      );
+
+      expect(assistant).toBeDefined();
+      expect(assistant?.streamPresentation).toEqual({ source: "replay" });
+    });
+    test("switches streaming presentation from replay to live when non-replay delta arrives", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      // Reconnect: stream-start with replay flag
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-replay-to-live",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+        startTime: 1_000,
+        replay: true,
+      });
+
+      // Replay catch-up delta (tagged with replay)
+      aggregator.handleStreamDelta({
+        type: "stream-delta",
+        workspaceId: "test-workspace",
+        messageId: "msg-replay-to-live",
+        delta: "cached ",
+        tokens: 1,
+        timestamp: 1_100,
+        replay: true,
+      });
+
+      // During replay: source should be "replay"
+      const duringReplay = aggregator.getDisplayedMessages();
+      const replayRow = duringReplay.find(
+        (message): message is Extract<(typeof duringReplay)[number], { type: "assistant" }> =>
+          message.type === "assistant" && message.historyId === "msg-replay-to-live"
+      );
+      expect(replayRow?.streamPresentation).toEqual({ source: "replay" });
+
+      // Fresh live delta (no replay flag) — catch-up is over
+      aggregator.handleStreamDelta({
+        type: "stream-delta",
+        workspaceId: "test-workspace",
+        messageId: "msg-replay-to-live",
+        delta: "fresh tokens",
+        tokens: 2,
+        timestamp: 1_200,
+      });
+
+      // After live resume: source should flip to "live"
+      const afterLive = aggregator.getDisplayedMessages();
+      const liveRow = afterLive.find(
+        (message): message is Extract<(typeof afterLive)[number], { type: "assistant" }> =>
+          message.type === "assistant" && message.historyId === "msg-replay-to-live"
+      );
+      expect(liveRow?.streamPresentation).toEqual({ source: "live" });
+    });
+
+    test("does not exit replay phase on non-replay tool events arriving before replay text drains", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      // Reconnect: stream-start with replay flag
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-tool-during-replay",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+        startTime: 1_000,
+        replay: true,
+      });
+
+      // Replay catch-up delta
+      aggregator.handleStreamDelta({
+        type: "stream-delta",
+        workspaceId: "test-workspace",
+        messageId: "msg-tool-during-replay",
+        delta: "cached ",
+        tokens: 1,
+        timestamp: 1_100,
+        replay: true,
+      });
+
+      // Non-replay tool event arrives before replay text finishes draining.
+      // Tool events are not buffered by the reconnect relay, so they can
+      // arrive without the replay flag even while replay text is still in-flight.
+      aggregator.handleToolCallStart({
+        type: "tool-call-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-tool-during-replay",
+        toolCallId: "tool-1",
+        toolName: "bash",
+        args: { command: "echo hi" },
+        tokens: 1,
+        timestamp: 1_150,
+      });
+
+      // Another replay delta arrives (still part of catch-up)
+      aggregator.handleStreamDelta({
+        type: "stream-delta",
+        workspaceId: "test-workspace",
+        messageId: "msg-tool-during-replay",
+        delta: "tail",
+        tokens: 1,
+        timestamp: 1_200,
+        replay: true,
+      });
+
+      // Source must still be "replay" — tool event must not have flipped it
+      const displayed = aggregator.getDisplayedMessages();
+      const assistantRows = displayed.filter(
+        (message): message is Extract<(typeof displayed)[number], { type: "assistant" }> =>
+          message.type === "assistant" && message.historyId === "msg-tool-during-replay"
+      );
+      const assistant = assistantRows.at(-1);
+      expect(assistant?.streamPresentation).toEqual({ source: "replay" });
     });
   });
 

@@ -11,6 +11,7 @@ import type {
   ProjectConfig,
   ProjectsConfig,
   FeatureFlagOverride,
+  UpdateChannel,
 } from "@/common/types/project";
 import {
   DEFAULT_TASK_SETTINGS,
@@ -19,6 +20,7 @@ import {
 } from "@/common/types/tasks";
 import { isLayoutPresetsConfigEmpty, normalizeLayoutPresetsConfig } from "@/common/types/uiLayouts";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
+import { RUNTIME_ENABLEMENT_IDS, type RuntimeEnablementId } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { getMuxHome } from "@/common/constants/paths";
@@ -69,6 +71,14 @@ function parseOptionalEnvBoolean(value: unknown): boolean | undefined {
 }
 function parseOptionalBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
+}
+
+function parseUpdateChannel(value: unknown): UpdateChannel | undefined {
+  if (value === "stable" || value === "nightly") {
+    return value;
+  }
+
+  return undefined;
 }
 
 function parseOptionalStringArray(value: unknown): string[] | undefined {
@@ -131,6 +141,78 @@ function parseOptionalPort(value: unknown): number | undefined {
 
   return value;
 }
+
+function normalizeRuntimeEnablementId(value: unknown): RuntimeEnablementId | undefined {
+  const trimmed = parseOptionalNonEmptyString(value);
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const normalized = trimmed.toLowerCase();
+  if (RUNTIME_ENABLEMENT_IDS.includes(normalized as RuntimeEnablementId)) {
+    return normalized as RuntimeEnablementId;
+  }
+
+  return undefined;
+}
+
+function normalizeRuntimeEnablementOverrides(
+  value: unknown
+): Partial<Record<RuntimeEnablementId, false>> | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const overrides: Partial<Record<RuntimeEnablementId, false>> = {};
+
+  for (const runtimeId of RUNTIME_ENABLEMENT_IDS) {
+    // Default ON: store `false` only so config.json stays minimal.
+    if (record[runtimeId] === false) {
+      overrides[runtimeId] = false;
+    }
+  }
+
+  return Object.keys(overrides).length > 0 ? overrides : undefined;
+}
+
+function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectConfig {
+  // Per-project runtime overrides are optional; keep config.json sparse by persisting only explicit
+  // overrides (false enablement + explicit default runtime selections).
+  if (!projectConfig || typeof projectConfig !== "object") {
+    return { workspaces: [] };
+  }
+
+  const record = projectConfig as ProjectConfig & {
+    runtimeEnablement?: unknown;
+    defaultRuntime?: unknown;
+    runtimeOverridesEnabled?: unknown;
+  };
+  const runtimeEnablement = normalizeRuntimeEnablementOverrides(record.runtimeEnablement);
+  const defaultRuntime = normalizeRuntimeEnablementId(record.defaultRuntime);
+  const runtimeOverridesEnabled = record.runtimeOverridesEnabled === true ? true : undefined;
+
+  const next = { ...record };
+  if (runtimeEnablement) {
+    next.runtimeEnablement = runtimeEnablement;
+  } else {
+    delete next.runtimeEnablement;
+  }
+
+  if (runtimeOverridesEnabled) {
+    next.runtimeOverridesEnabled = runtimeOverridesEnabled;
+  } else {
+    delete next.runtimeOverridesEnabled;
+  }
+
+  if (defaultRuntime) {
+    next.defaultRuntime = defaultRuntime;
+  } else {
+    delete next.defaultRuntime;
+  }
+
+  return next;
+}
 export type ProvidersConfig = Record<string, ProviderConfig>;
 
 /**
@@ -185,6 +267,10 @@ export class Config {
           muxGovernorUrl?: unknown;
           muxGovernorToken?: unknown;
           stopCoderWorkspaceOnArchive?: unknown;
+          terminalDefaultShell?: unknown;
+          updateChannel?: unknown;
+          runtimeEnablement?: unknown;
+          defaultRuntime?: unknown;
         };
 
         // Config is stored as array of [path, config] pairs
@@ -202,7 +288,11 @@ export class Config {
               return true;
             })
             .map(([projectPath, projectConfig]) => {
-              return [stripTrailingSlashes(projectPath), projectConfig] as [string, ProjectConfig];
+              const normalizedProjectConfig = normalizeProjectRuntimeSettings(projectConfig);
+              return [stripTrailingSlashes(projectPath), normalizedProjectConfig] as [
+                string,
+                ProjectConfig,
+              ];
             });
           const projectsMap = new Map<string, ProjectConfig>(normalizedPairs);
 
@@ -221,6 +311,10 @@ export class Config {
           // Default ON: store `false` only so config.json stays minimal.
           const stopCoderWorkspaceOnArchive =
             parseOptionalBoolean(parsed.stopCoderWorkspaceOnArchive) === false ? false : undefined;
+          const updateChannel = parseUpdateChannel(parsed.updateChannel);
+
+          const runtimeEnablement = normalizeRuntimeEnablementOverrides(parsed.runtimeEnablement);
+          const defaultRuntime = normalizeRuntimeEnablementId(parsed.defaultRuntime);
 
           const agentAiDefaults =
             parsed.agentAiDefaults !== undefined
@@ -260,6 +354,10 @@ export class Config {
             muxGovernorUrl: parseOptionalNonEmptyString(parsed.muxGovernorUrl),
             muxGovernorToken: parseOptionalNonEmptyString(parsed.muxGovernorToken),
             stopCoderWorkspaceOnArchive,
+            terminalDefaultShell: parseOptionalNonEmptyString(parsed.terminalDefaultShell),
+            updateChannel,
+            defaultRuntime,
+            runtimeEnablement,
           };
         }
       }
@@ -307,8 +405,15 @@ export class Config {
         muxGovernorUrl?: string;
         muxGovernorToken?: string;
         stopCoderWorkspaceOnArchive?: boolean;
+        terminalDefaultShell?: string;
+        updateChannel?: UpdateChannel;
+        runtimeEnablement?: ProjectsConfig["runtimeEnablement"];
+        defaultRuntime?: ProjectsConfig["defaultRuntime"];
       } = {
-        projects: Array.from(config.projects.entries()),
+        projects: Array.from(config.projects.entries()).map(
+          ([projectPath, projectConfig]) =>
+            [projectPath, normalizeProjectRuntimeSettings(projectConfig)] as [string, ProjectConfig]
+        ),
         taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
       };
 
@@ -423,6 +528,26 @@ export class Config {
         data.stopCoderWorkspaceOnArchive = false;
       }
 
+      const terminalDefaultShell = parseOptionalNonEmptyString(config.terminalDefaultShell);
+      if (terminalDefaultShell) {
+        data.terminalDefaultShell = terminalDefaultShell;
+      }
+
+      const updateChannel = parseUpdateChannel(config.updateChannel);
+      if (updateChannel) {
+        data.updateChannel = updateChannel;
+      }
+
+      const runtimeEnablement = normalizeRuntimeEnablementOverrides(config.runtimeEnablement);
+      if (runtimeEnablement) {
+        data.runtimeEnablement = runtimeEnablement;
+      }
+
+      const defaultRuntime = normalizeRuntimeEnablementId(config.defaultRuntime);
+      if (defaultRuntime !== undefined) {
+        data.defaultRuntime = defaultRuntime;
+      }
+
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
     } catch (error) {
       log.error("Error saving config:", error);
@@ -437,6 +562,18 @@ export class Config {
     const config = this.loadConfigOrDefault();
     const newConfig = fn(config);
     await this.saveConfig(newConfig);
+  }
+
+  getUpdateChannel(): UpdateChannel {
+    const config = this.loadConfigOrDefault();
+    return config.updateChannel === "nightly" ? "nightly" : "stable";
+  }
+
+  async setUpdateChannel(channel: UpdateChannel): Promise<void> {
+    await this.editConfig((config) => {
+      config.updateChannel = channel;
+      return config;
+    });
   }
 
   /**
@@ -704,6 +841,7 @@ export class Config {
                   : undefined),
               parentWorkspaceId: workspace.parentWorkspaceId,
               agentType: workspace.agentType,
+              agentSwitchingEnabled: workspace.agentSwitchingEnabled,
               taskStatus: workspace.taskStatus,
               reportedAt: workspace.reportedAt,
               taskModelString: workspace.taskModelString,
@@ -790,6 +928,7 @@ export class Config {
             // Preserve tree/task metadata when present in config (metadata.json won't have it)
             metadata.parentWorkspaceId ??= workspace.parentWorkspaceId;
             metadata.agentType ??= workspace.agentType;
+            metadata.agentSwitchingEnabled ??= workspace.agentSwitchingEnabled;
             metadata.taskStatus ??= workspace.taskStatus;
             metadata.reportedAt ??= workspace.reportedAt;
             metadata.taskModelString ??= workspace.taskModelString;
@@ -840,6 +979,7 @@ export class Config {
                   : undefined),
               parentWorkspaceId: workspace.parentWorkspaceId,
               agentType: workspace.agentType,
+              agentSwitchingEnabled: workspace.agentSwitchingEnabled,
               taskStatus: workspace.taskStatus,
               reportedAt: workspace.reportedAt,
               taskModelString: workspace.taskModelString,
@@ -884,6 +1024,7 @@ export class Config {
                 : undefined),
             parentWorkspaceId: workspace.parentWorkspaceId,
             agentType: workspace.agentType,
+            agentSwitchingEnabled: workspace.agentSwitchingEnabled,
             taskStatus: workspace.taskStatus,
             reportedAt: workspace.reportedAt,
             taskModelString: workspace.taskModelString,
@@ -944,6 +1085,7 @@ export class Config {
         parentWorkspaceId: metadata.parentWorkspaceId,
         agentType: metadata.agentType,
         agentId: metadata.agentId,
+        agentSwitchingEnabled: metadata.agentSwitchingEnabled,
         taskStatus: metadata.taskStatus,
         reportedAt: metadata.reportedAt,
         taskModelString: metadata.taskModelString,
@@ -999,7 +1141,7 @@ export class Config {
    */
   async updateWorkspaceMetadata(
     workspaceId: string,
-    updates: Partial<Pick<WorkspaceMetadata, "name" | "runtimeConfig">>
+    updates: Partial<Pick<WorkspaceMetadata, "name" | "runtimeConfig" | "agentSwitchingEnabled">>
   ): Promise<void> {
     await this.editConfig((config) => {
       for (const [_projectPath, projectConfig] of config.projects) {
@@ -1007,6 +1149,9 @@ export class Config {
         if (workspace) {
           if (updates.name !== undefined) workspace.name = updates.name;
           if (updates.runtimeConfig !== undefined) workspace.runtimeConfig = updates.runtimeConfig;
+          if (updates.agentSwitchingEnabled !== undefined) {
+            workspace.agentSwitchingEnabled = updates.agentSwitchingEnabled;
+          }
           return config;
         }
       }

@@ -1,10 +1,12 @@
 import { Check, Eye, Info, Pencil, Star, Trash2, X } from "lucide-react";
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { GatewayToggleButton } from "@/browser/components/GatewayToggleButton";
-import { cn } from "@/common/lib/utils";
+import { SearchableModelSelect } from "@/browser/components/Settings/components/SearchableModelSelect";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
-import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import { Button } from "@/browser/components/ui/button";
+import { ProviderIcon, ProviderWithIcon } from "@/browser/components/ProviderIcon";
+import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
+import { cn } from "@/common/lib/utils";
 import { getModelStats, type ModelStats } from "@/common/utils/tokens/modelStats";
 
 /** Format tokens as human-readable string (e.g. 200000 -> "200k") */
@@ -162,8 +164,11 @@ export interface ModelRowProps {
   isEditing: boolean;
   editModelValue?: string;
   editContextValue?: string;
+  editMappedToModel?: string;
   editAutofocus?: "model" | "context";
   customContextWindowTokens?: number | null;
+  mappedToModel?: string | null;
+  allModels?: string[];
   editError?: string | null;
   saving?: boolean;
   hasActiveEdit?: boolean;
@@ -180,6 +185,7 @@ export interface ModelRowProps {
   onCancelEdit?: () => void;
   onEditModelChange?: (value: string) => void;
   onEditContextChange?: (value: string) => void;
+  onEditMappedToModelChange?: (value: string) => void;
   onRemove?: () => void;
   /** Toggle gateway mode for this model */
   onToggleGateway?: () => void;
@@ -190,66 +196,88 @@ export interface ModelRowProps {
 }
 
 export function ModelRow(props: ModelRowProps) {
-  const stats = getModelStats(props.fullId);
+  const stats = getModelStats(props.mappedToModel ?? props.fullId);
 
   const contextBaseTokens = props.customContextWindowTokens ?? stats?.max_input_tokens ?? null;
+  const mappedProvider = props.mappedToModel ? props.mappedToModel.split(":")[0] || null : null;
+  // Use slice after the first colon to preserve any additional colons in the model ID
+  // (e.g. "ollama:gpt-oss:20b" → "gpt-oss:20b", not "gpt-oss").
+  const mappedModelId = props.mappedToModel
+    ? props.mappedToModel.slice(props.mappedToModel.indexOf(":") + 1) || props.mappedToModel
+    : null;
+  const mappedModelDisplayName = mappedModelId ? formatModelDisplayName(mappedModelId) : null;
 
   // Editing mode - render as a full-width row
   if (props.isEditing) {
     return (
       <tr className="border-border-medium border-b">
         <td colSpan={4} className="px-2 py-1.5 md:px-3">
-          <div className="flex items-center gap-2">
-            <ProviderWithIcon
-              provider={props.provider}
-              displayName
-              className="text-muted w-16 shrink-0 overflow-hidden text-xs md:w-20"
-            />
-            <input
-              type="text"
-              value={props.editModelValue ?? props.modelId}
-              onChange={(e) => props.onEditModelChange?.(e.target.value)}
-              onKeyDown={createEditKeyHandler({
-                onSave: () => props.onSaveEdit?.(),
-                onCancel: () => props.onCancelEdit?.(),
-              })}
-              className="bg-modal-bg border-border-medium focus:border-accent min-w-0 flex-1 rounded border px-2 py-0.5 font-mono text-xs focus:outline-none"
-              autoFocus={props.editAutofocus !== "context"}
-            />
-            <input
-              type="text"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              value={props.editContextValue ?? ""}
-              onChange={(e) => props.onEditContextChange?.(e.target.value)}
-              onKeyDown={createEditKeyHandler({
-                onSave: () => props.onSaveEdit?.(),
-                onCancel: () => props.onCancelEdit?.(),
-              })}
-              className="bg-modal-bg border-border-medium focus:border-accent w-28 shrink-0 rounded border px-2 py-0.5 text-right font-mono text-xs focus:outline-none"
-              placeholder="context"
-              autoFocus={props.editAutofocus === "context"}
-            />
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={props.onSaveEdit}
-              disabled={props.saving}
-              className="text-accent hover:text-accent-dark h-6 w-6"
-              title="Save changes (Enter)"
-            >
-              <Check className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={props.onCancelEdit}
-              disabled={props.saving}
-              className="text-muted hover:text-foreground h-6 w-6"
-              title="Cancel (Escape)"
-            >
-              <X className="h-3.5 w-3.5" />
-            </Button>
+          <div>
+            <div className="flex items-center gap-2">
+              <ProviderWithIcon
+                provider={props.provider}
+                displayName
+                className="text-muted w-16 shrink-0 overflow-hidden text-xs md:w-20"
+              />
+              <input
+                type="text"
+                value={props.editModelValue ?? props.modelId}
+                onChange={(e) => props.onEditModelChange?.(e.target.value)}
+                onKeyDown={createEditKeyHandler({
+                  onSave: () => props.onSaveEdit?.(),
+                  onCancel: () => props.onCancelEdit?.(),
+                })}
+                className="bg-modal-bg border-border-medium focus:border-accent min-w-0 flex-1 rounded border px-2 py-0.5 font-mono text-xs focus:outline-none"
+                autoFocus={props.editAutofocus !== "context"}
+              />
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={props.editContextValue ?? ""}
+                onChange={(e) => props.onEditContextChange?.(e.target.value)}
+                onKeyDown={createEditKeyHandler({
+                  onSave: () => props.onSaveEdit?.(),
+                  onCancel: () => props.onCancelEdit?.(),
+                })}
+                className="bg-modal-bg border-border-medium focus:border-accent w-28 shrink-0 rounded border px-2 py-0.5 text-right font-mono text-xs focus:outline-none"
+                placeholder="context"
+                autoFocus={props.editAutofocus === "context"}
+              />
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={props.onSaveEdit}
+                disabled={props.saving}
+                className="text-accent hover:text-accent-dark h-6 w-6"
+                title="Save changes (Enter)"
+              >
+                <Check className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={props.onCancelEdit}
+                disabled={props.saving}
+                className="text-muted hover:text-foreground h-6 w-6"
+                title="Cancel (Escape)"
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+            {props.isCustom && props.allModels && (
+              <div className="mt-1.5 flex items-center gap-2">
+                <span className="text-muted w-16 shrink-0 text-xs md:w-20">Treat as</span>
+                <SearchableModelSelect
+                  value={props.editMappedToModel ?? ""}
+                  onChange={(value) => props.onEditMappedToModelChange?.(value)}
+                  models={props.allModels}
+                  placeholder="Select model..."
+                  emptyOption={{ value: "", label: "None (use own metadata)" }}
+                  compact
+                />
+              </div>
+            )}
           </div>
           {props.editError && <div className="text-error mt-1 text-xs">{props.editError}</div>}
         </td>
@@ -279,6 +307,15 @@ export function ModelRow(props: ModelRowProps) {
           <span className="text-foreground min-w-0 truncate font-mono text-xs">
             {props.modelId}
           </span>
+          {mappedModelDisplayName && (
+            <span className="text-muted ml-1 flex shrink-0 items-center gap-1 text-[10px]">
+              →
+              {mappedProvider && (
+                <ProviderIcon provider={mappedProvider} className="text-muted h-3 w-3" />
+              )}
+              {mappedModelDisplayName}
+            </span>
+          )}
           {props.aliases && props.aliases.length > 0 && (
             <span className="text-muted-light shrink-0 text-xs">({props.aliases[0]})</span>
           )}

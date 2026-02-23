@@ -10,11 +10,10 @@ import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { FilePart, ProviderModelEntry, SendMessageOptions } from "@/common/orpc/types";
 import {
-  type MuxFrontendMetadata,
+  type MuxMessageMetadata,
   type CompactionRequestData,
   type CompactionFollowUpRequest,
   type CompactionFollowUpInput,
-  isDefaultSourceContent,
   pickPreservedSendOptions,
 } from "@/common/types/message";
 import type { ReviewNoteData } from "@/common/types/review";
@@ -40,13 +39,10 @@ import type { QueueDispatchMode } from "@/browser/components/ChatInput/types";
 import type { ChatAttachment } from "../components/ChatAttachments";
 import { dispatchWorkspaceSwitch } from "./workspaceEvents";
 import { getRuntimeKey, copyWorkspaceStorage } from "@/common/constants/storage";
-import {
-  DEFAULT_COMPACTION_WORD_TARGET,
-  WORDS_TO_TOKENS_RATIO,
-  buildCompactionPrompt,
-} from "@/common/constants/ui";
+import { buildCompactionMessageText } from "@/common/utils/compaction/compactionPrompt";
 import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
 import { openInEditor } from "@/browser/utils/openInEditor";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 // ============================================================================
 // Workspace Creation
@@ -773,16 +769,9 @@ export interface CompactionResult {
  */
 export function prepareCompactionMessage(options: CompactionOptions): {
   messageText: string;
-  metadata: MuxFrontendMetadata;
+  metadata: MuxMessageMetadata;
   sendOptions: SendMessageOptions;
 } {
-  const targetWords = options.maxOutputTokens
-    ? Math.round(options.maxOutputTokens / WORDS_TO_TOKENS_RATIO)
-    : DEFAULT_COMPACTION_WORD_TARGET;
-
-  // Build compaction message with optional continue context
-  let messageText = buildCompactionPrompt(targetWords);
-
   // followUpContent is the content that will be auto-sent after compaction.
   // For forced compaction (no explicit follow-up), we inject a short resume sentinel ("Continue").
   // Keep that sentinel out of the *compaction prompt* (summarization request), otherwise the model can
@@ -815,15 +804,17 @@ export function prepareCompactionMessage(options: CompactionOptions): {
     fc = {
       ...options.followUpContent,
       model: existingModel ?? options.sendMessageOptions.model,
-      agentId: existingAgentId ?? options.sendMessageOptions.agentId ?? "exec",
+      agentId: existingAgentId ?? options.sendMessageOptions.agentId ?? WORKSPACE_DEFAULTS.agentId,
       ...pickPreservedSendOptions(options.sendMessageOptions),
     };
   }
-  const isDefaultResume = isDefaultSourceContent(fc);
 
-  if (fc && !isDefaultResume) {
-    messageText += `\n\nThe user wants to continue with: ${fc.text}`;
-  }
+  // Build compaction message with optional continue context.
+  // Shared helper is also used by backend-triggered idle compaction.
+  const messageText = buildCompactionMessageText({
+    maxOutputTokens: options.maxOutputTokens,
+    followUpContent: fc,
+  });
 
   // Handle model preference (sticky globally)
   const effectiveModel = resolveCompactionModel(options.model);
@@ -841,7 +832,7 @@ export function prepareCompactionMessage(options: CompactionOptions): {
   // Apply compaction overrides
   const sendOptions = applyCompactionOverrides(options.sendMessageOptions, compactData);
 
-  const metadata: MuxFrontendMetadata = {
+  const metadata: MuxMessageMetadata = {
     type: "compaction-request",
     rawCommand: fullRawCommand,
     commandPrefix: commandLine,

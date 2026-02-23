@@ -168,7 +168,7 @@ class SSH2Pty implements PtyHandle {
         return;
       }
 
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       const code =
         error && typeof error === "object" && "code" in error && typeof error.code === "string"
           ? error.code
@@ -239,11 +239,13 @@ export class SSH2Transport implements SSHTransport {
   async acquireConnection(options?: {
     abortSignal?: AbortSignal;
     timeoutMs?: number;
+    maxWaitMs?: number;
     onWait?: (waitMs: number) => void;
   }): Promise<void> {
     await ssh2ConnectionPool.acquireConnection(this.config, {
       abortSignal: options?.abortSignal,
       timeoutMs: options?.timeoutMs,
+      maxWaitMs: options?.maxWaitMs,
       onWait: options?.onWait,
     });
   }

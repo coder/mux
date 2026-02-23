@@ -35,7 +35,12 @@ const setInterrupting = mock((_workspaceId: string) => undefined);
 const interruptStream = mock((_input: unknown) =>
   Promise.resolve({ success: true as const, data: undefined })
 );
-const disableAutoRetryPreferenceMock = mock((_workspaceId: string) => undefined);
+const setAutoRetryEnabled = mock((_input: unknown) =>
+  Promise.resolve({
+    success: true as const,
+    data: { previousEnabled: true, enabled: true },
+  })
+);
 const openSettings = mock((_section?: string) => undefined);
 
 void mock.module("@/browser/stores/WorkspaceStore", () => ({
@@ -53,6 +58,7 @@ void mock.module("@/browser/contexts/API", () => ({
     api: {
       workspace: {
         interruptStream,
+        setAutoRetryEnabled,
       },
     },
     status: "connected" as const,
@@ -72,10 +78,6 @@ void mock.module("@/browser/contexts/SettingsContext", () => ({
     providersExpandedProvider: null,
     setProvidersExpandedProvider: () => undefined,
   }),
-}));
-
-void mock.module("@/browser/utils/messages/autoRetryPreference", () => ({
-  disableAutoRetryPreference: disableAutoRetryPreferenceMock,
 }));
 
 void mock.module("@/browser/hooks/usePersistedState", () => ({
@@ -101,7 +103,7 @@ describe("StreamingBarrier", () => {
     hasInterruptingStream = false;
     setInterrupting.mockClear();
     interruptStream.mockClear();
-    disableAutoRetryPreferenceMock.mockClear();
+    setAutoRetryEnabled.mockClear();
     openSettings.mockClear();
   });
 
@@ -122,7 +124,7 @@ describe("StreamingBarrier", () => {
 
     fireEvent.click(view.getByRole("button", { name: "Stop streaming" }));
 
-    expect(disableAutoRetryPreferenceMock).toHaveBeenCalledWith("ws-1");
+    expect(setAutoRetryEnabled).toHaveBeenCalledWith({ workspaceId: "ws-1", enabled: false });
     expect(setInterrupting).toHaveBeenCalledWith("ws-1");
     expect(interruptStream).toHaveBeenCalledWith({ workspaceId: "ws-1" });
   });
@@ -142,7 +144,7 @@ describe("StreamingBarrier", () => {
 
     fireEvent.click(stopButton);
 
-    expect(disableAutoRetryPreferenceMock).toHaveBeenCalledWith("ws-1");
+    expect(setAutoRetryEnabled).toHaveBeenCalledWith({ workspaceId: "ws-1", enabled: false });
     expect(setInterrupting).not.toHaveBeenCalled();
     expect(interruptStream).toHaveBeenCalledWith({ workspaceId: "ws-1" });
   });
@@ -179,7 +181,7 @@ describe("StreamingBarrier", () => {
 
     fireEvent.click(view.getByRole("button", { name: "Stop streaming" }));
 
-    expect(disableAutoRetryPreferenceMock).toHaveBeenCalledWith("ws-1");
+    expect(setAutoRetryEnabled).toHaveBeenCalledWith({ workspaceId: "ws-1", enabled: false });
     expect(onCancelCompaction).toHaveBeenCalledTimes(1);
     expect(setInterrupting).not.toHaveBeenCalled();
     expect(interruptStream).not.toHaveBeenCalled();
@@ -195,7 +197,7 @@ describe("StreamingBarrier", () => {
 
     fireEvent.click(view.getByRole("button", { name: "Stop streaming" }));
 
-    expect(disableAutoRetryPreferenceMock).toHaveBeenCalledWith("ws-1");
+    expect(setAutoRetryEnabled).toHaveBeenCalledWith({ workspaceId: "ws-1", enabled: false });
     expect(setInterrupting).not.toHaveBeenCalled();
     expect(interruptStream).toHaveBeenCalledWith({
       workspaceId: "ws-1",

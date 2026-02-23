@@ -298,7 +298,17 @@ export class SSHRuntime extends RemoteRuntime {
 
     const command = `bash -lc ${shescape.quote(script)}`;
 
-    const abortController = createAbortController(10_000);
+    // Wait for connection establishment (including host-key confirmation) before
+    // starting the 10s command timeout. Otherwise users who take >10s to accept
+    // the host key prompt will hit a false timeout immediately after acceptance.
+    const resolvePathTimeoutMs = 10_000;
+
+    await this.transport.acquireConnection({
+      timeoutMs: resolvePathTimeoutMs,
+      maxWaitMs: resolvePathTimeoutMs,
+    });
+
+    const abortController = createAbortController(resolvePathTimeoutMs);
     try {
       const result = await execBuffered(this, command, {
         cwd: "/tmp",

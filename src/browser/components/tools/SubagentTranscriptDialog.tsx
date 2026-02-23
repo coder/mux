@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/browser/comp
 import { ErrorBox, LoadingDots } from "./shared/ToolPrimitives";
 import { MessageRenderer } from "@/browser/components/Messages/MessageRenderer";
 import { ModelDisplay } from "@/browser/components/Messages/ModelDisplay";
+import { getErrorMessage } from "@/common/utils/errors";
 
 interface SubagentTranscriptDialogProps {
   open: boolean;
@@ -115,7 +116,7 @@ const SubagentTranscriptViewer: React.FC<{
       } catch (err: unknown) {
         if (cancelled) return;
         setIsLoading(false);
-        setError(err instanceof Error ? err.message : String(err));
+        setError(getErrorMessage(err));
       }
     };
 

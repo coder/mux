@@ -8,6 +8,7 @@ import * as os from "os";
 import * as path from "path";
 import SSHConfig, { glob } from "ssh-config";
 import { log } from "@/node/services/log";
+import { getErrorMessage } from "@/common/utils/errors";
 
 interface ParsedValueToken {
   val: string;
@@ -259,7 +260,7 @@ async function loadSSHConfig(): Promise<SSHConfig | null> {
     if ((error as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {
       log.debug("Failed to read SSH config", {
         configPath,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
     }
     return null;

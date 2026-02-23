@@ -20,6 +20,7 @@ import { AskUserQuestionToolCall } from "../AskUserQuestionToolCall";
 import { ProposePlanToolCall } from "../ProposePlanToolCall";
 import { TodoToolCall } from "../TodoToolCall";
 import { StatusSetToolCall } from "../StatusSetToolCall";
+import { SwitchAgentToolCall } from "../SwitchAgentToolCall";
 import { NotifyToolCall } from "../NotifyToolCall";
 import { BashBackgroundListToolCall } from "../BashBackgroundListToolCall";
 import { BashBackgroundTerminateToolCall } from "../BashBackgroundTerminateToolCall";
@@ -90,6 +91,10 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   },
   todo_write: { component: TodoToolCall, schema: TOOL_DEFINITIONS.todo_write.schema },
   status_set: { component: StatusSetToolCall, schema: TOOL_DEFINITIONS.status_set.schema },
+  switch_agent: {
+    component: SwitchAgentToolCall,
+    schema: TOOL_DEFINITIONS.switch_agent.schema,
+  },
   notify: { component: NotifyToolCall, schema: TOOL_DEFINITIONS.notify.schema },
   web_fetch: { component: WebFetchToolCall, schema: TOOL_DEFINITIONS.web_fetch.schema },
   bash_background_list: {

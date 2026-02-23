@@ -57,6 +57,8 @@ description: Agent instructions for AI assistants working on the Mux codebase
 
 - If a PR has Codex review comments, address + resolve them, then re-request review by commenting `@codex review` on the PR.
 - Prefer `gh` CLI for GitHub interactions over manual web/curl flows.
+- In Orchestrator mode, delegate implementation/verification commands to `exec` or `explore` sub-agents and integrate their patches; do not bypass delegation with direct local edits.
+- In Orchestrator mode, route higher-complexity implementation tasks to `plan` sub-agents so they can research and produce a precise plan before auto-handoff to implementation.
 
 > PR readiness is mandatory. You MUST keep iterating until the PR is fully ready.
 > A PR is fully ready only when: (1) Codex confirms approval (thumbs-up reaction on the PR description or an approval comment like "Didn't find any major issues"), (2) all Codex review threads are resolved, and (3) all required CI checks pass.
@@ -65,11 +67,11 @@ description: Agent instructions for AI assistants working on the Mux codebase
 When a PR exists, you MUST remain in this loop until the PR is fully ready:
 
 1. Push your latest fixes.
-2. Run local validation (`make static-check` and targeted tests as needed).
+2. Run local validation (`make static-check` and targeted tests as needed); in Orchestrator mode, delegate command execution to sub-agents.
 3. Request review with `@codex review`.
 4. Run `./scripts/wait_pr_ready.sh <pr_number>` (which must execute `./scripts/wait_pr_checks.sh <pr_number> --once` while checks are pending).
-5. If Codex leaves comments, address them, resolve threads with `./scripts/resolve_pr_comment.sh <thread_id>`, push, and repeat.
-6. If checks/mergeability fail, fix issues locally, push, and repeat.
+5. If Codex leaves comments, address them (delegate fixes in Orchestrator mode), resolve threads with `./scripts/resolve_pr_comment.sh <thread_id>`, push, and repeat.
+6. If checks/mergeability fail, fix issues locally (delegate fixes in Orchestrator mode), push, and repeat.
 
 The only early-stop exception is when the reviewer is clearly misunderstanding the intended change and further churn would be counterproductive. In that case, leave a clarifying PR comment and pause for human direction.
 
@@ -96,7 +98,7 @@ HistoryService is pure local disk I/O with a single dependency (`getSessionDir`)
 
 ## Command Palette & UI Access
 
-- Open palette with `Cmd+Shift+P` (mac) / `Ctrl+Shift+P` (win/linux); quick toggle via `Cmd+P` / `Ctrl+P`.
+- Open palette with `Cmd+Shift+P` (mac) / `Ctrl+Shift+P` (win/linux) / `F4`; quick toggle via `Cmd+P` / `Ctrl+P`.
 - Palette covers workspace mgmt, navigation, chat utils, mode/model switches, slash commands (`/` for suggestions, `>` for actions).
 
 ## Styling
@@ -107,6 +109,13 @@ HistoryService is pure local disk I/O with a single dependency (`getSessionDir`)
 - If a tool/agent provides an emoji string (e.g., `status_set` or `displayStatus`), render via `EmojiIcon` (`src/browser/components/icons/EmojiIcon.tsx`) instead of rendering the emoji.
 - If a new emoji appears in tool output, extend `EmojiIcon` to map it to an SVG icon.
 - Colors defined in `src/browser/styles/globals.css` (`:root @theme` block). Reference via CSS variables (e.g., `var(--color-plan-mode)`), never hardcode hex values.
+
+## Security: Renderer HTML & XSS
+
+- Treat repo-controlled strings (file paths, diff content, branch names, commit messages) as attacker-controlled input.
+- Never render attacker-controlled data through `dangerouslySetInnerHTML`, `innerHTML`, `outerHTML`, or `insertAdjacentHTML`.
+- Prefer React element trees for highlighting (split + `<mark>` nodes) so React escaping stays in effect.
+- If raw HTML/SVG rendering is unavoidable (e.g., Shiki/Mermaid), require explicit sanitization/hardening and document the trust boundary with a `SECURITY AUDIT` comment at the sink.
 
 ## TypeScript Discipline
 
@@ -170,7 +179,7 @@ Freely make breaking changes, and reorganize / cleanup IPC as needed.
 - Do not add UX flourishes (auto-dismiss, animations, tooltips, etc.) unless requested. Ship the simplest behavior that meets requirements.
 - Enforce DRY: if you repeat code/strings, factor a shared helper/constant (search first; if cross-layer, move to `src/constants/` or `src/types/`).
 - Hooks that detect a condition should handle it directly when they already have the data—avoid unnecessary callback hop chains.
-- Every operation must have a keyboard shortcut, and UI controls with shortcuts should surface them in hover tooltips.
+- Every operation must have a keyboard shortcut. The keyboard shortcut should not be visible on mobile views.
 
 ## Logging
 

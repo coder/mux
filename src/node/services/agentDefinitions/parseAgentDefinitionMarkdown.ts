@@ -2,6 +2,7 @@ import { AgentDefinitionFrontmatterSchema } from "@/common/orpc/schemas";
 import type { AgentDefinitionFrontmatter } from "@/common/types/agentDefinition";
 import { MAX_FILE_SIZE } from "@/node/services/tools/fileCommon";
 import YAML from "yaml";
+import { getErrorMessage } from "@/common/utils/errors";
 
 export class AgentDefinitionParseError extends Error {
   constructor(message: string) {
@@ -89,7 +90,7 @@ export function parseAgentDefinitionMarkdown(input: {
   try {
     raw = YAML.parse(yamlText);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = getErrorMessage(err);
     throw new AgentDefinitionParseError(`Failed to parse YAML frontmatter: ${message}`);
   }
 

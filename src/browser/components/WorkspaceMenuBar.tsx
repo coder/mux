@@ -3,6 +3,7 @@ import { Bell, BellOff, Ellipsis, Menu, Pencil } from "lucide-react";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { cn } from "@/common/lib/utils";
+import { getErrorMessage } from "@/common/utils/errors";
 
 import {
   RIGHT_SIDEBAR_COLLAPSED_KEY,
@@ -186,7 +187,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
           forkError.showError(workspaceId, result.error ?? "Failed to fork chat", anchor);
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         forkError.showError(workspaceId, message, anchor);
       }
     },

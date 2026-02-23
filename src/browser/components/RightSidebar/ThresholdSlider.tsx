@@ -84,12 +84,13 @@ const getTooltipText = (threshold: number): string => {
 export const ThresholdSlider: React.FC<{ config: AutoCompactionConfig }> = ({ config }) => {
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const handleMouseDown = (e: React.MouseEvent) => {
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
 
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
 
+    const pointerId = e.pointerId;
     const calcPercent = (clientX: number) =>
       snapPercent(((clientX - rect.left) / rect.width) * 100);
 
@@ -97,13 +98,22 @@ export const ThresholdSlider: React.FC<{ config: AutoCompactionConfig }> = ({ co
 
     apply(calcPercent(e.clientX));
 
-    const onMove = (ev: MouseEvent) => apply(calcPercent(ev.clientX));
-    const onUp = () => {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      ev.preventDefault();
+      apply(calcPercent(ev.clientX));
     };
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
+
+    const onUp = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
+    };
+
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onUp);
   };
 
   const isEnabled = config.threshold < DISABLE_THRESHOLD;
@@ -123,12 +133,14 @@ export const ThresholdSlider: React.FC<{ config: AutoCompactionConfig }> = ({ co
     pointerEvents: "none",
   };
 
-  // Drag handle around the indicator - this captures mouse events
+  // Drag handle around the indicator - this captures pointer events (mouse + touch)
   const DRAG_ZONE_SIZE = 16; // pixels on each side of the indicator
   const handleStyle: React.CSSProperties = {
     position: "absolute",
     cursor: "ew-resize",
     pointerEvents: "auto",
+    // Prevent page scrolling while dragging the slider on touch devices.
+    touchAction: "none",
     left: `calc(${config.threshold}% - ${DRAG_ZONE_SIZE}px)`,
     width: DRAG_ZONE_SIZE * 2,
     top: 0,
@@ -151,7 +163,7 @@ export const ThresholdSlider: React.FC<{ config: AutoCompactionConfig }> = ({ co
     <div ref={containerRef} style={containerStyle}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <div style={handleStyle} onMouseDown={handleMouseDown} />
+          <div style={handleStyle} onPointerDown={handlePointerDown} />
         </TooltipTrigger>
         <TooltipContent side="top" showArrow={false}>
           {tooltipText}

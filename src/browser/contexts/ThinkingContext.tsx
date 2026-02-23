@@ -24,6 +24,7 @@ import {
   markPendingWorkspaceAiSettings,
 } from "@/browser/utils/workspaceAiSettingsSync";
 import { KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 interface ThinkingContextType {
   thinkingLevel: ThinkingLevel;
@@ -95,7 +96,9 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
       >;
 
       const normalizedAgentId =
-        readPersistedState<string>(getAgentIdKey(scopeId), "exec").trim().toLowerCase() || "exec";
+        readPersistedState<string>(getAgentIdKey(scopeId), WORKSPACE_DEFAULTS.agentId)
+          .trim()
+          .toLowerCase() || WORKSPACE_DEFAULTS.agentId;
 
       updatePersistedState<WorkspaceAISettingsByAgentCache>(
         getWorkspaceAISettingsByAgentKey(workspaceId),

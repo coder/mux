@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Download, Loader2, RefreshCw } from "lucide-react";
 import { VERSION } from "@/version";
 import type { UpdateStatus } from "@/common/orpc/types";
@@ -9,6 +9,7 @@ import { useAPI } from "@/browser/contexts/API";
 import { useAboutDialog } from "@/browser/contexts/AboutDialogContext";
 import { Button } from "@/browser/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/browser/components/ui/dialog";
+import { ToggleGroup, ToggleGroupItem } from "@/browser/components/ui/toggle-group";
 
 interface VersionRecord {
   buildTime?: unknown;
@@ -65,6 +66,10 @@ export function AboutDialog() {
   const MuxLogo = theme === "dark" || theme.endsWith("-dark") ? MuxLogoDark : MuxLogoLight;
   const { gitDescribe, buildTime } = parseVersionInfo(VERSION satisfies unknown);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
+  const [channel, setChannel] = useState<"stable" | "nightly" | null>(null);
+  const [channelLoading, setChannelLoading] = useState(false);
+  const [pendingAction, setPendingAction] = useState<"check" | "download" | "install" | null>(null);
+  const channelRequestTokenRef = useRef(0);
 
   const isDesktop = typeof window !== "undefined" && Boolean(window.api);
 
@@ -84,6 +89,7 @@ export function AboutDialog() {
             break;
           }
           setUpdateStatus(status);
+          setPendingAction(null);
         }
       } catch (error) {
         if (!signal.aborted) {
@@ -97,16 +103,62 @@ export function AboutDialog() {
     };
   }, [api, isDesktop, isOpen]);
 
+  useEffect(() => {
+    if (!isOpen || !isDesktop || !api) {
+      return;
+    }
+
+    let active = true;
+    // Ignore stale getChannel() responses when a newer request or manual selection has already happened.
+    const requestToken = ++channelRequestTokenRef.current;
+
+    api.update
+      .getChannel()
+      .then((nextChannel) => {
+        if (active && requestToken === channelRequestTokenRef.current) {
+          setChannel(nextChannel);
+        }
+      })
+      .catch(console.error);
+
+    return () => {
+      active = false;
+    };
+  }, [api, isDesktop, isOpen]);
+
   const canUseUpdateApi = isDesktop && Boolean(api);
   const isChecking =
-    canUseUpdateApi && (updateStatus.type === "checking" || updateStatus.type === "downloading");
+    canUseUpdateApi &&
+    (updateStatus.type === "checking" ||
+      updateStatus.type === "downloading" ||
+      pendingAction === "check");
+
+  const handleChannelChange = (next: "stable" | "nightly") => {
+    if (!api || next === channel || channelLoading) {
+      return;
+    }
+
+    // Invalidate any in-flight getChannel() request so late responses cannot overwrite user intent.
+    channelRequestTokenRef.current += 1;
+    setChannelLoading(true);
+    api.update
+      .setChannel({ channel: next })
+      .then(() => setChannel(next))
+      .catch(console.error)
+      .finally(() => setChannelLoading(false));
+  };
 
   const handleCheckForUpdates = () => {
     if (!api) {
       return;
     }
 
-    api.update.check({ source: "manual" }).catch(console.error);
+    setPendingAction("check");
+    api.update
+      .check({ source: "manual" })
+      .catch(console.error)
+      // Clear pending if the backend no-ops (e.g. already downloaded) and emits no status event.
+      .finally(() => setPendingAction((prev) => (prev === "check" ? null : prev)));
   };
 
   const handleDownload = () => {
@@ -114,7 +166,11 @@ export function AboutDialog() {
       return;
     }
 
-    api.update.download(undefined).catch(console.error);
+    setPendingAction("download");
+    api.update
+      .download(undefined)
+      .catch(console.error)
+      .finally(() => setPendingAction((prev) => (prev === "download" ? null : prev)));
   };
 
   const handleInstall = () => {
@@ -122,7 +178,11 @@ export function AboutDialog() {
       return;
     }
 
-    api.update.install(undefined).catch(console.error);
+    setPendingAction("install");
+    api.update
+      .install(undefined)
+      .catch(console.error)
+      .finally(() => setPendingAction((prev) => (prev === "install" ? null : prev)));
   };
 
   return (
@@ -160,6 +220,38 @@ export function AboutDialog() {
             <div className="text-muted text-xs">Connecting to desktop update service…</div>
           ) : (
             <>
+              {channel !== null && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted text-xs">Channel</span>
+                    <ToggleGroup
+                      type="single"
+                      value={channel}
+                      onValueChange={(next) => {
+                        if (next === "stable" || next === "nightly") {
+                          handleChannelChange(next);
+                        }
+                      }}
+                      disabled={channelLoading}
+                      aria-label="Update channel"
+                      size="sm"
+                    >
+                      <ToggleGroupItem value="stable" size="sm">
+                        Stable
+                      </ToggleGroupItem>
+                      <ToggleGroupItem value="nightly" size="sm">
+                        Nightly
+                      </ToggleGroupItem>
+                    </ToggleGroup>
+                  </div>
+                  <div className="text-muted text-xs">
+                    {channel === "stable"
+                      ? "Official releases only."
+                      : "Nightly pre-release builds from main."}
+                  </div>
+                </div>
+              )}
+
               <Button
                 variant="outline"
                 size="sm"
@@ -179,8 +271,16 @@ export function AboutDialog() {
                   <div className="text-foreground text-xs">
                     Update available: <span className="font-mono">{updateStatus.info.version}</span>
                   </div>
-                  <Button size="sm" onClick={handleDownload}>
-                    <Download className="h-3.5 w-3.5" />
+                  <Button
+                    size="sm"
+                    onClick={handleDownload}
+                    disabled={pendingAction === "download"}
+                  >
+                    {pendingAction === "download" ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Download className="h-3.5 w-3.5" />
+                    )}
                     Download
                   </Button>
                 </div>
@@ -197,9 +297,13 @@ export function AboutDialog() {
                   <div className="text-foreground text-xs">
                     Ready to install: <span className="font-mono">{updateStatus.info.version}</span>
                   </div>
-                  <Button size="sm" onClick={handleInstall}>
-                    <RefreshCw className="h-3.5 w-3.5" />
-                    Install & restart
+                  <Button size="sm" onClick={handleInstall} disabled={pendingAction === "install"}>
+                    {pendingAction === "install" ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    )}
+                    {pendingAction === "install" ? "Installing…" : "Install & restart"}
                   </Button>
                 </div>
               )}
@@ -223,18 +327,40 @@ export function AboutDialog() {
                   </div>
                   <div className="flex items-center gap-2">
                     {updateStatus.phase === "download" && (
-                      <Button size="sm" onClick={handleDownload}>
-                        <Download className="h-3.5 w-3.5" />
+                      <Button
+                        size="sm"
+                        onClick={handleDownload}
+                        disabled={pendingAction === "download"}
+                      >
+                        {pendingAction === "download" ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Download className="h-3.5 w-3.5" />
+                        )}
                         Retry download
                       </Button>
                     )}
                     {updateStatus.phase === "install" && (
-                      <Button size="sm" onClick={handleInstall}>
-                        <RefreshCw className="h-3.5 w-3.5" />
+                      <Button
+                        size="sm"
+                        onClick={handleInstall}
+                        disabled={pendingAction === "install"}
+                      >
+                        {pendingAction === "install" ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        )}
                         Try install again
                       </Button>
                     )}
-                    <Button variant="outline" size="sm" onClick={handleCheckForUpdates}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleCheckForUpdates}
+                      disabled={isChecking}
+                    >
+                      {isChecking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                       {updateStatus.phase === "check" ? "Try again" : "Check again"}
                     </Button>
                   </div>

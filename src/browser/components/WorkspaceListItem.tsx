@@ -12,9 +12,7 @@ import { useDrag } from "react-dnd";
 import { getEmptyImage } from "react-dnd-html5-backend";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 
-import { WorkspaceHoverPreview } from "./WorkspaceHoverPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
-import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
 import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
 import { PositionedMenu, PositionedMenuItem } from "./ui/positioned-menu";
@@ -28,19 +26,6 @@ import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ShareTranscriptDialog } from "./ShareTranscriptDialog";
 import { WorkspaceActionsMenuContent } from "./WorkspaceActionsMenuContent";
 import { useAPI } from "@/browser/contexts/API";
-
-const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
-
-/** Prevent HoverCard from closing when interacting with nested Radix portals (e.g., RuntimeBadge tooltip) */
-function preventHoverCardDismissForRadixPortals(e: {
-  target: EventTarget | null;
-  preventDefault: () => void;
-}) {
-  const target = e.target;
-  if (target instanceof HTMLElement && target.closest(RADIX_PORTAL_WRAPPER_SELECTOR)) {
-    e.preventDefault();
-  }
-}
 
 export interface WorkspaceSelection {
   projectPath: string;
@@ -645,52 +630,29 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 data-workspace-id={workspaceId}
               />
             ) : (
-              <HoverCard openDelay={300} closeDelay={100}>
-                <HoverCardTrigger asChild>
-                  <span
-                    className={cn(
-                      "text-foreground block truncate text-left text-[13px] transition-colors duration-200",
-                      !isDisabled && "cursor-pointer",
-                      isGeneratingTitle && "italic"
-                    )}
-                    onDoubleClick={(e) => {
-                      if (isDisabled) return;
-                      e.stopPropagation();
-                      startEditing();
-                    }}
-                  >
-                    {/* Always render text in same structure; Shimmer just adds animation class */}
-                    <Shimmer
-                      className={cn(
-                        "w-full truncate",
-                        !(isWorking || isInitializing || isGeneratingTitle) && "no-shimmer"
-                      )}
-                      colorClass="var(--color-foreground)"
-                    >
-                      {displayTitle}
-                    </Shimmer>
-                  </span>
-                </HoverCardTrigger>
-                <HoverCardContent
-                  align="start"
-                  side="top"
-                  sideOffset={8}
-                  className="border-separator-light bg-modal-bg w-auto max-w-[420px] px-[10px] py-[6px] text-[11px] shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
-                  onPointerDownOutside={preventHoverCardDismissForRadixPortals}
-                  onFocusOutside={preventHoverCardDismissForRadixPortals}
+              <span
+                className={cn(
+                  "text-foreground block truncate text-left text-[13px] transition-colors duration-200",
+                  !isDisabled && "cursor-pointer",
+                  isGeneratingTitle && "italic"
+                )}
+                onDoubleClick={(e) => {
+                  if (isDisabled) return;
+                  e.stopPropagation();
+                  startEditing();
+                }}
+              >
+                {/* Keep row selection on single-click and remove hover-triggered chat preview popups. */}
+                <Shimmer
+                  className={cn(
+                    "w-full truncate",
+                    !(isWorking || isInitializing || isGeneratingTitle) && "no-shimmer"
+                  )}
+                  colorClass="var(--color-foreground)"
                 >
-                  <div className="flex flex-col gap-1">
-                    <WorkspaceHoverPreview
-                      workspaceId={workspaceId}
-                      projectName={projectName}
-                      workspaceName={metadata.name}
-                      namedWorkspacePath={namedWorkspacePath}
-                      runtimeConfig={metadata.runtimeConfig}
-                      isWorking={isWorking}
-                    />
-                  </div>
-                </HoverCardContent>
-              </HoverCard>
+                  {displayTitle}
+                </Shimmer>
+              </span>
             )}
 
             {!isInitializing && !isEditing && (

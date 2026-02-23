@@ -9,6 +9,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { SplashScreen } from "./SplashScreen";
+import { useOnboardingPause } from "./SplashScreenProvider";
 import { DocsLink } from "@/browser/components/DocsLink";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import {
@@ -29,6 +30,7 @@ import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getEligibleGatewayModels } from "@/browser/utils/gatewayModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
+import { useGateway } from "@/browser/hooks/useGatewayModels";
 import {
   formatMuxGatewayBalance,
   useMuxGatewayAccountStatus,
@@ -38,6 +40,7 @@ import { getAgentsInitNudgeKey } from "@/common/constants/storage";
 import { PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { getAllowedProvidersForUi } from "@/browser/utils/policyUi";
+import { getErrorMessage } from "@/common/utils/errors";
 
 interface OAuthMessage {
   type?: unknown;
@@ -53,7 +56,6 @@ function getServerAuthToken(): string | null {
   return urlToken?.length ? urlToken : getStoredAuthToken();
 }
 
-const GATEWAY_MODELS_KEY = "gateway-models";
 const KBD_CLASSNAME =
   "bg-background-secondary text-foreground border-border-medium rounded border px-2 py-0.5 font-mono text-xs";
 
@@ -178,9 +180,19 @@ function CommandPalettePreview(props: { shortcut: string }) {
 }
 
 export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
-  const [stepIndex, setStepIndex] = useState(0);
+  const onboardingPause = useOnboardingPause();
+  const [stepIndex, setStepIndex] = useState(onboardingPause.paused?.stepIndex ?? 0);
 
   const { open: openSettings } = useSettings();
+  // Pause onboarding (not dismiss) so users can configure providers in full settings, then resume.
+  const openProvidersSettings = useCallback(
+    (provider?: string) => {
+      onboardingPause.pause({ stepIndex, reason: "providers-settings" });
+      openSettings("providers", provider ? { expandProvider: provider } : undefined);
+    },
+    [onboardingPause, openSettings, stepIndex]
+  );
+
   const policyState = usePolicy();
   const effectivePolicy =
     policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
@@ -223,6 +235,21 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   const [muxGatewayDesktopFlowId, setMuxGatewayDesktopFlowId] = useState<string | null>(null);
   const [muxGatewayServerState, setMuxGatewayServerState] = useState<string | null>(null);
 
+  const gateway = useGateway();
+
+  const applyDefaultGatewayModels = useCallback(
+    (configSnapshot: ProvidersConfigMap | null) => {
+      const existingModels =
+        configSnapshot?.["mux-gateway"]?.gatewayModels ??
+        providersConfig?.["mux-gateway"]?.gatewayModels ??
+        [];
+      const nextModels =
+        existingModels.length > 0 ? existingModels : getEligibleGatewayModels(configSnapshot);
+      gateway.setEnabledModels(nextModels);
+    },
+    [gateway, providersConfig]
+  );
+
   const cancelMuxGatewayLogin = useCallback(() => {
     muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
     muxGatewayLoginAttemptRef.current++;
@@ -240,11 +267,23 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   const startMuxGatewayLogin = useCallback(async () => {
     const attempt = ++muxGatewayLoginAttemptRef.current;
 
-    // Enable Mux Gateway for all eligible models after the *first* successful login.
-    const isLoggedIn = providersConfig?.["mux-gateway"]?.couponCodeSet ?? false;
-    muxGatewayApplyDefaultModelsOnSuccessRef.current = !isLoggedIn;
-
     try {
+      // Apply default enrollment only for confirmed first-time setup. If config
+      // hydration is unknown, prefer preserving the current backend selection.
+      let gatewayConfig = providersConfig?.["mux-gateway"];
+      if (gatewayConfig?.couponCodeSet == null && api?.providers?.getConfig) {
+        try {
+          const latestConfig = await api.providers.getConfig();
+          if (attempt !== muxGatewayLoginAttemptRef.current) {
+            return;
+          }
+          gatewayConfig = latestConfig?.["mux-gateway"];
+        } catch {
+          // Ignore pre-login fetch failures; fall back to current snapshot.
+        }
+      }
+      muxGatewayApplyDefaultModelsOnSuccessRef.current = gatewayConfig?.couponCodeSet === false;
+
       setMuxGatewayLoginError(null);
       setMuxGatewayDesktopFlowId(null);
       setMuxGatewayServerState(null);
@@ -302,7 +341,8 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
               return;
             }
 
-            updatePersistedState(GATEWAY_MODELS_KEY, getEligibleGatewayModels(latestConfig));
+            // Persist gateway models via backend config (no localStorage).
+            applyDefaultGatewayModels(latestConfig);
             muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
           }
 
@@ -374,11 +414,18 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
         return;
       }
 
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       setMuxGatewayLoginStatus("error");
       setMuxGatewayLoginError(message);
     }
-  }, [api, backendBaseUrl, isDesktop, providersConfig, refreshMuxGatewayAccountStatus]);
+  }, [
+    api,
+    backendBaseUrl,
+    isDesktop,
+    providersConfig,
+    applyDefaultGatewayModels,
+    refreshMuxGatewayAccountStatus,
+  ]);
 
   useEffect(() => {
     const attempt = muxGatewayLoginAttemptRef.current;
@@ -402,7 +449,8 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
 
           const applyLatest = (latestConfig: ProvidersConfigMap | null) => {
             if (muxGatewayLoginAttemptRef.current !== attempt) return;
-            updatePersistedState(GATEWAY_MODELS_KEY, getEligibleGatewayModels(latestConfig));
+            // Persist gateway models via backend config (no localStorage).
+            applyDefaultGatewayModels(latestConfig);
           };
 
           if (api) {
@@ -434,6 +482,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     muxGatewayLoginStatus,
     muxGatewayServerState,
     providersConfig,
+    applyDefaultGatewayModels,
     refreshMuxGatewayAccountStatus,
   ]);
 
@@ -481,6 +530,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   }, [configuredProviders.length, hasConfiguredProvidersAtStart, providersLoading]);
 
   const commandPaletteShortcut = formatKeybind(KEYBINDS.OPEN_COMMAND_PALETTE);
+  const commandPaletteActionsShortcut = formatKeybind(KEYBINDS.OPEN_COMMAND_PALETTE_ACTIONS);
   const agentPickerShortcut = formatKeybind(KEYBINDS.TOGGLE_AGENT);
   const cycleAgentShortcut = formatKeybind(KEYBINDS.CYCLE_AGENT);
 
@@ -629,7 +679,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
               <button
                 type="button"
                 className="text-accent hover:underline"
-                onClick={() => openSettings("providers")}
+                onClick={() => openProvidersSettings()}
               >
                 Settings → Providers
               </button>
@@ -671,7 +721,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
                     type="button"
                     className="bg-background-secondary border-border-medium text-foreground hover:bg-hover flex w-full cursor-pointer items-center justify-between rounded-md border px-2 py-1 text-left text-xs"
                     title={configured ? "Configured" : "Not configured"}
-                    onClick={() => openSettings("providers", { expandProvider: provider })}
+                    onClick={() => openProvidersSettings(provider)}
                   >
                     <ProviderWithIcon provider={provider} displayName iconClassName="text-accent" />
                     <span
@@ -697,7 +747,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
             <button
               type="button"
               className="text-accent hover:underline"
-              onClick={() => openSettings("providers")}
+              onClick={() => openProvidersSettings()}
             >
               Settings → Providers
             </button>
@@ -877,8 +927,9 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
           </div>
 
           <p className="mt-3">
-            Tip: type <code className="text-accent">&gt;</code> for commands and{" "}
-            <code className="text-accent">/</code> for slash commands.
+            Tip: type <code className="text-accent">&gt;</code> for commands, press{" "}
+            <kbd className={KBD_CLASSNAME}>{commandPaletteActionsShortcut}</kbd> to open command
+            mode directly, and use <code className="text-accent">/</code> for slash commands.
           </p>
         </>
       ),
@@ -889,6 +940,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     addProject,
     agentPickerShortcut,
     cancelMuxGatewayLogin,
+    commandPaletteActionsShortcut,
     commandPaletteShortcut,
     configuredProviders.length,
     configuredProvidersSummary,
@@ -902,7 +954,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     muxGatewayLoginError,
     muxGatewayLoginInProgress,
     muxGatewayLoginStatus,
-    openSettings,
+    openProvidersSettings,
     projects.size,
     providersConfig,
     refreshMuxGatewayAccountStatus,
@@ -910,9 +962,14 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     visibleProviders,
   ]);
 
+  // Clamp stepIndex to valid range when the step list changes. Skip while still
+  // loading provider config — the temporary single-item "loading" array would
+  // reset a restored stepIndex (e.g. after resuming from paused onboarding).
+  const isLoading = hasConfiguredProvidersAtStart === null;
   useEffect(() => {
+    if (isLoading) return;
     setStepIndex((index) => Math.min(index, steps.length - 1));
-  }, [steps.length]);
+  }, [isLoading, steps.length]);
 
   const totalSteps = steps.length;
   const currentStep = steps[stepIndex] ?? steps[0];
@@ -927,7 +984,6 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     return null;
   }
 
-  const isLoading = hasConfiguredProvidersAtStart === null;
   const canGoBack = !isLoading && stepIndex > 0;
   const canGoForward = !isLoading && stepIndex < totalSteps - 1;
 

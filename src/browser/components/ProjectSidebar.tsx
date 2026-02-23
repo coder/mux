@@ -1,17 +1,22 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import MuxLogoDark from "@/browser/assets/logos/mux-logo-dark.svg?react";
 import MuxLogoLight from "@/browser/assets/logos/mux-logo-light.svg?react";
 import { useTheme } from "@/browser/contexts/ThemeContext";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  readPersistedState,
+  updatePersistedState,
+  usePersistedState,
+} from "@/browser/hooks/usePersistedState";
 import { useDebouncedValue } from "@/browser/hooks/useDebouncedValue";
 import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import {
   EXPANDED_PROJECTS_KEY,
+  MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY,
   getDraftScopeId,
   getInputKey,
   getWorkspaceNameStateKey,
@@ -55,6 +60,7 @@ import type { Secret } from "@/common/types/secrets";
 import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { TitleEditProvider, useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
+import { useConfirmDialog } from "@/browser/contexts/ConfirmDialogContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { ChevronRight, CircleHelp, KeyRound } from "lucide-react";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
@@ -70,6 +76,7 @@ import { WorkspaceDragLayer } from "./WorkspaceDragLayer";
 import { SectionDragLayer } from "./SectionDragLayer";
 import { DraggableSection } from "./DraggableSection";
 import type { SectionConfig } from "@/common/types/project";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // Re-export WorkspaceSelection for backwards compatibility
 export type { WorkspaceSelection } from "./WorkspaceListItem";
@@ -445,6 +452,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const workspaceStore = useWorkspaceStoreRaw();
   const { navigateToProject } = useRouter();
   const { api } = useAPI();
+  const { confirm: confirmDialog } = useConfirmDialog();
 
   // Get project state and operations from context
   const {
@@ -466,16 +474,70 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   // Mobile breakpoint for auto-closing sidebar
   const MOBILE_BREAKPOINT = 768;
+  const projectListScrollRef = useRef<HTMLDivElement | null>(null);
+  const mobileScrollTopRef = useRef(0);
+  const wasCollapsedRef = useRef(collapsed);
+
+  const normalizeMobileScrollTop = useCallback((scrollTop: number): number => {
+    return Number.isFinite(scrollTop) ? Math.max(0, Math.round(scrollTop)) : 0;
+  }, []);
+
+  const persistMobileSidebarScrollTop = useCallback(
+    (scrollTop: number) => {
+      if (window.innerWidth > MOBILE_BREAKPOINT) {
+        return;
+      }
+
+      // Keep the last viewed list position so reopening the touch sidebar returns
+      // users to where they were browsing instead of jumping back to the top.
+      const normalizedScrollTop = normalizeMobileScrollTop(scrollTop);
+      updatePersistedState<number>(MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY, normalizedScrollTop, 0);
+    },
+    [MOBILE_BREAKPOINT, normalizeMobileScrollTop]
+  );
+
+  useEffect(() => {
+    if (collapsed || window.innerWidth > MOBILE_BREAKPOINT) {
+      return;
+    }
+
+    const persistedScrollTop = readPersistedState<unknown>(MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY, 0);
+    const normalizedScrollTop =
+      typeof persistedScrollTop === "number" ? normalizeMobileScrollTop(persistedScrollTop) : 0;
+    mobileScrollTopRef.current = normalizedScrollTop;
+
+    if (projectListScrollRef.current) {
+      projectListScrollRef.current.scrollTop = normalizedScrollTop;
+    }
+  }, [collapsed, MOBILE_BREAKPOINT, normalizeMobileScrollTop]);
+
+  useEffect(() => {
+    const wasCollapsed = wasCollapsedRef.current;
+
+    if (!wasCollapsed && collapsed) {
+      persistMobileSidebarScrollTop(mobileScrollTopRef.current);
+    }
+
+    wasCollapsedRef.current = collapsed;
+  }, [collapsed, persistMobileSidebarScrollTop]);
+
+  const handleProjectListScroll = useCallback(
+    (event: React.UIEvent<HTMLDivElement>) => {
+      mobileScrollTopRef.current = normalizeMobileScrollTop(event.currentTarget.scrollTop);
+    },
+    [normalizeMobileScrollTop]
+  );
 
   // Wrapper to close sidebar on mobile after workspace selection
   const handleSelectWorkspace = useCallback(
     (selection: WorkspaceSelection) => {
       onSelectWorkspace(selection);
       if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
+        persistMobileSidebarScrollTop(mobileScrollTopRef.current);
         onToggleCollapsed();
       }
     },
-    [onSelectWorkspace, collapsed, onToggleCollapsed]
+    [onSelectWorkspace, collapsed, onToggleCollapsed, persistMobileSidebarScrollTop]
   );
 
   // Wrapper to close sidebar on mobile after adding workspace
@@ -483,10 +545,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     (projectPath: string, sectionId?: string) => {
       createWorkspaceDraft(projectPath, sectionId);
       if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
+        persistMobileSidebarScrollTop(mobileScrollTopRef.current);
         onToggleCollapsed();
       }
     },
-    [createWorkspaceDraft, collapsed, onToggleCollapsed]
+    [createWorkspaceDraft, collapsed, onToggleCollapsed, persistMobileSidebarScrollTop]
   );
 
   // Wrapper to close sidebar on mobile after opening an existing draft
@@ -494,10 +557,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     (projectPath: string, draftId: string, sectionId?: string | null) => {
       openWorkspaceDraft(projectPath, draftId, sectionId);
       if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
+        persistMobileSidebarScrollTop(mobileScrollTopRef.current);
         onToggleCollapsed();
       }
     },
-    [openWorkspaceDraft, collapsed, onToggleCollapsed]
+    [openWorkspaceDraft, collapsed, onToggleCollapsed, persistMobileSidebarScrollTop]
   );
 
   const handleOpenMuxChat = useCallback(() => {
@@ -639,7 +703,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         workspaceForkError.showError(workspaceId, result.error ?? "Failed to fork chat", anchor);
       } catch (error) {
         // IPC/transport failures throw instead of returning { success: false }
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         workspaceForkError.showError(workspaceId, message, anchor);
       }
     },
@@ -753,6 +817,24 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     sectionId: string,
     buttonElement: HTMLElement
   ) => {
+    // removeSection unsections every workspace in the project (including archived),
+    // so confirmation needs to count from the full project config.
+    const workspacesInSection = (projects.get(projectPath)?.workspaces ?? []).filter(
+      (workspace) => workspace.sectionId === sectionId
+    );
+
+    if (workspacesInSection.length > 0) {
+      const ok = await confirmDialog({
+        title: "Delete section?",
+        description: `${workspacesInSection.length} workspace(s) in this section will be moved to unsectioned.`,
+        confirmLabel: "Delete",
+        confirmVariant: "destructive",
+      });
+      if (!ok) {
+        return;
+      }
+    }
+
     const result = await removeSection(projectPath, sectionId);
     if (!result.success) {
       const error = result.error ?? "Failed to remove section";
@@ -913,7 +995,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                   <span>Add Project</span>
                 </button>
               </div>
-              <div className="flex-1 overflow-x-hidden overflow-y-auto">
+              <div
+                ref={projectListScrollRef}
+                onScroll={handleProjectListScroll}
+                className="flex-1 overflow-x-hidden overflow-y-auto"
+              >
                 {visibleProjectPaths.length === 0 ? (
                   <div className="px-4 py-8 text-center">
                     <p className="text-muted mb-4 text-[13px]">No projects</p>

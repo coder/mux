@@ -8,6 +8,7 @@
 import { execSync, type ExecSyncOptionsWithStringEncoding } from "child_process";
 import { existsSync } from "fs";
 import path from "path";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const WIN_PATH = path.win32;
 
@@ -267,7 +268,7 @@ export function getBashPath(
     cachedBashPathError = null;
     return cachedBashPath;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     cachedBashPathError = { message, lastCheckedMs: now };
     throw error;
   }

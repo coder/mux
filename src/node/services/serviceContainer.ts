@@ -45,12 +45,15 @@ import { McpOauthService } from "@/node/services/mcpOauthService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
 import { getSigningService, type SigningService } from "@/node/services/signingService";
 import { coderService, type CoderService } from "@/node/services/coderService";
+import { HostKeyVerificationService } from "@/node/services/hostKeyVerificationService";
 import { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
 import {
   createStartCoderOnUnarchiveHook,
   createStopCoderOnArchiveHook,
 } from "@/node/runtime/coderLifecycleHooks";
 import { setGlobalCoderService } from "@/node/runtime/runtimeFactory";
+import { setHostKeyVerificationService } from "@/node/runtime/sshConnectionPool";
+import { setHostKeyVerificationService as setSSH2HostKeyVerificationService } from "@/node/runtime/SSH2ConnectionPool";
 import { PolicyService } from "@/node/services/policyService";
 import { ServerAuthService } from "@/node/services/serverAuthService";
 import type { ORPCContext } from "@/node/orpc/context";
@@ -114,6 +117,7 @@ export class ServiceContainer {
   public readonly policyService: PolicyService;
   public readonly coderService: CoderService;
   public readonly serverAuthService: ServerAuthService;
+  public readonly hostKeyVerificationService = new HostKeyVerificationService();
   private readonly ptyService: PTYService;
   public readonly idleCompactionService: IdleCompactionService;
 
@@ -163,7 +167,7 @@ export class ServiceContainer {
       config,
       this.historyService,
       this.extensionMetadata,
-      (workspaceId) => this.workspaceService.emitIdleCompactionNeeded(workspaceId)
+      (workspaceId) => this.workspaceService.executeIdleCompaction(workspaceId)
     );
     this.windowService = new WindowService();
     this.mcpOauthService = new McpOauthService(
@@ -197,11 +201,11 @@ export class ServiceContainer {
     this.workspaceService.setTerminalService(this.terminalService);
     // Editor service for opening workspaces in code editors
     this.editorService = new EditorService(config);
-    this.updateService = new UpdateService();
+    this.updateService = new UpdateService(this.config);
     this.tokenizerService = new TokenizerService(this.sessionUsageService);
     this.serverService = new ServerService();
     this.menuEventService = new MenuEventService();
-    this.voiceService = new VoiceService(config);
+    this.voiceService = new VoiceService(config, this.providerService, this.policyService);
     this.featureFlagService = new FeatureFlagService(config, this.telemetryService);
     this.signingService = getSigningService();
     this.coderService = coderService;
@@ -227,6 +231,8 @@ export class ServiceContainer {
 
     // Register globally so all createRuntime calls can create CoderSSHRuntime
     setGlobalCoderService(this.coderService);
+    setHostKeyVerificationService(this.hostKeyVerificationService);
+    setSSH2HostKeyVerificationService(this.hostKeyVerificationService);
 
     // Backend timing stats (behind feature flag).
     this.aiService.on("stream-start", (data: StreamStartEvent) =>
@@ -440,6 +446,7 @@ export class ServiceContainer {
       signingService: this.signingService,
       coderService: this.coderService,
       serverAuthService: this.serverAuthService,
+      hostKeyVerificationService: this.hostKeyVerificationService,
     };
   }
 

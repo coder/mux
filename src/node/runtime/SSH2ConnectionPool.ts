@@ -18,6 +18,13 @@ import { log } from "@/node/services/log";
 import { attachStreamErrorHandler } from "@/node/utils/streamErrors";
 import type { SSHConnectionConfig } from "./sshConnectionPool";
 import { resolveSSHConfig, type ResolvedSSHConfig } from "./sshConfigParser";
+import type { HostKeyVerificationService } from "@/node/services/hostKeyVerificationService";
+
+let hostKeyService: HostKeyVerificationService | undefined;
+
+export function setHostKeyVerificationService(svc: HostKeyVerificationService): void {
+  hostKeyService = svc;
+}
 
 /**
  * Connection health status
@@ -494,6 +501,9 @@ export class SSH2ConnectionPool {
         const readableKeys = await resolvePrivateKeys(resolvedConfigWithIdentities.identityFiles);
         const keysToTry: Array<Buffer | undefined> =
           readableKeys.length > 0 ? readableKeys : [undefined];
+        // Keep the hostKeyService wiring in place so known_hosts-backed
+        // verification can be restored without changing the public module API.
+        void hostKeyService;
 
         const connectWithKey = async (
           privateKey: Buffer | undefined,
@@ -611,6 +621,10 @@ export class SSH2ConnectionPool {
               keepaliveInterval: 5000,
               keepaliveCountMax: 2,
               ...(privateKey ? { privateKey } : {}),
+              // TODO(ethanndickson): Implement known_hosts support for SSH2
+              // and restore interactive host key verification once approvals
+              // can be persisted between connections.
+              hostVerifier: () => true,
             };
 
             client.connect(connectOptions);

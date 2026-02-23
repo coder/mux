@@ -11,6 +11,7 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { formatLineRangeCompact } from "@/browser/utils/review/lineRange";
 import { matchesKeybind, formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import type { Review } from "@/common/types/review";
 
@@ -43,6 +44,8 @@ export interface InlineReviewNoteProps {
   actions?: ReviewActionCallbacks;
   /** Additional className for the container */
   className?: string;
+  /** Request id that should put this note into edit mode */
+  editRequestId?: number | null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -58,12 +61,14 @@ export const InlineReviewNote: React.FC<InlineReviewNoteProps> = ({
   showFilePath = false,
   actions,
   className,
+  editRequestId,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(review.data.userNote);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isEditingRef = useRef(false);
   const actionsRef = useRef(actions);
+  const handledEditRequestIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     actionsRef.current = actions;
@@ -85,6 +90,19 @@ export const InlineReviewNote: React.FC<InlineReviewNoteProps> = ({
     setTimeout(() => textareaRef.current?.focus(), 0);
   }, [review.data.userNote, review.id, actions]);
 
+  useEffect(() => {
+    if (editRequestId == null || !actions?.onEditComment) {
+      return;
+    }
+
+    if (handledEditRequestIdRef.current === editRequestId) {
+      return;
+    }
+
+    handledEditRequestIdRef.current = editRequestId;
+    handleStartEdit();
+  }, [actions?.onEditComment, editRequestId, handleStartEdit]);
+
   const handleSaveEdit = useCallback(() => {
     if (actions?.onEditComment && editValue.trim() !== review.data.userNote) {
       actions.onEditComment(review.id, editValue.trim());
@@ -104,9 +122,11 @@ export const InlineReviewNote: React.FC<InlineReviewNoteProps> = ({
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (matchesKeybind(e, KEYBINDS.SAVE_EDIT)) {
+        stopKeyboardPropagation(e);
         e.preventDefault();
         handleSaveEdit();
       } else if (matchesKeybind(e, KEYBINDS.CANCEL_EDIT)) {
+        stopKeyboardPropagation(e);
         e.preventDefault();
         handleCancelEdit();
       }

@@ -131,8 +131,12 @@ describeIntegration("interruptStream during startup", () => {
       expect(abortEvent).not.toBeNull();
       expect(abortEvent?.type).toBe("stream-abort");
       if (abortEvent?.type === "stream-abort") {
-        // The "starting-" prefix comes from AIService.pendingStreamStarts synthetic message id.
-        expect(abortEvent.messageId).toMatch(/^starting-/);
+        // In the normal pre-stream path, AIService emits a synthetic "starting-*" message id.
+        // Rarely, startup can settle before interrupt races through and StreamManager emits an
+        // abort with an empty id instead. Accept both while still asserting no stream-start.
+        if (abortEvent.messageId.length > 0) {
+          expect(abortEvent.messageId).toMatch(/^starting-/);
+        }
       }
 
       const sendResult = await sendPromise;

@@ -16,6 +16,10 @@ import type {
   FrontendWorkspaceMetadataSchemaType,
 } from "@/common/orpc/types";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
+import type {
+  HostKeyVerificationEvent,
+  HostKeyVerificationRequest,
+} from "@/common/orpc/schemas/ssh";
 import {
   createAuthMiddleware,
   extractClientIpAddress,
@@ -47,6 +51,11 @@ import {
   normalizeTaskSettings,
 } from "@/common/types/tasks";
 import {
+  normalizeRuntimeEnablement,
+  RUNTIME_ENABLEMENT_IDS,
+  type RuntimeEnablementId,
+} from "@/common/types/runtime";
+import {
   discoverAgentSkills,
   discoverAgentSkillsDiagnostics,
   readAgentSkill,
@@ -71,6 +80,7 @@ import {
   readSubagentTranscriptArtifactsFile,
   type SubagentTranscriptArtifactIndexEntry,
 } from "@/node/services/subagentTranscriptArtifacts";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * Resolves runtime and discovery path for agent operations.
@@ -163,7 +173,7 @@ async function readChatJsonlAllowMissing(params: {
       } catch (parseError) {
         log.warn(
           `Skipping malformed JSON at line ${i + 1} in ${params.logLabel}:`,
-          parseError instanceof Error ? parseError.message : String(parseError),
+          getErrorMessage(parseError),
           "\nLine content:",
           lines[i].substring(0, 100) + (lines[i].length > 100 ? "..." : "")
         );
@@ -193,7 +203,7 @@ async function readPartialJsonBestEffort(partialPath: string): Promise<MuxMessag
     // Never fail transcript viewing because partial.json is corrupted.
     log.warn("Failed to read partial.json for transcript", {
       partialPath,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
     return null;
   }
@@ -325,7 +335,8 @@ export const router = (authToken?: string) => {
           return context.tokenizerService.calculateStats(
             input.workspaceId,
             input.messages,
-            input.model
+            input.model,
+            context.providerService.getConfig()
           );
         }),
     },
@@ -562,6 +573,8 @@ export const router = (authToken?: string) => {
             hiddenModels: config.hiddenModels,
             preferredCompactionModel: config.preferredCompactionModel,
             stopCoderWorkspaceOnArchive: config.stopCoderWorkspaceOnArchive !== false,
+            runtimeEnablement: normalizeRuntimeEnablement(config.runtimeEnablement),
+            defaultRuntime: config.defaultRuntime ?? null,
             agentAiDefaults: config.agentAiDefaults ?? {},
             // Legacy fields (downgrade compatibility)
             subagentAiDefaults: config.subagentAiDefaults ?? {},
@@ -607,9 +620,14 @@ export const router = (authToken?: string) => {
             return {
               ...config,
               muxGatewayEnabled: input.muxGatewayEnabled ? undefined : false,
-              muxGatewayModels: nextModels.length > 0 ? nextModels : undefined,
+              // Persist explicit empty selections so startup migration doesn't
+              // rehydrate stale legacy localStorage values.
+              muxGatewayModels: nextModels,
             };
           });
+          // Notify subscribers (useProvidersConfig) so the frontend picks up the
+          // new gateway enabled/models state without needing localStorage.
+          context.providerService.notifyConfigChanged();
         }),
       updateModelPreferences: t
         .input(schemas.config.updateModelPreferences.input)
@@ -673,6 +691,93 @@ export const router = (authToken?: string) => {
               // Default ON: store `false` only.
               stopCoderWorkspaceOnArchive: input.stopCoderWorkspaceOnArchive ? undefined : false,
             };
+          });
+        }),
+      updateRuntimeEnablement: t
+        .input(schemas.config.updateRuntimeEnablement.input)
+        .output(schemas.config.updateRuntimeEnablement.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const shouldUpdateRuntimeEnablement = input.runtimeEnablement !== undefined;
+            const shouldUpdateDefaultRuntime = input.defaultRuntime !== undefined;
+            const shouldUpdateOverridesEnabled = input.runtimeOverridesEnabled !== undefined;
+            const projectPath = input.projectPath?.trim();
+
+            if (
+              !shouldUpdateRuntimeEnablement &&
+              !shouldUpdateDefaultRuntime &&
+              !shouldUpdateOverridesEnabled
+            ) {
+              return config;
+            }
+
+            const runtimeEnablementOverrides =
+              input.runtimeEnablement == null
+                ? undefined
+                : (() => {
+                    const normalized = normalizeRuntimeEnablement(input.runtimeEnablement);
+                    const disabled: Partial<Record<RuntimeEnablementId, false>> = {};
+
+                    for (const runtimeId of RUNTIME_ENABLEMENT_IDS) {
+                      if (!normalized[runtimeId]) {
+                        disabled[runtimeId] = false;
+                      }
+                    }
+
+                    return Object.keys(disabled).length > 0 ? disabled : undefined;
+                  })();
+
+            const defaultRuntime = input.defaultRuntime ?? undefined;
+            const runtimeOverridesEnabled =
+              input.runtimeOverridesEnabled === true ? true : undefined;
+
+            if (projectPath) {
+              const project = config.projects.get(projectPath);
+              if (!project) {
+                log.warn("Runtime settings update requested for missing project", { projectPath });
+                return config;
+              }
+
+              const nextProject = { ...project };
+
+              if (shouldUpdateRuntimeEnablement) {
+                if (runtimeEnablementOverrides) {
+                  nextProject.runtimeEnablement = runtimeEnablementOverrides;
+                } else {
+                  delete nextProject.runtimeEnablement;
+                }
+              }
+
+              if (shouldUpdateDefaultRuntime) {
+                if (defaultRuntime !== undefined) {
+                  nextProject.defaultRuntime = defaultRuntime;
+                } else {
+                  delete nextProject.defaultRuntime;
+                }
+              }
+
+              if (shouldUpdateOverridesEnabled) {
+                if (runtimeOverridesEnabled) {
+                  nextProject.runtimeOverridesEnabled = true;
+                } else {
+                  delete nextProject.runtimeOverridesEnabled;
+                }
+              }
+              const nextProjects = new Map(config.projects);
+              nextProjects.set(projectPath, nextProject);
+              return { ...config, projects: nextProjects };
+            }
+
+            const next = { ...config };
+            if (shouldUpdateRuntimeEnablement) {
+              next.runtimeEnablement = runtimeEnablementOverrides;
+            }
+
+            if (shouldUpdateDefaultRuntime) {
+              next.defaultRuntime = defaultRuntime;
+            }
+
+            return next;
           });
         }),
       saveConfig: t
@@ -1116,7 +1221,7 @@ export const router = (authToken?: string) => {
               },
             });
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = getErrorMessage(error);
             return Err(`Mux Gateway balance request failed: ${message}`);
           }
 
@@ -1151,7 +1256,7 @@ export const router = (authToken?: string) => {
           try {
             json = await response.json();
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = getErrorMessage(error);
             return Err(`Mux Gateway balance response was not valid JSON: ${message}`);
           }
 
@@ -1344,7 +1449,7 @@ export const router = (authToken?: string) => {
             clearLogEntries();
             return { success: true };
           } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            const message = getErrorMessage(err);
             return { success: false, error: message };
           }
         }),
@@ -1456,7 +1561,7 @@ export const router = (authToken?: string) => {
 
             return Ok(undefined);
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = getErrorMessage(error);
             return Err(message);
           }
         }),
@@ -2577,6 +2682,43 @@ export const router = (authToken?: string) => {
                 : result.error;
             return { success: false, error };
           }
+          return { success: true, data: result.data };
+        }),
+      setAutoRetryEnabled: t
+        .input(schemas.workspace.setAutoRetryEnabled.input)
+        .output(schemas.workspace.setAutoRetryEnabled.output)
+        .handler(async ({ context, input }) => {
+          const result = await context.workspaceService.setAutoRetryEnabled(
+            input.workspaceId,
+            input.enabled,
+            input.persist ?? true
+          );
+          if (!result.success) {
+            return { success: false, error: result.error };
+          }
+          return { success: true, data: result.data };
+        }),
+      getStartupAutoRetryModel: t
+        .input(schemas.workspace.getStartupAutoRetryModel.input)
+        .output(schemas.workspace.getStartupAutoRetryModel.output)
+        .handler(async ({ context, input }) => {
+          const result = await context.workspaceService.getStartupAutoRetryModel(input.workspaceId);
+          if (!result.success) {
+            return { success: false, error: result.error };
+          }
+          return { success: true, data: result.data };
+        }),
+      setAutoCompactionThreshold: t
+        .input(schemas.workspace.setAutoCompactionThreshold.input)
+        .output(schemas.workspace.setAutoCompactionThreshold.output)
+        .handler(({ context, input }) => {
+          const result = context.workspaceService.setAutoCompactionThreshold(
+            input.workspaceId,
+            input.threshold
+          );
+          if (!result.success) {
+            return { success: false, error: result.error };
+          }
           return { success: true, data: undefined };
         }),
       interruptStream: t
@@ -2714,7 +2856,7 @@ export const router = (authToken?: string) => {
               log.warn("workspace.getSubagentTranscript: descendant check failed", {
                 requestingWorkspaceId,
                 taskId,
-                error: error instanceof Error ? error.message : String(error),
+                error: getErrorMessage(error),
               });
             }
           }
@@ -2856,6 +2998,10 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.onChat.output)
         .handler(async function* ({ context, input, signal }) {
           const session = context.workspaceService.getOrCreateSession(input.workspaceId);
+          if (typeof input.legacyAutoRetryEnabled === "boolean") {
+            session.setLegacyAutoRetryEnabledHint(input.legacyAutoRetryEnabled);
+          }
+
           const { push, iterate, end } = createAsyncMessageQueue<WorkspaceChatMessage>();
 
           const onAbort = () => {
@@ -2892,6 +3038,10 @@ export const router = (authToken?: string) => {
           }, input.mode);
 
           replayRelay.finishReplay();
+
+          // Startup recovery: after replay catches the client up, recover any
+          // crash-stranded compaction follow-ups and then evaluate auto-retry.
+          session.scheduleStartupRecovery();
 
           // 3. Heartbeat to keep the connection alive during long operations (tool calls, subagents).
           // Client uses this to detect stalled connections vs. intentionally idle streams.
@@ -3063,6 +3213,14 @@ export const router = (authToken?: string) => {
               signal?.removeEventListener("abort", onAbort);
               service.off("activity", onActivity);
             }
+          }),
+      },
+      history: {
+        loadMore: t
+          .input(schemas.workspace.history.loadMore.input)
+          .output(schemas.workspace.history.loadMore.output)
+          .handler(async ({ context, input }) => {
+            return context.workspaceService.getHistoryLoadMore(input.workspaceId, input.cursor);
           }),
       },
       getPlanContent: t
@@ -3413,7 +3571,7 @@ export const router = (authToken?: string) => {
               await context.sessionTimingService.clearTimingFile(input.workspaceId);
               return { success: true, data: undefined };
             } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
+              const message = getErrorMessage(error);
               return { success: false, error: message };
             }
           }),
@@ -3453,7 +3611,7 @@ export const router = (authToken?: string) => {
               );
               return { success: true, data: undefined };
             } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
+              const message = getErrorMessage(error);
               return { success: false, error: message };
             }
           }),
@@ -3795,6 +3953,18 @@ export const router = (authToken?: string) => {
             unsubscribe();
           }
         }),
+      getChannel: t
+        .input(schemas.update.getChannel.input)
+        .output(schemas.update.getChannel.output)
+        .handler(({ context }) => {
+          return context.updateService.getChannel();
+        }),
+      setChannel: t
+        .input(schemas.update.setChannel.input)
+        .output(schemas.update.setChannel.output)
+        .handler(async ({ context, input }) => {
+          await context.updateService.setChannel(input.channel);
+        }),
     },
     menu: {
       onOpenSettings: t
@@ -3898,6 +4068,49 @@ export const router = (authToken?: string) => {
           context.signingService.clearIdentityCache();
           return { success: true };
         }),
+    },
+    ssh: {
+      hostKeyVerification: {
+        subscribe: t
+          .input(schemas.ssh.hostKeyVerification.subscribe.input)
+          .output(schemas.ssh.hostKeyVerification.subscribe.output)
+          .handler(async function* ({ context, signal }) {
+            if (signal?.aborted) return;
+
+            const service = context.hostKeyVerificationService;
+            const releaseResponder = service.registerInteractiveResponder();
+            const queue = createAsyncEventQueue<HostKeyVerificationEvent>();
+
+            const onRequest = (req: HostKeyVerificationRequest) =>
+              queue.push({ type: "request" as const, ...req });
+            const onRemoved = (requestId: string) =>
+              queue.push({ type: "removed" as const, requestId });
+
+            // Atomic handshake: register listener + snapshot in one step.
+            // No requests can be lost between snapshot and subscription.
+            const { snapshot, unsubscribe } = service.subscribeRequests(onRequest, onRemoved);
+            for (const req of snapshot) queue.push({ type: "request" as const, ...req });
+
+            const onAbort = () => queue.end();
+            signal?.addEventListener("abort", onAbort, { once: true });
+
+            try {
+              yield* queue.iterate();
+            } finally {
+              signal?.removeEventListener("abort", onAbort);
+              releaseResponder();
+              queue.end();
+              unsubscribe();
+            }
+          }),
+        respond: t
+          .input(schemas.ssh.hostKeyVerification.respond.input)
+          .output(schemas.ssh.hostKeyVerification.respond.output)
+          .handler(({ context, input }) => {
+            context.hostKeyVerificationService.respond(input.requestId, input.accept);
+            return Ok(undefined);
+          }),
+      },
     },
   });
 };

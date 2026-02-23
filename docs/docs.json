@@ -98,6 +98,7 @@
               "config/agentic-git-identity",
               "config/keybinds",
               "config/notifications",
+              "config/server-access",
               "config/vim-mode"
             ]
           },
@@ -158,6 +159,7 @@
     { "source": "/agentic-git-identity", "destination": "/config/agentic-git-identity" },
     { "source": "/keybinds", "destination": "/config/keybinds" },
     { "source": "/notifications", "destination": "/config/notifications" },
+    { "source": "/server-access", "destination": "/config/server-access" },
     { "source": "/cli", "destination": "/reference/cli" },
     { "source": "/guides/cli", "destination": "/reference/cli" },
     { "source": "/context-management", "destination": "/workspaces/compaction" },

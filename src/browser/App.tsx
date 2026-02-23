@@ -21,7 +21,6 @@ import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
 import { handleLayoutSlotHotkeys } from "./utils/ui/layoutSlotHotkeys";
 import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
 import { getVisibleWorkspaceIds } from "./utils/ui/workspaceDomNav";
-import { useResumeManager } from "./hooks/useResumeManager";
 import { useUnreadTracking } from "./hooks/useUnreadTracking";
 import { useWorkspaceStoreRaw, useWorkspaceRecency } from "./stores/WorkspaceStore";
 
@@ -70,6 +69,7 @@ import { ConfirmDialogProvider, useConfirmDialog } from "./contexts/ConfirmDialo
 import { AboutDialog } from "./components/About/AboutDialog";
 import { SettingsPage } from "@/browser/components/Settings/SettingsPage";
 import { MuxGatewaySessionExpiredDialog } from "./components/MuxGatewaySessionExpiredDialog";
+import { HostKeyVerificationDialog } from "./components/HostKeyVerificationDialog";
 import { SplashScreenProvider } from "./components/splashScreens/SplashScreenProvider";
 import { TutorialProvider } from "./contexts/TutorialContext";
 import { PowerModeProvider } from "./contexts/PowerModeContext";
@@ -84,6 +84,8 @@ import { WindowsToolchainBanner } from "./components/WindowsToolchainBanner";
 import { RosettaBanner } from "./components/RosettaBanner";
 import { isDesktopMode } from "./hooks/useDesktopTitlebar";
 import { cn } from "@/common/lib/utils";
+import { getErrorMessage } from "@/common/utils/errors";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 function AppInner() {
   // Get workspace state from context
@@ -241,9 +243,6 @@ function AppInner() {
       });
     }
   }, [refreshWorkspaceMetadata, setSelectedWorkspace]);
-
-  // Auto-resume interrupted streams on app startup and when failures occur
-  useResumeManager();
 
   // Update window title based on selected workspace
   // URL syncing is now handled by RouterContext
@@ -413,8 +412,9 @@ function AppInner() {
       >;
 
       const normalizedAgentId =
-        readPersistedState<string>(getAgentIdKey(workspaceId), "exec").trim().toLowerCase() ||
-        "exec";
+        readPersistedState<string>(getAgentIdKey(workspaceId), WORKSPACE_DEFAULTS.agentId)
+          .trim()
+          .toLowerCase() || WORKSPACE_DEFAULTS.agentId;
 
       updatePersistedState<WorkspaceAISettingsByAgentCache>(
         getWorkspaceAISettingsByAgentKey(workspaceId),
@@ -518,7 +518,7 @@ function AppInner() {
           }
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         if (typeof window !== "undefined") {
           window.alert(message);
         }
@@ -677,12 +677,20 @@ function AppInner() {
       } else if (matchesKeybind(e, KEYBINDS.PREV_WORKSPACE)) {
         e.preventDefault();
         handleNavigateWorkspace("prev");
-      } else if (matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE)) {
+      } else if (
+        matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE) ||
+        matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE_ACTIONS)
+      ) {
         e.preventDefault();
         if (isCommandPaletteOpen) {
           closeCommandPalette();
         } else {
-          openCommandPalette();
+          // Alternate palette shortcut opens in command mode (with ">") while the
+          // primary Ctrl/Cmd+Shift+P shortcut opens default workspace-switch mode.
+          const initialQuery = matchesKeybind(e, KEYBINDS.OPEN_COMMAND_PALETTE_ACTIONS)
+            ? ">"
+            : undefined;
+          openCommandPalette(initialQuery);
         }
       } else if (matchesKeybind(e, KEYBINDS.OPEN_MUX_CHAT)) {
         e.preventDefault();
@@ -1105,6 +1113,7 @@ function AppInner() {
         />
         <AboutDialog />
         <MuxGatewaySessionExpiredDialog />
+        <HostKeyVerificationDialog />
       </div>
     </>
   );

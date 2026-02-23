@@ -16,11 +16,13 @@ import type { AIService } from "./aiService";
 import type { InitStateManager, InitStatus } from "./initStateManager";
 import type { ExtensionMetadataService } from "./ExtensionMetadataService";
 import type { FrontendWorkspaceMetadata, WorkspaceMetadata } from "@/common/types/workspace";
+import type { TaskService } from "./taskService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import type { BashToolResult } from "@/common/types/tools";
 import { createMuxMessage } from "@/common/types/message";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import * as runtimeFactory from "@/node/runtime/runtimeFactory";
+import * as forkOrchestratorModule from "@/node/services/utils/forkOrchestrator";
 import * as workspaceTitleGenerator from "./workspaceTitleGenerator";
 
 // Helper to access private renamingWorkspaces set
@@ -179,6 +181,593 @@ describe("WorkspaceService rename lock", () => {
     if (!result.success) {
       expect(result.error).toContain("stream is active");
     }
+  });
+});
+
+describe("WorkspaceService sendMessage status clearing", () => {
+  let workspaceService: WorkspaceService;
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+  let fakeSession: {
+    isBusy: ReturnType<typeof mock>;
+    queueMessage: ReturnType<typeof mock>;
+    sendMessage: ReturnType<typeof mock>;
+    resumeStream: ReturnType<typeof mock>;
+  };
+
+  beforeEach(async () => {
+    const aiService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() =>
+        Promise.resolve({ success: false as const, error: "not found" })
+      ),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/test",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: mock(() => ({
+        workspacePath: "/tmp/test/workspace",
+        projectPath: "/tmp/test/project",
+      })),
+      loadConfigOrDefault: mock(() => ({ projects: new Map() })),
+    };
+
+    const mockExtensionMetadata: Partial<ExtensionMetadataService> = {
+      updateRecency: mock(() =>
+        Promise.resolve({
+          recency: Date.now(),
+          streaming: false,
+          lastModel: null,
+          lastThinkingLevel: null,
+          agentStatus: null,
+        })
+      ),
+      setStreaming: mock(() =>
+        Promise.resolve({
+          recency: Date.now(),
+          streaming: false,
+          lastModel: null,
+          lastThinkingLevel: null,
+          agentStatus: null,
+        })
+      ),
+      setAgentStatus: mock(() =>
+        Promise.resolve({
+          recency: Date.now(),
+          streaming: false,
+          lastModel: null,
+          lastThinkingLevel: null,
+          agentStatus: null,
+        })
+      ),
+    };
+
+    workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadata as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    fakeSession = {
+      isBusy: mock(() => true),
+      queueMessage: mock(() => undefined),
+      sendMessage: mock(() => Promise.resolve(Ok(undefined))),
+      resumeStream: mock(() => Promise.resolve(Ok({ started: true }))),
+    };
+
+    (
+      workspaceService as unknown as {
+        getOrCreateSession: (workspaceId: string) => AgentSession;
+      }
+    ).getOrCreateSession = mock(() => fakeSession as unknown as AgentSession);
+
+    (
+      workspaceService as unknown as {
+        maybePersistAISettingsFromOptions: (
+          workspaceId: string,
+          options: unknown,
+          source: "send" | "resume"
+        ) => Promise<void>;
+      }
+    ).maybePersistAISettingsFromOptions = mock(() => Promise.resolve());
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
+  test("does not clear persisted agent status directly for non-synthetic sends", async () => {
+    const updateAgentStatus = spyOn(
+      workspaceService as unknown as {
+        updateAgentStatus: (workspaceId: string, status: null) => Promise<void>;
+      },
+      "updateAgentStatus"
+    ).mockResolvedValue(undefined);
+
+    const result = await workspaceService.sendMessage("test-workspace", "hello", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(true);
+    expect(updateAgentStatus).not.toHaveBeenCalled();
+  });
+
+  test("does not clear persisted agent status directly for synthetic sends", async () => {
+    const updateAgentStatus = spyOn(
+      workspaceService as unknown as {
+        updateAgentStatus: (workspaceId: string, status: null) => Promise<void>;
+      },
+      "updateAgentStatus"
+    ).mockResolvedValue(undefined);
+
+    const result = await workspaceService.sendMessage(
+      "test-workspace",
+      "hello",
+      {
+        model: "openai:gpt-4o-mini",
+        agentId: "exec",
+      },
+      {
+        synthetic: true,
+      }
+    );
+
+    expect(result.success).toBe(true);
+    expect(updateAgentStatus).not.toHaveBeenCalled();
+  });
+
+  test("sendMessage restores interrupted task status before successful send", async () => {
+    fakeSession.isBusy.mockReturnValue(false);
+
+    const markInterruptedTaskRunning = mock(() => Promise.resolve(true));
+    const restoreInterruptedTaskAfterResumeFailure = mock(() => Promise.resolve());
+    workspaceService.setTaskService({
+      markInterruptedTaskRunning,
+      restoreInterruptedTaskAfterResumeFailure,
+      resetAutoResumeCount: mock(() => undefined),
+    } as unknown as TaskService);
+
+    const result = await workspaceService.sendMessage("test-workspace", "hello", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(true);
+    expect(markInterruptedTaskRunning).toHaveBeenCalledWith("test-workspace");
+    expect(restoreInterruptedTaskAfterResumeFailure).not.toHaveBeenCalled();
+  });
+
+  test("resumeStream restores interrupted task status before successful resume", async () => {
+    const markInterruptedTaskRunning = mock(() => Promise.resolve(true));
+    const restoreInterruptedTaskAfterResumeFailure = mock(() => Promise.resolve());
+    workspaceService.setTaskService({
+      markInterruptedTaskRunning,
+      restoreInterruptedTaskAfterResumeFailure,
+      resetAutoResumeCount: mock(() => undefined),
+    } as unknown as TaskService);
+
+    const result = await workspaceService.resumeStream("test-workspace", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(true);
+    expect(markInterruptedTaskRunning).toHaveBeenCalledWith("test-workspace");
+    expect(restoreInterruptedTaskAfterResumeFailure).not.toHaveBeenCalled();
+  });
+
+  test("resumeStream keeps interrupted task status when no stream starts", async () => {
+    fakeSession.resumeStream.mockResolvedValue(Ok({ started: false }));
+
+    const markInterruptedTaskRunning = mock(() => Promise.resolve(true));
+    const restoreInterruptedTaskAfterResumeFailure = mock(() => Promise.resolve());
+    workspaceService.setTaskService({
+      markInterruptedTaskRunning,
+      restoreInterruptedTaskAfterResumeFailure,
+      resetAutoResumeCount: mock(() => undefined),
+    } as unknown as TaskService);
+
+    const result = await workspaceService.resumeStream("test-workspace", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.started).toBe(false);
+    }
+    expect(markInterruptedTaskRunning).toHaveBeenCalledWith("test-workspace");
+    expect(restoreInterruptedTaskAfterResumeFailure).toHaveBeenCalledWith("test-workspace");
+  });
+
+  test("resumeStream does not start interrupted tasks while still busy", async () => {
+    const getAgentTaskStatus = mock(() => "interrupted" as const);
+    const markInterruptedTaskRunning = mock(() => Promise.resolve(false));
+    workspaceService.setTaskService({
+      getAgentTaskStatus,
+      markInterruptedTaskRunning,
+      resetAutoResumeCount: mock(() => undefined),
+    } as unknown as TaskService);
+
+    const result = await workspaceService.resumeStream("test-workspace", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success && result.error.type === "unknown") {
+      expect(result.error.raw).toContain("Interrupted task is still winding down");
+    }
+    expect(getAgentTaskStatus).toHaveBeenCalledWith("test-workspace");
+    expect(markInterruptedTaskRunning).not.toHaveBeenCalled();
+    expect(fakeSession.resumeStream).not.toHaveBeenCalled();
+  });
+
+  test("sendMessage does not queue interrupted tasks while still busy", async () => {
+    const getAgentTaskStatus = mock(() => "interrupted" as const);
+    const markInterruptedTaskRunning = mock(() => Promise.resolve(false));
+    workspaceService.setTaskService({
+      getAgentTaskStatus,
+      markInterruptedTaskRunning,
+      resetAutoResumeCount: mock(() => undefined),
+    } as unknown as TaskService);
+
+    const result = await workspaceService.sendMessage("test-workspace", "hello", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success && result.error.type === "unknown") {
+      expect(result.error.raw).toContain("Interrupted task is still winding down");
+    }
+    expect(getAgentTaskStatus).toHaveBeenCalledWith("test-workspace");
+    expect(markInterruptedTaskRunning).not.toHaveBeenCalled();
+    expect(fakeSession.queueMessage).not.toHaveBeenCalled();
+  });
+
+  test("sendMessage restores interrupted status when resumed send fails", async () => {
+    fakeSession.isBusy.mockReturnValue(false);
+    fakeSession.sendMessage.mockResolvedValue(
+      Err({
+        type: "unknown" as const,
+        raw: "runtime startup failed after user turn persisted",
+      })
+    );
+
+    const markInterruptedTaskRunning = mock(() => Promise.resolve(true));
+    const restoreInterruptedTaskAfterResumeFailure = mock(() => Promise.resolve());
+    workspaceService.setTaskService({
+      markInterruptedTaskRunning,
+      restoreInterruptedTaskAfterResumeFailure,
+      resetAutoResumeCount: mock(() => undefined),
+    } as unknown as TaskService);
+
+    const result = await workspaceService.sendMessage("test-workspace", "hello", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(false);
+    expect(markInterruptedTaskRunning).toHaveBeenCalledWith("test-workspace");
+    expect(restoreInterruptedTaskAfterResumeFailure).toHaveBeenCalledWith("test-workspace");
+  });
+
+  test("sendMessage restores interrupted status when resumed send throws", async () => {
+    fakeSession.isBusy.mockReturnValue(false);
+    fakeSession.sendMessage.mockRejectedValue(new Error("send explode"));
+
+    const markInterruptedTaskRunning = mock(() => Promise.resolve(true));
+    const restoreInterruptedTaskAfterResumeFailure = mock(() => Promise.resolve());
+    workspaceService.setTaskService({
+      markInterruptedTaskRunning,
+      restoreInterruptedTaskAfterResumeFailure,
+      resetAutoResumeCount: mock(() => undefined),
+    } as unknown as TaskService);
+
+    const result = await workspaceService.sendMessage("test-workspace", "hello", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(false);
+    expect(markInterruptedTaskRunning).toHaveBeenCalledWith("test-workspace");
+    expect(restoreInterruptedTaskAfterResumeFailure).toHaveBeenCalledWith("test-workspace");
+  });
+
+  test("resumeStream restores interrupted status when resumed stream throws", async () => {
+    fakeSession.resumeStream.mockRejectedValue(new Error("resume explode"));
+
+    const markInterruptedTaskRunning = mock(() => Promise.resolve(true));
+    const restoreInterruptedTaskAfterResumeFailure = mock(() => Promise.resolve());
+    workspaceService.setTaskService({
+      markInterruptedTaskRunning,
+      restoreInterruptedTaskAfterResumeFailure,
+      resetAutoResumeCount: mock(() => undefined),
+    } as unknown as TaskService);
+
+    const result = await workspaceService.resumeStream("test-workspace", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(false);
+    expect(markInterruptedTaskRunning).toHaveBeenCalledWith("test-workspace");
+    expect(restoreInterruptedTaskAfterResumeFailure).toHaveBeenCalledWith("test-workspace");
+  });
+
+  test("does not clear persisted agent status directly when direct send fails after turn acceptance", async () => {
+    fakeSession.isBusy.mockReturnValue(false);
+    fakeSession.sendMessage.mockResolvedValue(
+      Err({
+        type: "unknown" as const,
+        raw: "runtime startup failed after user turn persisted",
+      })
+    );
+
+    const updateAgentStatus = spyOn(
+      workspaceService as unknown as {
+        updateAgentStatus: (workspaceId: string, status: null) => Promise<void>;
+      },
+      "updateAgentStatus"
+    ).mockResolvedValue(undefined);
+
+    const result = await workspaceService.sendMessage("test-workspace", "hello", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(false);
+    expect(updateAgentStatus).not.toHaveBeenCalled();
+  });
+
+  test("does not clear persisted agent status directly when direct send is rejected pre-acceptance", async () => {
+    fakeSession.isBusy.mockReturnValue(false);
+    fakeSession.sendMessage.mockResolvedValue(
+      Err({
+        type: "invalid_model_string" as const,
+        message: "invalid model",
+      })
+    );
+
+    const updateAgentStatus = spyOn(
+      workspaceService as unknown as {
+        updateAgentStatus: (workspaceId: string, status: null) => Promise<void>;
+      },
+      "updateAgentStatus"
+    ).mockResolvedValue(undefined);
+
+    const result = await workspaceService.sendMessage("test-workspace", "hello", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(false);
+    expect(updateAgentStatus).not.toHaveBeenCalled();
+  });
+
+  test("registerSession clears persisted agent status for accepted user chat events", () => {
+    const updateAgentStatus = spyOn(
+      workspaceService as unknown as {
+        updateAgentStatus: (workspaceId: string, status: null) => Promise<void>;
+      },
+      "updateAgentStatus"
+    ).mockResolvedValue(undefined);
+
+    const workspaceId = "listener-workspace";
+    const sessionEmitter = new EventEmitter();
+    const listenerSession = {
+      onChatEvent: (listener: (event: unknown) => void) => {
+        sessionEmitter.on("chat-event", listener);
+        return () => sessionEmitter.off("chat-event", listener);
+      },
+      onMetadataEvent: (listener: (event: unknown) => void) => {
+        sessionEmitter.on("metadata-event", listener);
+        return () => sessionEmitter.off("metadata-event", listener);
+      },
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      dispose: () => {},
+    } as unknown as AgentSession;
+
+    workspaceService.registerSession(workspaceId, listenerSession);
+
+    sessionEmitter.emit("chat-event", {
+      workspaceId,
+      message: {
+        type: "message",
+        ...createMuxMessage("user-accepted", "user", "hello"),
+      },
+    });
+
+    expect(updateAgentStatus).toHaveBeenCalledWith(workspaceId, null);
+  });
+
+  test("registerSession does not clear persisted agent status for synthetic user chat events", () => {
+    const updateAgentStatus = spyOn(
+      workspaceService as unknown as {
+        updateAgentStatus: (workspaceId: string, status: null) => Promise<void>;
+      },
+      "updateAgentStatus"
+    ).mockResolvedValue(undefined);
+
+    const workspaceId = "synthetic-listener-workspace";
+    const sessionEmitter = new EventEmitter();
+    const listenerSession = {
+      onChatEvent: (listener: (event: unknown) => void) => {
+        sessionEmitter.on("chat-event", listener);
+        return () => sessionEmitter.off("chat-event", listener);
+      },
+      onMetadataEvent: (listener: (event: unknown) => void) => {
+        sessionEmitter.on("metadata-event", listener);
+        return () => sessionEmitter.off("metadata-event", listener);
+      },
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      dispose: () => {},
+    } as unknown as AgentSession;
+
+    workspaceService.registerSession(workspaceId, listenerSession);
+
+    sessionEmitter.emit("chat-event", {
+      workspaceId,
+      message: {
+        type: "message",
+        ...createMuxMessage("user-synthetic", "user", "hello", { synthetic: true }),
+      },
+    });
+
+    expect(updateAgentStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe("WorkspaceService idle compaction dispatch", () => {
+  let workspaceService: WorkspaceService;
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+
+  beforeEach(async () => {
+    const aiService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() =>
+        Promise.resolve({ success: false as const, error: "not found" })
+      ),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/test",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: mock(() => null),
+    };
+
+    workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
+  test("marks idle compaction send as synthetic and emits started after dispatch", async () => {
+    const workspaceId = "idle-ws";
+    const sendMessage = mock(() => Promise.resolve(Ok(undefined)));
+    const buildIdleCompactionSendOptions = mock(() =>
+      Promise.resolve({ model: "openai:gpt-4o", agentId: "compact" })
+    );
+    const emitIdleCompactionStarted = mock((_id: string) => undefined);
+
+    (
+      workspaceService as unknown as {
+        sendMessage: typeof sendMessage;
+        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+        emitIdleCompactionStarted: typeof emitIdleCompactionStarted;
+      }
+    ).sendMessage = sendMessage;
+    (
+      workspaceService as unknown as {
+        sendMessage: typeof sendMessage;
+        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+        emitIdleCompactionStarted: typeof emitIdleCompactionStarted;
+      }
+    ).buildIdleCompactionSendOptions = buildIdleCompactionSendOptions;
+    (
+      workspaceService as unknown as {
+        sendMessage: typeof sendMessage;
+        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+        emitIdleCompactionStarted: typeof emitIdleCompactionStarted;
+      }
+    ).emitIdleCompactionStarted = emitIdleCompactionStarted;
+
+    await workspaceService.executeIdleCompaction(workspaceId);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      workspaceId,
+      expect.any(String),
+      expect.any(Object),
+      expect.objectContaining({
+        skipAutoResumeReset: true,
+        synthetic: true,
+        requireIdle: true,
+      })
+    );
+    expect(emitIdleCompactionStarted).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not emit idle-compaction-started when busy-skip result is returned", async () => {
+    const workspaceId = "idle-busy-ws";
+    const sendMessage = mock(() =>
+      Promise.resolve(
+        Err({
+          type: "unknown" as const,
+          raw: "Workspace is busy; idle-only send was skipped.",
+        })
+      )
+    );
+    const buildIdleCompactionSendOptions = mock(() =>
+      Promise.resolve({ model: "openai:gpt-4o", agentId: "compact" })
+    );
+    const emitIdleCompactionStarted = mock((_id: string) => undefined);
+
+    (
+      workspaceService as unknown as {
+        sendMessage: typeof sendMessage;
+        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+        emitIdleCompactionStarted: typeof emitIdleCompactionStarted;
+      }
+    ).sendMessage = sendMessage;
+    (
+      workspaceService as unknown as {
+        sendMessage: typeof sendMessage;
+        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+        emitIdleCompactionStarted: typeof emitIdleCompactionStarted;
+      }
+    ).buildIdleCompactionSendOptions = buildIdleCompactionSendOptions;
+    (
+      workspaceService as unknown as {
+        sendMessage: typeof sendMessage;
+        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+        emitIdleCompactionStarted: typeof emitIdleCompactionStarted;
+      }
+    ).emitIdleCompactionStarted = emitIdleCompactionStarted;
+
+    let executionError: unknown;
+    try {
+      await workspaceService.executeIdleCompaction(workspaceId);
+    } catch (error) {
+      executionError = error;
+    }
+
+    expect(executionError).toBeInstanceOf(Error);
+    if (!(executionError instanceof Error)) {
+      throw new Error("Expected idle compaction to throw when workspace is busy");
+    }
+    expect(executionError.message).toContain("idle-only send was skipped");
+
+    expect(emitIdleCompactionStarted).toHaveBeenCalledTimes(0);
   });
 });
 
@@ -443,11 +1032,31 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
 
     ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
 
+    const workspacePath = "/tmp/proj/ws";
+    const projectPath = "/tmp/proj";
     const mockConfig: Partial<Config> = {
       srcDir: "/tmp/test",
       getSessionDir: mock(() => "/tmp/test/sessions"),
       generateStableId: mock(() => "test-id"),
-      findWorkspace: mock(() => null),
+      findWorkspace: mock((workspaceId: string) =>
+        workspaceId === "ws" ? { projectPath, workspacePath } : null
+      ),
+      loadConfigOrDefault: mock(() => ({
+        projects: new Map([
+          [
+            projectPath,
+            {
+              workspaces: [
+                {
+                  id: "ws",
+                  path: workspacePath,
+                  name: "ws",
+                },
+              ],
+            },
+          ],
+        ]),
+      })),
     };
     const mockInitStateManager: Partial<InitStateManager> = {
       on: mock(() => undefined as unknown as InitStateManager),
@@ -526,6 +1135,71 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
     );
 
     expect(persistSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test("persists AI settings for sub-agent workspaces so auto-resume can use latest model", async () => {
+    const persistSpy = mock(() => Promise.resolve({ success: true as const, data: true }));
+
+    interface WorkspaceServiceTestAccess {
+      maybePersistAISettingsFromOptions: (
+        workspaceId: string,
+        options: unknown,
+        context: "send" | "resume"
+      ) => Promise<void>;
+      persistWorkspaceAISettingsForAgent: (...args: unknown[]) => unknown;
+      config: {
+        findWorkspace: (
+          workspaceId: string
+        ) => { projectPath: string; workspacePath: string } | null;
+        loadConfigOrDefault: () => {
+          projects: Map<string, { workspaces: Array<Record<string, unknown>> }>;
+        };
+      };
+    }
+
+    const svc = workspaceService as unknown as WorkspaceServiceTestAccess;
+    svc.persistWorkspaceAISettingsForAgent = persistSpy;
+
+    const projectPath = "/tmp/proj";
+    const workspacePath = "/tmp/proj/ws";
+    svc.config.findWorkspace = mock((workspaceId: string) =>
+      workspaceId === "ws" ? { projectPath, workspacePath } : null
+    );
+    svc.config.loadConfigOrDefault = mock(() => ({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                id: "ws",
+                path: workspacePath,
+                name: "ws",
+                parentWorkspaceId: "parent-ws",
+              },
+            ],
+          },
+        ],
+      ]),
+    }));
+
+    await svc.maybePersistAISettingsFromOptions(
+      "ws",
+      {
+        agentId: "exec",
+        model: "openai:gpt-4o-mini",
+        thinkingLevel: "off",
+      },
+      "send"
+    );
+
+    expect(persistSpy).toHaveBeenCalledTimes(1);
+    expect(persistSpy).toHaveBeenCalledWith(
+      "ws",
+      "exec",
+      { model: "openai:gpt-4o-mini", thinkingLevel: "off" },
+      { emitMetadata: false }
+    );
   });
 });
 describe("WorkspaceService remove timing rollup", () => {
@@ -2066,6 +2740,180 @@ describe("WorkspaceService regenerateTitle", () => {
     } finally {
       updateTitleSpy.mockRestore();
       generateIdentitySpy.mockRestore();
+    }
+  });
+});
+
+describe("WorkspaceService fork", () => {
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+
+  beforeEach(async () => {
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
+  test("cleans up init state when orchestrateFork rejects", async () => {
+    const sourceWorkspaceId = "source-workspace";
+    const newWorkspaceId = "forked-workspace";
+    const sourceProjectPath = "/tmp/project";
+
+    const mockAIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() =>
+        Promise.resolve(
+          Ok({
+            id: sourceWorkspaceId,
+            name: "source-branch",
+            projectPath: sourceProjectPath,
+            projectName: "project",
+            runtimeConfig: { type: "local" },
+          })
+        )
+      ),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    const startInitMock = mock(() => undefined);
+    const endInitMock = mock(() => Promise.resolve());
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => ({ status: "running" }) as unknown as InitStatus),
+      startInit: startInitMock,
+      endInit: endInitMock,
+      appendOutput: mock(() => undefined),
+      enterHookPhase: mock(() => undefined),
+    };
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/src",
+      generateStableId: mock(() => newWorkspaceId),
+      findWorkspace: mock(() => null),
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+    };
+
+    const workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      mockAIService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    const getOrCreateSessionSpy = spyOn(workspaceService, "getOrCreateSession").mockReturnValue({
+      emitMetadata: mock(() => undefined),
+    } as unknown as AgentSession);
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue(
+      {} as ReturnType<typeof runtimeFactory.createRuntime>
+    );
+    const orchestrateForkSpy = spyOn(forkOrchestratorModule, "orchestrateFork").mockRejectedValue(
+      new Error("runtime explosion")
+    );
+
+    try {
+      const result = await workspaceService.fork(sourceWorkspaceId, "fork-child");
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toBe("Failed to fork workspace: runtime explosion");
+      }
+
+      expect(startInitMock).toHaveBeenCalledWith(newWorkspaceId, sourceProjectPath);
+      expect(endInitMock).toHaveBeenCalledWith(newWorkspaceId, -1);
+
+      const initAbortControllers = (
+        workspaceService as unknown as { initAbortControllers: Map<string, AbortController> }
+      ).initAbortControllers;
+      expect(initAbortControllers.has(newWorkspaceId)).toBe(false);
+    } finally {
+      orchestrateForkSpy.mockRestore();
+      createRuntimeSpy.mockRestore();
+      getOrCreateSessionSpy.mockRestore();
+    }
+  });
+});
+
+describe("WorkspaceService interruptStream", () => {
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+
+  beforeEach(async () => {
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
+  test("sendQueuedImmediately clears hard-interrupt suppression before queued resend", async () => {
+    const workspaceId = "ws-interrupt-queue-111";
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/test",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: mock(() => null),
+    };
+
+    const mockAIService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() => Promise.resolve({ success: false, error: "not found" })),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    const workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      mockAIService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    const resetAutoResumeCount = mock(() => undefined);
+    const markParentWorkspaceInterrupted = mock(() => undefined);
+    const terminateAllDescendantAgentTasks = mock(() => Promise.resolve([] as string[]));
+    workspaceService.setTaskService({
+      resetAutoResumeCount,
+      markParentWorkspaceInterrupted,
+      terminateAllDescendantAgentTasks,
+    } as unknown as TaskService);
+
+    const sendQueuedMessages = mock(() => undefined);
+    const restoreQueueToInput = mock(() => undefined);
+    const interruptStream = mock(() => Promise.resolve(Ok(undefined)));
+    const fakeSession = {
+      interruptStream,
+      sendQueuedMessages,
+      restoreQueueToInput,
+    };
+    const getOrCreateSessionSpy = spyOn(workspaceService, "getOrCreateSession").mockReturnValue(
+      fakeSession as unknown as AgentSession
+    );
+
+    try {
+      const result = await workspaceService.interruptStream(workspaceId, {
+        sendQueuedImmediately: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(markParentWorkspaceInterrupted).toHaveBeenCalledWith(workspaceId);
+      expect(terminateAllDescendantAgentTasks).toHaveBeenCalledWith(workspaceId);
+      expect(resetAutoResumeCount).toHaveBeenCalledTimes(2);
+      expect(sendQueuedMessages).toHaveBeenCalledTimes(1);
+      expect(restoreQueueToInput).not.toHaveBeenCalled();
+    } finally {
+      getOrCreateSessionSpy.mockRestore();
     }
   });
 });

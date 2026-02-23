@@ -23,6 +23,7 @@ import {
 } from "@/common/constants/storage";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import { sortAgentsStable } from "@/browser/utils/agents";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 export interface AgentContextValue {
   agentId: string;
@@ -55,7 +56,9 @@ function getScopeId(workspaceId: string | undefined, projectPath: string | undef
 }
 
 function coerceAgentId(value: unknown): string {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : "exec";
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim().toLowerCase()
+    : WORKSPACE_DEFAULTS.agentId;
 }
 
 export function AgentProvider(props: AgentProviderProps) {
@@ -74,10 +77,23 @@ function AgentProviderWithState(props: {
   const { api } = useAPI();
 
   const scopeId = getScopeId(props.workspaceId, props.projectPath);
+  const isProjectScope = !props.workspaceId && Boolean(props.projectPath);
 
-  const [agentId, setAgentIdRaw] = usePersistedState<string>(getAgentIdKey(scopeId), "exec", {
-    listener: true,
-  });
+  const [globalDefaultAgentId] = usePersistedState<string>(
+    getAgentIdKey(GLOBAL_SCOPE_ID),
+    WORKSPACE_DEFAULTS.agentId,
+    {
+      listener: true,
+    }
+  );
+
+  const [scopedAgentId, setAgentIdRaw] = usePersistedState<string | null>(
+    getAgentIdKey(scopeId),
+    isProjectScope ? null : WORKSPACE_DEFAULTS.agentId,
+    {
+      listener: true,
+    }
+  );
 
   const [disableWorkspaceAgents, setDisableWorkspaceAgents] = usePersistedState<boolean>(
     getDisableWorkspaceAgentsKey(scopeId),
@@ -88,11 +104,14 @@ function AgentProviderWithState(props: {
   const setAgentId: Dispatch<SetStateAction<string>> = useCallback(
     (value) => {
       setAgentIdRaw((prev) => {
-        const next = typeof value === "function" ? value(prev) : value;
+        const previousAgentId = coerceAgentId(
+          isProjectScope ? (prev ?? globalDefaultAgentId) : prev
+        );
+        const next = typeof value === "function" ? value(previousAgentId) : value;
         return coerceAgentId(next);
       });
     },
-    [setAgentIdRaw]
+    [globalDefaultAgentId, isProjectScope, setAgentIdRaw]
   );
 
   const [agents, setAgents] = useState<AgentDefinitionDescriptor[]>([]);
@@ -200,13 +219,16 @@ function AgentProviderWithState(props: {
   const cycleToNextAgent = useCallback(() => {
     if (selectableAgents.length < 2) return;
 
-    const currentIndex = selectableAgents.findIndex((a) => a.id === coerceAgentId(agentId));
+    const activeAgentId = coerceAgentId(
+      isProjectScope ? (scopedAgentId ?? globalDefaultAgentId) : scopedAgentId
+    );
+    const currentIndex = selectableAgents.findIndex((a) => a.id === activeAgentId);
     const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % selectableAgents.length;
     const nextAgent = selectableAgents[nextIndex];
     if (nextAgent) {
       setAgentId(nextAgent.id);
     }
-  }, [agentId, selectableAgents, setAgentId]);
+  }, [globalDefaultAgentId, isProjectScope, scopedAgentId, selectableAgents, setAgentId]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -237,7 +259,11 @@ function AgentProviderWithState(props: {
       window.removeEventListener(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED, handleRefreshRequested);
   }, [refresh]);
 
-  const normalizedAgentId = coerceAgentId(agentId);
+  // Project-scoped providers should inherit the global default agent until a
+  // project-scoped preference is explicitly set.
+  const normalizedAgentId = coerceAgentId(
+    isProjectScope ? (scopedAgentId ?? globalDefaultAgentId) : scopedAgentId
+  );
   const currentAgent = loaded ? agents.find((a) => a.id === normalizedAgentId) : undefined;
 
   const agentContextValue = useMemo(

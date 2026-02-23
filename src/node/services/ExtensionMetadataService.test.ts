@@ -28,9 +28,44 @@ describe("ExtensionMetadataService", () => {
     expect(snapshot.streaming).toBe(false);
     expect(snapshot.lastModel).toBeNull();
     expect(snapshot.lastThinkingLevel).toBeNull();
+    expect(snapshot.agentStatus).toBeNull();
 
     const snapshots = await service.getAllSnapshots();
     expect(snapshots.get("workspace-1")).toEqual(snapshot);
+  });
+
+  test("setAgentStatus persists status_set payload", async () => {
+    const status = { emoji: "🔧", message: "Applying patch", url: "https://example.com/pr/123" };
+
+    const snapshot = await service.setAgentStatus("workspace-3", status);
+    expect(snapshot.agentStatus).toEqual(status);
+
+    const withoutUrl = await service.setAgentStatus("workspace-3", {
+      emoji: "✅",
+      message: "Checks passed",
+    });
+    // status_set often omits url after the first call; keep the last known URL.
+    expect(withoutUrl.agentStatus).toEqual({
+      emoji: "✅",
+      message: "Checks passed",
+      url: status.url,
+    });
+
+    const snapshots = await service.getAllSnapshots();
+    expect(snapshots.get("workspace-3")?.agentStatus).toEqual(withoutUrl.agentStatus);
+
+    const cleared = await service.setAgentStatus("workspace-3", null);
+    expect(cleared.agentStatus).toBeNull();
+
+    const afterClearWithoutUrl = await service.setAgentStatus("workspace-3", {
+      emoji: "🧪",
+      message: "Re-running",
+    });
+    expect(afterClearWithoutUrl.agentStatus).toEqual({
+      emoji: "🧪",
+      message: "Re-running",
+      url: status.url,
+    });
   });
 
   test("setStreaming toggles status and remembers last model", async () => {
@@ -39,11 +74,13 @@ describe("ExtensionMetadataService", () => {
     expect(streaming.streaming).toBe(true);
     expect(streaming.lastModel).toBe("anthropic/sonnet");
     expect(streaming.lastThinkingLevel).toBe("high");
+    expect(streaming.agentStatus).toBeNull();
 
     const cleared = await service.setStreaming("workspace-2", false);
     expect(cleared.streaming).toBe(false);
     expect(cleared.lastModel).toBe("anthropic/sonnet");
     expect(cleared.lastThinkingLevel).toBe("high");
+    expect(cleared.agentStatus).toBeNull();
 
     const snapshots = await service.getAllSnapshots();
     expect(snapshots.get("workspace-2")).toEqual(cleared);

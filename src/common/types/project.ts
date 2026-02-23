@@ -12,6 +12,7 @@ import type {
 import type { TaskSettings, SubagentAiDefaults } from "./tasks";
 import type { LayoutPresetsConfig } from "./uiLayouts";
 import type { AgentAiDefaults } from "./agentAiDefaults";
+import type { RuntimeEnablementId } from "./runtime";
 
 export type Workspace = z.infer<typeof WorkspaceConfigSchema>;
 
@@ -21,8 +22,18 @@ export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
 export type FeatureFlagOverride = "default" | "on" | "off";
 
+/**
+ * Update channel preference for Electron desktop app.
+ * Keep in sync with `UpdateChannelSchema` in `src/common/orpc/schemas/api.ts`.
+ */
+export type UpdateChannel = "stable" | "nightly";
+
 export interface ProjectsConfig {
   projects: Map<string, ProjectConfig>;
+  /**
+   * Update channel preference for Electron desktop app. Defaults to "stable".
+   */
+  updateChannel?: UpdateChannel;
   /**
    * Bind host/interface for the desktop HTTP/WS API server.
    *
@@ -114,4 +125,23 @@ export interface ProjectsConfig {
    * Stored as `false` only (undefined behaves as true) to keep config.json minimal.
    */
   stopCoderWorkspaceOnArchive?: boolean;
+
+  /** Global default runtime for new workspaces. */
+  defaultRuntime?: RuntimeEnablementId;
+
+  /**
+   * Override the default shell for local integrated terminals.
+   *
+   * When set, all local terminals (not SSH/Docker/Devcontainer) spawn this shell
+   * instead of auto-detecting from $SHELL or platform defaults.
+   *
+   * Accepts an absolute path (e.g. "/usr/bin/fish") or a command name (e.g. "fish").
+   */
+  terminalDefaultShell?: string;
+
+  /**
+   * Runtime enablement overrides (shared via ~/.mux/config.json).
+   * Defaults to enabled; store `false` only to keep config.json minimal.
+   */
+  runtimeEnablement?: Partial<Record<RuntimeEnablementId, false>>;
 }

@@ -1,6 +1,7 @@
 import { describe, expect, test, it } from "bun:test";
-import { getModelStats } from "./modelStats";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { getModelStats, getModelStatsResolved } from "./modelStats";
 
 describe("getModelStats", () => {
   describe("direct model lookups", () => {
@@ -147,6 +148,29 @@ describe("getModelStats", () => {
       const stats = getModelStats("gpt-5.2");
       expect(stats).not.toBeNull();
       expect(stats?.max_input_tokens).toBeGreaterThan(0);
+    });
+  });
+
+  describe("getModelStatsResolved", () => {
+    test("returns mapped model stats when mapping exists", () => {
+      const config: ProvidersConfigMap = {
+        ollama: {
+          apiKeySet: false,
+          isEnabled: true,
+          isConfigured: true,
+          models: [{ id: "custom", mappedToModel: KNOWN_MODELS.SONNET.id }],
+        },
+      };
+
+      const stats = getModelStatsResolved("ollama:custom", config);
+      const directStats = getModelStats(KNOWN_MODELS.SONNET.id);
+      expect(stats).toEqual(directStats);
+      expect(stats).not.toBeNull();
+    });
+
+    test("returns null for unmapped unknown model", () => {
+      const stats = getModelStatsResolved("ollama:custom", null);
+      expect(stats).toBeNull();
     });
   });
 

@@ -44,6 +44,7 @@ import {
   getInputAttachmentsKey,
   AGENT_AI_DEFAULTS_KEY,
   VIM_ENABLED_KEY,
+  RUNTIME_ENABLEMENT_KEY,
   getProjectScopeId,
   getPendingScopeId,
   getDraftScopeId,
@@ -51,13 +52,11 @@ import {
   getWorkspaceLastReadKey,
 } from "@/common/constants/storage";
 import {
-  executeCompaction,
   prepareCompactionMessage,
   processSlashCommand,
   type SlashCommandContext,
 } from "@/browser/utils/chatCommands";
 import { Button } from "../ui/button";
-import { shouldTriggerAutoCompaction } from "@/browser/utils/compaction/shouldTriggerAutoCompaction";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { findAtMentionAtCursor } from "@/common/utils/atMentions";
 import {
@@ -96,14 +95,18 @@ import type { PendingUserMessage } from "@/browser/utils/chatEditing";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import { DEFAULT_RUNTIME_ENABLEMENT, normalizeRuntimeEnablement } from "@/common/types/runtime";
 import { resolveThinkingInput } from "@/common/utils/thinking/policy";
 import {
-  type MuxFrontendMetadata,
+  type MuxMessageMetadata,
   type ReviewNoteDataForDisplay,
   prepareUserMessageForSend,
 } from "@/common/types/message";
 import type { Review } from "@/common/types/review";
-import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
+import {
+  getModelCapabilities,
+  getModelCapabilitiesResolved,
+} from "@/common/utils/ai/modelCapabilities";
 import { KNOWN_MODELS, MODEL_ABBREVIATION_EXAMPLES } from "@/common/constants/knownModels";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 import { trackCommandUsed } from "@/common/telemetry";
@@ -134,6 +137,7 @@ import {
   filePartsToChatAttachments,
   type SkillResolutionTarget,
 } from "./utils";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 // localStorage quotas are environment-dependent and relatively small.
 // Be conservative here so we can warn the user before writes start failing.
@@ -182,8 +186,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const editingMessage = variant === "workspace" ? props.editingMessage : undefined;
   const isStreamStarting = variant === "workspace" ? (props.isStreamStarting ?? false) : false;
   const isCompacting = variant === "workspace" ? (props.isCompacting ?? false) : false;
-  const hasQueuedCompaction =
-    variant === "workspace" ? (props.hasQueuedCompaction ?? false) : false;
   const canInterrupt = variant === "workspace" ? (props.canInterrupt ?? false) : false;
   const [isMobileTouch, setIsMobileTouch] = useState(
     () =>
@@ -229,6 +231,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       modelKey: getModelKey(props.workspaceId),
     };
   })();
+
+  // User request: keep creation runtime controls synced with Settings enablement toggles.
+  const [rawRuntimeEnablement] = usePersistedState(
+    RUNTIME_ENABLEMENT_KEY,
+    DEFAULT_RUNTIME_ENABLEMENT,
+    { listener: true }
+  );
+  const runtimeEnablement = normalizeRuntimeEnablement(rawRuntimeEnablement);
 
   const [input, setInput] = usePersistedState(storageKeys.inputKey, "", { listener: true });
 
@@ -463,9 +473,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   });
   const { startSequence: startTutorial } = useTutorial();
 
-  // Track OpenAI provider voice prerequisites from Settings → Providers.
+  // Track transcription provider prerequisites from Settings → Providers.
   const [openAIKeySet, setOpenAIKeySet] = useState(false);
   const [openAIProviderEnabled, setOpenAIProviderEnabled] = useState(true);
+  const [muxGatewayCouponSet, setMuxGatewayCouponSet] = useState(false);
+  const [muxGatewayEnabled, setMuxGatewayEnabled] = useState(true);
+  const isTranscriptionAvailable =
+    (openAIProviderEnabled && openAIKeySet) || (muxGatewayEnabled && muxGatewayCouponSet);
 
   // Voice input - appends transcribed text to input
   const voiceInput = useVoiceInput({
@@ -479,15 +493,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       pushToast({ type: "error", message: error });
     },
     onSend: () => void handleSend(),
-    openAIKeySet,
-    openAIProviderEnabled,
+    isTranscriptionAvailable,
     useRecordingKeybinds: true,
     api,
   });
 
-  const voiceInputUnavailableMessage = !voiceInput.isProviderEnabled
-    ? "Voice input is disabled because OpenAI provider is turned off. Enable it in Settings → Providers."
-    : "Voice input requires OpenAI API key. Configure in Settings → Providers.";
+  const voiceInputUnavailableMessage =
+    "Voice input requires a Mux Gateway login or an OpenAI API key. Configure in Settings → Providers.";
 
   // Start creation tutorial when entering creation mode
   useEffect(() => {
@@ -650,6 +662,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { projects } = useProjectContext();
   const pendingSectionId = variant === "creation" ? (props.pendingSectionId ?? null) : null;
   const creationProject = variant === "creation" ? projects.get(props.projectPath) : undefined;
+  const hasCreationRuntimeOverrides =
+    creationProject?.runtimeOverridesEnabled === true ||
+    Boolean(creationProject?.runtimeEnablement) ||
+    creationProject?.defaultRuntime !== undefined;
+  // Keep workspace creation in sync with Settings → Runtimes project overrides.
+  const creationRuntimeEnablement =
+    variant === "creation" && hasCreationRuntimeOverrides
+      ? normalizeRuntimeEnablement(creationProject?.runtimeEnablement)
+      : runtimeEnablement;
   const creationSections = creationProject?.sections ?? [];
 
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(() => pendingSectionId);
@@ -792,6 +813,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           projectName: props.projectName,
           nameState: creationState.nameState,
           runtimeAvailabilityState: creationState.runtimeAvailabilityState,
+          runtimeEnablement: creationRuntimeEnablement,
           sections: creationSections,
           selectedSectionId,
           onSectionChange: handleCreationSectionChange,
@@ -1087,7 +1109,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return;
     }
 
-    const cursor = inputRef.current?.selectionStart ?? input.length;
+    const cursor = Math.min(inputRef.current?.selectionStart ?? input.length, input.length);
     const match = findAtMentionAtCursor(input, cursor);
 
     if (!match) {
@@ -1250,7 +1272,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     };
   }, [api, variant, workspaceId, atMentionProjectPath, sendMessageOptions.disableWorkspaceAgents]);
 
-  // Voice input: track OpenAI key + enabled state (subscribe to provider config changes)
+  // Voice input: track transcription provider availability (subscribe to provider config changes)
   useEffect(() => {
     if (!api) return;
 
@@ -1261,12 +1283,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     // Ensure we `return()` them so backend subscriptions clean up EventEmitter listeners.
     let iterator: AsyncIterator<unknown> | null = null;
 
-    const checkOpenAIKey = async () => {
+    const checkTranscriptionConfig = async () => {
       try {
         const config = await api.providers.getConfig();
         if (!signal.aborted) {
           setOpenAIKeySet(config?.openai?.apiKeySet ?? false);
           setOpenAIProviderEnabled(config?.openai?.isEnabled ?? true);
+          setMuxGatewayCouponSet(config?.["mux-gateway"]?.couponCodeSet ?? false);
+          setMuxGatewayEnabled(config?.["mux-gateway"]?.isEnabled ?? true);
         }
       } catch {
         // Ignore errors fetching config
@@ -1274,7 +1298,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     };
 
     // Initial fetch
-    void checkOpenAIKey();
+    void checkTranscriptionConfig();
 
     // Subscribe to provider config changes via oRPC
     (async () => {
@@ -1290,7 +1314,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
         for await (const _ of subscribedIterator) {
           if (signal.aborted) break;
-          void checkOpenAIKey();
+          void checkTranscriptionConfig();
         }
       } catch {
         // Subscription cancelled via abort signal - expected on cleanup
@@ -1398,7 +1422,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (!voiceInput.shouldShowUI) return;
 
     const handleToggle = () => {
-      if (!voiceInput.isProviderEnabled || !voiceInput.isApiKeySet) {
+      if (!voiceInput.isAvailable) {
         pushToast({
           type: "error",
           message: voiceInputUnavailableMessage,
@@ -1670,7 +1694,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   const handleAtMentionSelect = useCallback(
     (suggestion: SlashSuggestion) => {
-      const cursor = inputRef.current?.selectionStart ?? input.length;
+      const cursor = Math.min(inputRef.current?.selectionStart ?? input.length, input.length);
       const match = findAtMentionAtCursor(input, cursor);
       if (!match) {
         return;
@@ -1827,7 +1851,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         (attachment) => getBaseMediaType(attachment.mediaType) === PDF_MEDIA_TYPE
       );
       if (pdfAttachments.length > 0) {
-        const caps = getModelCapabilities(policyModel);
+        const caps = getModelCapabilitiesResolved(policyModel, providersConfig);
         if (caps && !caps.supportsPdfInput) {
           const pdfCapableKnownModels = Object.values(KNOWN_MODELS)
             .map((m) => m.id)
@@ -1870,89 +1894,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const preSendDraft = getDraft();
       const preSendReviews = draftReviews;
 
-      // Auto-compaction check (workspace variant only)
-      // Check if we should auto-compact before sending this message
-      // Result is computed in parent (AIView) and passed down to avoid duplicate calculation
-      if (
-        variant === "workspace" &&
-        shouldTriggerAutoCompaction(
-          props.autoCompactionCheck,
-          isCompacting || isStreamStarting,
-          !!editingMessage,
-          hasQueuedCompaction
-        )
-      ) {
-        // Prepare file parts for the continue message
-        const fileParts = chatAttachmentsToFileParts(attachments);
-
-        // Prepare reviews data for the continue message
-        const reviewsData = reviewData;
-
-        // Capture review IDs for marking as checked on success
-        const sentReviewIds = reviewIdsForCheck;
-
-        // Clear input immediately for responsive UX
-        setInput("");
-        setDraftReviews(null);
-
-        const compactionSendMessageOptions: SendMessageOptions = {
-          ...sendMessageOptions,
-        };
-
-        setAttachments([]);
-        setHideReviewsDuringSend(true);
-
-        try {
-          const result = await executeCompaction({
-            api,
-            workspaceId: props.workspaceId,
-            followUpContent: {
-              text: messageTextForSend,
-              fileParts,
-              reviews: reviewsData,
-              muxMetadata: skillMuxMetadata,
-            },
-            sendMessageOptions: compactionSendMessageOptions,
-          });
-
-          if (!result.success) {
-            // Restore on error
-            setDraft(preSendDraft);
-            setDraftReviews(preSendReviews);
-            pushToast({
-              type: "error",
-              title: "Auto-Compaction Failed",
-              message: result.error ?? "Failed to start auto-compaction",
-            });
-          } else {
-            // Mark reviews as checked on success
-            if (sentReviewIds.length > 0) {
-              props.onCheckReviews?.(sentReviewIds);
-            }
-            pushToast({
-              type: "success",
-              message: "Context threshold reached - auto-compacting...",
-            });
-            props.onMessageSent?.("tool-end");
-          }
-        } catch (error) {
-          // Restore on unexpected error
-          setDraft(preSendDraft);
-          setDraftReviews(preSendReviews);
-          pushToast({
-            type: "error",
-            title: "Auto-Compaction Failed",
-            message:
-              error instanceof Error ? error.message : "Unexpected error during auto-compaction",
-          });
-        } finally {
-          setSendingCount((c) => c - 1);
-          setHideReviewsDuringSend(false);
-        }
-
-        return; // Skip normal send
-      }
-
       try {
         // Prepare file parts if any
         const fileParts = chatAttachmentsToFileParts(attachments, { validate: true });
@@ -1967,7 +1908,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
         // When editing a /compact command, regenerate the actual summarization request
         let actualMessageText = messageTextForSend;
-        let muxMetadata: MuxFrontendMetadata | undefined = skillMuxMetadata;
+        let muxMetadata: MuxMessageMetadata | undefined = skillMuxMetadata;
         let compactionOptions: Partial<SendMessageOptions> = {};
 
         if (editingMessage && actualMessageText.startsWith("/")) {
@@ -2093,7 +2034,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           telemetry.messageSent(
             props.workspaceId,
             effectiveModel,
-            sendMessageOptions.agentId ?? agentId ?? "exec",
+            sendMessageOptions.agentId ?? agentId ?? WORKSPACE_DEFAULTS.agentId,
             finalMessageText.length,
             runtimeType,
             sendMessageOptions.thinkingLevel ?? "off"
@@ -2160,7 +2101,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     // Handle voice input toggle (Ctrl+D / Cmd+D)
     if (matchesKeybind(e, KEYBINDS.TOGGLE_VOICE_INPUT) && voiceInput.shouldShowUI) {
       e.preventDefault();
-      if (!voiceInput.isProviderEnabled || !voiceInput.isApiKeySet) {
+      if (!voiceInput.isAvailable) {
         pushToast({
           type: "error",
           message: voiceInputUnavailableMessage,
@@ -2177,8 +2118,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       !e.repeat &&
       input.trim() === "" &&
       voiceInput.shouldShowUI &&
-      voiceInput.isProviderEnabled &&
-      voiceInput.isApiKeySet &&
+      voiceInput.isAvailable &&
       voiceInput.state === "idle"
     ) {
       e.preventDefault();
@@ -2245,6 +2185,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     }
 
     if (matchesKeybind(e, KEYBINDS.SEND_MESSAGE)) {
+      // Mobile keyboards should keep Enter for newlines; sending remains button-driven.
+      if (isMobileTouch) {
+        return;
+      }
       e.preventDefault();
       void handleSend();
     }
@@ -2454,8 +2398,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 <div className="absolute right-2 bottom-2">
                   <VoiceInputButton
                     state={voiceInput.state}
-                    isApiKeySet={voiceInput.isApiKeySet}
-                    isProviderEnabled={voiceInput.isProviderEnabled}
+                    isAvailable={voiceInput.isAvailable}
                     shouldShowUI={voiceInput.shouldShowUI}
                     requiresSecureContext={voiceInput.requiresSecureContext}
                     onToggle={voiceInput.toggle}

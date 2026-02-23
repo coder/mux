@@ -330,6 +330,38 @@ describe("extractSyncMetadata", () => {
   });
 });
 
+test("resolves mapped metadata model for usage history costs", () => {
+  const messages: MuxMessage[] = [
+    {
+      id: "1",
+      role: "assistant",
+      parts: [],
+      metadata: {
+        usage: {
+          inputTokens: 100,
+          outputTokens: 50,
+          totalTokens: 150,
+        },
+        model: "ollama:custom",
+      },
+    },
+  ];
+
+  const providersConfig = {
+    ollama: {
+      apiKeySet: false,
+      isEnabled: true,
+      isConfigured: true,
+      models: [{ id: "custom", mappedToModel: "anthropic:claude-sonnet-4-6" }],
+    },
+  };
+
+  const result = extractSyncMetadata(messages, "ollama:custom", providersConfig);
+  expect(result.usageHistory.length).toBe(1);
+  expect(result.usageHistory[0].input.cost_usd).not.toBeUndefined();
+  expect(result.usageHistory[0].input.cost_usd).toBeGreaterThan(0);
+});
+
 describe("getConsumerInfoForToolCall", () => {
   test("labels task tool calls as task", () => {
     expect(

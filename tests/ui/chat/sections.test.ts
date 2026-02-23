@@ -6,7 +6,7 @@
  * - Section and drop zone UI elements render with proper data attributes
  * - Workspace creation with sectionId assigns to that section
  * - Section "+" button pre-selects section in creation flow
- * - Section removal invariants (blocked by active workspaces, clears archived)
+ * - Section removal invariants (removal unsections active/archived workspaces)
  * - Section reordering via API and UI reflection
  *
  * Testing approach:
@@ -513,7 +513,7 @@ describeIntegration("Workspace Sections", () => {
   // Section Removal Invariants
   // ─────────────────────────────────────────────────────────────────────────────
 
-  test("cannot remove section with active (non-archived) workspaces", async () => {
+  test("removing section clears sectionId from active workspaces", async () => {
     const env = getSharedEnv();
     const projectPath = getSharedRepoPath();
     const trunkBranch = await detectDefaultTrunkBranch(projectPath);
@@ -545,19 +545,30 @@ describeIntegration("Workspace Sections", () => {
     const workspaceId = wsResult.success ? wsResult.metadata.id : "";
 
     try {
-      // Attempt to remove the section - should fail
+      // Verify workspace starts sectioned
+      let wsInfo = await env.orpc.workspace.getInfo({ workspaceId });
+      expect(wsInfo).not.toBeNull();
+      expect(wsInfo?.sectionId).toBe(sectionId);
+
+      // Remove section with active workspaces - should succeed and unsection the workspace
       const removeResult = await env.orpc.projects.sections.remove({
         projectPath,
         sectionId,
       });
-      expect(removeResult.success).toBe(false);
-      if (!removeResult.success) {
-        expect(removeResult.error).toContain("active workspace");
-      }
+      expect(removeResult.success).toBe(true);
+
+      // Verify section was removed
+      const sections = await env.orpc.projects.sections.list({ projectPath });
+      expect(sections.some((section) => section.id === sectionId)).toBe(false);
+
+      // Verify workspace's sectionId is now cleared
+      wsInfo = await env.orpc.workspace.getInfo({ workspaceId });
+      expect(wsInfo).not.toBeNull();
+      expect(wsInfo?.sectionId).toBeUndefined();
     } finally {
       await env.orpc.workspace.remove({ workspaceId });
       await env.orpc.workspace.remove({ workspaceId: setupWs.metadata.id });
-      await env.orpc.projects.sections.remove({ projectPath, sectionId });
+      await env.orpc.projects.sections.remove({ projectPath, sectionId }).catch(() => {});
     }
   }, 30_000);
 
@@ -623,10 +634,10 @@ describeIntegration("Workspace Sections", () => {
   }, 30_000);
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // Section Deletion Error Feedback
+  // Section Deletion Confirmation Flow
   // ─────────────────────────────────────────────────────────────────────────────
 
-  test("clicking delete on section with active workspaces shows error popover", async () => {
+  test("clicking delete on section with active workspaces confirms and unsections workspaces", async () => {
     const env = getSharedEnv();
     const projectPath = getSharedRepoPath();
     const trunkBranch = await detectDefaultTrunkBranch(projectPath);
@@ -634,7 +645,7 @@ describeIntegration("Workspace Sections", () => {
     // Create a setup workspace first to ensure project is registered
     const setupWs = await env.orpc.workspace.create({
       projectPath,
-      branchName: generateBranchName("setup-delete-error"),
+      branchName: generateBranchName("setup-delete-confirm"),
       trunkBranch,
     });
     if (!setupWs.success) throw new Error(`Setup failed: ${setupWs.error}`);
@@ -642,7 +653,7 @@ describeIntegration("Workspace Sections", () => {
     // Create a section
     const sectionResult = await env.orpc.projects.sections.create({
       projectPath,
-      name: `test-delete-error-${Date.now()}`,
+      name: `test-delete-confirm-${Date.now()}`,
     });
     expect(sectionResult.success).toBe(true);
     const sectionId = sectionResult.success ? sectionResult.data.id : "";
@@ -650,7 +661,7 @@ describeIntegration("Workspace Sections", () => {
     // Create a workspace in that section (active, not archived)
     const wsResult = await env.orpc.workspace.create({
       projectPath,
-      branchName: generateBranchName("in-section-delete-error"),
+      branchName: generateBranchName("in-section-delete-confirm"),
       trunkBranch,
       sectionId,
     });
@@ -666,8 +677,11 @@ describeIntegration("Workspace Sections", () => {
     try {
       await setupWorkspaceView(view, metadata, workspaceId);
 
-      // Wait for section to appear in UI
+      // Wait for section and workspace to appear in UI as sectioned
       await waitForSection(view.container, sectionId);
+      const workspaceRowBeforeDelete = findWorkspaceRow(view.container, workspaceId);
+      expect(workspaceRowBeforeDelete).not.toBeNull();
+      expect(workspaceRowBeforeDelete?.getAttribute("data-section-id")).toBe(sectionId);
 
       // Find and click the delete button on the section
       const sectionElement = view.container.querySelector(`[data-section-id="${sectionId}"]`);
@@ -680,18 +694,62 @@ describeIntegration("Workspace Sections", () => {
       expect(deleteButton).not.toBeNull();
       fireEvent.click(deleteButton!);
 
-      // Wait for error popover to appear with message about active workspaces
+      // Confirm the deletion warning for active workspaces
+      const confirmDialog = await waitFor(
+        () => {
+          const dialog = view.container.ownerDocument.body.querySelector('[role="dialog"]');
+          if (!dialog) throw new Error("Delete confirmation dialog not found");
+
+          const dialogText = dialog.textContent ?? "";
+          if (!dialogText.includes("Delete section?")) {
+            throw new Error(`Expected delete confirmation title, got: ${dialogText}`);
+          }
+          if (!dialogText.includes("will be moved to unsectioned")) {
+            throw new Error(`Expected unsection warning, got: ${dialogText}`);
+          }
+
+          return dialog as HTMLElement;
+        },
+        { timeout: 5_000 }
+      );
+
+      const confirmDeleteButton = Array.from(confirmDialog.querySelectorAll("button")).find(
+        (button) => button.textContent?.includes("Delete")
+      );
+      if (!confirmDeleteButton) {
+        throw new Error("Delete confirmation button not found");
+      }
+      fireEvent.click(confirmDeleteButton);
+
+      // Section should be removed from UI
       await waitFor(
         () => {
-          const errorPopover = document.querySelector('[role="alert"]');
-          if (!errorPopover) throw new Error("Error popover not found");
-          const errorText = errorPopover.textContent ?? "";
-          if (!errorText.toLowerCase().includes("active workspace")) {
-            throw new Error(`Expected error about active workspaces, got: ${errorText}`);
+          const removedSection = view.container.querySelector(`[data-section-id="${sectionId}"]`);
+          if (removedSection) throw new Error("Section was not removed from the sidebar");
+        },
+        { timeout: 5_000 }
+      );
+
+      // Workspace should remain but become unsectioned
+      await waitFor(
+        () => {
+          const workspaceRow = findWorkspaceRow(view.container, workspaceId);
+          if (!workspaceRow) throw new Error("Workspace row not found after deleting section");
+
+          const updatedSectionId = workspaceRow.getAttribute("data-section-id");
+          if (updatedSectionId !== "") {
+            throw new Error(
+              `Expected workspace to be unsectioned, got data-section-id=${updatedSectionId}`
+            );
           }
         },
         { timeout: 5_000 }
       );
+
+      // Backend should reflect the unsectioned workspace as well
+      const wsInfoAfterDelete = await env.orpc.workspace.getInfo({ workspaceId });
+      expect(wsInfoAfterDelete).not.toBeNull();
+      expect(wsInfoAfterDelete?.sectionId).toBeUndefined();
     } finally {
       await cleanupView(view, cleanupDom);
       await env.orpc.workspace.remove({ workspaceId });

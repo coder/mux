@@ -141,6 +141,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
     </span>
   ) : null;
   const syntheticClassName = cn(className, isSynthetic && "opacity-70");
+
   if (isLocalCommandOutput) {
     return (
       <MessageWindow

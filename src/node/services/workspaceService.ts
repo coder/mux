@@ -31,8 +31,9 @@ import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStora
 import { listLocalBranches } from "@/node/git";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
+import { buildCompactionMessageText } from "@/common/utils/compaction/compactionPrompt";
 import { fileExists } from "@/node/utils/runtime/fileExists";
-import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
+import { orchestrateFork } from "@/node/services/utils/forkOrchestrator";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
 import { NAME_GEN_PREFERRED_MODELS } from "@/common/constants/nameGeneration";
 import type { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
@@ -61,7 +62,7 @@ import {
   AskUserQuestionToolResultSchema,
 } from "@/common/utils/tools/toolDefinitions";
 import type { UIMode } from "@/common/types/mode";
-import type { MuxMessage } from "@/common/types/message";
+import type { MuxMessageMetadata, MuxMessage } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import {
   hasSrcBaseDir,
@@ -71,8 +72,9 @@ import {
 } from "@/common/types/runtime";
 import { isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
-import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
+import type { StreamEndEvent, StreamAbortEvent, ToolCallEndEvent } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { WorkspaceAISettingsSchema } from "@/common/orpc/schemas";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
@@ -86,7 +88,11 @@ import { createBashTool } from "@/node/services/tools/bash";
 import type { AskUserQuestionToolSuccessResult, BashToolResult } from "@/common/types/tools";
 import { secretsToRecord } from "@/common/types/secrets";
 
-import { execBuffered, movePlanFile, copyPlanFile } from "@/node/utils/runtime/helpers";
+import {
+  copyPlanFileAcrossRuntimes,
+  execBuffered,
+  movePlanFile,
+} from "@/node/utils/runtime/helpers";
 import {
   buildFileCompletionsIndex,
   EMPTY_FILE_COMPLETIONS_INDEX,
@@ -111,6 +117,7 @@ import {
   updateSubagentTranscriptArtifactsFile,
   upsertSubagentTranscriptArtifactIndexEntry,
 } from "@/node/services/subagentTranscriptArtifacts";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /** Maximum number of retry attempts when workspace name collides */
 const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
@@ -119,6 +126,7 @@ const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
 
 // Shared type for workspace-scoped AI settings (model + thinking)
 type WorkspaceAISettings = z.infer<typeof WorkspaceAISettingsSchema>;
+type WorkspaceAgentStatus = NonNullable<WorkspaceActivitySnapshot["agentStatus"]>;
 const POST_COMPACTION_METADATA_REFRESH_DEBOUNCE_MS = 100;
 
 interface FileCompletionsCacheEntry {
@@ -328,6 +336,42 @@ function isPositiveInteger(value: unknown): value is number {
   );
 }
 
+function isNonNegativeInteger(value: unknown): value is number {
+  return (
+    typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0
+  );
+}
+
+function getOldestSequencedMessage(
+  messages: readonly MuxMessage[]
+): { message: MuxMessage; historySequence: number } | null {
+  let oldest: { message: MuxMessage; historySequence: number } | null = null;
+
+  for (const message of messages) {
+    const historySequence = message.metadata?.historySequence;
+    if (!isNonNegativeInteger(historySequence)) {
+      continue;
+    }
+
+    if (oldest === null || historySequence < oldest.historySequence) {
+      oldest = { message, historySequence };
+    }
+  }
+
+  return oldest;
+}
+
+interface WorkspaceHistoryLoadMoreCursor {
+  beforeHistorySequence: number;
+  beforeMessageId?: string | null;
+}
+
+interface WorkspaceHistoryLoadMoreResult {
+  messages: WorkspaceChatMessage[];
+  nextCursor: WorkspaceHistoryLoadMoreCursor | null;
+  hasOlder: boolean;
+}
+
 function hasDurableCompactedMarker(value: unknown): value is true | "user" | "idle" {
   return value === true || value === "user" || value === "idle";
 }
@@ -423,7 +467,7 @@ async function copyFileBestEffort(params: {
       ...params.logContext,
       srcPath: params.srcPath,
       destPath: params.destPath,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
     return false;
   }
@@ -458,7 +502,7 @@ async function copyDirIfMissingBestEffort(params: {
       ...params.logContext,
       srcDir: params.srcDir,
       destDir: params.destDir,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
   }
 }
@@ -590,7 +634,7 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
     log.error("Failed to archive child transcript into parent session dir", {
       parentWorkspaceId: params.parentWorkspaceId,
       childWorkspaceId: params.childWorkspaceId,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
   }
 
@@ -670,7 +714,7 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
     log.error("Failed to roll up subagent patch artifacts into parent", {
       parentWorkspaceId: params.parentWorkspaceId,
       childWorkspaceId: params.childWorkspaceId,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
   }
 
@@ -751,7 +795,7 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
     log.error("Failed to roll up subagent report artifacts into parent", {
       parentWorkspaceId: params.parentWorkspaceId,
       childWorkspaceId: params.childWorkspaceId,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
   }
 
@@ -833,7 +877,7 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
     log.error("Failed to roll up subagent transcript artifacts into parent", {
       parentWorkspaceId: params.parentWorkspaceId,
       childWorkspaceId: params.childWorkspaceId,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
   }
 }
@@ -903,6 +947,11 @@ export class WorkspaceService extends EventEmitter {
   // Why this lives here: archive/remove are the user-facing lifecycle operations that should
   // cancel any fire-and-forget init work to avoid orphaned processes (e.g., SSH sync, .mux/init).
   private readonly initAbortControllers = new Map<string, AbortController>();
+
+  // Per-workspace queue to serialize extension metadata read-modify-write cycles.
+  // This prevents last-writer-wins races between recency/streaming/status_set updates
+  // that all persist through the same extensionMetadata.json file.
+  private readonly metadataWriteQueues = new Map<string, Promise<void>>();
 
   /** Check if a workspace is currently being removed. */
   isRemoving(workspaceId: string): boolean {
@@ -993,6 +1042,34 @@ export class WorkspaceService extends EventEmitter {
       isWorkspaceEvent(v) &&
       (!("metadata" in (v as Record<string, unknown>)) || isObj((v as StreamEndEvent).metadata));
     const isStreamAbortEvent = (v: unknown): v is StreamAbortEvent => isWorkspaceEvent(v);
+    const isToolCallEndEvent = (v: unknown): v is ToolCallEndEvent =>
+      isWorkspaceEvent(v) &&
+      "toolName" in v &&
+      typeof (v as { toolName: unknown }).toolName === "string" &&
+      "result" in v;
+    const extractStatusSetResult = (result: unknown): WorkspaceAgentStatus | null => {
+      if (!isObj(result)) {
+        return null;
+      }
+
+      if (
+        result.success !== true ||
+        typeof result.emoji !== "string" ||
+        typeof result.message !== "string"
+      ) {
+        return null;
+      }
+
+      if (result.url !== undefined && typeof result.url !== "string") {
+        return null;
+      }
+
+      return {
+        emoji: result.emoji,
+        message: result.message,
+        ...(typeof result.url === "string" ? { url: result.url } : {}),
+      };
+    };
     const extractTimestamp = (event: StreamEndEvent | { metadata?: { timestamp?: number } }) => {
       const raw = event.metadata?.timestamp;
       return typeof raw === "number" && Number.isFinite(raw) ? raw : Date.now();
@@ -1015,6 +1092,19 @@ export class WorkspaceService extends EventEmitter {
       if (isStreamAbortEvent(data)) {
         void this.updateStreamingStatus(data.workspaceId, false);
       }
+    });
+
+    this.aiService.on("tool-call-end", (data: unknown) => {
+      if (!isToolCallEndEvent(data) || data.replay === true || data.toolName !== "status_set") {
+        return;
+      }
+
+      const agentStatus = extractStatusSetResult(data.result);
+      if (!agentStatus) {
+        return;
+      }
+
+      void this.updateAgentStatus(data.workspaceId, agentStatus);
     });
   }
 
@@ -1040,15 +1130,49 @@ export class WorkspaceService extends EventEmitter {
     this.emit("activity", { workspaceId, activity: snapshot });
   }
 
+  private async enqueueMetadataWrite(
+    workspaceId: string,
+    write: () => Promise<void>
+  ): Promise<void> {
+    const previous = this.metadataWriteQueues.get(workspaceId) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(write);
+
+    this.metadataWriteQueues.set(workspaceId, next);
+
+    try {
+      await next;
+    } finally {
+      if (this.metadataWriteQueues.get(workspaceId) === next) {
+        this.metadataWriteQueues.delete(workspaceId);
+      }
+    }
+  }
+
   private async updateRecencyTimestamp(workspaceId: string, timestamp?: number): Promise<void> {
     try {
-      const snapshot = await this.extensionMetadata.updateRecency(
-        workspaceId,
-        timestamp ?? Date.now()
-      );
-      this.emitWorkspaceActivity(workspaceId, snapshot);
+      await this.enqueueMetadataWrite(workspaceId, async () => {
+        const snapshot = await this.extensionMetadata.updateRecency(
+          workspaceId,
+          timestamp ?? Date.now()
+        );
+        this.emitWorkspaceActivity(workspaceId, snapshot);
+      });
     } catch (error) {
       log.error("Failed to update workspace recency", { workspaceId, error });
+    }
+  }
+
+  public async updateAgentStatus(
+    workspaceId: string,
+    agentStatus: WorkspaceAgentStatus | null
+  ): Promise<void> {
+    try {
+      await this.enqueueMetadataWrite(workspaceId, async () => {
+        const snapshot = await this.extensionMetadata.setAgentStatus(workspaceId, agentStatus);
+        this.emitWorkspaceActivity(workspaceId, snapshot);
+      });
+    } catch (error) {
+      log.error("Failed to update workspace agent status", { workspaceId, error });
     }
   }
 
@@ -1077,13 +1201,15 @@ export class WorkspaceService extends EventEmitter {
           thinkingLevel = aiSettings?.thinkingLevel;
         }
       }
-      const snapshot = await this.extensionMetadata.setStreaming(
-        workspaceId,
-        streaming,
-        model,
-        thinkingLevel
-      );
-      this.emitWorkspaceActivity(workspaceId, snapshot);
+      await this.enqueueMetadataWrite(workspaceId, async () => {
+        const snapshot = await this.extensionMetadata.setStreaming(
+          workspaceId,
+          streaming,
+          model,
+          thinkingLevel
+        );
+        this.emitWorkspaceActivity(workspaceId, snapshot);
+      });
     } catch (error) {
       log.error("Failed to update workspace streaming status", { workspaceId, error });
     }
@@ -1175,6 +1301,15 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  // Clear persisted sidebar status only after the user turn is accepted and emitted.
+  // sendMessage can fail before acceptance (for example invalid_model_string), so
+  // clearing inside sendMessage would drop status for turns that never entered history.
+  private shouldClearAgentStatusFromChatMessage(message: WorkspaceChatMessage): boolean {
+    return (
+      message.type === "message" && message.role === "user" && message.metadata?.synthetic !== true
+    );
+  }
+
   public getOrCreateSession(workspaceId: string): AgentSession {
     assert(typeof workspaceId === "string", "workspaceId must be a string");
     const trimmed = workspaceId.trim();
@@ -1203,6 +1338,9 @@ export class WorkspaceService extends EventEmitter {
 
     const chatUnsubscribe = session.onChatEvent((event) => {
       this.emit("chat", { workspaceId: event.workspaceId, message: event.message });
+      if (this.shouldClearAgentStatusFromChatMessage(event.message)) {
+        void this.updateAgentStatus(event.workspaceId, null);
+      }
     });
 
     const metadataUnsubscribe = session.onMetadataEvent((event) => {
@@ -1236,6 +1374,9 @@ export class WorkspaceService extends EventEmitter {
 
     const chatUnsubscribe = session.onChatEvent((event) => {
       this.emit("chat", { workspaceId: event.workspaceId, message: event.message });
+      if (this.shouldClearAgentStatusFromChatMessage(event.message)) {
+        void this.updateAgentStatus(event.workspaceId, null);
+      }
     });
 
     const metadataUnsubscribe = session.onMetadataEvent((event) => {
@@ -1438,7 +1579,7 @@ export class WorkspaceService extends EventEmitter {
       );
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to set exclusion: ${message}`);
     }
   }
@@ -1503,7 +1644,7 @@ export class WorkspaceService extends EventEmitter {
         }
       }
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getErrorMessage(error);
       return Err(errorMsg);
     }
 
@@ -1665,7 +1806,7 @@ export class WorkspaceService extends EventEmitter {
       return Ok({ metadata: this.enrichFrontendMetadata(completeMetadata) });
     } catch (error) {
       initLogger.logComplete(-1);
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to create workspace: ${message}`);
     }
   }
@@ -1811,7 +1952,7 @@ export class WorkspaceService extends EventEmitter {
             log.error("Failed to roll up child session timing into parent", {
               workspaceId,
               parentWorkspaceId,
-              error: error instanceof Error ? error.message : String(error),
+              error: getErrorMessage(error),
             });
           }
         }
@@ -1843,7 +1984,7 @@ export class WorkspaceService extends EventEmitter {
             log.error("Failed to roll up child session usage into parent", {
               workspaceId,
               parentWorkspaceId,
-              error: error instanceof Error ? error.message : String(error),
+              error: getErrorMessage(error),
             });
           }
         }
@@ -1877,7 +2018,7 @@ export class WorkspaceService extends EventEmitter {
             log.error("Failed to roll up child session artifacts into parent", {
               workspaceId,
               parentWorkspaceId,
-              error: error instanceof Error ? error.message : String(error),
+              error: getErrorMessage(error),
             });
           }
         }
@@ -1905,7 +2046,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to remove workspace: ${message}`);
     } finally {
       this.removingWorkspaces.delete(workspaceId);
@@ -2098,7 +2239,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok({ newWorkspaceId: workspaceId });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to rename workspace: ${message}`);
     } finally {
       // Always clear renaming flag, even on error
@@ -2146,7 +2287,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to update workspace title: ${message}`);
     }
   }
@@ -2281,7 +2422,7 @@ export class WorkspaceService extends EventEmitter {
         } catch (error) {
           log.debug("Failed to emit metadata after init cancellation during archive", {
             workspaceId,
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           });
         }
       }
@@ -2351,7 +2492,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to archive workspace: ${message}`);
     } finally {
       this.archivingWorkspaces.delete(workspaceId);
@@ -2443,7 +2584,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to unarchive workspace: ${message}`);
     }
   }
@@ -2512,7 +2653,7 @@ export class WorkspaceService extends EventEmitter {
           try {
             parsed = JSON.parse(output);
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = getErrorMessage(error);
             errors.push({ workspaceId, error: `Failed to parse gh output: ${message}` });
             return;
           }
@@ -2536,7 +2677,7 @@ export class WorkspaceService extends EventEmitter {
 
           skippedWorkspaceIds.push(workspaceId);
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message = getErrorMessage(error);
           errors.push({ workspaceId, error: message });
         }
       });
@@ -2561,7 +2702,7 @@ export class WorkspaceService extends EventEmitter {
         errors,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to archive merged workspaces: ${message}`);
     }
   }
@@ -2761,7 +2902,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to update workspace AI settings: ${message}`);
     }
   }
@@ -2795,12 +2936,6 @@ export class WorkspaceService extends EventEmitter {
         }
       }
 
-      // Block fork for Docker runtimes - creates broken workspaces.
-      // Sub-agent task spawning uses a different code path (TaskService.create).
-      if (isDockerRuntime(sourceRuntimeConfig)) {
-        return Err("Forking Docker workspaces is not supported. Create a new workspace instead.");
-      }
-
       // Auto-generate branch name (and title) when user omits one (seamless fork).
       // Uses pattern: {parentName}-fork-{N} for branch, "{parentTitle} (N)" for title.
       const isAutoName = newName == null;
@@ -2820,7 +2955,7 @@ export class WorkspaceService extends EventEmitter {
         } catch (error) {
           log.debug("Failed to list local branches for fork auto-name preflight", {
             projectPath: foundProjectPath,
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           });
         }
 
@@ -2863,7 +2998,7 @@ export class WorkspaceService extends EventEmitter {
         return Err(resolvedNameValidation.error ?? "Invalid workspace name");
       }
 
-      const runtime = createRuntime(sourceRuntimeConfig, {
+      const sourceRuntime = createRuntime(sourceRuntimeConfig, {
         projectPath: foundProjectPath,
         workspaceName: sourceMetadata.name,
       });
@@ -2874,31 +3009,53 @@ export class WorkspaceService extends EventEmitter {
       this.initStateManager.startInit(newWorkspaceId, foundProjectPath);
       const initLogger = this.createInitLogger(newWorkspaceId);
 
-      const forkResult = await runtime.forkWorkspace({
-        projectPath: foundProjectPath,
-        sourceWorkspaceName: sourceMetadata.name,
-        newWorkspaceName: resolvedName,
-        initLogger,
-      });
+      const initAbortController = new AbortController();
+      this.initAbortControllers.set(newWorkspaceId, initAbortController);
+
+      let forkResult: Awaited<ReturnType<typeof orchestrateFork>>;
+      try {
+        forkResult = await orchestrateFork({
+          sourceRuntime,
+          projectPath: foundProjectPath,
+          sourceWorkspaceName: sourceMetadata.name,
+          newWorkspaceName: resolvedName,
+          initLogger,
+          config: this.config,
+          sourceWorkspaceId,
+          sourceRuntimeConfig,
+          allowCreateFallback: false,
+          abortSignal: initAbortController.signal,
+        });
+      } catch (error) {
+        // Guarantee init lifecycle cleanup when orchestrateFork rejects.
+        // initLogger.logComplete deletes from initAbortControllers and ends init state.
+        initLogger.logComplete(-1);
+        throw error;
+      }
 
       if (!forkResult.success) {
         initLogger.logComplete(-1);
-        return Err(forkResult.error ?? "Failed to fork workspace");
+        return Err(forkResult.error);
       }
 
-      // Run init for forked workspace (fire-and-forget like create())
-      // Use sourceBranch as trunk since fork is based on source workspace's branch
-      const secrets = secretsToRecord(this.config.getEffectiveSecrets(foundProjectPath));
+      const {
+        workspacePath,
+        trunkBranch,
+        forkedRuntimeConfig,
+        targetRuntime,
+        sourceRuntimeConfigUpdate,
+        sourceRuntimeConfigUpdated,
+      } = forkResult.data;
 
-      const initAbortController = new AbortController();
-      this.initAbortControllers.set(newWorkspaceId, initAbortController);
+      // Run init for forked workspace (fire-and-forget like create())
+      const secrets = secretsToRecord(this.config.getEffectiveSecrets(foundProjectPath));
       runBackgroundInit(
-        runtime,
+        targetRuntime,
         {
           projectPath: foundProjectPath,
           branchName: resolvedName,
-          trunkBranch: forkResult.sourceBranch ?? "main",
-          workspacePath: forkResult.workspacePath!,
+          trunkBranch,
+          workspacePath,
           initLogger,
           env: secrets,
           abortSignal: initAbortController.signal,
@@ -2926,35 +3083,40 @@ export class WorkspaceService extends EventEmitter {
           );
         }
       } catch (copyError) {
-        await runtime.deleteWorkspace(foundProjectPath, resolvedName, true);
+        await targetRuntime.deleteWorkspace(foundProjectPath, resolvedName, true);
         try {
           await fsPromises.rm(newSessionDir, { recursive: true, force: true });
         } catch (cleanupError) {
           log.error(`Failed to clean up session dir ${newSessionDir}:`, cleanupError);
         }
         initLogger.logComplete(-1);
-        const message = copyError instanceof Error ? copyError.message : String(copyError);
+        const message = getErrorMessage(copyError);
         return Err(`Failed to copy chat history: ${message}`);
       }
 
-      // Copy plan file if it exists (checks both new and legacy paths)
-      await copyPlanFile(
-        runtime,
+      // Copy plan file using explicit source/target runtimes for cross-runtime safety.
+      // Create a fresh source runtime handle because DockerRuntime.forkWorkspace() can
+      // mutate the original runtime's container identity to target the new workspace.
+      const freshSourceRuntime = createRuntime(sourceRuntimeConfig, {
+        projectPath: foundProjectPath,
+        workspaceName: sourceMetadata.name,
+      });
+      await copyPlanFileAcrossRuntimes(
+        freshSourceRuntime,
+        targetRuntime,
         sourceMetadata.name,
         sourceWorkspaceId,
         resolvedName,
         projectName
       );
 
-      // Apply runtime-provided config updates (e.g., Coder marks shared workspaces)
-      const { forkedRuntimeConfig } = await applyForkRuntimeUpdates(
-        this.config,
-        sourceWorkspaceId,
-        sourceRuntimeConfig,
-        forkResult
-      );
+      if (sourceRuntimeConfigUpdate) {
+        await this.config.updateWorkspaceMetadata(sourceWorkspaceId, {
+          runtimeConfig: sourceRuntimeConfigUpdate,
+        });
+      }
 
-      if (forkResult.sourceRuntimeConfig) {
+      if (sourceRuntimeConfigUpdated) {
         const allMetadataUpdated = await this.config.getAllWorkspaceMetadata();
         const updatedMetadata = allMetadataUpdated.find((m) => m.id === sourceWorkspaceId) ?? null;
         const enrichedMetadata = this.enrichMaybeFrontendMetadata(updatedMetadata);
@@ -2967,7 +3129,7 @@ export class WorkspaceService extends EventEmitter {
       }
 
       // Compute namedWorkspacePath for frontend metadata
-      const namedWorkspacePath = runtime.getWorkspacePath(foundProjectPath, resolvedName);
+      const namedWorkspacePath = targetRuntime.getWorkspacePath(foundProjectPath, resolvedName);
 
       const metadata: FrontendWorkspaceMetadata = {
         id: newWorkspaceId,
@@ -2999,7 +3161,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok({ metadata: enrichedMetadata, projectPath: foundProjectPath });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to fork workspace: ${message}`);
     }
   }
@@ -3014,6 +3176,8 @@ export class WorkspaceService extends EventEmitter {
       allowQueuedAgentTask?: boolean;
       skipAutoResumeReset?: boolean;
       synthetic?: boolean;
+      /** When true, reject instead of queueing if the workspace is busy. */
+      requireIdle?: boolean;
     }
   ): Promise<Result<void, SendMessageError>> {
     log.debug("sendMessage handler: Received", {
@@ -3023,6 +3187,7 @@ export class WorkspaceService extends EventEmitter {
       options,
     });
 
+    let resumedInterruptedTask = false;
     try {
       // Block streaming while workspace is being renamed to prevent path conflicts
       if (this.renamingWorkspaces.has(workspaceId)) {
@@ -3132,6 +3297,21 @@ export class WorkspaceService extends EventEmitter {
       const shouldQueue = !normalizedOptions?.editMessageId && session.isBusy();
 
       if (shouldQueue) {
+        const taskStatus = this.taskService?.getAgentTaskStatus?.(workspaceId);
+        if (taskStatus === "interrupted") {
+          return Err({
+            type: "unknown",
+            raw: "Interrupted task is still winding down. Wait until it is idle, then try again.",
+          });
+        }
+
+        if (internal?.requireIdle) {
+          return Err({
+            type: "unknown",
+            raw: "Workspace is busy; idle-only send was skipped.",
+          });
+        }
+
         const pendingAskUserQuestion = askUserQuestionManager.getLatestPending(workspaceId);
         if (pendingAskUserQuestion) {
           try {
@@ -3144,18 +3324,34 @@ export class WorkspaceService extends EventEmitter {
             log.debug("Failed to cancel pending ask_user_question", {
               workspaceId,
               toolCallId: pendingAskUserQuestion.toolCallId,
-              error: error instanceof Error ? error.message : String(error),
+              error: getErrorMessage(error),
             });
           }
         }
 
-        session.queueMessage(message, normalizedOptions);
+        session.queueMessage(message, normalizedOptions, {
+          synthetic: internal?.synthetic,
+        });
         return Ok(undefined);
       }
 
       if (!internal?.skipAutoResumeReset) {
         this.taskService?.resetAutoResumeCount(workspaceId);
       }
+
+      // Non-destructive interrupt cascades preserve descendant task workspaces with
+      // taskStatus=interrupted. Transition before starting a new stream so TaskService
+      // stream-end handling does not early-return on interrupted status.
+      try {
+        resumedInterruptedTask =
+          (await this.taskService?.markInterruptedTaskRunning?.(workspaceId)) ?? false;
+      } catch (error: unknown) {
+        log.error("Failed to restore interrupted task status before sendMessage", {
+          workspaceId,
+          error,
+        });
+      }
+
       const result = await session.sendMessage(message, normalizedOptions, {
         synthetic: internal?.synthetic,
       });
@@ -3164,9 +3360,34 @@ export class WorkspaceService extends EventEmitter {
           workspaceId,
           error: result.error,
         });
+
+        if (resumedInterruptedTask) {
+          try {
+            await this.taskService?.restoreInterruptedTaskAfterResumeFailure?.(workspaceId);
+          } catch (error: unknown) {
+            log.error("Failed to restore interrupted task status after sendMessage failure", {
+              workspaceId,
+              error,
+            });
+          }
+        }
+
+        return result;
       }
+
       return result;
     } catch (error) {
+      if (resumedInterruptedTask) {
+        try {
+          await this.taskService?.restoreInterruptedTaskAfterResumeFailure?.(workspaceId);
+        } catch (restoreError: unknown) {
+          log.error("Failed to restore interrupted task status after sendMessage throw", {
+            workspaceId,
+            error: restoreError,
+          });
+        }
+      }
+
       const errorMessage = error instanceof Error ? error.message : JSON.stringify(error, null, 2);
       log.error("Unexpected error in sendMessage handler:", error);
 
@@ -3191,7 +3412,8 @@ export class WorkspaceService extends EventEmitter {
     workspaceId: string,
     options: SendMessageOptions,
     internal?: { allowQueuedAgentTask?: boolean }
-  ): Promise<Result<void, SendMessageError>> {
+  ): Promise<Result<{ started: boolean }, SendMessageError>> {
+    let resumedInterruptedTask = false;
     try {
       // Block streaming while workspace is being renamed to prevent path conflicts
       if (this.renamingWorkspaces.has(workspaceId)) {
@@ -3247,10 +3469,31 @@ export class WorkspaceService extends EventEmitter {
 
       const session = this.getOrCreateSession(workspaceId);
 
+      const taskStatus = this.taskService?.getAgentTaskStatus?.(workspaceId);
+      if (taskStatus === "interrupted" && session.isBusy()) {
+        return Err({
+          type: "unknown",
+          raw: "Interrupted task is still winding down. Wait until it is idle, then try again.",
+        });
+      }
+
       const normalizedOptions = this.normalizeSendMessageAgentId(options);
 
       // Persist last-used model + thinking level for cross-device consistency.
       await this.maybePersistAISettingsFromOptions(workspaceId, normalizedOptions, "resume");
+
+      // Non-destructive interrupt cascades preserve descendant task workspaces with
+      // taskStatus=interrupted. Transition before stream start so TaskService stream-end
+      // handling does not early-return on interrupted status.
+      try {
+        resumedInterruptedTask =
+          (await this.taskService?.markInterruptedTaskRunning?.(workspaceId)) ?? false;
+      } catch (error: unknown) {
+        log.error("Failed to restore interrupted task status before resumeStream", {
+          workspaceId,
+          error,
+        });
+      }
 
       const result = await session.resumeStream(normalizedOptions);
       if (!result.success) {
@@ -3258,10 +3501,49 @@ export class WorkspaceService extends EventEmitter {
           workspaceId,
           error: result.error,
         });
+        if (resumedInterruptedTask) {
+          try {
+            await this.taskService?.restoreInterruptedTaskAfterResumeFailure?.(workspaceId);
+          } catch (error: unknown) {
+            log.error("Failed to restore interrupted task status after resumeStream failure", {
+              workspaceId,
+              error,
+            });
+          }
+        }
+        return result;
       }
+
+      // resumeStream can succeed without starting a new stream when the session is
+      // still busy (started=false). Keep interrupted semantics in that case.
+      if (!result.data.started) {
+        if (resumedInterruptedTask) {
+          try {
+            await this.taskService?.restoreInterruptedTaskAfterResumeFailure?.(workspaceId);
+          } catch (error: unknown) {
+            log.error("Failed to restore interrupted task status after no-op resumeStream", {
+              workspaceId,
+              error,
+            });
+          }
+        }
+        return result;
+      }
+
       return result;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (resumedInterruptedTask) {
+        try {
+          await this.taskService?.restoreInterruptedTaskAfterResumeFailure?.(workspaceId);
+        } catch (restoreError: unknown) {
+          log.error("Failed to restore interrupted task status after resumeStream throw", {
+            workspaceId,
+            error: restoreError,
+          });
+        }
+      }
+
+      const errorMessage = getErrorMessage(error);
       log.error("Unexpected error in resumeStream handler:", error);
 
       // Handle incompatible workspace errors from downgraded configs
@@ -3281,15 +3563,65 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  async setAutoRetryEnabled(
+    workspaceId: string,
+    enabled: boolean,
+    persist = true
+  ): Promise<Result<{ previousEnabled: boolean; enabled: boolean }>> {
+    try {
+      const session = this.getOrCreateSession(workspaceId);
+      const state = await session.setAutoRetryEnabled(enabled, { persist });
+      return Ok(state);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log.error("Unexpected error in setAutoRetryEnabled handler:", error);
+      return Err(`Failed to set auto-retry enabled state: ${errorMessage}`);
+    }
+  }
+
+  async getStartupAutoRetryModel(workspaceId: string): Promise<Result<string | null>> {
+    try {
+      const session = this.getOrCreateSession(workspaceId);
+      const model = await session.getStartupAutoRetryModelHint();
+      return Ok(model);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log.error("Unexpected error in getStartupAutoRetryModel handler:", error);
+      return Err(`Failed to inspect startup auto-retry model: ${errorMessage}`);
+    }
+  }
+
+  setAutoCompactionThreshold(workspaceId: string, threshold: number): Result<void> {
+    try {
+      const session = this.getOrCreateSession(workspaceId);
+      session.setAutoCompactionThreshold(threshold);
+      return Ok(undefined);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log.error("Unexpected error in setAutoCompactionThreshold handler:", error);
+      return Err(`Failed to set auto-compaction threshold: ${errorMessage}`);
+    }
+  }
+
   async interruptStream(
     workspaceId: string,
     options?: { soft?: boolean; abandonPartial?: boolean; sendQueuedImmediately?: boolean }
   ): Promise<Result<void>> {
     try {
       this.taskService?.resetAutoResumeCount(workspaceId);
+      if (!options?.soft) {
+        // Mark before attempting the session interrupt to close races where a child
+        // could report between stop initiation and descendant cascade termination.
+        this.taskService?.markParentWorkspaceInterrupted(workspaceId);
+      }
+
       const session = this.getOrCreateSession(workspaceId);
       const stopResult = await session.interruptStream(options);
       if (!stopResult.success) {
+        // Interrupt failed, so clear hard-interrupt suppression we set above.
+        if (!options?.soft) {
+          this.taskService?.resetAutoResumeCount(workspaceId);
+        }
         log.error("Failed to stop stream:", stopResult.error);
         return Err(stopResult.error);
       }
@@ -3301,8 +3633,31 @@ export class WorkspaceService extends EventEmitter {
         await this.historyService.deletePartial(workspaceId);
       }
 
+      // Rationale: user-initiated hard interrupts should stop the entire task tree so
+      // descendant sub-agents cannot finish later and auto-resume this workspace.
+      if (!options?.soft) {
+        try {
+          const interruptedTaskIds =
+            await this.taskService?.terminateAllDescendantAgentTasks?.(workspaceId);
+          if (interruptedTaskIds && interruptedTaskIds.length > 0) {
+            log.debug("Cascade-interrupted descendant tasks on interrupt", {
+              workspaceId,
+              interruptedTaskIds,
+            });
+          }
+        } catch (error: unknown) {
+          log.error("Failed to cascade-interrupt descendant tasks on interrupt", {
+            workspaceId,
+            error,
+          });
+        }
+      }
+
       // Handle queued messages based on option
       if (options?.sendQueuedImmediately) {
+        // `sendQueuedMessages()` routes through AgentSession directly, so explicitly
+        // clear hard-interrupt suppression first (it won't flow through sendMessage()).
+        this.taskService?.resetAutoResumeCount(workspaceId);
         // Send queued messages immediately instead of restoring to input
         session.sendQueuedMessages();
       } else {
@@ -3312,7 +3667,11 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (!options?.soft) {
+        // Keep suppression state consistent if interrupt setup/stop throws.
+        this.taskService?.resetAutoResumeCount(workspaceId);
+      }
+      const errorMessage = getErrorMessage(error);
       log.error("Unexpected error in interruptStream handler:", error);
       return Err(`Failed to interrupt stream: ${errorMessage}`);
     }
@@ -3454,7 +3813,7 @@ export class WorkspaceService extends EventEmitter {
         }
 
         if (!best) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
+          const errorMessage = getErrorMessage(error);
           return Err(`Failed to answer ask_user_question: ${errorMessage}`);
         }
 
@@ -3496,7 +3855,7 @@ export class WorkspaceService extends EventEmitter {
 
         return Ok(undefined);
       } catch (innerError) {
-        const errorMessage = innerError instanceof Error ? innerError.message : String(innerError);
+        const errorMessage = getErrorMessage(innerError);
         return Err(errorMessage);
       }
     }
@@ -3508,7 +3867,7 @@ export class WorkspaceService extends EventEmitter {
       session.clearQueue();
       return Ok(undefined);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       log.error("Unexpected error in clearQueue handler:", error);
       return Err(`Failed to clear queue: ${errorMessage}`);
     }
@@ -3754,7 +4113,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to replace history: ${message}`);
     }
   }
@@ -3778,6 +4137,127 @@ export class WorkspaceService extends EventEmitter {
     } catch (error) {
       log.error("Failed to get chat history:", error);
       return [];
+    }
+  }
+
+  async getHistoryLoadMore(
+    workspaceId: string,
+    cursor: WorkspaceHistoryLoadMoreCursor | null | undefined
+  ): Promise<WorkspaceHistoryLoadMoreResult> {
+    assert(
+      typeof workspaceId === "string" && workspaceId.trim().length > 0,
+      "workspaceId is required"
+    );
+
+    if (cursor !== null && cursor !== undefined) {
+      assert(
+        isNonNegativeInteger(cursor.beforeHistorySequence),
+        "cursor.beforeHistorySequence must be a non-negative integer"
+      );
+      assert(
+        cursor.beforeMessageId === null ||
+          cursor.beforeMessageId === undefined ||
+          typeof cursor.beforeMessageId === "string",
+        "cursor.beforeMessageId must be a string, null, or undefined"
+      );
+      if (typeof cursor.beforeMessageId === "string") {
+        assert(
+          cursor.beforeMessageId.trim().length > 0,
+          "cursor.beforeMessageId must be non-empty when provided"
+        );
+      }
+    }
+
+    const emptyResult: WorkspaceHistoryLoadMoreResult = {
+      messages: [],
+      nextCursor: null,
+      hasOlder: false,
+    };
+
+    try {
+      let beforeHistorySequence: number | undefined = cursor?.beforeHistorySequence;
+
+      if (beforeHistorySequence === undefined) {
+        // Initial load-more request (no cursor) should page one epoch older than startup replay.
+        const latestBoundaryResult = await this.historyService.getHistoryFromLatestBoundary(
+          workspaceId,
+          0
+        );
+        if (!latestBoundaryResult.success) {
+          log.warn("workspace.history.loadMore: failed to read latest boundary", {
+            workspaceId,
+            error: latestBoundaryResult.error,
+          });
+          return emptyResult;
+        }
+
+        const oldestFromLatestBoundary = getOldestSequencedMessage(latestBoundaryResult.data);
+        if (!oldestFromLatestBoundary) {
+          return emptyResult;
+        }
+
+        beforeHistorySequence = oldestFromLatestBoundary.historySequence;
+      }
+
+      assert(
+        isNonNegativeInteger(beforeHistorySequence),
+        "resolved beforeHistorySequence must be a non-negative integer"
+      );
+
+      const historyWindowResult = await this.historyService.getHistoryBoundaryWindow(
+        workspaceId,
+        beforeHistorySequence
+      );
+      if (!historyWindowResult.success) {
+        log.warn("workspace.history.loadMore: failed to read boundary window", {
+          workspaceId,
+          beforeHistorySequence,
+          error: historyWindowResult.error,
+        });
+        return emptyResult;
+      }
+
+      const messages: WorkspaceChatMessage[] = historyWindowResult.data.messages.map((message) => ({
+        ...message,
+        type: "message",
+      }));
+
+      if (!historyWindowResult.data.hasOlder) {
+        return {
+          messages,
+          nextCursor: null,
+          hasOlder: false,
+        };
+      }
+
+      const oldestInWindow = getOldestSequencedMessage(historyWindowResult.data.messages);
+      if (!oldestInWindow) {
+        // Defensive fallback: if we cannot build a stable cursor, stop paging instead of looping.
+        log.warn("workspace.history.loadMore: cannot compute next cursor despite hasOlder=true", {
+          workspaceId,
+          beforeHistorySequence,
+        });
+        return {
+          messages,
+          nextCursor: null,
+          hasOlder: false,
+        };
+      }
+
+      return {
+        messages,
+        nextCursor: {
+          beforeHistorySequence: oldestInWindow.historySequence,
+          beforeMessageId: oldestInWindow.message.id,
+        },
+        hasOlder: true,
+      };
+    } catch (error) {
+      log.error("Failed to load more workspace history:", {
+        workspaceId,
+        error: getErrorMessage(error),
+      });
+      return emptyResult;
     }
   }
 
@@ -3839,7 +4319,7 @@ export class WorkspaceService extends EventEmitter {
         } catch (error) {
           log.debug("getFileCompletions: failed to list files", {
             workspaceId,
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           });
 
           // Keep any previously indexed data, but avoid retrying in a tight loop.
@@ -3959,7 +4439,7 @@ export class WorkspaceService extends EventEmitter {
     } catch (error) {
       // bashTool.execute returns error results instead of throwing, so this only catches
       // failures from setup code (getWorkspaceMetadata, findWorkspace, createRuntime, etc.)
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to execute bash command: ${message}`);
     }
   }
@@ -4085,13 +4565,147 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
-   * Emit an idle-compaction-needed event to a workspace's stream.
-   * Called by IdleCompactionService when a workspace becomes eligible while connected.
+   * Execute idle compaction for a workspace directly from the backend.
+   *
+   * This path is frontend-independent: compaction still runs even if no UI is open.
+   * Throws on failure so IdleCompactionService can log and continue with the next workspace.
    */
-  emitIdleCompactionNeeded(workspaceId: string): void {
+  async executeIdleCompaction(workspaceId: string): Promise<void> {
+    assert(workspaceId.trim().length > 0, "executeIdleCompaction requires a non-empty workspaceId");
+
+    const sendOptions = await this.buildIdleCompactionSendOptions(workspaceId);
+
+    const muxMetadata: MuxMessageMetadata = {
+      type: "compaction-request",
+      rawCommand: "/compact",
+      commandPrefix: "/compact",
+      parsed: {
+        model: sendOptions.model,
+      },
+      requestedModel: sendOptions.model,
+      source: "idle-compaction",
+      displayStatus: { emoji: "💤", message: "Compacting idle workspace..." },
+    };
+
+    const session = this.getOrCreateSession(workspaceId);
+    if (session.isBusy()) {
+      throw new Error(
+        "Failed to execute idle compaction: Workspace is busy; idle-only send was skipped."
+      );
+    }
+
+    const sendResult = await this.sendMessage(
+      workspaceId,
+      buildCompactionMessageText({}),
+      {
+        ...sendOptions,
+        muxMetadata,
+      },
+      {
+        // Idle compaction runs in background; avoid mutating auto-resume counters.
+        skipAutoResumeReset: true,
+        // Backend-initiated maintenance turn: do not treat as explicit user re-engagement.
+        synthetic: true,
+        // If the workspace became active after eligibility checks, skip instead of queueing
+        // stale maintenance work for later.
+        requireIdle: true,
+      }
+    );
+
+    if (!sendResult.success) {
+      const rawError = sendResult.error;
+      const formattedError =
+        typeof rawError === "object" && rawError !== null
+          ? "raw" in rawError && typeof rawError.raw === "string"
+            ? rawError.raw
+            : "message" in rawError && typeof rawError.message === "string"
+              ? rawError.message
+              : "type" in rawError && typeof rawError.type === "string"
+                ? rawError.type
+                : JSON.stringify(rawError)
+          : String(rawError);
+      throw new Error(`Failed to execute idle compaction: ${formattedError}`);
+    }
+
+    // Notify listeners only after dispatch succeeds so UI state reflects real work.
+    this.emitIdleCompactionStarted(workspaceId);
+  }
+
+  private async buildIdleCompactionSendOptions(workspaceId: string): Promise<SendMessageOptions> {
+    const config = this.config.loadConfigOrDefault();
+    const workspaceMatch = this.config.findWorkspace(workspaceId);
+
+    const workspaceEntry = workspaceMatch
+      ? (() => {
+          const project = config.projects.get(workspaceMatch.projectPath);
+          return (
+            project?.workspaces.find((workspace) => workspace.id === workspaceId) ??
+            project?.workspaces.find((workspace) => workspace.path === workspaceMatch.workspacePath)
+          );
+        })()
+      : undefined;
+
+    const activity = await this.extensionMetadata.getMetadata(workspaceId);
+
+    const compactAgentSettings = workspaceEntry?.aiSettingsByAgent?.compact;
+    const execAgentSettings =
+      workspaceEntry?.aiSettingsByAgent?.[WORKSPACE_DEFAULTS.agentId] ?? workspaceEntry?.aiSettings;
+
+    const preferredCompactionModel =
+      typeof config.preferredCompactionModel === "string"
+        ? normalizeGatewayModel(config.preferredCompactionModel.trim())
+        : undefined;
+
+    const normalizedPreferredCompactionModel =
+      preferredCompactionModel && isValidModelFormat(preferredCompactionModel)
+        ? preferredCompactionModel
+        : undefined;
+
+    const fallbackModel =
+      normalizedPreferredCompactionModel ??
+      compactAgentSettings?.model ??
+      execAgentSettings?.model ??
+      activity?.lastModel ??
+      WORKSPACE_DEFAULTS.model;
+
+    let model = normalizeGatewayModel(fallbackModel);
+    if (!isValidModelFormat(model)) {
+      log.warn("Idle compaction resolved invalid model; falling back to workspace default", {
+        workspaceId,
+        model,
+      });
+      model = WORKSPACE_DEFAULTS.model;
+    }
+
+    const requestedThinking =
+      compactAgentSettings?.thinkingLevel ??
+      execAgentSettings?.thinkingLevel ??
+      activity?.lastThinkingLevel ??
+      WORKSPACE_DEFAULTS.thinkingLevel;
+
+    const normalizedThinkingLevel =
+      coerceThinkingLevel(requestedThinking) ?? WORKSPACE_DEFAULTS.thinkingLevel;
+
+    return {
+      model,
+      agentId: "compact",
+      thinkingLevel: enforceThinkingPolicy(model, normalizedThinkingLevel),
+      maxOutputTokens: undefined,
+      // Disable all tools during compaction - regex .* matches all tool names.
+      toolPolicy: [{ regex_match: ".*", action: "disable" }],
+      // Compaction should not mutate persisted workspace AI defaults.
+      skipAiSettingsPersistence: true,
+    };
+  }
+
+  /**
+   * Emit an idle-compaction-started event to a workspace's stream.
+   * This is a transient UI hint while backend-initiated compaction is running.
+   */
+  emitIdleCompactionStarted(workspaceId: string): void {
     const session = this.sessions.get(workspaceId);
     if (session) {
-      session.emitChatEvent({ type: "idle-compaction-needed" });
+      session.emitChatEvent({ type: "idle-compaction-started" });
     }
   }
 }

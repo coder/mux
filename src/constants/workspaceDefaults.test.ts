@@ -9,15 +9,13 @@ describe("WORKSPACE_DEFAULTS", () => {
     expect(WORKSPACE_DEFAULTS).toHaveProperty("agentId");
     expect(WORKSPACE_DEFAULTS).toHaveProperty("thinkingLevel");
     expect(WORKSPACE_DEFAULTS).toHaveProperty("model");
-    expect(WORKSPACE_DEFAULTS).toHaveProperty("autoRetry");
     expect(WORKSPACE_DEFAULTS).toHaveProperty("input");
   });
 
   test("should have correct default values", () => {
-    expect(WORKSPACE_DEFAULTS.agentId).toBe("exec");
+    expect(WORKSPACE_DEFAULTS.agentId).toBe("auto");
     expect(WORKSPACE_DEFAULTS.thinkingLevel).toBe("off");
     expect(WORKSPACE_DEFAULTS.model).toBe(DEFAULT_MODEL);
-    expect(WORKSPACE_DEFAULTS.autoRetry).toBe(true);
     expect(WORKSPACE_DEFAULTS.input).toBe("");
   });
 
@@ -25,7 +23,6 @@ describe("WORKSPACE_DEFAULTS", () => {
     expect(typeof WORKSPACE_DEFAULTS.agentId).toBe("string");
     expect(typeof WORKSPACE_DEFAULTS.thinkingLevel).toBe("string");
     expect(typeof WORKSPACE_DEFAULTS.model).toBe("string");
-    expect(typeof WORKSPACE_DEFAULTS.autoRetry).toBe("boolean");
     expect(typeof WORKSPACE_DEFAULTS.input).toBe("string");
   });
 
@@ -47,8 +44,8 @@ describe("WORKSPACE_DEFAULTS", () => {
     expect(WORKSPACE_DEFAULTS.agentId).toBe(originalAgentId);
   });
 
-  test("agentId should default to exec", () => {
-    expect(WORKSPACE_DEFAULTS.agentId).toBe("exec");
+  test("agentId should default to auto", () => {
+    expect(WORKSPACE_DEFAULTS.agentId).toBe("auto");
   });
 
   test("thinkingLevel should be valid ThinkingLevel", () => {
@@ -58,10 +55,6 @@ describe("WORKSPACE_DEFAULTS", () => {
 
   test("model should follow provider:model format", () => {
     expect(WORKSPACE_DEFAULTS.model).toMatch(/^[a-z]+:[a-z0-9-]+$/);
-  });
-
-  test("autoRetry should be boolean", () => {
-    expect(typeof WORKSPACE_DEFAULTS.autoRetry).toBe("boolean");
   });
 
   test("input should be empty string", () => {

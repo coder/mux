@@ -103,7 +103,14 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
 
     // Streaming text gets typewriter effect
     if (isStreaming) {
-      const contentElement = <TypewriterMarkdown deltas={[content]} isComplete={false} />;
+      const contentElement = (
+        <TypewriterMarkdown
+          deltas={[content]}
+          isComplete={false}
+          streamKey={message.historyId}
+          streamSource={message.streamPresentation?.source}
+        />
+      );
 
       // Wrap streaming compaction in special container
       if (isStreamingCompaction) {
@@ -113,7 +120,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
       return contentElement;
     }
 
-    // Completed text renders as static content
+    // Completed text renders as static content so hydrated history never replays via typewriter.
     return content ? (
       showRaw ? (
         <div className="relative">

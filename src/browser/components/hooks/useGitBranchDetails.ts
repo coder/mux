@@ -7,6 +7,7 @@ import {
   type GitBranchHeader,
 } from "@/common/utils/git/parseGitLog";
 import { useAPI } from "@/browser/contexts/API";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const GitBranchDataSchema = z.object({
   showBranch: z.string(),
@@ -274,9 +275,7 @@ printf '__MUX_BRANCH_DATA__BEGIN_DIRTY_FILES__\\n%s\\n__MUX_BRANCH_DATA__END_DIR
         timestamp: Date.now(),
       };
     } catch (error) {
-      setErrorMessage(
-        `Failed to fetch branch info: ${error instanceof Error ? error.message : String(error)}`
-      );
+      setErrorMessage(`Failed to fetch branch info: ${getErrorMessage(error)}`);
       setCommits(null);
     } finally {
       setIsLoading(false);

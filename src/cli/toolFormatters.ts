@@ -317,12 +317,37 @@ function formatTaskEnd(_toolName: string, _args: unknown, result: unknown): stri
 }
 
 function formatWebFetchEnd(_toolName: string, _args: unknown, result: unknown): string | null {
-  const fetchResult = result as WebFetchToolResult;
+  if (result == null || typeof result !== "object") return null;
 
+  // Unwrap SDK JSON-wrapper shape: { type: "json", value: ... }
+  const maybeWrapped = result as Record<string, unknown>;
+  const unwrapped =
+    maybeWrapped.type === "json" && "value" in maybeWrapped ? maybeWrapped.value : result;
+
+  if (unwrapped == null || typeof unwrapped !== "object") return null;
+  const r = unwrapped as Record<string, unknown>;
+
+  // Anthropic-native success: { type: "web_fetch_result", url, content: { title, source } }
+  if (r.type === "web_fetch_result") {
+    const content = r.content as Record<string, unknown> | undefined;
+    const title = typeof content?.title === "string" ? chalk.dim(` "${content.title}"`) : "";
+    const source = content?.source as Record<string, unknown> | undefined;
+    const len =
+      typeof source?.data === "string" ? chalk.dim(` ${formatBytes(source.data.length)}`) : "";
+    return `${chalk.green("✓")}${title}${len}`;
+  }
+
+  // Anthropic-native error: { type: "web_fetch_tool_result_error", errorCode }
+  if (r.type === "web_fetch_tool_result_error") {
+    const errorCode = typeof r.errorCode === "string" ? r.errorCode : "fetch error";
+    return `${chalk.red("✗")} ${chalk.red(errorCode)}`;
+  }
+
+  // Built-in format: { success: boolean, title?, content?, length?, error? }
+  const fetchResult = unwrapped as WebFetchToolResult;
   if (fetchResult?.success === false) {
     return `${chalk.red("✗")} ${chalk.red(fetchResult.error ?? "Fetch failed")}`;
   }
-
   if (fetchResult?.success) {
     const title = fetchResult.title ? chalk.dim(` "${fetchResult.title}"`) : "";
     const len = fetchResult.length ? chalk.dim(` ${formatBytes(fetchResult.length)}`) : "";

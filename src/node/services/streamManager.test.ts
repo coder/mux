@@ -76,6 +76,7 @@ describe("StreamManager - stopWhen configuration", () => {
   type BuildStopWhenCondition = (request: {
     toolChoice?: { type: "tool"; toolName: string } | "required";
     hasQueuedMessage?: () => boolean;
+    stopAfterSuccessfulProposePlan?: boolean;
   }) => StopWhenCondition | StopWhenCondition[];
 
   test("uses single-step stopWhen when a tool is required", () => {
@@ -107,9 +108,10 @@ describe("StreamManager - stopWhen configuration", () => {
     if (!Array.isArray(stopWhen)) {
       throw new Error("Expected autonomous stopWhen to be an array of conditions");
     }
-    expect(stopWhen).toHaveLength(3);
+    expect(stopWhen).toHaveLength(4);
 
-    const [maxStepCondition, queuedMessageCondition, agentReportCondition] = stopWhen;
+    const [maxStepCondition, queuedMessageCondition, agentReportCondition, switchAgentCondition] =
+      stopWhen;
     expect(maxStepCondition({ steps: new Array(99999) })).toBe(false);
     expect(maxStepCondition({ steps: new Array(100000) })).toBe(true);
 
@@ -120,6 +122,12 @@ describe("StreamManager - stopWhen configuration", () => {
     expect(
       agentReportCondition({
         steps: [{ toolResults: [{ toolName: "agent_report", output: { success: true } }] }],
+      })
+    ).toBe(true);
+
+    expect(
+      switchAgentCondition({
+        steps: [{ toolResults: [{ toolName: "switch_agent", output: { ok: true } }] }],
       })
     ).toBe(true);
   });
@@ -171,6 +179,160 @@ describe("StreamManager - stopWhen configuration", () => {
 
     // Returns false when no steps.
     expect(reportStop({ steps: [] })).toBe(false);
+  });
+
+  test("stops only after successful switch_agent tool result in autonomous mode", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({ hasQueuedMessage: () => false });
+    if (!Array.isArray(stopWhen)) {
+      throw new Error("Expected autonomous stopWhen to be an array of conditions");
+    }
+
+    const [, , , switchStop] = stopWhen;
+    if (!switchStop) {
+      throw new Error("Expected autonomous stopWhen to include switch_agent condition");
+    }
+
+    // Returns true when step contains successful switch_agent tool result.
+    expect(
+      switchStop({
+        steps: [{ toolResults: [{ toolName: "switch_agent", output: { ok: true } }] }],
+      })
+    ).toBe(true);
+
+    // Returns false when step contains failed switch_agent output.
+    expect(
+      switchStop({
+        steps: [{ toolResults: [{ toolName: "switch_agent", output: { ok: false } }] }],
+      })
+    ).toBe(false);
+
+    // Returns false when step only contains switch_agent tool call (no successful result yet).
+    expect(
+      switchStop({
+        steps: [{ toolCalls: [{ toolName: "switch_agent" }] }],
+      })
+    ).toBe(false);
+
+    // Returns false when step contains other tool results.
+    expect(
+      switchStop({
+        steps: [{ toolResults: [{ toolName: "bash", output: { ok: true } }] }],
+      })
+    ).toBe(false);
+
+    // Returns false when no steps.
+    expect(switchStop({ steps: [] })).toBe(false);
+  });
+
+  test("stops when propose_plan succeeds and flag is enabled", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      stopAfterSuccessfulProposePlan: true,
+    });
+    if (!Array.isArray(stopWhen)) {
+      throw new Error("Expected autonomous stopWhen to be an array of conditions");
+    }
+    expect(stopWhen).toHaveLength(5);
+
+    const proposePlanSuccessSteps = [
+      {
+        toolResults: [
+          {
+            toolName: "propose_plan",
+            output: { success: true, planPath: "/tmp/plan.md" },
+          },
+        ],
+      },
+    ];
+
+    const proposePlanCondition = stopWhen[4];
+    if (!proposePlanCondition) {
+      throw new Error("Expected stopWhen to include propose_plan condition");
+    }
+
+    expect(proposePlanCondition({ steps: proposePlanSuccessSteps })).toBe(true);
+    expect(stopWhen.some((condition) => condition({ steps: proposePlanSuccessSteps }))).toBe(true);
+  });
+
+  test("does not stop when propose_plan fails", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      stopAfterSuccessfulProposePlan: true,
+    });
+    if (!Array.isArray(stopWhen)) {
+      throw new Error("Expected autonomous stopWhen to be an array of conditions");
+    }
+
+    const proposePlanFailedSteps = [
+      {
+        toolResults: [
+          {
+            toolName: "propose_plan",
+            output: { success: false },
+          },
+        ],
+      },
+    ];
+
+    const proposePlanCondition = stopWhen[4];
+    if (!proposePlanCondition) {
+      throw new Error("Expected stopWhen to include propose_plan condition");
+    }
+
+    expect(proposePlanCondition({ steps: proposePlanFailedSteps })).toBe(false);
+    expect(stopWhen.some((condition) => condition({ steps: proposePlanFailedSteps }))).toBe(false);
+  });
+
+  test("does not stop for propose_plan when flag is false/absent", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const proposePlanSuccessSteps = [
+      {
+        toolResults: [
+          {
+            toolName: "propose_plan",
+            output: { success: true, planPath: "/tmp/plan.md" },
+          },
+        ],
+      },
+    ];
+
+    const stopWhenWithoutProposePlanFlag = [
+      buildStopWhen!({ hasQueuedMessage: () => false, stopAfterSuccessfulProposePlan: false }),
+      buildStopWhen!({ hasQueuedMessage: () => false }),
+    ];
+
+    for (const stopWhen of stopWhenWithoutProposePlanFlag) {
+      if (!Array.isArray(stopWhen)) {
+        throw new Error("Expected autonomous stopWhen to be an array of conditions");
+      }
+      expect(stopWhen).toHaveLength(4);
+      expect(stopWhen.some((condition) => condition({ steps: proposePlanSuccessSteps }))).toBe(
+        false
+      );
+    }
   });
 
   test("treats missing queued-message callback as not queued", () => {
@@ -1119,6 +1281,120 @@ describe("StreamManager - replayStream", () => {
     await streamManager.replayStream(workspaceId, { afterTimestamp: 20 });
 
     expect(replayedToolEnds).toEqual(["tool-new"]);
+  });
+  test("replayStream emits replay usage-delta from tracked step/cumulative usage", async () => {
+    const streamManager = new StreamManager(historyService);
+
+    // Suppress error events from bubbling up as uncaught exceptions during tests
+    streamManager.on("error", () => undefined);
+
+    const workspaceId = "ws-replay-usage";
+    const usageEvents: Array<{
+      replay?: boolean;
+      usage: { inputTokens: number; outputTokens: number; totalTokens: number };
+      cumulativeUsage: { inputTokens: number; outputTokens: number; totalTokens: number };
+    }> = [];
+
+    streamManager.on(
+      "usage-delta",
+      (event: {
+        replay?: boolean;
+        usage: { inputTokens: number; outputTokens: number; totalTokens: number };
+        cumulativeUsage: { inputTokens: number; outputTokens: number; totalTokens: number };
+      }) => {
+        usageEvents.push(event);
+      }
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
+    if (!(workspaceStreamsValue instanceof Map)) {
+      throw new Error("StreamManager.workspaceStreams is not a Map");
+    }
+    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
+
+    workspaceStreams.set(workspaceId, {
+      state: "streaming",
+      messageId: "msg-usage",
+      model: "claude-sonnet-4",
+      metadataModel: "claude-sonnet-4",
+      historySequence: 1,
+      startTime: 123,
+      initialMetadata: {},
+      toolCompletionTimestamps: new Map<string, number>(),
+      parts: [{ type: "text", text: "hello", timestamp: 10 }],
+      lastStepUsage: { inputTokens: 21, outputTokens: 3, totalTokens: 24 },
+      cumulativeUsage: { inputTokens: 55, outputTokens: 11, totalTokens: 66 },
+      lastStepProviderMetadata: { anthropic: { cacheReadInputTokens: 2 } },
+      cumulativeProviderMetadata: { anthropic: { cacheCreationInputTokens: 9 } },
+    });
+
+    const tokenTracker = Reflect.get(streamManager, "tokenTracker") as {
+      setModel: (model: string) => Promise<void>;
+      countTokens: (text: string) => Promise<number>;
+    };
+
+    tokenTracker.setModel = () => Promise.resolve();
+    tokenTracker.countTokens = () => Promise.resolve(1);
+
+    await streamManager.replayStream(workspaceId);
+
+    expect(usageEvents).toHaveLength(1);
+    expect(usageEvents[0]?.replay).toBe(true);
+    expect(usageEvents[0]?.usage).toEqual({ inputTokens: 21, outputTokens: 3, totalTokens: 24 });
+    expect(usageEvents[0]?.cumulativeUsage).toEqual({
+      inputTokens: 55,
+      outputTokens: 11,
+      totalTokens: 66,
+    });
+  });
+  test("replayStream skips replay usage-delta for incremental afterTimestamp replays", async () => {
+    const streamManager = new StreamManager(historyService);
+
+    // Suppress error events from bubbling up as uncaught exceptions during tests
+    streamManager.on("error", () => undefined);
+
+    const workspaceId = "ws-replay-usage-incremental";
+    const usageEvents: Array<{ replay?: boolean }> = [];
+
+    streamManager.on("usage-delta", (event: { replay?: boolean }) => {
+      usageEvents.push(event);
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
+    if (!(workspaceStreamsValue instanceof Map)) {
+      throw new Error("StreamManager.workspaceStreams is not a Map");
+    }
+    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
+
+    workspaceStreams.set(workspaceId, {
+      state: "streaming",
+      messageId: "msg-usage-incremental",
+      model: "claude-sonnet-4",
+      metadataModel: "claude-sonnet-4",
+      historySequence: 1,
+      startTime: 123,
+      initialMetadata: {},
+      toolCompletionTimestamps: new Map<string, number>(),
+      parts: [{ type: "text", text: "hello", timestamp: 10 }],
+      lastStepUsage: { inputTokens: 21, outputTokens: 3, totalTokens: 24 },
+      cumulativeUsage: { inputTokens: 55, outputTokens: 11, totalTokens: 66 },
+      lastStepProviderMetadata: { anthropic: { cacheReadInputTokens: 2 } },
+      cumulativeProviderMetadata: { anthropic: { cacheCreationInputTokens: 9 } },
+    });
+
+    const tokenTracker = Reflect.get(streamManager, "tokenTracker") as {
+      setModel: (model: string) => Promise<void>;
+      countTokens: (text: string) => Promise<number>;
+    };
+
+    tokenTracker.setModel = () => Promise.resolve();
+    tokenTracker.countTokens = () => Promise.resolve(1);
+
+    await streamManager.replayStream(workspaceId, { afterTimestamp: 999 });
+
+    expect(usageEvents).toHaveLength(0);
   });
 });
 

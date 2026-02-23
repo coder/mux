@@ -37,6 +37,12 @@ export interface StartServerOptions {
   router?: AppRouter;
   /** Whether to serve static files */
   serveStatic?: boolean;
+  /**
+   * Allow HTTPS browser origins when a TLS-terminating proxy forwards
+   * X-Forwarded-Proto=http to mux. If omitted, falls back to
+   * MUX_SERVER_ALLOW_HTTP_ORIGIN for non-CLI server starts.
+   */
+  allowHttpOrigin?: boolean;
 }
 
 type NetworkInterfaces = NodeJS.Dict<os.NetworkInterfaceInfo[]>;
@@ -69,6 +75,16 @@ function formatHostForUrl(host: string): string {
 
 function buildHttpBaseUrl(host: string, port: number): string {
   return `http://${formatHostForUrl(host)}:${port}`;
+}
+
+function resolveAllowHttpOriginEnvFlag(): boolean {
+  const raw = process.env.MUX_SERVER_ALLOW_HTTP_ORIGIN;
+  if (!raw) {
+    return false;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  return normalized === "1" || normalized === "true";
 }
 
 function getNonInternalInterfaceAddresses(
@@ -235,6 +251,10 @@ export class ServerService {
       }
     }
 
+    // Non-CLI starts (desktop/browser mode) do not parse CLI flags, so allow an
+    // explicit env override for TLS-terminating proxies that rewrite forwarded proto.
+    const allowHttpOrigin = options.allowHttpOrigin ?? resolveAllowHttpOriginEnvFlag();
+
     const serverOptions: OrpcServerOptions = {
       host: bindHost,
       port: options.port ?? 0,
@@ -243,6 +263,7 @@ export class ServerService {
       router: options.router,
       serveStatic,
       staticDir,
+      allowHttpOrigin,
     };
 
     const server = await createOrpcServer(serverOptions);

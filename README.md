@@ -45,6 +45,7 @@ macOS and Linux.
 
 ## Screenshots
 
+<!-- Screenshots below are generated from Storybook stories under Docs/README Screenshots -->
 <table>
 <tr>
 <td align="center" width="50%">
@@ -68,8 +69,8 @@ macOS and Linux.
 </tr>
 <tr>
 <td align="center" width="50%">
-<img src="./docs/img/project-secrets.webp" alt="Screenshot of project secrets" width="100%" /><br>
-<sub>Project secrets help split your Human and Agent identities</sub>
+<img src="./docs/img/auto-mode.webp" alt="Screenshot of auto mode" width="100%" /><br>
+<sub>Auto mode intelligently switches agent types for the best results</sub>
 </td>
 <td align="center" width="50%">
 <img src="./docs/img/costs-tab.webp" alt="Screenshot of costs table" width="100%" /><br>
@@ -78,10 +79,19 @@ macOS and Linux.
 </tr>
 <tr>
 <td align="center" width="50%">
-<img src="./docs/img/opportunistic-compaction.webp" alt="Screenshot of opportunistic compaction" width="100%" /><br>
-<sub>Opportunistic compaction helps keep context small</sub>
+<img src="./docs/img/context-management.webp" alt="Screenshot of context management dialog" width="100%" /><br>
+<sub>Context management dialog keeps compaction controls in one place</sub>
 </td>
-<td></td>
+<td align="center" width="50%">
+<img src="./docs/img/orchestrate-agents.webp" alt="Screenshot of orchestrate agents" width="100%" /><br>
+<sub>Orchestrate parallel agent tasks with plan mode</sub>
+</td>
+</tr>
+<tr>
+<td align="center" colspan="2">
+<img src="./docs/img/mobile-server-mode.webp" alt="Screenshot of mux mobile UI" width="40%" /><br>
+<sub>Mux server mode has a responsive UI for mobile users</sub>
+</td>
 </tr>
 </table>
 

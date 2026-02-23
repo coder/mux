@@ -11,6 +11,7 @@ import {
   getAgentIdKey,
   getModelKey,
   getThinkingLevelKey,
+  getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
 
 import { TooltipProvider } from "../ui/tooltip";
@@ -321,6 +322,69 @@ describe("ProposePlanToolCall", () => {
       expect(JSON.parse(window.localStorage.getItem(modelKey)!)).toBe(execModel);
       expect(JSON.parse(window.localStorage.getItem(thinkingKey)!)).toBe(execThinking);
     }
+  });
+
+  test("uses workspace-by-agent override for Implement when exec defaults inherit", async () => {
+    const workspaceId = "ws-123";
+    const planPath = "~/.mux/plans/demo/ws-123.md";
+    const planModel = "anthropic:claude-sonnet-4-5";
+    const planThinking = "high";
+    const execWorkspaceModel = "openai:gpt-5.2-pro";
+    const execWorkspaceThinking = "medium";
+
+    window.localStorage.setItem(getAgentIdKey(workspaceId), JSON.stringify("plan"));
+    updatePersistedState(getModelKey(workspaceId), planModel);
+    updatePersistedState(getThinkingLevelKey(workspaceId), planThinking);
+    updatePersistedState(AGENT_AI_DEFAULTS_KEY, {});
+    updatePersistedState(getWorkspaceAISettingsByAgentKey(workspaceId), {
+      exec: { model: execWorkspaceModel, thinkingLevel: execWorkspaceThinking },
+    });
+
+    const sendMessageCalls: SendMessageArgs[] = [];
+
+    mockApi = {
+      config: {
+        getConfig: () =>
+          Promise.resolve({
+            taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+            agentAiDefaults: {},
+            subagentAiDefaults: {},
+          }),
+      },
+      workspace: {
+        getPlanContent: () =>
+          Promise.resolve({
+            success: true,
+            data: { content: "# My Plan\n\nDo the thing.", path: planPath },
+          }),
+        replaceChatHistory: (_args) => Promise.resolve({ success: true, data: undefined }),
+        sendMessage: (args: SendMessageArgs) => {
+          sendMessageCalls.push(args);
+          return Promise.resolve({ success: true, data: undefined });
+        },
+      },
+    };
+
+    const view = renderToolCall(
+      <ProposePlanToolCall
+        args={{}}
+        status="completed"
+        result={{
+          success: true,
+          planPath,
+          planContent: "# My Plan\n\nDo the thing.",
+        }}
+        workspaceId={workspaceId}
+        isLatest={true}
+      />
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "Implement" }));
+
+    await waitFor(() => expect(sendMessageCalls.length).toBe(1));
+    expect(sendMessageCalls[0]?.options.agentId).toBe("exec");
+    expect(sendMessageCalls[0]?.options.model).toBe(execWorkspaceModel);
+    expect(sendMessageCalls[0]?.options.thinkingLevel).toBe(execWorkspaceThinking);
   });
 
   test("replaces chat history before implementing when setting enabled", async () => {

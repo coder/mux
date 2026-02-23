@@ -1,4 +1,13 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useRouter } from "@/browser/contexts/RouterContext";
 
 interface OpenSettingsOptions {
@@ -12,6 +21,9 @@ interface SettingsContextValue {
   open: (section?: string, options?: OpenSettingsOptions) => void;
   close: () => void;
   setActiveSection: (section: string) => void;
+
+  /** Subscribe to settings close events. Returns an unsubscribe function. */
+  registerOnClose: (callback: () => void) => () => void;
 
   /** One-shot hint for ProvidersSection to expand a provider. */
   providersExpandedProvider: string | null;
@@ -32,6 +44,8 @@ export function SettingsProvider(props: { children: ReactNode }) {
   const router = useRouter();
   const [providersExpandedProvider, setProvidersExpandedProvider] = useState<string | null>(null);
 
+  const closeCallbacksRef = useRef(new Set<() => void>());
+
   const isOpen = router.currentSettingsSection != null;
   const activeSection = router.currentSettingsSection ?? DEFAULT_SECTION;
 
@@ -47,6 +61,25 @@ export function SettingsProvider(props: { children: ReactNode }) {
     },
     [router]
   );
+
+  const registerOnClose = useCallback((callback: () => void) => {
+    closeCallbacksRef.current.add(callback);
+    return () => {
+      closeCallbacksRef.current.delete(callback);
+    };
+  }, []);
+
+  // Fire close subscribers whenever settings transitions from open → closed,
+  // regardless of how the navigation happened (explicit close, back button, etc.).
+  const wasOpenRef = useRef(isOpen);
+  useEffect(() => {
+    if (wasOpenRef.current && !isOpen) {
+      for (const callback of closeCallbacksRef.current) {
+        callback();
+      }
+    }
+    wasOpenRef.current = isOpen;
+  }, [isOpen]);
 
   const close = useCallback(() => {
     setProvidersExpandedProvider(null);
@@ -70,10 +103,19 @@ export function SettingsProvider(props: { children: ReactNode }) {
       open,
       close,
       setActiveSection,
+      registerOnClose,
       providersExpandedProvider,
       setProvidersExpandedProvider,
     }),
-    [isOpen, activeSection, open, close, setActiveSection, providersExpandedProvider]
+    [
+      isOpen,
+      activeSection,
+      open,
+      close,
+      setActiveSection,
+      registerOnClose,
+      providersExpandedProvider,
+    ]
   );
 
   return <SettingsContext.Provider value={value}>{props.children}</SettingsContext.Provider>;

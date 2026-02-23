@@ -22,6 +22,12 @@ export interface SessionUsageTokenStatsCacheV1 {
 
   computedAt: number;
 
+  /**
+   * Stable fingerprint of provider config used when this cache was computed.
+   * Optional for backward compatibility with pre-fingerprint cache entries.
+   */
+  providersConfigVersion?: number;
+
   /** Tokenization model (impacts tokenizer + tool definition counting) */
   model: string;
 

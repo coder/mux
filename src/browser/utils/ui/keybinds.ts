@@ -302,6 +302,9 @@ export const KEYBINDS = {
   /** Jump to bottom of chat */
   JUMP_TO_BOTTOM: { key: "G", shift: true },
 
+  /** Load older transcript messages when pagination is available */
+  LOAD_OLDER_MESSAGES: { key: "h", shift: true },
+
   /** Navigate to next workspace in current project */
   NEXT_WORKSPACE: { key: "j", ctrl: true },
 
@@ -337,6 +340,10 @@ export const KEYBINDS = {
   // VS Code-style palette
   // macOS: Cmd+Shift+P, Win/Linux: Ctrl+Shift+P
   OPEN_COMMAND_PALETTE: { key: "P", ctrl: true, shift: true },
+
+  /** Open Command Palette directly in command mode (prefills ">") */
+  // F4 avoids browser-level collisions with Ctrl/Cmd+Shift+P in Firefox.
+  OPEN_COMMAND_PALETTE_ACTIONS: { key: "F4" },
 
   /** Open Chat with Mux */
   // User requested F1 for quick access to the built-in help chat.
@@ -385,10 +392,10 @@ export const KEYBINDS = {
   TOGGLE_HUNK_READ: { key: "m" },
 
   /** Mark selected hunk as read in Code Review panel */
-  MARK_HUNK_READ: { key: "l" },
+  MARK_HUNK_READ: { key: "r" },
 
   /** Mark selected hunk as unread in Code Review panel */
-  MARK_HUNK_UNREAD: { key: "h" },
+  MARK_HUNK_UNREAD: { key: "u" },
 
   /** Mark entire file (all hunks) as read in Code Review panel */
   MARK_FILE_READ: { key: "M", shift: true },
@@ -425,6 +432,45 @@ export const KEYBINDS = {
 
   /** Cancel/dismiss confirmation dialogs */
   CONFIRM_DIALOG_NO: { key: "n", allowShift: true },
+
+  /** Toggle immersive review mode */
+  TOGGLE_REVIEW_IMMERSIVE: { key: "i", shift: true },
+
+  /** Navigate to next file in immersive review */
+  REVIEW_NEXT_FILE: { key: "l" },
+
+  /** Navigate to previous file in immersive review */
+  REVIEW_PREV_FILE: { key: "h" },
+
+  /** Navigate to next hunk in immersive review */
+  REVIEW_NEXT_HUNK: { key: "j" },
+
+  /** Navigate to previous hunk in immersive review */
+  REVIEW_PREV_HUNK: { key: "k" },
+
+  /** Move line cursor down in immersive review */
+  REVIEW_CURSOR_DOWN: { key: "ArrowDown", allowShift: true },
+
+  /** Move line cursor up in immersive review */
+  REVIEW_CURSOR_UP: { key: "ArrowUp", allowShift: true },
+
+  /** Jump line cursor 10 lines down in immersive review */
+  REVIEW_CURSOR_JUMP_DOWN: { key: "ArrowDown", ctrl: true, allowShift: true },
+
+  /** Jump line cursor 10 lines up in immersive review */
+  REVIEW_CURSOR_JUMP_UP: { key: "ArrowUp", ctrl: true, allowShift: true },
+
+  /** Quick "I like this" feedback in immersive review */
+  REVIEW_QUICK_LIKE: { key: "l", shift: true },
+
+  /** Quick "I don't like this" feedback in immersive review */
+  REVIEW_QUICK_DISLIKE: { key: "d", shift: true },
+
+  /** Add comment in immersive review */
+  REVIEW_COMMENT: { key: "c", shift: true },
+
+  /** Toggle focus between diff and notes sidebar in immersive review */
+  REVIEW_FOCUS_NOTES: { key: "Tab" },
 
   TOGGLE_POWER_MODE: { key: "F12", shift: true },
 } as const;

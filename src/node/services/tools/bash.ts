@@ -22,6 +22,7 @@ import { toBashTaskId } from "./taskId";
 import { migrateToBackground } from "@/node/services/backgroundProcessExecutor";
 import { LocalBaseRuntime } from "@/node/runtime/LocalBaseRuntime";
 import { getToolEnvPath } from "@/node/services/hooks";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const CAT_FILE_READ_NOTICE =
   "[IMPORTANT]\n\nDO NOT use `cat`, `rg`, or `grep` to read files. Use the `file_read` tool instead (supports offset/limit paging). Bash output may be truncated or auto-filtered, which can hide parts of the file.";
@@ -1379,7 +1380,7 @@ ${scriptWithEnv}`;
         }
         return withNotice({
           success: false,
-          error: `Failed to execute command: ${err instanceof Error ? err.message : String(err)}`,
+          error: `Failed to execute command: ${getErrorMessage(err)}`,
           exitCode: -1,
           wall_duration_ms: Math.round(performance.now() - startTime),
         });

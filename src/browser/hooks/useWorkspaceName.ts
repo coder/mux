@@ -6,6 +6,7 @@ import { getWorkspaceNameStateKey } from "@/common/constants/storage";
 import { NAME_GEN_PREFERRED_MODELS } from "@/common/constants/nameGeneration";
 import type { NameGenerationError } from "@/common/types/errors";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /** Discriminated error type for workspace name operations */
 export type WorkspaceNameUIError =
@@ -250,7 +251,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
         if (requestId !== requestIdRef.current) {
           return null;
         }
-        const errorMsg = err instanceof Error ? err.message : String(err);
+        const errorMsg = getErrorMessage(err);
         setError({ kind: "transport", message: errorMsg });
         safeResolve(null);
         return null;

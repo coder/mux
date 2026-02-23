@@ -1,27 +1,107 @@
 import { describe, expect, it, beforeEach, afterEach, mock, type Mock } from "bun:test";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { StreamStartEvent, ToolCallStartEvent } from "@/common/types/stream";
-import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import type { WorkspaceActivitySnapshot, WorkspaceChatMessage } from "@/common/orpc/types";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
+import { DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT } from "@/common/constants/ui";
+import { getAutoCompactionThresholdKey, getAutoRetryKey } from "@/common/constants/storage";
 import { WorkspaceStore } from "./WorkspaceStore";
+
+interface LoadMoreResponse {
+  messages: WorkspaceChatMessage[];
+  nextCursor: { beforeHistorySequence: number; beforeMessageId?: string | null } | null;
+  hasOlder: boolean;
+}
 
 // Mock client
 // eslint-disable-next-line require-yield
-const mockOnChat = mock(async function* (): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
-  // yield nothing by default
-  await Promise.resolve();
+const mockOnChat = mock(async function* (
+  _input?: { workspaceId: string; mode?: unknown },
+  options?: { signal?: AbortSignal }
+): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+  // Keep the iterator open until the store aborts it (prevents retry-loop noise in tests).
+  await new Promise<void>((resolve) => {
+    if (!options?.signal) {
+      resolve();
+      return;
+    }
+    options.signal.addEventListener("abort", () => resolve(), { once: true });
+  });
 });
 
 const mockGetSessionUsage = mock(() => Promise.resolve(undefined));
+const mockHistoryLoadMore = mock(
+  (): Promise<LoadMoreResponse> =>
+    Promise.resolve({
+      messages: [],
+      nextCursor: null,
+      hasOlder: false,
+    })
+);
+const mockActivityList = mock(() => Promise.resolve<Record<string, WorkspaceActivitySnapshot>>({}));
+// eslint-disable-next-line require-yield
+const mockActivitySubscribe = mock(async function* (
+  _input?: void,
+  options?: { signal?: AbortSignal }
+): AsyncGenerator<
+  { workspaceId: string; activity: WorkspaceActivitySnapshot | null },
+  void,
+  unknown
+> {
+  await new Promise<void>((resolve) => {
+    if (!options?.signal) {
+      resolve();
+      return;
+    }
+    options.signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+});
+
+const mockSetAutoCompactionThreshold = mock(() =>
+  Promise.resolve({ success: true, data: undefined })
+);
+const mockGetStartupAutoRetryModel = mock(() => Promise.resolve({ success: true, data: null }));
 
 const mockClient = {
   workspace: {
     onChat: mockOnChat,
     getSessionUsage: mockGetSessionUsage,
+    history: {
+      loadMore: mockHistoryLoadMore,
+    },
+    activity: {
+      list: mockActivityList,
+      subscribe: mockActivitySubscribe,
+    },
+    setAutoCompactionThreshold: mockSetAutoCompactionThreshold,
+    getStartupAutoRetryModel: mockGetStartupAutoRetryModel,
+  },
+};
+
+const localStorageBacking = new Map<string, string>();
+const mockLocalStorage: Storage = {
+  get length() {
+    return localStorageBacking.size;
+  },
+  clear() {
+    localStorageBacking.clear();
+  },
+  getItem(key: string) {
+    return localStorageBacking.get(key) ?? null;
+  },
+  key(index: number) {
+    return Array.from(localStorageBacking.keys())[index] ?? null;
+  },
+  removeItem(key: string) {
+    localStorageBacking.delete(key);
+  },
+  setItem(key: string, value: string) {
+    localStorageBacking.set(key, value);
   },
 };
 
 const mockWindow = {
+  localStorage: mockLocalStorage,
   api: {
     workspace: {
       onChat: mock((_workspaceId, _callback) => {
@@ -43,7 +123,8 @@ global.queueMicrotask = (fn) => fn();
 function createAndAddWorkspace(
   store: WorkspaceStore,
   workspaceId: string,
-  options: Partial<FrontendWorkspaceMetadata> = {}
+  options: Partial<FrontendWorkspaceMetadata> = {},
+  activate = true
 ): FrontendWorkspaceMetadata {
   const metadata: FrontendWorkspaceMetadata = {
     id: workspaceId,
@@ -54,8 +135,31 @@ function createAndAddWorkspace(
     createdAt: options.createdAt ?? new Date().toISOString(),
     runtimeConfig: options.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
   };
+  if (activate) {
+    store.setActiveWorkspaceId(workspaceId);
+  }
   store.addWorkspace(metadata);
   return metadata;
+}
+
+function createHistoryMessageEvent(id: string, historySequence: number): WorkspaceChatMessage {
+  return {
+    type: "message",
+    id,
+    role: "user",
+    parts: [{ type: "text", text: `message-${historySequence}` }],
+    metadata: { historySequence, timestamp: historySequence },
+  };
+}
+
+async function waitForAbortSignal(signal?: AbortSignal): Promise<void> {
+  await new Promise<void>((resolve) => {
+    if (!signal) {
+      resolve();
+      return;
+    }
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
 }
 
 describe("WorkspaceStore", () => {
@@ -64,6 +168,19 @@ describe("WorkspaceStore", () => {
 
   beforeEach(() => {
     mockOnChat.mockClear();
+    mockGetSessionUsage.mockClear();
+    mockHistoryLoadMore.mockClear();
+    mockActivityList.mockClear();
+    mockActivitySubscribe.mockClear();
+    mockSetAutoCompactionThreshold.mockClear();
+    mockGetStartupAutoRetryModel.mockClear();
+    global.window.localStorage?.clear?.();
+    mockHistoryLoadMore.mockResolvedValue({
+      messages: [],
+      nextCursor: null,
+      hasOlder: false,
+    });
+    mockActivityList.mockResolvedValue({});
     mockOnModelUsed = mock(() => undefined);
     store = new WorkspaceStore(mockOnModelUsed);
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
@@ -129,6 +246,7 @@ describe("WorkspaceStore", () => {
       });
 
       // Add workspace
+      store.setActiveWorkspaceId(workspaceId);
       store.addWorkspace(metadata);
 
       // Check initial recency
@@ -141,6 +259,7 @@ describe("WorkspaceStore", () => {
       // Recency should still be based on createdAt
       const stateAfterCaughtUp = store.getWorkspaceState(workspaceId);
       expect(stateAfterCaughtUp.recencyTimestamp).toBe(new Date(createdAt).getTime());
+      expect(stateAfterCaughtUp.isHydratingTranscript).toBe(false);
 
       // Verify recency map
       const recency = store.getWorkspaceRecency();
@@ -175,6 +294,7 @@ describe("WorkspaceStore", () => {
       });
 
       // Add workspace (should trigger IPC subscription)
+      store.setActiveWorkspaceId(metadata.id);
       store.addWorkspace(metadata);
 
       // Wait for async processing
@@ -211,6 +331,7 @@ describe("WorkspaceStore", () => {
 
       // Unsubscribe before adding workspace (which triggers updates)
       unsubscribe();
+      store.setActiveWorkspaceId(metadata.id);
       store.addWorkspace(metadata);
 
       // Wait for async processing
@@ -220,8 +341,323 @@ describe("WorkspaceStore", () => {
     });
   });
 
+  describe("active workspace subscriptions", () => {
+    it("does not start onChat until workspace becomes active", async () => {
+      const workspaceId = "inactive-workspace";
+      createAndAddWorkspace(store, workspaceId, {}, false);
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(mockOnChat).not.toHaveBeenCalled();
+
+      store.setActiveWorkspaceId(workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(mockOnChat).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceId }),
+        expect.anything()
+      );
+    });
+
+    it("does not pin hydration while waiting for the chat client", async () => {
+      const workspaceId = "workspace-awaiting-client";
+
+      store.setClient(null);
+      createAndAddWorkspace(store, workspaceId, {}, false);
+
+      store.setActiveWorkspaceId(workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(store.getWorkspaceState(workspaceId).isHydratingTranscript).toBe(false);
+      expect(mockOnChat).not.toHaveBeenCalled();
+    });
+
+    it("clears hydration after first pre-caught-up failure when client disconnects", async () => {
+      const workspaceId = "workspace-hydration-first-failure-offline";
+      let attempts = 0;
+      let resolveFirstFailure!: () => void;
+      const firstFailure = new Promise<void>((resolve) => {
+        resolveFirstFailure = resolve;
+      });
+
+      // eslint-disable-next-line require-yield
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        attempts += 1;
+        if (attempts === 1) {
+          resolveFirstFailure();
+          throw new Error("first-retry-failure");
+        }
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId, {}, false);
+      store.setActiveWorkspaceId(workspaceId);
+      await firstFailure;
+
+      // Simulate transport/client loss before a second retry can catch up.
+      store.setClient(null);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(store.getWorkspaceState(workspaceId).isHydratingTranscript).toBe(false);
+    });
+
+    it("switches onChat subscriptions when active workspace changes", async () => {
+      // eslint-disable-next-line require-yield
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        await new Promise<void>((resolve) => {
+          if (!options?.signal) {
+            resolve();
+            return;
+          }
+          options.signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+      });
+
+      createAndAddWorkspace(store, "workspace-1", {}, false);
+      createAndAddWorkspace(store, "workspace-2", {}, false);
+
+      store.setActiveWorkspaceId("workspace-1");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      store.setActiveWorkspaceId("workspace-2");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const subscribedWorkspaceIds = mockOnChat.mock.calls.map((call) => {
+        const input = call[0] as { workspaceId?: string };
+        return input.workspaceId;
+      });
+
+      expect(subscribedWorkspaceIds).toEqual(["workspace-1", "workspace-2"]);
+    });
+
+    it("clears replay buffers before aborting the previous active workspace subscription", async () => {
+      // eslint-disable-next-line require-yield
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, "workspace-1", {}, false);
+      createAndAddWorkspace(store, "workspace-2", {}, false);
+
+      store.setActiveWorkspaceId("workspace-1");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const transientState = (
+        store as unknown as {
+          chatTransientState: Map<
+            string,
+            {
+              caughtUp: boolean;
+              isHydratingTranscript: boolean;
+              replayingHistory: boolean;
+              historicalMessages: WorkspaceChatMessage[];
+              pendingStreamEvents: WorkspaceChatMessage[];
+            }
+          >;
+        }
+      ).chatTransientState.get("workspace-1");
+      expect(transientState).toBeDefined();
+
+      transientState!.caughtUp = false;
+      transientState!.isHydratingTranscript = true;
+      transientState!.replayingHistory = true;
+      transientState!.historicalMessages.push(
+        createHistoryMessageEvent("stale-buffered-message", 9)
+      );
+      transientState!.pendingStreamEvents.push({
+        type: "stream-start",
+        workspaceId: "workspace-1",
+        messageId: "stale-buffered-stream",
+        model: "claude-sonnet-4",
+        historySequence: 10,
+        startTime: Date.now(),
+      });
+
+      // Switching active workspaces should clear replay buffers synchronously
+      // before aborting the previous subscription.
+      store.setActiveWorkspaceId("workspace-2");
+
+      expect(transientState!.caughtUp).toBe(false);
+      expect(transientState!.isHydratingTranscript).toBe(false);
+      expect(transientState!.replayingHistory).toBe(false);
+      expect(transientState!.historicalMessages).toHaveLength(0);
+      expect(transientState!.pendingStreamEvents).toHaveLength(0);
+      expect(store.getWorkspaceState("workspace-2").isHydratingTranscript).toBe(true);
+    });
+    it("keeps transcript hydration active across full replay resets", async () => {
+      const workspaceId = "workspace-full-replay-hydration";
+
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        // Full replay path emits history rows before the caught-up marker.
+        yield createHistoryMessageEvent("history-before-caught-up", 11);
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId, {}, false);
+      store.setActiveWorkspaceId(workspaceId);
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Hydration should stay active until an authoritative caught-up marker arrives,
+      // even if replay reset rebuilt transient state.
+      expect(store.getWorkspaceState(workspaceId).isHydratingTranscript).toBe(true);
+    });
+
+    it("clears transcript hydration after repeated catch-up retry failures", async () => {
+      const workspaceId = "workspace-hydration-retry-fallback";
+      let attempts = 0;
+
+      // eslint-disable-next-line require-yield
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        attempts += 1;
+        if (attempts <= 2) {
+          throw new Error(`retry-failure-${attempts}`);
+        }
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId, {}, false);
+      store.setActiveWorkspaceId(workspaceId);
+
+      const startedAt = Date.now();
+      while (mockOnChat.mock.calls.length < 3 && Date.now() - startedAt < 3_000) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+
+      expect(mockOnChat.mock.calls.length).toBeGreaterThanOrEqual(3);
+      expect(store.getWorkspaceState(workspaceId).isHydratingTranscript).toBe(false);
+    });
+
+    it("clears transcript hydration when retries keep replaying partial history without caught-up", async () => {
+      const workspaceId = "workspace-hydration-partial-replay-fallback";
+      let attempts = 0;
+
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        attempts += 1;
+
+        // Simulate flaky reconnects that emit some replay rows, then terminate
+        // before caught-up can arrive.
+        yield createHistoryMessageEvent(`partial-history-${attempts}`, attempts);
+        if (attempts <= 2) {
+          return;
+        }
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId, {}, false);
+      store.setActiveWorkspaceId(workspaceId);
+
+      const startedAt = Date.now();
+      while (mockOnChat.mock.calls.length < 3 && Date.now() - startedAt < 3_000) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+
+      expect(mockOnChat.mock.calls.length).toBeGreaterThanOrEqual(3);
+      expect(store.getWorkspaceState(workspaceId).isHydratingTranscript).toBe(false);
+    });
+
+    it("drops queued chat events from an aborted subscription attempt", async () => {
+      const queuedMicrotasks: Array<() => void> = [];
+      const originalQueueMicrotask = global.queueMicrotask;
+      let resolveQueuedEvent!: () => void;
+      const queuedEvent = new Promise<void>((resolve) => {
+        resolveQueuedEvent = resolve;
+      });
+
+      global.queueMicrotask = (callback) => {
+        queuedMicrotasks.push(callback);
+        resolveQueuedEvent();
+      };
+
+      try {
+        mockOnChat.mockImplementation(async function* (
+          input?: { workspaceId: string; mode?: unknown },
+          options?: { signal?: AbortSignal }
+        ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+          if (input?.workspaceId === "workspace-1") {
+            yield createHistoryMessageEvent("queued-after-switch", 11);
+          }
+          await waitForAbortSignal(options?.signal);
+        });
+
+        createAndAddWorkspace(store, "workspace-1", {}, false);
+        createAndAddWorkspace(store, "workspace-2", {}, false);
+
+        store.setActiveWorkspaceId("workspace-1");
+        await queuedEvent;
+
+        const transientState = (
+          store as unknown as {
+            chatTransientState: Map<
+              string,
+              {
+                historicalMessages: WorkspaceChatMessage[];
+                pendingStreamEvents: WorkspaceChatMessage[];
+              }
+            >;
+          }
+        ).chatTransientState.get("workspace-1");
+        expect(transientState).toBeDefined();
+
+        // Abort workspace-1 attempt by moving focus; the queued callback should now no-op.
+        store.setActiveWorkspaceId("workspace-2");
+
+        for (const callback of queuedMicrotasks) {
+          callback();
+        }
+
+        expect(transientState!.historicalMessages).toHaveLength(0);
+        expect(transientState!.pendingStreamEvents).toHaveLength(0);
+      } finally {
+        global.queueMicrotask = originalQueueMicrotask;
+      }
+    });
+  });
+
+  it("tracks which workspace currently has the active onChat subscription", async () => {
+    createAndAddWorkspace(store, "workspace-1", {}, false);
+    createAndAddWorkspace(store, "workspace-2", {}, false);
+
+    expect(store.isOnChatSubscriptionActive("workspace-1")).toBe(false);
+    expect(store.isOnChatSubscriptionActive("workspace-2")).toBe(false);
+
+    store.setActiveWorkspaceId("workspace-1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(store.isOnChatSubscriptionActive("workspace-1")).toBe(true);
+    expect(store.isOnChatSubscriptionActive("workspace-2")).toBe(false);
+
+    store.setActiveWorkspaceId("workspace-2");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(store.isOnChatSubscriptionActive("workspace-1")).toBe(false);
+    expect(store.isOnChatSubscriptionActive("workspace-2")).toBe(true);
+
+    store.setActiveWorkspaceId(null);
+    expect(store.isOnChatSubscriptionActive("workspace-1")).toBe(false);
+    expect(store.isOnChatSubscriptionActive("workspace-2")).toBe(false);
+  });
+
   describe("syncWorkspaces", () => {
-    it("should add new workspaces", () => {
+    it("should add new workspaces", async () => {
       const metadata1: FrontendWorkspaceMetadata = {
         id: "workspace-1",
         name: "workspace-1",
@@ -233,9 +669,62 @@ describe("WorkspaceStore", () => {
       };
 
       const workspaceMap = new Map([[metadata1.id, metadata1]]);
+      store.setActiveWorkspaceId(metadata1.id);
       store.syncWorkspaces(workspaceMap);
 
+      // addWorkspace triggers async onChat subscription setup; wait until the
+      // subscription attempt runs so startup threshold sync RPCs do not race this assertion.
+      const deadline = Date.now() + 1_000;
+      while (mockOnChat.mock.calls.length === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
       expect(mockOnChat).toHaveBeenCalledWith({ workspaceId: "workspace-1" }, expect.anything());
+    });
+
+    it("sanitizes malformed startup threshold values before backend sync", async () => {
+      const workspaceId = "workspace-threshold-sanitize";
+      const thresholdKey = getAutoCompactionThresholdKey("default");
+      global.window.localStorage.setItem(thresholdKey, JSON.stringify("not-a-number"));
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const deadline = Date.now() + 1_000;
+      while (mockSetAutoCompactionThreshold.mock.calls.length === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      expect(mockSetAutoCompactionThreshold).toHaveBeenCalledWith({
+        workspaceId,
+        threshold: DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT / 100,
+      });
+
+      expect(global.window.localStorage.getItem(thresholdKey)).toBe(
+        JSON.stringify(DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT)
+      );
+    });
+
+    it("sanitizes malformed legacy auto-retry values before subscribing", async () => {
+      const workspaceId = "workspace-auto-retry-sanitize";
+      const autoRetryKey = getAutoRetryKey(workspaceId);
+      global.window.localStorage.setItem(autoRetryKey, JSON.stringify("invalid-legacy-value"));
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const deadline = Date.now() + 1_000;
+      while (mockOnChat.mock.calls.length === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      expect(mockOnChat.mock.calls.length).toBeGreaterThan(0);
+      const onChatInput = mockOnChat.mock.calls[0]?.[0] as {
+        workspaceId?: string;
+        legacyAutoRetryEnabled?: unknown;
+      };
+
+      expect(onChatInput.workspaceId).toBe(workspaceId);
+      expect("legacyAutoRetryEnabled" in onChatInput).toBe(false);
+      expect(global.window.localStorage.getItem(autoRetryKey)).toBeNull();
     });
 
     it("should remove deleted workspaces", () => {
@@ -271,6 +760,7 @@ describe("WorkspaceStore", () => {
         canInterrupt: false,
         isCompacting: false,
         loading: true, // loading because not caught up
+        isHydratingTranscript: true,
         muxMessages: [],
         currentModel: null,
       });
@@ -290,6 +780,678 @@ describe("WorkspaceStore", () => {
       expect(state1).toEqual(state2);
       expect(state1.canInterrupt).toBe(state2.canInterrupt);
       expect(state1.loading).toBe(state2.loading);
+    });
+  });
+
+  describe("history pagination", () => {
+    it("initializes pagination from the oldest loaded history sequence on caught-up", async () => {
+      const workspaceId = "history-pagination-workspace-1";
+
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        yield createHistoryMessageEvent("msg-newer", 5);
+        await Promise.resolve();
+        yield { type: "caught-up", hasOlderHistory: true };
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.hasOlderHistory).toBe(true);
+      expect(state.loadingOlderHistory).toBe(false);
+    });
+
+    it("does not infer older history from non-boundary sequences without server metadata", async () => {
+      const workspaceId = "history-pagination-no-boundary";
+
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        yield createHistoryMessageEvent("msg-non-boundary", 5);
+        await Promise.resolve();
+        yield { type: "caught-up" };
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.hasOlderHistory).toBe(false);
+      expect(state.loadingOlderHistory).toBe(false);
+    });
+
+    it("loads older history and prepends it to the transcript", async () => {
+      const workspaceId = "history-pagination-workspace-2";
+
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        yield createHistoryMessageEvent("msg-newer", 5);
+        await Promise.resolve();
+        yield { type: "caught-up", hasOlderHistory: true };
+        await waitForAbortSignal(options?.signal);
+      });
+
+      mockHistoryLoadMore.mockResolvedValueOnce({
+        messages: [createHistoryMessageEvent("msg-older", 3)],
+        nextCursor: null,
+        hasOlder: false,
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(store.getWorkspaceState(workspaceId).hasOlderHistory).toBe(true);
+
+      await store.loadOlderHistory(workspaceId);
+
+      expect(mockHistoryLoadMore).toHaveBeenCalledWith({
+        workspaceId,
+        cursor: {
+          beforeHistorySequence: 5,
+          beforeMessageId: "msg-newer",
+        },
+      });
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.hasOlderHistory).toBe(false);
+      expect(state.loadingOlderHistory).toBe(false);
+      expect(state.muxMessages.map((message) => message.id)).toEqual(["msg-older", "msg-newer"]);
+    });
+
+    it("exposes loadingOlderHistory while requests are in flight and ignores concurrent loads", async () => {
+      const workspaceId = "history-pagination-workspace-3";
+
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        yield createHistoryMessageEvent("msg-newer", 5);
+        await Promise.resolve();
+        yield { type: "caught-up", hasOlderHistory: true };
+        await waitForAbortSignal(options?.signal);
+      });
+
+      let resolveLoadMore: ((value: LoadMoreResponse) => void) | undefined;
+
+      const loadMorePromise = new Promise<LoadMoreResponse>((resolve) => {
+        resolveLoadMore = resolve;
+      });
+      mockHistoryLoadMore.mockReturnValueOnce(loadMorePromise);
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const firstLoad = store.loadOlderHistory(workspaceId);
+      expect(store.getWorkspaceState(workspaceId).loadingOlderHistory).toBe(true);
+
+      const secondLoad = store.loadOlderHistory(workspaceId);
+      expect(mockHistoryLoadMore).toHaveBeenCalledTimes(1);
+
+      resolveLoadMore?.({
+        messages: [],
+        nextCursor: null,
+        hasOlder: false,
+      });
+
+      await firstLoad;
+      await secondLoad;
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.loadingOlderHistory).toBe(false);
+      expect(state.hasOlderHistory).toBe(false);
+    });
+
+    it("ignores stale load-more responses after pagination state changes", async () => {
+      const workspaceId = "history-pagination-stale-response";
+
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        yield createHistoryMessageEvent("msg-newer", 5);
+        await Promise.resolve();
+        yield { type: "caught-up", hasOlderHistory: true };
+        await waitForAbortSignal(options?.signal);
+      });
+
+      let resolveLoadMore: ((value: LoadMoreResponse) => void) | undefined;
+      const loadMorePromise = new Promise<LoadMoreResponse>((resolve) => {
+        resolveLoadMore = resolve;
+      });
+      mockHistoryLoadMore.mockReturnValueOnce(loadMorePromise);
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const loadOlderPromise = store.loadOlderHistory(workspaceId);
+      expect(store.getWorkspaceState(workspaceId).loadingOlderHistory).toBe(true);
+
+      const internalHistoryPagination = (
+        store as unknown as {
+          historyPagination: Map<
+            string,
+            {
+              nextCursor: { beforeHistorySequence: number; beforeMessageId?: string | null } | null;
+              hasOlder: boolean;
+              loading: boolean;
+            }
+          >;
+        }
+      ).historyPagination;
+      // Simulate a concurrent pagination reset (e.g., live compaction boundary arriving).
+      internalHistoryPagination.set(workspaceId, {
+        nextCursor: null,
+        hasOlder: false,
+        loading: false,
+      });
+
+      resolveLoadMore?.({
+        messages: [createHistoryMessageEvent("msg-stale-older", 3)],
+        nextCursor: {
+          beforeHistorySequence: 3,
+          beforeMessageId: "msg-stale-older",
+        },
+        hasOlder: true,
+      });
+
+      await loadOlderPromise;
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.muxMessages.map((message) => message.id)).toEqual(["msg-newer"]);
+      expect(state.hasOlderHistory).toBe(false);
+      expect(state.loadingOlderHistory).toBe(false);
+    });
+  });
+
+  describe("activity fallbacks", () => {
+    it("uses activity snapshots for non-active workspace sidebar fields", async () => {
+      const workspaceId = "activity-fallback-workspace";
+      const activityRecency = new Date("2024-01-03T12:00:00.000Z").getTime();
+      const activitySnapshot: WorkspaceActivitySnapshot = {
+        recency: activityRecency,
+        streaming: true,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: "high",
+        agentStatus: { emoji: "🔧", message: "Running checks", url: "https://example.com" },
+      };
+
+      // Recreate the store so the first activity.list call uses this test snapshot.
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      mockActivityList.mockResolvedValue({ [workspaceId]: activitySnapshot });
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+
+      // Let the initial activity.list call resolve and queue its state updates.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      createAndAddWorkspace(
+        store,
+        workspaceId,
+        {
+          createdAt: "2020-01-01T00:00:00.000Z",
+        },
+        false
+      );
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.canInterrupt).toBe(true);
+      expect(state.currentModel).toBe(activitySnapshot.lastModel);
+      expect(state.currentThinkingLevel).toBe(activitySnapshot.lastThinkingLevel);
+      expect(state.agentStatus).toEqual(activitySnapshot.agentStatus ?? undefined);
+      expect(state.recencyTimestamp).toBe(activitySnapshot.recency);
+    });
+
+    it("fires response-complete callback when a background workspace stops streaming", async () => {
+      const activeWorkspaceId = "active-workspace";
+      const backgroundWorkspaceId = "background-workspace";
+      const initialRecency = new Date("2024-01-05T00:00:00.000Z").getTime();
+
+      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
+        recency: initialRecency,
+        streaming: true,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+      };
+
+      let releaseBackgroundCompletion!: () => void;
+      const backgroundCompletionReady = new Promise<void>((resolve) => {
+        releaseBackgroundCompletion = resolve;
+      });
+
+      mockActivityList.mockResolvedValue({
+        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
+      });
+
+      mockActivitySubscribe.mockImplementation(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<
+        { workspaceId: string; activity: WorkspaceActivitySnapshot | null },
+        void,
+        unknown
+      > {
+        await backgroundCompletionReady;
+        if (options?.signal?.aborted) {
+          return;
+        }
+
+        yield {
+          workspaceId: backgroundWorkspaceId,
+          activity: {
+            ...backgroundStreamingSnapshot,
+            recency: initialRecency + 1,
+            streaming: false,
+          },
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      const onResponseComplete = mock(
+        (
+          _workspaceId: string,
+          _messageId: string,
+          _isFinal: boolean,
+          _finalText: string,
+          _compaction?: { hasContinueMessage: boolean },
+          _completedAt?: number | null
+        ) => undefined
+      );
+
+      // Recreate the store so the first activity.list call uses this test snapshot.
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      store.setOnResponseComplete(onResponseComplete);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+
+      createAndAddWorkspace(store, activeWorkspaceId);
+      createAndAddWorkspace(store, backgroundWorkspaceId, {}, false);
+
+      releaseBackgroundCompletion();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(onResponseComplete).toHaveBeenCalledTimes(1);
+      expect(onResponseComplete).toHaveBeenCalledWith(
+        backgroundWorkspaceId,
+        "",
+        true,
+        "",
+        undefined,
+        initialRecency + 1
+      );
+    });
+
+    it("preserves compaction continue metadata for background completion callbacks", async () => {
+      const activeWorkspaceId = "active-workspace-continue";
+      const backgroundWorkspaceId = "background-workspace-continue";
+      const initialRecency = new Date("2024-01-08T00:00:00.000Z").getTime();
+
+      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
+        recency: initialRecency,
+        streaming: true,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+      };
+
+      let releaseBackgroundCompletion!: () => void;
+      const backgroundCompletionReady = new Promise<void>((resolve) => {
+        releaseBackgroundCompletion = resolve;
+      });
+
+      mockActivityList.mockResolvedValue({
+        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
+      });
+
+      mockActivitySubscribe.mockImplementation(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<
+        { workspaceId: string; activity: WorkspaceActivitySnapshot | null },
+        void,
+        unknown
+      > {
+        await backgroundCompletionReady;
+        if (options?.signal?.aborted) {
+          return;
+        }
+
+        yield {
+          workspaceId: backgroundWorkspaceId,
+          activity: {
+            ...backgroundStreamingSnapshot,
+            recency: initialRecency + 1,
+            streaming: false,
+          },
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      mockOnChat.mockImplementation(async function* (
+        input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        if (input?.workspaceId !== backgroundWorkspaceId) {
+          await waitForAbortSignal(options?.signal);
+          return;
+        }
+
+        yield {
+          type: "message",
+          id: "compaction-request-msg",
+          role: "user",
+          parts: [{ type: "text", text: "/compact" }],
+          metadata: {
+            historySequence: 1,
+            timestamp: Date.now(),
+            muxMetadata: {
+              type: "compaction-request",
+              rawCommand: "/compact",
+              parsed: {
+                model: "claude-sonnet-4",
+                followUpContent: {
+                  text: "continue after compaction",
+                  model: "claude-sonnet-4",
+                  agentId: "exec",
+                },
+              },
+            },
+          },
+        };
+
+        yield {
+          type: "stream-start",
+          workspaceId: backgroundWorkspaceId,
+          messageId: "compaction-stream",
+          historySequence: 2,
+          model: "claude-sonnet-4",
+          startTime: Date.now(),
+          mode: "exec",
+        };
+
+        yield { type: "caught-up", hasOlderHistory: false };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      const onResponseComplete = mock(
+        (
+          _workspaceId: string,
+          _messageId: string,
+          _isFinal: boolean,
+          _finalText: string,
+          _compaction?: { hasContinueMessage: boolean },
+          _completedAt?: number | null
+        ) => undefined
+      );
+
+      // Recreate the store so the first activity.list call uses this test snapshot.
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      store.setOnResponseComplete(onResponseComplete);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+
+      createAndAddWorkspace(store, backgroundWorkspaceId);
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      const sawCompactingStream = await waitUntil(
+        () => store.getWorkspaceState(backgroundWorkspaceId).isCompacting
+      );
+      expect(sawCompactingStream).toBe(true);
+
+      // Move focus to a different workspace so the compaction workspace is backgrounded.
+      createAndAddWorkspace(store, activeWorkspaceId);
+
+      releaseBackgroundCompletion();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(onResponseComplete).toHaveBeenCalledTimes(1);
+      expect(onResponseComplete).toHaveBeenCalledWith(
+        backgroundWorkspaceId,
+        "",
+        true,
+        "",
+        { hasContinueMessage: true },
+        initialRecency + 1
+      );
+    });
+
+    it("does not fire response-complete callback when background streaming stops without recency advance", async () => {
+      const activeWorkspaceId = "active-workspace-no-replay";
+      const backgroundWorkspaceId = "background-workspace-no-replay";
+      const initialRecency = new Date("2024-01-06T00:00:00.000Z").getTime();
+
+      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
+        recency: initialRecency,
+        streaming: true,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+      };
+
+      let releaseBackgroundTransition!: () => void;
+      const backgroundTransitionReady = new Promise<void>((resolve) => {
+        releaseBackgroundTransition = resolve;
+      });
+
+      mockActivityList.mockResolvedValue({
+        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
+      });
+
+      mockActivitySubscribe.mockImplementation(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<
+        { workspaceId: string; activity: WorkspaceActivitySnapshot | null },
+        void,
+        unknown
+      > {
+        await backgroundTransitionReady;
+        if (options?.signal?.aborted) {
+          return;
+        }
+
+        yield {
+          workspaceId: backgroundWorkspaceId,
+          activity: {
+            ...backgroundStreamingSnapshot,
+            // Abort/error transitions can stop streaming without advancing recency.
+            recency: initialRecency,
+            streaming: false,
+          },
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      const onResponseComplete = mock(
+        (
+          _workspaceId: string,
+          _messageId: string,
+          _isFinal: boolean,
+          _finalText: string,
+          _compaction?: { hasContinueMessage: boolean },
+          _completedAt?: number | null
+        ) => undefined
+      );
+
+      // Recreate the store so the first activity.list call uses this test snapshot.
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      store.setOnResponseComplete(onResponseComplete);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+
+      createAndAddWorkspace(store, activeWorkspaceId);
+      createAndAddWorkspace(store, backgroundWorkspaceId, {}, false);
+
+      releaseBackgroundTransition();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(onResponseComplete).not.toHaveBeenCalled();
+    });
+    it("clears activity stream-start recency cache on dispose", () => {
+      const workspaceId = "dispose-clears-activity-recency";
+      const internalStore = store as unknown as {
+        activityStreamingStartRecency: Map<string, number>;
+      };
+
+      internalStore.activityStreamingStartRecency.set(workspaceId, Date.now());
+      expect(internalStore.activityStreamingStartRecency.has(workspaceId)).toBe(true);
+
+      store.dispose();
+
+      expect(internalStore.activityStreamingStartRecency.size).toBe(0);
+    });
+
+    it("opens activity subscription before listing snapshots", async () => {
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+
+      const callOrder: string[] = [];
+
+      mockActivitySubscribe.mockImplementation(
+        (
+          _input?: void,
+          options?: { signal?: AbortSignal }
+        ): AsyncGenerator<
+          { workspaceId: string; activity: WorkspaceActivitySnapshot | null },
+          void,
+          unknown
+        > => {
+          callOrder.push("subscribe");
+
+          // eslint-disable-next-line require-yield
+          return (async function* (): AsyncGenerator<
+            { workspaceId: string; activity: WorkspaceActivitySnapshot | null },
+            void,
+            unknown
+          > {
+            await waitForAbortSignal(options?.signal);
+          })();
+        }
+      );
+
+      mockActivityList.mockImplementation(() => {
+        callOrder.push("list");
+        return Promise.resolve({});
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient({ workspace: mockClient.workspace } as any);
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      const sawBothCalls = await waitUntil(() => callOrder.length >= 2);
+      expect(sawBothCalls).toBe(true);
+      expect(callOrder.slice(0, 2)).toEqual(["subscribe", "list"]);
+    });
+
+    it("preserves cached activity snapshots when list returns an empty payload", async () => {
+      const workspaceId = "activity-list-empty-payload";
+      const initialRecency = new Date("2024-01-07T00:00:00.000Z").getTime();
+      const snapshot: WorkspaceActivitySnapshot = {
+        recency: initialRecency,
+        streaming: true,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: "high",
+      };
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+
+      let listCallCount = 0;
+      mockActivityList.mockImplementation(
+        (): Promise<Record<string, WorkspaceActivitySnapshot>> => {
+          listCallCount += 1;
+          if (listCallCount === 1) {
+            return Promise.resolve({ [workspaceId]: snapshot });
+          }
+          return Promise.resolve({});
+        }
+      );
+
+      // eslint-disable-next-line require-yield
+      mockActivitySubscribe.mockImplementation(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<
+        { workspaceId: string; activity: WorkspaceActivitySnapshot | null },
+        void,
+        unknown
+      > {
+        await waitForAbortSignal(options?.signal);
+      });
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient({ workspace: mockClient.workspace } as any);
+      createAndAddWorkspace(
+        store,
+        workspaceId,
+        {
+          createdAt: "2020-01-01T00:00:00.000Z",
+        },
+        false
+      );
+
+      const seededSnapshot = await waitUntil(() => {
+        const state = store.getWorkspaceState(workspaceId);
+        return state.recencyTimestamp === initialRecency && state.canInterrupt === true;
+      });
+      expect(seededSnapshot).toBe(true);
+
+      // Swap to a new client object to force activity subscription restart and a fresh list() call.
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient({ workspace: mockClient.workspace } as any);
+
+      const sawRetryListCall = await waitUntil(() => listCallCount >= 2);
+      expect(sawRetryListCall).toBe(true);
+
+      const stateAfterEmptyList = store.getWorkspaceState(workspaceId);
+      expect(stateAfterEmptyList.recencyTimestamp).toBe(initialRecency);
+      expect(stateAfterEmptyList.canInterrupt).toBe(true);
+      expect(stateAfterEmptyList.currentModel).toBe(snapshot.lastModel);
+      expect(stateAfterEmptyList.currentThinkingLevel).toBe(snapshot.lastThinkingLevel);
     });
   });
 
@@ -336,6 +1498,7 @@ describe("WorkspaceStore", () => {
         });
       });
 
+      store.setActiveWorkspaceId(metadata.id);
       store.addWorkspace(metadata);
 
       // Wait for async processing
@@ -448,6 +1611,9 @@ describe("WorkspaceStore", () => {
       // Add workspace first
       createAndAddWorkspace(store, "test-workspace");
 
+      // Ignore setup emissions so this test only validates getAggregator() side effects.
+      emitCount = 0;
+
       // Simulate what happens during render - component calls getAggregator
       const aggregator1 = store.getAggregator("test-workspace");
       expect(aggregator1).toBeDefined();
@@ -483,7 +1649,7 @@ describe("WorkspaceStore", () => {
         unknown
       > {
         yield { type: "caught-up" };
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 30));
         yield {
           type: "stream-start",
           historySequence: 1,
@@ -497,12 +1663,13 @@ describe("WorkspaceStore", () => {
         });
       });
 
+      store.setActiveWorkspaceId(metadata.id);
       store.addWorkspace(metadata);
 
       const state1 = store.getWorkspaceState("test-workspace");
 
       // Wait for async processing
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await new Promise((resolve) => setTimeout(resolve, 70));
 
       const state2 = store.getWorkspaceState("test-workspace");
       expect(state1).not.toBe(state2); // Cache should be invalidated
@@ -541,6 +1708,7 @@ describe("WorkspaceStore", () => {
         });
       });
 
+      store.setActiveWorkspaceId(metadata.id);
       store.addWorkspace(metadata);
 
       const states1 = store.getAllStates();
@@ -860,6 +2028,79 @@ describe("WorkspaceStore", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(store.getTaskToolLiveTaskId(workspaceId, "call-task-2")).toBeNull();
+    });
+
+    it("preserves pagination state across since reconnect retries", async () => {
+      const workspaceId = "pagination-since-retry";
+      let subscriptionCount = 0;
+      let releaseFirstSubscription: (() => void) | undefined;
+      const holdFirstSubscription = new Promise<void>((resolve) => {
+        releaseFirstSubscription = resolve;
+      });
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        subscriptionCount += 1;
+
+        if (subscriptionCount === 1) {
+          yield createHistoryMessageEvent("history-5", 5);
+          yield {
+            type: "caught-up",
+            replay: "full",
+            hasOlderHistory: true,
+            cursor: {
+              history: {
+                messageId: "history-5",
+                historySequence: 5,
+              },
+            },
+          };
+
+          await holdFirstSubscription;
+          return;
+        }
+
+        yield {
+          type: "caught-up",
+          replay: "since",
+          cursor: {
+            history: {
+              messageId: "history-5",
+              historySequence: 5,
+            },
+          },
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const seededPagination = await waitUntil(
+        () => store.getWorkspaceState(workspaceId).hasOlderHistory === true
+      );
+      expect(seededPagination).toBe(true);
+
+      releaseFirstSubscription?.();
+
+      const preservedPagination = await waitUntil(() => {
+        return (
+          subscriptionCount >= 2 && store.getWorkspaceState(workspaceId).hasOlderHistory === true
+        );
+      });
+      expect(preservedPagination).toBe(true);
     });
 
     it("clears stale live tool state when since replay reports no active stream", async () => {
@@ -1234,6 +2475,67 @@ describe("WorkspaceStore", () => {
       expect(clearedAbortReason).toBe(true);
     });
 
+    it("clears stale auto-retry status when full replay reconnect replaces history", async () => {
+      const workspaceId = "task-created-workspace-auto-retry-reset";
+      let subscriptionCount = 0;
+      let releaseFirstSubscription: (() => void) | undefined;
+      const holdFirstSubscription = new Promise<void>((resolve) => {
+        releaseFirstSubscription = resolve;
+      });
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        subscriptionCount += 1;
+
+        if (subscriptionCount === 1) {
+          yield { type: "caught-up" };
+          await Promise.resolve();
+          yield {
+            type: "auto-retry-starting",
+            attempt: 2,
+          };
+
+          await holdFirstSubscription;
+          return;
+        }
+
+        yield {
+          type: "caught-up",
+          replay: "full",
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const seededRetryStatus = await waitUntil(() => {
+        return store.getWorkspaceState(workspaceId).autoRetryStatus?.type === "auto-retry-starting";
+      });
+      expect(seededRetryStatus).toBe(true);
+
+      releaseFirstSubscription?.();
+
+      const clearedRetryStatus = await waitUntil(() => {
+        return (
+          subscriptionCount >= 2 && store.getWorkspaceState(workspaceId).autoRetryStatus === null
+        );
+      });
+      expect(clearedRetryStatus).toBe(true);
+    });
+
     it("replays pre-caught-up task-created after full replay catches up", async () => {
       const workspaceId = "task-created-workspace-3";
 
@@ -1257,6 +2559,233 @@ describe("WorkspaceStore", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(store.getTaskToolLiveTaskId(workspaceId, "call-task-3")).toBe("child-workspace-3");
+    });
+
+    it("preserves usage state while full replay resets the aggregator", async () => {
+      const workspaceId = "usage-reset-replay-workspace";
+      let subscriptionCount = 0;
+      let releaseFirstSubscription: (() => void) | undefined;
+      const holdFirstSubscription = new Promise<void>((resolve) => {
+        releaseFirstSubscription = resolve;
+      });
+
+      let releaseSecondCaughtUp: (() => void) | undefined;
+      const holdSecondCaughtUp = new Promise<void>((resolve) => {
+        releaseSecondCaughtUp = resolve;
+      });
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        subscriptionCount += 1;
+
+        if (subscriptionCount === 1) {
+          yield { type: "caught-up" };
+          await Promise.resolve();
+          yield {
+            type: "stream-start",
+            workspaceId,
+            messageId: "msg-live-usage",
+            historySequence: 1,
+            model: "claude-3-5-sonnet-20241022",
+            startTime: 1,
+          };
+          yield {
+            type: "usage-delta",
+            workspaceId,
+            messageId: "msg-live-usage",
+            usage: { inputTokens: 321, outputTokens: 9, totalTokens: 330 },
+            cumulativeUsage: { inputTokens: 500, outputTokens: 15, totalTokens: 515 },
+          };
+
+          await holdFirstSubscription;
+          return;
+        }
+
+        if (subscriptionCount === 2) {
+          // Hold caught-up so the test can inspect usage after resetChatStateForReplay()
+          // cleared the aggregator but before replay completion.
+          await holdSecondCaughtUp;
+          yield { type: "caught-up", replay: "full" };
+          return;
+        }
+
+        await waitForAbortSignal();
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const seededUsage = await waitUntil(() => {
+        const aggregator = store.getAggregator(workspaceId);
+        return aggregator?.getActiveStreamUsage("msg-live-usage")?.inputTokens === 321;
+      });
+      expect(seededUsage).toBe(true);
+
+      releaseFirstSubscription?.();
+
+      const startedSecondSubscription = await waitUntil(() => subscriptionCount >= 2);
+      expect(startedSecondSubscription).toBe(true);
+
+      const usageDuringReplay = store.getWorkspaceUsage(workspaceId);
+      expect(usageDuringReplay.liveUsage?.input.tokens).toBe(321);
+      expect(usageDuringReplay.liveCostUsage?.input.tokens).toBe(500);
+
+      releaseSecondCaughtUp?.();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const usageAfterCaughtUp = store.getWorkspaceUsage(workspaceId);
+      expect(usageAfterCaughtUp.liveUsage).toBeUndefined();
+    });
+
+    it("clears replay usage snapshot when reconnect fails before caught-up", async () => {
+      const workspaceId = "usage-reset-replay-failure-workspace";
+      let subscriptionCount = 0;
+      let releaseFirstSubscription: (() => void) | undefined;
+      const holdFirstSubscription = new Promise<void>((resolve) => {
+        releaseFirstSubscription = resolve;
+      });
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        subscriptionCount += 1;
+
+        if (subscriptionCount === 1) {
+          yield { type: "caught-up" };
+          await Promise.resolve();
+          yield {
+            type: "stream-start",
+            workspaceId,
+            messageId: "msg-live-usage-failure",
+            historySequence: 1,
+            model: "claude-3-5-sonnet-20241022",
+            startTime: 1,
+          };
+          yield {
+            type: "usage-delta",
+            workspaceId,
+            messageId: "msg-live-usage-failure",
+            usage: { inputTokens: 111, outputTokens: 9, totalTokens: 120 },
+            cumulativeUsage: { inputTokens: 300, outputTokens: 15, totalTokens: 315 },
+          };
+          // Keep two active streams so reconnect cannot build a safe incremental cursor.
+          // This forces a full replay attempt, which executes resetChatStateForReplay().
+          yield {
+            type: "stream-start",
+            workspaceId,
+            messageId: "msg-live-usage-failure-2",
+            historySequence: 2,
+            model: "claude-3-5-sonnet-20241022",
+            startTime: 2,
+          };
+
+          await holdFirstSubscription;
+          return;
+        }
+
+        if (subscriptionCount === 2) {
+          // Simulate reconnect failure before authoritative caught-up.
+          await Promise.resolve();
+          return;
+        }
+
+        await waitForAbortSignal();
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const seededUsage = await waitUntil(() => {
+        const aggregator = store.getAggregator(workspaceId);
+        return aggregator?.getActiveStreamUsage("msg-live-usage-failure")?.inputTokens === 111;
+      });
+      expect(seededUsage).toBe(true);
+
+      releaseFirstSubscription?.();
+
+      const startedSecondSubscription = await waitUntil(() => subscriptionCount >= 2);
+      expect(startedSecondSubscription).toBe(true);
+
+      const usageSnapshotCleared = await waitUntil(() => {
+        const usage = store.getWorkspaceUsage(workspaceId);
+        return usage.liveUsage === undefined && usage.liveCostUsage === undefined;
+      });
+      expect(usageSnapshotCleared).toBe(true);
+    });
+
+    it("uses compaction boundary context usage when it is the newest usage in the active epoch", async () => {
+      const workspaceId = "boundary-context-usage-workspace";
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        await Promise.resolve();
+        yield {
+          type: "message",
+          id: "pre-boundary-assistant",
+          role: "assistant",
+          parts: [{ type: "text", text: "Older context usage" }],
+          metadata: {
+            historySequence: 1,
+            timestamp: 1,
+            model: "claude-3-5-sonnet-20241022",
+            contextUsage: { inputTokens: 999, outputTokens: 10, totalTokens: undefined },
+          },
+        };
+
+        yield {
+          type: "message",
+          id: "compaction-boundary-summary",
+          role: "assistant",
+          parts: [{ type: "text", text: "Compacted summary" }],
+          metadata: {
+            historySequence: 2,
+            timestamp: 2,
+            model: "claude-3-5-sonnet-20241022",
+            compacted: "idle",
+            compactionBoundary: true,
+            compactionEpoch: 1,
+            contextUsage: { inputTokens: 42, outputTokens: 0, totalTokens: undefined },
+          },
+        };
+
+        yield { type: "caught-up" };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const usage = store.getWorkspaceUsage(workspaceId);
+      expect(usage.lastContextUsage?.input.tokens).toBe(42);
+      expect(usage.lastContextUsage?.output.tokens).toBe(0);
+      expect(usage.lastContextUsage?.model).toBe("claude-3-5-sonnet-20241022");
     });
   });
 });

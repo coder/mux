@@ -3,7 +3,11 @@
  */
 
 import React from "react";
+import { ArrowLeft, Maximize2 } from "lucide-react";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { useTutorial } from "@/browser/contexts/TutorialContext";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
+import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { ReviewFilters, ReviewStats, ReviewSortOrder } from "@/common/types/review";
 import type { LastRefreshInfo } from "@/browser/utils/RefreshController";
@@ -26,6 +30,10 @@ interface ReviewControlsProps {
   projectPath: string;
   /** Debug info about last refresh */
   lastRefreshInfo?: LastRefreshInfo | null;
+  /** Whether immersive review mode is active */
+  isImmersive?: boolean;
+  /** Toggle immersive review mode */
+  onToggleImmersive?: () => void;
 }
 
 export const ReviewControls: React.FC<ReviewControlsProps> = ({
@@ -37,6 +45,8 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
   isRefreshBlocked = false,
   projectPath,
   lastRefreshInfo,
+  isImmersive = false,
+  onToggleImmersive,
 }) => {
   // Per-project default base (used for new workspaces in this project)
   const [defaultBase, setDefaultBase] = usePersistedState<string>(
@@ -44,6 +54,14 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
     WORKSPACE_DEFAULTS.reviewBase,
     { listener: true }
   );
+  const { startSequence } = useTutorial();
+
+  // Show the immersive review tutorial the first time the review panel is visible
+  React.useEffect(() => {
+    // Small delay to ensure the button is rendered and measurable
+    const timer = setTimeout(() => startSequence("review"), 500);
+    return () => clearTimeout(timer);
+  }, [startSequence]);
 
   // Use callback form to avoid stale closure issues with filters prop
   const handleBaseChange = (value: string) => {
@@ -146,7 +164,33 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
         </select>
       </label>
 
-      <span className="text-dim ml-auto whitespace-nowrap">
+      {onToggleImmersive && (
+        <>
+          <div className="bg-border-light ml-auto h-3 w-px" />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={onToggleImmersive}
+                className="text-muted hover:text-foreground flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 text-[11px] transition-colors duration-150"
+                aria-label={isImmersive ? "Exit immersive review" : "Enter immersive review"}
+                data-tutorial="immersive-review"
+              >
+                {isImmersive ? (
+                  <ArrowLeft aria-hidden="true" className="h-3 w-3" />
+                ) : (
+                  <Maximize2 aria-hidden="true" className="h-3 w-3" />
+                )}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {isImmersive ? "Exit" : "Enter"} immersive review (
+              {formatKeybind(KEYBINDS.TOGGLE_REVIEW_IMMERSIVE)})
+            </TooltipContent>
+          </Tooltip>
+        </>
+      )}
+
+      <span className={`text-dim whitespace-nowrap ${onToggleImmersive ? "" : "ml-auto"}`}>
         {stats.read}/{stats.total}
       </span>
     </div>

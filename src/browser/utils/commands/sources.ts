@@ -14,7 +14,6 @@ import {
 } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
-import { disableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
 import { CommandIds } from "@/browser/utils/commandIds";
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
 import {
@@ -719,7 +718,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           if (p.selectedWorkspaceState?.awaitingUserQuestion) {
             return;
           }
-          disableAutoRetryPreference(id);
+          await p.api?.workspace.setAutoRetryEnabled?.({ workspaceId: id, enabled: false });
           await p.api?.workspace.interruptStream({ workspaceId: id });
         },
       });

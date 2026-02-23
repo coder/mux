@@ -481,7 +481,13 @@ export const TaskTerminateToolResultSchema = z
 // task_list (list descendant sub-agent tasks)
 // -----------------------------------------------------------------------------
 
-const TaskListStatusSchema = z.enum(["queued", "running", "awaiting_report", "reported"]);
+const TaskListStatusSchema = z.enum([
+  "queued",
+  "running",
+  "awaiting_report",
+  "interrupted",
+  "reported",
+]);
 const TaskListThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh", "max"]);
 
 export const TaskListToolArgsSchema = z
@@ -524,6 +530,18 @@ export const AgentReportToolArgsSchema = z
   .object({
     reportMarkdown: z.string().min(1),
     title: z.string().nullish(),
+  })
+  .strict();
+
+// -----------------------------------------------------------------------------
+// switch_agent (agent switching for Auto agent)
+// -----------------------------------------------------------------------------
+
+export const SwitchAgentToolArgsSchema = z
+  .object({
+    agentId: AgentIdSchema,
+    reason: z.string().max(512).nullish(),
+    followUp: z.string().nullish(),
   })
   .strict();
 
@@ -885,6 +903,13 @@ export const TOOL_DEFINITIONS = {
       "Report the final result of a sub-agent task back to the parent workspace. " +
       "Call this exactly once when you have a final answer (after any spawned sub-tasks complete).",
     schema: AgentReportToolArgsSchema,
+  },
+  switch_agent: {
+    description:
+      "Switch to a different agent and restart the stream. " +
+      "Only UI-selectable agents can be targeted. " +
+      "The current stream will end and a new stream will start with the selected agent.",
+    schema: SwitchAgentToolArgsSchema,
   },
   system1_keep_ranges: {
     description:
@@ -1345,6 +1370,9 @@ export type BridgeableToolName =
   | "agent_skill_read_file"
   | "file_edit_insert"
   | "file_edit_replace_string"
+  // Note: for Anthropic models, web_fetch is replaced by a provider-native tool
+  // (webFetch_20250910) that has no execute(). ToolBridge's hasExecute filter will drop it
+  // from the PTC sandbox for those sessions. That silent absence is intentional and accepted.
   | "web_fetch"
   | "task"
   | "task_await"
@@ -1429,6 +1457,7 @@ export function getAvailableTools(
     "task_terminate",
     "task_list",
     ...(enableAgentReport ? ["agent_report"] : []),
+    "switch_agent",
     "system1_keep_ranges",
     "todo_write",
     "todo_read",

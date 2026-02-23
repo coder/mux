@@ -40,6 +40,7 @@ export interface SSHTransport {
   acquireConnection(options?: {
     abortSignal?: AbortSignal;
     timeoutMs?: number;
+    maxWaitMs?: number;
     onWait?: (waitMs: number) => void;
   }): Promise<void>;
 

@@ -17,6 +17,7 @@ import {
   isMuxMdUrl,
   parseMuxMdUrl,
 } from "@/common/lib/muxMd";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const USER_AGENT = "Mux/1.0 (https://github.com/coder/mux; web-fetch tool)";
 
@@ -282,7 +283,7 @@ export const createWebFetchTool: ToolFactory = (config: ToolConfiguration) => {
           length: content.length,
         };
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         return {
           success: false,
           error: `web_fetch error: ${message}`,

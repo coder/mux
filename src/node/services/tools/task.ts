@@ -7,6 +7,7 @@ import type { TaskCreatedEvent } from "@/common/types/stream";
 import { log } from "@/node/services/log";
 
 import { parseToolResult, requireTaskService, requireWorkspaceId } from "./toolUtils";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * Build dynamic task tool description with available sub-agents.
@@ -145,7 +146,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
           throw new Error("Interrupted");
         }
 
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         if (message === "Timed out waiting for agent_report") {
           const currentStatus = taskService.getAgentTaskStatus(taskId) ?? created.data.status;
           const normalizedStatus = currentStatus === "queued" ? "queued" : "running";

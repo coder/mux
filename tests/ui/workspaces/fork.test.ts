@@ -11,6 +11,8 @@ import { fireEvent, waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests } from "../../testUtils";
 import { preloadTestModules } from "../../ipc/setup";
+import { isDockerAvailable } from "../../runtime/test-fixtures/ssh-fixture";
+import type { RuntimeConfig } from "@/common/types/runtime";
 
 import { createAppHarness } from "../harness";
 
@@ -80,6 +82,71 @@ describeIntegration("Workspace Fork (UI)", () => {
       await app.dispose();
     }
   }, 60_000);
+
+  test("/fork on Docker runtime adds the new workspace to the sidebar immediately", async () => {
+    if (!(await isDockerAvailable())) return;
+
+    const dockerRuntimeConfig: RuntimeConfig = {
+      type: "docker",
+      image: "node:20",
+    };
+    const app = await createAppHarness({
+      branchPrefix: "ui-fork-docker",
+      runtimeConfig: dockerRuntimeConfig,
+    });
+
+    let forkedWorkspaceId: string | null = null;
+
+    try {
+      await app.chat.send("Hello from Docker source workspace");
+      await app.chat.expectTranscriptContains("Mock response: Hello from Docker source workspace");
+
+      await app.chat.send("/fork");
+
+      await waitFor(
+        () => {
+          const path = window.location.pathname;
+          if (!path.startsWith("/workspace/")) {
+            throw new Error(`Unexpected path after fork: ${path}`);
+          }
+
+          const currentId = decodeURIComponent(path.slice("/workspace/".length));
+          if (currentId === app.workspaceId) {
+            throw new Error("Still on source workspace after fork");
+          }
+
+          forkedWorkspaceId = currentId;
+        },
+        { timeout: 15_000 }
+      );
+
+      if (!forkedWorkspaceId) {
+        throw new Error("Missing forked workspace ID after Docker runtime navigation");
+      }
+
+      await app.chat.expectTranscriptNotContains("Fork Failed", 5_000);
+
+      await waitFor(
+        () => {
+          const el = app.view.container.querySelector(
+            `[data-workspace-id=\"${forkedWorkspaceId}\"]`
+          ) as HTMLElement | null;
+          if (!el) {
+            throw new Error("Forked Docker workspace not found in sidebar");
+          }
+        },
+        { timeout: 1_000 }
+      );
+    } finally {
+      if (forkedWorkspaceId) {
+        await app.env.orpc.workspace
+          .remove({ workspaceId: forkedWorkspaceId, options: { force: true } })
+          .catch(() => {});
+      }
+
+      await app.dispose();
+    }
+  }, 120_000);
 
   test("context menu Fork chat action adds the new workspace to the sidebar immediately", async () => {
     const app = await createAppHarness({ branchPrefix: "ui-fork-menu" });

@@ -41,6 +41,8 @@ interface SessionData {
 
 interface CreateSessionOptions {
   env?: NodeJS.ProcessEnv;
+  /** User-configured default shell from config.json. */
+  defaultShell?: string;
 }
 
 /**
@@ -137,7 +139,7 @@ export class PTYService {
       } catch {
         throw new Error(`Workspace path does not exist: ${workspacePath}`);
       }
-      const shell = resolveLocalPtyShell();
+      const shell = resolveLocalPtyShell({ configuredShell: options?.defaultShell });
       runtimeLabel = "Local";
 
       if (!shell.command.trim()) {

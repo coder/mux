@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -29,10 +30,10 @@ import {
   migrateWorkspaceStorage,
   AGENT_AI_DEFAULTS_KEY,
   DEFAULT_MODEL_KEY,
-  GATEWAY_ENABLED_KEY,
-  GATEWAY_MODELS_KEY,
+  DEFAULT_RUNTIME_KEY,
   HIDDEN_MODELS_KEY,
   PREFERRED_COMPACTION_MODEL_KEY,
+  RUNTIME_ENABLEMENT_KEY,
   SELECTED_WORKSPACE_KEY,
   WORKSPACE_DRAFTS_BY_PROJECT_KEY,
 } from "@/common/constants/storage";
@@ -57,6 +58,7 @@ import { useRouter } from "@/browser/contexts/RouterContext";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { APIClient } from "@/browser/contexts/API";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * One-time best-effort migration: if the backend doesn't have model preferences yet,
@@ -111,6 +113,44 @@ function migrateLocalModelPrefsToBackend(
     api.config.updateModelPreferences(patch).catch(() => {
       // Best-effort only.
     });
+  }
+}
+
+/**
+ * One-time best-effort migration for gateway preferences.
+ * Users upgrading from builds that only stored gateway state in localStorage
+ * (keys: "gateway-enabled", "gateway-models") need their preferences migrated
+ * to config.json so they aren't lost when localStorage is no longer read.
+ */
+function migrateLocalGatewayPrefsToBackend(
+  api: APIClient,
+  cfg: { muxGatewayEnabled?: boolean; muxGatewayModels?: string[] }
+): void {
+  // Only migrate if the backend doesn't have these values yet
+  if (cfg.muxGatewayEnabled !== undefined && cfg.muxGatewayModels !== undefined) return;
+
+  // Read legacy localStorage keys (inline strings — these constants were removed from storage.ts)
+  const localEnabled = readPersistedState<boolean>("gateway-enabled", true);
+  const localModels = readPersistedState<string[]>("gateway-models", []);
+
+  const shouldMigrateEnabled = cfg.muxGatewayEnabled === undefined && localEnabled === false;
+  const shouldMigrateModels = cfg.muxGatewayModels === undefined && localModels.length > 0;
+
+  const clearLegacyGatewayPrefs = () => {
+    updatePersistedState<boolean | undefined>("gateway-enabled", undefined);
+    updatePersistedState<string[] | undefined>("gateway-models", undefined);
+  };
+
+  if (shouldMigrateEnabled || shouldMigrateModels) {
+    api.config
+      .updateMuxGatewayPrefs({
+        muxGatewayEnabled: cfg.muxGatewayEnabled ?? localEnabled,
+        muxGatewayModels: cfg.muxGatewayModels ?? localModels,
+      })
+      .then(clearLegacyGatewayPrefs)
+      .catch(() => {
+        // Best-effort only.
+      });
   }
 }
 
@@ -182,7 +222,10 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
   }
 
   // Seed the active agent into the existing keys to avoid UI flash.
-  const activeAgentId = readPersistedState<string>(getAgentIdKey(workspaceId), "exec");
+  const activeAgentId = readPersistedState<string>(
+    getAgentIdKey(workspaceId),
+    WORKSPACE_DEFAULTS.agentId
+  );
   const active = nextByAgent[activeAgentId] ?? nextByAgent.exec ?? nextByAgent.plan;
   if (!active) {
     return;
@@ -466,14 +509,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           normalizeAgentAiDefaults(cfg.agentAiDefaults ?? {})
         );
 
-        // Seed Mux Gateway prefs from backend so switching ports doesn't reset the UI.
-        if (cfg.muxGatewayEnabled !== undefined) {
-          updatePersistedState(GATEWAY_ENABLED_KEY, cfg.muxGatewayEnabled);
-        }
-        if (cfg.muxGatewayModels !== undefined) {
-          updatePersistedState(GATEWAY_MODELS_KEY, cfg.muxGatewayModels);
-        }
-
         // Seed global model preferences from backend so switching ports doesn't reset the UI.
         if (cfg.defaultModel !== undefined) {
           updatePersistedState(DEFAULT_MODEL_KEY, cfg.defaultModel);
@@ -485,31 +520,24 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           updatePersistedState(PREFERRED_COMPACTION_MODEL_KEY, cfg.preferredCompactionModel);
         }
 
-        // One-time best-effort migration: if the backend doesn't have gateway prefs yet,
-        // persist non-default localStorage values so future port changes keep them.
-        if (api.config.updateMuxGatewayPrefs) {
-          const localEnabled = readPersistedState<boolean>(GATEWAY_ENABLED_KEY, true);
-          const localModels = readPersistedState<string[]>(GATEWAY_MODELS_KEY, []);
+        // Seed runtime enablement from backend so switching ports doesn't reset the UI.
+        if (cfg.runtimeEnablement !== undefined) {
+          updatePersistedState(RUNTIME_ENABLEMENT_KEY, cfg.runtimeEnablement);
+        }
 
-          const shouldMigrateEnabled =
-            cfg.muxGatewayEnabled === undefined && localEnabled === false;
-          const shouldMigrateModels = cfg.muxGatewayModels === undefined && localModels.length > 0;
-
-          if (shouldMigrateEnabled || shouldMigrateModels) {
-            api.config
-              .updateMuxGatewayPrefs({
-                muxGatewayEnabled: cfg.muxGatewayEnabled ?? localEnabled,
-                muxGatewayModels: cfg.muxGatewayModels ?? localModels,
-              })
-              .catch(() => {
-                // Best-effort only.
-              });
-          }
+        // Seed global default runtime so workspace defaults survive port changes.
+        if (cfg.defaultRuntime !== undefined) {
+          updatePersistedState(DEFAULT_RUNTIME_KEY, cfg.defaultRuntime);
         }
 
         // One-time best-effort migration: if the backend doesn't have model prefs yet,
         // persist non-default localStorage values so future port changes keep them.
         migrateLocalModelPrefsToBackend(api, cfg);
+
+        // One-time gateway pref migration: if the backend doesn't have gateway prefs yet,
+        // check if the user had non-default values in the old localStorage keys.
+        // This covers users upgrading from builds that only stored gateway state locally.
+        migrateLocalGatewayPrefsToBackend(api, cfg);
       })
       .catch(() => {
         // Best-effort only.
@@ -531,6 +559,18 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   } = useRouter();
 
   const workspaceStore = useWorkspaceStoreRaw();
+
+  useLayoutEffect(() => {
+    // When the user navigates to settings, currentWorkspaceId becomes null
+    // (URL is /settings/...). Preserve the active workspace subscription so
+    // chat messages aren't cleared. Only null it out when truly leaving a
+    // workspace context (e.g., navigating to Home).
+    if (currentWorkspaceId) {
+      workspaceStore.setActiveWorkspaceId(currentWorkspaceId);
+    } else if (!currentSettingsSection) {
+      workspaceStore.setActiveWorkspaceId(null);
+    }
+  }, [workspaceStore, currentWorkspaceId, currentSettingsSection]);
   const [workspaceMetadata, setWorkspaceMetadataState] = useState<
     Map<string, FrontendWorkspaceMetadata>
   >(new Map());
@@ -1210,7 +1250,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           return { success: false, error: result.error };
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         console.error("Failed to remove workspace:", errorMessage);
         return { success: false, error: errorMessage };
       }
@@ -1252,7 +1292,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           return { success: false, error: result.error };
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         console.error("Failed to update workspace title:", errorMessage);
         return { success: false, error: errorMessage };
       }
@@ -1274,7 +1314,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         console.error("Failed to archive workspace:", result.error);
         return { success: false, error: result.error };
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         console.error("Failed to archive workspace:", errorMessage);
         return { success: false, error: errorMessage };
       }
@@ -1295,7 +1335,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           return { success: false, error: result.error };
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         console.error("Failed to unarchive workspace:", errorMessage);
         return { success: false, error: errorMessage };
       }

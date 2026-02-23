@@ -30,11 +30,11 @@ export const StreamingBarrierView: React.FC<StreamingBarrierViewProps> = (props)
         <BaseBarrier text={props.statusText} color="var(--color-assistant-border)" animate />
         {props.hintElement}
         {props.tokenCount !== undefined && (
-          <span className="text-assistant-border font-mono text-[11px] whitespace-nowrap select-none">
-            ~{props.tokenCount.toLocaleString()} tokens
-            {props.tps !== undefined && props.tps > 0 && (
-              <span className="text-dim ml-1">@ {props.tps} t/s</span>
-            )}
+          <span className="text-assistant-border inline-flex min-w-[14ch] items-baseline justify-end font-mono text-[11px] whitespace-nowrap tabular-nums select-none">
+            <span>~{props.tokenCount.toLocaleString()} tokens</span>
+            <span className="text-dim ml-1 inline-block min-w-[7ch] text-right">
+              @ {props.tps !== undefined && props.tps > 0 ? props.tps : "--"} t/s
+            </span>
           </span>
         )}
       </div>

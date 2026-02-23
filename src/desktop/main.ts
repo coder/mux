@@ -53,11 +53,13 @@ import type { UpdateStatus } from "../common/orpc/types";
 import { parseMuxDeepLink } from "../common/utils/deepLink";
 
 import assert from "../common/utils/assert";
+import { setOpenSSHHostKeyPolicyMode } from "@/node/runtime/sshConnectionPool";
 import { loadTokenizerModules } from "../node/utils/main/tokenizer";
 import { isBashAvailable } from "../node/utils/main/bashPath";
 import windowStateKeeper from "electron-window-state";
 import { getTitleBarOptions } from "./titleBarOptions";
 import { isUpdateInstallInProgress } from "./updateInstallState";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // React DevTools for development profiling
 // Using dynamic import() to avoid loading electron-devtools-installer at module init time
@@ -111,7 +113,7 @@ if (process.env.MUX_DEBUG_START_TIME === "1") {
 process.on("uncaughtException", (error: unknown) => {
   console.error("Uncaught Exception:", error);
 
-  const message = error instanceof Error ? error.message : String(error);
+  const message = getErrorMessage(error);
   const stack = error instanceof Error ? error.stack : undefined;
 
   console.error("Stack:", stack);
@@ -130,7 +132,7 @@ process.on("unhandledRejection", (reason, promise) => {
   console.error("Reason:", reason);
 
   if (app.isPackaged) {
-    const message = reason instanceof Error ? reason.message : String(reason);
+    const message = getErrorMessage(reason);
     const stack = reason instanceof Error ? reason.stack : undefined;
     dialog.showErrorBox(
       "Unhandled Promise Rejection",
@@ -299,7 +301,8 @@ function createMenu() {
         { role: "toggleDevTools" },
         { type: "separator" },
         { role: "resetZoom" },
-        { role: "zoomIn" },
+        // Bind zoom-in to Ctrl/Cmd+= so the standard shortcut works without requiring Shift.
+        { role: "zoomIn", accelerator: "CommandOrControl+=" },
         { role: "zoomOut" },
         { type: "separator" },
         {
@@ -550,6 +553,8 @@ async function loadServices(): Promise<void> {
   config = new ConfigClass();
 
   services = new ServiceContainerClass(config);
+  // Desktop bootstrap owns interactive host-key trust policy
+  setOpenSSHHostKeyPolicyMode("strict");
   await services.initialize();
   // Keep the latest update status in main so close-to-tray can prompt for installs.
   services.updateService.onStatus((status) => {

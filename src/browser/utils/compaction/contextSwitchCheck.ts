@@ -10,7 +10,7 @@ import type { EffectivePolicy, ProvidersConfigMap } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import { getPreferredCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
-import { getEffectiveContextLimit } from "./contextLimit";
+import { getEffectiveContextLimit } from "@/common/utils/compaction/contextLimit";
 import { getExplicitCompactionSuggestion } from "./suggestion";
 
 /** Safety buffer - warn if context exceeds 90% of target model's limit */

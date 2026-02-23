@@ -17,6 +17,7 @@ import { log } from "@/node/services/log";
 import { checkProviderConfigured } from "@/node/utils/providerRequirements";
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 import type { PolicyService } from "@/node/services/policyService";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // Re-export types for backward compatibility
 export type { AWSCredentialStatus, ProviderConfigInfo, ProvidersConfigMap };
@@ -59,7 +60,12 @@ export class ProviderService {
     return () => this.emitter.off("configChanged", callback);
   }
 
-  private emitConfigChanged(): void {
+  /**
+   * Notify subscribers that provider-relevant config has changed.
+   * Called internally on provider config edits, and externally when
+   * main config changes affect provider availability (e.g. muxGatewayEnabled).
+   */
+  notifyConfigChanged(): void {
     this.emitter.emit("configChanged");
   }
 
@@ -83,6 +89,7 @@ export class ProviderService {
    */
   public getConfig(): ProvidersConfigMap {
     const providersConfig = this.config.loadProvidersConfig() ?? {};
+    const mainConfig = this.config.loadConfigOrDefault();
     const result: ProvidersConfigMap = {};
 
     for (const provider of this.list()) {
@@ -121,7 +128,10 @@ export class ProviderService {
 
       const codexOauthSet =
         provider === "openai" && parseCodexOauthAuth(config.codexOauth) !== null;
-      const isEnabled = !isProviderDisabledInConfig(config);
+      let isEnabled = !isProviderDisabledInConfig(config);
+      if (provider === "mux-gateway" && mainConfig.muxGatewayEnabled === false) {
+        isEnabled = false;
+      }
 
       const providerInfo: ProviderConfigInfo = {
         apiKeySet: !!config.apiKey,
@@ -169,16 +179,24 @@ export class ProviderService {
         };
       }
 
-      // Mux Gateway-specific fields (check couponCode first, fallback to legacy voucher)
+      // Mux Gateway-specific fields (check couponCode first, fallback to legacy voucher).
+      // Gateway stores enabled/models in the global config (~/.mux/config.json), not
+      // in providers.jsonc, so override the generic isEnabled with the gateway-specific value.
       if (provider === "mux-gateway") {
         const muxConfig = config as { couponCode?: string; voucher?: string };
         providerInfo.couponCodeSet = !!(muxConfig.couponCode ?? muxConfig.voucher);
+        const globalConfig = this.config.loadConfigOrDefault();
+        providerInfo.isEnabled = globalConfig.muxGatewayEnabled !== false;
+        providerInfo.gatewayModels = globalConfig.muxGatewayModels ?? [];
       }
 
       // Compute isConfigured using shared utility (checks config + env vars).
       // Disabled providers intentionally surface as not configured in the UI.
+      // Use providerInfo.isEnabled (not the local `isEnabled`) because gateway
+      // overrides it from global config — using the providers.jsonc value would
+      // make a disabled gateway appear configured.
       providerInfo.isConfigured =
-        isEnabled && checkProviderConfigured(provider, config).isConfigured;
+        providerInfo.isEnabled && checkProviderConfigured(provider, config).isConfigured;
 
       if (provider === "openai" && isEnabled && codexOauthSet) {
         providerInfo.isConfigured = true;
@@ -229,11 +247,11 @@ export class ProviderService {
 
       providersConfig[provider].models = normalizedModels;
       this.config.saveProvidersConfig(providersConfig);
-      this.emitConfigChanged();
+      this.notifyConfigChanged();
 
       return { success: true, data: undefined };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return { success: false, error: `Failed to set models: ${message}` };
     }
   }
@@ -296,11 +314,11 @@ export class ProviderService {
 
       // Save updated config
       this.config.saveProvidersConfig(providersConfig);
-      this.emitConfigChanged();
+      this.notifyConfigChanged();
 
       return { success: true, data: undefined };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return { success: false, error: `Failed to set provider config: ${message}` };
     }
   }
@@ -373,18 +391,18 @@ export class ProviderService {
             "anthropic/claude-sonnet-4-6",
             "anthropic/claude-opus-4-6",
             "openai/gpt-5.2",
-            "openai/gpt-5.1-codex",
+            "openai/gpt-5.2-codex",
           ];
         }
       }
 
       // Save updated config
       this.config.saveProvidersConfig(providersConfig);
-      this.emitConfigChanged();
+      this.notifyConfigChanged();
 
       return { success: true, data: undefined };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return { success: false, error: `Failed to set provider config: ${message}` };
     }
   }

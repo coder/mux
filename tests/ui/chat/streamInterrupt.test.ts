@@ -3,6 +3,7 @@
  *
  * Tests verify that:
  * - User-initiated interrupts (Ctrl+C/Escape) do NOT show warning RetryBarrier
+ * - Transcript hydration suppresses RetryBarrier while preserving cached transcript rows
  *
  * Note: The error-case UI behavior (showing RetryBarrier for network errors) is covered
  * by unit tests in retryEligibility.test.ts. Testing it in UI integration tests is
@@ -15,6 +16,7 @@ import { waitFor } from "@testing-library/react";
 import { preloadTestModules } from "../../ipc/setup";
 import { createStreamCollector } from "../../ipc/streamCollector";
 import { createAppHarness } from "../harness";
+import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 
 describe("Stream Interrupt UI (mock AI router)", () => {
   beforeAll(async () => {
@@ -83,6 +85,41 @@ describe("Stream Interrupt UI (mock AI router)", () => {
       const buttons = Array.from(app.view.container.querySelectorAll("button"));
       const retryButton = buttons.find((btn) => btn.textContent?.includes("Retry"));
       expect(retryButton).toBeUndefined();
+
+      // Simulate workspace-switch catch-up hydration while interrupted history exists.
+      // eslint-disable-next-line react-hooks/rules-of-hooks -- plain singleton accessor, no React state.
+      const storeRaw = useWorkspaceStoreRaw();
+      const transientState = (
+        storeRaw as unknown as {
+          chatTransientState: Map<string, { caughtUp: boolean; isHydratingTranscript: boolean }>;
+        }
+      ).chatTransientState.get(app.workspaceId);
+      expect(transientState).toBeDefined();
+
+      transientState!.caughtUp = false;
+      transientState!.isHydratingTranscript = true;
+      storeRaw.bumpState(app.workspaceId);
+
+      await waitFor(
+        () => {
+          const placeholder = app.view.container.querySelector(
+            '[data-testid="transcript-hydration-placeholder"]'
+          );
+          expect(placeholder).toBeNull();
+
+          const text = app.view.container.textContent ?? "";
+          expect(text).toContain("Mock response:");
+          expect(text).not.toContain("No Messages Yet");
+          expect(text).not.toContain("Stream interrupted");
+        },
+        { timeout: 5_000 }
+      );
+
+      const buttonsDuringHydration = Array.from(app.view.container.querySelectorAll("button"));
+      const hydrationRetryButton = buttonsDuringHydration.find((btn) =>
+        btn.textContent?.includes("Retry")
+      );
+      expect(hydrationRetryButton).toBeUndefined();
     } finally {
       collector.stop();
       await app.dispose();

@@ -17,7 +17,14 @@ type SendOptions = SendMessageOptions & { fileParts?: FilePart[] };
 
 interface SessionInternals {
   dispatchPendingFollowUp: () => Promise<void>;
-  sendMessage: (message: string, options?: SendOptions) => Promise<{ success: boolean }>;
+  sendMessage: (
+    message: string,
+    options?: SendOptions,
+    internal?: { synthetic?: boolean }
+  ) => Promise<{ success: true } | { success: false; error: { type: string; message?: string } }>;
+  scheduleStartupRecovery: () => void;
+  startupRecoveryPromise: Promise<void> | null;
+  startupRecoveryScheduled: boolean;
 }
 
 describe("AgentSession continue-message agentId fallback", () => {
@@ -30,6 +37,7 @@ describe("AgentSession continue-message agentId fallback", () => {
     // Track the follow-up message that gets dispatched
     let dispatchedMessage: string | undefined;
     let dispatchedOptions: SendOptions | undefined;
+    let dispatchedInternal: { synthetic?: boolean } | undefined;
 
     const aiService: AIService = {
       on() {
@@ -108,11 +116,14 @@ describe("AgentSession continue-message agentId fallback", () => {
     const internals = session as unknown as SessionInternals;
 
     // Intercept sendMessage to capture what dispatchPendingFollowUp sends
-    internals.sendMessage = mock((message: string, options?: SendOptions) => {
-      dispatchedMessage = message;
-      dispatchedOptions = options;
-      return Promise.resolve({ success: true });
-    });
+    internals.sendMessage = mock(
+      (message: string, options?: SendOptions, internal?: { synthetic?: boolean }) => {
+        dispatchedMessage = message;
+        dispatchedOptions = options;
+        dispatchedInternal = internal;
+        return Promise.resolve({ success: true as const });
+      }
+    );
 
     // Call dispatchPendingFollowUp directly (normally called after compaction completes)
     await internals.dispatchPendingFollowUp();
@@ -120,6 +131,252 @@ describe("AgentSession continue-message agentId fallback", () => {
     // Verify the follow-up was dispatched with correct agentId derived from legacy mode
     expect(dispatchedMessage).toBe("follow up");
     expect(dispatchedOptions?.agentId).toBe("plan");
+    expect(dispatchedInternal?.synthetic).toBe(true);
+
+    session.dispose();
+  });
+
+  test("dispatchPendingFollowUp throws when history read fails", async () => {
+    const aiService: AIService = {
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+      isStreaming: () => false,
+      stopStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
+    } as unknown as AIService;
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const initStateManager: InitStateManager = {
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      cleanup: mock(() => Promise.resolve()),
+      setMessageQueued: mock(() => undefined),
+    } as unknown as BackgroundProcessManager;
+
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => "/tmp"),
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId: "ws",
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const internals = session as unknown as SessionInternals & {
+      historyService: {
+        getLastMessages: (
+          workspaceId: string,
+          count: number
+        ) => Promise<{
+          success: boolean;
+          error?: string;
+          data: MuxMessage[];
+        }>;
+      };
+    };
+
+    internals.historyService.getLastMessages = mock(() =>
+      Promise.resolve({ success: false, error: "temporary history read failure", data: [] })
+    );
+
+    let dispatchError: unknown;
+    try {
+      await internals.dispatchPendingFollowUp();
+    } catch (error) {
+      dispatchError = error;
+    }
+
+    expect(dispatchError).toBeInstanceOf(Error);
+    if (!(dispatchError instanceof Error)) {
+      throw new Error("Expected dispatchPendingFollowUp to throw on history read failures");
+    }
+    expect(dispatchError.message).toContain(
+      "Failed to read history for startup follow-up recovery"
+    );
+
+    session.dispose();
+  });
+
+  test("startup recovery dispatches pending follow-up only once", async () => {
+    let sendCount = 0;
+
+    const aiService: AIService = {
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+      isStreaming: () => false,
+      stopStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
+    } as unknown as AIService;
+
+    const mockSummaryMessage = {
+      id: "summary-once",
+      role: "assistant" as const,
+      parts: [{ type: "text" as const, text: "Compaction summary" }],
+      metadata: {
+        muxMetadata: {
+          type: "compaction-summary" as const,
+          pendingFollowUp: {
+            text: "follow up once",
+            model: "openai:gpt-4o",
+            agentId: "exec",
+          },
+        },
+      },
+    } satisfies MuxMessage;
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+    await historyService.appendToHistory("ws", mockSummaryMessage);
+
+    const initStateManager: InitStateManager = {
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      cleanup: mock(() => Promise.resolve()),
+      setMessageQueued: mock(() => undefined),
+    } as unknown as BackgroundProcessManager;
+
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => "/tmp"),
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId: "ws",
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const internals = session as unknown as SessionInternals;
+    internals.sendMessage = mock(() => {
+      sendCount += 1;
+      return Promise.resolve({ success: true as const });
+    });
+
+    internals.scheduleStartupRecovery();
+    internals.scheduleStartupRecovery();
+
+    await internals.startupRecoveryPromise;
+
+    expect(sendCount).toBe(1);
+
+    session.dispose();
+  });
+
+  test("startup recovery retries pending follow-up after an initial send failure", async () => {
+    let sendCount = 0;
+
+    const aiService: AIService = {
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+      isStreaming: () => false,
+      stopStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
+    } as unknown as AIService;
+
+    const mockSummaryMessage = {
+      id: "summary-retry",
+      role: "assistant" as const,
+      parts: [{ type: "text" as const, text: "Compaction summary" }],
+      metadata: {
+        muxMetadata: {
+          type: "compaction-summary" as const,
+          pendingFollowUp: {
+            text: "follow up retry",
+            model: "openai:gpt-4o",
+            agentId: "exec",
+          },
+        },
+      },
+    } satisfies MuxMessage;
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+    await historyService.appendToHistory("ws", mockSummaryMessage);
+
+    const initStateManager: InitStateManager = {
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      cleanup: mock(() => Promise.resolve()),
+      setMessageQueued: mock(() => undefined),
+    } as unknown as BackgroundProcessManager;
+
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => "/tmp"),
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId: "ws",
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const internals = session as unknown as SessionInternals;
+    internals.sendMessage = mock(() => {
+      sendCount += 1;
+      if (sendCount === 1) {
+        return Promise.resolve({
+          success: false,
+          error: { type: "runtime_start_failed", message: "startup failed" },
+        });
+      }
+      return Promise.resolve({ success: true as const });
+    });
+
+    internals.scheduleStartupRecovery();
+    await internals.startupRecoveryPromise;
+
+    expect(sendCount).toBe(1);
+    expect(internals.startupRecoveryScheduled).toBe(false);
+
+    internals.scheduleStartupRecovery();
+    await internals.startupRecoveryPromise;
+
+    expect(sendCount).toBe(2);
+    expect(internals.startupRecoveryScheduled).toBe(true);
 
     session.dispose();
   });

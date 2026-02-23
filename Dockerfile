@@ -87,6 +87,14 @@ RUN mkdir -p dist/static && cp -r static/* dist/static/ 2>/dev/null || true
 # ==============================================================================
 FROM node:22-slim
 
+# OCI image metadata — allows registries (GHCR, Docker Hub) to link the image
+# back to the source repository and display version/description.
+ARG VERSION=dev
+LABEL org.opencontainers.image.source="https://github.com/coder/mux"
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.description="Mux server — parallel AI agent workflows"
+LABEL org.opencontainers.image.licenses="AGPL-3.0"
+
 WORKDIR /app
 
 # Install runtime dependencies

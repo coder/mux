@@ -1,6 +1,6 @@
 import React from "react";
 import { useWorkspaceUsage, useWorkspaceConsumers } from "@/browser/stores/WorkspaceStore";
-import { getModelStats } from "@/common/utils/tokens/modelStats";
+import { getModelStatsResolved } from "@/common/utils/tokens/modelStats";
 import {
   sumUsageHistory,
   formatCostWithDollar,
@@ -23,7 +23,8 @@ import { FileBreakdown } from "./FileBreakdown";
 import { ContextUsageBar } from "./ContextUsageBar";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
-import { getEffectiveContextLimit } from "@/browser/utils/compaction/contextLimit";
+import { getEffectiveContextLimit } from "@/common/utils/compaction/contextLimit";
+
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { PostCompactionSection } from "./PostCompactionSection";
 import { usePostCompactionState } from "@/browser/hooks/usePostCompactionState";
@@ -188,7 +189,8 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
               // Cost and Details use viewMode-dependent data
               // Get model from the displayUsage (which could be last request or session sum)
               const model = displayUsage?.model ?? lastRequestUsage?.model ?? "unknown";
-              const modelStats = getModelStats(model);
+              const modelStats = getModelStatsResolved(model, providersConfig);
+              // 1M pricing is provider-level (Anthropic/Gemini), gated on runtime model.
               const is1MActive = has1MContext(model) && supports1MContext(model);
 
               // Helper to calculate cost percentage

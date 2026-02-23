@@ -11,7 +11,6 @@ import { getLanguageFromPath } from "@/common/utils/git/languageDetector";
 import { useOverflowDetection } from "@/browser/hooks/useOverflowDetection";
 import { MessageSquare } from "lucide-react";
 import { InlineReviewNote, type ReviewActionCallbacks } from "./InlineReviewNote";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { groupDiffLines } from "@/browser/utils/highlighting/diffChunking";
 import { useTheme, type ThemeMode } from "@/browser/contexts/ThemeContext";
 import {
@@ -607,6 +606,8 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
                 lineNumberWidths={lineNumberWidths}
               />
               <DiffIndicator type={chunk.type} background={codeBg} />
+              {/* SECURITY AUDIT: line.html comes from Shiki token output or escapeHtml fallback.
+                  User/repo text is escaped before insertion and search highlighting only wraps text nodes. */}
               <span
                 className="min-w-0 whitespace-pre [&_span:not(.search-highlight)]:!bg-transparent"
                 style={{
@@ -641,6 +642,25 @@ interface SelectableDiffRendererProps extends Omit<DiffRendererProps, "filePath"
   onComposingChange?: (isComposing: boolean) => void;
   /** Action callbacks for inline review notes (edit, check, delete, etc.) */
   reviewActions?: ReviewActionCallbacks;
+  /** Active line for immersive keyboard navigation */
+  activeLineIndex?: number | null;
+  /** Selected line range for immersive keyboard navigation */
+  selectedLineRange?: LineSelection | null;
+  /** Called when user selects a line via click in immersive mode */
+  onLineIndexSelect?: (lineIndex: number, shiftKey: boolean) => void;
+  /** External request to open/update inline composer at a specific line selection */
+  externalSelectionRequest?: {
+    requestId: number;
+    selection: LineSelection;
+    initialNoteText?: string;
+  } | null;
+  /** External request to open an existing inline review note in edit mode */
+  externalEditRequest?: {
+    requestId: number;
+    reviewId: string;
+  } | null;
+  /** Callback when the inline composer is canceled (for parent/child sync). */
+  onComposerCancel?: () => void;
 }
 
 interface LineSelection {
@@ -667,6 +687,7 @@ interface ReviewNoteInputProps {
   lineNumberWidths: { oldWidthCh: number; newWidthCh: number };
   onSubmit: (data: ReviewNoteData) => void;
   onCancel: () => void;
+  initialNoteText?: string;
 }
 
 const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
@@ -679,15 +700,20 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
     lineNumberWidths,
     onSubmit,
     onCancel,
+    initialNoteText,
   }) => {
     const { showOld, showNew } = getLineNumberModeFlags(lineNumberMode);
-    const [noteText, setNoteText] = React.useState("");
+    const [noteText, setNoteText] = React.useState(initialNoteText ?? "");
     const textareaRef = React.useRef<HTMLTextAreaElement>(null);
 
     // Auto-focus on mount
     React.useEffect(() => {
       textareaRef.current?.focus();
     }, []);
+
+    React.useEffect(() => {
+      setNoteText(initialNoteText ?? "");
+    }, [initialNoteText]);
 
     // Auto-expand textarea as user types
     React.useEffect(() => {
@@ -870,10 +896,20 @@ interface InlineReviewNoteRowProps {
   lineNumberWidths: LineNumberWidths;
   /** Optional action callbacks for review actions */
   reviewActions?: ReviewActionCallbacks;
+  /** Request id that should trigger this note to enter edit mode */
+  editRequestId?: number | null;
 }
 
 const InlineReviewNoteRow: React.FC<InlineReviewNoteRowProps> = React.memo(
-  ({ review, lineType, showLineNumbers, lineNumberMode, lineNumberWidths, reviewActions }) => {
+  ({
+    review,
+    lineType,
+    showLineNumbers,
+    lineNumberMode,
+    lineNumberWidths,
+    reviewActions,
+    editRequestId,
+  }) => {
     const codeBg = getDiffLineBackground(lineType);
     const { showOld, showNew } = getLineNumberModeFlags(lineNumberMode);
 
@@ -904,7 +940,12 @@ const InlineReviewNoteRow: React.FC<InlineReviewNoteRowProps> = React.memo(
         <span style={{ background: codeBg }} />
         {/* Inline note using shared component */}
         <div className="min-w-0 py-0.5 pr-3" style={{ background: codeBg }}>
-          <InlineReviewNote review={review} showFilePath={false} actions={reviewActions} />
+          <InlineReviewNote
+            review={review}
+            showFilePath={false}
+            actions={reviewActions}
+            editRequestId={editRequestId}
+          />
         </div>
       </div>
     );
@@ -931,6 +972,12 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     enableHighlighting = true,
     onComposingChange,
     reviewActions,
+    activeLineIndex,
+    selectedLineRange,
+    onLineIndexSelect,
+    externalSelectionRequest,
+    externalEditRequest,
+    onComposerCancel,
   }) => {
     const dragAnchorRef = React.useRef<number | null>(null);
     const [isDragging, setIsDragging] = React.useState(false);
@@ -951,11 +998,62 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     }, []);
     const { theme } = useTheme();
     const [selection, setSelection] = React.useState<LineSelection | null>(null);
+    const [selectionInitialNoteText, setSelectionInitialNoteText] = React.useState("");
+
+    const lastExternalSelectionRequestIdRef = React.useRef<number | null>(null);
+    const dismissedExternalSelectionRequestIdRef = React.useRef<number | null>(null);
+
+    React.useEffect(() => {
+      if (!externalSelectionRequest) {
+        if (lastExternalSelectionRequestIdRef.current !== null) {
+          lastExternalSelectionRequestIdRef.current = null;
+          setSelection(null);
+          setSelectionInitialNoteText("");
+        }
+        return;
+      }
+
+      // If the composer was closed for this request ID, keep it dismissed even
+      // if the parent prop lingers and re-renders before clearing.
+      if (dismissedExternalSelectionRequestIdRef.current === externalSelectionRequest.requestId) {
+        return;
+      }
+
+      // Reset only when a new request arrives; selection churn from the parent
+      // for the same request should not wipe an in-progress composer draft.
+      if (lastExternalSelectionRequestIdRef.current === externalSelectionRequest.requestId) {
+        return;
+      }
+
+      lastExternalSelectionRequestIdRef.current = externalSelectionRequest.requestId;
+      setSelection({
+        startIndex: externalSelectionRequest.selection.startIndex,
+        endIndex: externalSelectionRequest.selection.endIndex,
+      });
+      setSelectionInitialNoteText(externalSelectionRequest.initialNoteText ?? "");
+    }, [externalSelectionRequest]);
+
+    // Render newly-issued external composer requests immediately so immersive actions
+    // don't show a one-frame delay while local state catches up in the effect above.
+    const pendingExternalSelectionRequest =
+      externalSelectionRequest &&
+      dismissedExternalSelectionRequestIdRef.current !== externalSelectionRequest.requestId &&
+      lastExternalSelectionRequestIdRef.current !== externalSelectionRequest.requestId
+        ? externalSelectionRequest
+        : null;
+
+    const renderSelection: LineSelection | null =
+      pendingExternalSelectionRequest?.selection ?? selection;
+    const renderNoteText = pendingExternalSelectionRequest
+      ? (pendingExternalSelectionRequest.initialNoteText ?? "")
+      : selectionInitialNoteText;
+    const renderSelectionStartIndex = renderSelection?.startIndex ?? null;
 
     // Notify parent when composition state changes
+    const isComposing = renderSelection !== null;
     React.useEffect(() => {
-      onComposingChange?.(selection !== null);
-    }, [selection, onComposingChange]);
+      onComposingChange?.(isComposing);
+    }, [isComposing, onComposingChange]);
 
     // On unmount, ensure we release the pause if we were composing
     // (separate effect with empty deps so cleanup only runs on unmount)
@@ -1097,15 +1195,18 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
           return;
         }
 
-        // Notify parent that this hunk should become active
+        // Notify parent that this hunk should become active.
         onLineClick?.();
+        onLineIndexSelect?.(lineIndex, shiftKey);
 
-        const anchor = shiftKey && selection ? selection.startIndex : lineIndex;
+        const anchor =
+          shiftKey && renderSelectionStartIndex !== null ? renderSelectionStartIndex : lineIndex;
         dragAnchorRef.current = anchor;
         setIsDragging(true);
+        setSelectionInitialNoteText("");
         setSelection({ startIndex: anchor, endIndex: lineIndex });
       },
-      [onLineClick, onReviewNote, selection]
+      [onLineClick, onLineIndexSelect, onReviewNote, renderSelectionStartIndex]
     );
 
     const updateDragSelection = React.useCallback(
@@ -1114,18 +1215,21 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
           return;
         }
 
+        onLineIndexSelect?.(lineIndex, true);
         setSelection({ startIndex: dragAnchorRef.current, endIndex: lineIndex });
       },
-      [isDragging]
+      [isDragging, onLineIndexSelect]
     );
 
     const handleCommentButtonClick = (lineIndex: number, shiftKey: boolean) => {
-      // Notify parent that this hunk should become active
+      // Keep immersive cursor/hunk selection in sync with inline comment actions.
       onLineClick?.();
+      onLineIndexSelect?.(lineIndex, shiftKey);
 
       // Shift-click: extend existing selection
-      if (shiftKey && selection) {
-        const start = selection.startIndex;
+      if (shiftKey && renderSelection) {
+        const start = renderSelection.startIndex;
+        setSelectionInitialNoteText("");
         setSelection({
           startIndex: start,
           endIndex: lineIndex,
@@ -1134,6 +1238,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       }
 
       // Regular click: start new selection
+      setSelectionInitialNoteText("");
       setSelection({
         startIndex: lineIndex,
         endIndex: lineIndex,
@@ -1142,17 +1247,29 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
 
     const handleSubmitNote = (data: ReviewNoteData) => {
       if (!onReviewNote) return;
+      if (externalSelectionRequest) {
+        dismissedExternalSelectionRequestIdRef.current = externalSelectionRequest.requestId;
+      }
       onReviewNote(data);
       setSelection(null);
+      setSelectionInitialNoteText("");
     };
 
     const handleCancelNote = () => {
+      if (externalSelectionRequest) {
+        dismissedExternalSelectionRequestIdRef.current = externalSelectionRequest.requestId;
+      }
       setSelection(null);
+      setSelectionInitialNoteText("");
+      onComposerCancel?.();
     };
 
-    const isLineSelected = (index: number) => {
-      if (!selection) return false;
-      const [start, end] = [selection.startIndex, selection.endIndex].sort((a, b) => a - b);
+    const isLineInSelection = (index: number, lineSelection: LineSelection | null | undefined) => {
+      if (!lineSelection) {
+        return false;
+      }
+
+      const [start, end] = [lineSelection.startIndex, lineSelection.endIndex].sort((a, b) => a - b);
       return index >= start && index <= end;
     };
 
@@ -1160,9 +1277,12 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     const firstLineType = highlightedLineData[0]?.type;
     const lastLineType = highlightedLineData[highlightedLineData.length - 1]?.type;
 
-    // Selection highlight overlay - applied via box-shadow to avoid affecting grid layout
-    const selectionHighlight =
+    // Selection highlights are applied via box-shadow to avoid affecting grid layout.
+    const reviewSelectionHighlight =
       "inset 0 0 0 100vmax hsl(from var(--color-review-accent) h s l / 0.16)";
+    const rangeSelectionHighlight =
+      "inset 0 0 0 100vmax hsl(from var(--color-review-accent) h s l / 0.12)";
+    const activeLineHighlight = "inset 0 0 0 1px hsl(from var(--color-review-accent) h s l / 0.45)";
 
     return (
       <DiffContainer
@@ -1173,7 +1293,9 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
         lastLineType={lastLineType}
       >
         {highlightedLineData.map((lineInfo, displayIndex) => {
-          const isSelected = isLineSelected(displayIndex);
+          const isComposerSelected = isLineInSelection(displayIndex, renderSelection);
+          const isRangeSelected = isLineInSelection(displayIndex, selectedLineRange);
+          const isActiveLine = activeLineIndex === displayIndex;
           const isInReviewRange = reviewRangeByLineIndex[displayIndex] ?? false;
           const baseCodeBg = getDiffLineBackground(lineInfo.type);
           const codeBg = applyReviewRangeOverlay(baseCodeBg, isInReviewRange);
@@ -1183,6 +1305,16 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
           );
           const anchoredReviews = inlineReviewsByAnchor.get(displayIndex);
 
+          const lineShadows: string[] = [];
+          if (isComposerSelected) {
+            lineShadows.push(reviewSelectionHighlight);
+          } else if (isRangeSelected) {
+            lineShadows.push(rangeSelectionHighlight);
+          }
+          if (isActiveLine) {
+            lineShadows.push(activeLineHighlight);
+          }
+
           // Each line renders as 3 CSS Grid cells: gutter | indicator | code
           // Use display:contents wrapper for selection state + group hover behavior
           return (
@@ -1190,9 +1322,18 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
               <div
                 className={cn(
                   SELECTABLE_DIFF_LINE_CLASS,
-                  "group relative col-span-3 grid cursor-text grid-cols-subgrid"
+                  "group relative col-span-3 grid grid-cols-subgrid",
+                  onLineIndexSelect ? "cursor-pointer" : "cursor-text"
                 )}
-                data-selected={isSelected ? "true" : "false"}
+                data-line-index={displayIndex}
+                data-selected={isComposerSelected || isRangeSelected ? "true" : "false"}
+                onClick={(e) => {
+                  if (!onLineIndexSelect) {
+                    return;
+                  }
+                  onLineClick?.();
+                  onLineIndexSelect(displayIndex, e.shiftKey);
+                }}
               >
                 <DiffLineGutter
                   type={lineInfo.type}
@@ -1207,7 +1348,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                   type={lineInfo.type}
                   background={codeBg}
                   lineIndex={displayIndex}
-                  isInteractive={Boolean(onReviewNote)}
+                  isInteractive={Boolean(onReviewNote ?? onLineIndexSelect)}
                   onMouseDown={(e) => {
                     if (!onReviewNote) return;
                     if (e.button !== 0) return;
@@ -1221,45 +1362,41 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                   }}
                   reviewButton={
                     onReviewNote && (
-                      <Tooltip open={selection || isDragging ? false : undefined}>
-                        <TooltipTrigger asChild>
-                          <button
-                            className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:text-[var(--color-review-accent)] active:scale-90"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleCommentButtonClick(displayIndex, e.shiftKey);
-                            }}
-                            aria-label="Add review comment"
-                          >
-                            <MessageSquare className="size-3" />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent side="bottom" align="start">
-                          Add review comment
-                          <br />
-                          (Shift-click or drag to select range)
-                        </TooltipContent>
-                      </Tooltip>
+                      <button
+                        type="button"
+                        className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:text-[var(--color-review-accent)] active:scale-90"
+                        style={{ position: "absolute", inset: 0 }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCommentButtonClick(displayIndex, e.shiftKey);
+                        }}
+                        title="Add review comment (Shift-click or drag to select range)"
+                        aria-label="Add review comment"
+                      >
+                        <MessageSquare className="size-3" />
+                      </button>
                     )
                   }
                 />
+                {/* SECURITY AUDIT: lineInfo.html is derived from Shiki/escapeHtml output
+                    (optionally transformed by text-node-only search highlighting). */}
                 <span
                   className="min-w-0 whitespace-pre [&_span:not(.search-highlight)]:!bg-transparent"
                   style={{
                     background: codeBg,
                     color: getLineContentColor(lineInfo.type),
-                    boxShadow: isSelected ? selectionHighlight : undefined,
+                    boxShadow: lineShadows.length > 0 ? lineShadows.join(", ") : undefined,
                   }}
                   dangerouslySetInnerHTML={{ __html: lineInfo.html }}
                 />
               </div>
 
               {/* Show textarea after the last selected line */}
-              {isSelected &&
-                selection &&
-                displayIndex === Math.max(selection.startIndex, selection.endIndex) && (
+              {isComposerSelected &&
+                renderSelection &&
+                displayIndex === Math.max(renderSelection.startIndex, renderSelection.endIndex) && (
                   <ReviewNoteInput
-                    selection={selection}
+                    selection={renderSelection}
                     lineData={lineData}
                     filePath={filePath}
                     showLineNumbers={showLineNumbers}
@@ -1267,6 +1404,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                     lineNumberWidths={lineNumberWidths}
                     onSubmit={handleSubmitNote}
                     onCancel={handleCancelNote}
+                    initialNoteText={renderNoteText}
                   />
                 )}
 
@@ -1279,6 +1417,11 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                   lineNumberMode={lineNumberMode}
                   lineNumberWidths={lineNumberWidths}
                   reviewActions={reviewActions}
+                  editRequestId={
+                    externalEditRequest?.reviewId === review.id
+                      ? externalEditRequest.requestId
+                      : null
+                  }
                 />
               ))}
             </React.Fragment>

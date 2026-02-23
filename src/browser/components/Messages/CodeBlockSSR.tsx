@@ -19,6 +19,7 @@ export function CodeBlockSSR({ code, highlightedLines }: CodeBlockSSRProps) {
         {highlightedLines.map((lineHtml, idx) => (
           <React.Fragment key={idx}>
             <div className="line-number">{idx + 1}</div>
+            {/* SECURITY AUDIT: lineHtml is pre-tokenized Shiki output from docs generation. */}
             <div className="code-line" dangerouslySetInnerHTML={{ __html: lineHtml }} />
           </React.Fragment>
         ))}
