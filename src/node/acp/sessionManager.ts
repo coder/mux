@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import type { RuntimeMode } from "../../common/types/runtime";
+import type { RuntimeMode } from "@/common/types/runtime";
 import type { NegotiatedCapabilities } from "./capabilities";
 
 const KNOWN_RUNTIME_MODES: ReadonlySet<RuntimeMode> = new Set([

@@ -5,8 +5,8 @@ import type {
   PermissionOption,
   RequestPermissionOutcome,
 } from "@agentclientprotocol/sdk";
-import type { RuntimeMode } from "../../common/types/runtime";
-import { handleStringReplace } from "../services/tools/file_edit_replace_shared";
+import type { RuntimeMode } from "@/common/types/runtime";
+import { handleStringReplace } from "@/node/services/tools/file_edit_replace_shared";
 
 // Defined locally while ACP capability negotiation modules are developed.
 interface NegotiatedCapabilities {

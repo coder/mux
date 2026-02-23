@@ -4,12 +4,12 @@ import { createORPCClient, type ClientContext } from "@orpc/client";
 import { RPCLink as WebSocketRPCLink } from "@orpc/client/websocket";
 import type { RouterClient } from "@orpc/server";
 import WebSocket from "ws";
-import { getMuxHome } from "../../common/constants/paths";
-import { Config } from "../config";
-import type { AppRouter } from "../orpc/router";
-import { createOrpcServer } from "../orpc/server";
-import { ServiceContainer } from "../services/serviceContainer";
-import { ServerLockfile } from "../services/serverLockfile";
+import { getMuxHome } from "@/common/constants/paths";
+import { Config } from "@/node/config";
+import type { AppRouter } from "@/node/orpc/router";
+import { createOrpcServer } from "@/node/orpc/server";
+import { ServiceContainer } from "@/node/services/serviceContainer";
+import { ServerLockfile } from "@/node/services/serverLockfile";
 
 interface ConnectViaWebSocketResult {
   client: ORPCClient;

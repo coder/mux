@@ -5,7 +5,7 @@ import type {
   ToolCallContent,
   ToolKind,
 } from "@agentclientprotocol/sdk";
-import type { WorkspaceChatMessage } from "../../common/orpc/types";
+import type { WorkspaceChatMessage } from "@/common/orpc/types";
 
 interface ActiveToolCall {
   toolCallId: string;
