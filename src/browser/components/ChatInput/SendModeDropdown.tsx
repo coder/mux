@@ -91,7 +91,7 @@ export const SendModeDropdown: React.FC<SendModeDropdownProps> = (props) => {
               onClick={() => handleSelect(entry.mode)}
             >
               <span className="whitespace-nowrap">{entry.label}</span>
-              <kbd className="bg-background-secondary text-foreground border-border-medium whitespace-nowrap rounded border px-1.5 py-px font-mono text-[10px]">
+              <kbd className="bg-background-secondary text-foreground border-border-medium rounded border px-1.5 py-px font-mono text-[10px] whitespace-nowrap">
                 {formatKeybind(entry.keybind)}
               </kbd>
             </button>

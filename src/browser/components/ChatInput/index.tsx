@@ -2587,9 +2587,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     </TooltipContent>
                   </Tooltip>
 
-                  {canInterrupt && (
+                  {variant === "workspace" && (
                     <SendModeDropdown
-                      disabled={!hasTypedText || !canSend}
+                      disabled={!canInterrupt || !hasTypedText || !canSend}
                       triggerClassName="-ml-1 px-0"
                       onSelect={(mode) => {
                         void handleSend(

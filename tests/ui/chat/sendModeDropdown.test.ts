@@ -119,11 +119,13 @@ describe("SendModeDropdown (mock AI router)", () => {
     await preloadTestModules();
   });
 
-  test("dropdown trigger hidden when not streaming", async () => {
+  test("dropdown trigger is visible but disabled when not streaming", async () => {
     const app = await createAppHarness({ branchPrefix: "send-mode-dropdown" });
 
     try {
-      expect(getSendModeButton(app.view.container)).toBeNull();
+      const trigger = getSendModeButton(app.view.container);
+      expect(trigger).not.toBeNull();
+      expect(trigger?.disabled).toBe(true);
     } finally {
       await app.dispose();
     }
@@ -154,7 +156,9 @@ describe("SendModeDropdown (mock AI router)", () => {
 
       await waitFor(
         () => {
-          expect(getSendModeButton(app.view.container)).toBeNull();
+          const trigger = getSendModeButton(app.view.container);
+          expect(trigger).not.toBeNull();
+          expect(trigger?.disabled).toBe(true);
         },
         { timeout: 30_000 }
       );
