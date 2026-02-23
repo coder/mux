@@ -687,6 +687,93 @@ exit 1
       );
     }
 
+    async function writeFakeGitCloneEnvLoggingShim(
+      fakeGitPath: string,
+      options: { failIfSshAskpassIsSet: boolean }
+    ): Promise<void> {
+      const sshAskpassGuard = options.failIfSshAskpassIsSet
+        ? `
+  if [ -n "$SSH_ASKPASS" ]; then
+    echo "Unexpected SSH_ASKPASS for non-SSH clone" >&2
+    exit 128
+  fi`
+        : "";
+
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  printf 'SSH_ASKPASS=%s\nSSH_ASKPASS_REQUIRE=%s\nGIT_TERMINAL_PROMPT=%s\n' "\${SSH_ASKPASS:-}" "\${SSH_ASKPASS_REQUIRE:-}" "\${GIT_TERMINAL_PROMPT:-}" > "$FAKE_GIT_ENV_LOG"${sshAskpassGuard}
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+    }
+
+    async function cloneAndCaptureAskpassEnv(options: {
+      testCaseId: string;
+      repoUrl: string;
+      failIfSshAskpassIsSet: boolean;
+    }): Promise<Record<string, string>> {
+      const cloneParentDir = path.join(tempDir, `${options.testCaseId}-clone-parent`);
+      const fakeBinDir = path.join(tempDir, `fake-bin-${options.testCaseId}`);
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const fakeGitEnvLogPath = path.join(tempDir, `fake-git-${options.testCaseId}-env.log`);
+      const originalPath = process.env.PATH ?? "";
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+      const originalFakeGitEnvLogPath = process.env.FAKE_GIT_ENV_LOG;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await writeFakeGitCloneEnvLoggingShim(fakeGitPath, {
+        failIfSshAskpassIsSet: options.failIfSshAskpassIsSet,
+      });
+
+      const sshPromptService = new SshPromptService(5000);
+      const release = sshPromptService.registerInteractiveResponder();
+      const sshCloneService = new ProjectService(config, sshPromptService);
+      const onRequest = (request: SshPromptRequest) => {
+        sshPromptService.respond(request.requestId, "yes");
+      };
+      sshPromptService.on("request", onRequest);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.HOME = tempDir;
+      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
+      process.env.FAKE_GIT_ENV_LOG = fakeGitEnvLogPath;
+
+      try {
+        const events = await collectCloneEvents(sshCloneService, options.repoUrl, cloneParentDir);
+        const successEvent = events.find((event) => event.type === "success");
+        expect(successEvent?.type).toBe("success");
+
+        return await readLoggedEnv(fakeGitEnvLogPath);
+      } finally {
+        sshPromptService.off("request", onRequest);
+        release();
+        process.env.PATH = originalPath;
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+        if (originalFakeGitEnvLogPath === undefined) {
+          delete process.env.FAKE_GIT_ENV_LOG;
+        } else {
+          process.env.FAKE_GIT_ENV_LOG = originalFakeGitEnvLogPath;
+        }
+      }
+    }
+
     it("SSH clone invokes askpass for host-key prompt and succeeds when accepted", async () => {
       if (process.platform === "win32") {
         // This test relies on a POSIX shell shim named "git" in PATH.
@@ -1380,6 +1467,74 @@ exit 1
           process.env.FAKE_GIT_ENV_LOG = originalFakeGitEnvLogPath;
         }
       }
+    });
+
+    it("sets SSH askpass env for ssh:// clone URL", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const env = await cloneAndCaptureAskpassEnv({
+        testCaseId: "ssh-transport-ssh-scheme",
+        repoUrl: "ssh://github.com/testuser/testrepo.git",
+        failIfSshAskpassIsSet: false,
+      });
+
+      expect(env.SSH_ASKPASS).not.toBe("");
+      expect(env.SSH_ASKPASS_REQUIRE).toBe("force");
+      expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+    });
+
+    it("sets SSH askpass env for git+ssh:// clone URL", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const env = await cloneAndCaptureAskpassEnv({
+        testCaseId: "ssh-transport-git-plus-ssh",
+        repoUrl: "git+ssh://github.com/testuser/testrepo.git",
+        failIfSshAskpassIsSet: false,
+      });
+
+      expect(env.SSH_ASKPASS).not.toBe("");
+      expect(env.SSH_ASKPASS_REQUIRE).toBe("force");
+      expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+    });
+
+    it("sets SSH askpass env for ssh+git:// clone URL", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const env = await cloneAndCaptureAskpassEnv({
+        testCaseId: "ssh-transport-ssh-plus-git",
+        repoUrl: "ssh+git://github.com/testuser/testrepo.git",
+        failIfSshAskpassIsSet: false,
+      });
+
+      expect(env.SSH_ASKPASS).not.toBe("");
+      expect(env.SSH_ASKPASS_REQUIRE).toBe("force");
+      expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+    });
+
+    it("does not set SSH askpass env for git:// clone URL", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const env = await cloneAndCaptureAskpassEnv({
+        testCaseId: "ssh-transport-git-scheme",
+        repoUrl: "git://github.com/testuser/testrepo.git",
+        failIfSshAskpassIsSet: true,
+      });
+
+      expect(env.SSH_ASKPASS).toBe("");
+      expect(env.SSH_ASKPASS_REQUIRE).toBe("");
+      expect(env.GIT_TERMINAL_PROMPT).toBe("0");
     });
   });
 

@@ -217,35 +217,55 @@ function parseScpStyleSshUrl(url: string): { host: string } | undefined {
   return { host: scpLikeMatch[1] };
 }
 
-/** Detect whether a clone URL will use SSH transport (SCP-style or ssh:// protocol). */
+/** Protocol schemes that Git routes through SSH transport. */
+const SSH_PROTOCOL_SCHEMES = new Set(["ssh:", "git+ssh:", "ssh+git:"]);
+
+type CloneTransport =
+  | { kind: "ssh"; hostname: string; port: number }
+  | { kind: "ssh-scp"; hostname: string; port: number }
+  | { kind: "non-ssh" };
+
+/**
+ * Canonical clone-URL transport classifier.
+ * Every SSH-related decision in the clone flow (askpass enablement, prompt
+ * deduplication) should consume this parser so protocol support cannot drift.
+ */
+function parseCloneTransport(rawUrl: string): CloneTransport {
+  const trimmedUrl = rawUrl.trim();
+
+  // SCP-style: [user@]host:path (always SSH, port 22)
+  const parsedScpLikeUrl = parseScpStyleSshUrl(trimmedUrl);
+  if (parsedScpLikeUrl) {
+    return { kind: "ssh-scp", hostname: parsedScpLikeUrl.host, port: 22 };
+  }
+
+  // Protocol URLs: ssh://, git+ssh://, ssh+git://
+  try {
+    const parsed = new URL(trimmedUrl);
+    if (SSH_PROTOCOL_SCHEMES.has(parsed.protocol.toLowerCase()) && parsed.hostname) {
+      const parsedPort = Number.parseInt(parsed.port, 10);
+      const port = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 22;
+      return { kind: "ssh", hostname: parsed.hostname, port };
+    }
+  } catch {
+    // Not a valid protocol URL; treat as non-SSH.
+  }
+
+  return { kind: "non-ssh" };
+}
+
+/** Detect whether a clone URL will use SSH transport. */
 function isSshCloneUrl(url: string): boolean {
-  if (parseScpStyleSshUrl(url)) return true;
-  // ssh:// protocol
-  if (url.startsWith("ssh://")) return true;
-  return false;
+  return parseCloneTransport(url).kind !== "non-ssh";
 }
 
 function deriveSshClonePromptDedupeKey(cloneUrl: string): string | undefined {
-  const trimmedCloneUrl = cloneUrl.trim();
-
-  // ssh://user@host[:port]/path
-  try {
-    const parsed = new URL(trimmedCloneUrl);
-    if (parsed.protocol === "ssh:" && parsed.hostname) {
-      const parsedPort = Number.parseInt(parsed.port, 10);
-      const port = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 22;
-      return formatSshEndpoint(parsed.hostname, port);
-    }
-  } catch {
-    // Not a protocol URL (likely SCP-style); parse below.
+  const transport = parseCloneTransport(cloneUrl);
+  if (transport.kind === "non-ssh") {
+    return undefined;
   }
 
-  const parsedScpLikeUrl = parseScpStyleSshUrl(trimmedCloneUrl);
-  if (parsedScpLikeUrl) {
-    return formatSshEndpoint(parsedScpLikeUrl.host, 22);
-  }
-
-  return undefined;
+  return formatSshEndpoint(transport.hostname, transport.port);
 }
 
 const FILE_COMPLETIONS_CACHE_TTL_MS = 10_000;
