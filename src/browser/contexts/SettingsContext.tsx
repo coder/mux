@@ -86,6 +86,8 @@ export function SettingsProvider(props: { children: ReactNode }) {
   const wasOpenRef = useRef(isOpen);
   useEffect(() => {
     if (wasOpenRef.current && !isOpen) {
+      setProvidersExpandedProvider(null);
+      setRuntimesProjectPath(null);
       for (const callback of closeCallbacksRef.current) {
         callback();
       }
@@ -95,6 +97,7 @@ export function SettingsProvider(props: { children: ReactNode }) {
 
   const close = useCallback(() => {
     setProvidersExpandedProvider(null);
+    setRuntimesProjectPath(null);
     router.navigateFromSettings();
   }, [router]);
 
@@ -102,6 +105,10 @@ export function SettingsProvider(props: { children: ReactNode }) {
     (section: string) => {
       if (section !== "providers") {
         setProvidersExpandedProvider(null);
+      }
+      if (section !== "runtimes") {
+        // Runtime scope hints are one-shot and should not persist across section changes.
+        setRuntimesProjectPath(null);
       }
       router.navigateToSettings(section);
     },
