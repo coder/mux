@@ -471,7 +471,6 @@ export class ServiceContainer {
       serverAuthService: this.serverAuthService,
       sshPromptService: this.sshPromptService,
       analyticsService: this.analyticsService,
-      hostKeyVerificationService: this.hostKeyVerificationService,
     };
   }
 
