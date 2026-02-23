@@ -250,21 +250,29 @@ export class AIService extends EventEmitter {
     // Handle stream-abort: dispose of partial based on abandonPartial flag
     this.streamManager.on("stream-abort", (data: StreamAbortEvent) => {
       void (async () => {
-        if (data.abandonPartial) {
-          // Caller requested discarding partial - delete without committing
-          await this.historyService.deletePartial(data.workspaceId);
-        } else {
-          // Commit interrupted message to history with partial:true metadata
-          // This ensures /clear and /truncate can clean up interrupted messages
-          const partial = await this.historyService.readPartial(data.workspaceId);
-          if (partial) {
-            await this.historyService.commitPartial(data.workspaceId);
+        try {
+          if (data.abandonPartial) {
+            // Caller requested discarding partial - delete without committing
             await this.historyService.deletePartial(data.workspaceId);
+          } else {
+            // Commit interrupted message to history with partial:true metadata
+            // This ensures /clear and /truncate can clean up interrupted messages
+            const partial = await this.historyService.readPartial(data.workspaceId);
+            if (partial) {
+              await this.historyService.commitPartial(data.workspaceId);
+              await this.historyService.deletePartial(data.workspaceId);
+            }
           }
+        } catch (error) {
+          log.error("Failed partial cleanup during stream-abort", {
+            workspaceId: data.workspaceId,
+            error: getErrorMessage(error),
+          });
+        } finally {
+          // Always forward abort event to consumers (workspaceService, agentSession)
+          // even if partial cleanup failed — stream lifecycle consistency is higher priority.
+          this.emit("stream-abort", data);
         }
-
-        // Forward abort event to consumers
-        this.emit("stream-abort", data);
       })();
     });
   }

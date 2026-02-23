@@ -35,6 +35,7 @@ import { createMuxMessage } from "@/common/types/message";
 import type { MuxMessage } from "@/common/types/message";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
+import type { StreamAbortEvent } from "@/common/types/stream";
 import type { StreamManager } from "./streamManager";
 import * as agentResolution from "./agentResolution";
 import * as streamContextBuilder from "./streamContextBuilder";
@@ -60,6 +61,41 @@ describe("AIService", () => {
   it("should create an AIService instance", () => {
     expect(service).toBeDefined();
     expect(service).toBeInstanceOf(AIService);
+  });
+});
+
+describe("AIService.setupStreamEventForwarding", () => {
+  afterEach(() => {
+    mock.restore();
+  });
+
+  it("forwards stream-abort even when partial cleanup throws", async () => {
+    using muxHome = new DisposableTempDir("ai-service-stream-abort-forwarding");
+    const config = new Config(muxHome.path);
+    const historyService = new HistoryService(config);
+    const initStateManager = new InitStateManager(config);
+    const providerService = new ProviderService(config);
+    const service = new AIService(config, historyService, initStateManager, providerService);
+
+    const cleanupError = new Error("disk full");
+    spyOn(historyService, "deletePartial").mockImplementation(() => Promise.reject(cleanupError));
+
+    const streamManager = (service as unknown as { streamManager: StreamManager }).streamManager;
+    const abortEvent: StreamAbortEvent = {
+      type: "stream-abort",
+      workspaceId: "workspace-1",
+      messageId: "message-1",
+      abandonPartial: true,
+    };
+
+    const forwardedAbortPromise = new Promise<StreamAbortEvent>((resolve) => {
+      service.once("stream-abort", (event) => resolve(event as StreamAbortEvent));
+    });
+
+    streamManager.emit("stream-abort", abortEvent);
+
+    await expect(forwardedAbortPromise).resolves.toEqual(abortEvent);
+    expect(historyService.deletePartial).toHaveBeenCalledWith(abortEvent.workspaceId);
   });
 });
 
