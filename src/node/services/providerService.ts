@@ -101,6 +101,8 @@ export class ProviderService {
         cacheTtl?: unknown;
         /** OpenAI-only: default auth precedence for Codex-OAuth-allowed models. */
         codexOauthDefaultAuth?: unknown;
+        /** OpenAI-only: auth mode for credential resolution. */
+        authMode?: unknown;
         region?: string;
         /** Optional AWS shared config profile name (equivalent to AWS_PROFILE). */
         profile?: string;
@@ -166,6 +168,11 @@ export class ProviderService {
         const codexOauthDefaultAuth = config.codexOauthDefaultAuth;
         if (codexOauthDefaultAuth === "oauth" || codexOauthDefaultAuth === "apiKey") {
           providerInfo.codexOauthDefaultAuth = codexOauthDefaultAuth;
+        }
+
+        const authMode = config.authMode;
+        if (authMode === "apiKey" || authMode === "entra") {
+          providerInfo.openaiAuthMode = authMode;
         }
       }
       // AWS/Bedrock-specific fields

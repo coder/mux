@@ -214,6 +214,9 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - uses: ./.github/actions/setup-playwright
+        with:
+          # Storybook test-runner may launch chromium headless shell; install it alongside chromium.
+          browsers: "chromium chromium-headless-shell"
       - run: make storybook-build
       - run: |
           bun x http-server storybook-static -p 6006 &
