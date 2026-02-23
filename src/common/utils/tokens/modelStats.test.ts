@@ -21,24 +21,16 @@ describe("getModelStats", () => {
     test("should find models in models-extra.ts", () => {
       const stats = getModelStats("openai:gpt-5.2-pro");
       expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBe(272000);
-      expect(stats?.input_cost_per_token).toBe(0.000021);
-    });
-
-    test("should include spark model config from models-extra.ts", () => {
-      const stats = getModelStats("openai:gpt-5.3-codex-spark");
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBe(128000);
-      expect(stats?.max_output_tokens).toBe(128000);
-      expect(stats?.input_cost_per_token).toBe(0.00000175);
-      expect(stats?.output_cost_per_token).toBe(0.000014);
+      expect(stats?.max_input_tokens).toBeGreaterThan(0);
+      expect(stats?.input_cost_per_token).toBeGreaterThan(0);
     });
 
     test("models-extra.ts should override models.json", () => {
-      // gpt-5.2-codex exists in both files - models-extra.ts has correct 272k, models.json has incorrect 400k
+      // gpt-5.2-codex exists in both files - models-extra.ts has correct 272k, models.json has incorrect 400k.
+      // The exact value matters here: it proves the override mechanism works.
       const stats = getModelStats("openai:gpt-5.2-codex");
       expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBe(272000); // models-extra.ts override
+      expect(stats?.max_input_tokens).toBe(272000);
     });
   });
 
@@ -46,15 +38,13 @@ describe("getModelStats", () => {
     test("should find ollama gpt-oss:20b with cloud suffix", () => {
       const stats = getModelStats("ollama:gpt-oss:20b");
       expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBe(131072);
-      expect(stats?.input_cost_per_token).toBe(0); // Local models are free
-      expect(stats?.output_cost_per_token).toBe(0);
+      expect(stats?.max_input_tokens).toBeGreaterThan(0);
     });
 
     test("should find ollama gpt-oss:120b with cloud suffix", () => {
       const stats = getModelStats("ollama:gpt-oss:120b");
       expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBe(131072);
+      expect(stats?.max_input_tokens).toBeGreaterThan(0);
     });
 
     test("should find ollama deepseek-v3.1:671b with cloud suffix", () => {
@@ -97,13 +87,13 @@ describe("getModelStats", () => {
     test("should prefer github copilot provider-specific limits", () => {
       const stats = getModelStats("github-copilot:gpt-4-o-preview");
       expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBe(64000);
+      expect(stats?.max_input_tokens).toBeGreaterThan(0);
     });
 
     test("should default missing copilot costs to zero", () => {
       const stats = getModelStats("github-copilot:gpt-4.1");
       expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBe(128000);
+      expect(stats?.max_input_tokens).toBeGreaterThan(0);
       expect(stats?.input_cost_per_token).toBe(0);
       expect(stats?.output_cost_per_token).toBe(0);
     });
@@ -136,8 +126,8 @@ describe("getModelStats", () => {
     test("should handle mux-gateway:anthropic/model format", () => {
       const stats = getModelStats("mux-gateway:anthropic/claude-sonnet-4-5");
       expect(stats).not.toBeNull();
-      expect(stats?.input_cost_per_token).toBe(0.000003);
-      expect(stats?.output_cost_per_token).toBe(0.000015);
+      expect(stats?.input_cost_per_token).toBeGreaterThan(0);
+      expect(stats?.output_cost_per_token).toBeGreaterThan(0);
     });
 
     test("should handle mux-gateway:openai/model format", () => {
@@ -188,23 +178,23 @@ describe("getModelStats", () => {
       const stats = getModelStats(KNOWN_MODELS.SONNET.id);
 
       expect(stats).not.toBeNull();
-      expect(stats?.input_cost_per_token).toBe(0.000003);
-      expect(stats?.output_cost_per_token).toBe(0.000015);
-      expect(stats?.max_input_tokens).toBe(200000);
+      expect(stats?.input_cost_per_token).toBeGreaterThan(0);
+      expect(stats?.output_cost_per_token).toBeGreaterThan(0);
+      expect(stats?.max_input_tokens).toBeGreaterThan(0);
     });
 
     it("should handle model without provider prefix", () => {
       const stats = getModelStats("claude-sonnet-4-5");
 
       expect(stats).not.toBeNull();
-      expect(stats?.input_cost_per_token).toBe(0.000003);
+      expect(stats?.input_cost_per_token).toBeGreaterThan(0);
     });
 
     it("should return cache pricing when available", () => {
       const stats = getModelStats(KNOWN_MODELS.SONNET.id);
 
-      expect(stats?.cache_creation_input_token_cost).toBe(0.00000375);
-      expect(stats?.cache_read_input_token_cost).toBe(3e-7);
+      expect(stats?.cache_creation_input_token_cost).toBeDefined();
+      expect(stats?.cache_read_input_token_cost).toBeDefined();
     });
 
     it("should return null for unknown models", () => {

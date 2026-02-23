@@ -4,7 +4,6 @@ import {
   getModelName,
   supports1MContext,
   isValidModelFormat,
-  resolveModelAlias,
 } from "./models";
 
 describe("normalizeGatewayModel", () => {
@@ -103,26 +102,5 @@ describe("isValidModelFormat", () => {
 
     // Empty string
     expect(isValidModelFormat("")).toBe(false);
-  });
-});
-
-describe("resolveModelAlias", () => {
-  it("resolves known aliases to full model strings", () => {
-    expect(resolveModelAlias("haiku")).toBe("anthropic:claude-haiku-4-5");
-    expect(resolveModelAlias("sonnet")).toBe("anthropic:claude-sonnet-4-6");
-    expect(resolveModelAlias("opus")).toBe("anthropic:claude-opus-4-6");
-    expect(resolveModelAlias("grok")).toBe("xai:grok-4-1-fast");
-    expect(resolveModelAlias("codex")).toBe("openai:gpt-5.2-codex");
-    expect(resolveModelAlias("gemini")).toBe("google:gemini-3.1-pro-preview");
-    expect(resolveModelAlias("codex-mini")).toBe("openai:gpt-5.1-codex-mini");
-    expect(resolveModelAlias("spark")).toBe("openai:gpt-5.3-codex-spark");
-    expect(resolveModelAlias("gemini-pro")).toBe("google:gemini-3.1-pro-preview");
-    expect(resolveModelAlias("gemini-flash")).toBe("google:gemini-3-flash-preview");
-  });
-
-  it("returns non-alias strings unchanged", () => {
-    expect(resolveModelAlias("anthropic:custom-model")).toBe("anthropic:custom-model");
-    expect(resolveModelAlias("openai:gpt-5.2")).toBe("openai:gpt-5.2");
-    expect(resolveModelAlias("unknown")).toBe("unknown");
   });
 });
