@@ -871,16 +871,19 @@ export function CreationControls(props: CreationControlsProps) {
 
       {/* Runtime type - button group */}
       <div className="flex flex-col gap-1.5" data-component="RuntimeTypeGroup">
-        {/* User request: keep the configure shortcut but render it in muted gray. */}
         <div className="flex items-center gap-1">
           <label className="text-muted-foreground text-xs font-medium">Workspace Type</label>
+          {/* Visual cue when the user has changed the runtime from the project default. */}
+          {runtimeChoice !== props.defaultRuntimeMode && (
+            <span className="text-warning text-[10px] font-medium">(modified)</span>
+          )}
           <span className="text-muted-foreground text-xs">-</span>
           <button
             type="button"
-            onClick={() => settings.open("runtimes")}
-            className="text-muted-foreground hover:text-foreground cursor-pointer text-xs font-medium hover:underline"
+            onClick={() => settings.open("runtimes", { runtimesProjectPath: props.projectPath })}
+            className="text-accent hover:text-accent/80 cursor-pointer text-xs font-medium hover:underline"
           >
-            configure
+            set defaults
           </button>
         </div>
         <div className="flex flex-col gap-2">

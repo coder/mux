@@ -13,6 +13,7 @@ import { Switch } from "@/browser/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
 import { useAPI } from "@/browser/contexts/API";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
+import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useRuntimeEnablement } from "@/browser/hooks/useRuntimeEnablement";
 import { RUNTIME_CHOICE_UI, type RuntimeUiSpec } from "@/browser/utils/runtimeUi";
 import { cn } from "@/common/lib/utils";
@@ -66,10 +67,16 @@ export function RuntimesSection() {
   const { projects, refreshProjects } = useProjectContext();
   const { enablement, setRuntimeEnabled, defaultRuntime, setDefaultRuntime } =
     useRuntimeEnablement();
+  const { runtimesProjectPath, setRuntimesProjectPath } = useSettings();
 
   const projectList = Array.from(projects.keys());
 
-  const [selectedScope, setSelectedScope] = useState(ALL_SCOPE_VALUE);
+  // Consume one-shot project scope hint from "set defaults" button in creation controls.
+  const initialScope =
+    runtimesProjectPath && projects.has(runtimesProjectPath)
+      ? runtimesProjectPath
+      : ALL_SCOPE_VALUE;
+  const [selectedScope, setSelectedScope] = useState(initialScope);
   const [projectOverrideEnabled, setProjectOverrideEnabled] = useState(false);
   const [projectEnablement, setProjectEnablement] = useState<RuntimeEnablement>(enablement);
   const [projectDefaultRuntime, setProjectDefaultRuntime] = useState<RuntimeEnablementId | null>(
@@ -81,6 +88,16 @@ export function RuntimesSection() {
   const [overrideCacheVersion, setOverrideCacheVersion] = useState(0);
   // Cache pending per-project overrides locally while config updates propagate.
   const overrideCacheRef = useRef<Map<string, RuntimeOverrideCacheEntry>>(new Map());
+
+  // When re-opened with a new project hint (e.g., clicking "set defaults" again for
+  // a different project), sync the scope and clear the one-shot hint.
+  useEffect(() => {
+    if (!runtimesProjectPath) return;
+    if (projects.has(runtimesProjectPath)) {
+      setSelectedScope(runtimesProjectPath);
+    }
+    setRuntimesProjectPath(null);
+  }, [runtimesProjectPath, projects, setRuntimesProjectPath]);
 
   const selectedProjectPath = selectedScope === ALL_SCOPE_VALUE ? null : selectedScope;
   const isProjectScope = Boolean(selectedProjectPath);
@@ -550,6 +567,9 @@ export function RuntimesSection() {
                       ) : null}
                     </div>
                     <div className="text-muted text-xs">{runtime.description}</div>
+                    {runtime.options ? (
+                      <div className="text-muted/70 text-[11px]">Options: {runtime.options}</div>
+                    ) : null}
                   </div>
                 </div>
                 <div className="flex items-center gap-3">

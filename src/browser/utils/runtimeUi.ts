@@ -17,6 +17,8 @@ export interface RuntimeIconProps {
 export interface RuntimeUiSpec {
   label: string;
   description: string;
+  /** What user-provided options this runtime requires at creation time. */
+  options?: string;
   docsPath: string;
   Icon: ComponentType<RuntimeIconProps>;
   button: {
@@ -86,6 +88,7 @@ export const RUNTIME_UI = {
   ssh: {
     label: "SSH",
     description: "Remote clone on SSH host",
+    options: "Host (user@host)",
     docsPath: "/runtime/ssh",
     Icon: SSHIcon,
     button: {
@@ -109,6 +112,7 @@ export const RUNTIME_UI = {
   docker: {
     label: "Docker",
     description: "Isolated container per workspace",
+    options: "Image name (e.g. node:20)",
     docsPath: "/runtime/docker",
     Icon: DockerIcon,
     button: {
@@ -132,6 +136,7 @@ export const RUNTIME_UI = {
   devcontainer: {
     label: "Dev container",
     description: "Uses project's devcontainer.json configuration",
+    options: "Config path (devcontainer.json)",
     docsPath: "/runtime/devcontainer",
     Icon: DevcontainerIcon,
     button: {
@@ -158,6 +163,7 @@ const CODER_RUNTIME_UI: RuntimeUiSpec = {
   ...RUNTIME_UI.ssh,
   label: "Coder",
   description: "Coder workspace via the Coder CLI",
+  options: "Coder workspace template",
   docsPath: "/runtime/coder",
   Icon: CoderIcon,
 };
