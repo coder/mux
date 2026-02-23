@@ -131,6 +131,13 @@ const MOCK_REQUEST: SshPromptRequest = {
   prompt: "Trust host key?",
 };
 
+const MOCK_CREDENTIAL_REQUEST: SshPromptRequest = {
+  requestId: "cred-1",
+  kind: "credential",
+  prompt: "Enter passphrase for key '/home/user/.ssh/id_ed25519':",
+  secret: true,
+};
+
 async function flushReactWork(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
@@ -185,6 +192,93 @@ describe("SshPromptDialog", () => {
 
     // Successful respond dequeues → dialog closes → no Reject button
     expect(queryByRole("button", { name: "Reject" })).toBeNull();
+  });
+
+  it("renders credential prompt with input field", async () => {
+    const { container, getByRole, getByText } = render(<SshPromptDialog />);
+
+    await waitFor(() => expect(subscribeMock).toHaveBeenCalledTimes(1));
+    await enqueueRequest(MOCK_CREDENTIAL_REQUEST);
+
+    expect(getByText("Enter passphrase for key '/home/user/.ssh/id_ed25519':")).not.toBeNull();
+
+    const credentialInput = container.querySelector("input[type='password']");
+    expect(credentialInput).not.toBeNull();
+
+    expect(getByRole("button", { name: "Submit" })).not.toBeNull();
+    expect(getByRole("button", { name: "Cancel" })).not.toBeNull();
+  });
+
+  it("credential submit sends typed response", async () => {
+    const { container, getByRole, queryByRole } = render(<SshPromptDialog />);
+
+    await waitFor(() => expect(subscribeMock).toHaveBeenCalledTimes(1));
+    await enqueueRequest(MOCK_CREDENTIAL_REQUEST);
+
+    const credentialInput = container.querySelector<HTMLInputElement>("input[type='password']");
+    expect(credentialInput).not.toBeNull();
+    if (!credentialInput) {
+      throw new Error("Expected credential input to be present");
+    }
+
+    const reactPropsKey = Object.keys(credentialInput).find((key) =>
+      key.startsWith("__reactProps")
+    );
+    expect(reactPropsKey).not.toBeUndefined();
+    if (!reactPropsKey) {
+      throw new Error("Expected credential input to expose React props");
+    }
+
+    const reactPropsRecord = credentialInput as unknown as Record<string, unknown>;
+    const reactProps = reactPropsRecord[reactPropsKey];
+    if (!reactProps || typeof reactProps !== "object") {
+      throw new Error("Expected credential input to expose React prop object");
+    }
+
+    const onChange = (reactProps as { onChange?: (event: { target: { value: string } }) => void })
+      .onChange;
+    expect(onChange).toBeDefined();
+    if (!onChange) {
+      throw new Error("Expected credential input to expose onChange handler");
+    }
+
+    await act(async () => {
+      // fireEvent.change alone does not always update controlled input state in happy-dom.
+      fireEvent.change(credentialInput, { target: { value: "my-passphrase" } });
+      onChange({ target: { value: "my-passphrase" } });
+      await flushReactWork();
+    });
+
+    await act(async () => {
+      fireEvent.click(getByRole("button", { name: "Submit" }));
+      await flushReactWork();
+    });
+
+    await waitFor(() => {
+      expect(respondMock).toHaveBeenCalledWith({
+        requestId: "cred-1",
+        response: "my-passphrase",
+      });
+    });
+
+    // Successful credential submit dequeues the request and closes the dialog.
+    expect(queryByRole("button", { name: "Submit" })).toBeNull();
+  });
+
+  it("credential cancel sends empty response", async () => {
+    const { getByRole } = render(<SshPromptDialog />);
+
+    await waitFor(() => expect(subscribeMock).toHaveBeenCalledTimes(1));
+    await enqueueRequest(MOCK_CREDENTIAL_REQUEST);
+
+    await act(async () => {
+      fireEvent.click(getByRole("button", { name: "Cancel" }));
+      await flushReactWork();
+    });
+
+    await waitFor(() => {
+      expect(respondMock).toHaveBeenCalledWith({ requestId: "cred-1", response: "" });
+    });
   });
 
   it("keeps request visible when respond fails", async () => {
