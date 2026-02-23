@@ -20,6 +20,7 @@ Two fixes are required:
   and the re-style must not create a layout shift.
 - Include runtime options in the new runtime settings page to clarify how the defaults work there.
   - These defaults should be configurable just as they are in the new workspace page.
+  - The options should have labels to match parity with the new workspace page.
     
 There's also a bug where clicking the configure button on a project page takes you to the 
 settings page with a global scope instead of the project scope. We should fix this as well.
@@ -32,3 +33,4 @@ During this change, it is imperative that we have single-ownership of:
 - What options are available per runtime
 - The setting / getting of defaults
 - The list of runtime types
+- Display code for the runtime options
