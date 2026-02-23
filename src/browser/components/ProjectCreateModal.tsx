@@ -322,7 +322,7 @@ function buildCloneDestinationPreview(cloneParentDir: string, repoName: string):
   return `${normalizedCloneParentDir}${separator}${repoName}`;
 }
 
-function formatCloneError(event: { code?: string; error: string }): string {
+function formatCloneError(event: { code: string; error: string }): string {
   switch (event.code) {
     case "ssh_host_key_rejected":
       return "SSH host key was rejected. The clone was cancelled.";
