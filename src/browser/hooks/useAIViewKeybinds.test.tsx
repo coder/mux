@@ -237,6 +237,58 @@ describe("useAIViewKeybinds", () => {
     expect(loadOlderHistory.mock.calls.length).toBe(1);
   });
 
+  test("Escape does not interrupt when immersive review captures Escape", () => {
+    const interruptStream = mock(() =>
+      Promise.resolve({ success: true as const, data: undefined })
+    );
+    currentClientMock = {
+      workspace: {
+        interruptStream,
+      },
+    };
+
+    const chatInputAPI: RefObject<ChatInputAPI | null> = { current: null };
+
+    renderHook(() =>
+      useAIViewKeybinds({
+        workspaceId: "ws",
+        canInterrupt: true,
+        showRetryBarrier: false,
+        chatInputAPI,
+        jumpToBottom: () => undefined,
+        loadOlderHistory: null,
+        handleOpenTerminal: () => undefined,
+        handleOpenInEditor: () => undefined,
+        aggregator: undefined,
+        setEditingMessage: () => undefined,
+        vimEnabled: false,
+      })
+    );
+
+    const stopImmersiveEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+
+    // Immersive review listens in capture phase so Escape never reaches bubble-phase
+    // stream interrupt listeners.
+    window.addEventListener("keydown", stopImmersiveEscape, { capture: true });
+
+    document.body.dispatchEvent(
+      new window.KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+
+    window.removeEventListener("keydown", stopImmersiveEscape, { capture: true });
+
+    expect(interruptStream.mock.calls.length).toBe(0);
+  });
+
   test("Escape does not interrupt when a modal stops propagation (e.g., Settings)", () => {
     const interruptStream = mock(() =>
       Promise.resolve({ success: true as const, data: undefined })

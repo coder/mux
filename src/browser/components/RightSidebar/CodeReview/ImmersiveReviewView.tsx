@@ -27,6 +27,7 @@ import {
   getFileHunks,
 } from "@/browser/utils/review/navigation";
 import { isEditableElement, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { buildReadFileScript, processFileContents } from "@/browser/utils/fileExplorer";
 import {
   parseReviewLineRange,
@@ -1060,6 +1061,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         // Esc: return to diff panel (not exit immersive).
         if (matchesKeybind(e, KEYBINDS.CANCEL)) {
           e.preventDefault();
+          stopKeyboardPropagation(e);
           setFocusedPanel("diff");
           containerRef.current?.focus();
           return;
@@ -1126,6 +1128,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       // Esc: exit immersive
       if (matchesKeybind(e, KEYBINDS.CANCEL)) {
         e.preventDefault();
+        stopKeyboardPropagation(e);
         onExit();
         return;
       }
@@ -1204,8 +1207,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    // Run in capture phase so immersive Escape handling can swallow the event before
+    // bubble-phase global stream-interrupt listeners see it.
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
   }, [
     focusedPanel,
     allReviews,
