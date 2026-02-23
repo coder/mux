@@ -5,6 +5,7 @@ export interface BackfillDecisionInput {
   watermarkCount: number;
   sessionWorkspaceCount: number;
   hasSessionWorkspaceMissingWatermark: boolean;
+  hasWatermarkMissingSessionWorkspace: boolean;
   hasAnyWatermarkAtOrAboveZero: boolean;
 }
 
@@ -26,6 +27,10 @@ export function shouldRunInitialBackfill(input: BackfillDecisionInput): boolean 
     "shouldRunInitialBackfill requires boolean hasSessionWorkspaceMissingWatermark"
   );
   assert(
+    typeof input.hasWatermarkMissingSessionWorkspace === "boolean",
+    "shouldRunInitialBackfill requires boolean hasWatermarkMissingSessionWorkspace"
+  );
+  assert(
     typeof input.hasAnyWatermarkAtOrAboveZero === "boolean",
     "shouldRunInitialBackfill requires boolean hasAnyWatermarkAtOrAboveZero"
   );
@@ -44,6 +49,12 @@ export function shouldRunInitialBackfill(input: BackfillDecisionInput): boolean 
   if (input.hasSessionWorkspaceMissingWatermark) {
     // Count parity alone is not enough: stale watermark rows can keep the count
     // equal while still leaving current session workspaces uncovered.
+    return true;
+  }
+
+  if (input.hasWatermarkMissingSessionWorkspace) {
+    // Complementary coverage check: if a watermark points to a workspace that no
+    // longer exists on disk, rebuild so stale watermark/event rows are purged.
     return true;
   }
 

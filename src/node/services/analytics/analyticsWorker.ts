@@ -288,6 +288,7 @@ async function handleNeedsBackfill(data: NeedsBackfillData): Promise<{ needsBack
 
   const sessionWorkspaceIds = await listSessionWorkspaceIdsWithHistory(data.sessionsDir);
   const sessionWorkspaceCount = sessionWorkspaceIds.length;
+  const sessionWorkspaceIdSet = new Set(sessionWorkspaceIds);
 
   const watermarkWorkspaceIds = await listWatermarkWorkspaceIds();
   assert(
@@ -298,6 +299,9 @@ async function handleNeedsBackfill(data: NeedsBackfillData): Promise<{ needsBack
   const hasSessionWorkspaceMissingWatermark = sessionWorkspaceIds.some(
     (workspaceId) => !watermarkWorkspaceIds.has(workspaceId)
   );
+  const hasWatermarkMissingSessionWorkspace = [...watermarkWorkspaceIds].some(
+    (workspaceId) => !sessionWorkspaceIdSet.has(workspaceId)
+  );
 
   return {
     needsBackfill: shouldRunInitialBackfill({
@@ -305,6 +309,7 @@ async function handleNeedsBackfill(data: NeedsBackfillData): Promise<{ needsBack
       watermarkCount,
       sessionWorkspaceCount,
       hasSessionWorkspaceMissingWatermark,
+      hasWatermarkMissingSessionWorkspace,
       hasAnyWatermarkAtOrAboveZero,
     }),
   };

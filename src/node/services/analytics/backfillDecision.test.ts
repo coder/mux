@@ -9,6 +9,7 @@ describe("shouldRunInitialBackfill", () => {
         watermarkCount: 0,
         sessionWorkspaceCount: 2,
         hasSessionWorkspaceMissingWatermark: true,
+        hasWatermarkMissingSessionWorkspace: false,
         hasAnyWatermarkAtOrAboveZero: false,
       })
     ).toBe(true);
@@ -19,6 +20,7 @@ describe("shouldRunInitialBackfill", () => {
         watermarkCount: 0,
         sessionWorkspaceCount: 1,
         hasSessionWorkspaceMissingWatermark: true,
+        hasWatermarkMissingSessionWorkspace: false,
         hasAnyWatermarkAtOrAboveZero: false,
       })
     ).toBe(true);
@@ -31,18 +33,20 @@ describe("shouldRunInitialBackfill", () => {
         watermarkCount: 1,
         sessionWorkspaceCount: 2,
         hasSessionWorkspaceMissingWatermark: true,
+        hasWatermarkMissingSessionWorkspace: false,
         hasAnyWatermarkAtOrAboveZero: false,
       })
     ).toBe(true);
   });
 
-  test("returns true when watermark count matches but IDs are stale", () => {
+  test("returns true when a watermark references a workspace missing on disk", () => {
     expect(
       shouldRunInitialBackfill({
         eventCount: 3,
         watermarkCount: 2,
         sessionWorkspaceCount: 2,
-        hasSessionWorkspaceMissingWatermark: true,
+        hasSessionWorkspaceMissingWatermark: false,
+        hasWatermarkMissingSessionWorkspace: true,
         hasAnyWatermarkAtOrAboveZero: false,
       })
     ).toBe(true);
@@ -55,6 +59,7 @@ describe("shouldRunInitialBackfill", () => {
         watermarkCount: 2,
         sessionWorkspaceCount: 2,
         hasSessionWorkspaceMissingWatermark: false,
+        hasWatermarkMissingSessionWorkspace: false,
         hasAnyWatermarkAtOrAboveZero: true,
       })
     ).toBe(true);
@@ -67,6 +72,7 @@ describe("shouldRunInitialBackfill", () => {
         watermarkCount: 2,
         sessionWorkspaceCount: 2,
         hasSessionWorkspaceMissingWatermark: false,
+        hasWatermarkMissingSessionWorkspace: false,
         hasAnyWatermarkAtOrAboveZero: false,
       })
     ).toBe(false);
@@ -79,6 +85,7 @@ describe("shouldRunInitialBackfill", () => {
         watermarkCount: 2,
         sessionWorkspaceCount: 2,
         hasSessionWorkspaceMissingWatermark: false,
+        hasWatermarkMissingSessionWorkspace: false,
         hasAnyWatermarkAtOrAboveZero: true,
       })
     ).toBe(false);
@@ -91,6 +98,7 @@ describe("shouldRunInitialBackfill", () => {
         watermarkCount: 0,
         sessionWorkspaceCount: 0,
         hasSessionWorkspaceMissingWatermark: false,
+        hasWatermarkMissingSessionWorkspace: false,
         hasAnyWatermarkAtOrAboveZero: false,
       })
     ).toBe(false);
@@ -101,6 +109,7 @@ describe("shouldRunInitialBackfill", () => {
         watermarkCount: 0,
         sessionWorkspaceCount: 0,
         hasSessionWorkspaceMissingWatermark: false,
+        hasWatermarkMissingSessionWorkspace: false,
         hasAnyWatermarkAtOrAboveZero: true,
       })
     ).toBe(false);
