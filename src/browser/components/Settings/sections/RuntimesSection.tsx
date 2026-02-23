@@ -78,6 +78,7 @@ export function RuntimesSection() {
   const [runtimeAvailabilityState, setRuntimeAvailabilityState] =
     useState<RuntimeAvailabilityState>({ status: "idle" });
   const [coderInfo, setCoderInfo] = useState<CoderInfo | null>(null);
+  const [nixShellEnabled, setNixShellEnabled] = useState(false);
   const [overrideCacheVersion, setOverrideCacheVersion] = useState(0);
   // Cache pending per-project overrides locally while config updates propagate.
   const overrideCacheRef = useRef<Map<string, RuntimeOverrideCacheEntry>>(new Map());
@@ -203,6 +204,29 @@ export function RuntimesSection() {
         }
       });
 
+    return () => {
+      active = false;
+    };
+  }, [api, selectedProjectPath]);
+
+  useEffect(() => {
+    if (!api || !selectedProjectPath) {
+      setNixShellEnabled(false);
+      return;
+    }
+    let active = true;
+    api.projects.nixShell
+      .get({ projectPath: selectedProjectPath })
+      .then((result) => {
+        if (active) {
+          setNixShellEnabled(result.enabled);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setNixShellEnabled(false);
+        }
+      });
     return () => {
       active = false;
     };
@@ -439,6 +463,30 @@ export function RuntimesSection() {
               checked={projectOverrideEnabled}
               onCheckedChange={handleOverrideToggle}
               aria-label="Override project runtime settings"
+            />
+          </div>
+        ) : null}
+
+        {isProjectScope ? (
+          <div className="border-border-light bg-background-secondary flex items-center justify-between gap-4 rounded-md border px-3 py-2">
+            <div className="flex-1">
+              <div className="text-foreground text-sm">Use Nix Shell</div>
+              <div className="text-muted text-xs">
+                Run all agent bash commands inside this project&apos;s Nix dev shell (nix develop).
+              </div>
+            </div>
+            <Switch
+              checked={nixShellEnabled}
+              onCheckedChange={(checked) => {
+                setNixShellEnabled(checked);
+                if (selectedProjectPath && api) {
+                  void api.projects.nixShell.set({
+                    projectPath: selectedProjectPath,
+                    enabled: checked,
+                  });
+                }
+              }}
+              aria-label="Toggle Nix Shell"
             />
           </div>
         ) : null}
