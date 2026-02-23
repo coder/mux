@@ -74,8 +74,6 @@ export const CaughtUpMessageSchema = z.object({
   cursor: OnChatCursorSchema.optional(),
 });
 
-/** Sent when backend starts idle compaction for a workspace */
-
 /**
  * Progress event for runtime readiness checks.
  * Used by Coder workspaces to show "Starting Coder workspace..." while ensureReady() blocks.
@@ -87,10 +85,6 @@ export const RuntimeStatusEventSchema = z.object({
   phase: z.enum(["checking", "starting", "waiting", "ready", "error"]),
   runtimeType: RuntimeModeSchema,
   detail: z.string().optional(), // Human-readable status like "Starting Coder workspace..."
-});
-
-export const IdleCompactionStartedEventSchema = z.object({
-  type: z.literal("idle-compaction-started"),
 });
 
 export const AutoCompactionTriggeredEventSchema = z.object({
@@ -533,8 +527,6 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   // Auto-compaction status events
   AutoCompactionTriggeredEventSchema,
   AutoCompactionCompletedEventSchema,
-  // Idle compaction notification
-  IdleCompactionStartedEventSchema,
   // Auto-retry status events
   AutoRetryScheduledEventSchema,
   AutoRetryStartingEventSchema,

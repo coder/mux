@@ -4640,9 +4640,6 @@ export class WorkspaceService extends EventEmitter {
     // streaming=false snapshot (emitted by updateStreamingStatus on stream end) will
     // pick it up — the frontend checks both snapshots.
     this.idleCompactingWorkspaces.add(workspaceId);
-
-    // Notify listeners only after dispatch succeeds so UI state reflects real work.
-    this.emitIdleCompactionStarted(workspaceId);
   }
 
   private async buildIdleCompactionSendOptions(workspaceId: string): Promise<SendMessageOptions> {
@@ -4710,16 +4707,5 @@ export class WorkspaceService extends EventEmitter {
       // Compaction should not mutate persisted workspace AI defaults.
       skipAiSettingsPersistence: true,
     };
-  }
-
-  /**
-   * Emit an idle-compaction-started event to a workspace's stream.
-   * This is a transient UI hint while backend-initiated compaction is running.
-   */
-  emitIdleCompactionStarted(workspaceId: string): void {
-    const session = this.sessions.get(workspaceId);
-    if (session) {
-      session.emitChatEvent({ type: "idle-compaction-started" });
-    }
   }
 }

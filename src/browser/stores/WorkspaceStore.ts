@@ -569,9 +569,6 @@ export class WorkspaceStore {
   private sessionUsage = new Map<string, z.infer<typeof SessionUsageFileSchema>>();
   private sessionUsageRequestVersion = new Map<string, number>();
 
-  // Idle compaction notification callbacks (called when backend signals idle compaction started)
-  private idleCompactionCallbacks = new Set<(workspaceId: string) => void>();
-
   // Global callback for navigating to a workspace (set by App, used for notification clicks)
   private navigateToWorkspaceCallback: ((workspaceId: string) => void) | null = null;
 
@@ -2369,10 +2366,10 @@ export class WorkspaceStore {
     const backgroundCompaction = isBackgroundStreamingStop
       ? this.getBackgroundCompletionCompaction(workspaceId)
       : undefined;
-    // The backend tags both the streaming=true and streaming=false snapshots with
-    // isIdleCompaction. Check both: previous covers the normal case; snapshot (the stop
-    // event) covers UI reconnects where activity.list() restored a previous without the
-    // transient flag.
+    // The backend tags the streaming=false (stop) snapshot with isIdleCompaction.
+    // The idle marker is added after sendMessage returns (to avoid races with
+    // concurrent user streams), so only the stop snapshot carries the flag.
+    // Check both previous and current as defense-in-depth.
     const wasIdleCompaction =
       previous?.isIdleCompaction === true || snapshot?.isIdleCompaction === true;
 
@@ -2390,13 +2387,12 @@ export class WorkspaceStore {
           "",
           true,
           "",
-          backgroundCompaction
-            ? wasIdleCompaction
-              ? { ...backgroundCompaction, isIdle: true }
-              : backgroundCompaction
-            : wasIdleCompaction
-              ? { hasContinueMessage: false, isIdle: true }
-              : undefined,
+          wasIdleCompaction
+            ? {
+                hasContinueMessage: backgroundCompaction?.hasContinueMessage ?? false,
+                isIdle: true,
+              }
+            : backgroundCompaction,
           stoppedStreamingSnapshot.recency
         );
       }
@@ -3131,29 +3127,6 @@ export class WorkspaceStore {
   }
 
   /**
-   * Subscribe to idle compaction events.
-   * Callback is called when backend signals a workspace started idle compaction.
-   * Returns unsubscribe function.
-   */
-  onIdleCompactionStarted(callback: (workspaceId: string) => void): () => void {
-    this.idleCompactionCallbacks.add(callback);
-    return () => this.idleCompactionCallbacks.delete(callback);
-  }
-
-  /**
-   * Notify all listeners that a workspace started idle compaction.
-   */
-  private notifyIdleCompactionStarted(workspaceId: string): void {
-    for (const callback of this.idleCompactionCallbacks) {
-      try {
-        callback(workspaceId);
-      } catch (error) {
-        console.error("Error in idle compaction callback:", error);
-      }
-    }
-  }
-
-  /**
    * Subscribe to file-modifying tool completions.
    * @param listener Called with workspaceId when a file-modifying tool completes
    * @param workspaceId If provided, only notify for this workspace
@@ -3374,12 +3347,6 @@ export class WorkspaceStore {
       return;
     }
 
-    // Handle idle-compaction-started event from backend execution.
-    if ("type" in data && data.type === "idle-compaction-started") {
-      this.notifyIdleCompactionStarted(workspaceId);
-      return;
-    }
-
     // Heartbeat events are no-ops for UI state - they exist only for connection liveness detection
     if ("type" in data && data.type === "heartbeat") {
       return;
@@ -3547,8 +3514,6 @@ function getStoreInstance(): WorkspaceStore {
  * Use this for non-hook subscriptions (e.g., in useEffect callbacks).
  */
 export const workspaceStore = {
-  onIdleCompactionStarted: (callback: (workspaceId: string) => void) =>
-    getStoreInstance().onIdleCompactionStarted(callback),
   subscribeFileModifyingTool: (listener: (workspaceId: string) => void, workspaceId?: string) =>
     getStoreInstance().subscribeFileModifyingTool(listener, workspaceId),
   getFileModifyingToolMs: (workspaceId: string) =>

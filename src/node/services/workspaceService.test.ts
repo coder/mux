@@ -672,35 +672,25 @@ describe("WorkspaceService idle compaction dispatch", () => {
     await cleanupHistory();
   });
 
-  test("marks idle compaction send as synthetic and emits started after dispatch", async () => {
+  test("marks idle compaction send as synthetic", async () => {
     const workspaceId = "idle-ws";
     const sendMessage = mock(() => Promise.resolve(Ok(undefined)));
     const buildIdleCompactionSendOptions = mock(() =>
       Promise.resolve({ model: "openai:gpt-4o", agentId: "compact" })
     );
-    const emitIdleCompactionStarted = mock((_id: string) => undefined);
 
     (
       workspaceService as unknown as {
         sendMessage: typeof sendMessage;
         buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
-        emitIdleCompactionStarted: typeof emitIdleCompactionStarted;
       }
     ).sendMessage = sendMessage;
     (
       workspaceService as unknown as {
         sendMessage: typeof sendMessage;
         buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
-        emitIdleCompactionStarted: typeof emitIdleCompactionStarted;
       }
     ).buildIdleCompactionSendOptions = buildIdleCompactionSendOptions;
-    (
-      workspaceService as unknown as {
-        sendMessage: typeof sendMessage;
-        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
-        emitIdleCompactionStarted: typeof emitIdleCompactionStarted;
-      }
-    ).emitIdleCompactionStarted = emitIdleCompactionStarted;
 
     await workspaceService.executeIdleCompaction(workspaceId);
 
@@ -715,10 +705,9 @@ describe("WorkspaceService idle compaction dispatch", () => {
         requireIdle: true,
       })
     );
-    expect(emitIdleCompactionStarted).toHaveBeenCalledTimes(1);
   });
 
-  test("does not emit idle-compaction-started when busy-skip result is returned", async () => {
+  test("propagates busy-skip errors", async () => {
     const workspaceId = "idle-busy-ws";
     const sendMessage = mock(() =>
       Promise.resolve(
@@ -731,29 +720,19 @@ describe("WorkspaceService idle compaction dispatch", () => {
     const buildIdleCompactionSendOptions = mock(() =>
       Promise.resolve({ model: "openai:gpt-4o", agentId: "compact" })
     );
-    const emitIdleCompactionStarted = mock((_id: string) => undefined);
 
     (
       workspaceService as unknown as {
         sendMessage: typeof sendMessage;
         buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
-        emitIdleCompactionStarted: typeof emitIdleCompactionStarted;
       }
     ).sendMessage = sendMessage;
     (
       workspaceService as unknown as {
         sendMessage: typeof sendMessage;
         buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
-        emitIdleCompactionStarted: typeof emitIdleCompactionStarted;
       }
     ).buildIdleCompactionSendOptions = buildIdleCompactionSendOptions;
-    (
-      workspaceService as unknown as {
-        sendMessage: typeof sendMessage;
-        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
-        emitIdleCompactionStarted: typeof emitIdleCompactionStarted;
-      }
-    ).emitIdleCompactionStarted = emitIdleCompactionStarted;
 
     let executionError: unknown;
     try {
@@ -767,8 +746,6 @@ describe("WorkspaceService idle compaction dispatch", () => {
       throw new Error("Expected idle compaction to throw when workspace is busy");
     }
     expect(executionError.message).toContain("idle-only send was skipped");
-
-    expect(emitIdleCompactionStarted).toHaveBeenCalledTimes(0);
   });
 });
 

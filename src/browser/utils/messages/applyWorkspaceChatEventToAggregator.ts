@@ -193,8 +193,7 @@ export function applyWorkspaceChatEventToAggregator(
     isBashOutputEvent(event) ||
     ("type" in event && event.type === "session-usage-delta") ||
     ("type" in event && event.type === "auto-compaction-triggered") ||
-    ("type" in event && event.type === "auto-compaction-completed") ||
-    ("type" in event && event.type === "idle-compaction-started")
+    ("type" in event && event.type === "auto-compaction-completed")
   ) {
     return "ignored";
   }
