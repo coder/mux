@@ -1344,6 +1344,115 @@ describe("WorkspaceStore", () => {
       );
     });
 
+    it("marks compaction completions with queued follow-up as continue for active callbacks", async () => {
+      const workspaceId = "active-workspace-queued-follow-up";
+
+      mockOnChat.mockImplementation(async function* (
+        input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        if (input?.workspaceId !== workspaceId) {
+          await waitForAbortSignal(options?.signal);
+          return;
+        }
+
+        const timestamp = Date.now();
+
+        yield { type: "caught-up", hasOlderHistory: false };
+
+        yield {
+          type: "message",
+          id: "compaction-request-msg",
+          role: "user",
+          parts: [{ type: "text", text: "/compact" }],
+          metadata: {
+            historySequence: 1,
+            timestamp,
+            muxMetadata: {
+              type: "compaction-request",
+              rawCommand: "/compact",
+              parsed: {
+                model: "claude-sonnet-4",
+              },
+            },
+          },
+        };
+
+        yield {
+          type: "stream-start",
+          workspaceId,
+          messageId: "compaction-stream",
+          historySequence: 2,
+          model: "claude-sonnet-4",
+          startTime: timestamp + 1,
+          mode: "compact",
+        };
+
+        // A queued message will be auto-sent by the backend when compaction stream ends.
+        yield {
+          type: "queued-message-changed",
+          workspaceId,
+          queuedMessages: ["follow-up after compaction"],
+          displayText: "follow-up after compaction",
+        };
+
+        yield {
+          type: "stream-end",
+          workspaceId,
+          messageId: "compaction-stream",
+          metadata: {
+            model: "claude-sonnet-4",
+          },
+          parts: [],
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      const onResponseComplete = mock(
+        (
+          _workspaceId: string,
+          _messageId: string,
+          _isFinal: boolean,
+          _finalText: string,
+          _compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
+          _completedAt?: number | null
+        ) => undefined
+      );
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      store.setOnResponseComplete(onResponseComplete);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      const sawResponseComplete = await waitUntil(() => onResponseComplete.mock.calls.length > 0);
+      expect(sawResponseComplete).toBe(true);
+
+      expect(onResponseComplete).toHaveBeenCalledTimes(1);
+      expect(onResponseComplete).toHaveBeenCalledWith(
+        workspaceId,
+        "compaction-stream",
+        true,
+        "",
+        { hasContinueMessage: true },
+        expect.any(Number)
+      );
+    });
+
     it("does not fire response-complete callback when background streaming stops without recency advance", async () => {
       const activeWorkspaceId = "active-workspace-no-replay";
       const backgroundWorkspaceId = "background-workspace-no-replay";

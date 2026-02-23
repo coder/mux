@@ -1294,8 +1294,77 @@ export class WorkspaceStore {
     this.responseCompleteCallback = callback;
     // Update existing aggregators with the callback
     for (const aggregator of this.aggregators.values()) {
-      aggregator.onResponseComplete = callback;
+      this.bindAggregatorResponseCompleteCallback(aggregator);
     }
+  }
+
+  private maybeMarkCompactionContinueFromQueuedFollowUp(
+    workspaceId: string,
+    compaction: { hasContinueMessage: boolean; isIdle?: boolean } | undefined,
+    includeQueuedFollowUpSignal: boolean
+  ): { hasContinueMessage: boolean; isIdle?: boolean } | undefined {
+    if (!compaction || compaction.hasContinueMessage || !includeQueuedFollowUpSignal) {
+      return compaction;
+    }
+
+    const queuedMessage = this.chatTransientState.get(workspaceId)?.queuedMessage;
+    if (!queuedMessage) {
+      return compaction;
+    }
+
+    // A queued message will be auto-sent after stream-end. Suppress the intermediate
+    // "Compaction complete" notification and only notify for the follow-up response.
+    return {
+      ...compaction,
+      hasContinueMessage: true,
+    };
+  }
+
+  private emitResponseComplete(
+    workspaceId: string,
+    messageId: string,
+    isFinal: boolean,
+    finalText: string,
+    compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
+    completedAt?: number | null,
+    includeQueuedFollowUpSignal = true
+  ): void {
+    if (!this.responseCompleteCallback) {
+      return;
+    }
+
+    this.responseCompleteCallback(
+      workspaceId,
+      messageId,
+      isFinal,
+      finalText,
+      this.maybeMarkCompactionContinueFromQueuedFollowUp(
+        workspaceId,
+        compaction,
+        includeQueuedFollowUpSignal
+      ),
+      completedAt
+    );
+  }
+
+  private bindAggregatorResponseCompleteCallback(aggregator: StreamingMessageAggregator): void {
+    aggregator.onResponseComplete = (
+      workspaceId: string,
+      messageId: string,
+      isFinal: boolean,
+      finalText: string,
+      compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
+      completedAt?: number | null
+    ) => {
+      this.emitResponseComplete(
+        workspaceId,
+        messageId,
+        isFinal,
+        finalText,
+        compaction,
+        completedAt
+      );
+    };
   }
 
   /**
@@ -2378,24 +2447,23 @@ export class WorkspaceStore {
     // stream-abort/error transitions also flip streaming to false, but recency stays
     // unchanged there, so suppress completion notifications in those cases.
     if (stoppedStreamingSnapshot && recencyAdvancedSinceStreamStart && isBackgroundStreamingStop) {
-      if (this.responseCompleteCallback) {
-        // Activity snapshots don't include message/content metadata. Reuse any
-        // still-active stream context captured before this workspace was backgrounded
-        // so compaction continue turns remain suppressible in App notifications.
-        this.responseCompleteCallback(
-          workspaceId,
-          "",
-          true,
-          "",
-          wasIdleCompaction
-            ? {
-                hasContinueMessage: backgroundCompaction?.hasContinueMessage ?? false,
-                isIdle: true,
-              }
-            : backgroundCompaction,
-          stoppedStreamingSnapshot.recency
-        );
-      }
+      // Activity snapshots don't include message/content metadata. Reuse any
+      // still-active stream context captured before this workspace was backgrounded
+      // so compaction continue turns remain suppressible in App notifications.
+      this.emitResponseComplete(
+        workspaceId,
+        "",
+        true,
+        "",
+        wasIdleCompaction
+          ? {
+              hasContinueMessage: backgroundCompaction?.hasContinueMessage ?? false,
+              isIdle: true,
+            }
+          : backgroundCompaction,
+        stoppedStreamingSnapshot.recency,
+        false
+      );
     }
 
     if (isBackgroundStreamingStop) {
@@ -3196,7 +3264,7 @@ export class WorkspaceStore {
       }
       // Wire up response complete callback for "notify on response" feature
       if (this.responseCompleteCallback) {
-        aggregator.onResponseComplete = this.responseCompleteCallback;
+        this.bindAggregatorResponseCompleteCallback(aggregator);
       }
       this.aggregators.set(workspaceId, aggregator);
       this.workspaceCreatedAt.set(workspaceId, createdAt);
