@@ -57,13 +57,15 @@ const SkillsPopoverContent: React.FC<SkillsPopoverContentProps> = (props) => {
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    // Scroll container lives inside PopoverContent (whose overflow-visible
+    // powers the hover-bridge pseudo-element and must not be overridden).
+    <div className="flex max-h-[min(400px,60vh)] flex-col gap-2 overflow-y-auto">
       {SCOPE_CONFIG.map(({ scope, label }) => {
         const skills = skillsByScope.get(scope);
         if (!skills || skills.length === 0) return null;
 
         return (
-          <div key={scope} className="flex flex-col gap-1.5">
+          <div key={scope} className="flex flex-col gap-1">
             <div className="text-muted-foreground text-[10px] font-medium tracking-wider uppercase">
               {label} skills
             </div>
@@ -71,9 +73,9 @@ const SkillsPopoverContent: React.FC<SkillsPopoverContentProps> = (props) => {
               const isLoaded = loadedSkillNames.has(skill.name);
               const isUnadvertised = skill.advertise === false;
               return (
-                <div key={skill.name} className="flex items-start gap-2">
+                <div key={skill.name} className="flex items-start gap-1.5">
                   <div className="bg-muted-foreground/30 mt-1.5 h-1 w-1 shrink-0 rounded-full" />
-                  <div className="flex flex-col">
+                  <div className="flex min-w-0 flex-col">
                     <span
                       className={cn(
                         "text-xs font-medium",
@@ -89,7 +91,7 @@ const SkillsPopoverContent: React.FC<SkillsPopoverContentProps> = (props) => {
                       )}
                       {isLoaded && <Check className="text-success ml-1 inline h-3 w-3" />}
                     </span>
-                    <span className="text-muted-foreground text-[11px] leading-snug">
+                    <span className="text-muted-foreground line-clamp-1 text-[11px] leading-snug">
                       {skill.description}
                     </span>
                   </div>
@@ -105,32 +107,32 @@ const SkillsPopoverContent: React.FC<SkillsPopoverContentProps> = (props) => {
             <AlertTriangle className="h-3 w-3" />
             Invalid skills
           </div>
-          <div className="mt-2 flex flex-col gap-3">
+          <div className="mt-1.5 flex flex-col gap-2">
             {SCOPE_CONFIG.map(({ scope, label }) => {
               const issues = invalidSkillsByScope.get(scope);
               if (!issues || issues.length === 0) return null;
 
               return (
-                <div key={`invalid-${scope}`} className="flex flex-col gap-1.5">
+                <div key={`invalid-${scope}`} className="flex flex-col gap-1">
                   <div className="text-muted-foreground text-[10px] font-medium tracking-wider uppercase">
                     {label}
                   </div>
                   {issues.map((issue) => (
                     <div
                       key={`${issue.scope}:${issue.directoryName}:${issue.displayPath}`}
-                      className="flex items-start gap-2"
+                      className="flex items-start gap-1.5"
                     >
                       <div className="bg-muted-foreground/30 mt-1.5 h-1 w-1 shrink-0 rounded-full" />
-                      <div className="flex flex-col gap-0.5">
+                      <div className="flex min-w-0 flex-col gap-0.5">
                         <span className="text-xs font-medium">{issue.directoryName}</span>
-                        <span className="text-muted-foreground font-mono text-[10px] break-all">
+                        <span className="text-muted-foreground line-clamp-1 font-mono text-[10px]">
                           {issue.displayPath}
                         </span>
-                        <span className="text-muted-foreground text-[11px] leading-snug">
+                        <span className="text-muted-foreground line-clamp-2 text-[11px] leading-snug">
                           {issue.message}
                         </span>
                         {issue.hint && (
-                          <span className="text-muted-foreground text-[11px] leading-snug">
+                          <span className="text-muted-foreground line-clamp-1 text-[11px] leading-snug">
                             Hint: {issue.hint}
                           </span>
                         )}
@@ -149,13 +151,13 @@ const SkillsPopoverContent: React.FC<SkillsPopoverContentProps> = (props) => {
             <XCircle className="h-3 w-3" />
             Load errors
           </div>
-          <div className="mt-1.5 flex flex-col gap-1.5">
+          <div className="mt-1.5 flex flex-col gap-1">
             {props.skillLoadErrors.map((err) => (
-              <div key={err.name} className="flex items-start gap-2">
+              <div key={err.name} className="flex items-start gap-1.5">
                 <div className="bg-muted-foreground/30 mt-1.5 h-1 w-1 shrink-0 rounded-full" />
-                <div className="flex flex-col gap-0.5">
+                <div className="flex min-w-0 flex-col gap-0.5">
                   <span className="text-xs font-medium">{err.name}</span>
-                  <span className="text-muted-foreground text-[11px] leading-snug">
+                  <span className="text-muted-foreground line-clamp-2 text-[11px] leading-snug">
                     {err.error}
                   </span>
                 </div>
