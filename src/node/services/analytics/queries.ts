@@ -158,7 +158,7 @@ async function querySummary(
         0
       ) AS avg_daily_spend_usd,
       COALESCE(
-        SUM(cached_tokens)::DOUBLE / NULLIF(SUM(input_tokens + cached_tokens), 0),
+        SUM(cached_tokens)::DOUBLE / NULLIF(SUM(input_tokens + cached_tokens + cache_create_tokens), 0),
         0
       ) AS cache_hit_ratio,
       COALESCE(
@@ -421,7 +421,7 @@ async function queryCacheHitRatioByProvider(
     SELECT
       COALESCE(model, 'unknown') AS model,
       COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
-      COALESCE(SUM(input_tokens + cached_tokens), 0) AS total_prompt_tokens,
+      COALESCE(SUM(input_tokens + cached_tokens + cache_create_tokens), 0) AS total_prompt_tokens,
       COALESCE(COUNT(*), 0) AS response_count
     FROM events
     WHERE (? IS NULL OR project_path = ?)

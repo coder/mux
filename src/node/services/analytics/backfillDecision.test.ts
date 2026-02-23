@@ -91,7 +91,7 @@ describe("shouldRunInitialBackfill", () => {
     ).toBe(false);
   });
 
-  test("returns false when there are no session workspaces", () => {
+  test("returns false when there are no session workspaces and the DB is empty", () => {
     expect(
       shouldRunInitialBackfill({
         eventCount: 0,
@@ -102,7 +102,9 @@ describe("shouldRunInitialBackfill", () => {
         hasAnyWatermarkAtOrAboveZero: false,
       })
     ).toBe(false);
+  });
 
+  test("returns true when there are no session workspaces but stale DB rows remain", () => {
     expect(
       shouldRunInitialBackfill({
         eventCount: 5,
@@ -112,6 +114,17 @@ describe("shouldRunInitialBackfill", () => {
         hasWatermarkMissingSessionWorkspace: false,
         hasAnyWatermarkAtOrAboveZero: true,
       })
-    ).toBe(false);
+    ).toBe(true);
+
+    expect(
+      shouldRunInitialBackfill({
+        eventCount: 0,
+        watermarkCount: 2,
+        sessionWorkspaceCount: 0,
+        hasSessionWorkspaceMissingWatermark: false,
+        hasWatermarkMissingSessionWorkspace: false,
+        hasAnyWatermarkAtOrAboveZero: false,
+      })
+    ).toBe(true);
   });
 });

@@ -36,7 +36,9 @@ export function shouldRunInitialBackfill(input: BackfillDecisionInput): boolean 
   );
 
   if (input.sessionWorkspaceCount === 0) {
-    return false;
+    // No live session workspaces means any persisted analytics rows are stale
+    // leftovers from deleted workspaces and should be purged via rebuild.
+    return input.watermarkCount > 0 || input.eventCount > 0;
   }
 
   if (input.watermarkCount === 0) {
