@@ -14,9 +14,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui
 import { useAPI } from "@/browser/contexts/API";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useSettings } from "@/browser/contexts/SettingsContext";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useRuntimeEnablement } from "@/browser/hooks/useRuntimeEnablement";
-import { RUNTIME_CHOICE_UI, type RuntimeUiSpec } from "@/browser/utils/runtimeUi";
+import {
+  RUNTIME_CHOICE_UI,
+  getRuntimeOptionField,
+  type RuntimeUiSpec,
+} from "@/browser/utils/runtimeUi";
 import { cn } from "@/common/lib/utils";
+import { getLastRuntimeConfigKey } from "@/common/constants/storage";
 import type { CoderInfo } from "@/common/orpc/schemas/coder";
 import { normalizeRuntimeEnablement, RUNTIME_MODE } from "@/common/types/runtime";
 import type {
@@ -91,17 +97,45 @@ export function RuntimesSection() {
 
   // When re-opened with a new project hint (e.g., clicking "set defaults" again for
   // a different project), sync the scope and clear the one-shot hint.
+  // Only clear the hint once the project is actually found in the project list;
+  // projects load asynchronously, so we must keep the hint alive until then.
   useEffect(() => {
     if (!runtimesProjectPath) return;
-    if (projects.has(runtimesProjectPath)) {
-      setSelectedScope(runtimesProjectPath);
-    }
+    if (!projects.has(runtimesProjectPath)) return;
+    setSelectedScope(runtimesProjectPath);
     setRuntimesProjectPath(null);
   }, [runtimesProjectPath, projects, setRuntimesProjectPath]);
 
   const selectedProjectPath = selectedScope === ALL_SCOPE_VALUE ? null : selectedScope;
   const isProjectScope = Boolean(selectedProjectPath);
   const isProjectOverrideActive = isProjectScope && projectOverrideEnabled;
+
+  // Per-project runtime option defaults (SSH host, Docker image, etc.).
+  // Same localStorage keys the creation flow reads, so edits here are reflected immediately.
+  const runtimeConfigKey = selectedProjectPath
+    ? getLastRuntimeConfigKey(selectedProjectPath)
+    : "__no_project_defaults__";
+  type RuntimeOptionConfigs = Partial<Record<string, Record<string, unknown>>>;
+  const [runtimeOptionConfigs, setRuntimeOptionConfigs] = usePersistedState<RuntimeOptionConfigs>(
+    runtimeConfigKey,
+    {},
+    { listener: true }
+  );
+
+  const readOptionField = (runtimeMode: string, field: string): string => {
+    const modeConfig = runtimeOptionConfigs[runtimeMode];
+    if (!modeConfig || typeof modeConfig !== "object") return "";
+    const val = modeConfig[field];
+    return typeof val === "string" ? val : "";
+  };
+
+  const setOptionField = (runtimeMode: string, field: string, value: string) => {
+    setRuntimeOptionConfigs((prev) => {
+      const existing = prev[runtimeMode];
+      const existingObj = existing && typeof existing === "object" ? existing : {};
+      return { ...prev, [runtimeMode]: { ...existingObj, [field]: value } };
+    });
+  };
 
   const syncProjects = () =>
     refreshProjects().catch(() => {
@@ -567,9 +601,42 @@ export function RuntimesSection() {
                       ) : null}
                     </div>
                     <div className="text-muted text-xs">{runtime.description}</div>
-                    {runtime.options ? (
-                      <div className="text-muted/70 text-[11px]">Options: {runtime.options}</div>
-                    ) : null}
+                    {/* Configurable option inputs — only for project scope, matching the
+                        same localStorage keys the creation flow reads as initial defaults. */}
+                    {(() => {
+                      const optionSpec = getRuntimeOptionField(runtime.id);
+                      if (!optionSpec || !selectedProjectPath) {
+                        // Global scope: show option description if available
+                        if (runtime.options && !selectedProjectPath) {
+                          return (
+                            <div className="text-muted/70 text-[11px]">
+                              Options: {runtime.options}
+                            </div>
+                          );
+                        }
+                        return null;
+                      }
+                      return (
+                        <input
+                          type="text"
+                          value={readOptionField(
+                            runtime.id === "coder" ? "ssh" : runtime.id,
+                            optionSpec.field
+                          )}
+                          onChange={(e) =>
+                            setOptionField(
+                              runtime.id === "coder" ? "ssh" : runtime.id,
+                              optionSpec.field,
+                              e.target.value
+                            )
+                          }
+                          placeholder={optionSpec.placeholder}
+                          disabled={rowDisabled}
+                          className="border-border-medium bg-background-secondary text-foreground placeholder:text-muted focus:border-accent mt-1.5 h-7 w-full max-w-[260px] rounded border px-2 text-xs focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                          aria-label={`${optionSpec.label} for ${runtime.label}`}
+                        />
+                      );
+                    })()}
                   </div>
                 </div>
                 <div className="flex items-center gap-3">

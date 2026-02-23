@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import type { RuntimeMode } from "@/common/types/runtime";
+import type { RuntimeEnablementId, RuntimeMode } from "@/common/types/runtime";
 import {
   SSHIcon,
   WorktreeIcon,
@@ -12,6 +12,49 @@ import {
 export interface RuntimeIconProps {
   size?: number;
   className?: string;
+}
+
+export interface RuntimeOptionFieldSpec {
+  readonly field: string;
+  readonly label: string;
+  readonly placeholder: string;
+  readonly summary: string;
+}
+
+export const RUNTIME_OPTION_FIELDS = {
+  ssh: {
+    field: "host",
+    label: "Default host",
+    placeholder: "user@host",
+    summary: "Host (user@host)",
+  },
+  docker: {
+    field: "image",
+    label: "Default image",
+    placeholder: "node:20",
+    summary: "Image name (e.g. node:20)",
+  },
+  devcontainer: {
+    field: "configPath",
+    label: "Default config",
+    placeholder: ".devcontainer/devcontainer.json",
+    summary: "Config path (devcontainer.json)",
+  },
+} as const satisfies Partial<Record<RuntimeEnablementId, RuntimeOptionFieldSpec>>;
+
+export function getRuntimeOptionField(
+  runtimeId: RuntimeEnablementId
+): RuntimeOptionFieldSpec | null {
+  switch (runtimeId) {
+    case "ssh":
+      return RUNTIME_OPTION_FIELDS.ssh;
+    case "docker":
+      return RUNTIME_OPTION_FIELDS.docker;
+    case "devcontainer":
+      return RUNTIME_OPTION_FIELDS.devcontainer;
+    default:
+      return null;
+  }
 }
 
 export interface RuntimeUiSpec {
@@ -112,7 +155,7 @@ export const RUNTIME_UI = {
   docker: {
     label: "Docker",
     description: "Isolated container per workspace",
-    options: "Image name (e.g. node:20)",
+    options: RUNTIME_OPTION_FIELDS.docker.summary,
     docsPath: "/runtime/docker",
     Icon: DockerIcon,
     button: {
@@ -136,7 +179,7 @@ export const RUNTIME_UI = {
   devcontainer: {
     label: "Dev container",
     description: "Uses project's devcontainer.json configuration",
-    options: "Config path (devcontainer.json)",
+    options: RUNTIME_OPTION_FIELDS.devcontainer.summary,
     docsPath: "/runtime/devcontainer",
     Icon: DevcontainerIcon,
     button: {

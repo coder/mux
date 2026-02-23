@@ -32,6 +32,7 @@ import { Skeleton } from "../ui/skeleton";
 import { DocsLink } from "../DocsLink";
 import {
   RUNTIME_CHOICE_UI,
+  RUNTIME_OPTION_FIELDS,
   type RuntimeChoice,
   type RuntimeIconProps,
 } from "@/browser/utils/runtimeUi";
@@ -871,17 +872,20 @@ export function CreationControls(props: CreationControlsProps) {
 
       {/* Runtime type - button group */}
       <div className="flex flex-col gap-1.5" data-component="RuntimeTypeGroup">
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
           <label className="text-muted-foreground text-xs font-medium">Workspace Type</label>
-          {/* Visual cue when the user has changed the runtime from the project default. */}
-          {runtimeChoice !== props.defaultRuntimeMode && (
-            <span className="text-warning text-[10px] font-medium">(modified)</span>
-          )}
           <span className="text-muted-foreground text-xs">-</span>
+          {/* Distinct button style when runtime selection differs from the project default.
+              Uses consistent padding so the button dimensions never shift. */}
           <button
             type="button"
             onClick={() => settings.open("runtimes", { runtimesProjectPath: props.projectPath })}
-            className="text-accent hover:text-accent/80 cursor-pointer text-xs font-medium hover:underline"
+            className={cn(
+              "cursor-pointer rounded-sm px-1 text-xs font-medium transition-colors",
+              runtimeChoice !== props.defaultRuntimeMode
+                ? "bg-warning/15 text-warning hover:bg-warning/25"
+                : "text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground"
+            )}
           >
             set defaults
           </button>
@@ -1004,7 +1008,7 @@ export function CreationControls(props: CreationControlsProps) {
                 label="host"
                 value={selectedRuntime.host}
                 onChange={(value) => onSelectedRuntimeChange({ mode: "ssh", host: value })}
-                placeholder="user@host"
+                placeholder={RUNTIME_OPTION_FIELDS.ssh.placeholder}
                 disabled={props.disabled}
                 hasError={props.runtimeFieldError === "ssh"}
               />
@@ -1023,7 +1027,7 @@ export function CreationControls(props: CreationControlsProps) {
                   shareCredentials: selectedRuntime.shareCredentials,
                 })
               }
-              placeholder="node:20"
+              placeholder={RUNTIME_OPTION_FIELDS.docker.placeholder}
               disabled={props.disabled}
               hasError={props.runtimeFieldError === "docker"}
               id="docker-image"

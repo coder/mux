@@ -16,8 +16,10 @@ Two fixes are required:
 
 - Make the `configure` runtime more prominent, and call it `set defaults` instead.
   - Create distinct visual style when the current runtime options are not the default so the user
-  can more quickly see how they would persist their changes.
+  can more quickly see how they would persist their changes. Only the button itself should change,
+  and the re-style must not create a layout shift.
 - Include runtime options in the new runtime settings page to clarify how the defaults work there.
+  - These defaults should be configurable just as they are in the new workspace page.
     
 There's also a bug where clicking the configure button on a project page takes you to the 
 settings page with a global scope instead of the project scope. We should fix this as well.
