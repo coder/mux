@@ -267,10 +267,16 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
         </DialogHeader>
         {/* Keep manual /compact discoverability in the settings modal so the inline auto-compact hint stays minimal. */}
         <div className="text-muted text-[10px]">
-          Run <span className="font-mono">/compact</span> to compact manually ·{" "}
-          <span className="font-mono">-m model</span> ·{" "}
-          <span className="font-mono">-t max output tokens</span> · add a followup message on the
-          next line
+          <div>
+            Run <span className="font-mono">/compact</span> to compact manually
+          </div>
+          <div className="mt-1">
+            • <span className="font-mono">-m model</span>
+          </div>
+          <div>
+            • <span className="font-mono">-t max output tokens</span>
+          </div>
+          <div>• add a followup message on the next line</div>
         </div>
         <AutoCompactSettings
           data={data}
