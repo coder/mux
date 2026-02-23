@@ -4634,12 +4634,20 @@ export class WorkspaceService extends EventEmitter {
       throw new Error(`Failed to execute idle compaction: ${formattedError}`);
     }
 
-    // Mark idle compaction AFTER send succeeds. At this point the idle stream is running
-    // and the session is busy, so no concurrent user stream can race with this marker.
-    // The streaming=true snapshot was already emitted without the flag, but the
-    // streaming=false snapshot (emitted by updateStreamingStatus on stream end) will
-    // pick it up — the frontend checks both snapshots.
-    this.idleCompactingWorkspaces.add(workspaceId);
+    // Mark idle compaction only while a stream is actually active.
+    // sendMessage can succeed on startup-abort paths where no stream is running,
+    // and leaking this marker into the next user stream would suppress real notifications.
+    if (session.isBusy()) {
+      // Marker is added after dispatch to avoid races with concurrent user sends.
+      // The streaming=true snapshot was already emitted without the flag, but the
+      // streaming=false snapshot (on stream end) picks up the marker.
+      this.idleCompactingWorkspaces.add(workspaceId);
+      return;
+    }
+
+    // Defensive cleanup for startup-abort paths or extremely fast completions that
+    // finish before executeIdleCompaction regains control.
+    this.idleCompactingWorkspaces.delete(workspaceId);
   }
 
   private async buildIdleCompactionSendOptions(workspaceId: string): Promise<SendMessageOptions> {

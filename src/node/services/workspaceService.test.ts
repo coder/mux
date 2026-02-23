@@ -672,25 +672,42 @@ describe("WorkspaceService idle compaction dispatch", () => {
     await cleanupHistory();
   });
 
-  test("marks idle compaction send as synthetic", async () => {
+  test("marks idle compaction send as synthetic when stream stays active", async () => {
     const workspaceId = "idle-ws";
     const sendMessage = mock(() => Promise.resolve(Ok(undefined)));
     const buildIdleCompactionSendOptions = mock(() =>
       Promise.resolve({ model: "openai:gpt-4o", agentId: "compact" })
     );
 
+    let busyChecks = 0;
+    const session = {
+      isBusy: mock(() => {
+        busyChecks += 1;
+        return busyChecks >= 2;
+      }),
+    } as unknown as AgentSession;
+
     (
       workspaceService as unknown as {
         sendMessage: typeof sendMessage;
         buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+        getOrCreateSession: (workspaceId: string) => AgentSession;
       }
     ).sendMessage = sendMessage;
     (
       workspaceService as unknown as {
         sendMessage: typeof sendMessage;
         buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+        getOrCreateSession: (workspaceId: string) => AgentSession;
       }
     ).buildIdleCompactionSendOptions = buildIdleCompactionSendOptions;
+    (
+      workspaceService as unknown as {
+        sendMessage: typeof sendMessage;
+        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+        getOrCreateSession: (workspaceId: string) => AgentSession;
+      }
+    ).getOrCreateSession = (_workspaceId: string) => session;
 
     await workspaceService.executeIdleCompaction(workspaceId);
 
@@ -705,6 +722,52 @@ describe("WorkspaceService idle compaction dispatch", () => {
         requireIdle: true,
       })
     );
+
+    const idleCompactingWorkspaces = (
+      workspaceService as unknown as { idleCompactingWorkspaces: Set<string> }
+    ).idleCompactingWorkspaces;
+    expect(idleCompactingWorkspaces.has(workspaceId)).toBe(true);
+  });
+
+  test("does not mark idle compaction when send succeeds without active stream", async () => {
+    const workspaceId = "idle-no-stream-ws";
+    const sendMessage = mock(() => Promise.resolve(Ok(undefined)));
+    const buildIdleCompactionSendOptions = mock(() =>
+      Promise.resolve({ model: "openai:gpt-4o", agentId: "compact" })
+    );
+
+    const session = {
+      isBusy: mock(() => false),
+    } as unknown as AgentSession;
+
+    (
+      workspaceService as unknown as {
+        sendMessage: typeof sendMessage;
+        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+        getOrCreateSession: (workspaceId: string) => AgentSession;
+      }
+    ).sendMessage = sendMessage;
+    (
+      workspaceService as unknown as {
+        sendMessage: typeof sendMessage;
+        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+        getOrCreateSession: (workspaceId: string) => AgentSession;
+      }
+    ).buildIdleCompactionSendOptions = buildIdleCompactionSendOptions;
+    (
+      workspaceService as unknown as {
+        sendMessage: typeof sendMessage;
+        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+        getOrCreateSession: (workspaceId: string) => AgentSession;
+      }
+    ).getOrCreateSession = (_workspaceId: string) => session;
+
+    await workspaceService.executeIdleCompaction(workspaceId);
+
+    const idleCompactingWorkspaces = (
+      workspaceService as unknown as { idleCompactingWorkspaces: Set<string> }
+    ).idleCompactingWorkspaces;
+    expect(idleCompactingWorkspaces.has(workspaceId)).toBe(false);
   });
 
   test("propagates busy-skip errors", async () => {
