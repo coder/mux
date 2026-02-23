@@ -810,6 +810,55 @@ describe("WorkspaceService idle compaction dispatch", () => {
     }
     expect(executionError.message).toContain("idle-only send was skipped");
   });
+  test("does not tag streaming=true snapshots as idle compaction", async () => {
+    const workspaceId = "idle-streaming-true-no-tag";
+    const snapshot = {
+      recency: Date.now(),
+      streaming: true,
+      lastModel: "claude-sonnet-4",
+      lastThinkingLevel: null,
+    };
+
+    const setStreaming = mock(() => Promise.resolve(snapshot));
+    const emitWorkspaceActivity = mock(
+      (_workspaceId: string, _snapshot: typeof snapshot) => undefined
+    );
+
+    (
+      workspaceService as unknown as {
+        extensionMetadata: ExtensionMetadataService;
+        emitWorkspaceActivity: typeof emitWorkspaceActivity;
+      }
+    ).extensionMetadata = {
+      setStreaming,
+    } as unknown as ExtensionMetadataService;
+    (
+      workspaceService as unknown as {
+        extensionMetadata: ExtensionMetadataService;
+        emitWorkspaceActivity: typeof emitWorkspaceActivity;
+      }
+    ).emitWorkspaceActivity = emitWorkspaceActivity;
+
+    const internals = workspaceService as unknown as {
+      idleCompactingWorkspaces: Set<string>;
+      updateStreamingStatus: (
+        workspaceId: string,
+        streaming: boolean,
+        model?: string,
+        agentId?: string
+      ) => Promise<void>;
+    };
+
+    internals.idleCompactingWorkspaces.add(workspaceId);
+
+    await internals.updateStreamingStatus(workspaceId, true);
+
+    expect(setStreaming).toHaveBeenCalledWith(workspaceId, true, undefined, undefined);
+    expect(emitWorkspaceActivity).toHaveBeenCalledTimes(1);
+    expect(emitWorkspaceActivity).toHaveBeenCalledWith(workspaceId, snapshot);
+    expect(internals.idleCompactingWorkspaces.has(workspaceId)).toBe(true);
+  });
+
   test("clears idle marker when streaming=false metadata update fails", async () => {
     const workspaceId = "idle-streaming-false-failure";
 

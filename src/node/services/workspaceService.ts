@@ -1196,10 +1196,12 @@ export class WorkspaceService extends EventEmitter {
         model,
         thinkingLevel
       );
-      const isIdleCompaction = this.idleCompactingWorkspaces.has(workspaceId);
+      // Idle compaction tagging is stop-snapshot only. Never tag streaming=true updates,
+      // otherwise fast follow-up turns can inherit stale idle metadata before cleanup runs.
+      const shouldTagIdleCompaction = !streaming && this.idleCompactingWorkspaces.has(workspaceId);
       this.emitWorkspaceActivity(
         workspaceId,
-        isIdleCompaction ? { ...snapshot, isIdleCompaction: true } : snapshot
+        shouldTagIdleCompaction ? { ...snapshot, isIdleCompaction: true } : snapshot
       );
     } catch (error) {
       log.error("Failed to update workspace streaming status", { workspaceId, error });
