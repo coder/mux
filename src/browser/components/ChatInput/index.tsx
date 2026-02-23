@@ -880,6 +880,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     !sendInFlightBlocksInput &&
     !coderPresetsLoading &&
     !policyBlocksCreateSend;
+  // Dispatch-mode choice (send-after-step vs send-after-turn) should track actual
+  // sendability — not just typed text. canSend already covers text, attachments, and reviews.
+  const canChooseDispatchMode = canInterrupt && canSend;
 
   // User request: this sync effect runs on mount and when defaults/config change.
   // Only treat *real* agent changes as explicit (origin "agent"); everything else is "sync".
@@ -2542,7 +2545,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
                   {variant === "workspace" && (
                     <SendModeDropdown
-                      disabled={!canInterrupt || !hasTypedText || !canSend}
+                      disabled={!canChooseDispatchMode}
                       triggerClassName="-ml-1 px-0"
                       onSelect={(mode) => {
                         void handleSend(

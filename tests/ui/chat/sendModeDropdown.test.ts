@@ -1,12 +1,15 @@
 import "../dom";
-import { fireEvent, waitFor } from "@testing-library/react";
+import { act, fireEvent, waitFor } from "@testing-library/react";
 
 import { preloadTestModules, type TestEnvironment } from "../../ipc/setup";
 
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { workspaceStore } from "@/browser/stores/WorkspaceStore";
+import { getReviewsKey } from "@/common/constants/storage";
+import type { ReviewsState } from "@/common/types/review";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 
 import { createAppHarness, type AppHarness } from "../harness";
-import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 
 interface ServiceContainerPrivates {
   backgroundProcessManager: BackgroundProcessManager;
@@ -50,7 +53,8 @@ function getSendModeButton(container: HTMLElement): HTMLButtonElement | null {
     container.querySelectorAll('button[aria-label="Send mode options"]')
   ) as HTMLButtonElement[];
 
-  return buttons[0] ?? null;
+  // Multiple ChatInput instances can be mounted; the active workspace input is the last one.
+  return buttons.at(-1) ?? null;
 }
 
 function getSendModeTrigger(container: HTMLElement): HTMLButtonElement | null {
@@ -73,6 +77,40 @@ async function waitForSendModeTrigger(container: HTMLElement): Promise<HTMLButto
     },
     { timeout: 30_000 }
   );
+}
+
+async function openSendModeMenu(container: HTMLElement): Promise<void> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const trigger = await waitForSendModeTrigger(container);
+    act(() => {
+      fireEvent.click(trigger);
+    });
+
+    try {
+      await waitFor(
+        () => {
+          const expandedTrigger = container.querySelector(
+            'button[aria-label="Send mode options"][aria-expanded="true"]'
+          );
+          if (!expandedTrigger) {
+            throw new Error("Send mode menu did not open");
+          }
+        },
+        { timeout: 2_000 }
+      );
+      return;
+    } catch (error) {
+      if (error instanceof Error) {
+        lastError = error;
+      } else {
+        lastError = new Error("Send mode menu did not open");
+      }
+    }
+  }
+
+  throw lastError ?? new Error("Send mode menu did not open");
 }
 
 async function waitForCanInterrupt(workspaceId: string, expected: boolean): Promise<void> {
@@ -109,7 +147,9 @@ async function getActiveTextarea(container: HTMLElement): Promise<HTMLTextAreaEl
 }
 
 async function startStreamingTurn(app: AppHarness, label: string): Promise<void> {
-  await app.chat.send(`[mock:wait-start] [force] ${label}`);
+  // Use a long mock echo payload so canInterrupt stays true long enough for dropdown interactions.
+  const longStreamingTail = " keep-streaming".repeat(600);
+  await app.chat.send(`[mock:wait-start] ${label}${longStreamingTail}`);
   app.env.services.aiService.releaseMockStreamStartGate(app.workspaceId);
   await waitForCanInterrupt(app.workspaceId, true);
 }
@@ -174,8 +214,7 @@ describe("SendModeDropdown (mock AI router)", () => {
       await startStreamingTurn(app, "open send mode dropdown menu");
       await app.chat.typeWithoutSending("open send mode menu");
 
-      const trigger = await waitForSendModeTrigger(app.view.container);
-      fireEvent.click(trigger);
+      await openSendModeMenu(app.view.container);
 
       const stepRow = await waitFor(
         () => {
@@ -295,6 +334,48 @@ describe("SendModeDropdown (mock AI router)", () => {
       await app.chat.expectStreamComplete();
     } finally {
       unregister?.();
+      await app.dispose();
+    }
+  }, 60_000);
+
+  test("dropdown enabled with review-only draft during streaming (no typed text)", async () => {
+    const app = await createAppHarness({ branchPrefix: "send-mode-dropdown" });
+
+    try {
+      await startStreamingTurn(app, "review-only dropdown enablement");
+
+      // Verify dropdown is disabled with no content
+      const disabledTrigger = getSendModeButton(app.view.container);
+      expect(disabledTrigger).not.toBeNull();
+      expect(disabledTrigger?.disabled).toBe(true);
+
+      // Seed an attached review via persisted state (useReviews listens cross-component)
+      act(() => {
+        updatePersistedState<ReviewsState>(getReviewsKey(app.workspaceId), {
+          workspaceId: app.workspaceId,
+          reviews: {
+            "review-1": {
+              id: "review-1",
+              status: "attached",
+              createdAt: Date.now(),
+              data: {
+                filePath: "src/example.ts",
+                lineRange: "+1",
+                selectedCode: "const x = 1;",
+                userNote: "Check this",
+              },
+            },
+          },
+          lastUpdated: Date.now(),
+        });
+      });
+
+      // Dropdown should become enabled — canSend is true via review, canInterrupt is true via stream
+      const enabledTrigger = await waitForSendModeTrigger(app.view.container);
+      expect(enabledTrigger.disabled).toBe(false);
+
+      await app.chat.expectStreamComplete(60_000);
+    } finally {
       await app.dispose();
     }
   }, 60_000);
