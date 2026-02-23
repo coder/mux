@@ -30,25 +30,11 @@ export const buildPendingFromDisplayed = (message: DisplayedUserMessage): Pendin
   reviews: message.reviews ?? [],
 });
 
-export const buildPendingFromContent = (content: string): PendingUserMessage => ({
-  content,
-  fileParts: [],
-  reviews: [],
-});
-
 export const buildEditingStateFromDisplayed = (
   message: DisplayedUserMessage
 ): EditingMessageState => ({
   id: message.historyId,
   pending: buildPendingFromDisplayed(message),
-});
-
-export const buildEditingStateFromContent = (
-  messageId: string,
-  content: string
-): EditingMessageState => ({
-  id: messageId,
-  pending: buildPendingFromContent(content),
 });
 
 /**
