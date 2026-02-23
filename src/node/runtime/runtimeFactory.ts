@@ -164,6 +164,7 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
         bgOutputDir: config.bgOutputDir,
         identityFile: config.identityFile,
         port: config.port,
+        forwardAgent: config.forwardAgent,
       };
 
       const useSSH2 = shouldUseSSH2Runtime();

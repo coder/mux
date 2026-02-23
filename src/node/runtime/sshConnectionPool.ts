@@ -30,6 +30,8 @@ export interface SSHConnectionConfig {
   identityFile?: string;
   /** Optional: SSH port (default: 22) */
   port?: number;
+  /** Optional: Forward SSH agent to remote host (enables git/SSH on remote) */
+  forwardAgent?: boolean;
 }
 
 /**

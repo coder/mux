@@ -800,6 +800,27 @@ export function CreationControls(props: CreationControlsProps) {
               />
             )}
 
+          {/* SSH agent forwarding checkbox - hidden when Coder runtime is selected */}
+          {selectedRuntime.mode === "ssh" && !isCoderSelected && (
+            <label className="flex items-center gap-1.5 text-xs">
+              <input
+                type="checkbox"
+                checked={selectedRuntime.forwardAgent ?? false}
+                onChange={(e) =>
+                  onSelectedRuntimeChange({
+                    mode: "ssh",
+                    host: selectedRuntime.host,
+                    coder: selectedRuntime.coder,
+                    forwardAgent: e.target.checked,
+                  })
+                }
+                disabled={props.disabled}
+                className="accent-accent"
+              />
+              <span className="text-muted">Forward SSH agent</span>
+            </label>
+          )}
+
           {/* Runtime-specific config inputs */}
 
           {selectedRuntime.mode === "docker" && (

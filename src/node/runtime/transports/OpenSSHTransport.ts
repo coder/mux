@@ -103,6 +103,8 @@ export class OpenSSHTransport implements SSHTransport {
   private buildSSHArgs(): string[] {
     const args: string[] = [];
 
+    if (this.config.forwardAgent) args.push("-A");
+
     if (this.config.port) {
       args.push("-p", this.config.port.toString());
     }

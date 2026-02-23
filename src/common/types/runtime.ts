@@ -56,7 +56,7 @@ export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
 export type ParsedRuntime =
   | { mode: "local" }
   | { mode: "worktree" }
-  | { mode: "ssh"; host: string; coder?: CoderWorkspaceConfig }
+  | { mode: "ssh"; host: string; coder?: CoderWorkspaceConfig; forwardAgent?: boolean }
   | { mode: "docker"; image: string; shareCredentials?: boolean }
   | { mode: "devcontainer"; configPath: string; shareCredentials?: boolean };
 
@@ -172,6 +172,7 @@ export function buildRuntimeConfig(parsed: ParsedRuntime): RuntimeConfig | undef
         host: parsed.host.trim(),
         srcBaseDir: "~/mux", // Default remote base directory (tilde resolved by backend)
         coder: parsed.coder,
+        forwardAgent: parsed.forwardAgent,
       };
     case RUNTIME_MODE.DOCKER:
       return {

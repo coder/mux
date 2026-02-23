@@ -607,6 +607,7 @@ export class SSH2ConnectionPool {
               keepaliveInterval: 5000,
               keepaliveCountMax: 2,
               ...(privateKey ? { privateKey } : {}),
+              ...(config.forwardAgent && { agentForward: true }),
             };
 
             client.connect(connectOptions);

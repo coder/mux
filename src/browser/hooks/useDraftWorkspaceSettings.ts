@@ -48,12 +48,14 @@ export interface DraftWorkspaceSettings {
 interface SshRuntimeConfig {
   host: string;
   coder?: CoderWorkspaceConfig;
+  forwardAgent?: boolean;
 }
 
 interface SshRuntimeState {
   host: string;
   coderEnabled: boolean;
   coderConfig: CoderWorkspaceConfig | null;
+  forwardAgent: boolean;
 }
 
 /** Stable fallback for Coder config to avoid new object on every render */
@@ -80,6 +82,7 @@ const buildRuntimeForMode = (
         mode: "ssh",
         host: effectiveHost,
         coder: sshConfig.coder,
+        forwardAgent: sshConfig.forwardAgent,
       };
     }
     case RUNTIME_MODE.DOCKER:
@@ -220,6 +223,7 @@ export function useDraftWorkspaceSettings(
       "coderConfig",
       null
     ),
+    forwardAgent: readRuntimeConfigFrom(configs, RUNTIME_MODE.SSH, "forwardAgent", false),
   });
 
   const readSshRuntimeConfig = (configs: LastRuntimeConfigs): SshRuntimeConfig => {
@@ -228,6 +232,7 @@ export function useDraftWorkspaceSettings(
     return {
       host: sshState.host,
       coder: sshState.coderEnabled && sshState.coderConfig ? sshState.coderConfig : undefined,
+      forwardAgent: sshState.forwardAgent,
     };
   };
 
@@ -282,6 +287,7 @@ export function useDraftWorkspaceSettings(
       if (config.coder) {
         setLastRuntimeConfig(RUNTIME_MODE.SSH, "coderConfig", config.coder);
       }
+      setLastRuntimeConfig(RUNTIME_MODE.SSH, "forwardAgent", config.forwardAgent ?? false);
     },
     [setLastRuntimeConfig]
   );
@@ -337,7 +343,7 @@ export function useDraftWorkspaceSettings(
 
   const defaultRuntime = buildRuntimeForMode(
     defaultRuntimeMode,
-    { host: defaultSshHost, coder: defaultSshCoder },
+    { host: defaultSshHost, coder: defaultSshCoder, forwardAgent: lastSsh.forwardAgent },
     defaultDockerImage,
     lastShareCredentials,
     defaultDevcontainerConfigPath,
@@ -361,7 +367,7 @@ export function useDraftWorkspaceSettings(
       setSelectedRuntimeState(
         buildRuntimeForMode(
           defaultRuntimeMode,
-          { host: defaultSshHost, coder: defaultSshCoder },
+          { host: defaultSshHost, coder: defaultSshCoder, forwardAgent: lastSsh.forwardAgent },
           defaultDockerImage,
           lastShareCredentials,
           defaultDevcontainerConfigPath,
@@ -379,6 +385,7 @@ export function useDraftWorkspaceSettings(
     defaultDockerImage,
     lastShareCredentials,
     defaultSshCoder,
+    lastSsh.forwardAgent,
     defaultDevcontainerConfigPath,
     lastDevcontainerShareCredentials,
   ]);
@@ -458,7 +465,11 @@ export function useDraftWorkspaceSettings(
     // Avoid wiping the remembered value when the UI switches modes with an empty field.
     // Avoid persisting the Coder placeholder as the remembered SSH host.
     if (runtime.mode === RUNTIME_MODE.SSH) {
-      writeSshRuntimeConfig({ host: runtime.host, coder: runtime.coder });
+      writeSshRuntimeConfig({
+        host: runtime.host,
+        coder: runtime.coder,
+        forwardAgent: runtime.forwardAgent,
+      });
     } else if (runtime.mode === RUNTIME_MODE.DOCKER) {
       if (runtime.image.trim()) {
         setLastRuntimeConfig(RUNTIME_MODE.DOCKER, "image", runtime.image);
@@ -495,10 +506,12 @@ export function useDraftWorkspaceSettings(
         ? {
             host: CODER_RUNTIME_PLACEHOLDER,
             coder: freshSshState.coderConfig ?? DEFAULT_CODER_CONFIG,
+            forwardAgent: freshSshState.forwardAgent,
           }
         : {
             host: freshSshState.host,
             coder: undefined,
+            forwardAgent: freshSshState.forwardAgent,
           };
 
     const newRuntime = buildRuntimeForMode(

@@ -93,6 +93,9 @@ export const RuntimeConfigSchema = z.union([
     coder: CoderWorkspaceConfigSchema.optional().meta({
       description: "Coder workspace configuration (when using Coder as SSH backend)",
     }),
+    forwardAgent: z.boolean().optional().meta({
+      description: "Forward SSH agent to remote host (enables git/SSH on remote)",
+    }),
   }),
   // Docker runtime - each workspace runs in its own container
   z.object({
