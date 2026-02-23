@@ -24,19 +24,19 @@ export interface RuntimeOptionFieldSpec {
 export const RUNTIME_OPTION_FIELDS = {
   ssh: {
     field: "host",
-    label: "Default host",
+    label: "Host",
     placeholder: "user@host",
     summary: "Host (user@host)",
   },
   docker: {
     field: "image",
-    label: "Default image",
+    label: "Image",
     placeholder: "node:20",
     summary: "Image name (e.g. node:20)",
   },
   devcontainer: {
     field: "configPath",
-    label: "Default config",
+    label: "Config",
     placeholder: ".devcontainer/devcontainer.json",
     summary: "Config path (devcontainer.json)",
   },
@@ -131,7 +131,7 @@ export const RUNTIME_UI = {
   ssh: {
     label: "SSH",
     description: "Remote clone on SSH host",
-    options: "Host (user@host)",
+    options: RUNTIME_OPTION_FIELDS.ssh.summary,
     docsPath: "/runtime/ssh",
     Icon: SSHIcon,
     button: {

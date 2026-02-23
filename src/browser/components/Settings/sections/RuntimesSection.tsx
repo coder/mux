@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Loader2 } from "lucide-react";
 
 import { resolveCoderAvailability } from "@/browser/components/ChatInput/CoderControls";
+import { RuntimeConfigInput } from "@/browser/components/RuntimeConfigInput";
 import {
   Select,
   SelectContent,
@@ -552,6 +553,8 @@ export function RuntimesSection() {
             const rowDisabled = isProjectScope && !projectOverrideEnabled;
             const isLastEnabled = effectiveEnablement[runtime.id] && enabledRuntimeCount <= 1;
             const switchDisabled = rowDisabled || isLastEnabled;
+            const optionSpec = getRuntimeOptionField(runtime.id);
+            const optionRuntimeMode = runtime.id === "coder" ? "ssh" : runtime.id;
             const switchControl = (
               <Switch
                 checked={effectiveEnablement[runtime.id]}
@@ -601,42 +604,26 @@ export function RuntimesSection() {
                       ) : null}
                     </div>
                     <div className="text-muted text-xs">{runtime.description}</div>
-                    {/* Configurable option inputs — only for project scope, matching the
-                        same localStorage keys the creation flow reads as initial defaults. */}
-                    {(() => {
-                      const optionSpec = getRuntimeOptionField(runtime.id);
-                      if (!optionSpec || !selectedProjectPath) {
-                        // Global scope: show option description if available
-                        if (runtime.options && !selectedProjectPath) {
-                          return (
-                            <div className="text-muted/70 text-[11px]">
-                              Options: {runtime.options}
-                            </div>
-                          );
+                    {/* Configurable option inputs — project scope uses the same labeled
+                        input component and localStorage defaults as the creation flow. */}
+                    {!optionSpec || !selectedProjectPath ? (
+                      runtime.options && !selectedProjectPath ? (
+                        <div className="text-muted/70 text-[11px]">Options: {runtime.options}</div>
+                      ) : null
+                    ) : (
+                      <RuntimeConfigInput
+                        label={optionSpec.label}
+                        value={readOptionField(optionRuntimeMode, optionSpec.field)}
+                        onChange={(value) =>
+                          setOptionField(optionRuntimeMode, optionSpec.field, value)
                         }
-                        return null;
-                      }
-                      return (
-                        <input
-                          type="text"
-                          value={readOptionField(
-                            runtime.id === "coder" ? "ssh" : runtime.id,
-                            optionSpec.field
-                          )}
-                          onChange={(e) =>
-                            setOptionField(
-                              runtime.id === "coder" ? "ssh" : runtime.id,
-                              optionSpec.field,
-                              e.target.value
-                            )
-                          }
-                          placeholder={optionSpec.placeholder}
-                          disabled={rowDisabled}
-                          className="border-border-medium bg-background-secondary text-foreground placeholder:text-muted focus:border-accent mt-1.5 h-7 w-full max-w-[260px] rounded border px-2 text-xs focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                          aria-label={`${optionSpec.label} for ${runtime.label}`}
-                        />
-                      );
-                    })()}
+                        placeholder={optionSpec.placeholder}
+                        disabled={rowDisabled}
+                        className="mt-1.5"
+                        inputClassName="w-full max-w-[260px]"
+                        ariaLabel={`${optionSpec.label} for ${runtime.label}`}
+                      />
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
