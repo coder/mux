@@ -115,6 +115,13 @@ const AutoCompactSettings: React.FC<{
             Drag blue slider to adjust usage-based auto-compaction
           </div>
         )}
+        {/* Keep manual /compact discoverability in the settings modal so the inline auto-compact hint stays minimal. */}
+        <div className="text-muted mt-1 text-[10px]">
+          Run <span className="font-mono">/compact</span> to compact manually ·{" "}
+          <span className="font-mono">-m model</span> ·{" "}
+          <span className="font-mono">-t max output tokens</span> · add a followup message on the
+          next line
+        </div>
       </div>
 
       {/* Token meter with threshold slider + tick marks */}

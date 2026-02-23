@@ -43,14 +43,12 @@ export const CompactionWarning: React.FC<{
   }
 
   return (
-    <div className="mx-4 mt-2 mb-1 flex flex-col text-right text-[10px]">
-      <div className={isUrgent ? "text-plan-mode font-semibold" : "text-muted"}>{text}</div>
-      <div className="text-muted">
-        Run <span className="font-mono">/compact</span> to compact manually ·{" "}
-        <span className="font-mono">-m model</span> ·{" "}
-        <span className="font-mono">-t max output tokens</span> · add a followup message on the next
-        line
-      </div>
+    <div
+      className={`mx-4 mt-2 mb-1 text-right text-[10px] ${
+        isUrgent ? "text-plan-mode font-semibold" : "text-muted"
+      }`}
+    >
+      {text}
     </div>
   );
 };
