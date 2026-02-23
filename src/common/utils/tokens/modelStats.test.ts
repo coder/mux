@@ -25,9 +25,7 @@ describe("getModelStats", () => {
       expect(stats?.input_cost_per_token).toBeGreaterThan(0);
     });
 
-    test("models-extra.ts should override models.json", () => {
-      // gpt-5.2-codex exists in both files - models-extra.ts has correct 272k, models.json has incorrect 400k.
-      // The exact value matters here: it proves the override mechanism works.
+    test("should return synced upstream values for gpt-5.2-codex", () => {
       const stats = getModelStats("openai:gpt-5.2-codex");
       expect(stats).not.toBeNull();
       expect(stats?.max_input_tokens).toBe(272000);

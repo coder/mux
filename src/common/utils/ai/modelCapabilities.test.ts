@@ -9,15 +9,13 @@ describe("getModelCapabilities", () => {
     expect(caps?.supportsVision).toBe(true);
   });
 
-  it("merges models.json + modelsExtra so overrides don't wipe capabilities", () => {
-    // claude-opus-4-5 exists in both sources; modelsExtra intentionally overrides
-    // pricing/token limits, but it should not wipe upstream capability flags.
+  it("returns capabilities for upstream Anthropic models", () => {
     const caps = getModelCapabilities("anthropic:claude-opus-4-5");
     expect(caps).not.toBeNull();
     expect(caps?.supportsPdfInput).toBe(true);
   });
 
-  it("keeps explicit PDF support for Opus 4.6 from models-extra", () => {
+  it("retains PDF support for Opus 4.6", () => {
     const caps = getModelCapabilities("anthropic:claude-opus-4-6");
     expect(caps).not.toBeNull();
     expect(caps?.supportsPdfInput).toBe(true);
@@ -29,9 +27,9 @@ describe("getModelCapabilities", () => {
   });
 
   it("returns capabilities for models present only in models-extra", () => {
-    // This model is defined in models-extra.ts but not (yet) in upstream models.json.
-    const caps = getModelCapabilities("openrouter:z-ai/glm-4.6");
+    const caps = getModelCapabilities("openai:gpt-5.3-codex");
     expect(caps).not.toBeNull();
+    expect(caps?.supportsVision).toBe(true);
   });
 
   it("returns maxPdfSizeMb when present in model metadata", () => {

@@ -36,18 +36,82 @@ a matching entry. The lookup keys follow the same logic as `modelStats.ts`:
 - Bare model name (e.g., `gpt-5.2`)
 - Provider-prefixed name (e.g., `openai/gpt-5.2`)
 
+Use this script to print each `models-extra` entry, whether upstream has it, and which critical
+fields differ:
+
+```bash
+bun -e '
+import modelsJson from "./src/common/utils/tokens/models.json";
+import { modelsExtra } from "./src/common/utils/tokens/models-extra";
+
+const critical = [
+  "max_input_tokens",
+  "max_output_tokens",
+  "input_cost_per_token",
+  "output_cost_per_token",
+  "cache_creation_input_token_cost",
+  "cache_read_input_token_cost",
+  "mode",
+] as const;
+
+function parseNum(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = Number(v.replace(/,/g, "").trim());
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+for (const [model, extra] of Object.entries(modelsExtra)) {
+  const provider = extra.litellm_provider ?? "";
+  const candidates = [
+    model,
+    provider ? `${provider}/${model}` : null,
+    provider ? `${provider}/${model}-cloud` : null,
+  ].filter(Boolean) as string[];
+
+  const foundKey = candidates.find((k) => (modelsJson as Record<string, unknown>)[k]);
+  if (!foundKey) {
+    console.log(`${model} | upstream=missing | decision=keep`);
+    continue;
+  }
+
+  const upstream = (modelsJson as Record<string, Record<string, unknown>>)[foundKey];
+  const diffs = critical.filter((field) => {
+    const ev = extra[field];
+    const uv = upstream[field];
+    if (ev == null && uv == null) return false;
+    const en = parseNum(ev);
+    const un = parseNum(uv);
+    return en != null || un != null ? en !== un : ev !== uv;
+  });
+
+  console.log(
+    `${model} | upstream=${foundKey} | diffs=${diffs.join(",") || "none"} | decision=${
+      diffs.length === 0 ? "remove" : "review"
+    }`
+  );
+}
+'
+```
+
+Then manually inspect each `review` entry to decide whether upstream is now accurate enough to
+remove the local override.
+
 ### 3. Decide: remove, keep, or update
 
 For each models-extra entry found upstream, compare the **critical fields**:
 
-| Field                             | Priority                       |
-| --------------------------------- | ------------------------------ |
-| `max_input_tokens`                | Must match or be acceptable    |
-| `max_output_tokens`               | Must match or be acceptable    |
-| `input_cost_per_token`            | Must match exactly             |
-| `output_cost_per_token`           | Must match exactly             |
-| `cache_creation_input_token_cost` | Must match if present in extra |
-| `cache_read_input_token_cost`     | Must match if present in extra |
+| Field                             | Priority                                       |
+| --------------------------------- | ---------------------------------------------- |
+| `max_input_tokens`                | Must match or be acceptable                    |
+| `max_output_tokens`               | Must match or be acceptable                    |
+| `input_cost_per_token`            | Must match exactly                             |
+| `output_cost_per_token`           | Must match exactly                             |
+| `cache_creation_input_token_cost` | Must match if present in extra                 |
+| `cache_read_input_token_cost`     | Must match if present in extra                 |
+| `mode`                            | Must match when provider routing depends on it |
 
 **Decision matrix:**
 
@@ -96,6 +160,18 @@ bun test src/common/utils/ai/modelCapabilities.test.ts
 If any test hard-codes a value from a removed models-extra entry (e.g., asserting
 `max_input_tokens === 272000` for a model that now resolves from upstream with a
 different value), update the test expectation to match the new upstream data.
+
+## Findings from 2026-02-23 update cycle
+
+- Upstream LiteLLM had caught up on most previously custom entries; only one model
+  (`gpt-5.3-codex`) still required a local `models-extra` entry.
+- Several stale overrides were **worse** than upstream (e.g., lower max token limits or outdated
+  `mode: "chat"` where upstream now uses `mode: "responses"`).
+- `max_output_tokens` changed for some models without cost changes, so pruning decisions should
+  always compare token limits in addition to pricing fields.
+
+**Lesson:** default to removing local overrides once upstream is present, unless there is a
+clear, documented mismatch that affects runtime behavior or cost accounting.
 
 ## Common Pitfalls
 
