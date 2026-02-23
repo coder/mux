@@ -5,10 +5,14 @@
  * Chromatic is configured to snapshot both light and dark themes.
  */
 
+import { within, waitFor, userEvent } from "@storybook/test";
+import type { ComponentType } from "react";
+
+import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
+
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createAssistantMessage, createUserMessage, STABLE_TIMESTAMP } from "./mockFactory";
 import { setupSimpleChatStory } from "./storyHelpers";
-import type { ComponentType } from "react";
 import {
   blurActiveElement,
   waitForChatInputAutofocusDone,
@@ -70,6 +74,23 @@ const MESSAGES = [
     { historySequence: 3, timestamp: STABLE_TIMESTAMP - 100_000 }
   ),
 ] as const;
+
+const TOUCH_REVIEW_IMMERSIVE_WORKSPACE_ID = "ws-iphone-17-pro-max-touch-review";
+const TOUCH_REVIEW_IMMERSIVE_DIFF = `diff --git a/src/mobile/review.tsx b/src/mobile/review.tsx
+index 1111111..2222222 100644
+--- a/src/mobile/review.tsx
++++ b/src/mobile/review.tsx
+@@ -10,6 +10,10 @@ export function ReviewPanel() {
+   return (
+     <section>
++      <h2 className="sr-only">Touch review</h2>
+       <p>Review hunk interactions on mobile.</p>
++      <p>Tap any changed line to add a note immediately.</p>
+     </section>
+   );
+ }
+`;
+const TOUCH_REVIEW_IMMERSIVE_NUMSTAT = "2\t0\tsrc/mobile/review.tsx";
 
 export default {
   ...appMeta,
@@ -140,5 +161,73 @@ export const IPhone17ProMax: AppStory = {
   },
   play: async ({ canvasElement }) => {
     await stabilizePhoneViewportStory(canvasElement);
+  },
+};
+
+export const IPhone17ProMaxTouchReviewImmersive: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: TOUCH_REVIEW_IMMERSIVE_WORKSPACE_ID,
+          workspaceName: "mobile-review",
+          projectName: "mux",
+          messages: [...MESSAGES],
+          gitDiff: {
+            diffOutput: TOUCH_REVIEW_IMMERSIVE_DIFF,
+            numstatOutput: TOUCH_REVIEW_IMMERSIVE_NUMSTAT,
+          },
+        })
+      }
+    />
+  ),
+  decorators: [IPhone17ProMaxDecorator],
+  parameters: {
+    ...appMeta.parameters,
+    chromatic: {
+      ...(appMeta.parameters?.chromatic ?? {}),
+      cropToViewport: true,
+      modes: {
+        dark: { theme: "dark", viewport: IPHONE_17_PRO_MAX, hasTouch: true },
+        light: { theme: "light", viewport: IPHONE_17_PRO_MAX, hasTouch: true },
+      },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    await stabilizePhoneViewportStory(canvasElement);
+
+    window.dispatchEvent(
+      createCustomEvent(CUSTOM_EVENTS.OPEN_TOUCH_REVIEW_IMMERSIVE, {
+        workspaceId: TOUCH_REVIEW_IMMERSIVE_WORKSPACE_ID,
+      })
+    );
+
+    const canvas = within(canvasElement);
+    await waitFor(
+      () => {
+        canvas.getByTestId("immersive-review-view");
+      },
+      { timeout: 10_000 }
+    );
+
+    const immersiveView = canvas.getByTestId("immersive-review-view");
+    const tappableLine = immersiveView.querySelector('[data-line-index="0"]');
+    if (!(tappableLine instanceof HTMLElement)) {
+      throw new Error("Expected at least one tappable diff row in touch immersive story.");
+    }
+
+    await userEvent.click(tappableLine);
+
+    await waitFor(
+      () => {
+        canvas.getByPlaceholderText("Your comment...");
+        if (canvas.queryByRole("heading", { name: "Notes" })) {
+          throw new Error("Touch immersive mode should hide the desktop notes sidebar.");
+        }
+      },
+      { timeout: 10_000 }
+    );
+
+    blurActiveElement();
   },
 };
