@@ -672,15 +672,15 @@ export function CreationControls(props: CreationControlsProps) {
 
     switch (firstEnabled) {
       case RUNTIME_MODE.SSH: {
-        const sshHost =
+        const isNonCoderSsh =
           selectedRuntime.mode === RUNTIME_MODE.SSH &&
-          selectedRuntime.host !== CODER_RUNTIME_PLACEHOLDER
-            ? selectedRuntime.host
-            : props.sshHostFallback;
-        const sshForwardAgent =
-          selectedRuntime.mode === RUNTIME_MODE.SSH
-            ? selectedRuntime.forwardAgent
-            : props.sshForwardAgentFallback;
+          selectedRuntime.host !== CODER_RUNTIME_PLACEHOLDER;
+        const sshHost = isNonCoderSsh ? selectedRuntime.host : props.sshHostFallback;
+        // Use in-memory forwardAgent only when already in host-SSH mode;
+        // otherwise fall back to the persisted value so Coder→SSH switches don't drop it.
+        const sshForwardAgent = isNonCoderSsh
+          ? selectedRuntime.forwardAgent
+          : props.sshForwardAgentFallback;
         onSelectedRuntimeChange({
           mode: "ssh",
           host: sshHost,
@@ -910,15 +910,15 @@ export function CreationControls(props: CreationControlsProps) {
               // Convert mode to ParsedRuntime with appropriate defaults
               switch (mode) {
                 case RUNTIME_MODE.SSH: {
-                  const sshHost =
+                  const isNonCoderSsh =
                     selectedRuntime.mode === "ssh" &&
-                    selectedRuntime.host !== CODER_RUNTIME_PLACEHOLDER
-                      ? selectedRuntime.host
-                      : props.sshHostFallback;
-                  const sshForwardAgent =
-                    selectedRuntime.mode === "ssh"
-                      ? selectedRuntime.forwardAgent
-                      : props.sshForwardAgentFallback;
+                    selectedRuntime.host !== CODER_RUNTIME_PLACEHOLDER;
+                  const sshHost = isNonCoderSsh ? selectedRuntime.host : props.sshHostFallback;
+                  // Use in-memory forwardAgent only when already in host-SSH mode;
+                  // otherwise fall back to the persisted value so Coder→SSH switches don't drop it.
+                  const sshForwardAgent = isNonCoderSsh
+                    ? selectedRuntime.forwardAgent
+                    : props.sshForwardAgentFallback;
                   onSelectedRuntimeChange({
                     mode: "ssh",
                     host: sshHost,
