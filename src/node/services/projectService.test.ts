@@ -836,8 +836,8 @@ exit 1
 
       try {
         const [eventsA, eventsB] = await Promise.all([
-          collectCloneEvents(sshCloneService, "git@github.com:org/repo-a.git", cloneParentDir),
-          collectCloneEvents(sshCloneService, "git@github.com:org/repo-b.git", cloneParentDir),
+          collectCloneEvents(sshCloneService, "github.com:org/repo-a.git", cloneParentDir),
+          collectCloneEvents(sshCloneService, "github.com:org/repo-b.git", cloneParentDir),
         ]);
 
         expect(eventsA.some((event) => event.type === "success")).toBe(true);

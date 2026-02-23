@@ -194,10 +194,31 @@ function normalizeRepoUrlForClone(repoUrl: string): string {
   return trimmedRepoUrl;
 }
 
+function parseScpStyleSshUrl(url: string): { host: string } | undefined {
+  const trimmedUrl = url.trim();
+
+  // Keep Windows drive-letter paths (e.g. C:\repo) out of SCP-style SSH matching.
+  if (/^[a-zA-Z]:[\\/]/.test(trimmedUrl)) {
+    return undefined;
+  }
+
+  // Protocol URLs (https://, ssh://, etc.) are handled separately.
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmedUrl)) {
+    return undefined;
+  }
+
+  // SCP-style clone URL: [user@]host:path
+  const scpLikeMatch = /^(?:[a-zA-Z0-9._-]+@)?(\[[^\]]+\]|[^:/\s][^:/\s]*):(.+)$/.exec(trimmedUrl);
+  if (!scpLikeMatch) {
+    return undefined;
+  }
+
+  return { host: scpLikeMatch[1] };
+}
+
 /** Detect whether a clone URL will use SSH transport (SCP-style or ssh:// protocol). */
 function isSshCloneUrl(url: string): boolean {
-  // SCP-style: git@host:path or user@host:path
-  if (/^[a-zA-Z0-9._-]+@[^:]+:/.test(url)) return true;
+  if (parseScpStyleSshUrl(url)) return true;
   // ssh:// protocol
   if (url.startsWith("ssh://")) return true;
   return false;
@@ -218,10 +239,9 @@ function deriveSshClonePromptDedupeKey(cloneUrl: string): string | undefined {
     // Not a protocol URL (likely SCP-style); parse below.
   }
 
-  // SCP-style clone URL: [user@]host:path
-  const scpLikeMatch = /^(?:[a-zA-Z0-9._-]+@)?(\[[^\]]+\]|[^:\s]+):.+$/.exec(trimmedCloneUrl);
-  if (scpLikeMatch) {
-    return formatSshEndpoint(scpLikeMatch[1], 22);
+  const parsedScpLikeUrl = parseScpStyleSshUrl(trimmedCloneUrl);
+  if (parsedScpLikeUrl) {
+    return formatSshEndpoint(parsedScpLikeUrl.host, 22);
   }
 
   return undefined;
