@@ -160,7 +160,7 @@ export class ServiceContainer {
     this.extensionMetadata = core.extensionMetadata;
     this.backgroundProcessManager = core.backgroundProcessManager;
 
-    this.projectService = new ProjectService(config);
+    this.projectService = new ProjectService(config, this.sshPromptService);
 
     // Idle compaction service - auto-compacts workspaces after configured idle period
     this.idleCompactionService = new IdleCompactionService(

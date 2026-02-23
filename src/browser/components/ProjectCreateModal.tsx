@@ -322,6 +322,19 @@ function buildCloneDestinationPreview(cloneParentDir: string, repoName: string):
   return `${normalizedCloneParentDir}${separator}${repoName}`;
 }
 
+function formatCloneError(event: { code?: string; error: string }): string {
+  switch (event.code) {
+    case "ssh_host_key_rejected":
+      return "SSH host key was rejected. The clone was cancelled.";
+    case "ssh_credential_cancelled":
+      return "SSH authentication was cancelled.";
+    case "ssh_prompt_timeout":
+      return "SSH authentication timed out.";
+    default:
+      return event.error || "Failed to clone project";
+  }
+}
+
 const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFormProps>(
   function ProjectCloneForm(props, ref) {
     const { api } = useAPI();
@@ -447,7 +460,7 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
             return true;
           }
 
-          setError(event.error || "Failed to clone project");
+          setError(formatCloneError(event));
           return false;
         }
 

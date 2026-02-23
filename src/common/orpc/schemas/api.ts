@@ -486,6 +486,14 @@ export const projects = {
         }),
         z.object({
           type: z.literal("error"),
+          code: z
+            .enum([
+              "ssh_host_key_rejected",
+              "ssh_credential_cancelled",
+              "ssh_prompt_timeout",
+              "clone_failed",
+            ])
+            .optional(),
           error: z.string(),
         }),
       ])
