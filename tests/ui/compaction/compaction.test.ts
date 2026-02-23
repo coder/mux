@@ -17,6 +17,8 @@ import { fireEvent } from "@testing-library/react";
 import { createAppHarness } from "../harness";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
 
 interface ServiceContainerPrivates {
   backgroundProcessManager: BackgroundProcessManager;
@@ -103,23 +105,22 @@ describe("Compaction UI (mock AI router)", () => {
   }, 60_000);
 
   test("auto-compacts after context_exceeded and resumes", async () => {
-    const app = await createAppHarness({ branchPrefix: "compaction-ui" });
+    const app = await createAppHarness({
+      branchPrefix: "compaction-ui",
+      // Keep auto-compaction deterministic even when default model context windows change.
+      beforeRender: () => {
+        updatePersistedState(PREFERRED_COMPACTION_MODEL_KEY, COMPACTION_TEST_MODEL);
+      },
+    });
 
     try {
       const triggerMessage = "Trigger context error";
       const userDraft = "My draft message that should be preserved";
 
-      const triggerPromise = app.env.orpc.workspace.sendMessage({
-        workspaceId: app.workspaceId,
-        message: triggerMessage,
-        options: { model: COMPACTION_TEST_MODEL, agentId: WORKSPACE_DEFAULTS.agentId },
-      });
+      await app.chat.send(triggerMessage);
 
       // User starts typing while auto-compaction is in progress.
       await app.chat.typeWithoutSending(userDraft);
-
-      const triggerResult = await triggerPromise;
-      expect(triggerResult.success).toBe(true);
 
       await app.chat.expectTranscriptContains("Mock compaction summary:", 60_000);
       await app.chat.expectTranscriptContains(`Continue with: ${triggerMessage}`, 60_000);
