@@ -562,6 +562,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     currentProjectId,
     currentProjectPathFromState,
     currentSettingsSection,
+    isAnalyticsOpen,
     pendingSectionId,
     pendingDraftId,
   } = useRouter();
@@ -575,10 +576,13 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     // workspace context (e.g., navigating to Home).
     if (currentWorkspaceId) {
       workspaceStore.setActiveWorkspaceId(currentWorkspaceId);
-    } else if (!currentSettingsSection) {
+    } else if (!currentSettingsSection && !isAnalyticsOpen) {
+      // Only null out the active workspace when truly leaving a workspace
+      // context (e.g., navigating to Home). Settings and analytics pages
+      // should preserve the subscription so chat messages aren't cleared.
       workspaceStore.setActiveWorkspaceId(null);
     }
-  }, [workspaceStore, currentWorkspaceId, currentSettingsSection]);
+  }, [workspaceStore, currentWorkspaceId, currentSettingsSection, isAnalyticsOpen]);
   const [workspaceMetadata, setWorkspaceMetadataState] = useState<
     Map<string, FrontendWorkspaceMetadata>
   >(new Map());
@@ -982,11 +986,12 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     // Skip if we already have a selected workspace (from localStorage or URL hash)
     if (selectedWorkspace) return;
 
-    // Skip if user is on the settings page — navigating to /settings/:section
-    // clears the workspace from the URL, making selectedWorkspace null. Without
-    // this guard the effect would auto-select a workspace and navigate away from
-    // settings immediately.
+    // Skip if user is on the settings or analytics page — navigating to
+    // /settings/:section or /analytics clears the workspace from the URL,
+    // making selectedWorkspace null. Without this guard the effect would
+    // auto-select a workspace and navigate away immediately.
     if (currentSettingsSection) return;
+    if (isAnalyticsOpen) return;
 
     // Skip if user is in the middle of creating a workspace
     if (pendingNewWorkspaceProject) return;
@@ -1032,6 +1037,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     loading,
     selectedWorkspace,
     currentSettingsSection,
+    isAnalyticsOpen,
     pendingNewWorkspaceProject,
     workspaceMetadata,
     setSelectedWorkspace,
