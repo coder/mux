@@ -296,6 +296,28 @@ describe("buildProviderOptions - OpenAI", () => {
     });
   });
 
+  describe("reasoning summary compatibility", () => {
+    test("should include reasoningSummary for supported OpenAI reasoning models", () => {
+      const result = buildProviderOptions("openai:gpt-5.2", "medium");
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.reasoningEffort).toBe("medium");
+      expect(openai!.reasoningSummary).toBe("detailed");
+      expect(openai!.include).toEqual(["reasoning.encrypted_content"]);
+    });
+
+    test("should omit reasoningSummary for gpt-5.3-codex-spark", () => {
+      const result = buildProviderOptions("openai:gpt-5.3-codex-spark", "medium");
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.reasoningEffort).toBe("medium");
+      expect(openai!.reasoningSummary).toBeUndefined();
+      expect(openai!.include).toEqual(["reasoning.encrypted_content"]);
+    });
+  });
+
   describe("previousResponseId reuse", () => {
     test("should reuse previousResponseId for gateway OpenAI history", () => {
       const messages = [

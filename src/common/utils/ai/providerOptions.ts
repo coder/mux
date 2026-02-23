@@ -46,6 +46,16 @@ type ProviderOptions =
   | { xai: XaiProviderOptions }
   | Record<string, never>; // Empty object for unsupported providers
 
+const OPENAI_REASONING_SUMMARY_UNSUPPORTED_MODELS = new Set<string>([
+  // gpt-5.3-codex-spark rejects reasoning.summary with:
+  // "Unsupported parameter: 'reasoning.summary' ...".
+  "gpt-5.3-codex-spark",
+]);
+
+function supportsOpenAIReasoningSummary(modelName: string): boolean {
+  return !OPENAI_REASONING_SUMMARY_UNSUPPORTED_MODELS.has(modelName);
+}
+
 /**
  * Build provider-specific options for AI SDK based on thinking level
  *
@@ -224,9 +234,11 @@ export function buildProviderOptions(
 
     const serviceTier = muxProviderOptions?.openai?.serviceTier ?? "auto";
     const truncationMode = openaiTruncationMode ?? "disabled";
+    const shouldSendReasoningSummary = supportsOpenAIReasoningSummary(modelName);
 
     log.debug("buildProviderOptions: OpenAI config", {
       reasoningEffort,
+      shouldSendReasoningSummary,
       thinkingLevel: effectiveThinking,
       previousResponseId,
       promptCacheKey,
@@ -245,7 +257,9 @@ export function buildProviderOptions(
         // Conditionally add reasoning configuration
         ...(reasoningEffort && {
           reasoningEffort,
-          reasoningSummary: "detailed", // Enable detailed reasoning summaries
+          ...(shouldSendReasoningSummary && {
+            reasoningSummary: "detailed", // Enable detailed reasoning summaries when the model supports it
+          }),
           // Include reasoning encrypted content to preserve reasoning context across conversation steps
           // Required when using reasoning models (gpt-5, o3, o4-mini) with tool calls
           // See: https://sdk.vercel.ai/providers/ai-sdk-providers/openai#responses-models
