@@ -357,6 +357,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const notesSidebarRef = useRef<HTMLDivElement>(null);
   const hunkJumpRef = useRef(false);
+  const pendingJumpSelectAllHunkIdRef = useRef<string | null>(null);
   const { api } = useAPI();
 
   const {
@@ -436,6 +437,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     }
 
     if (!selectedHunkId || !currentFileHunks.some((hunk) => hunk.id === selectedHunkId)) {
+      pendingJumpSelectAllHunkIdRef.current = null;
       onSelectHunk(currentFileHunks[0].id);
     }
   }, [currentFileHunks, selectedHunkId, onSelectHunk]);
@@ -741,9 +743,24 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
   // Keep cursor and selection aligned to the selected hunk when hunk navigation changes.
   useEffect(() => {
-    if (!selectedHunkRange) {
+    const resolvedSelectedHunkId = selectedHunk?.id ?? null;
+
+    if (!selectedHunkRange || !resolvedSelectedHunkId) {
+      pendingJumpSelectAllHunkIdRef.current = null;
       setActiveLineIndex(null);
       setSelectedLineRange(null);
+      return;
+    }
+
+    const shouldSelectEntireHunk = pendingJumpSelectAllHunkIdRef.current === resolvedSelectedHunkId;
+    if (shouldSelectEntireHunk) {
+      pendingJumpSelectAllHunkIdRef.current = null;
+      const hunkAnchorLine = selectedHunkRange.firstModifiedIndex ?? selectedHunkRange.startIndex;
+      setActiveLineIndex(hunkAnchorLine);
+      setSelectedLineRange({
+        startIndex: selectedHunkRange.startIndex,
+        endIndex: selectedHunkRange.endIndex,
+      });
       return;
     }
 
@@ -800,6 +817,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         candidatePath = nextPath;
         const fileHunks = sortHunksInFileOrder(getFileHunks(hunks, candidatePath));
         if (fileHunks.length > 0) {
+          pendingJumpSelectAllHunkIdRef.current = null;
           hunkJumpRef.current = true;
           onSelectHunk(fileHunks[0].id);
           return;
@@ -828,8 +846,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         }
       }
 
+      const targetHunkId = currentFileHunks[nextIdx].id;
+      pendingJumpSelectAllHunkIdRef.current = targetHunkId;
       hunkJumpRef.current = true;
-      onSelectHunk(currentFileHunks[nextIdx].id);
+      onSelectHunk(targetHunkId);
     },
     [currentFileHunks, selectedHunkId, onSelectHunk]
   );
@@ -842,6 +862,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       }
 
       const targetHunkId = findReviewHunkId(review, fileHunks) ?? fileHunks[0].id;
+      pendingJumpSelectAllHunkIdRef.current = null;
       hunkJumpRef.current = true;
       onSelectHunk(targetHunkId);
       // Force scroll effect to re-fire even when activeLineIndex is unchanged
@@ -927,6 +948,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
           if (resolved.hunk.id !== currentSelectedHunkId) {
             // Record the in-flight hunk switch so mismatch guards do not clear
             // this composer request before onSelectHunk propagates.
+            pendingJumpSelectAllHunkIdRef.current = null;
             pendingComposerHunkSwitchRef.current = {
               fromHunkId: currentSelectedHunkId,
               toHunkId: resolved.hunk.id,
@@ -1012,6 +1034,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
       const lineHunkId = overlayData.lineHunkIds[nextIndex];
       if (lineHunkId && lineHunkId !== selectedHunkIdRef.current) {
+        pendingJumpSelectAllHunkIdRef.current = null;
         onSelectHunk(lineHunkId);
       }
     },
@@ -1022,6 +1045,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     (lineIndex: number, shiftKey: boolean) => {
       const resolvedHunk = findHunkAtLine(lineIndex, overlayData, currentFileHunks);
       if (resolvedHunk && selectedHunkIdRef.current !== resolvedHunk.hunk.id) {
+        pendingJumpSelectAllHunkIdRef.current = null;
         onSelectHunk(resolvedHunk.hunk.id);
       }
 
@@ -1320,7 +1344,30 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       return;
     }
 
-    if (activeLineIndex !== null && lineIndexForScroll === activeLineIndex) {
+    const normalizedSelectedLineRange = selectedLineRange
+      ? {
+          startIndex: Math.min(selectedLineRange.startIndex, selectedLineRange.endIndex),
+          endIndex: Math.max(selectedLineRange.startIndex, selectedLineRange.endIndex),
+        }
+      : null;
+    const hasMultiLineSelection = Boolean(
+      normalizedSelectedLineRange &&
+      normalizedSelectedLineRange.endIndex > normalizedSelectedLineRange.startIndex
+    );
+    const isActiveLineInsideSelection = Boolean(
+      normalizedSelectedLineRange &&
+      activeLineIndex !== null &&
+      activeLineIndex >= normalizedSelectedLineRange.startIndex &&
+      activeLineIndex <= normalizedSelectedLineRange.endIndex
+    );
+    const shouldRenderActiveLineOutline =
+      activeLineIndex !== null &&
+      lineIndexForScroll === activeLineIndex &&
+      !(hasMultiLineSelection && isActiveLineInsideSelection);
+
+    // For full-hunk keyboard selections (J/K), suppress the separate active-line
+    // ring so the range highlight reads as one unified selection.
+    if (shouldRenderActiveLineOutline) {
       lineElement.style.outline = ACTIVE_LINE_OUTLINE;
       lineElement.style.outlineOffset = "-1px";
       highlightedLineElementRef.current = lineElement;
@@ -1353,6 +1400,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     overlayData.content,
     revealTargetLineIndex,
     scrollNonce,
+    selectedLineRange,
   ]);
 
   useEffect(() => {

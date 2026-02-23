@@ -1283,6 +1283,16 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     const rangeSelectionHighlight =
       "inset 0 0 0 100vmax hsl(from var(--color-review-accent) h s l / 0.12)";
     const activeLineHighlight = "inset 0 0 0 1px hsl(from var(--color-review-accent) h s l / 0.45)";
+    const normalizedSelectedLineRange = selectedLineRange
+      ? {
+          startIndex: Math.min(selectedLineRange.startIndex, selectedLineRange.endIndex),
+          endIndex: Math.max(selectedLineRange.startIndex, selectedLineRange.endIndex),
+        }
+      : null;
+    const hasMultiLineExternalSelection = Boolean(
+      normalizedSelectedLineRange &&
+      normalizedSelectedLineRange.endIndex > normalizedSelectedLineRange.startIndex
+    );
 
     return (
       <DiffContainer
@@ -1294,8 +1304,12 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       >
         {highlightedLineData.map((lineInfo, displayIndex) => {
           const isComposerSelected = isLineInSelection(displayIndex, renderSelection);
-          const isRangeSelected = isLineInSelection(displayIndex, selectedLineRange);
+          const isRangeSelected = isLineInSelection(displayIndex, normalizedSelectedLineRange);
           const isActiveLine = activeLineIndex === displayIndex;
+          // When a multi-line selection is active (e.g. immersive J/K full-hunk selection),
+          // let the range highlight own the visual state so the cursor doesn't appear detached.
+          const shouldRenderActiveLineHighlight =
+            isActiveLine && !(hasMultiLineExternalSelection && isRangeSelected);
           const isInReviewRange = reviewRangeByLineIndex[displayIndex] ?? false;
           const baseCodeBg = getDiffLineBackground(lineInfo.type);
           const codeBg = applyReviewRangeOverlay(baseCodeBg, isInReviewRange);
@@ -1311,7 +1325,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
           } else if (isRangeSelected) {
             lineShadows.push(rangeSelectionHighlight);
           }
-          if (isActiveLine) {
+          if (shouldRenderActiveLineHighlight) {
             lineShadows.push(activeLineHighlight);
           }
 
