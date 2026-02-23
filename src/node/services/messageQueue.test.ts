@@ -198,6 +198,67 @@ describe("MessageQueue", () => {
       expect(queue.getQueueDispatchMode()).toBe("tool-end");
     });
 
+    it("should preserve turn-end mode when compaction enqueue is rejected", () => {
+      const validOptions: SendMessageOptions = {
+        model: "gpt-4",
+        agentId: "exec",
+      };
+
+      queue.add("wait for turn end", {
+        ...validOptions,
+        queueDispatchMode: "turn-end",
+      });
+      expect(queue.getQueueDispatchMode()).toBe("turn-end");
+
+      const metadata: MuxMessageMetadata = {
+        type: "compaction-request",
+        rawCommand: "/compact",
+        parsed: {},
+      };
+
+      expect(() =>
+        queue.add("summarize", {
+          ...validOptions,
+          queueDispatchMode: "tool-end",
+          muxMetadata: metadata,
+        })
+      ).toThrow(/Cannot queue compaction request/);
+
+      expect(queue.getQueueDispatchMode()).toBe("turn-end");
+      expect(queue.getMessages()).toHaveLength(1);
+    });
+
+    it("should preserve turn-end mode when agent-skill enqueue is rejected", () => {
+      const validOptions: SendMessageOptions = {
+        model: "gpt-4",
+        agentId: "exec",
+      };
+
+      queue.add("wait for turn end", {
+        ...validOptions,
+        queueDispatchMode: "turn-end",
+      });
+      expect(queue.getQueueDispatchMode()).toBe("turn-end");
+
+      const metadata: MuxMessageMetadata = {
+        type: "agent-skill",
+        rawCommand: "/init",
+        skillName: "init",
+        scope: "built-in",
+      };
+
+      expect(() =>
+        queue.add("run skill", {
+          ...validOptions,
+          queueDispatchMode: "tool-end",
+          muxMetadata: metadata,
+        })
+      ).toThrow(/Cannot queue agent skill/);
+
+      expect(queue.getQueueDispatchMode()).toBe("turn-end");
+      expect(queue.getMessages()).toHaveLength(1);
+    });
+
     it("should reset mode to tool-end when cleared", () => {
       queue.add("Follow up", {
         model: "gpt-4",

@@ -141,13 +141,11 @@ export class MessageQueue {
     const incomingIsAgentSkill = isAgentSkillMetadata(options?.muxMetadata);
     const queueHasMessages = !this.isEmpty();
     const incomingMode = options?.queueDispatchMode ?? "tool-end";
-
-    if (!queueHasMessages) {
-      this.queueDispatchMode = incomingMode;
-    } else if (incomingMode === "tool-end") {
-      // tool-end (more urgent) takes precedence if mixed in same batch
-      this.queueDispatchMode = "tool-end";
-    }
+    const nextQueueDispatchMode = !queueHasMessages
+      ? incomingMode
+      : incomingMode === "tool-end"
+        ? "tool-end"
+        : this.queueDispatchMode;
 
     const queueHasAgentSkill = isAgentSkillMetadata(this.firstMuxMetadata);
 
@@ -176,6 +174,9 @@ export class MessageQueue {
           "Wait for the current stream to complete before running a skill."
       );
     }
+
+    // Commit dispatch mode only after validation checks pass
+    this.queueDispatchMode = nextQueueDispatchMode;
 
     // Add text message if non-empty
     if (trimmedMessage.length > 0) {
