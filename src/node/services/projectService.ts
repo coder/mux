@@ -2,6 +2,7 @@ import type { Config, ProjectConfig } from "@/node/config";
 import type { SectionConfig } from "@/common/types/project";
 import { DEFAULT_SECTION_COLOR } from "@/common/constants/ui";
 import { sortSectionsByLinkedList } from "@/common/utils/sections";
+import { formatSshEndpoint } from "@/common/utils/ssh/formatSshEndpoint";
 import { spawn } from "child_process";
 import { randomBytes } from "crypto";
 import { validateProjectPath, isGitRepository } from "@/node/utils/pathUtils";
@@ -200,6 +201,30 @@ function isSshCloneUrl(url: string): boolean {
   // ssh:// protocol
   if (url.startsWith("ssh://")) return true;
   return false;
+}
+
+function deriveSshClonePromptDedupeKey(cloneUrl: string): string | undefined {
+  const trimmedCloneUrl = cloneUrl.trim();
+
+  // ssh://user@host[:port]/path
+  try {
+    const parsed = new URL(trimmedCloneUrl);
+    if (parsed.protocol === "ssh:" && parsed.hostname) {
+      const parsedPort = Number.parseInt(parsed.port, 10);
+      const port = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 22;
+      return formatSshEndpoint(parsed.hostname, port);
+    }
+  } catch {
+    // Not a protocol URL (likely SCP-style); parse below.
+  }
+
+  // SCP-style clone URL: [user@]host:path
+  const scpLikeMatch = /^(?:[a-zA-Z0-9._-]+@)?(\[[^\]]+\]|[^:\s]+):.+$/.exec(trimmedCloneUrl);
+  if (scpLikeMatch) {
+    return formatSshEndpoint(scpLikeMatch[1], 22);
+  }
+
+  return undefined;
 }
 
 function classifyCloneError(stderr: string): CloneErrorCode {
@@ -439,8 +464,9 @@ export class ProjectService {
           ? await createMediatedAskpassSession({
               sshPromptService: this.sshPromptService,
               promptPolicy: { allowHostKey: true, allowCredential: true },
-              // Clone URL may include user@host:port — extract host portion for dedup
-              dedupeKey: cloneUrl,
+              // Deduplicate host-key prompts by SSH endpoint identity (host:port),
+              // not by full repo path, so concurrent clones to the same host coalesce.
+              dedupeKey: deriveSshClonePromptDedupeKey(cloneUrl),
               getStderrContext: () => collectedStderr,
             })
           : undefined;

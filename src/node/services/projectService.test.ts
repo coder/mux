@@ -782,6 +782,86 @@ exit 1
       }
     });
 
+    it("coalesces concurrent host-key prompts for the same SSH endpoint", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "ssh-askpass-host-key-dedupe");
+      const fakeBinDir = path.join(tempDir, "fake-bin-ssh-host-key-dedupe");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  if [ -z "$SSH_ASKPASS" ]; then
+    echo "Host key verification failed." >&2
+    exit 128
+  fi
+  RESPONSE=$("$SSH_ASKPASS" "Are you sure you want to continue connecting (yes/no/[fingerprint])? ")
+  if [ "$RESPONSE" != "yes" ]; then
+    echo "Host key verification failed." >&2
+    exit 128
+  fi
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      const sshPromptService = new SshPromptService(5000);
+      const release = sshPromptService.registerInteractiveResponder();
+      const sshCloneService = new ProjectService(config, sshPromptService);
+      const capturedRequests: SshPromptRequest[] = [];
+      const onRequest = (request: SshPromptRequest) => {
+        capturedRequests.push(request);
+        setTimeout(() => {
+          sshPromptService.respond(request.requestId, "yes");
+        }, 200);
+      };
+      sshPromptService.on("request", onRequest);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.HOME = tempDir;
+      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
+
+      try {
+        const [eventsA, eventsB] = await Promise.all([
+          collectCloneEvents(sshCloneService, "git@github.com:org/repo-a.git", cloneParentDir),
+          collectCloneEvents(sshCloneService, "git@github.com:org/repo-b.git", cloneParentDir),
+        ]);
+
+        expect(eventsA.some((event) => event.type === "success")).toBe(true);
+        expect(eventsB.some((event) => event.type === "success")).toBe(true);
+
+        const hostKeyRequests = capturedRequests.filter((request) => request.kind === "host-key");
+        expect(hostKeyRequests).toHaveLength(1);
+      } finally {
+        sshPromptService.off("request", onRequest);
+        release();
+        process.env.PATH = originalPath;
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+      }
+    });
+
     it("SSH clone yields ssh_host_key_rejected when host-key prompt is rejected", async () => {
       if (process.platform === "win32") {
         // This test relies on a POSIX shell shim named "git" in PATH.
