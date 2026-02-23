@@ -559,13 +559,14 @@ export function getControlPath(config: SSHConnectionConfig): string {
  */
 function makeConnectionKey(config: SSHConnectionConfig): string {
   // Note: srcBaseDir is intentionally excluded - connection identity is determined
-  // by user + host + port + key. This allows health tracking and multiplexing
-  // to be shared across workspaces on the same host.
+  // by user + host + port + key + agent forwarding. This allows health tracking
+  // and multiplexing to be shared across workspaces on the same host.
   const parts = [
     os.userInfo().username, // Include local user to prevent cross-user collisions
     config.host,
     config.port?.toString() ?? "22",
     config.identityFile ?? "default",
+    config.forwardAgent ? "fwd" : "nofwd",
   ];
   return parts.join(":");
 }

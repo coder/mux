@@ -174,6 +174,7 @@ function makeConnectionKey(config: SSHConnectionConfig): string {
     config.host,
     config.port?.toString() ?? "22",
     config.identityFile ?? "default",
+    config.forwardAgent ? "fwd" : "nofwd",
   ];
   return parts.join(":");
 }

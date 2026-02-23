@@ -675,9 +675,12 @@ export function CreationControls(props: CreationControlsProps) {
           selectedRuntime.host !== CODER_RUNTIME_PLACEHOLDER
             ? selectedRuntime.host
             : props.sshHostFallback;
+        const sshForwardAgent =
+          selectedRuntime.mode === RUNTIME_MODE.SSH ? selectedRuntime.forwardAgent : false;
         onSelectedRuntimeChange({
           mode: "ssh",
           host: sshHost,
+          forwardAgent: sshForwardAgent,
         });
         return;
       }
@@ -907,9 +910,12 @@ export function CreationControls(props: CreationControlsProps) {
                     selectedRuntime.host !== CODER_RUNTIME_PLACEHOLDER
                       ? selectedRuntime.host
                       : props.sshHostFallback;
+                  const sshForwardAgent =
+                    selectedRuntime.mode === "ssh" ? selectedRuntime.forwardAgent : false;
                   onSelectedRuntimeChange({
                     mode: "ssh",
                     host: sshHost,
+                    forwardAgent: sshForwardAgent,
                   });
                   break;
                 }
@@ -1000,7 +1006,14 @@ export function CreationControls(props: CreationControlsProps) {
               <RuntimeConfigInput
                 label="host"
                 value={selectedRuntime.host}
-                onChange={(value) => onSelectedRuntimeChange({ mode: "ssh", host: value })}
+                onChange={(value) =>
+                  onSelectedRuntimeChange({
+                    mode: "ssh",
+                    host: value,
+                    forwardAgent:
+                      selectedRuntime.mode === "ssh" ? selectedRuntime.forwardAgent : undefined,
+                  })
+                }
                 placeholder="user@host"
                 disabled={props.disabled}
                 hasError={props.runtimeFieldError === "ssh"}
