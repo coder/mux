@@ -12,9 +12,9 @@ const sleep = (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
-type ExtensionMetadataServiceInternals = {
+interface ExtensionMetadataServiceInternals {
   load: () => Promise<ExtensionMetadataFile>;
-};
+}
 
 const addLoadDelay = (target: ExtensionMetadataService, delayMs: number): (() => void) => {
   const internals = target as unknown as ExtensionMetadataServiceInternals;

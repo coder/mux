@@ -78,7 +78,9 @@ describe("AIService.setupStreamEventForwarding", () => {
     const service = new AIService(config, historyService, initStateManager, providerService);
 
     const cleanupError = new Error("disk full");
-    spyOn(historyService, "deletePartial").mockImplementation(() => Promise.reject(cleanupError));
+    const deletePartialSpy = spyOn(historyService, "deletePartial").mockImplementation(() =>
+      Promise.reject(cleanupError)
+    );
 
     const streamManager = (service as unknown as { streamManager: StreamManager }).streamManager;
     const abortEvent: StreamAbortEvent = {
@@ -94,8 +96,8 @@ describe("AIService.setupStreamEventForwarding", () => {
 
     streamManager.emit("stream-abort", abortEvent);
 
-    await expect(forwardedAbortPromise).resolves.toEqual(abortEvent);
-    expect(historyService.deletePartial).toHaveBeenCalledWith(abortEvent.workspaceId);
+    expect(await forwardedAbortPromise).toEqual(abortEvent);
+    expect(deletePartialSpy).toHaveBeenCalledWith(abortEvent.workspaceId);
   });
 });
 
