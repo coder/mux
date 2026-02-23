@@ -36,6 +36,23 @@ export interface ExtensionWorkspaceMetadata extends ExtensionMetadata {
 
 export class ExtensionMetadataService {
   private readonly filePath: string;
+  private mutationQueue: Promise<void> = Promise.resolve();
+
+  /**
+   * Serialize all mutating operations on the shared metadata file.
+   * Prevents cross-workspace read-modify-write races since all workspaces
+   * share a single extensionMetadata.json file.
+   */
+  private async withSerializedMutation<T>(fn: () => Promise<T>): Promise<T> {
+    let result!: T;
+    const run = async () => {
+      result = await fn();
+    };
+    const next = this.mutationQueue.catch(() => undefined).then(run);
+    this.mutationQueue = next;
+    await next;
+    return result;
+  }
 
   private coerceStatusUrl(url: unknown): string | null {
     return typeof url === "string" ? url : null;
@@ -131,27 +148,29 @@ export class ExtensionMetadataService {
     workspaceId: string,
     timestamp: number = Date.now()
   ): Promise<WorkspaceActivitySnapshot> {
-    const data = await this.load();
+    return this.withSerializedMutation(async () => {
+      const data = await this.load();
 
-    if (!data.workspaces[workspaceId]) {
-      data.workspaces[workspaceId] = {
-        recency: timestamp,
-        streaming: false,
-        lastModel: null,
-        lastThinkingLevel: null,
-        agentStatus: null,
-        lastStatusUrl: null,
-      };
-    } else {
-      data.workspaces[workspaceId].recency = timestamp;
-    }
+      if (!data.workspaces[workspaceId]) {
+        data.workspaces[workspaceId] = {
+          recency: timestamp,
+          streaming: false,
+          lastModel: null,
+          lastThinkingLevel: null,
+          agentStatus: null,
+          lastStatusUrl: null,
+        };
+      } else {
+        data.workspaces[workspaceId].recency = timestamp;
+      }
 
-    await this.save(data);
-    const workspace = data.workspaces[workspaceId];
-    if (!workspace) {
-      throw new Error(`Workspace ${workspaceId} metadata missing after update.`);
-    }
-    return this.toSnapshot(workspace);
+      await this.save(data);
+      const workspace = data.workspaces[workspaceId];
+      if (!workspace) {
+        throw new Error(`Workspace ${workspaceId} metadata missing after update.`);
+      }
+      return this.toSnapshot(workspace);
+    });
   }
 
   /**
@@ -164,34 +183,36 @@ export class ExtensionMetadataService {
     model?: string,
     thinkingLevel?: ExtensionMetadata["lastThinkingLevel"]
   ): Promise<WorkspaceActivitySnapshot> {
-    const data = await this.load();
-    const now = Date.now();
+    return this.withSerializedMutation(async () => {
+      const data = await this.load();
+      const now = Date.now();
 
-    if (!data.workspaces[workspaceId]) {
-      data.workspaces[workspaceId] = {
-        recency: now,
-        streaming,
-        lastModel: model ?? null,
-        lastThinkingLevel: thinkingLevel ?? null,
-        agentStatus: null,
-        lastStatusUrl: null,
-      };
-    } else {
-      data.workspaces[workspaceId].streaming = streaming;
-      if (model) {
-        data.workspaces[workspaceId].lastModel = model;
+      if (!data.workspaces[workspaceId]) {
+        data.workspaces[workspaceId] = {
+          recency: now,
+          streaming,
+          lastModel: model ?? null,
+          lastThinkingLevel: thinkingLevel ?? null,
+          agentStatus: null,
+          lastStatusUrl: null,
+        };
+      } else {
+        data.workspaces[workspaceId].streaming = streaming;
+        if (model) {
+          data.workspaces[workspaceId].lastModel = model;
+        }
+        if (thinkingLevel !== undefined) {
+          data.workspaces[workspaceId].lastThinkingLevel = thinkingLevel;
+        }
       }
-      if (thinkingLevel !== undefined) {
-        data.workspaces[workspaceId].lastThinkingLevel = thinkingLevel;
-      }
-    }
 
-    await this.save(data);
-    const workspace = data.workspaces[workspaceId];
-    if (!workspace) {
-      throw new Error(`Workspace ${workspaceId} metadata missing after streaming update.`);
-    }
-    return this.toSnapshot(workspace);
+      await this.save(data);
+      const workspace = data.workspaces[workspaceId];
+      if (!workspace) {
+        throw new Error(`Workspace ${workspaceId} metadata missing after streaming update.`);
+      }
+      return this.toSnapshot(workspace);
+    });
   }
 
   /**
@@ -201,54 +222,56 @@ export class ExtensionMetadataService {
     workspaceId: string,
     agentStatus: ExtensionAgentStatus | null
   ): Promise<WorkspaceActivitySnapshot> {
-    const data = await this.load();
-    const now = Date.now();
+    return this.withSerializedMutation(async () => {
+      const data = await this.load();
+      const now = Date.now();
 
-    if (!data.workspaces[workspaceId]) {
-      const carriedUrl = agentStatus?.url;
-      data.workspaces[workspaceId] = {
-        recency: now,
-        streaming: false,
-        lastModel: null,
-        lastThinkingLevel: null,
-        agentStatus:
-          agentStatus && carriedUrl !== undefined
-            ? {
-                ...agentStatus,
-                url: carriedUrl,
-              }
-            : agentStatus,
-        lastStatusUrl: carriedUrl ?? null,
-      };
-    } else {
-      const workspace = data.workspaces[workspaceId];
-      const previousStatus = this.coerceAgentStatus(workspace.agentStatus);
-      const previousUrl =
-        previousStatus?.url ?? this.coerceStatusUrl(workspace.lastStatusUrl) ?? null;
-      if (agentStatus) {
-        const carriedUrl = agentStatus.url ?? previousUrl ?? undefined;
-        workspace.agentStatus =
-          carriedUrl !== undefined
-            ? {
-                ...agentStatus,
-                url: carriedUrl,
-              }
-            : agentStatus;
-        workspace.lastStatusUrl = carriedUrl ?? null;
+      if (!data.workspaces[workspaceId]) {
+        const carriedUrl = agentStatus?.url;
+        data.workspaces[workspaceId] = {
+          recency: now,
+          streaming: false,
+          lastModel: null,
+          lastThinkingLevel: null,
+          agentStatus:
+            agentStatus && carriedUrl !== undefined
+              ? {
+                  ...agentStatus,
+                  url: carriedUrl,
+                }
+              : agentStatus,
+          lastStatusUrl: carriedUrl ?? null,
+        };
       } else {
-        workspace.agentStatus = null;
-        // Keep lastStatusUrl across clears so the next status_set without `url`
-        // can still reuse the previous deep link.
-        workspace.lastStatusUrl = previousUrl;
+        const workspace = data.workspaces[workspaceId];
+        const previousStatus = this.coerceAgentStatus(workspace.agentStatus);
+        const previousUrl =
+          previousStatus?.url ?? this.coerceStatusUrl(workspace.lastStatusUrl) ?? null;
+        if (agentStatus) {
+          const carriedUrl = agentStatus.url ?? previousUrl ?? undefined;
+          workspace.agentStatus =
+            carriedUrl !== undefined
+              ? {
+                  ...agentStatus,
+                  url: carriedUrl,
+                }
+              : agentStatus;
+          workspace.lastStatusUrl = carriedUrl ?? null;
+        } else {
+          workspace.agentStatus = null;
+          // Keep lastStatusUrl across clears so the next status_set without `url`
+          // can still reuse the previous deep link.
+          workspace.lastStatusUrl = previousUrl;
+        }
       }
-    }
 
-    await this.save(data);
-    const workspace = data.workspaces[workspaceId];
-    if (!workspace) {
-      throw new Error(`Workspace ${workspaceId} metadata missing after agent status update.`);
-    }
-    return this.toSnapshot(workspace);
+      await this.save(data);
+      const workspace = data.workspaces[workspaceId];
+      if (!workspace) {
+        throw new Error(`Workspace ${workspaceId} metadata missing after agent status update.`);
+      }
+      return this.toSnapshot(workspace);
+    });
   }
 
   /**
@@ -294,12 +317,14 @@ export class ExtensionMetadataService {
    * Call this when a workspace is deleted.
    */
   async deleteWorkspace(workspaceId: string): Promise<void> {
-    const data = await this.load();
+    await this.withSerializedMutation(async () => {
+      const data = await this.load();
 
-    if (data.workspaces[workspaceId]) {
-      delete data.workspaces[workspaceId];
-      await this.save(data);
-    }
+      if (data.workspaces[workspaceId]) {
+        delete data.workspaces[workspaceId];
+        await this.save(data);
+      }
+    });
   }
 
   /**
@@ -307,19 +332,21 @@ export class ExtensionMetadataService {
    * Call this on app startup to clean up stale streaming states from crashes.
    */
   async clearStaleStreaming(): Promise<void> {
-    const data = await this.load();
-    let modified = false;
+    await this.withSerializedMutation(async () => {
+      const data = await this.load();
+      let modified = false;
 
-    for (const entry of Object.values(data.workspaces)) {
-      if (entry.streaming) {
-        entry.streaming = false;
-        modified = true;
+      for (const entry of Object.values(data.workspaces)) {
+        if (entry.streaming) {
+          entry.streaming = false;
+          modified = true;
+        }
       }
-    }
 
-    if (modified) {
-      await this.save(data);
-    }
+      if (modified) {
+        await this.save(data);
+      }
+    });
   }
 
   async getAllSnapshots(): Promise<Map<string, WorkspaceActivitySnapshot>> {
