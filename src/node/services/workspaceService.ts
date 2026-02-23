@@ -2463,6 +2463,9 @@ export class WorkspaceService extends EventEmitter {
         }
       }
 
+      // Archiving hides workspace UI; do not leave terminal PTYs running headless.
+      this.terminalService?.closeWorkspaceSessions(workspaceId);
+
       await this.config.editConfig((config) => {
         const projectConfig = config.projects.get(projectPath);
         if (projectConfig) {

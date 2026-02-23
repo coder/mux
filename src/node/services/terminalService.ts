@@ -672,7 +672,9 @@ export class TerminalService {
    * Called when a workspace is removed to prevent resource leaks.
    */
   closeWorkspaceSessions(workspaceId: string): void {
-    this.ptyService.closeWorkspaceSessions(workspaceId);
+    const sessionIds = this.getWorkspaceSessionIds(workspaceId);
+    // Route bulk-close through TerminalService.close() so cleanup() runs for backend state.
+    sessionIds.forEach((sessionId) => this.close(sessionId));
   }
 
   /**
@@ -680,7 +682,9 @@ export class TerminalService {
    * Called during server shutdown to prevent orphan PTY processes.
    */
   closeAllSessions(): void {
-    this.ptyService.closeAllSessions();
+    const sessionIds = Array.from(this.ptyService.getSessions().keys());
+    // Route bulk-close through TerminalService.close() so cleanup() runs for backend state.
+    sessionIds.forEach((sessionId) => this.close(sessionId));
   }
 
   private cleanup(sessionId: string) {

@@ -59,12 +59,24 @@ const sendInputMock = mock(() => {
 const closeSessionMock = mock(() => {
   /* no-op */
 });
+const getWorkspaceSessionIdsMock = mock(() => [] as string[]);
+const closeWorkspaceSessionsMock = mock(() => {
+  /* no-op */
+});
+const closeAllSessionsMock = mock(() => {
+  /* no-op */
+});
+const getSessionsMock = mock(() => new Map());
 
 const mockPTYService = {
   createSession: createSessionMock,
   closeSession: closeSessionMock,
   resize: resizeMock,
   sendInput: sendInputMock,
+  getWorkspaceSessionIds: getWorkspaceSessionIdsMock,
+  closeWorkspaceSessions: closeWorkspaceSessionsMock,
+  closeAllSessions: closeAllSessionsMock,
+  getSessions: getSessionsMock,
 } as unknown as PTYService;
 
 const openTerminalWindowMock = mock(() => Promise.resolve());
@@ -87,6 +99,11 @@ describe("TerminalService", () => {
     getEffectiveSecretsMock.mockClear();
     resizeMock.mockClear();
     sendInputMock.mockClear();
+    closeSessionMock.mockClear();
+    getWorkspaceSessionIdsMock.mockClear();
+    closeWorkspaceSessionsMock.mockClear();
+    closeAllSessionsMock.mockClear();
+    getSessionsMock.mockClear();
     openTerminalWindowMock.mockClear();
   });
 
@@ -181,6 +198,37 @@ describe("TerminalService", () => {
   it("should handle input", () => {
     service.sendInput("session-1", "ls\n");
     expect(sendInputMock).toHaveBeenCalledWith("session-1", "ls\n");
+  });
+
+  it("should close workspace sessions by fan-out through close", () => {
+    getWorkspaceSessionIdsMock.mockReturnValue(["session-1", "session-2"]);
+    const closeSpy = spyOn(service, "close");
+
+    service.closeWorkspaceSessions("ws-1");
+
+    expect(getWorkspaceSessionIdsMock).toHaveBeenCalledWith("ws-1");
+    expect(closeSpy).toHaveBeenCalledTimes(2);
+    expect(closeSpy).toHaveBeenNthCalledWith(1, "session-1");
+    expect(closeSpy).toHaveBeenNthCalledWith(2, "session-2");
+    expect(closeWorkspaceSessionsMock).not.toHaveBeenCalled();
+  });
+
+  it("should close all sessions by fan-out through close", () => {
+    getSessionsMock.mockReturnValue(
+      new Map<string, unknown>([
+        ["session-1", { workspaceId: "ws-1" }],
+        ["session-2", { workspaceId: "ws-2" }],
+      ])
+    );
+    const closeSpy = spyOn(service, "close");
+
+    service.closeAllSessions();
+
+    expect(getSessionsMock).toHaveBeenCalled();
+    expect(closeSpy).toHaveBeenCalledTimes(2);
+    expect(closeSpy).toHaveBeenNthCalledWith(1, "session-1");
+    expect(closeSpy).toHaveBeenNthCalledWith(2, "session-2");
+    expect(closeAllSessionsMock).not.toHaveBeenCalled();
   });
 
   it("should open terminal window via manager", async () => {
