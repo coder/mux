@@ -1077,6 +1077,142 @@ exit 1
       }
     });
 
+    it("SSH clone yields ssh_credential_cancelled when credential prompt is cancelled", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "ssh-askpass-credential-cancel");
+      const fakeBinDir = path.join(tempDir, "fake-bin-ssh-credential-cancel");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  if [ -z "$SSH_ASKPASS" ]; then
+    echo "Permission denied (publickey,password)." >&2
+    exit 128
+  fi
+  RESPONSE=$("$SSH_ASKPASS" "Enter passphrase for key '/home/user/.ssh/id_ed25519':")
+  if [ -z "$RESPONSE" ]; then
+    echo "Permission denied, please try again." >&2
+    echo "git@github.com: Permission denied (publickey,password)." >&2
+    exit 128
+  fi
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      const sshPromptService = new SshPromptService(5000);
+      const release = sshPromptService.registerInteractiveResponder();
+      const sshCloneService = new ProjectService(config, sshPromptService);
+      const capturedRequests: SshPromptRequest[] = [];
+      const onRequest = (request: SshPromptRequest) => {
+        capturedRequests.push(request);
+        sshPromptService.respond(request.requestId, "");
+      };
+      sshPromptService.on("request", onRequest);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.HOME = tempDir;
+      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
+
+      try {
+        const events = await collectCloneEvents(
+          sshCloneService,
+          "github.com:org/repo-credential-cancel.git",
+          cloneParentDir
+        );
+
+        const terminalEvent = events[events.length - 1];
+        expect(terminalEvent?.type).toBe("error");
+        if (terminalEvent?.type !== "error") throw new Error("Expected error event");
+        expect(terminalEvent.code).toBe("ssh_credential_cancelled");
+        expect(terminalEvent.error).toContain("Permission denied");
+
+        expect(capturedRequests[0]?.kind).toBe("credential");
+      } finally {
+        sshPromptService.off("request", onRequest);
+        release();
+        process.env.PATH = originalPath;
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+      }
+    });
+
+    it("clone failures include the last three meaningful stderr lines", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "clone-stderr-summary");
+      const fakeBinDir = path.join(tempDir, "fake-bin-clone-stderr-summary");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  echo "remote: Resolving deltas: 100% (1/1)" >&2
+  echo "fatal: Could not read from remote repository." >&2
+  echo "Please make sure you have the correct access rights" >&2
+  echo "and the repository exists." >&2
+  exit 128
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+
+      try {
+        const events = await collectCloneEvents(
+          service,
+          "https://github.com/org/repo-summary.git",
+          cloneParentDir
+        );
+
+        const terminalEvent = events[events.length - 1];
+        expect(terminalEvent?.type).toBe("error");
+        if (terminalEvent?.type !== "error") throw new Error("Expected error event");
+        expect(terminalEvent.code).toBe("clone_failed");
+        expect(terminalEvent.error).toBe(
+          [
+            "fatal: Could not read from remote repository.",
+            "Please make sure you have the correct access rights",
+            "and the repository exists.",
+          ].join("\n")
+        );
+        expect(terminalEvent.error).toContain("\n");
+      } finally {
+        process.env.PATH = originalPath;
+      }
+    });
+
     it("SSH clone invokes askpass for credential prompt and succeeds", async () => {
       if (process.platform === "win32") {
         // This test relies on a POSIX shell shim named "git" in PATH.

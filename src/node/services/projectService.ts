@@ -21,10 +21,12 @@ import {
 } from "@/node/services/fileCompletionsIndex";
 import { log } from "@/node/services/log";
 import type { SshPromptService } from "@/node/services/sshPromptService";
+import { createMediatedAskpassSession } from "@/node/runtime/openSshPromptMediation";
 import {
-  createMediatedAskpassSession,
-  type MediatedPromptOutcome,
-} from "@/node/runtime/openSshPromptMediation";
+  classifySshCloneFailure,
+  summarizeCloneStderr,
+  type CloneErrorCode,
+} from "./sshCloneFailure";
 import type { BranchListResult } from "@/common/orpc/types";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import * as path from "path";
@@ -72,11 +74,7 @@ interface CloneProjectParams {
   cloneParentDir?: string | null;
 }
 
-export type CloneErrorCode =
-  | "ssh_host_key_rejected"
-  | "ssh_credential_cancelled"
-  | "ssh_prompt_timeout"
-  | "clone_failed";
+export type { CloneErrorCode } from "./sshCloneFailure";
 
 export type CloneEvent =
   | { type: "progress"; line: string }
@@ -248,37 +246,6 @@ function deriveSshClonePromptDedupeKey(cloneUrl: string): string | undefined {
   }
 
   return undefined;
-}
-
-function classifyCloneError(
-  stderr: string,
-  promptOutcome: MediatedPromptOutcome | null
-): CloneErrorCode {
-  if (promptOutcome?.reason === "timeout") {
-    return "ssh_prompt_timeout";
-  }
-
-  if (promptOutcome?.kind === "host-key" && promptOutcome.reason === "responded") {
-    if (promptOutcome.response.trim().toLowerCase() !== "yes") {
-      return "ssh_host_key_rejected";
-    }
-  }
-
-  if (promptOutcome?.kind === "credential" && promptOutcome.reason === "responded") {
-    if (promptOutcome.response.length === 0) {
-      return "ssh_credential_cancelled";
-    }
-
-    // Non-empty credentials were provided but auth still failed; keep stderr details.
-    return "clone_failed";
-  }
-
-  if (/host key verification failed/i.test(stderr)) return "ssh_host_key_rejected";
-  if (/permission denied/i.test(stderr) && /passphrase|password/i.test(stderr)) {
-    return "ssh_credential_cancelled";
-  }
-
-  return "clone_failed";
 }
 
 const FILE_COMPLETIONS_CACHE_TTL_MS = 10_000;
@@ -532,14 +499,7 @@ export class ProjectService {
       });
       let spawnErrorMessage: string | null = null;
 
-      const getLastMeaningfulStderrLine = (): string | null => {
-        const stderrLines = collectedStderr
-          .trim()
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .filter((line) => line.length > 0);
-        return stderrLines[stderrLines.length - 1] ?? null;
-      };
+      const summarizeStderr = (): string | null => summarizeCloneStderr(collectedStderr);
 
       const notifyChunk = () => {
         if (!resolveChunk) {
@@ -644,7 +604,7 @@ export class ProjectService {
 
       if (spawnErrorMessage != null) {
         await cleanupPartialClone();
-        const errorMessage = getLastMeaningfulStderrLine() ?? spawnErrorMessage;
+        const errorMessage = summarizeStderr() ?? spawnErrorMessage;
         yield { type: "error", code: "clone_failed", error: errorMessage };
         return;
       }
@@ -661,13 +621,16 @@ export class ProjectService {
       if (exitCode !== 0 || exitSignal != null) {
         await cleanupPartialClone();
         const errorMessage =
-          getLastMeaningfulStderrLine() ??
+          summarizeStderr() ??
           (exitSignal != null
             ? `Clone failed: process terminated by signal ${String(exitSignal)}`
             : `Clone failed with exit code ${exitCode ?? "unknown"}`);
         yield {
           type: "error",
-          code: classifyCloneError(collectedStderr, askpass?.getLastPromptOutcome() ?? null),
+          code: classifySshCloneFailure({
+            stderr: collectedStderr,
+            promptOutcome: askpass?.getLastPromptOutcome() ?? null,
+          }),
           error: errorMessage,
         };
         return;
