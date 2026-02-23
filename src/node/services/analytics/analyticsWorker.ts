@@ -9,11 +9,17 @@ import { shouldRunInitialBackfill } from "./backfillDecision";
 import { CHAT_FILE_NAME, clearWorkspaceAnalyticsState, ingestWorkspace, rebuildAll } from "./etl";
 import { executeNamedQuery } from "./queries";
 
-interface WorkerRequest {
+interface WorkerTaskRequest {
   messageId: number;
   taskName: string;
   data: unknown;
 }
+
+interface WorkerShutdownRequest {
+  type: "shutdown";
+}
+
+type WorkerRequest = WorkerTaskRequest | WorkerShutdownRequest;
 
 interface WorkerSuccessResponse {
   messageId: number;
@@ -103,7 +109,9 @@ CREATE TABLE IF NOT EXISTS ingest_watermarks (
 )
 `;
 
+let instance: DuckDBInstance | null = null;
 let conn: DuckDBConnection | null = null;
+let isShuttingDown = false;
 
 function getConn(): DuckDBConnection {
   assert(conn, "analytics worker has not been initialized");
@@ -112,9 +120,11 @@ function getConn(): DuckDBConnection {
 
 async function handleInit(data: InitData): Promise<void> {
   assert(data.dbPath.trim().length > 0, "init requires a non-empty dbPath");
+  assert(instance == null && conn == null, "analytics worker init must only run once per process");
 
-  const instance = await DuckDBInstance.create(data.dbPath);
-  conn = await instance.connect();
+  const createdInstance = await DuckDBInstance.create(data.dbPath);
+  instance = createdInstance;
+  conn = await createdInstance.connect();
 
   const activeConn = getConn();
   await activeConn.run(CREATE_EVENTS_TABLE_SQL);
@@ -315,6 +325,65 @@ async function handleNeedsBackfill(data: NeedsBackfillData): Promise<{ needsBack
   };
 }
 
+function isWorkerTaskRequest(message: unknown): message is WorkerTaskRequest {
+  if (!isRecord(message)) {
+    return false;
+  }
+
+  const messageId = message.messageId;
+  if (typeof messageId !== "number" || !Number.isInteger(messageId) || messageId < 0) {
+    return false;
+  }
+
+  const taskName = message.taskName;
+  return typeof taskName === "string" && taskName.trim().length > 0;
+}
+
+function isWorkerShutdownRequest(message: unknown): message is WorkerShutdownRequest {
+  return isRecord(message) && message.type === "shutdown";
+}
+
+function closeDuckDb(): void {
+  const activeConn = conn;
+  const activeInstance = instance;
+  conn = null;
+  instance = null;
+
+  try {
+    if (activeConn != null) {
+      activeConn.disconnectSync();
+    }
+  } finally {
+    if (activeInstance != null) {
+      activeInstance.closeSync();
+    }
+  }
+}
+
+// Shutdown runs in the serialized message queue, so we only close DuckDB
+// after earlier ETL/query tasks have completed on this worker thread.
+function handleShutdown(): void {
+  if (isShuttingDown) {
+    return;
+  }
+
+  isShuttingDown = true;
+  let exitCode = 0;
+
+  try {
+    closeDuckDb();
+  } catch (error) {
+    exitCode = 1;
+    process.stderr.write(
+      `[analytics-worker] Failed to close DuckDB during shutdown: ${getErrorMessage(error)}\n`
+    );
+  }
+
+  workerParentPort.removeAllListeners("message");
+  workerParentPort.close();
+  process.exit(exitCode);
+}
+
 async function dispatchTask(taskName: string, data: unknown): Promise<unknown> {
   switch (taskName) {
     case "init":
@@ -344,7 +413,7 @@ function requireParentPort(): NonNullable<typeof parentPort> {
 
 const workerParentPort = requireParentPort();
 
-function toResponseMessageId(message: WorkerRequest): number {
+function toResponseMessageId(message: WorkerTaskRequest): number {
   if (Number.isInteger(message.messageId) && message.messageId >= 0) {
     return message.messageId;
   }
@@ -362,7 +431,7 @@ function postWorkerResponse(response: WorkerSuccessResponse | WorkerErrorRespons
   }
 }
 
-async function processMessage(message: WorkerRequest): Promise<void> {
+async function processMessage(message: WorkerTaskRequest): Promise<void> {
   const responseMessageId = toResponseMessageId(message);
 
   try {
@@ -396,8 +465,21 @@ async function processMessage(message: WorkerRequest): Promise<void> {
 let messageQueue: Promise<void> = Promise.resolve();
 
 workerParentPort.on("message", (message: WorkerRequest) => {
-  // Serialize ETL and query tasks to avoid races when ingest/rebuild requests
-  // arrive back-to-back from the parent process.
+  // Serialize ETL/query tasks and shutdown so dispose can wait for in-flight
+  // DuckDB work to finish before we disconnect and close the database.
+  if (isWorkerShutdownRequest(message)) {
+    messageQueue = messageQueue.then(
+      () => handleShutdown(),
+      () => handleShutdown()
+    );
+    return;
+  }
+
+  if (!isWorkerTaskRequest(message)) {
+    process.stderr.write("[analytics-worker] Dropping invalid worker message payload\n");
+    return;
+  }
+
   messageQueue = messageQueue.then(
     () => processMessage(message),
     () => processMessage(message)
