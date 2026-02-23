@@ -5,7 +5,7 @@
  * Chromatic is configured to snapshot both light and dark themes.
  */
 
-import { within, waitFor, userEvent } from "@storybook/test";
+import { within, waitFor } from "@storybook/test";
 import type { ComponentType } from "react";
 
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
@@ -210,17 +210,10 @@ export const IPhone17ProMaxTouchReviewImmersive: AppStory = {
       { timeout: 10_000 }
     );
 
-    const immersiveView = canvas.getByTestId("immersive-review-view");
-    const tappableLine = immersiveView.querySelector('[data-line-index="0"]');
-    if (!(tappableLine instanceof HTMLElement)) {
-      throw new Error("Expected at least one tappable diff row in touch immersive story.");
-    }
-
-    await userEvent.click(tappableLine);
-
     await waitFor(
       () => {
-        canvas.getByPlaceholderText("Your comment...");
+        const immersiveView = canvas.getByTestId("immersive-review-view");
+        within(immersiveView).getByText(/Tap any changed line to add a note immediately\./i);
         if (canvas.queryByRole("heading", { name: "Notes" })) {
           throw new Error("Touch immersive mode should hide the desktop notes sidebar.");
         }
