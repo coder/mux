@@ -1169,7 +1169,7 @@ describe("WorkspaceStore", () => {
           _messageId: string,
           _isFinal: boolean,
           _finalText: string,
-          _compaction?: { hasContinueMessage: boolean },
+          _compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
           _completedAt?: number | null
         ) => undefined
       );
@@ -1297,7 +1297,7 @@ describe("WorkspaceStore", () => {
           _messageId: string,
           _isFinal: boolean,
           _finalText: string,
-          _compaction?: { hasContinueMessage: boolean },
+          _compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
           _completedAt?: number | null
         ) => undefined
       );
@@ -1397,7 +1397,7 @@ describe("WorkspaceStore", () => {
           _messageId: string,
           _isFinal: boolean,
           _finalText: string,
-          _compaction?: { hasContinueMessage: boolean },
+          _compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
           _completedAt?: number | null
         ) => undefined
       );

@@ -867,7 +867,7 @@ function AppInner() {
       _messageId: string,
       isFinal: boolean,
       finalText: string,
-      compaction?: { hasContinueMessage: boolean },
+      compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
       completedAt?: number | null
     ) => {
       // Only notify on final message (when assistant is done with all work)
@@ -881,6 +881,9 @@ function AppInner() {
       if (completedAt != null && isChatVisible) {
         updatePersistedState(getWorkspaceLastReadKey(workspaceId), completedAt);
       }
+
+      // Skip notification for idle compaction (background maintenance, not user-initiated).
+      if (compaction?.isIdle) return;
 
       // Skip notification if compaction completed with a continue message.
       // We use the compaction metadata instead of queued state since the queue

@@ -121,6 +121,9 @@ export const WorkspaceActivitySnapshotSchema = z.object({
     description:
       "Most recent status_set value for this workspace (used to surface background progress in sidebar).",
   }),
+  isIdleCompaction: z.boolean().optional().meta({
+    description: "Whether the current streaming activity is an idle (background) compaction",
+  }),
 });
 
 export const PostCompactionStateSchema = z.object({

@@ -585,7 +585,7 @@ export class WorkspaceStore {
         messageId: string,
         isFinal: boolean,
         finalText: string,
-        compaction?: { hasContinueMessage: boolean },
+        compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
         completedAt?: number | null
       ) => void)
     | null = null;
@@ -1290,7 +1290,7 @@ export class WorkspaceStore {
       messageId: string,
       isFinal: boolean,
       finalText: string,
-      compaction?: { hasContinueMessage: boolean },
+      compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
       completedAt?: number | null
     ) => void
   ): void {
@@ -2369,6 +2369,12 @@ export class WorkspaceStore {
     const backgroundCompaction = isBackgroundStreamingStop
       ? this.getBackgroundCompletionCompaction(workspaceId)
       : undefined;
+    // The backend tags both the streaming=true and streaming=false snapshots with
+    // isIdleCompaction. Check both: previous covers the normal case; snapshot (the stop
+    // event) covers UI reconnects where activity.list() restored a previous without the
+    // transient flag.
+    const wasIdleCompaction =
+      previous?.isIdleCompaction === true || snapshot?.isIdleCompaction === true;
 
     // Trigger response completion notifications for background workspaces only when
     // activity indicates a true completion (streaming true -> false WITH recency advance).
@@ -2384,7 +2390,13 @@ export class WorkspaceStore {
           "",
           true,
           "",
-          backgroundCompaction,
+          backgroundCompaction
+            ? wasIdleCompaction
+              ? { ...backgroundCompaction, isIdle: true }
+              : backgroundCompaction
+            : wasIdleCompaction
+              ? { hasContinueMessage: false, isIdle: true }
+              : undefined,
           stoppedStreamingSnapshot.recency
         );
       }

@@ -943,6 +943,10 @@ export class WorkspaceService extends EventEmitter {
   // from waking a dedicated workspace during archive().
   private readonly archivingWorkspaces = new Set<string>();
 
+  // Tracks workspaces undergoing idle (background) compaction so the activity snapshot
+  // can tag the stream, letting the frontend suppress notifications for maintenance work.
+  private readonly idleCompactingWorkspaces = new Set<string>();
+
   // AbortControllers for in-progress workspace initialization (postCreateSetup + initWorkspace).
   //
   // Why this lives here: archive/remove are the user-facing lifecycle operations that should
@@ -1192,7 +1196,14 @@ export class WorkspaceService extends EventEmitter {
         model,
         thinkingLevel
       );
-      this.emitWorkspaceActivity(workspaceId, snapshot);
+      const isIdleCompaction = this.idleCompactingWorkspaces.has(workspaceId);
+      this.emitWorkspaceActivity(
+        workspaceId,
+        isIdleCompaction ? { ...snapshot, isIdleCompaction: true } : snapshot
+      );
+      if (!streaming) {
+        this.idleCompactingWorkspaces.delete(workspaceId);
+      }
     } catch (error) {
       log.error("Failed to update workspace streaming status", { workspaceId, error });
     }
@@ -4622,6 +4633,13 @@ export class WorkspaceService extends EventEmitter {
           : String(rawError);
       throw new Error(`Failed to execute idle compaction: ${formattedError}`);
     }
+
+    // Mark idle compaction AFTER send succeeds. At this point the idle stream is running
+    // and the session is busy, so no concurrent user stream can race with this marker.
+    // The streaming=true snapshot was already emitted without the flag, but the
+    // streaming=false snapshot (emitted by updateStreamingStatus on stream end) will
+    // pick it up — the frontend checks both snapshots.
+    this.idleCompactingWorkspaces.add(workspaceId);
 
     // Notify listeners only after dispatch succeeds so UI state reflects real work.
     this.emitIdleCompactionStarted(workspaceId);

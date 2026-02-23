@@ -409,7 +409,7 @@ export class StreamingMessageAggregator {
     messageId: string,
     isFinal: boolean,
     finalText: string,
-    compaction?: { hasContinueMessage: boolean },
+    compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
     completedAt?: number | null
   ) => void;
 
