@@ -126,19 +126,30 @@ function RouterContextInner(props: { children: ReactNode }) {
     state: unknown;
   }
 
-  // When leaving settings or analytics, we need to restore the *full* previous location including
+  // When leaving settings, we need to restore the *full* previous location including
   // any in-memory navigation state (e.g. /project relies on { projectPath } state, and
   // the legacy ?path= deep link rewrite stores that path in location.state).
+  // Include /analytics so Settings opened from Analytics can close back to Analytics.
   const lastNonSettingsLocationRef = useRef<NonSettingsLocationSnapshot>({
     url: getInitialRoute(),
     state: null,
   });
+  // Keep a separate "close analytics" snapshot that intentionally excludes /analytics so
+  // closing analytics still returns to the last non-analytics route.
+  const lastNonAnalyticsLocationRef = useRef<NonSettingsLocationSnapshot>({
+    url: getInitialRoute(),
+    state: null,
+  });
   useEffect(() => {
-    if (!location.pathname.startsWith("/settings") && location.pathname !== "/analytics") {
-      lastNonSettingsLocationRef.current = {
+    if (!location.pathname.startsWith("/settings")) {
+      const locationSnapshot: NonSettingsLocationSnapshot = {
         url: location.pathname + location.search,
         state: location.state,
       };
+      lastNonSettingsLocationRef.current = locationSnapshot;
+      if (location.pathname !== "/analytics") {
+        lastNonAnalyticsLocationRef.current = locationSnapshot;
+      }
     }
   }, [location.pathname, location.search, location.state]);
 
@@ -200,11 +211,7 @@ function RouterContextInner(props: { children: ReactNode }) {
 
   const navigateFromSettings = useCallback(() => {
     const lastLocation = lastNonSettingsLocationRef.current;
-    if (
-      !lastLocation.url ||
-      lastLocation.url.startsWith("/settings") ||
-      lastLocation.url === "/analytics"
-    ) {
+    if (!lastLocation.url || lastLocation.url.startsWith("/settings")) {
       void navigateRef.current("/");
       return;
     }
@@ -216,7 +223,7 @@ function RouterContextInner(props: { children: ReactNode }) {
   }, []);
 
   const navigateFromAnalytics = useCallback(() => {
-    const lastLocation = lastNonSettingsLocationRef.current;
+    const lastLocation = lastNonAnalyticsLocationRef.current;
     if (
       !lastLocation.url ||
       lastLocation.url.startsWith("/settings") ||
