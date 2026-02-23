@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -74,10 +75,8 @@ export function AuthTokenModal(props: AuthTokenModalProps) {
   const [githubLoginError, setGithubLoginError] = useState<string | null>(null);
   const [githubUserCode, setGithubUserCode] = useState<string | null>(null);
   const [githubVerificationUri, setGithubVerificationUri] = useState<string | null>(null);
-  const [githubCodeCopied, setGithubCodeCopied] = useState(false);
 
   const waitAbortControllerRef = useRef<AbortController | null>(null);
-  const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { onSubmit } = props;
 
@@ -86,7 +85,6 @@ export function AuthTokenModal(props: AuthTokenModalProps) {
     setGithubLoginError(null);
     setGithubUserCode(null);
     setGithubVerificationUri(null);
-    setGithubCodeCopied(false);
 
     waitAbortControllerRef.current?.abort();
     waitAbortControllerRef.current = null;
@@ -154,9 +152,6 @@ export function AuthTokenModal(props: AuthTokenModalProps) {
   useEffect(() => {
     return () => {
       waitAbortControllerRef.current?.abort();
-      if (copiedTimeoutRef.current !== null) {
-        clearTimeout(copiedTimeoutRef.current);
-      }
     };
   }, []);
 
@@ -194,8 +189,6 @@ export function AuthTokenModal(props: AuthTokenModalProps) {
       setGithubLoginStatus("waiting");
       setGithubVerificationUri(verificationUri);
       setGithubUserCode(userCode);
-
-      window.open(verificationUri, "_blank", "noopener");
 
       const waitController = new AbortController();
       waitAbortControllerRef.current = waitController;
@@ -244,23 +237,6 @@ export function AuthTokenModal(props: AuthTokenModalProps) {
       setGithubLoginError(message);
     }
   }, [clearGithubLoginUi, props]);
-
-  const copyGithubUserCode = useCallback(() => {
-    if (!githubUserCode) {
-      return;
-    }
-
-    void navigator.clipboard.writeText(githubUserCode);
-    setGithubCodeCopied(true);
-
-    if (copiedTimeoutRef.current !== null) {
-      clearTimeout(copiedTimeoutRef.current);
-    }
-
-    copiedTimeoutRef.current = setTimeout(() => {
-      setGithubCodeCopied(false);
-    }, 2_000);
-  }, [githubUserCode]);
 
   // This modal cannot be dismissed without providing a token/session.
   const handleOpenChange = useCallback(() => {
@@ -326,33 +302,30 @@ export function AuthTokenModal(props: AuthTokenModalProps) {
               <div className="bg-background-tertiary space-y-2 rounded-md p-3">
                 <p className="text-muted text-xs">Enter this code on GitHub:</p>
                 <div className="flex items-center gap-2">
-                  <code className="text-accent text-lg font-bold tracking-widest">
+                  <code className="text-foreground text-lg font-bold tracking-widest">
                     {githubUserCode}
                   </code>
                   <Button
-                    variant="ghost"
                     size="sm"
-                    aria-label="Copy GitHub verification code"
-                    onClick={copyGithubUserCode}
-                    className="text-muted hover:text-foreground h-auto px-1 py-0 text-xs"
+                    aria-label="Copy and open GitHub verification page"
+                    onClick={() => {
+                      if (!githubVerificationUri) {
+                        return;
+                      }
+
+                      void navigator.clipboard.writeText(githubUserCode);
+                      window.open(githubVerificationUri, "_blank", "noopener");
+                    }}
+                    className="h-8 px-3 text-xs"
+                    disabled={!githubVerificationUri}
                   >
-                    {githubCodeCopied ? "Copied!" : "Copy"}
+                    Copy & Open GitHub
                   </Button>
                 </div>
-                {githubVerificationUri ? (
-                  <p className="text-muted text-xs">
-                    If the browser didn&apos;t open,{" "}
-                    <a
-                      href={githubVerificationUri}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-accent hover:text-accent-light underline"
-                    >
-                      open the verification page
-                    </a>
-                    .
-                  </p>
-                ) : null}
+                <p className="text-muted inline-flex items-center gap-2 text-xs">
+                  <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
+                  Waiting for authorization...
+                </p>
               </div>
             ) : null}
 
