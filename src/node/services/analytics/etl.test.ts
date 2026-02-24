@@ -468,4 +468,37 @@ describe("ingestArchivedSubagentTranscripts", () => {
     expect(await queryEventCount(conn)).toBe(1);
     expect(await queryEventCount(conn, parentWorkspaceId)).toBe(1);
   });
+
+  test("falls back to parent workspace ID when archived metadata.json is missing", async () => {
+    const conn = await createTestConn();
+    const parentWorkspaceId = "parent-id";
+    const childWorkspaceId = "legacy-child";
+
+    const parentSessionDir = await createTempSessionDir();
+    await writeChatJsonl(parentSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
+
+    // Create archived child WITHOUT metadata.json — simulates pre-existing archives
+    const childSessionDir = path.join(
+      parentSessionDir,
+      SUBAGENT_TRANSCRIPTS_DIR_NAME,
+      childWorkspaceId
+    );
+    await fs.mkdir(childSessionDir, { recursive: true });
+    await writeChatJsonl(childSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
+    // Deliberately NOT writing metadata.json
+
+    await ingestWorkspace(conn, parentWorkspaceId, parentSessionDir, { projectPath: "/test" });
+
+    expect(await queryEventCount(conn, childWorkspaceId)).toBe(1);
+
+    const childRows = await queryRows(
+      conn,
+      "SELECT parent_workspace_id, CAST(is_sub_agent AS INTEGER) AS is_sub_agent_int FROM events WHERE workspace_id = ?",
+      [childWorkspaceId]
+    );
+    expect(childRows).toHaveLength(1);
+    // Even without metadata.json, the fallback sets parentWorkspaceId and is_sub_agent
+    expect(childRows[0].parent_workspace_id).toBe(parentWorkspaceId);
+    expect(parseBooleanFromInteger(childRows[0].is_sub_agent_int, "is_sub_agent_int")).toBe(true);
+  });
 });
