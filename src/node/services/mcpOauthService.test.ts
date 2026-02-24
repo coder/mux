@@ -5,7 +5,12 @@ import * as os from "os";
 import * as path from "path";
 import { Config } from "@/node/config";
 import { MCPConfigService } from "./mcpConfigService";
-import { McpOauthService, parseBearerWwwAuthenticate } from "./mcpOauthService";
+import {
+  McpOauthService,
+  parseBearerWwwAuthenticate,
+  probeServerForBearerChallenge,
+  probeWellKnownResourceMetadata,
+} from "./mcpOauthService";
 
 function getStoreFilePath(muxHome: string): string {
   return path.join(muxHome, "mcp-oauth.json");
@@ -483,5 +488,135 @@ describe("McpOauthService.startDesktopFlow", () => {
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+});
+
+describe("probeServerForBearerChallenge", () => {
+  test("returns challenge from GET www-authenticate header", async () => {
+    const server = createServer((_req, res) => {
+      res.statusCode = 401;
+      res.setHeader(
+        "WWW-Authenticate",
+        'Bearer scope="mcp.read" resource_metadata="https://example.com/.well-known/oauth-protected-resource"'
+      );
+      res.end("Unauthorized");
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Failed to bind");
+
+      const result = await probeServerForBearerChallenge(`http://127.0.0.1:${address.port}/`);
+      expect(result).not.toBeNull();
+      expect(result?.scope).toBe("mcp.read");
+      expect(result?.resourceMetadataUrl?.toString()).toBe(
+        "https://example.com/.well-known/oauth-protected-resource"
+      );
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  test("falls back to POST when GET returns 405 without www-authenticate", async () => {
+    const server = createServer((req, res) => {
+      if (req.method === "GET") {
+        // HTTP-transport servers like Figma return 405 on GET with no
+        // WWW-Authenticate header.
+        res.statusCode = 405;
+        res.end("Method Not Allowed");
+        return;
+      }
+
+      // POST returns 401 + WWW-Authenticate (standard HTTP-transport behavior).
+      res.statusCode = 401;
+      res.setHeader(
+        "WWW-Authenticate",
+        'Bearer scope="mcp.write" resource_metadata="https://figma.example.com/.well-known/oauth-protected-resource"'
+      );
+      res.end("Unauthorized");
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Failed to bind");
+
+      const result = await probeServerForBearerChallenge(`http://127.0.0.1:${address.port}/`);
+      expect(result).not.toBeNull();
+      expect(result?.scope).toBe("mcp.write");
+      expect(result?.resourceMetadataUrl?.toString()).toBe(
+        "https://figma.example.com/.well-known/oauth-protected-resource"
+      );
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  test("returns null when neither GET nor POST return www-authenticate", async () => {
+    const server = createServer((_req, res) => {
+      res.statusCode = 200;
+      res.end("OK");
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Failed to bind");
+
+      const result = await probeServerForBearerChallenge(`http://127.0.0.1:${address.port}/`);
+      expect(result).toBeNull();
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
+
+describe("probeWellKnownResourceMetadata", () => {
+  test("returns URL when well-known endpoint responds 200", async () => {
+    const server = createServer((req, res) => {
+      if (req.url === "/.well-known/oauth-protected-resource") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ resource: "https://example.com/" }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end("Not Found");
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Failed to bind");
+
+      const result = await probeWellKnownResourceMetadata(`http://127.0.0.1:${address.port}/`);
+      expect(result).toBeDefined();
+      expect(result?.pathname).toBe("/.well-known/oauth-protected-resource");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  test("returns undefined when well-known endpoint responds 404", async () => {
+    const server = createServer((_req, res) => {
+      res.statusCode = 404;
+      res.end("Not Found");
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Failed to bind");
+
+      const result = await probeWellKnownResourceMetadata(`http://127.0.0.1:${address.port}/`);
+      expect(result).toBeUndefined();
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  test("returns undefined for invalid server URL", async () => {
+    const result = await probeWellKnownResourceMetadata("not-a-url");
+    expect(result).toBeUndefined();
   });
 });

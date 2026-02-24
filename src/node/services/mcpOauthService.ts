@@ -202,7 +202,9 @@ export function parseBearerWwwAuthenticate(header: string): BearerChallenge | nu
   };
 }
 
-async function probeServerForBearerChallenge(serverUrl: string): Promise<BearerChallenge | null> {
+export async function probeServerForBearerChallenge(
+  serverUrl: string
+): Promise<BearerChallenge | null> {
   const requestUrl = sanitizeServerUrlForRequest(serverUrl);
   if (!requestUrl) {
     return null;
@@ -217,27 +219,59 @@ async function probeServerForBearerChallenge(serverUrl: string): Promise<BearerC
   const timeout = setTimeout(() => abortController.abort(), 5_000);
 
   try {
-    const response = await fetch(requestUrl, {
-      method: "GET",
-      headers: {
-        Accept: "text/event-stream",
-      },
-      redirect: "manual",
-      signal: abortController.signal,
-    });
+    // Try GET first (works for SSE servers), then POST (works for HTTP-transport
+    // servers like Figma that return 405 on GET but 401+WWW-Authenticate on POST).
+    for (const method of ["GET", "POST"] as const) {
+      try {
+        const response = await fetch(requestUrl, {
+          method,
+          headers: {
+            Accept: "text/event-stream",
+          },
+          redirect: "manual",
+          signal: abortController.signal,
+        });
 
-    const header =
-      response.headers.get("www-authenticate") ?? response.headers.get("WWW-Authenticate");
-    if (!header) {
-      return null;
+        const header =
+          response.headers.get("www-authenticate") ?? response.headers.get("WWW-Authenticate");
+        if (header) {
+          return parseBearerWwwAuthenticate(header);
+        }
+      } catch {
+        // Continue to next method.
+      }
     }
-
-    return parseBearerWwwAuthenticate(header);
-  } catch {
     return null;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * Directly probe `/.well-known/oauth-protected-resource` on the server.
+ * Returns the URL if the endpoint exists and responds successfully, so
+ * it can be passed to `auth()` as the `resourceMetadataUrl` hint.
+ */
+export async function probeWellKnownResourceMetadata(serverUrl: string): Promise<URL | undefined> {
+  const requestUrl = sanitizeServerUrlForRequest(serverUrl);
+  if (!requestUrl) return undefined;
+
+  const base = new URL(requestUrl);
+  const wellKnownUrl = new URL("/.well-known/oauth-protected-resource", base);
+
+  try {
+    const response = await fetch(wellKnownUrl.toString(), {
+      method: "GET",
+      redirect: "manual",
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (response.ok) {
+      return wellKnownUrl;
+    }
+  } catch {
+    // Server doesn't support RFC 9728 — that's fine.
+  }
+  return undefined;
 }
 
 function parseStoredCredentials(value: unknown): MCPOAuthStoredCredentials | null {
@@ -669,6 +703,14 @@ export class McpOauthService {
     // @ai-sdk/mcp can still fall back to well-known discovery.
     const challenge = await probeServerForBearerChallenge(serverUrlForDiscovery);
 
+    // If the probe didn't extract a resource_metadata hint, try the well-known
+    // endpoint directly. Servers like Figma expose RFC 9728 metadata at a
+    // standard URL that the SDK can use to discover the correct auth server.
+    let resourceMetadataUrl = challenge?.resourceMetadataUrl;
+    if (!resourceMetadataUrl) {
+      resourceMetadataUrl = await probeWellKnownResourceMetadata(serverUrlForDiscovery);
+    }
+
     const flow: DesktopFlow = {
       flowId,
       projectPath: projectKey,
@@ -681,7 +723,7 @@ export class McpOauthService {
       authorizeUrl: "",
       redirectUri,
       scope: challenge?.scope,
-      resourceMetadataUrl: challenge?.resourceMetadataUrl,
+      resourceMetadataUrl,
       codeVerifier: null,
       server: serverListener,
       timeout: setTimeout(() => {
@@ -810,6 +852,14 @@ export class McpOauthService {
     // @ai-sdk/mcp can still fall back to well-known discovery.
     const challenge = await probeServerForBearerChallenge(serverUrlForDiscovery);
 
+    // If the probe didn't extract a resource_metadata hint, try the well-known
+    // endpoint directly. Servers like Figma expose RFC 9728 metadata at a
+    // standard URL that the SDK can use to discover the correct auth server.
+    let resourceMetadataUrl = challenge?.resourceMetadataUrl;
+    if (!resourceMetadataUrl) {
+      resourceMetadataUrl = await probeWellKnownResourceMetadata(serverUrlForDiscovery);
+    }
+
     const flow: ServerFlow = {
       flowId,
       projectPath: projectKey,
@@ -822,7 +872,7 @@ export class McpOauthService {
       authorizeUrl: "",
       redirectUri: redirectUri.toString(),
       scope: challenge?.scope,
-      resourceMetadataUrl: challenge?.resourceMetadataUrl,
+      resourceMetadataUrl,
       codeVerifier: null,
       timeout: setTimeout(() => {
         void this.finishServerFlow(flowId, Err("Timed out waiting for OAuth callback"));
