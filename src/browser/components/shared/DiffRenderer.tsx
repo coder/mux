@@ -805,7 +805,7 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
 
     // Renders as a subgrid row with 3 cells to align with diff lines: gutter | indicator | input
     return (
-      <div className="col-span-3 grid min-w-0 grid-cols-subgrid [contain:inline-size]">
+      <div className="col-span-3 grid min-w-0 grid-cols-subgrid">
         {/* Gutter spacer to align with diff lines */}
         <span
           className="flex shrink-0 items-center gap-0.5 px-1 tabular-nums select-none"
@@ -828,9 +828,10 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
         {/* Input container with accent styling */}
         <div className="min-w-0 py-1.5 pr-3" style={{ background: codeBg }}>
           <div
-            className="flex w-full max-w-full overflow-hidden rounded border border-[var(--color-review-accent)]/30 shadow-sm sm:max-w-[560px]"
+            className="flex w-full overflow-hidden rounded border border-[var(--color-review-accent)]/30 shadow-sm"
             style={{
               background: "hsl(from var(--color-review-accent) h s l / 0.08)",
+              maxWidth: "min(560px, calc(100vw - 4rem))",
             }}
           >
             {/* Left accent bar */}
@@ -915,7 +916,7 @@ const InlineReviewNoteRow: React.FC<InlineReviewNoteRowProps> = React.memo(
 
     return (
       <div
-        className="col-span-3 grid min-w-0 grid-cols-subgrid [contain:inline-size]"
+        className="col-span-3 grid min-w-0 grid-cols-subgrid"
         data-inline-review-note={true}
         data-review-id={review.id}
       >

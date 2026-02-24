@@ -161,10 +161,14 @@ export const InlineReviewNote: React.FC<InlineReviewNoteProps> = ({
   return (
     <div
       className={cn(
-        "group/review-note flex w-full max-w-full sm:max-w-[560px] overflow-hidden rounded border shadow-sm",
+        "group/review-note flex w-full overflow-hidden rounded border shadow-sm",
         className
       )}
-      style={{ background: containerBg, borderColor }}
+      style={{
+        background: containerBg,
+        borderColor,
+        maxWidth: "min(560px, calc(100vw - 4rem))",
+      }}
     >
       {/* Left accent bar */}
       <div className="w-[3px] shrink-0" style={{ background: tintColor }} />

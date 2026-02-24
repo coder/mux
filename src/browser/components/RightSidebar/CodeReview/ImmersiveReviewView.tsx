@@ -1493,7 +1493,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         <div className="bg-border-light h-4 w-px shrink-0" />
 
         {/* File navigation */}
-        <div className="flex min-w-0 items-center gap-1">
+        <div className="flex min-w-0 flex-1 items-center gap-1">
           <button
             onClick={() => navigateFile(-1)}
             disabled={fileCount <= 1}
@@ -1503,7 +1503,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
             <ChevronLeft className="h-4 w-4" />
           </button>
           <span
-            className="text-foreground min-w-0 truncate font-mono text-xs"
+            className="text-foreground min-w-0 flex-1 truncate font-mono text-xs"
             title={activeFilePath ?? undefined}
           >
             {activeFilePath ?? "No files"}
