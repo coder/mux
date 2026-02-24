@@ -335,6 +335,20 @@ function formatCloneError(event: { code: string; error: string }): string {
   }
 }
 
+/**
+ * Simulate terminal carriage-return handling: for each line, only the
+ * text after the last \r is visible (earlier content is "overwritten").
+ */
+function processTerminalOutput(raw: string): string {
+  return raw
+    .split("\n")
+    .map((line) => {
+      const segments = line.split("\r");
+      return segments[segments.length - 1];
+    })
+    .join("\n");
+}
+
 const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFormProps>(
   function ProjectCloneForm(props, ref) {
     const { api } = useAPI();
@@ -343,7 +357,8 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
     const [hasEditedCloneParentDir, setHasEditedCloneParentDir] = useState(false);
     const [error, setError] = useState("");
     const [isCreating, setIsCreating] = useState(false);
-    const [progressLines, setProgressLines] = useState<string[]>([]);
+    const [cloneOutput, setCloneOutput] = useState("");
+    const rawOutputRef = useRef("");
     const abortControllerRef = useRef<AbortController | null>(null);
     const progressEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -360,7 +375,8 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
       setCloneParentDir(props.defaultProjectDir);
       setHasEditedCloneParentDir(false);
       setError("");
-      setProgressLines([]);
+      setCloneOutput("");
+      rawOutputRef.current = "";
     }, [props.defaultProjectDir]);
 
     const abortInFlightClone = useCallback(() => {
@@ -390,7 +406,7 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
 
     useEffect(() => {
       progressEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, [progressLines]);
+    }, [cloneOutput]);
 
     const trimmedCloneParentDir = cloneParentDir.trim();
 
@@ -428,7 +444,8 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
       }
 
       setError("");
-      setProgressLines([]);
+      setCloneOutput("");
+      rawOutputRef.current = "";
       setCreating(true);
 
       const controller = new AbortController();
@@ -446,8 +463,9 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
         for await (const event of cloneEvents) {
           if (event.type === "progress") {
             if (!controller.signal.aborted) {
-              // Show the raw git stderr stream so users can confirm clone progress and diagnose hangs.
-              setProgressLines((previousLines) => [...previousLines, event.line]);
+              // Show clone stderr in a terminal-like way so carriage returns replace prior progress lines.
+              rawOutputRef.current += event.line;
+              setCloneOutput(processTerminalOutput(rawOutputRef.current));
             }
             continue;
           }
@@ -490,7 +508,8 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
 
     const handleRetry = useCallback(() => {
       setError("");
-      setProgressLines([]);
+      setCloneOutput("");
+      rawOutputRef.current = "";
     }, []);
 
     const handleKeyDown = useCallback(
@@ -515,7 +534,7 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
     const repoName = getRepoNameFromUrl(repoUrl);
     const destinationPreview = buildCloneDestinationPreview(cloneParentDir, repoName);
     // Keep the progress log visible after failed clones so users can diagnose the git error before retrying.
-    const hasCloneFailure = !isCreating && progressLines.length > 0 && error.length > 0;
+    const hasCloneFailure = !isCreating && cloneOutput.length > 0 && error.length > 0;
     const showCloneProgress = isCreating || (hasCloneFailure && !props.hideFooter);
 
     return (
@@ -528,7 +547,7 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
               </label>
               <div className="bg-modal-bg border-border-medium max-h-40 overflow-y-auto rounded border p-3">
                 <pre className="text-muted font-mono text-xs break-all whitespace-pre-wrap">
-                  {progressLines.length > 0 ? progressLines.join("") : "Starting clone…"}
+                  {cloneOutput.length > 0 ? cloneOutput : "Starting clone…"}
                 </pre>
                 <div ref={progressEndRef} />
               </div>
