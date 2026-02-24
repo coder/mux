@@ -248,9 +248,21 @@ export async function resolveAgentForStream(
         ]
       : undefined;
 
+  // Caller require policies (e.g. task completion enforcement) must take precedence.
+  // Drop agent-level require filters in that case to avoid multiple-required-tool conflicts.
+  const callerRequiresTool =
+    callerToolPolicy?.some((filter) => filter.action === "require") === true;
+  const agentToolPolicyForComposition = callerRequiresTool
+    ? agentToolPolicy.filter((filter) => filter.action !== "require")
+    : agentToolPolicy;
+
   const effectiveToolPolicy: ToolPolicy | undefined =
-    callerToolPolicy || agentToolPolicy.length > 0 || systemWorkspaceToolPolicy
-      ? [...agentToolPolicy, ...(callerToolPolicy ?? []), ...(systemWorkspaceToolPolicy ?? [])]
+    callerToolPolicy || agentToolPolicyForComposition.length > 0 || systemWorkspaceToolPolicy
+      ? [
+          ...agentToolPolicyForComposition,
+          ...(callerToolPolicy ?? []),
+          ...(systemWorkspaceToolPolicy ?? []),
+        ]
       : undefined;
 
   // --- Sentinel tool names for agent transition detection ---
