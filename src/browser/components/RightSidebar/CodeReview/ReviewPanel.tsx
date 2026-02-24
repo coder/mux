@@ -1225,12 +1225,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't interfere with text input in chat or other editable elements
-      if (e.target instanceof HTMLElement) {
-        const tagName = e.target.tagName.toLowerCase();
-        if (tagName === "input" || tagName === "textarea" || e.target.contentEditable === "true") {
-          return;
-        }
-      }
+      if (isEditableElement(e.target)) return;
 
       // Immersive mode has its own keyboard handler; don't double-handle
       if (isImmersive) return;
