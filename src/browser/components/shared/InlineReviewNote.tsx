@@ -161,7 +161,7 @@ export const InlineReviewNote: React.FC<InlineReviewNoteProps> = ({
   return (
     <div
       className={cn(
-        "group/review-note flex w-full max-w-[560px] overflow-hidden rounded border shadow-sm",
+        "group/review-note flex w-full max-w-full sm:max-w-[560px] overflow-hidden rounded border shadow-sm",
         className
       )}
       style={{ background: containerBg, borderColor }}

@@ -828,7 +828,7 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
         {/* Input container with accent styling */}
         <div className="min-w-0 py-1.5 pr-3" style={{ background: codeBg }}>
           <div
-            className="flex w-full max-w-[560px] overflow-hidden rounded border border-[var(--color-review-accent)]/30 shadow-sm"
+            className="flex w-full max-w-full overflow-hidden rounded border border-[var(--color-review-accent)]/30 shadow-sm sm:max-w-[560px]"
             style={{
               background: "hsl(from var(--color-review-accent) h s l / 0.08)",
             }}
