@@ -1224,9 +1224,7 @@ ${jsonString}`;
       "key" in value &&
       "value" in value &&
       typeof (value as { key?: unknown }).key === "string" &&
-      Config.isSecretValue((value as { value?: unknown }).value) &&
-      (!Object.prototype.hasOwnProperty.call(value, "injectAll") ||
-        typeof (value as { injectAll?: unknown }).injectAll === "boolean")
+      Config.isSecretValue((value as { value?: unknown }).value)
     );
   }
 
@@ -1235,8 +1233,33 @@ ${jsonString}`;
       return [];
     }
 
-    // Filter invalid entries to avoid crashes when iterating secrets.
-    return value.filter((entry): entry is Secret => Config.isSecret(entry));
+    const sanitizedSecrets: Secret[] = [];
+
+    for (const entry of value) {
+      // Filter invalid entries to avoid crashes when iterating secrets.
+      if (!Config.isSecret(entry)) {
+        continue;
+      }
+
+      // Preserve key/value when persisted data includes malformed injectAll values.
+      // This keeps existing secrets usable while ignoring invalid inject-all flags.
+      const entryWithInjectAll = entry as Secret & { injectAll?: unknown };
+      if (typeof entryWithInjectAll.injectAll === "boolean") {
+        sanitizedSecrets.push({
+          key: entryWithInjectAll.key,
+          value: entryWithInjectAll.value,
+          injectAll: entryWithInjectAll.injectAll,
+        });
+        continue;
+      }
+
+      sanitizedSecrets.push({
+        key: entryWithInjectAll.key,
+        value: entryWithInjectAll.value,
+      });
+    }
+
+    return sanitizedSecrets;
   }
 
   private static mergeSecretsByKey(primary: Secret[], secondary: Secret[]): Secret[] {
@@ -1417,7 +1440,7 @@ ${jsonString}`;
 
     const injectedGlobalSecrets: Secret[] = [];
     for (const secret of finalGlobalSecretsByKey.values()) {
-      if (!secret.injectAll) {
+      if (secret.injectAll !== true) {
         continue;
       }
 

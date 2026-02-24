@@ -607,5 +607,21 @@ describe("Config", () => {
       expect(config.getGlobalSecrets()).toEqual([]);
       expect(config.getProjectSecrets("/repo")).toEqual([{ key: "A", value: "1" }]);
     });
+    it("sanitizes malformed injectAll values without dropping valid secrets", () => {
+      const projectPath = "/repo";
+      const secretsFile = path.join(tempDir, "secrets.json");
+      fs.writeFileSync(
+        secretsFile,
+        JSON.stringify({
+          __global__: [{ key: "GLOBAL_TOKEN", value: "abc", injectAll: "true" }],
+          [projectPath]: [{ key: "TOKEN", value: { secret: "GLOBAL_TOKEN" } }],
+        })
+      );
+
+      expect(config.getGlobalSecrets()).toEqual([{ key: "GLOBAL_TOKEN", value: "abc" }]);
+      expect(secretsToRecord(config.getEffectiveSecrets(projectPath))).toEqual({
+        TOKEN: "abc",
+      });
+    });
   });
 });
