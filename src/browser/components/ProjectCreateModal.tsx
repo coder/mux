@@ -344,7 +344,12 @@ function processTerminalOutput(raw: string): string {
     .split("\n")
     .map((line) => {
       const segments = line.split("\r");
-      return segments[segments.length - 1];
+      // When a chunk ends with \r, the last segment is empty — use the
+      // last non-empty segment so in-flight progress lines stay visible.
+      for (let i = segments.length - 1; i >= 0; i--) {
+        if (segments[i] !== "") return segments[i];
+      }
+      return "";
     })
     .join("\n");
 }
