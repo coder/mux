@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Trash2 } from "lucide-react";
 import type { Secret } from "@/common/types/secrets";
 import { useAPI } from "@/browser/contexts/API";
@@ -120,6 +120,10 @@ export const SecretsSection: React.FC = () => {
 
   const [globalSecretKeys, setGlobalSecretKeys] = useState<string[]>([]);
 
+  // Track the last plaintext value per row index so toggling Source back to
+  // "Value" restores the user's input instead of clearing it.
+  const lastLiteralValuesRef = useRef<Map<number, string>>(new Map());
+
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -186,11 +190,13 @@ export const SecretsSection: React.FC = () => {
       setLoadedSecrets(nextSecrets);
       setSecrets(nextSecrets);
       setVisibleSecrets(new Set());
+      lastLiteralValuesRef.current = new Map();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load secrets";
       setLoadedSecrets([]);
       setSecrets([]);
       setVisibleSecrets(new Set());
+      lastLiteralValuesRef.current = new Map();
       setError(message);
     } finally {
       setLoading(false);
@@ -247,6 +253,16 @@ export const SecretsSection: React.FC = () => {
       }
       return next;
     });
+
+    // Shift cached literal values the same way so the right value is restored
+    // if the user toggles the source back on a shifted row.
+    const cache = lastLiteralValuesRef.current;
+    const shifted = new Map<number, string>();
+    for (const [i, val] of cache) {
+      if (i === index) continue;
+      shifted.set(i > index ? i - 1 : i, val);
+    }
+    lastLiteralValuesRef.current = shifted;
   }, []);
 
   const updateSecretKey = useCallback((index: number, value: string) => {
@@ -274,17 +290,25 @@ export const SecretsSection: React.FC = () => {
       setSecrets((prev) => {
         const next = [...prev];
         const existing = next[index] ?? { key: "", value: "" };
+        const cache = lastLiteralValuesRef.current;
 
         if (kind === "literal") {
+          // Restore the last plaintext value the user typed, if any.
+          const restored = cache.get(index) ?? "";
           next[index] = {
             ...existing,
-            value: typeof existing.value === "string" ? existing.value : "",
+            value: typeof existing.value === "string" ? existing.value : restored,
           };
           return next;
         }
 
         if (isSecretReferenceValue(existing.value)) {
           return next;
+        }
+
+        // Stash the current plaintext value before switching to a global ref.
+        if (typeof existing.value === "string") {
+          cache.set(index, existing.value);
         }
 
         const defaultKey = globalSecretKeys[0] ?? "";
@@ -313,6 +337,7 @@ export const SecretsSection: React.FC = () => {
   const handleReset = useCallback(() => {
     setSecrets(loadedSecrets);
     setVisibleSecrets(new Set());
+    lastLiteralValuesRef.current = new Map();
     setError(null);
   }, [loadedSecrets]);
 
@@ -451,7 +476,7 @@ export const SecretsSection: React.FC = () => {
           } items-end gap-1 [&>label]:mb-0.5 [&>label]:text-[11px]`}
         >
           <label>Key</label>
-          {scope === "project" && <label>Type</label>}
+          {scope === "project" && <label>Source</label>}
           <label>Value</label>
           <div />
           <div />
@@ -479,8 +504,7 @@ export const SecretsSection: React.FC = () => {
                 />
 
                 {scope === "project" && (
-                  <ToggleGroup
-                    type="single"
+                  <Select
                     value={kind}
                     onValueChange={(value) => {
                       if (value !== "literal" && value !== "global") {
@@ -488,26 +512,21 @@ export const SecretsSection: React.FC = () => {
                       }
                       updateSecretValueKind(index, value);
                     }}
-                    size="sm"
-                    className="h-[34px]"
                     disabled={saving}
                   >
-                    <ToggleGroupItem
-                      value="literal"
-                      size="sm"
-                      className="h-[26px] px-3 text-[13px]"
+                    <SelectTrigger
+                      className="border-border-medium bg-modal-bg hover:bg-hover h-[34px] w-[100px] px-2.5 text-[13px]"
+                      aria-label="Secret source"
                     >
-                      Value
-                    </ToggleGroupItem>
-                    <ToggleGroupItem
-                      value="global"
-                      size="sm"
-                      className="h-[26px] px-3 text-[13px]"
-                      disabled={availableKeys.length === 0}
-                    >
-                      Global
-                    </ToggleGroupItem>
-                  </ToggleGroup>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="literal">Value</SelectItem>
+                      <SelectItem value="global" disabled={availableKeys.length === 0}>
+                        Global
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
                 )}
 
                 {isReference ? (
