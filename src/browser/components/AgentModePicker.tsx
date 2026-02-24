@@ -134,6 +134,9 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
   // Non-auto options shown as selectable items in the dropdown
   const selectableOptions = useMemo(() => options.filter((opt) => opt.id !== "auto"), [options]);
 
+  // Auto is only available when the backend discovers it in the agent list
+  const autoAvailable = useMemo(() => options.some((opt) => opt.id === "auto"), [options]);
+
   const activeOption = useMemo(() => {
     if (!normalizedAgentId) {
       return null;
@@ -262,6 +265,9 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
       e.preventDefault();
       e.stopPropagation();
 
+      // Don't allow numbered shortcuts to bypass Auto lock
+      if (isAuto) return;
+
       // Use selectableOptions so keybinds match the visible dropdown items
       if (index < selectableOptions.length) {
         const picked = selectableOptions[index];
@@ -274,7 +280,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     // Use capture phase to intercept before other handlers
     window.addEventListener("keydown", handleGlobalKeyDown, true);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown, true);
-  }, [isPickerOpen, selectableOptions, handleSelectAgent]);
+  }, [isPickerOpen, isAuto, selectableOptions, handleSelectAgent]);
 
   const handleDropdownKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Escape") {
@@ -432,38 +438,40 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
             )}
           </div>
 
-          {/* Divider + Auto-select toggle */}
-          <div className="border-border-light border-t px-2.5 py-1.5">
-            <div
-              role="button"
-              tabIndex={-1}
-              className="flex cursor-pointer items-center gap-2"
-              onClick={() => {
-                if (isAuto) {
-                  // Turn off auto → default to exec (first built-in)
-                  setAgentId("exec");
-                } else {
-                  setAgentId("auto");
-                }
-                closePicker();
-              }}
-            >
-              {/* Wrapper stops propagation so the parent div's onClick
-                 doesn't double-fire when clicking the Switch directly */}
-              <span onClick={(e) => e.stopPropagation()}>
-                <Switch
-                  checked={isAuto}
-                  onCheckedChange={(checked) => {
-                    setAgentId(checked ? "auto" : "exec");
-                    closePicker();
-                  }}
-                  aria-label="Auto-select agent"
-                />
-              </span>
-              <span className="text-foreground text-[11px] font-medium">Auto-select</span>
-              <span className="text-muted ml-0.5 text-[10px]">· Mux chooses the best agent</span>
+          {/* Divider + Auto-select toggle — only shown when auto agent is available */}
+          {autoAvailable && (
+            <div className="border-border-light border-t px-2.5 py-1.5">
+              <div
+                role="button"
+                tabIndex={-1}
+                className="flex cursor-pointer items-center gap-2"
+                onClick={() => {
+                  if (isAuto) {
+                    // Turn off auto → default to exec (first built-in)
+                    setAgentId("exec");
+                  } else {
+                    setAgentId("auto");
+                  }
+                  closePicker();
+                }}
+              >
+                {/* Wrapper stops propagation so the parent div's onClick
+                   doesn't double-fire when clicking the Switch directly */}
+                <span onClick={(e) => e.stopPropagation()}>
+                  <Switch
+                    checked={isAuto}
+                    onCheckedChange={(checked) => {
+                      setAgentId(checked ? "auto" : "exec");
+                      closePicker();
+                    }}
+                    aria-label="Auto-select agent"
+                  />
+                </span>
+                <span className="text-foreground text-[11px] font-medium">Auto-select</span>
+                <span className="text-muted ml-0.5 text-[10px]">· Mux chooses the best agent</span>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
     </div>
