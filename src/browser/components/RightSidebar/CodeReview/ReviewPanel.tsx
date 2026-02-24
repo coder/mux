@@ -522,6 +522,15 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     sortOrder: sortOrder,
   });
 
+  const handleDiffBaseInteraction = useCallback(
+    (value: string) => {
+      // Persist immediately so async trunk detection can observe explicit selections,
+      // even when the selected value matches the current fallback base.
+      setDiffBase(value);
+    },
+    [setDiffBase]
+  );
+
   // Keep filters in sync with persisted state when updates come from outside this panel
   // (e.g., GitStatusIndicator base selector).
   useEffect(() => {
@@ -1324,6 +1333,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         filters={filters}
         stats={stats}
         onFiltersChange={setFilters}
+        onDiffBaseInteraction={handleDiffBaseInteraction}
         onRefresh={handleRefresh}
         isLoading={
           diffState.status === "loading" || diffState.status === "refreshing" || isLoadingTree
