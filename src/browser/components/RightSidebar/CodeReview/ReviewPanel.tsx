@@ -430,15 +430,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           setDefaultBase(detectedBase);
         }
         if (shouldInitializeWorkspaceBase && !initializedWorkspaceFromMetadata) {
-          if (hasUserInteractedWithDiffBaseRef.current) {
-            return;
-          }
-
           const currentWorkspaceBase = readPersistedString(workspaceDiffBaseKey);
-          if (
-            currentWorkspaceBase === undefined ||
-            currentWorkspaceBase === WORKSPACE_DEFAULTS.reviewBase
-          ) {
+          if (currentWorkspaceBase === undefined) {
             setDiffBase(detectedBase);
           }
         }
@@ -472,12 +465,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   const selectedHunkIdRef = useRef(selectedHunkId);
   selectedHunkIdRef.current = selectedHunkId;
   const showReadHunksRef = useRef(false); // Will be updated after filters state is declared
-
-  const hasUserInteractedWithDiffBaseRef = useRef(false);
-
-  const handleDiffBaseInteraction = useCallback(() => {
-    hasUserInteractedWithDiffBaseRef.current = true;
-  }, []);
 
   // Track hunk first-seen timestamps for LIFO sorting
   const { recordFirstSeen, firstSeenMap } = useHunkFirstSeen(workspaceId);
@@ -980,8 +967,17 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     isCreating,
   ]);
 
-  // Persist diffBase when it changes
+  const hasSkippedInitialDiffBasePersistRef = useRef(false);
+
+  // Persist diffBase when it changes.
+  // Skip the first run so an unset workspace doesn't immediately persist the fallback
+  // base before async trunk detection resolves.
   useEffect(() => {
+    if (!hasSkippedInitialDiffBasePersistRef.current) {
+      hasSkippedInitialDiffBasePersistRef.current = true;
+      return;
+    }
+
     setDiffBase(filters.diffBase);
   }, [filters.diffBase, setDiffBase]);
 
@@ -1328,7 +1324,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         filters={filters}
         stats={stats}
         onFiltersChange={setFilters}
-        onDiffBaseInteraction={handleDiffBaseInteraction}
         onRefresh={handleRefresh}
         isLoading={
           diffState.status === "loading" || diffState.status === "refreshing" || isLoadingTree

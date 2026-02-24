@@ -23,7 +23,6 @@ interface ReviewControlsProps {
   filters: ReviewFilters;
   stats: ReviewStats;
   onFiltersChange: (filters: ReviewFilters | ((prev: ReviewFilters) => ReviewFilters)) => void;
-  onDiffBaseInteraction?: () => void;
   onRefresh?: () => void;
   isLoading?: boolean;
   /** Whether refresh is blocked (e.g., user composing review note) */
@@ -41,7 +40,6 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
   filters,
   stats,
   onFiltersChange,
-  onDiffBaseInteraction,
   onRefresh,
   isLoading = false,
   isRefreshBlocked = false,
@@ -67,7 +65,6 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
 
   // Use callback form to avoid stale closure issues with filters prop
   const handleBaseChange = (value: string) => {
-    onDiffBaseInteraction?.();
     onFiltersChange((prev) => ({ ...prev, diffBase: value }));
   };
 
