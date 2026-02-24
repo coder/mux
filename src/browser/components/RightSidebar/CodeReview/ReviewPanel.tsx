@@ -409,7 +409,13 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           setDefaultBase(detectedBase);
         }
         if (shouldInitializeWorkspaceBase && !initializedWorkspaceFromMetadata) {
-          setDiffBase(detectedBase);
+          const currentWorkspaceBase = readPersistedString(workspaceDiffBaseKey);
+          if (
+            currentWorkspaceBase === undefined ||
+            currentWorkspaceBase === WORKSPACE_DEFAULTS.reviewBase
+          ) {
+            setDiffBase(detectedBase);
+          }
         }
       } catch {
         // Best effort only; keep WORKSPACE_DEFAULTS.reviewBase when detection fails.
