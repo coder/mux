@@ -271,14 +271,18 @@ verify-docker-runtime-artifacts: build-docker-runtime ## Verify required Docker 
 	@test -f dist/static/splash.html
 
 # Bundle server runtime for Docker image to reduce runtime dependencies/image size.
-dist/runtime/server-bundle.js: dist/cli/server.js $(TS_SOURCES)
+# Depend on build-main explicitly because dist/cli/server.js is emitted as a side effect.
+dist/runtime/server-bundle.js: build-main $(TS_SOURCES)
 	@echo "Bundling server runtime for Docker..."
+	@test -f dist/cli/server.js
 	@mkdir -p dist/runtime
 	@bun x esbuild dist/cli/server.js $(ESBUILD_SERVER_FLAGS)
 
 # Bundle tokenizer worker next to server-bundle.js so workerPool resolves it at runtime.
-dist/runtime/tokenizer.worker.js: dist/node/utils/main/tokenizer.worker.js
+# Depend on build-main explicitly because tokenizer worker JS is emitted under dist/node/ as a side effect.
+dist/runtime/tokenizer.worker.js: build-main
 	@echo "Bundling tokenizer worker for Docker..."
+	@test -f dist/node/utils/main/tokenizer.worker.js
 	@mkdir -p dist/runtime
 	@bun x esbuild dist/node/utils/main/tokenizer.worker.js $(ESBUILD_TOKENIZER_WORKER_FLAGS)
 
