@@ -1219,7 +1219,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   // Derive ghost hint for slash-command argument syntax.
   // Show only when suggestions are hidden and the input is exactly "/command " with no args yet.
-  const commandGhostHint = getCommandGhostHint(input, showCommandSuggestions);
+  const commandGhostHint = getCommandGhostHint(input, showCommandSuggestions, variant);
 
   // Load agent skills for suggestions
   useEffect(() => {

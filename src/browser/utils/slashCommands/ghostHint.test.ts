@@ -30,4 +30,16 @@ describe("getCommandGhostHint", () => {
   it("returns null while command suggestions are visible", () => {
     expect(getCommandGhostHint("/compact ", true)).toBeNull();
   });
+
+  it("returns null when the command is followed by a newline instead of a space", () => {
+    expect(getCommandGhostHint("/compact\n", false)).toBeNull();
+  });
+
+  it("returns null for workspace-only commands in creation mode", () => {
+    expect(getCommandGhostHint("/compact ", false, "creation")).toBeNull();
+  });
+
+  it("still returns hints for creation-available commands in creation mode", () => {
+    expect(getCommandGhostHint("/model ", false, "creation")).toBe(SLASH_COMMAND_HINTS.model);
+  });
 });

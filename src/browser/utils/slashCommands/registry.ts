@@ -7,10 +7,12 @@ import type {
   ParsedCommand,
   SlashSuggestion,
   SuggestionDefinition,
+  SlashSuggestionContext,
 } from "./types";
 import minimist from "minimist";
 import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 import { SLASH_COMMAND_HINTS } from "@/common/constants/slashCommandHints";
+import { WORKSPACE_ONLY_COMMAND_KEYS } from "@/constants/slashCommands";
 import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
 
 /**
@@ -466,9 +468,13 @@ export const SLASH_COMMAND_DEFINITION_MAP = new Map(
   SLASH_COMMAND_DEFINITIONS.map((definition) => [definition.key, definition])
 );
 
-const COMMAND_GHOST_HINT_PATTERN = /^\/(\S+)\s+$/;
+const COMMAND_GHOST_HINT_PATTERN = /^\/(\S+) +$/;
 
-export function getCommandGhostHint(input: string, showCommandSuggestions: boolean): string | null {
+export function getCommandGhostHint(
+  input: string,
+  showCommandSuggestions: boolean,
+  variant?: SlashSuggestionContext["variant"]
+): string | null {
   if (showCommandSuggestions) {
     return null;
   }
@@ -478,5 +484,10 @@ export function getCommandGhostHint(input: string, showCommandSuggestions: boole
     return null;
   }
 
-  return SLASH_COMMAND_DEFINITION_MAP.get(match[1])?.inputHint ?? null;
+  const commandKey = match[1];
+  if (variant === "creation" && WORKSPACE_ONLY_COMMAND_KEYS.has(commandKey)) {
+    return null;
+  }
+
+  return SLASH_COMMAND_DEFINITION_MAP.get(commandKey)?.inputHint ?? null;
 }
