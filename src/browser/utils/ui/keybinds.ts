@@ -131,7 +131,7 @@ export function matchesKeybind(
 }
 
 /**
- * Check if the event target is an editable element (input, textarea, contentEditable).
+ * Check if the event target is an editable element (input, textarea, select, contentEditable).
  * Used to prevent global keyboard shortcuts from interfering with text input.
  */
 export function isEditableElement(target: EventTarget | null): boolean {
@@ -140,7 +140,12 @@ export function isEditableElement(target: EventTarget | null): boolean {
   }
 
   const tagName = target.tagName.toLowerCase();
-  return tagName === "input" || tagName === "textarea" || target.contentEditable === "true";
+  return (
+    tagName === "input" ||
+    tagName === "textarea" ||
+    tagName === "select" ||
+    target.contentEditable === "true"
+  );
 }
 
 /**
