@@ -2291,7 +2291,10 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  async updateRuntimeConfig(workspaceId: string, runtimeConfig: RuntimeConfig): Promise<Result<void>> {
+  async updateRuntimeConfig(
+    workspaceId: string,
+    runtimeConfig: RuntimeConfig
+  ): Promise<Result<void>> {
     try {
       const workspace = this.config.findWorkspace(workspaceId);
       if (!workspace) {

@@ -49,6 +49,7 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
     onSelectWorkspace: () => undefined,
     onRemoveWorkspace: () => Promise.resolve({ success: true }),
     onUpdateTitle: () => Promise.resolve({ success: true }),
+    onChangeSSHHost: () => Promise.resolve({ success: true }),
     onAddProject: () => undefined,
     onRemoveProject: () => undefined,
     onToggleSidebar: () => undefined,

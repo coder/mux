@@ -1,6 +1,6 @@
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
-import { GitBranch, Link2, Maximize2, Pencil, Server } from "lucide-react";
+import { GitBranch, Globe, Link2, Maximize2, Pencil, Server } from "lucide-react";
 import React from "react";
 
 interface WorkspaceActionButtonProps {
@@ -36,6 +36,8 @@ function WorkspaceActionButton(props: WorkspaceActionButtonProps) {
 interface WorkspaceActionsMenuContentProps {
   /** Workspace title actions only make sense in the left sidebar where title text is visible. */
   onEditTitle?: (() => void) | null;
+  /** Change the SSH host for an SSH workspace. Only shown for SSH workspaces. */
+  onChangeSSHHost?: (() => void) | null;
   /** Workspace-level settings action currently surfaced from the workspace menu bar. */
   onConfigureMcp?: (() => void) | null;
   /** Mobile workspace-header action: open immersive review in full-screen touch mode. */
@@ -67,6 +69,17 @@ export const WorkspaceActionsMenuContent: React.FC<WorkspaceActionsMenuContentPr
             e.stopPropagation();
             props.onCloseMenu();
             props.onEditTitle?.();
+          }}
+        />
+      )}
+      {props.onChangeSSHHost && (
+        <WorkspaceActionButton
+          label="Change SSH host"
+          icon={<Globe className="h-3 w-3 shrink-0" />}
+          onClick={(e) => {
+            e.stopPropagation();
+            props.onCloseMenu();
+            props.onChangeSSHHost?.();
           }}
         />
       )}
