@@ -471,4 +471,91 @@ describe("MCPServerManager", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
+
+  test("test() extracts WWW-Authenticate via POST when GET returns 405", async () => {
+    let baseUrl = "";
+    let resourceMetadataUrl = "";
+
+    // Simulate a server (like Figma) that returns 405 on GET but
+    // 401 + WWW-Authenticate on POST.
+    const server = createServer((req, res) => {
+      if (req.method === "GET") {
+        res.statusCode = 405;
+        res.end("Method Not Allowed");
+        return;
+      }
+
+      res.statusCode = 401;
+      res.setHeader(
+        "WWW-Authenticate",
+        `Bearer scope="mcp.read" resource_metadata="${resourceMetadataUrl}"`
+      );
+      res.end("Unauthorized");
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to bind POST-fallback test server");
+      }
+
+      baseUrl = `http://127.0.0.1:${address.port}/`;
+      resourceMetadataUrl = `${baseUrl}.well-known/oauth-protected-resource`;
+
+      const result = await manager.test({
+        projectPath: "/tmp/project",
+        transport: "http",
+        url: baseUrl,
+      });
+
+      expect(result.success).toBe(false);
+      if (result.success) {
+        throw new Error("Expected test() to fail");
+      }
+
+      expect(result.oauthChallenge).toEqual({
+        scope: "mcp.read",
+        resourceMetadataUrl,
+      });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  test("test() returns minimal oauthChallenge on 401 without WWW-Authenticate header", async () => {
+    // Server returns 401 but no WWW-Authenticate header at all.
+    const server = createServer((_req, res) => {
+      res.statusCode = 401;
+      res.end("Unauthorized");
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to bind minimal-challenge test server");
+      }
+
+      const baseUrl = `http://127.0.0.1:${address.port}/`;
+
+      const result = await manager.test({
+        projectPath: "/tmp/project",
+        transport: "http",
+        url: baseUrl,
+      });
+
+      expect(result.success).toBe(false);
+      if (result.success) {
+        throw new Error("Expected test() to fail");
+      }
+
+      // Minimal challenge {} so the OAuth banner still surfaces.
+      expect(result.oauthChallenge).toEqual({});
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
 });
