@@ -11,6 +11,7 @@ import { log } from "@/node/services/log";
 
 export const CHAT_FILE_NAME = "chat.jsonl";
 const METADATA_FILE_NAME = "metadata.json";
+const SUBAGENT_TRANSCRIPTS_DIR_NAME = "subagent-transcripts";
 
 const INSERT_EVENT_SQL = `
 INSERT INTO events (
@@ -872,31 +873,90 @@ export async function ingestWorkspace(
       lastSequence: parsedMaxSequence ?? -1,
       lastModified: stat.mtimeMs,
     });
-    return;
+  } else {
+    let maxSequence = watermark.lastSequence;
+    const eventsToInsert: IngestEvent[] = [];
+    for (const event of parsedEvents) {
+      maxSequence = Math.max(maxSequence, event.sequence);
+
+      // Include the current watermark sequence so in-place rewrites with the same
+      // historySequence refresh stale analytics rows instead of getting skipped forever.
+      if (event.sequence < watermark.lastSequence) {
+        continue;
+      }
+
+      eventsToInsert.push(event);
+    }
+
+    await replaceEventsByResponseIndex(conn, workspaceId, eventsToInsert);
+
+    await writeWatermark(conn, workspaceId, {
+      lastSequence: maxSequence,
+      lastModified: stat.mtimeMs,
+    });
   }
 
-  let maxSequence = watermark.lastSequence;
-  const eventsToInsert: IngestEvent[] = [];
-  for (const event of parsedEvents) {
-    maxSequence = Math.max(maxSequence, event.sequence);
+  // Also ingest archived sub-agent transcripts stored in this workspace's
+  // session dir. This recovers sub-agent data that was cleared when the
+  // child workspace was removed (clearWorkspace deletes child rows, but
+  // the archived chat.jsonl in the parent dir is the source of truth).
+  // Watermark dedup makes repeated calls cheap (stat + comparison only).
+  const mergedMetaForChildren = mergeWorkspaceMeta(
+    await readWorkspaceMetaFromDisk(sessionDir),
+    meta
+  );
+  await ingestArchivedSubagentTranscripts(conn, sessionDir, mergedMetaForChildren);
+}
 
-    // Include the current watermark sequence so in-place rewrites with the same
-    // historySequence refresh stale analytics rows instead of getting skipped forever.
-    if (event.sequence < watermark.lastSequence) {
+/**
+ * Scan a workspace's archived sub-agent transcripts and ingest each one.
+ * The archive is flat: existing rollup logic in workspaceService copies
+ * grandchild directories up to the parent level, so all descendants appear
+ * as siblings under subagent-transcripts/.
+ */
+async function ingestArchivedSubagentTranscripts(
+  conn: DuckDBConnection,
+  sessionDir: string,
+  parentMeta: WorkspaceMeta
+): Promise<number> {
+  const transcriptsDir = path.join(sessionDir, SUBAGENT_TRANSCRIPTS_DIR_NAME);
+
+  let entries: Dirent[];
+  try {
+    entries = await fs.readdir(transcriptsDir, { withFileTypes: true });
+  } catch {
+    // No archived transcripts directory — nothing to ingest.
+    return 0;
+  }
+
+  let ingested = 0;
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
       continue;
     }
 
-    eventsToInsert.push(event);
+    const childWorkspaceId = entry.name;
+    const archivedSessionDir = path.join(transcriptsDir, childWorkspaceId);
+
+    try {
+      // Pass parent's projectPath/projectName so the child inherits
+      // project-level attribution even if its own metadata.json is incomplete.
+      await ingestWorkspace(conn, childWorkspaceId, archivedSessionDir, {
+        projectPath: parentMeta.projectPath,
+        projectName: parentMeta.projectName,
+      });
+      ingested += 1;
+    } catch (error) {
+      log.warn("[analytics-etl] Failed to ingest archived sub-agent transcript", {
+        childWorkspaceId,
+        sessionDir,
+        error: getErrorMessage(error),
+      });
+    }
   }
 
-  await replaceEventsByResponseIndex(conn, workspaceId, eventsToInsert);
-
-  await writeWatermark(conn, workspaceId, {
-    lastSequence: maxSequence,
-    lastModified: stat.mtimeMs,
-  });
+  return ingested;
 }
-
 export async function rebuildAll(
   conn: DuckDBConnection,
   sessionsDir: string,
