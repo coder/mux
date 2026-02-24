@@ -101,6 +101,15 @@ function AgentProviderWithState(props: {
     { listener: true }
   );
 
+  // The UI toggle for disableWorkspaceAgents was removed — clear persisted
+  // true values so users who had it enabled aren't stranded with no way to
+  // re-enable workspace agents.
+  useEffect(() => {
+    if (disableWorkspaceAgents) {
+      setDisableWorkspaceAgents(false);
+    }
+  }, [disableWorkspaceAgents, setDisableWorkspaceAgents]);
+
   const setAgentId: Dispatch<SetStateAction<string>> = useCallback(
     (value) => {
       setAgentIdRaw((prev) => {
