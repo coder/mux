@@ -487,12 +487,20 @@ export class ProjectService {
       }
 
       if (destinationStat) {
-        yield {
-          type: "error",
-          code: "destination_exists",
-          error: `Destination already exists: ${normalizedPath}`,
-          normalizedPath,
-        };
+        if (destinationStat.isDirectory()) {
+          yield {
+            type: "error",
+            code: "destination_exists",
+            error: `Destination already exists: ${normalizedPath}`,
+            normalizedPath,
+          };
+        } else {
+          yield {
+            type: "error",
+            code: "clone_failed",
+            error: `Destination already exists: ${normalizedPath}`,
+          };
+        }
         return;
       }
 
@@ -679,12 +687,31 @@ export class ProjectService {
         const err = error as NodeJS.ErrnoException;
         if (err.code === "EEXIST" || err.code === "ENOTEMPTY") {
           await cleanupPartialClone();
-          yield {
-            type: "error",
-            code: "destination_exists",
-            error: `Destination already exists: ${normalizedPath}`,
-            normalizedPath,
-          };
+
+          let existingDestinationStat: Stats | null = null;
+          try {
+            existingDestinationStat = await fsPromises.stat(normalizedPath);
+          } catch (statError) {
+            const statErr = statError as NodeJS.ErrnoException;
+            if (statErr.code !== "ENOENT") {
+              throw statError;
+            }
+          }
+
+          if (existingDestinationStat?.isDirectory()) {
+            yield {
+              type: "error",
+              code: "destination_exists",
+              error: `Destination already exists: ${normalizedPath}`,
+              normalizedPath,
+            };
+          } else {
+            yield {
+              type: "error",
+              code: "clone_failed",
+              error: `Destination already exists: ${normalizedPath}`,
+            };
+          }
           return;
         }
         throw error;
