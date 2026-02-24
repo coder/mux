@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, Menu } from "lucide-react";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useRouter } from "@/browser/contexts/RouterContext";
@@ -13,6 +13,7 @@ import {
 } from "@/browser/hooks/useAnalytics";
 import { DESKTOP_TITLEBAR_HEIGHT_CLASS, isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { isEditableElement, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 import { Button } from "@/browser/components/ui/button";
 import { cn } from "@/common/lib/utils";
 import { AgentCostChart } from "./AgentCostChart";
@@ -137,6 +138,24 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
     .sort((a, b) => a.label.localeCompare(b.label));
 
   const desktopMode = isDesktopMode();
+
+  // Close analytics on Escape. Uses bubble phase so inner surfaces (Select dropdowns,
+  // Popover) that call stopPropagation/preventDefault on Escape get first
+  // right of refusal—only an unclaimed Escape navigates away from analytics.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!matchesKeybind(e, KEYBINDS.CANCEL)) return;
+      if (e.defaultPrevented) return;
+      if (isEditableElement(e.target)) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+      navigateFromAnalytics();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [navigateFromAnalytics]);
 
   return (
     <div className="bg-dark flex min-h-0 flex-1 flex-col overflow-hidden">
