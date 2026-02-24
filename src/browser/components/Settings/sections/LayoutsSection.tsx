@@ -7,9 +7,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useUILayouts } from "@/browser/contexts/UILayoutsContext";
 import { useConfirmDialog } from "@/browser/contexts/ConfirmDialogContext";
+import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { getEffectiveSlotKeybind } from "@/browser/utils/uiLayouts";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { formatKeybind, isMac, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
+import { SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
 import type { Keybind } from "@/common/types/keybind";
 import type { LayoutSlotNumber } from "@/common/types/uiLayouts";
 
@@ -97,6 +99,23 @@ function validateSlotKeybindOverride(params: {
   return null;
 }
 
+interface PersistedWorkspaceSelection {
+  workspaceId: string;
+}
+
+function isPersistedWorkspaceSelection(value: unknown): value is PersistedWorkspaceSelection {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<Record<keyof PersistedWorkspaceSelection, unknown>>;
+  return typeof candidate.workspaceId === "string";
+}
+
+function formatWorkspaceLabel(projectName: string, namedWorkspacePath: string): string {
+  return `${projectName}/${namedWorkspacePath.split("/").pop() ?? namedWorkspacePath}`;
+}
+
 export function LayoutsSection() {
   const {
     layoutPresets,
@@ -108,7 +127,7 @@ export function LayoutsSection() {
     deleteSlot,
     setSlotKeybindOverride,
   } = useUILayouts();
-  const { selectedWorkspace } = useWorkspaceContext();
+  const { selectedWorkspace, workspaceMetadata } = useWorkspaceContext();
   const { confirm: confirmDialog } = useConfirmDialog();
 
   const [actionError, setActionError] = useState<string | null>(null);
@@ -122,10 +141,30 @@ export function LayoutsSection() {
   const [capturingSlot, setCapturingSlot] = useState<LayoutSlotNumber | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
 
-  const workspaceId = selectedWorkspace?.workspaceId ?? null;
+  // selectedWorkspace is URL-derived and becomes null on /settings routes.
+  // Fall back to the last selected workspace so capture/apply actions remain usable.
+  const persistedWorkspaceSelection = useMemo(() => {
+    const raw = readPersistedState<unknown>(SELECTED_WORKSPACE_KEY, null);
+    return isPersistedWorkspaceSelection(raw) ? raw : null;
+  }, []);
+  const fallbackWorkspaceMetadata = useMemo(() => {
+    const fallbackWorkspaceId = persistedWorkspaceSelection?.workspaceId;
+    if (!fallbackWorkspaceId) {
+      return null;
+    }
+
+    return workspaceMetadata.get(fallbackWorkspaceId) ?? null;
+  }, [persistedWorkspaceSelection, workspaceMetadata]);
+
+  const workspaceId = selectedWorkspace?.workspaceId ?? fallbackWorkspaceMetadata?.id ?? null;
   const selectedWorkspaceLabel = selectedWorkspace
-    ? `${selectedWorkspace.projectName}/${selectedWorkspace.namedWorkspacePath.split("/").pop() ?? selectedWorkspace.namedWorkspacePath}`
-    : null;
+    ? formatWorkspaceLabel(selectedWorkspace.projectName, selectedWorkspace.namedWorkspacePath)
+    : fallbackWorkspaceMetadata
+      ? formatWorkspaceLabel(
+          fallbackWorkspaceMetadata.projectName,
+          fallbackWorkspaceMetadata.namedWorkspacePath
+        )
+      : null;
 
   const existingKeybinds = useMemo(() => {
     const existing: Array<{ slot: LayoutSlotNumber; keybind: Keybind }> = [];
