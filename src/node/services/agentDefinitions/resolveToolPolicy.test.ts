@@ -171,6 +171,24 @@ describe("resolveToolPolicyForAgent", () => {
     ]);
   });
 
+  test("subagents skip require filters for hard-denied ask_user_question", () => {
+    const agents: AgentLikeForPolicy[] = [{ tools: { require: ["ask_user_question"] } }];
+    const policy = resolveToolPolicyForAgent({
+      agents,
+      isSubagent: true,
+      disableTaskToolsForDepth: false,
+    });
+
+    expect(policy).toEqual([
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "switch_agent", action: "disable" },
+      { regex_match: "ask_user_question", action: "disable" },
+      { regex_match: "switch_agent", action: "disable" },
+      { regex_match: "propose_plan", action: "disable" },
+      { regex_match: "agent_report", action: "enable" },
+    ]);
+  });
+
   test("non-plan subagents disable propose_plan and allow agent_report", () => {
     const agents: AgentLikeForPolicy[] = [{ tools: { add: ["task", "file_read"] } }];
     const policy = resolveToolPolicyForAgent({

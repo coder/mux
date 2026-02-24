@@ -68,6 +68,12 @@ function isExplicitSwitchAgentEnablePattern(pattern: string): boolean {
   return matchesSwitchAgentPattern(trimmed);
 }
 
+const SUBAGENT_HARD_DENIED_TOOLS = ["ask_user_question", "switch_agent"] as const;
+
+function matchesSubagentHardDeniedTool(pattern: string): boolean {
+  return SUBAGENT_HARD_DENIED_TOOLS.some((toolName) => matchesToolPattern(pattern, toolName));
+}
+
 /**
  * Resolves tool policy for an agent, including inherited tools from base agents.
  *
@@ -134,9 +140,9 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
   }
 
   for (const pattern of effectiveRequirePatterns) {
-    // Subagents must not require switch_agent: subagent hard-deny would disable it,
-    // and a disabled required tool can collapse the entire toolset.
-    if (isSubagent && matchesSwitchAgentPattern(pattern)) {
+    // Subagents must not require tools that are hard-denied at runtime: a disabled
+    // required tool can collapse the entire toolset.
+    if (isSubagent && matchesSubagentHardDeniedTool(pattern)) {
       continue;
     }
 
