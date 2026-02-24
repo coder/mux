@@ -498,8 +498,10 @@ export const projects = {
             "ssh_credential_cancelled",
             "ssh_prompt_timeout",
             "clone_failed",
+            "destination_exists",
           ]),
           error: z.string(),
+          normalizedPath: z.string().nullish(),
         }),
       ])
     ),

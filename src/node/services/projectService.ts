@@ -82,7 +82,12 @@ export type { CloneErrorCode } from "./sshCloneFailure";
 export type CloneEvent =
   | { type: "progress"; line: string }
   | { type: "success"; projectConfig: ProjectConfig; normalizedPath: string }
-  | { type: "error"; code: CloneErrorCode; error: string };
+  | {
+      type: "error";
+      code: CloneErrorCode;
+      error: string;
+      normalizedPath?: string | null;
+    };
 
 type ProjectRemoveError = z.infer<typeof ProjectRemoveErrorSchema>;
 
@@ -484,8 +489,9 @@ export class ProjectService {
       if (destinationStat) {
         yield {
           type: "error",
-          code: "clone_failed",
+          code: "destination_exists",
           error: `Destination already exists: ${normalizedPath}`,
+          normalizedPath,
         };
         return;
       }
@@ -675,8 +681,9 @@ export class ProjectService {
           await cleanupPartialClone();
           yield {
             type: "error",
-            code: "clone_failed",
+            code: "destination_exists",
             error: `Destination already exists: ${normalizedPath}`,
+            normalizedPath,
           };
           return;
         }

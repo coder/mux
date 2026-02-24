@@ -330,6 +330,8 @@ function formatCloneError(event: { code: string; error: string }): string {
       return "SSH authentication was cancelled.";
     case "ssh_prompt_timeout":
       return "SSH authentication timed out.";
+    case "destination_exists":
+      return event.error || "Destination already exists";
     default:
       return event.error || "Failed to clone project";
   }
@@ -361,6 +363,7 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
     const [cloneParentDir, setCloneParentDir] = useState(props.defaultProjectDir);
     const [hasEditedCloneParentDir, setHasEditedCloneParentDir] = useState(false);
     const [error, setError] = useState("");
+    const [destinationExistsPath, setDestinationExistsPath] = useState<string | null>(null);
     const [isCreating, setIsCreating] = useState(false);
     const [cloneOutput, setCloneOutput] = useState("");
     const rawOutputRef = useRef("");
@@ -380,8 +383,9 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
       setCloneParentDir(props.defaultProjectDir);
       setHasEditedCloneParentDir(false);
       setError("");
-      setCloneOutput("");
+setCloneOutput("");
       rawOutputRef.current = "";
+      setDestinationExistsPath(null);
     }, [props.defaultProjectDir]);
 
     const abortInFlightClone = useCallback(() => {
@@ -449,8 +453,9 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
       }
 
       setError("");
-      setCloneOutput("");
+setCloneOutput("");
       rawOutputRef.current = "";
+      setDestinationExistsPath(null);
       setCreating(true);
 
       const controller = new AbortController();
@@ -483,6 +488,9 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
             return true;
           }
 
+          if (event.code === "destination_exists" && event.normalizedPath) {
+            setDestinationExistsPath(event.normalizedPath);
+          }
           setError(formatCloneError(event));
           return false;
         }
@@ -510,6 +518,28 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
         }
       }
     }, [api, isCreating, props, repoUrl, reset, setCreating, trimmedCloneParentDir]);
+
+    const handleAddExistingProject = useCallback(async () => {
+      if (!api || !destinationExistsPath) {
+        return;
+      }
+
+      try {
+        const result = await api.projects.create({ projectPath: destinationExistsPath });
+        if (!result.success) {
+          const errorMessage =
+            typeof result.error === "string" ? result.error : "Failed to add existing project";
+          setError(errorMessage);
+          return;
+        }
+
+        props.onSuccess(result.data.normalizedPath, result.data.projectConfig);
+        reset();
+        props.onClose?.();
+      } catch {
+        setError("Failed to add existing project");
+      }
+    }, [api, destinationExistsPath, props, reset]);
 
     const handleRetry = useCallback(() => {
       setError("");
@@ -622,7 +652,20 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
           </div>
         )}
 
-        {error && <p className="text-error text-xs">{error}</p>}
+        {error && (
+          <div className="space-y-1">
+            <p className="text-error text-xs">{error}</p>
+            {destinationExistsPath && (
+              <button
+                type="button"
+                className="text-accent text-xs underline"
+                onClick={() => void handleAddExistingProject()}
+              >
+                Add this project instead
+              </button>
+            )}
+          </div>
+        )}
 
         {!props.hideFooter && (
           <DialogFooter>

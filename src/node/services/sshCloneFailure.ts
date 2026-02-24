@@ -4,7 +4,8 @@ export type CloneErrorCode =
   | "ssh_host_key_rejected"
   | "ssh_credential_cancelled"
   | "ssh_prompt_timeout"
-  | "clone_failed";
+  | "clone_failed"
+  | "destination_exists";
 
 export interface CloneFailureContext {
   stderr: string;
