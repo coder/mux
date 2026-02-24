@@ -1,7 +1,9 @@
 import { describe, expect, it } from "@jest/globals";
 import {
   isExecLikeEditingCapableInResolvedChain,
+  isToolEnabledByConfigs,
   isToolEnabledInResolvedChain,
+  type ToolsConfig,
 } from "./agentTools";
 
 describe("isExecLikeEditingCapableInResolvedChain", () => {
@@ -57,5 +59,28 @@ describe("isExecLikeEditingCapableInResolvedChain", () => {
     const agents = [{ id: "orchestrator", tools: { add: ["task_apply_git_patch"] } }];
 
     expect(isExecLikeEditingCapableInResolvedChain(agents)).toBe(false);
+  });
+});
+
+describe("isToolEnabledByConfigs", () => {
+  it("applies add/remove in order", () => {
+    const configs: ToolsConfig[] = [{ add: ["file_read", "task"], remove: ["task"] }];
+
+    expect(isToolEnabledByConfigs("file_read", configs)).toBe(true);
+    expect(isToolEnabledByConfigs("task", configs)).toBe(false);
+  });
+
+  it("tools.require uses last-layer-wins semantics", () => {
+    const configs: ToolsConfig[] = [{ require: ["propose_plan"] }, { require: ["agent_report"] }];
+
+    expect(isToolEnabledByConfigs("propose_plan", configs)).toBe(false);
+    expect(isToolEnabledByConfigs("agent_report", configs)).toBe(true);
+  });
+
+  it("base require remains effective when child omits tools.require", () => {
+    const configs: ToolsConfig[] = [{ require: ["propose_plan"] }, { add: ["file_read"] }];
+
+    expect(isToolEnabledByConfigs("propose_plan", configs)).toBe(true);
+    expect(isToolEnabledByConfigs("file_read", configs)).toBe(false);
   });
 });
