@@ -124,9 +124,11 @@ export function useCoderWorkspace({
   const [loadingWorkspaces, setLoadingWorkspaces] = useState(false);
 
   const fetchCoderInfo = useCallback(async () => {
-    if (!api) return;
-
+    // Advance sequence before the API guard so that an API context change
+    // (e.g., reconnecting -> api becomes null) invalidates any in-flight request.
     const seq = ++latestAuthSeqRef.current;
+
+    if (!api) return;
 
     try {
       const info = await api.coder.getInfo();
