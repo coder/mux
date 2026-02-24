@@ -604,6 +604,23 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
         },
       });
 
+      const childMetadataPath = path.join(params.childSessionDir, "metadata.json");
+      const archivedMetadataPath = path.join(
+        params.parentSessionDir,
+        "subagent-transcripts",
+        params.childWorkspaceId,
+        "metadata.json"
+      );
+      await copyFileBestEffort({
+        srcPath: childMetadataPath,
+        destPath: archivedMetadataPath,
+        logContext: {
+          parentWorkspaceId: params.parentWorkspaceId,
+          childWorkspaceId: params.childWorkspaceId,
+          artifact: "metadata.json",
+        },
+      });
+
       if (didCopyChat || didCopyPartial) {
         const nowMs = Date.now();
 
