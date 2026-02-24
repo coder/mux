@@ -206,7 +206,12 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
             desktopMode && "titlebar-no-drag"
           )}
         >
-          <label className="text-muted hidden text-xs md:inline" htmlFor="analytics-project-filter">
+          {/* Keep the project control labeled on mobile for screen readers while
+              keeping the compact mobile header visually uncluttered. */}
+          <label
+            className="text-muted sr-only text-xs md:not-sr-only md:inline"
+            htmlFor="analytics-project-filter"
+          >
             Project
           </label>
           <select
