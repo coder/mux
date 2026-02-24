@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useId } from "react";
 
 import { cn } from "@/common/lib/utils";
@@ -20,6 +21,8 @@ export function RuntimeConfigInput(props: {
   inputClassName?: string;
   /** When true, render label above input instead of beside it. */
   stacked?: boolean;
+  /** Optional icon rendered before the label text. */
+  icon?: ReactNode;
 }) {
   const autoId = useId();
   const inputId = props.id ?? autoId;
@@ -36,9 +39,11 @@ export function RuntimeConfigInput(props: {
         className={cn(
           "text-muted-foreground text-xs",
           props.stacked && "font-medium",
+          props.icon && "flex items-center gap-1",
           props.labelClassName
         )}
       >
+        {props.icon}
         {props.label}
       </label>
       <input

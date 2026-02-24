@@ -20,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { Cog, GitBranch, Loader2, Wand2, X } from "lucide-react";
+import { Blocks, Cog, GitBranch, Loader2, Wand2, X } from "lucide-react";
 import { PlatformPaths } from "@/common/utils/paths";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useSettings } from "@/browser/contexts/SettingsContext";
@@ -37,6 +37,7 @@ import {
   type RuntimeChoice,
   type RuntimeIconProps,
 } from "@/browser/utils/runtimeUi";
+import { SSHIcon, DockerIcon, DevcontainerIcon } from "@/browser/components/icons/RuntimeIcons";
 import type { WorkspaceNameState, WorkspaceNameUIError } from "@/browser/hooks/useWorkspaceName";
 import type { CoderInfo } from "@/common/orpc/schemas/coder";
 import type { SectionConfig } from "@/common/types/project";
@@ -958,7 +959,10 @@ export function CreationControls(props: CreationControlsProps) {
         <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
           <div className="flex min-w-0 flex-col gap-1.5">
             <div className="flex items-center gap-1.5">
-              <label className="text-muted-foreground text-xs font-medium">Workspace Type</label>
+              <label className="text-muted-foreground flex items-center gap-1 text-xs font-medium">
+                <Blocks className="h-3.5 w-3.5" />
+                Workspace Type
+              </label>
               {/* Keep this compact while preserving quick access to project runtime defaults. */}
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -1100,6 +1104,7 @@ export function CreationControls(props: CreationControlsProps) {
               <RuntimeConfigInput
                 id="ssh-host"
                 label={RUNTIME_OPTION_FIELDS.ssh.label}
+                icon={<SSHIcon size={14} />}
                 value={selectedRuntime.host}
                 onChange={(value) => onSelectedRuntimeChange({ mode: "ssh", host: value })}
                 placeholder={RUNTIME_OPTION_FIELDS.ssh.placeholder}
@@ -1114,6 +1119,7 @@ export function CreationControls(props: CreationControlsProps) {
           {selectedRuntime.mode === "docker" && (
             <RuntimeConfigInput
               label={RUNTIME_OPTION_FIELDS.docker.label}
+              icon={<DockerIcon size={14} />}
               value={selectedRuntime.image}
               onChange={(value) =>
                 onSelectedRuntimeChange({
@@ -1142,7 +1148,8 @@ export function CreationControls(props: CreationControlsProps) {
         {selectedRuntime.mode === "devcontainer" && devcontainerSelection.uiMode !== "hidden" && (
           <div className="border-border-medium flex w-fit flex-col gap-1.5 rounded-md border p-2">
             <div className="flex flex-col gap-1">
-              <label className="text-muted-foreground text-xs">
+              <label className="text-muted-foreground flex items-center gap-1 text-xs">
+                <DevcontainerIcon size={14} />
                 {RUNTIME_OPTION_FIELDS.devcontainer.label}
               </label>
               {devcontainerSelection.uiMode === "loading" ? (
