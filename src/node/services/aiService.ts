@@ -884,6 +884,9 @@ export class AIService extends EventEmitter {
           // Dynamic context for tool descriptions (moved from system prompt for better model attention)
           availableSubagents: agentDefinitions,
           availableSkills,
+          // Trust gating: only run hooks/scripts for explicitly trusted projects
+          trusted:
+            this.config.loadConfigOrDefault().projects.get(metadata.projectPath)?.trusted ?? false,
         },
         workspaceId,
         this.initStateManager,

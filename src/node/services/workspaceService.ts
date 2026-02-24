@@ -1705,6 +1705,7 @@ export class WorkspaceService extends EventEmitter {
           directoryName: finalBranchName,
           initLogger,
           abortSignal: initAbortController.signal,
+          trusted: this.config.loadConfigOrDefault().projects.get(projectPath)?.trusted ?? false,
         });
 
         if (createResult.success) break;
@@ -1805,6 +1806,7 @@ export class WorkspaceService extends EventEmitter {
             initLogger,
             env: secrets,
             abortSignal: initAbortController.signal,
+            trusted: this.config.loadConfigOrDefault().projects.get(projectPath)?.trusted ?? false,
           },
           workspaceId,
           log
@@ -3044,6 +3046,8 @@ export class WorkspaceService extends EventEmitter {
           sourceRuntimeConfig,
           allowCreateFallback: false,
           abortSignal: initAbortController.signal,
+          trusted:
+            this.config.loadConfigOrDefault().projects.get(foundProjectPath)?.trusted ?? false,
         });
       } catch (error) {
         // Guarantee init lifecycle cleanup when orchestrateFork rejects.
@@ -3078,6 +3082,8 @@ export class WorkspaceService extends EventEmitter {
           initLogger,
           env: secrets,
           abortSignal: initAbortController.signal,
+          trusted:
+            this.config.loadConfigOrDefault().projects.get(foundProjectPath)?.trusted ?? false,
         },
         newWorkspaceId,
         log

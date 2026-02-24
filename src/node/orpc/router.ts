@@ -2012,6 +2012,18 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.projectService.gitInit(input.projectPath);
         }),
+      setTrust: t
+        .input(schemas.projects.setTrust.input)
+        .output(schemas.projects.setTrust.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const project = config.projects.get(input.projectPath);
+            if (project) {
+              project.trusted = input.trusted;
+            }
+            return config;
+          });
+        }),
       remove: t
         .input(schemas.projects.remove.input)
         .output(schemas.projects.remove.output)

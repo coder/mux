@@ -147,4 +147,8 @@ export const ProjectConfigSchema = z.object({
     description:
       "Project classification. System projects are hidden from user-facing project lists unless explicitly requested.",
   }),
+  trusted: z.boolean().optional().meta({
+    description:
+      "Whether the user has confirmed trust for this project. Untrusted projects cannot run hooks or user scripts.",
+  }),
 });

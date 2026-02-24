@@ -540,6 +540,10 @@ export const projects = {
     input: z.object({ projectPath: z.string() }),
     output: ResultSchema(z.void(), z.string()),
   },
+  setTrust: {
+    input: z.object({ projectPath: z.string(), trusted: z.boolean() }),
+    output: z.void(),
+  },
   mcp: {
     list: {
       input: z.object({ projectPath: z.string() }),

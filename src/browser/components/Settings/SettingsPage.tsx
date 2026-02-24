@@ -36,6 +36,7 @@ import { RuntimesSection } from "./sections/RuntimesSection";
 import { ExperimentsSection } from "./sections/ExperimentsSection";
 import { ServerAccessSection } from "./sections/ServerAccessSection";
 import { KeybindsSection } from "./sections/KeybindsSection";
+import { SecuritySection } from "./sections/SecuritySection";
 import type { SettingsSection } from "./types";
 
 const BASE_SECTIONS: SettingsSection[] = [
@@ -74,6 +75,12 @@ const BASE_SECTIONS: SettingsSection[] = [
     label: "Secrets",
     icon: <Lock className="h-4 w-4" />,
     component: SecretsSection,
+  },
+  {
+    id: "security",
+    label: "Security",
+    icon: <ShieldCheck className="h-4 w-4" />,
+    component: SecuritySection,
   },
   {
     id: "server-access",

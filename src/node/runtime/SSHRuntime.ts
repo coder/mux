@@ -40,6 +40,7 @@ import { getProjectName, execBuffered } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 import { type SSHRuntimeConfig } from "./sshConnectionPool";
 import { getOriginUrlForBundle } from "./gitBundleSync";
+import { gitNoHooksPrefix } from "@/node/utils/gitNoHooksEnv";
 import type { PtyHandle, PtySessionParams, SSHTransport } from "./transports";
 import { streamToString, shescape } from "./streamUtils";
 
@@ -809,6 +810,9 @@ export class SSHRuntime extends RemoteRuntime {
       skipInitHook,
     } = params;
 
+    // Disable git hooks for untrusted projects (prevents post-checkout execution)
+    const nhp = gitNoHooksPrefix(params.trusted);
+
     try {
       // If the workspace directory already exists and contains a git repo (e.g. forked from
       // another SSH workspace via worktree add or legacy cp), skip the expensive sync step.
@@ -923,7 +927,7 @@ export class SSHRuntime extends RemoteRuntime {
         // (e.g. orphaned from a previously deleted workspace). Git still prevents
         // checking out a branch that's active in another worktree.
         initLogger.logStep(`Creating worktree for branch: ${branchName}`);
-        const worktreeCmd = `git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -B ${shescape.quote(branchName)} ${shescape.quote(newBranchBase)}`;
+        const worktreeCmd = `${nhp}git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -B ${shescape.quote(branchName)} ${shescape.quote(newBranchBase)}`;
 
         const worktreeResult = await execBuffered(this, worktreeCmd, {
           cwd: "/tmp",

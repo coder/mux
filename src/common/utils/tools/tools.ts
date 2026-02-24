@@ -91,6 +91,8 @@ export interface ToolConfiguration {
   availableSubagents?: AgentDefinitionDescriptor[];
   /** Available skills for the agent_skill_read tool description (dynamic context) */
   availableSkills?: AgentSkillDescriptor[];
+  /** Whether the project is trusted for hook/script execution */
+  trusted?: boolean;
 }
 
 /**
@@ -208,6 +210,11 @@ function wrapToolsWithHooks(
   tools: Record<string, Tool>,
   config: ToolConfiguration
 ): Record<string, Tool> {
+  // Skip hooks for untrusted projects — repo-controlled scripts must not run
+  if (!config.trusted) {
+    return tools;
+  }
+
   // Hooks require workspaceId, cwd, and runtime
   if (!config.workspaceId || !config.cwd || !config.runtime) {
     return tools;

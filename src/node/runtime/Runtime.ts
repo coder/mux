@@ -177,6 +177,8 @@ export interface WorkspaceCreationParams {
   initLogger: InitLogger;
   /** Optional abort signal for cancellation */
   abortSignal?: AbortSignal;
+  /** Whether the project is trusted — when false, git hooks are disabled */
+  trusted?: boolean;
 }
 
 /**
@@ -214,6 +216,8 @@ export interface WorkspaceInitParams {
    * NOTE: This skips only hook execution, not runtime provisioning.
    */
   skipInitHook?: boolean;
+  /** Whether the project is trusted — when false, git hooks are disabled */
+  trusted?: boolean;
 }
 
 /**
@@ -244,6 +248,8 @@ export interface WorkspaceForkParams {
   initLogger: InitLogger;
   /** Signal to abort long-running operations (e.g. cp -R -P or git worktree add) */
   abortSignal?: AbortSignal;
+  /** Whether the project is trusted — when false, git hooks are disabled */
+  trusted?: boolean;
 }
 
 /**

@@ -33,6 +33,7 @@ import { checkInitHookExists, getMuxEnv, runInitHookOnRuntime } from "./initHook
 import { getProjectName } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 import { syncProjectViaGitBundle } from "./gitBundleSync";
+import { GIT_NO_HOOKS_ENV } from "@/node/utils/gitNoHooksEnv";
 import {
   getHostGitconfigPath,
   hasHostGitconfig,
@@ -500,6 +501,7 @@ export class DockerRuntime extends RemoteRuntime {
       initLogger,
       abortSignal,
       env,
+      trusted: params.trusted,
     });
   }
 
@@ -640,6 +642,7 @@ export class DockerRuntime extends RemoteRuntime {
     initLogger: InitLogger;
     abortSignal?: AbortSignal;
     env?: Record<string, string>;
+    trusted?: boolean;
   }): Promise<void> {
     const {
       containerName,
@@ -706,7 +709,8 @@ export class DockerRuntime extends RemoteRuntime {
         containerName,
         workspacePath,
         initLogger,
-        abortSignal
+        abortSignal,
+        params.trusted
       );
     } catch (error) {
       await runDockerCommand(`docker rm -f ${containerName}`, 10000);
@@ -742,7 +746,8 @@ export class DockerRuntime extends RemoteRuntime {
     containerName: string,
     workspacePath: string,
     initLogger: InitLogger,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    trusted?: boolean
   ): Promise<void> {
     const timestamp = Date.now();
     const bundleFilename = `mux-bundle-${timestamp}.bundle`;
@@ -760,6 +765,7 @@ export class DockerRuntime extends RemoteRuntime {
       initLogger,
       abortSignal,
       cloneStep: "Cloning repository in container...",
+      trusted,
       createRemoteBundle: async ({ remoteBundlePath, initLogger, abortSignal }) => {
         try {
           if (abortSignal?.aborted) {
@@ -1034,8 +1040,16 @@ export class DockerRuntime extends RemoteRuntime {
       }
 
       initLogger.logStep("Cloning repository in destination...");
+      // Disable git hooks inside the container for untrusted projects
+      const noHooksEnvCmd = params.trusted
+        ? ""
+        : "env " +
+          Object.entries(GIT_NO_HOOKS_ENV)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(" ") +
+          " ";
       const cloneResult = await runDockerCommand(
-        `docker exec ${destContainerName} git clone ${containerBundlePath} ${CONTAINER_SRC_DIR}`,
+        `docker exec ${destContainerName} ${noHooksEnvCmd}git clone ${containerBundlePath} ${CONTAINER_SRC_DIR}`,
         300000
       );
       if (cloneResult.exitCode !== 0) {

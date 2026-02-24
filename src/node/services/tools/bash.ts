@@ -870,7 +870,9 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
           : undefined;
 
       // Look up .mux/tool_env to source before script (for direnv, nvm, venv, etc.)
-      const toolEnvPath = config.runtime ? await getToolEnvPath(config.runtime, config.cwd) : null;
+      // Skip for untrusted projects — tool_env is repo-controlled code
+      const toolEnvPath =
+        config.trusted && config.runtime ? await getToolEnvPath(config.runtime, config.cwd) : null;
       const toolEnvPrelude = buildToolEnvPrelude(toolEnvPath);
 
       // On Windows, models sometimes emit cmd.exe-style `>nul` / `2>nul` redirections.

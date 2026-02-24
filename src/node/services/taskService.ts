@@ -983,6 +983,8 @@ export class TaskService {
       sourceWorkspaceId: parentWorkspaceId,
       sourceRuntimeConfig: parentRuntimeConfig,
       allowCreateFallback: true,
+      trusted:
+        this.config.loadConfigOrDefault().projects.get(parentMeta.projectPath)?.trusted ?? false,
     });
 
     if (forkResult.success && forkResult.data.sourceRuntimeConfigUpdate) {
@@ -1059,6 +1061,8 @@ export class TaskService {
         initLogger,
         env: secrets,
         skipInitHook,
+        trusted:
+          this.config.loadConfigOrDefault().projects.get(parentMeta.projectPath)?.trusted ?? false,
       },
       taskId
     );
@@ -2119,6 +2123,8 @@ export class TaskService {
           sourceRuntimeConfig: parentRuntimeConfig,
           allowCreateFallback: true,
           preferredTrunkBranch: trunkBranch,
+          trusted:
+            this.config.loadConfigOrDefault().projects.get(taskEntry.projectPath)?.trusted ?? false,
         });
 
         if (
@@ -2244,6 +2250,9 @@ export class TaskService {
             initLogger,
             env: secrets,
             skipInitHook,
+            trusted:
+              this.config.loadConfigOrDefault().projects.get(taskEntry.projectPath)?.trusted ??
+              false,
           },
           taskId
         );

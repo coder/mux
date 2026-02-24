@@ -33,6 +33,8 @@ interface OrchestrateForkParams {
   preferredTrunkBranch?: string;
 
   abortSignal?: AbortSignal;
+  /** Whether the project is trusted — when false, git hooks are disabled */
+  trusted?: boolean;
 }
 
 interface OrchestrateForkSuccess {
@@ -74,6 +76,7 @@ export async function orchestrateFork(
     newWorkspaceName,
     initLogger,
     abortSignal,
+    trusted: params.trusted,
   });
 
   const { forkedRuntimeConfig, sourceRuntimeConfigUpdate } = await applyForkRuntimeUpdates(
@@ -142,6 +145,7 @@ export async function orchestrateFork(
       directoryName: newWorkspaceName,
       initLogger,
       abortSignal,
+      trusted: params.trusted,
     });
 
     if (!createResult.success || !createResult.workspacePath) {

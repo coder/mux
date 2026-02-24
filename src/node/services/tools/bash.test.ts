@@ -1712,6 +1712,7 @@ describe("bash tool - tool_env", () => {
 
     const config = createTestToolConfig(tempDir.path);
     config.runtimeTempDir = tempDir.path;
+    config.trusted = true;
     const tool = createBashTool(config);
 
     const args: BashToolArgs = {
@@ -1736,6 +1737,7 @@ describe("bash tool - tool_env", () => {
 
     const config = createTestToolConfig(tempDir.path);
     config.runtimeTempDir = tempDir.path;
+    config.trusted = true;
     const tool = createBashTool(config);
 
     const args: BashToolArgs = {
@@ -1770,6 +1772,56 @@ describe("bash tool - tool_env", () => {
 
     expect(result.success).toBe(true);
     expect(result.output).toBe("normal_execution");
+  });
+});
+
+describe("bash tool - tool_env trust gating", () => {
+  it("should NOT source tool_env when project is untrusted", async () => {
+    using tempDir = new TestTempDir("test-bash-untrusted-env");
+    const muxDir = `${tempDir.path}/.mux`;
+    fs.mkdirSync(muxDir, { recursive: true });
+    fs.writeFileSync(`${muxDir}/tool_env`, "export MUX_TEST_VAR=from_tool_env");
+
+    const config = createTestToolConfig(tempDir.path);
+    config.runtimeTempDir = tempDir.path;
+    // trusted is undefined (default) — tool_env should be skipped
+    const tool = createBashTool(config);
+
+    const args: BashToolArgs = {
+      script: "echo ${MUX_TEST_VAR:-not_sourced}",
+      timeout_secs: 5,
+      run_in_background: false,
+      display_name: "test",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("not_sourced");
+  });
+
+  it("should source tool_env when project is trusted", async () => {
+    using tempDir = new TestTempDir("test-bash-trusted-env");
+    const muxDir = `${tempDir.path}/.mux`;
+    fs.mkdirSync(muxDir, { recursive: true });
+    fs.writeFileSync(`${muxDir}/tool_env`, "export MUX_TEST_VAR=from_tool_env");
+
+    const config = createTestToolConfig(tempDir.path);
+    config.runtimeTempDir = tempDir.path;
+    config.trusted = true;
+    const tool = createBashTool(config);
+
+    const args: BashToolArgs = {
+      script: "echo $MUX_TEST_VAR",
+      timeout_secs: 5,
+      run_in_background: false,
+      display_name: "test",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("from_tool_env");
   });
 });
 

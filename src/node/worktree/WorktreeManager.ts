@@ -14,6 +14,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { expandTilde } from "@/node/runtime/tildeExpansion";
 import { toPosixPath } from "@/node/utils/paths";
 import { log } from "@/node/services/log";
+import { GIT_NO_HOOKS_ENV } from "@/node/utils/gitNoHooksEnv";
 
 export class WorktreeManager {
   private readonly srcBaseDir: string;
@@ -33,8 +34,11 @@ export class WorktreeManager {
     branchName: string;
     trunkBranch: string;
     initLogger: InitLogger;
+    trusted?: boolean;
   }): Promise<WorkspaceCreationResult> {
     const { projectPath, branchName, trunkBranch, initLogger } = params;
+    // Disable git hooks for untrusted projects (prevents post-checkout execution)
+    const noHooksEnv = params.trusted ? undefined : { env: GIT_NO_HOOKS_ENV };
 
     // Clean up stale lock before git operations on main repo
     cleanStaleLock(projectPath);
@@ -79,30 +83,22 @@ export class WorktreeManager {
       // Create worktree (git worktree is typically fast)
       if (branchExists) {
         // Branch exists, just add worktree pointing to it
-        using proc = execFileAsync("git", [
-          "-C",
-          projectPath,
-          "worktree",
-          "add",
-          workspacePath,
-          branchName,
-        ]);
+        using proc = execFileAsync(
+          "git",
+          ["-C", projectPath, "worktree", "add", workspacePath, branchName],
+          noHooksEnv
+        );
         await proc.result;
       } else {
         // Branch doesn't exist, create from the best available base:
         // - origin/<trunk> if local is behind/equal (ensures fresh starting point)
         // - local <trunk> if local is ahead/diverged (preserves user's work)
         const newBranchBase = shouldUseOrigin ? `origin/${trunkBranch}` : trunkBranch;
-        using proc = execFileAsync("git", [
-          "-C",
-          projectPath,
-          "worktree",
-          "add",
-          "-b",
-          branchName,
-          workspacePath,
-          newBranchBase,
-        ]);
+        using proc = execFileAsync(
+          "git",
+          ["-C", projectPath, "worktree", "add", "-b", branchName, workspacePath, newBranchBase],
+          noHooksEnv
+        );
         await proc.result;
       }
 
