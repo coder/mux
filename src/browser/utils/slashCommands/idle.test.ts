@@ -6,7 +6,7 @@ describe("/idle command", () => {
     expect(result).toEqual({
       type: "command-missing-args",
       command: "idle",
-      usage: "/idle <hours> or /idle off",
+      usage: "/idle <hours>|off",
     });
   });
 
@@ -40,7 +40,7 @@ describe("/idle command", () => {
       type: "command-invalid-args",
       command: "idle",
       input: "abc",
-      usage: "/idle <hours> or /idle off",
+      usage: "/idle <hours>|off",
     });
   });
 
@@ -50,7 +50,7 @@ describe("/idle command", () => {
       type: "command-invalid-args",
       command: "idle",
       input: "-5",
-      usage: "/idle <hours> or /idle off",
+      usage: "/idle <hours>|off",
     });
   });
 });
