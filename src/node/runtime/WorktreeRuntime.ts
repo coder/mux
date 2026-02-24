@@ -82,6 +82,7 @@ export class WorktreeRuntime extends LocalBaseRuntime {
       branchName: params.branchName,
       trunkBranch: params.trunkBranch,
       initLogger: params.initLogger,
+      trusted: params.trusted,
     });
   }
 

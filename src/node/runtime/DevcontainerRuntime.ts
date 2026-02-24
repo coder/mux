@@ -424,6 +424,7 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
       branchName: params.branchName,
       trunkBranch: params.trunkBranch,
       initLogger: params.initLogger,
+      trusted: params.trusted,
     });
   }
 

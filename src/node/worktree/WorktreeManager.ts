@@ -517,6 +517,7 @@ export class WorktreeManager {
         branchName: newWorkspaceName,
         trunkBranch: sourceBranch, // Fork from source branch instead of main/master
         initLogger,
+        trusted: params.trusted,
       });
 
       if (!createResult.success || !createResult.workspacePath) {
