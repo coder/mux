@@ -383,9 +383,12 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   useEffect(() => {
     const projectBaseIsPersisted = readPersistedString(projectDefaultBaseKey) !== undefined;
     const workspaceBaseIsPersisted = readPersistedString(workspaceDiffBaseKey) !== undefined;
+    const shouldInitializeWorkspaceBase = !workspaceBaseIsPersisted;
 
     const metadataTrunkBase = toOriginDiffBase(workspaceMetadata.get(workspaceId)?.taskTrunkBranch);
-    if (!workspaceBaseIsPersisted && metadataTrunkBase) {
+    const initializedWorkspaceFromMetadata =
+      shouldInitializeWorkspaceBase && metadataTrunkBase != null;
+    if (initializedWorkspaceFromMetadata) {
       setDiffBase(metadataTrunkBase);
     }
 
@@ -405,7 +408,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         if (readPersistedString(projectDefaultBaseKey) === undefined) {
           setDefaultBase(detectedBase);
         }
-        if (readPersistedString(workspaceDiffBaseKey) === undefined) {
+        if (shouldInitializeWorkspaceBase && !initializedWorkspaceFromMetadata) {
           setDiffBase(detectedBase);
         }
       } catch {
