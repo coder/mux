@@ -117,40 +117,44 @@ export function useCoderWorkspace({
   const [loadingPresets, setLoadingPresets] = useState(false);
   const [loadingWorkspaces, setLoadingWorkspaces] = useState(false);
 
-  // Fetch Coder info on mount
-  useEffect(() => {
+  const fetchCoderInfo = useCallback(async () => {
     if (!api) return;
 
-    let mounted = true;
-
-    api.coder
-      .getInfo()
-      .then((info) => {
-        if (mounted) {
-          setCoderInfo(info);
-          // Clear Coder config when CLI is not available (outdated or unavailable)
-          if (info.state !== "available" && coderConfigRef.current != null) {
-            onCoderConfigChangeRef.current(null);
-          }
-        }
-      })
-      .catch(() => {
-        if (mounted) {
-          setCoderInfo({
-            state: "unavailable",
-            reason: { kind: "error", message: "Failed to fetch" },
-          });
-          // Clear Coder config on fetch failure
-          if (coderConfigRef.current != null) {
-            onCoderConfigChangeRef.current(null);
-          }
-        }
+    try {
+      const info = await api.coder.getInfo();
+      setCoderInfo(info);
+      // Clear Coder config when CLI is not available (outdated or unavailable)
+      if (info.state !== "available" && coderConfigRef.current != null) {
+        onCoderConfigChangeRef.current(null);
+      }
+    } catch {
+      setCoderInfo({
+        state: "unavailable",
+        reason: { kind: "error", message: "Failed to fetch" },
       });
-
-    return () => {
-      mounted = false;
-    };
+      // Clear Coder config on fetch failure
+      if (coderConfigRef.current != null) {
+        onCoderConfigChangeRef.current(null);
+      }
+    }
   }, [api]);
+
+  // Fetch Coder info on mount
+  useEffect(() => {
+    void fetchCoderInfo();
+  }, [fetchCoderInfo]);
+
+  // Re-check Coder auth on window focus — catches `coder login` done externally.
+  // Backend doesn't cache whoami failures, so this re-runs the CLI check only
+  // when logged out. Once logged in, the cached result returns instantly.
+  useEffect(() => {
+    const handleFocus = () => {
+      void fetchCoderInfo();
+    };
+
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [fetchCoderInfo]);
 
   // Fetch templates when Coder is enabled
   useEffect(() => {
