@@ -27,7 +27,12 @@ import {
   getAdjacentFilePath,
   getFileHunks,
 } from "@/browser/utils/review/navigation";
-import { isEditableElement, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
+import {
+  isDialogOpen,
+  isEditableElement,
+  KEYBINDS,
+  matchesKeybind,
+} from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { buildReadFileScript, processFileContents } from "@/browser/utils/fileExplorer";
 import {
@@ -1184,6 +1189,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       // --- Diff panel keyboard mode ---
       // Don't intercept when typing in editable elements
       if (isEditableElement(e.target)) return;
+
+      // Don't intercept Escape (or any shortcut) while a modal dialog is open.
+      // This handler runs in capture phase, so bubble-phase stopPropagation
+      // from dialog onKeyDown can't block it; check the DOM directly.
+      if (isDialogOpen()) return;
 
       // Esc: exit immersive
       if (matchesKeybind(e, KEYBINDS.CANCEL)) {
