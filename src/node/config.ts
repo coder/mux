@@ -300,9 +300,7 @@ export class Config {
           // These were added when no trust prompt existed, so the user implicitly
           // trusted them. See AGENTS.md "Trusted Project" for rationale.
           for (const [, projectConfig] of projectsMap) {
-            if (projectConfig.trusted === undefined) {
-              projectConfig.trusted = true;
-            }
+            projectConfig.trusted ??= true;
           }
 
           const taskSettings = normalizeTaskSettings(parsed.taskSettings);
