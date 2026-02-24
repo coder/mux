@@ -301,6 +301,11 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     if (isAuto) return;
 
     if (e.key === "Enter") {
+      // Only handle Enter for agent rows — don't intercept when focus is on
+      // the auto-select Switch (which has role="switch")
+      const target = e.target as HTMLElement;
+      if (target.getAttribute("role") === "switch") return;
+
       e.preventDefault();
       if (selectableOptions.length === 0) return;
 
