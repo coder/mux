@@ -11,7 +11,7 @@ import { DevcontainerRuntime } from "./DevcontainerRuntime";
 import type { RuntimeConfig, RuntimeMode, RuntimeAvailabilityStatus } from "@/common/types/runtime";
 import { hasSrcBaseDir } from "@/common/types/runtime";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
-import { execAsync } from "@/node/utils/disposableExec";
+import { execFileAsync } from "@/node/utils/disposableExec";
 import type { CoderService } from "@/node/services/coderService";
 import { Config } from "@/node/config";
 import { checkDevcontainerCliVersion } from "./devcontainerCli";
@@ -254,7 +254,7 @@ async function isGitRepository(projectPath: string): Promise<boolean> {
 async function isDockerAvailable(): Promise<boolean> {
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   try {
-    using proc = execAsync("docker info");
+    using proc = execFileAsync("docker", ["info"]);
     const timeout = new Promise<never>((_, reject) => {
       timeoutHandle = setTimeout(() => reject(new Error("timeout")), 5000);
     });
