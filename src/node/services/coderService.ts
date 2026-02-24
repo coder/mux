@@ -2,8 +2,10 @@
  * Service for interacting with the Coder CLI.
  * Used to create/manage Coder workspaces as SSH targets for Mux workspaces.
  */
+import { ensureMuxCoderSSHConfigFile } from "@/node/runtime/muxSshConfigWriter";
 import { execAsync, execFileAsync } from "@/node/utils/disposableExec";
 import { getBashPath } from "@/node/utils/main/bashPath";
+import { toWindowsPath } from "@/node/utils/paths";
 import { log } from "@/node/services/log";
 import { spawn, type ChildProcess } from "child_process";
 import type { Result } from "@/common/types/result";
@@ -332,17 +334,40 @@ export class CoderService {
   private cachedWhoami: CoderWhoamiData | null = null;
 
   private async resolveCoderBinaryPath(): Promise<string | null> {
-    let shell: string | undefined;
     if (process.platform === "win32") {
+      // Prefer native Windows lookup — returns paths cmd.exe can execute directly.
+      try {
+        using proc = execAsync("where.exe coder");
+        const { stdout } = await proc.result;
+        const firstLine = stdout.split(/\r?\n/)[0]?.trim();
+        if (firstLine) return firstLine;
+      } catch {
+        // where.exe may not find coder; fall through to Git Bash lookup.
+      }
+
+      // Fallback: Git Bash lookup. Normalize MSYS paths (/c/...) to Windows (C:\...).
+      let shell: string | undefined;
       try {
         shell = getBashPath();
       } catch {
-        // Best-effort; if Git Bash isn't available, the lookup may fail and we'll fall back to null.
+        return null;
+      }
+
+      try {
+        using proc = execAsync("command -v coder", { shell });
+        const { stdout } = await proc.result;
+        const firstLine = stdout.split(/\r?\n/)[0]?.trim();
+        // Convert MSYS path format to native Windows path for cmd.exe compatibility.
+        // SSH ProxyCommand runs through cmd.exe, not Git Bash.
+        return firstLine ? toWindowsPath(firstLine) : null;
+      } catch {
+        return null;
       }
     }
 
+    // POSIX: command -v is universally available
     try {
-      using proc = execAsync("command -v coder", shell ? { shell } : undefined);
+      using proc = execAsync("command -v coder");
       const { stdout } = await proc.result;
       const firstLine = stdout.split(/\r?\n/)[0]?.trim();
       return firstLine || null;
@@ -546,30 +571,14 @@ export class CoderService {
     await session.dispose();
   }
 
-  private normalizeHostnameSuffix(raw: string | undefined): string {
-    const cleaned = (raw ?? "").trim().replace(/^\./, "");
-    return cleaned || "coder";
+  /**
+   * Verify the current Coder CLI session is authenticated.
+   * Forces a fresh whoami check instead of using cached data.
+   */
+  async verifyAuthenticatedSession(): Promise<void> {
+    await this.getWhoamiData({ useCache: false });
   }
 
-  async fetchDeploymentSshConfig(session?: CoderApiSession): Promise<{ hostnameSuffix: string }> {
-    const deploymentUrl = await this.getDeploymentUrl();
-    const tokenName = `mux-ssh-config-${Date.now().toString(36)}`;
-
-    const run = async (api: CoderApiSession) => {
-      const url = new URL("/api/v2/deployment/ssh", deploymentUrl);
-      const response = await fetch(url, {
-        headers: { "Coder-Session-Token": api.token },
-      });
-      if (!response.ok) {
-        throw new Error(`Failed to fetch SSH config: ${response.status}`);
-      }
-
-      const data = (await response.json()) as { hostname_suffix?: string };
-      return { hostnameSuffix: this.normalizeHostnameSuffix(data.hostname_suffix) };
-    };
-
-    return session ? run(session) : this.withApiSession(tokenName, run);
-  }
   /**
    * Clear cached Coder info. Used for testing.
    */
@@ -1462,13 +1471,20 @@ export class CoderService {
   }
 
   /**
-   * Ensure SSH config is set up for Coder workspaces.
+   * Ensure mux-owned SSH config is set up for Coder workspaces.
    * Run before every Coder workspace connection (idempotent).
    */
-  async ensureSSHConfig(): Promise<void> {
-    log.debug("Ensuring Coder SSH config");
-    using proc = execFileAsync("coder", ["config-ssh", "--yes"]);
-    await proc.result;
+  async ensureMuxCoderSSHConfig(): Promise<void> {
+    log.debug("Ensuring mux-owned Coder SSH config");
+    const coderBinary = await this.resolveCoderBinaryPath();
+    if (coderBinary == null) {
+      log.debug("Skipping mux-owned Coder SSH config setup because coder binary is unavailable");
+      return;
+    }
+
+    await ensureMuxCoderSSHConfigFile({
+      coderBinaryPath: coderBinary,
+    });
   }
 }
 

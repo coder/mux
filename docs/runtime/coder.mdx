@@ -24,11 +24,11 @@ If multiple organizations have templates with the same name, Mux shows the organ
 
 1. Choose **Existing**.
 2. Select a workspace from the list (status is shown).
-3. Mux will start the workspace if it is stopped, then connect to `<workspace-name>.coder`.
+3. Mux will start the workspace if it is stopped, then connect to `<workspace-name>.mux--coder`.
 
 ## SSH setup
 
-Mux runs `coder config-ssh --yes` before connecting, which creates SSH aliases like `<workspace-name>.coder` in `~/.ssh/config`.
+Mux writes and maintains a mux-owned SSH config block before connecting, creating aliases like `<workspace-name>.mux--coder` in `~/.ssh/config`.
 
 ## Notes
 

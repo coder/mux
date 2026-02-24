@@ -304,10 +304,10 @@ export class ServiceContainer {
     // Start idle compaction checker
     this.idleCompactionService.start();
 
-    // Refresh Coder SSH config in background (handles binary path changes on restart)
+    // Refresh mux-owned Coder SSH config in background (handles binary path changes on restart)
     // Skip getCoderInfo() to avoid caching "unavailable" if coder isn't installed yet
-    void this.coderService.ensureSSHConfig().catch(() => {
-      // Ignore errors - coder may not be installed
+    void this.coderService.ensureMuxCoderSSHConfig().catch((error: unknown) => {
+      log.warn("Background mux SSH config setup failed", { error });
     });
 
     // Ensure the built-in Chat with Mux system workspace exists.

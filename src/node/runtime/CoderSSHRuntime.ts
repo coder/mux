@@ -3,7 +3,7 @@
  *
  * Extends SSHRuntime to add Coder-specific provisioning via postCreateSetup():
  * - Creates Coder workspace (if not connecting to existing)
- * - Runs `coder config-ssh --yes` to set up SSH proxy
+ * - Ensures mux-owned SSH config is present for Coder SSH proxying
  *
  * This ensures mux workspace metadata is persisted before the long-running
  * Coder build starts, allowing build logs to stream to init logs (like Docker).
@@ -24,6 +24,7 @@ import { SSHRuntime, type SSHRuntimeConfig } from "./SSHRuntime";
 import type { SSHTransport } from "./transports";
 import type { CoderWorkspaceConfig, RuntimeConfig } from "@/common/types/runtime";
 import { isSSHRuntime } from "@/common/types/runtime";
+import { resolveCoderSSHHost } from "@/constants/coder";
 import type { CoderService } from "@/node/services/coderService";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
@@ -106,7 +107,7 @@ export class CoderSSHRuntime extends SSHRuntime {
     }
 
     const baseConfig: SSHRuntimeConfig = {
-      host: config.host,
+      host: resolveCoderSSHHost(config.host, config.coder?.workspaceName),
       srcBaseDir: config.srcBaseDir,
       bgOutputDir: config.bgOutputDir,
       identityFile: config.identityFile,
@@ -433,30 +434,38 @@ export class CoderSSHRuntime extends SSHRuntime {
       return Err("Coder workspace name is required");
     }
 
-    let hostnameSuffix: string;
+    // Verify Coder auth before persisting workspace metadata.
+    // Without this, existing-workspace flows skip all auth checks and can create
+    // unusable entries when the user is logged out or their session has expired.
     try {
-      // Keep a provisioning session around for new workspaces so we can reuse the same token
-      // when fetching template parameters during postCreateSetup.
-      const session = coder.existingWorkspace
-        ? undefined
-        : await this.coderService.ensureProvisioningSession(workspaceName);
-      const sshConfig = await this.coderService.fetchDeploymentSshConfig(session);
-      hostnameSuffix = sshConfig.hostnameSuffix;
+      await this.coderService.verifyAuthenticatedSession();
     } catch (error) {
-      if (!coder.existingWorkspace) {
-        await this.coderService.disposeProvisioningSession(workspaceName);
-      }
       const message = getErrorMessage(error);
       return Err(
-        `Failed to read Coder deployment SSH config. ` +
+        `Failed to verify Coder authentication. ` +
           `Make sure you're logged in with the Coder CLI. ` +
           `(${message})`
       );
     }
 
+    // Keep a provisioning session around for new workspaces so we can reuse the same token
+    // when fetching template parameters during postCreateSetup.
+    if (!coder.existingWorkspace) {
+      try {
+        await this.coderService.ensureProvisioningSession(workspaceName);
+      } catch (error) {
+        const message = getErrorMessage(error);
+        return Err(
+          `Failed to prepare Coder provisioning session. ` +
+            `Make sure you're logged in with the Coder CLI. ` +
+            `(${message})`
+        );
+      }
+    }
+
     return Ok({
       ...config,
-      host: `${workspaceName}.${hostnameSuffix}`,
+      host: resolveCoderSSHHost(config.host, workspaceName),
       coder: { ...coder, workspaceName },
     });
   }
@@ -801,10 +810,10 @@ export class CoderSSHRuntime extends SSHRuntime {
       }
     }
 
-    // Ensure SSH config is set up for Coder workspaces
+    // Ensure mux-owned SSH config is set up for Coder workspaces.
     initLogger.logStep("Configuring SSH for Coder...");
     try {
-      await this.coderService.ensureSSHConfig();
+      await this.coderService.ensureMuxCoderSSHConfig();
     } catch (error) {
       const errorMsg = getErrorMessage(error);
       log.error("Failed to configure SSH for Coder", { error });
@@ -813,7 +822,7 @@ export class CoderSSHRuntime extends SSHRuntime {
     }
 
     // Create parent directory for workspace (git clone won't create it)
-    // This must happen after ensureSSHConfig() so SSH is configured
+    // This must happen after ensureMuxCoderSSHConfig() so SSH is configured
     initLogger.logStep("Preparing workspace directory...");
     const parentDir = path.posix.dirname(params.workspacePath);
     const mkdirResult = await execBuffered(this, `mkdir -p ${expandTildeForSSH(parentDir)}`, {

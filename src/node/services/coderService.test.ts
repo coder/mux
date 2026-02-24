@@ -3,6 +3,7 @@ import { Readable } from "stream";
 import { describe, it, expect, vi, beforeEach, afterEach, spyOn } from "bun:test";
 import { CoderService, compareVersions } from "./coderService";
 import * as childProcess from "child_process";
+import * as muxSshConfigWriter from "@/node/runtime/muxSshConfigWriter";
 import * as disposableExec from "@/node/utils/disposableExec";
 
 // eslint-disable-next-line @typescript-eslint/no-empty-function
@@ -390,6 +391,48 @@ describe("CoderService", () => {
     });
   });
 
+  describe("verifyAuthenticatedSession", () => {
+    it("resolves when coder whoami succeeds", async () => {
+      execFileAsyncSpy?.mockImplementation((file: string, args: string[]) => {
+        if (isCoderCommand(file, args, ["whoami", "--output=json"])) {
+          return createMockExecResult(
+            Promise.resolve({
+              stdout: JSON.stringify([
+                { url: "https://coder.example.com", username: "coder-user", id: "user-1" },
+              ]),
+              stderr: "",
+            })
+          );
+        }
+        return createMockExecResult(
+          Promise.reject(new Error(`Unexpected command: ${file} ${args.join(" ")}`))
+        );
+      });
+
+      await service.verifyAuthenticatedSession();
+      expect(execFileAsyncSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("throws when coder whoami fails (not logged in)", async () => {
+      execFileAsyncSpy?.mockImplementation((file: string, args: string[]) => {
+        if (isCoderCommand(file, args, ["whoami", "--output=json"])) {
+          return createMockExecResult(Promise.reject(new Error("error: not logged in")));
+        }
+        return createMockExecResult(
+          Promise.reject(new Error(`Unexpected command: ${file} ${args.join(" ")}`))
+        );
+      });
+
+      try {
+        await service.verifyAuthenticatedSession();
+        throw new Error("expected verifyAuthenticatedSession to throw");
+      } catch (error) {
+        expect((error as Error).message).toContain("not logged in");
+      }
+      expect(execFileAsyncSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("listTemplates", () => {
     it("returns templates with display names", async () => {
       execFileAsyncSpy?.mockReturnValue(
@@ -699,102 +742,6 @@ describe("CoderService", () => {
       expect(thrown instanceof Error ? thrown.message : String(thrown)).toBe(
         "coder ssh --wait failed (exit 1): Connection refused"
       );
-    });
-  });
-
-  describe("fetchDeploymentSshConfig", () => {
-    let originalFetch: typeof fetch;
-
-    beforeEach(() => {
-      originalFetch = global.fetch;
-    });
-
-    afterEach(() => {
-      global.fetch = originalFetch;
-    });
-
-    function mockWhoami() {
-      execFileAsyncSpy?.mockImplementation((file: string, args: string[]) => {
-        if (isCoderCommand(file, args, ["whoami", "--output=json"])) {
-          return createMockExecResult(
-            Promise.resolve({
-              stdout: JSON.stringify([
-                { url: "https://coder.example.com", username: "coder-user" },
-              ]),
-              stderr: "",
-            })
-          );
-        }
-        return createMockExecResult(
-          Promise.reject(new Error(`Unexpected command: ${file} ${args.join(" ")}`))
-        );
-      });
-    }
-
-    it("uses provided session and normalizes leading dot", async () => {
-      mockWhoami();
-      const fetchSpy = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({ hostname_suffix: ".corp" }),
-      });
-      global.fetch = fetchSpy as unknown as typeof fetch;
-
-      const session = {
-        token: "session-token",
-        dispose: vi.fn().mockResolvedValue(undefined),
-      };
-      const result = await service.fetchDeploymentSshConfig(session);
-
-      expect(result).toEqual({ hostnameSuffix: "corp" });
-      const calledUrl = fetchSpy.mock.calls[0]?.[0] as URL | undefined;
-      const options = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;
-      expect(calledUrl?.toString()).toBe("https://coder.example.com/api/v2/deployment/ssh");
-      expect(options).toEqual({
-        headers: { "Coder-Session-Token": "session-token" },
-      });
-      expect(execFileAsyncSpy).toHaveBeenCalledTimes(1);
-    });
-
-    it("reuses cached whoami after getCoderInfo", async () => {
-      mockVersionAndWhoami({ version: "2.28.2", username: "coder-user" });
-      const fetchSpy = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({ hostname_suffix: ".corp" }),
-      });
-      global.fetch = fetchSpy as unknown as typeof fetch;
-
-      await service.getCoderInfo();
-
-      const session = {
-        token: "session-token",
-        dispose: vi.fn().mockResolvedValue(undefined),
-      };
-      await service.fetchDeploymentSshConfig(session);
-
-      expect(execAsyncSpy).toHaveBeenCalledTimes(1);
-      expect(execFileAsyncSpy).toHaveBeenCalledTimes(2);
-      const whoamiCalls =
-        execFileAsyncSpy?.mock.calls.filter(([file, args]) =>
-          isCoderCommand(file, args, ["whoami", "--output=json"])
-        ) ?? [];
-      expect(whoamiCalls).toHaveLength(1);
-    });
-
-    it("defaults to coder when hostname suffix missing", async () => {
-      mockWhoami();
-      const fetchSpy = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({}),
-      });
-      global.fetch = fetchSpy as unknown as typeof fetch;
-
-      const session = {
-        token: "session-token",
-        dispose: vi.fn().mockResolvedValue(undefined),
-      };
-      const result = await service.fetchDeploymentSshConfig(session);
-
-      expect(result).toEqual({ hostnameSuffix: "coder" });
     });
   });
 
@@ -1617,6 +1564,78 @@ describe("deleteWorkspaceEventually", () => {
     expect(result.success).toBe(true);
     expect(serviceHack.runCoderCommand).toHaveBeenCalledTimes(1);
     expect(serviceHack.sleep).not.toHaveBeenCalled();
+  });
+});
+
+describe("CoderService.ensureMuxCoderSSHConfig", () => {
+  it("skips SSH config writes when coder binary is unavailable", async () => {
+    const service = new CoderService();
+    const resolveCoderBinaryPathSpy = spyOn(
+      service as unknown as { resolveCoderBinaryPath: () => Promise<string | null> },
+      "resolveCoderBinaryPath"
+    ).mockResolvedValue(null);
+    const ensureMuxCoderSSHConfigFileSpy = spyOn(
+      muxSshConfigWriter,
+      "ensureMuxCoderSSHConfigFile"
+    ).mockResolvedValue();
+
+    try {
+      await service.ensureMuxCoderSSHConfig();
+
+      expect(resolveCoderBinaryPathSpy).toHaveBeenCalledTimes(1);
+      expect(ensureMuxCoderSSHConfigFileSpy).not.toHaveBeenCalled();
+    } finally {
+      resolveCoderBinaryPathSpy.mockRestore();
+      ensureMuxCoderSSHConfigFileSpy.mockRestore();
+    }
+  });
+
+  it("writes SSH config when coder binary is resolved", async () => {
+    const service = new CoderService();
+    const resolveCoderBinaryPathSpy = spyOn(
+      service as unknown as { resolveCoderBinaryPath: () => Promise<string | null> },
+      "resolveCoderBinaryPath"
+    ).mockResolvedValue("/usr/local/bin/coder");
+    const ensureMuxCoderSSHConfigFileSpy = spyOn(
+      muxSshConfigWriter,
+      "ensureMuxCoderSSHConfigFile"
+    ).mockResolvedValue();
+
+    try {
+      await service.ensureMuxCoderSSHConfig();
+
+      expect(resolveCoderBinaryPathSpy).toHaveBeenCalledTimes(1);
+      expect(ensureMuxCoderSSHConfigFileSpy).toHaveBeenCalledWith({
+        coderBinaryPath: "/usr/local/bin/coder",
+      });
+    } finally {
+      resolveCoderBinaryPathSpy.mockRestore();
+      ensureMuxCoderSSHConfigFileSpy.mockRestore();
+    }
+  });
+
+  it("writes SSH config when coder binary resolves to normalized Windows path", async () => {
+    const service = new CoderService();
+    const resolveCoderBinaryPathSpy = spyOn(
+      service as unknown as { resolveCoderBinaryPath: () => Promise<string | null> },
+      "resolveCoderBinaryPath"
+    ).mockResolvedValue("C:\\Users\\me\\bin\\coder.exe");
+    const ensureMuxCoderSSHConfigFileSpy = spyOn(
+      muxSshConfigWriter,
+      "ensureMuxCoderSSHConfigFile"
+    ).mockResolvedValue();
+
+    try {
+      await service.ensureMuxCoderSSHConfig();
+
+      expect(resolveCoderBinaryPathSpy).toHaveBeenCalledTimes(1);
+      expect(ensureMuxCoderSSHConfigFileSpy).toHaveBeenCalledWith({
+        coderBinaryPath: "C:\\Users\\me\\bin\\coder.exe",
+      });
+    } finally {
+      resolveCoderBinaryPathSpy.mockRestore();
+      ensureMuxCoderSSHConfigFileSpy.mockRestore();
+    }
   });
 });
 

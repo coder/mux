@@ -2278,7 +2278,7 @@ describeIntegration("Runtime integration tests", () => {
             createWorkspaceCalled = true;
             yield "should not happen";
           },
-          ensureSSHConfig: async () => {
+          ensureMuxCoderSSHConfig: async () => {
             // This SHOULD be called - it's safe and idempotent
           },
           getWorkspaceStatus: () =>

@@ -16,6 +16,7 @@ import type { CoderService } from "@/node/services/coderService";
 import { Config } from "@/node/config";
 import { checkDevcontainerCliVersion } from "./devcontainerCli";
 import { buildDevcontainerConfigInfo, scanDevcontainerConfigs } from "./devcontainerConfigs";
+import { resolveCoderSSHHost } from "@/constants/coder";
 import { getErrorMessage } from "@/common/utils/errors";
 
 // Re-export for backward compatibility with existing imports
@@ -159,8 +160,11 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
       });
 
     case "ssh": {
+      // Normalize Coder host before transport creation so both transport
+      // and runtime use the canonical *.mux--coder hostname from the start.
+      const sshHost = resolveCoderSSHHost(config.host, config.coder?.workspaceName);
       const sshConfig = {
-        host: config.host,
+        host: sshHost,
         srcBaseDir: config.srcBaseDir,
         bgOutputDir: config.bgOutputDir,
         identityFile: config.identityFile,

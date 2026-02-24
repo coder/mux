@@ -4,6 +4,8 @@ import { createRuntime, IncompatibleRuntimeError } from "./runtimeFactory";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { LocalRuntime } from "./LocalRuntime";
 import { WorktreeRuntime } from "./WorktreeRuntime";
+import { CoderSSHRuntime } from "./CoderSSHRuntime";
+import type { CoderService } from "@/node/services/coderService";
 
 describe("isIncompatibleRuntimeConfig", () => {
   it("returns false for undefined config", () => {
@@ -82,5 +84,38 @@ describe("createRuntime", () => {
     const config = { type: "future-runtime" } as unknown as RuntimeConfig;
     expect(() => createRuntime(config)).toThrow(IncompatibleRuntimeError);
     expect(() => createRuntime(config)).toThrow(/newer version of mux/);
+  });
+});
+
+describe("createRuntime - Coder host normalization", () => {
+  it("uses normalized mux--coder host for both runtime and transport", () => {
+    // Legacy persisted config: host still has old .coder suffix,
+    // but coder.workspaceName is present for normalization.
+    const config: RuntimeConfig = {
+      type: "ssh",
+      host: "legacy.coder",
+      srcBaseDir: "~/src",
+      coder: {
+        existingWorkspace: true,
+        workspaceName: "legacy",
+        template: "default-template",
+      },
+    };
+
+    const runtime = createRuntime(config, {
+      coderService: {} as unknown as CoderService,
+    });
+
+    expect(runtime).toBeInstanceOf(CoderSSHRuntime);
+
+    // Both runtime config and underlying transport must use the
+    // canonical host — the P1 bug was transport keeping raw config.host.
+    const sshRuntime = runtime as unknown as {
+      getConfig(): { host: string };
+      transport: { getConfig(): { host: string } };
+    };
+
+    expect(sshRuntime.getConfig().host).toBe("legacy.mux--coder");
+    expect(sshRuntime.transport.getConfig().host).toBe("legacy.mux--coder");
   });
 });

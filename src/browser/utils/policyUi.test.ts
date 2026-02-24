@@ -59,7 +59,7 @@ describe("policyUi", () => {
     const sshHost: ParsedRuntime = { mode: RUNTIME_MODE.SSH, host: "user@host" };
     const sshCoder: ParsedRuntime = {
       mode: RUNTIME_MODE.SSH,
-      host: "workspace.coder",
+      host: "workspace.mux--coder",
       coder: { existingWorkspace: true, workspaceName: "workspace" },
     };
 
