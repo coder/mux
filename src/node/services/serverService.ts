@@ -239,17 +239,30 @@ export class ServerService {
 
     this.apiAuthToken = options.authToken;
 
-    const staticDir = path.join(__dirname, "../..");
-    let serveStatic = options.serveStatic ?? false;
-    if (serveStatic) {
-      const indexPath = path.join(staticDir, "index.html");
-      try {
-        await fs.access(indexPath);
-      } catch {
-        log.warn(`API server static UI requested, but ${indexPath} is missing. Disabling.`);
-        serveStatic = false;
+    // Resolve the static assets directory (dist/) that contains index.html.
+    // Non-bundled (Electron): __dirname is dist/node/services/, so ../.. reaches dist/.
+    // Bundled (Docker):       __dirname is dist/runtime/, so .. reaches dist/.
+    const staticDirCandidates = [path.join(__dirname, "../.."), path.join(__dirname, "..")];
+
+    let staticDir: string | undefined;
+    if (options.serveStatic) {
+      for (const candidate of staticDirCandidates) {
+        try {
+          await fs.access(path.join(candidate, "index.html"));
+          staticDir = candidate;
+          break;
+        } catch {
+          // Try the next candidate.
+        }
+      }
+
+      if (!staticDir) {
+        log.warn(
+          `API server static UI requested, but index.html is missing near ${__dirname}. Disabling.`
+        );
       }
     }
+    const serveStatic = options.serveStatic === true && staticDir !== undefined;
 
     // Non-CLI starts (desktop/browser mode) do not parse CLI flags, so allow an
     // explicit env override for TLS-terminating proxies that rewrite forwarded proto.

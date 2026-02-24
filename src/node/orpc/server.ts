@@ -444,7 +444,8 @@ export async function createOrpcServer({
   context,
   serveStatic = false,
   allowHttpOrigin = false,
-  // From dist/node/orpc/, go up 2 levels to reach dist/ where index.html lives
+  // Default for non-bundled mode: from dist/node/orpc/, go up 2 levels to dist/.
+  // In bundled mode (dist/runtime/), serverService computes the static dir.
   staticDir = path.join(__dirname, "../.."),
   onOrpcError = (error, options) => {
     // Auth failures are expected in browser mode while the user enters the token.
