@@ -383,6 +383,56 @@ describe("Config", () => {
       });
     });
 
+    it("injects global secrets with injectAll into any project's effective secrets", async () => {
+      await config.updateGlobalSecrets([
+        { key: "INJECTED", value: "everywhere", injectAll: true },
+        { key: "STORED_ONLY", value: "shared" },
+      ]);
+
+      const record = secretsToRecord(config.getEffectiveSecrets("/fake/project"));
+      expect(record).toEqual({
+        INJECTED: "everywhere",
+      });
+    });
+
+    it("project secrets override injectAll global secrets", async () => {
+      await config.updateGlobalSecrets([{ key: "TOKEN", value: "global", injectAll: true }]);
+
+      const projectPath = "/fake/project";
+      await config.updateProjectSecrets(projectPath, [{ key: "TOKEN", value: "project" }]);
+
+      const record = secretsToRecord(config.getEffectiveSecrets(projectPath));
+      expect(record).toEqual({
+        TOKEN: "project",
+      });
+    });
+
+    it("injects injectAll globals alongside project-specific secrets", async () => {
+      await config.updateGlobalSecrets([{ key: "GLOBAL_TOKEN", value: "global", injectAll: true }]);
+
+      const projectPath = "/fake/project";
+      await config.updateProjectSecrets(projectPath, [{ key: "LOCAL_TOKEN", value: "local" }]);
+
+      const record = secretsToRecord(config.getEffectiveSecrets(projectPath));
+      expect(record).toEqual({
+        GLOBAL_TOKEN: "global",
+        LOCAL_TOKEN: "local",
+      });
+    });
+
+    it("does not inject global secrets unless injectAll is true", async () => {
+      await config.updateGlobalSecrets([
+        { key: "A", value: "1", injectAll: false },
+        { key: "B", value: "2" },
+        { key: "C", value: "3", injectAll: true },
+      ]);
+
+      const record = secretsToRecord(config.getEffectiveSecrets("/fake/project"));
+      expect(record).toEqual({
+        C: "3",
+      });
+    });
+
     it('resolves project secret aliases to global secrets via {secret:"KEY"}', async () => {
       await config.updateGlobalSecrets([{ key: "GLOBAL_TOKEN", value: "abc" }]);
 

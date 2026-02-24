@@ -1224,7 +1224,9 @@ ${jsonString}`;
       "key" in value &&
       "value" in value &&
       typeof (value as { key?: unknown }).key === "string" &&
-      Config.isSecretValue((value as { value?: unknown }).value)
+      Config.isSecretValue((value as { value?: unknown }).value) &&
+      (!Object.prototype.hasOwnProperty.call(value, "injectAll") ||
+        typeof (value as { injectAll?: unknown }).injectAll === "boolean")
     );
   }
 
@@ -1336,12 +1338,13 @@ ${jsonString}`;
    * Get effective secrets for a project.
    *
    * Project secrets define which env vars are injected into this project/workspace.
-   * Global secrets are only used as a shared value store and are injected only when
-   * a project secret references them via `{ secret: "GLOBAL_KEY" }`.
+   * Global secrets can be injected for all projects when `injectAll` is enabled,
+   * and are also used as a shared value store for `{ secret: "GLOBAL_KEY" }` references.
    */
   getEffectiveSecrets(projectPath: string): Secret[] {
     const normalizedProjectPath = Config.normalizeSecretsProjectPath(projectPath) || projectPath;
     const config = this.loadSecretsConfig();
+    const globalSecrets = config[Config.GLOBAL_SECRETS_KEY] ?? [];
     const projectSecrets = config[normalizedProjectPath] ?? [];
 
     // Keep global reference resolution synchronous so getEffectiveSecrets remains fast and side-effect free.
@@ -1403,7 +1406,21 @@ ${jsonString}`;
       }
     }
 
-    return projectSecrets.map((secret) => {
+
+    const injectedGlobalSecrets: Secret[] = [];
+    for (const secret of globalSecrets) {
+      if (!secret.injectAll) {
+        continue;
+      }
+
+      const resolvedValue = globalSecretsByKey.get(secret.key);
+      // Allow empty-string global secrets by checking for undefined explicitly.
+      if (resolvedValue !== undefined) {
+        injectedGlobalSecrets.push({ key: secret.key, value: resolvedValue });
+      }
+    }
+
+    const resolvedProjectSecrets = projectSecrets.map((secret) => {
       if (!isSecretReferenceValue(secret.value)) {
         return secret;
       }
@@ -1424,6 +1441,13 @@ ${jsonString}`;
 
       return secret;
     });
+
+    const projectKeys = new Set(resolvedProjectSecrets.map((secret) => secret.key));
+    const nonOverriddenGlobalSecrets = injectedGlobalSecrets.filter(
+      (secret) => !projectKeys.has(secret.key)
+    );
+
+    return [...nonOverriddenGlobalSecrets, ...resolvedProjectSecrets];
   }
 
   /**

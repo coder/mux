@@ -6,6 +6,7 @@ import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { Button } from "@/browser/components/Button/Button";
 import { Input } from "@/browser/components/Input/Input";
+import { Switch } from "@/browser/components/Switch/Switch";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { OnePasswordPicker } from "../Components/OnePasswordPicker";
 import {
@@ -110,6 +111,7 @@ function secretsEqual(a: Secret[], b: Secret[]): boolean {
     if (!left || !right) return false;
     if (left.key !== right.key) return false;
     if (!secretValuesEqual(left.value, right.value)) return false;
+    if (!!left.injectAll !== !!right.injectAll) return false;
   }
   return true;
 }
@@ -396,6 +398,18 @@ export const SecretsSection: React.FC = () => {
     });
   }, []);
 
+  const updateSecretInjectAll = useCallback((index: number, checked: boolean) => {
+    setSecrets((prev) => {
+      const next = [...prev];
+      const existing = next[index] ?? { key: "", value: "" };
+      next[index] = {
+        ...existing,
+        injectAll: checked || undefined,
+      };
+      return next;
+    });
+  }, []);
+
   const updateSecretValueKind = useCallback(
     (index: number, kind: "literal" | "global") => {
       setSecrets((prev) => {
@@ -532,7 +546,7 @@ export const SecretsSection: React.FC = () => {
             Scope: <span className="text-foreground">{scopeLabel}</span>
           </p>
           <p className="text-muted mt-1 text-xs">
-            Global secrets are shared storage only; they are not injected by default.
+            Toggle Inject on a global secret to automatically inject it into every project.
           </p>
           <p className="text-muted mt-1 text-xs">
             Project secrets control injection. Use Type: Global to reference a global value.
@@ -609,13 +623,14 @@ export const SecretsSection: React.FC = () => {
           className={`[&>label]:text-muted grid ${
             showSourceColumn
               ? "grid-cols-[1fr_auto_1fr_auto_auto]"
-              : "grid-cols-[1fr_1fr_auto_auto]"
+              : "grid-cols-[1fr_1fr_auto_auto_auto]"
           } items-end gap-1 [&>label]:mb-0.5 [&>label]:text-[11px]`}
         >
           <label>Key</label>
           {showSourceColumn && <label>Source</label>}
           <label>Value</label>
           <div />
+          {scope === "global" ? <label className="text-center">Inject</label> : <div />}
           <div />
 
           {secrets.map((secret, index) => {
@@ -753,6 +768,18 @@ export const SecretsSection: React.FC = () => {
                   >
                     <ToggleVisibilityIcon visible={visibleSecrets.has(index)} />
                   </button>
+                )}
+
+                {scope === "global" && (
+                  <div className="flex items-center justify-center self-center">
+                    <Switch
+                      checked={!!secret.injectAll}
+                      onCheckedChange={(checked) => updateSecretInjectAll(index, checked)}
+                      disabled={saving}
+                      aria-label="Inject into all projects"
+                      title="Inject into all projects"
+                    />
+                  </div>
                 )}
 
                 <button
