@@ -19,6 +19,8 @@ export interface RuntimeOptionFieldSpec {
   readonly label: string;
   readonly placeholder: string;
   readonly summary: string;
+  /** Icon component for this field — keeps label + icon paired by construction. */
+  readonly Icon: ComponentType<RuntimeIconProps>;
 }
 
 export const RUNTIME_OPTION_FIELDS = {
@@ -27,18 +29,21 @@ export const RUNTIME_OPTION_FIELDS = {
     label: "Host",
     placeholder: "user@host",
     summary: "Host (user@host)",
+    Icon: SSHIcon,
   },
   docker: {
     field: "image",
     label: "Image",
     placeholder: "node:20",
     summary: "Image name (e.g. node:20)",
+    Icon: DockerIcon,
   },
   devcontainer: {
     field: "configPath",
     label: "Config",
     placeholder: ".devcontainer/devcontainer.json",
     summary: "Config path (devcontainer.json)",
+    Icon: DevcontainerIcon,
   },
 } as const satisfies Partial<Record<RuntimeEnablementId, RuntimeOptionFieldSpec>>;
 

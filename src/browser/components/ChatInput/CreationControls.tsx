@@ -37,7 +37,7 @@ import {
   type RuntimeChoice,
   type RuntimeIconProps,
 } from "@/browser/utils/runtimeUi";
-import { SSHIcon, DockerIcon, DevcontainerIcon } from "@/browser/components/icons/RuntimeIcons";
+
 import type { WorkspaceNameState, WorkspaceNameUIError } from "@/browser/hooks/useWorkspaceName";
 import type { CoderInfo } from "@/common/orpc/schemas/coder";
 import type { SectionConfig } from "@/common/types/project";
@@ -1103,11 +1103,9 @@ export function CreationControls(props: CreationControlsProps) {
             !(props.coderProps?.coderInfo === null && props.coderProps?.coderConfig) && (
               <RuntimeConfigInput
                 id="ssh-host"
-                label={RUNTIME_OPTION_FIELDS.ssh.label}
-                icon={<SSHIcon size={14} />}
+                fieldSpec={RUNTIME_OPTION_FIELDS.ssh}
                 value={selectedRuntime.host}
                 onChange={(value) => onSelectedRuntimeChange({ mode: "ssh", host: value })}
-                placeholder={RUNTIME_OPTION_FIELDS.ssh.placeholder}
                 disabled={props.disabled}
                 hasError={props.runtimeFieldError === "ssh"}
                 inputClassName={INLINE_CONTROL_CLASSES}
@@ -1118,8 +1116,7 @@ export function CreationControls(props: CreationControlsProps) {
           {/* Docker Image Input - shown in the same row when Docker is selected */}
           {selectedRuntime.mode === "docker" && (
             <RuntimeConfigInput
-              label={RUNTIME_OPTION_FIELDS.docker.label}
-              icon={<DockerIcon size={14} />}
+              fieldSpec={RUNTIME_OPTION_FIELDS.docker}
               value={selectedRuntime.image}
               onChange={(value) =>
                 onSelectedRuntimeChange({
@@ -1128,7 +1125,6 @@ export function CreationControls(props: CreationControlsProps) {
                   shareCredentials: selectedRuntime.shareCredentials,
                 })
               }
-              placeholder={RUNTIME_OPTION_FIELDS.docker.placeholder}
               disabled={props.disabled}
               hasError={props.runtimeFieldError === "docker"}
               id="docker-image"
@@ -1149,7 +1145,7 @@ export function CreationControls(props: CreationControlsProps) {
           <div className="border-border-medium flex w-fit flex-col gap-1.5 rounded-md border p-2">
             <div className="flex flex-col gap-1">
               <label className="text-muted-foreground flex items-center gap-1 text-xs">
-                <DevcontainerIcon size={14} />
+                <RUNTIME_OPTION_FIELDS.devcontainer.Icon size={14} />
                 {RUNTIME_OPTION_FIELDS.devcontainer.label}
               </label>
               {devcontainerSelection.uiMode === "loading" ? (

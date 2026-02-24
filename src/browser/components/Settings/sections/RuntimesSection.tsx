@@ -609,16 +609,16 @@ export function RuntimesSection() {
                       ) : null
                     ) : (
                       <RuntimeConfigInput
-                        label={optionSpec.label}
+                        fieldSpec={optionSpec}
                         value={readOptionField(optionRuntimeMode, optionSpec.field)}
                         onChange={(value) =>
                           setOptionField(optionRuntimeMode, optionSpec.field, value)
                         }
-                        placeholder={optionSpec.placeholder}
                         disabled={rowDisabled}
                         className="mt-1.5"
                         inputClassName="w-full max-w-[260px]"
                         ariaLabel={`${optionSpec.label} for ${runtime.label}`}
+                        stacked
                       />
                     )}
                   </div>
