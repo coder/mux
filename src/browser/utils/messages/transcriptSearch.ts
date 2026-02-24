@@ -8,10 +8,21 @@ export interface TranscriptTextMatch {
 }
 
 /**
+ * Escape special RegExp characters so a plain-text query can be used as a literal pattern.
+ */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
  * Find case-insensitive text matches in rendered transcript message content.
  *
  * We intentionally scope to message content blocks so "find in transcript" ignores
  * surrounding chat chrome (buttons, metadata rows, warnings, etc.).
+ *
+ * Uses RegExp with the `i` flag so match offsets refer to the *original* source text.
+ * A manual toLowerCase approach would break for characters whose lowercased form has
+ * a different code-unit length (e.g., Turkish İ → i̇).
  */
 export function findTranscriptTextMatches(options: {
   transcriptRoot: HTMLElement;
@@ -22,10 +33,7 @@ export function findTranscriptTextMatches(options: {
     return [];
   }
 
-  const normalizedNeedle = query.toLocaleLowerCase();
-  if (normalizedNeedle.length === 0) {
-    return [];
-  }
+  const pattern = new RegExp(escapeRegExp(query), "gi");
 
   const textNodeFilter = typeof NodeFilter === "undefined" ? 4 : NodeFilter.SHOW_TEXT;
   const matches: TranscriptTextMatch[] = [];
@@ -56,22 +64,16 @@ export function findTranscriptTextMatches(options: {
         continue;
       }
 
-      const normalizedHaystack = textValue.toLocaleLowerCase();
-      let searchStart = 0;
+      // Reset lastIndex so the stateful `g` flag starts from position 0 for each node.
+      pattern.lastIndex = 0;
 
-      while (searchStart <= normalizedHaystack.length - normalizedNeedle.length) {
-        const matchStart = normalizedHaystack.indexOf(normalizedNeedle, searchStart);
-        if (matchStart === -1) {
-          break;
-        }
-
+      let regexpMatch: RegExpExecArray | null;
+      while ((regexpMatch = pattern.exec(textValue)) !== null) {
         matches.push({
           textNode,
-          startOffset: matchStart,
-          endOffset: matchStart + normalizedNeedle.length,
+          startOffset: regexpMatch.index,
+          endOffset: regexpMatch.index + regexpMatch[0].length,
         });
-
-        searchStart = matchStart + Math.max(1, normalizedNeedle.length);
       }
     }
   }
