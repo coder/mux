@@ -344,7 +344,7 @@ subagent:
     expect(frontmatter.subagent?.skip_init_hook).toBe(false);
   });
 
-  test("resolveAgentFrontmatter concatenates tools.add/tools.remove/tools.require (base first)", async () => {
+  test("resolveAgentFrontmatter concatenates add/remove and overrides require with child value", async () => {
     using tempDir = new DisposableTempDir("agent-frontmatter-tools");
     const agentsRoot = path.join(tempDir.path, ".mux", "agents");
     await fs.mkdir(agentsRoot, { recursive: true });
@@ -389,7 +389,7 @@ tools:
 
     expect(frontmatter.tools?.add).toEqual(["a", "c"]);
     expect(frontmatter.tools?.remove).toEqual(["b", "d"]);
-    expect(frontmatter.tools?.require).toEqual(["switch_agent", "agent_report"]);
+    expect(frontmatter.tools?.require).toEqual(["agent_report"]);
   });
 
   test("resolveAgentFrontmatter detects cycles", async () => {

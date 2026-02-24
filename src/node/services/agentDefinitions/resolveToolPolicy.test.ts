@@ -99,6 +99,25 @@ describe("resolveToolPolicyForAgent", () => {
     ]);
   });
 
+  test("child tools.require overrides base tools.require", () => {
+    // Chain: child → base
+    const agents: AgentLikeForPolicy[] = [
+      { tools: { require: ["agent_report"] } },
+      { tools: { require: ["switch_agent"] } },
+    ];
+    const policy = resolveToolPolicyForAgent({
+      agents,
+      isSubagent: false,
+      disableTaskToolsForDepth: false,
+    });
+
+    expect(policy).toEqual([
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "agent_report", action: "require" },
+      { regex_match: "switch_agent", action: "disable" },
+    ]);
+  });
+
   test("broad wildcard add does not implicitly unlock switch_agent", () => {
     const agents: AgentLikeForPolicy[] = [{ tools: { add: [".*"] } }];
     const policy = resolveToolPolicyForAgent({
@@ -144,7 +163,6 @@ describe("resolveToolPolicyForAgent", () => {
 
     expect(policy).toEqual([
       { regex_match: ".*", action: "disable" },
-      { regex_match: "switch_agent", action: "require" },
       { regex_match: "switch_agent", action: "disable" },
       { regex_match: "ask_user_question", action: "disable" },
       { regex_match: "switch_agent", action: "disable" },

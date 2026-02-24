@@ -75,7 +75,7 @@ function isExplicitSwitchAgentEnablePattern(pattern: string): boolean {
  * 1. Inheritance chain processed base → child:
  *    - Each layer's `tools.add` patterns (enable)
  *    - Each layer's `tools.remove` patterns (disable)
- *    - Each layer's `tools.require` patterns (require)
+ *    - Effective `tools.require` patterns (require), where child layers override base layers
  * 2. Runtime restrictions (subagent limits, depth limits) applied last
  *
  * Example: ask (base: exec)
@@ -96,6 +96,7 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
   // Process inheritance chain: base → child
   const configs = collectToolConfigsFromResolvedChain(agents);
   let switchAgentEnabledByConfig = false;
+  let effectiveRequirePatterns: string[] = [];
   for (const config of configs) {
     // Enable tools from add list (treated as regex patterns)
     if (config.add) {
@@ -123,17 +124,25 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
       }
     }
 
-    // Require tools from require list.
+    // Require tools from require list. Child layers override base layers to keep
+    // at most one effective required-tool configuration across inheritance.
     if (config.require) {
-      for (const pattern of config.require) {
-        const trimmed = pattern.trim();
-        if (trimmed.length > 0) {
-          agentPolicy.push({ regex_match: trimmed, action: "require" });
-          if (isExplicitSwitchAgentEnablePattern(trimmed)) {
-            switchAgentEnabledByConfig = true;
-          }
-        }
-      }
+      effectiveRequirePatterns = config.require
+        .map((pattern) => pattern.trim())
+        .filter((pattern) => pattern.length > 0);
+    }
+  }
+
+  for (const pattern of effectiveRequirePatterns) {
+    // Subagents must not require switch_agent: subagent hard-deny would disable it,
+    // and a disabled required tool can collapse the entire toolset.
+    if (isSubagent && matchesSwitchAgentPattern(pattern)) {
+      continue;
+    }
+
+    agentPolicy.push({ regex_match: pattern, action: "require" });
+    if (!isSubagent && isExplicitSwitchAgentEnablePattern(pattern)) {
+      switchAgentEnabledByConfig = true;
     }
   }
 

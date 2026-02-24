@@ -526,10 +526,16 @@ function deepMergeAgentFrontmatter(
   }
 
   const pathKey = path.join(".");
+  if (Array.isArray(base) && Array.isArray(overlay) && pathKey === "tools.require") {
+    // Require semantics are "last layer wins" to avoid inheriting multiple
+    // required-tool patterns that can make policy application ambiguous.
+    return [...(overlay as unknown[])];
+  }
+
   if (
     Array.isArray(base) &&
     Array.isArray(overlay) &&
-    (pathKey === "tools.add" || pathKey === "tools.remove" || pathKey === "tools.require")
+    (pathKey === "tools.add" || pathKey === "tools.remove")
   ) {
     // Tool layers are processed in order (base first, then child).
     return [...(base as unknown[]), ...(overlay as unknown[])];
