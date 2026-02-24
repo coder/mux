@@ -422,7 +422,15 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       try {
         const branchResult = await api.projects.listBranches({ projectPath });
         const detectedBase = toOriginDiffBase(branchResult.recommendedTrunk);
-        if (!detectedBase || cancelled) {
+        if (cancelled) {
+          return;
+        }
+        if (!detectedBase) {
+          // Persist fallback once so repeated metadata updates don't keep re-trying
+          // trunk detection for repos that currently have no usable recommended trunk.
+          if (readPersistedString(projectDefaultBaseKey) === undefined) {
+            setDefaultBase(WORKSPACE_DEFAULTS.reviewBase);
+          }
           return;
         }
 
