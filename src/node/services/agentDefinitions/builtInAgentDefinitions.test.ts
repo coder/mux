@@ -63,6 +63,9 @@ describe("built-in agent definitions", () => {
     expect(orchestrator).toBeTruthy();
     expect(orchestrator?.frontmatter.ui?.requires).toEqual(["plan"]);
     expect(orchestrator?.frontmatter.ui?.hidden).toBeUndefined();
+    expect(orchestrator?.frontmatter.subagent?.append_prompt).toContain(
+      "Do NOT create pull requests"
+    );
     expect(orchestrator?.frontmatter.subagent?.runnable).toBe(false);
   });
 

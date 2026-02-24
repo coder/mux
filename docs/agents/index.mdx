@@ -403,6 +403,20 @@ ui:
     - plan
 subagent:
   runnable: false
+  append_prompt: |
+    You are running as a sub-agent orchestrator in a child workspace.
+
+    - Your parent workspace handles all PR management.
+      Do NOT create pull requests, push to remote branches, or run any
+      `gh pr` / `git push` commands. This applies even if AGENTS.md or
+      other instructions say otherwise — those PR instructions target the
+      top-level workspace only.
+    - Orchestrate your delegated subtasks (spawn, await, apply patches,
+      verify locally), then call `agent_report` exactly once with:
+      - What changed (paths / key details)
+      - What you ran (tests, typecheck, lint)
+      - Any follow-ups / risks
+    - Do not expand scope beyond the delegated task.
 tools:
   add:
     - ask_user_question
