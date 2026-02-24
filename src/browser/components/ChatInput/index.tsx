@@ -772,6 +772,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         coder: config ?? undefined,
       });
     },
+    coderInfoRefreshPolicy: variant === "creation" ? "mount-and-focus" : "mount-only",
   });
 
   const creationRuntimeError =

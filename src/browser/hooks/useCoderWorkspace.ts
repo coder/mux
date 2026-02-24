@@ -35,11 +35,15 @@ export function buildAutoSelectedTemplateConfig(
   };
 }
 
+export type CoderInfoRefreshPolicy = "mount-only" | "mount-and-focus";
+
 interface UseCoderWorkspaceOptions {
   /** Current Coder config (null = disabled, owned by parent via selectedRuntime.coder) */
   coderConfig: CoderWorkspaceConfig | null;
   /** Callback to update Coder config (updates selectedRuntime.coder) */
   onCoderConfigChange: (config: CoderWorkspaceConfig | null) => void;
+  /** Controls whether auth checks run only on mount or also when the window regains focus. */
+  coderInfoRefreshPolicy: CoderInfoRefreshPolicy;
 }
 
 interface UseCoderWorkspaceReturn {
@@ -90,6 +94,7 @@ interface UseCoderWorkspaceReturn {
 export function useCoderWorkspace({
   coderConfig,
   onCoderConfigChange,
+  coderInfoRefreshPolicy,
 }: UseCoderWorkspaceOptions): UseCoderWorkspaceReturn {
   const { api } = useAPI();
 
@@ -105,6 +110,7 @@ export function useCoderWorkspace({
   const onCoderConfigChangeRef = useRef(onCoderConfigChange);
   coderConfigRef.current = coderConfig;
   onCoderConfigChangeRef.current = onCoderConfigChange;
+  const latestAuthSeqRef = useRef(0);
   const [templates, setTemplates] = useState<CoderTemplate[]>([]);
   const [templatesError, setTemplatesError] = useState<string | null>(null);
   const [presets, setPresets] = useState<CoderPreset[]>([]);
@@ -120,14 +126,24 @@ export function useCoderWorkspace({
   const fetchCoderInfo = useCallback(async () => {
     if (!api) return;
 
+    const seq = ++latestAuthSeqRef.current;
+
     try {
       const info = await api.coder.getInfo();
+      if (seq !== latestAuthSeqRef.current) {
+        return;
+      }
+
       setCoderInfo(info);
       // Clear Coder config when CLI is not available (outdated or unavailable)
       if (info.state !== "available" && coderConfigRef.current != null) {
         onCoderConfigChangeRef.current(null);
       }
     } catch {
+      if (seq !== latestAuthSeqRef.current) {
+        return;
+      }
+
       setCoderInfo({
         state: "unavailable",
         reason: { kind: "error", message: "Failed to fetch" },
@@ -148,13 +164,17 @@ export function useCoderWorkspace({
   // Backend doesn't cache whoami failures, so this re-runs the CLI check only
   // when logged out. Once logged in, the cached result returns instantly.
   useEffect(() => {
-    const handleFocus = () => {
+    if (coderInfoRefreshPolicy !== "mount-and-focus") {
+      return;
+    }
+
+    const onFocus = () => {
       void fetchCoderInfo();
     };
 
-    window.addEventListener("focus", handleFocus);
-    return () => window.removeEventListener("focus", handleFocus);
-  }, [fetchCoderInfo]);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [coderInfoRefreshPolicy, fetchCoderInfo]);
 
   // Fetch templates when Coder is enabled
   useEffect(() => {
