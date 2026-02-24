@@ -376,26 +376,20 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
   // Auto-detect trunk for new review base keys so repos using master/develop
   // don't start on the hard-coded fallback. Existing user selections are preserved.
+  //
+  // IMPORTANT: workspace task trunk metadata may represent a fork source branch, not
+  // the repository's canonical trunk. So we only apply metadata trunk to the workspace-
+  // scoped diff base, while the project default comes from listBranches().recommendedTrunk.
   useEffect(() => {
     const projectBaseIsPersisted = readPersistedString(projectDefaultBaseKey) !== undefined;
-    if (projectBaseIsPersisted) {
-      return;
-    }
-
     const workspaceBaseIsPersisted = readPersistedString(workspaceDiffBaseKey) !== undefined;
 
     const metadataTrunkBase = toOriginDiffBase(workspaceMetadata.get(workspaceId)?.taskTrunkBranch);
-    if (metadataTrunkBase) {
-      if (readPersistedString(projectDefaultBaseKey) === undefined) {
-        setDefaultBase(metadataTrunkBase);
-      }
-      if (!workspaceBaseIsPersisted) {
-        setDiffBase(metadataTrunkBase);
-      }
-      return;
+    if (!workspaceBaseIsPersisted && metadataTrunkBase) {
+      setDiffBase(metadataTrunkBase);
     }
 
-    if (!api) {
+    if (projectBaseIsPersisted || !api) {
       return;
     }
 
