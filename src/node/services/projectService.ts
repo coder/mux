@@ -28,7 +28,7 @@ import {
   type CloneErrorCode,
 } from "./sshCloneFailure";
 import type { BranchListResult } from "@/common/orpc/types";
-import { ProjectRemoveErrorSchema } from "@/common/orpc/schemas/errors";
+import type { ProjectRemoveErrorSchema } from "@/common/orpc/schemas/errors";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import * as path from "path";
 import { getMuxProjectsDir } from "@/common/constants/paths";

@@ -36,7 +36,7 @@ export function PopoverError(props: PopoverErrorProps) {
               props.error!.action!.onClick();
               props.onDismiss?.();
             }}
-            className="text-link hover:underline mt-1 cursor-pointer border-none bg-transparent p-0 text-xs"
+            className="text-link mt-1 cursor-pointer border-none bg-transparent p-0 text-xs hover:underline"
           >
             {props.error.action.label}
           </button>
