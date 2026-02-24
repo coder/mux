@@ -296,6 +296,15 @@ export class Config {
             });
           const projectsMap = new Map<string, ProjectConfig>(normalizedPairs);
 
+          // Migrate: auto-trust projects that predate the trust feature.
+          // These were added when no trust prompt existed, so the user implicitly
+          // trusted them. See AGENTS.md "Trusted Project" for rationale.
+          for (const [, projectConfig] of projectsMap) {
+            if (projectConfig.trusted === undefined) {
+              projectConfig.trusted = true;
+            }
+          }
+
           const taskSettings = normalizeTaskSettings(parsed.taskSettings);
 
           const muxGatewayEnabled = parseOptionalBoolean(parsed.muxGatewayEnabled);

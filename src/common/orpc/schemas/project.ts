@@ -147,4 +147,12 @@ export const ProjectConfigSchema = z.object({
   defaultRuntime: RuntimeEnablementIdSchema.optional().meta({
     description: "Default runtime override for new workspaces in this project",
   }),
+  trusted: z
+    .boolean()
+    .optional()
+    .meta({
+      description:
+        "Whether the project is trusted to run repo-level hooks, tool_env, MCP servers, and agent/skill definitions. " +
+        "undefined = legacy (auto-trusted on migration), false = explicitly untrusted, true = explicitly trusted.",
+    }),
 });
