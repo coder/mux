@@ -128,11 +128,17 @@ export interface HookResult {
  * Note: We don't check execute permissions via runtime since FileStat doesn't
  * expose mode bits. The hook will fail at execution time if not executable.
  */
-export async function getHookPath(runtime: Runtime, projectDir: string): Promise<string | null> {
-  // Check project-level hook first
-  const projectHook = joinPathLike(projectDir, ".mux", HOOK_FILENAME);
-  if (await isFile(runtime, projectHook)) {
-    return projectHook;
+export async function getHookPath(
+  runtime: Runtime,
+  projectDir: string,
+  options?: { skipRepoHooks?: boolean }
+): Promise<string | null> {
+  if (!options?.skipRepoHooks) {
+    // Check project-level hook first
+    const projectHook = joinPathLike(projectDir, ".mux", HOOK_FILENAME);
+    if (await isFile(runtime, projectHook)) {
+      return projectHook;
+    }
   }
 
   // Fall back to user-level hook (resolve ~ for SSH compatibility)
@@ -154,11 +160,17 @@ export async function getHookPath(runtime: Runtime, projectDir: string): Promise
  * This file is sourced before bash tool scripts to set up environment.
  * Returns null if no tool_env exists.
  */
-export async function getToolEnvPath(runtime: Runtime, projectDir: string): Promise<string | null> {
-  // Check project-level tool_env first
-  const projectEnv = joinPathLike(projectDir, ".mux", TOOL_ENV_FILENAME);
-  if (await isFile(runtime, projectEnv)) {
-    return projectEnv;
+export async function getToolEnvPath(
+  runtime: Runtime,
+  projectDir: string,
+  options?: { skipRepoHooks?: boolean }
+): Promise<string | null> {
+  if (!options?.skipRepoHooks) {
+    // Check project-level tool_env first
+    const projectEnv = joinPathLike(projectDir, ".mux", TOOL_ENV_FILENAME);
+    if (await isFile(runtime, projectEnv)) {
+      return projectEnv;
+    }
   }
 
   // Fall back to user-level tool_env (resolve ~ for SSH compatibility)
@@ -180,10 +192,16 @@ export async function getToolEnvPath(runtime: Runtime, projectDir: string): Prom
  * This hook runs before tool execution; exit non-zero to block.
  * Returns null if no tool_pre exists.
  */
-export async function getPreHookPath(runtime: Runtime, projectDir: string): Promise<string | null> {
-  const projectHook = joinPathLike(projectDir, ".mux", PRE_HOOK_FILENAME);
-  if (await isFile(runtime, projectHook)) {
-    return projectHook;
+export async function getPreHookPath(
+  runtime: Runtime,
+  projectDir: string,
+  options?: { skipRepoHooks?: boolean }
+): Promise<string | null> {
+  if (!options?.skipRepoHooks) {
+    const projectHook = joinPathLike(projectDir, ".mux", PRE_HOOK_FILENAME);
+    if (await isFile(runtime, projectHook)) {
+      return projectHook;
+    }
   }
 
   try {
@@ -206,11 +224,14 @@ export async function getPreHookPath(runtime: Runtime, projectDir: string): Prom
  */
 export async function getPostHookPath(
   runtime: Runtime,
-  projectDir: string
+  projectDir: string,
+  options?: { skipRepoHooks?: boolean }
 ): Promise<string | null> {
-  const projectHook = joinPathLike(projectDir, ".mux", POST_HOOK_FILENAME);
-  if (await isFile(runtime, projectHook)) {
-    return projectHook;
+  if (!options?.skipRepoHooks) {
+    const projectHook = joinPathLike(projectDir, ".mux", POST_HOOK_FILENAME);
+    if (await isFile(runtime, projectHook)) {
+      return projectHook;
+    }
   }
 
   try {
