@@ -48,6 +48,33 @@ const HIGHLIGHT_FALLBACK_THRESHOLD_BYTES = 32 * 1024;
 const HIGHLIGHT_FALLBACK_BUFFER_BYTES = 1024;
 const HIGHLIGHT_VS_PLAIN_NUMSTAT = "3\t2\tsrc/review/lineHeightProbe.ts";
 
+const IMMERSIVE_MINIMAP_WORKSPACE_ID = "ws-review-immersive-minimap";
+const IMMERSIVE_MINIMAP_NUMSTAT = "5\t5\tsrc/review/minimapProbe.ts";
+
+function buildMinimapDiffOutput(): string {
+  const hunkLines: string[] = [];
+
+  for (let lineNumber = 1; lineNumber <= 55; lineNumber += 1) {
+    if (lineNumber % 11 === 0) {
+      hunkLines.push(`-const previousLine${lineNumber} = createProbe(${lineNumber}, "old");`);
+      hunkLines.push(`+const nextLine${lineNumber} = createProbe(${lineNumber}, "new");`);
+      continue;
+    }
+
+    hunkLines.push(` const sharedLine${lineNumber} = createProbe(${lineNumber}, "context");`);
+  }
+
+  return [
+    "diff --git a/src/review/minimapProbe.ts b/src/review/minimapProbe.ts",
+    "index 9999999..aaaaaaa 100644",
+    "--- a/src/review/minimapProbe.ts",
+    "+++ b/src/review/minimapProbe.ts",
+    "@@ -1,55 +1,55 @@",
+    ...hunkLines,
+    "",
+  ].join("\n");
+}
+
 function buildHighlightVsPlainDiffOutput(): string {
   const oversizedContextLines: string[] = [];
   let contextBytes = 0;
@@ -179,6 +206,52 @@ export const ReviewTabImmersiveHighlightVsPlainHeight: AppStory = {
           gitDiff: {
             diffOutput,
             numstatOutput: HIGHLIGHT_VS_PLAIN_NUMSTAT,
+          },
+        });
+
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await waitFor(
+      () => {
+        canvas.getByTestId("immersive-review-view");
+        canvas.getByRole("button", { name: /exit immersive review/i });
+      },
+      { timeout: 10_000 }
+    );
+  },
+};
+
+export const ImmersiveWithMinimap: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "760");
+        localStorage.removeItem(getRightSidebarLayoutKey(IMMERSIVE_MINIMAP_WORKSPACE_ID));
+        updatePersistedState(getReviewImmersiveKey(IMMERSIVE_MINIMAP_WORKSPACE_ID), true);
+
+        const diffOutput = buildMinimapDiffOutput();
+        const client = setupSimpleChatStory({
+          workspaceId: IMMERSIVE_MINIMAP_WORKSPACE_ID,
+          workspaceName: "feature/immersive-minimap",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Show immersive review with a minimap.", {
+              historySequence: 1,
+            }),
+            createAssistantMessage("msg-2", "Opened immersive review with a dense diff.", {
+              historySequence: 2,
+            }),
+          ],
+          gitDiff: {
+            diffOutput,
+            numstatOutput: IMMERSIVE_MINIMAP_NUMSTAT,
           },
         });
 

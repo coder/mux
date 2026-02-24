@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { SelectableDiffRenderer } from "../../shared/DiffRenderer";
+import { ImmersiveMinimap } from "./ImmersiveMinimap";
 import { KeycapGroup } from "@/browser/components/ui/Keycap";
 import { useAPI } from "@/browser/contexts/API";
 import { formatLineRangeCompact } from "@/browser/utils/review/lineRange";
@@ -353,6 +354,7 @@ function findReviewHunkId(review: Review, fileHunks: DiffHunk[]): string | null 
 
 export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const notesSidebarRef = useRef<HTMLDivElement>(null);
   const hunkJumpRef = useRef(false);
   const { api } = useAPI();
@@ -1042,6 +1044,19 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     [overlayData, currentFileHunks, isTouchExperience, onSelectHunk, openComposer]
   );
 
+  const handleMinimapSelectLine = useCallback(
+    (lineIndex: number) => {
+      const hunkId = overlayData.lineHunkIds[lineIndex] ?? null;
+      if (hunkId && hunkId !== selectedHunkIdRef.current) {
+        onSelectHunk(hunkId);
+      }
+
+      setActiveLineIndex(lineIndex);
+      setSelectedLineRange(null);
+    },
+    [overlayData.lineHunkIds, onSelectHunk]
+  );
+
   // Auto-focus only for keyboard-first immersive mode.
   useEffect(() => {
     if (isTouchExperience) {
@@ -1487,7 +1502,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
       {/* Unified whole-file diff with hunk overlays + notes sidebar */}
       <div className="flex min-h-0 flex-1">
-        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-3">
+        <div ref={scrollContainerRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto p-3">
           {props.isLoading && currentFileHunks.length === 0 ? (
             <div className="text-muted flex items-center justify-center py-12 text-sm">
               <span className="animate-pulse">Loading diff...</span>
@@ -1528,6 +1543,15 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
             </div>
           )}
         </div>
+
+        {overlayData && !isTouchExperience && (
+          <ImmersiveMinimap
+            content={overlayData.content}
+            scrollContainerRef={scrollContainerRef}
+            activeLineIndex={activeLineIndex}
+            onSelectLineIndex={handleMinimapSelectLine}
+          />
+        )}
 
         {!isTouchExperience && (
           <aside className="border-border-light bg-dark flex w-[280px] min-w-[280px] flex-col border-l">
