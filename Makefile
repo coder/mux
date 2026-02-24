@@ -446,6 +446,9 @@ dist-win: build ## Build Windows distributable
 dist-linux: build ## Build Linux distributable
 	@bun x electron-builder --linux --publish never
 
+dist-linux-arm64: build ## Build Linux arm64 distributable
+	@bun x electron-builder --linux --arm64 --publish never
+
 ## VS Code Extension (delegates to vscode/Makefile)
 
 vscode-ext: ## Build VS Code extension (.vsix)

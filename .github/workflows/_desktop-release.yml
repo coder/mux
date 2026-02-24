@@ -93,6 +93,51 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  build-linux-arm64:
+    name: Build and Release Linux arm64
+    # Native arm64 runner required for node-pty and duckdb native modules.
+    # Falls back to GitHub's hosted arm64 runner for forks.
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-arm-16' || 'ubuntu-24.04-arm' }}
+    # Depends on x64 job to ensure the release exists and latest-linux.yml
+    # is published first. The arm64 job only uploads the AppImage artifact
+    # to avoid overwriting the auto-update manifest.
+    needs: [build-linux]
+    permissions:
+      contents: write # Upload release assets
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      VERSION_OVERRIDE: ${{ inputs.version_override }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0 # Required for git describe to find tags
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-mux
+
+      - name: Patch package.json version
+        if: inputs.version_override != ''
+        shell: bash
+        run: |
+          # Keep this in a script so nightly/release workflows can share behavior.
+          node ./scripts/set-package-version.js "$VERSION_OVERRIDE"
+
+      - name: Build application
+        run: bun run build
+
+      - name: Package for Linux arm64
+        run: bun x electron-builder --linux --arm64 --publish never
+
+      - name: Upload arm64 AppImage to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Upload only the AppImage (not latest-linux.yml) to avoid
+          # overwriting the auto-update manifest produced by the x64 job.
+          gh release upload "$RELEASE_TAG" release/mux-*-arm64.AppImage --clobber
+
   build-windows:
     name: Build and Release Windows
     runs-on: windows-latest
@@ -163,3 +208,32 @@ jobs:
             release/*.exe
             release/*.exe.blockmap
           if-no-files-found: error
+
+  checksums-linux:
+    name: Generate Linux checksums
+    needs: [build-linux, build-linux-arm64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Upload release assets
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - name: Download and checksum Linux artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "mux-*-x86_64.AppImage" \
+            --pattern "mux-*-arm64.AppImage" \
+            --dir artifacts
+
+          cd artifacts
+          for file in mux-*.AppImage; do
+            sha256sum "$file" > "${file}.sha256"
+          done
+
+          gh release upload "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber \
+            *.sha256
