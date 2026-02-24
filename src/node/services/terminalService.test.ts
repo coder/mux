@@ -1,4 +1,4 @@
-import { describe, it, expect, mock, beforeEach, afterEach, spyOn, type Mock } from "bun:test";
+import { describe, it, expect, mock, beforeEach, afterEach, spyOn, vi, type Mock } from "bun:test";
 import { TerminalService } from "./terminalService";
 import type { PTYService } from "./ptyService";
 import type { Config } from "@/node/config";
@@ -59,14 +59,13 @@ const sendInputMock = mock(() => {
 const closeSessionMock = mock(() => {
   /* no-op */
 });
-const getWorkspaceSessionIdsMock = mock(() => [] as string[]);
+const getWorkspaceSessionIdsMock = mock(() => []);
 const closeWorkspaceSessionsMock = mock(() => {
   /* no-op */
 });
 const closeAllSessionsMock = mock(() => {
   /* no-op */
 });
-const getSessionsMock = mock(() => new Map());
 
 const mockPTYService = {
   createSession: createSessionMock,
@@ -76,7 +75,6 @@ const mockPTYService = {
   getWorkspaceSessionIds: getWorkspaceSessionIdsMock,
   closeWorkspaceSessions: closeWorkspaceSessionsMock,
   closeAllSessions: closeAllSessionsMock,
-  getSessions: getSessionsMock,
 } as unknown as PTYService;
 
 const openTerminalWindowMock = mock(() => Promise.resolve());
@@ -93,9 +91,17 @@ describe("TerminalService", () => {
   let service: TerminalService;
 
   beforeEach(() => {
+    // Some tests temporarily replace createSession to capture callbacks.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockPTYService.createSession as any) = createSessionMock;
+
     service = new TerminalService(mockConfig, mockPTYService);
     service.setTerminalWindowManager(mockWindowManager);
     createSessionMock.mockClear();
+    closeSessionMock.mockClear();
+    getWorkspaceSessionIdsMock.mockClear();
+    closeWorkspaceSessionsMock.mockClear();
+    closeAllSessionsMock.mockClear();
     getEffectiveSecretsMock.mockClear();
     resizeMock.mockClear();
     sendInputMock.mockClear();
@@ -103,7 +109,6 @@ describe("TerminalService", () => {
     getWorkspaceSessionIdsMock.mockClear();
     closeWorkspaceSessionsMock.mockClear();
     closeAllSessionsMock.mockClear();
-    getSessionsMock.mockClear();
     openTerminalWindowMock.mockClear();
   });
 
@@ -200,35 +205,31 @@ describe("TerminalService", () => {
     expect(sendInputMock).toHaveBeenCalledWith("session-1", "ls\n");
   });
 
-  it("should close workspace sessions by fan-out through close", () => {
-    getWorkspaceSessionIdsMock.mockReturnValue(["session-1", "session-2"]);
-    const closeSpy = spyOn(service, "close");
+  it("should close workspace sessions via terminateTrackedSessions", async () => {
+    // Create real sessions so sessionActivity is populated
+    await service.create({ workspaceId: "ws-1", cols: 80, rows: 24 });
+    closeSessionMock.mockClear();
 
     service.closeWorkspaceSessions("ws-1");
 
-    expect(getWorkspaceSessionIdsMock).toHaveBeenCalledWith("ws-1");
-    expect(closeSpy).toHaveBeenCalledTimes(2);
-    expect(closeSpy).toHaveBeenNthCalledWith(1, "session-1");
-    expect(closeSpy).toHaveBeenNthCalledWith(2, "session-2");
+    expect(closeSessionMock).toHaveBeenCalled();
+    // PTY bulk close should NOT be used — we route through per-session termination
     expect(closeWorkspaceSessionsMock).not.toHaveBeenCalled();
+    // Activity should be fully cleaned up
+    expect(service.getWorkspaceActivity("ws-1")).toEqual({ activeCount: 0, totalSessions: 0 });
   });
 
-  it("should close all sessions by fan-out through close", () => {
-    getSessionsMock.mockReturnValue(
-      new Map<string, unknown>([
-        ["session-1", { workspaceId: "ws-1" }],
-        ["session-2", { workspaceId: "ws-2" }],
-      ])
-    );
-    const closeSpy = spyOn(service, "close");
+  it("should close all sessions via terminateTrackedSessions", async () => {
+    // Create a real session so sessionActivity is populated
+    await service.create({ workspaceId: "ws-1", cols: 80, rows: 24 });
+    closeSessionMock.mockClear();
 
     service.closeAllSessions();
 
-    expect(getSessionsMock).toHaveBeenCalled();
-    expect(closeSpy).toHaveBeenCalledTimes(2);
-    expect(closeSpy).toHaveBeenNthCalledWith(1, "session-1");
-    expect(closeSpy).toHaveBeenNthCalledWith(2, "session-2");
+    expect(closeSessionMock).toHaveBeenCalled();
+    // PTY bulk close should NOT be used
     expect(closeAllSessionsMock).not.toHaveBeenCalled();
+    expect(service.getWorkspaceActivity("ws-1")).toEqual({ activeCount: 0, totalSessions: 0 });
   });
 
   it("should open terminal window via manager", async () => {
@@ -280,6 +281,406 @@ describe("TerminalService", () => {
     // Let's just restore it to createSessionMock.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mockPTYService.createSession as any) = createSessionMock;
+  });
+  describe("terminal activity tracking", () => {
+    let capturedOnData: ((data: string) => void) | undefined;
+    let capturedOnExit: ((code: number) => void) | undefined;
+    const onDataBySession = new Map<string, (data: string) => void>();
+    let sessionCounter = 0;
+
+    beforeEach(() => {
+      capturedOnData = undefined;
+      capturedOnExit = undefined;
+      onDataBySession.clear();
+      sessionCounter = 0;
+
+      // Override createSession to capture onData/onExit callbacks.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (mockPTYService.createSession as any) = mock(
+        (
+          params: TerminalCreateParams,
+          _runtime: unknown,
+          _path: string,
+          onData: (d: string) => void,
+          onExit: (code: number) => void
+        ) => {
+          sessionCounter += 1;
+          const sessionId = `session-${params.workspaceId}-${sessionCounter}`;
+          capturedOnData = onData;
+          capturedOnExit = onExit;
+          onDataBySession.set(sessionId, onData);
+
+          return Promise.resolve({
+            sessionId,
+            workspaceId: params.workspaceId,
+            cols: params.cols,
+            rows: params.rows,
+          });
+        }
+      );
+    });
+
+    async function sendTitle(
+      onData: ((data: string) => void) | undefined,
+      title: string
+    ): Promise<void> {
+      if (!onData) {
+        throw new Error("Expected createSession to capture onData callback");
+      }
+
+      onData(`\x1b]0;${title}\x07`);
+      // xterm/headless processes writes asynchronously.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    async function sendPromptMarker(
+      onData: ((data: string) => void) | undefined,
+      marker: string
+    ): Promise<void> {
+      if (!onData) {
+        throw new Error("Expected createSession to capture onData callback");
+      }
+
+      onData(`\x1b]133;${marker}\x07`);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    it("classifies idle titles as not running", async () => {
+      await service.create({ workspaceId: "ws-1", cols: 80, rows: 24 });
+
+      const initial = service.getWorkspaceActivity("ws-1");
+      expect(initial.totalSessions).toBe(1);
+      expect(initial.activeCount).toBe(0);
+
+      await sendTitle(capturedOnData, "bash");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(0);
+
+      await sendTitle(capturedOnData, "zsh");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(0);
+
+      await sendTitle(capturedOnData, "/home/user/project");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(0);
+
+      await sendTitle(capturedOnData, "~/project");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(0);
+
+      await sendTitle(capturedOnData, "user@host:/path");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(0);
+    });
+
+    it("classifies command titles as running", async () => {
+      await service.create({ workspaceId: "ws-1", cols: 80, rows: 24 });
+
+      const initial = service.getWorkspaceActivity("ws-1");
+      expect(initial.totalSessions).toBe(1);
+      expect(initial.activeCount).toBe(0);
+
+      await sendTitle(capturedOnData, "vim main.ts");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(1);
+
+      await sendTitle(capturedOnData, "npm run build");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(1);
+
+      await sendTitle(capturedOnData, "htop");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(1);
+    });
+
+    it("sendInput with newline marks session as running", async () => {
+      const session = await service.create({ workspaceId: "ws-1", cols: 80, rows: 24 });
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(0);
+
+      service.sendInput(session.sessionId, "make build\r");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(1);
+
+      await sendTitle(capturedOnData, "~/project");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(0);
+    });
+
+    it("sendInput without newline does not mark running", async () => {
+      const session = await service.create({ workspaceId: "ws-1", cols: 80, rows: 24 });
+      service.sendInput(session.sessionId, "a");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(0);
+
+      service.sendInput(session.sessionId, "bc");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(0);
+    });
+
+    it("OSC 133 prompt-start (A) marks session as idle", async () => {
+      const session = await service.create({ workspaceId: "ws-1", cols: 80, rows: 24 });
+
+      // Simulate: user runs command
+      service.sendInput(session.sessionId, "sleep infinity\r");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(1);
+
+      // Fish sends OSC 133;D (command done) then 133;A (prompt start)
+      await sendPromptMarker(capturedOnData, "D;130");
+      // D should be ignored — still running
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(1);
+
+      await sendPromptMarker(capturedOnData, "A;special_key=1");
+      // A flips to idle
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(0);
+    });
+
+    it("OSC 133 command-start (C) marks session as running", async () => {
+      await service.create({ workspaceId: "ws-1", cols: 80, rows: 24 });
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(0);
+
+      await sendPromptMarker(capturedOnData, "C");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(1);
+
+      // Prompt returns
+      await sendPromptMarker(capturedOnData, "A");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(0);
+    });
+
+    it("transitions between running and idle", async () => {
+      await service.create({ workspaceId: "ws-1", cols: 80, rows: 24 });
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(0);
+
+      await sendTitle(capturedOnData, "make build");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(1);
+
+      await sendTitle(capturedOnData, "bash");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(0);
+    });
+
+    it("emits activity change events with dedup", async () => {
+      const changes: string[] = [];
+      const unsubscribe = service.onActivityChange((workspaceId) => changes.push(workspaceId));
+
+      await service.create({ workspaceId: "ws-1", cols: 80, rows: 24 });
+      expect(changes).toEqual(["ws-1"]);
+
+      const countAfterCreate = changes.length;
+      await sendTitle(capturedOnData, "make test");
+      expect(changes.length).toBe(countAfterCreate + 1);
+
+      const countAfterFirstCommand = changes.length;
+      await sendTitle(capturedOnData, "npm test");
+      expect(changes.length).toBe(countAfterFirstCommand);
+
+      await sendTitle(capturedOnData, "bash");
+      expect(changes.length).toBe(countAfterFirstCommand + 1);
+
+      const countAfterIdle = changes.length;
+      await sendTitle(capturedOnData, "zsh");
+      expect(changes.length).toBe(countAfterIdle);
+
+      unsubscribe();
+    });
+
+    it("cleans up activity on session exit", async () => {
+      await service.create({ workspaceId: "ws-1", cols: 80, rows: 24 });
+
+      await sendTitle(capturedOnData, "make build");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(1);
+      expect(service.getWorkspaceActivity("ws-1").totalSessions).toBe(1);
+
+      if (!capturedOnExit) {
+        throw new Error("Expected createSession to capture onExit callback");
+      }
+
+      capturedOnExit(0);
+      expect(service.getWorkspaceActivity("ws-1").totalSessions).toBe(0);
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(0);
+    });
+
+    it("returns aggregate across workspace sessions via getAllWorkspaceActivity", async () => {
+      const firstSession = await service.create({ workspaceId: "ws-1", cols: 80, rows: 24 });
+      const secondSession = await service.create({ workspaceId: "ws-1", cols: 80, rows: 24 });
+
+      const firstOnData = onDataBySession.get(firstSession.sessionId);
+      const secondOnData = onDataBySession.get(secondSession.sessionId);
+
+      await sendTitle(firstOnData, "vim");
+      const activity = service.getWorkspaceActivity("ws-1");
+      expect(activity.totalSessions).toBe(2);
+      expect(activity.activeCount).toBe(1);
+
+      await sendTitle(secondOnData, "npm test");
+      const activity2 = service.getWorkspaceActivity("ws-1");
+      expect(activity2.activeCount).toBe(2);
+
+      const all = service.getAllWorkspaceActivity();
+      expect(all["ws-1"]).toEqual({ activeCount: 2, totalSessions: 2 });
+    });
+
+    it("clears activity on bulk workspace close without exit callback", async () => {
+      const session = await service.create({ workspaceId: "ws-1", cols: 80, rows: 24 });
+      service.sendInput(session.sessionId, "make build\n");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(1);
+      expect(service.getWorkspaceActivity("ws-1").totalSessions).toBe(1);
+
+      service.closeWorkspaceSessions("ws-1");
+      expect(service.getWorkspaceActivity("ws-1")).toEqual({ activeCount: 0, totalSessions: 0 });
+    });
+
+    it("clears all activity on global close without exit callbacks", async () => {
+      const configRef = mockConfig as unknown as {
+        getAllWorkspaceMetadata: typeof mockConfig.getAllWorkspaceMetadata;
+      };
+      const originalGetAllWorkspaceMetadata = configRef.getAllWorkspaceMetadata;
+      configRef.getAllWorkspaceMetadata = mock(() =>
+        Promise.resolve([
+          {
+            id: "ws-1",
+            projectPath: "/tmp/project",
+            name: "main",
+            runtimeConfig: { type: "local", srcBaseDir: "/tmp" },
+          },
+          {
+            id: "ws-2",
+            projectPath: "/tmp/project2",
+            name: "dev",
+            runtimeConfig: { type: "local", srcBaseDir: "/tmp" },
+          },
+        ])
+      ) as unknown as typeof configRef.getAllWorkspaceMetadata;
+
+      try {
+        const s1 = await service.create({ workspaceId: "ws-1", cols: 80, rows: 24 });
+        const s2 = await service.create({ workspaceId: "ws-2", cols: 80, rows: 24 });
+        service.sendInput(s1.sessionId, "cmd1\n");
+        service.sendInput(s2.sessionId, "cmd2\n");
+
+        expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(1);
+        expect(service.getWorkspaceActivity("ws-2").activeCount).toBe(1);
+
+        service.closeAllSessions();
+        expect(service.getWorkspaceActivity("ws-1")).toEqual({ activeCount: 0, totalSessions: 0 });
+        expect(service.getWorkspaceActivity("ws-2")).toEqual({ activeCount: 0, totalSessions: 0 });
+        expect(Object.keys(service.getAllWorkspaceActivity())).toHaveLength(0);
+      } finally {
+        configRef.getAllWorkspaceMetadata = originalGetAllWorkspaceMetadata;
+      }
+    });
+  });
+
+  describe("no-OSC idle fallback", () => {
+    let capturedOnData: ((data: string) => void) | undefined;
+    let sessionCounter = 0;
+    let originalSetTimeout: typeof globalThis.setTimeout;
+    let originalClearTimeout: typeof globalThis.clearTimeout;
+    type TimerHandle = ReturnType<typeof setTimeout> | number;
+    const fallbackTimerHandles: TimerHandle[] = [];
+    const fallbackCallbacks = new Map<TimerHandle, () => void>();
+
+    function fireFallbackTimer(handle: TimerHandle): void {
+      const callback = fallbackCallbacks.get(handle);
+      if (!callback) {
+        throw new Error("Expected fallback timer callback to be captured");
+      }
+
+      originalClearTimeout(handle);
+      fallbackCallbacks.delete(handle);
+      callback();
+    }
+
+    beforeEach(() => {
+      capturedOnData = undefined;
+      sessionCounter = 0;
+      fallbackTimerHandles.length = 0;
+      fallbackCallbacks.clear();
+      originalSetTimeout = globalThis.setTimeout;
+      originalClearTimeout = globalThis.clearTimeout;
+
+      vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+        handler: TimerHandler,
+        timeout?: number,
+        ...args: unknown[]
+      ) => {
+        const handle = originalSetTimeout(handler, timeout, ...args);
+
+        if (timeout === 10_000 && typeof handler === "function") {
+          fallbackTimerHandles.push(handle);
+          fallbackCallbacks.set(handle, handler as () => void);
+        }
+
+        return handle;
+      }) as typeof globalThis.setTimeout);
+
+      vi.spyOn(globalThis, "clearTimeout").mockImplementation(((handle: TimerHandle) => {
+        fallbackCallbacks.delete(handle);
+        return originalClearTimeout(handle);
+      }) as typeof globalThis.clearTimeout);
+
+      // Override createSession to capture onData callback.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (mockPTYService.createSession as any) = mock(
+        (
+          params: TerminalCreateParams,
+          _runtime: unknown,
+          _path: string,
+          onData: (d: string) => void,
+          _onExit: (code: number) => void
+        ) => {
+          sessionCounter += 1;
+          const sessionId = `session-${params.workspaceId}-${sessionCounter}`;
+          capturedOnData = onData;
+
+          return Promise.resolve({
+            sessionId,
+            workspaceId: params.workspaceId,
+            cols: params.cols,
+            rows: params.rows,
+          });
+        }
+      );
+    });
+
+    afterEach(() => {
+      for (const handle of fallbackTimerHandles) {
+        originalClearTimeout(handle);
+      }
+      vi.restoreAllMocks();
+    });
+
+    it("resets to idle after fallback timeout when no OSC observed", async () => {
+      const session = await service.create({ workspaceId: "ws-1", cols: 80, rows: 24 });
+      service.sendInput(session.sessionId, "make build\r");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(1);
+      expect(fallbackTimerHandles).toHaveLength(1);
+
+      fireFallbackTimer(fallbackTimerHandles[0]);
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(0);
+    });
+
+    it("does not use fallback once OSC activity is observed", async () => {
+      const session = await service.create({ workspaceId: "ws-1", cols: 80, rows: 24 });
+
+      if (!capturedOnData) {
+        throw new Error("Expected createSession to capture onData callback");
+      }
+
+      capturedOnData(`\x1b]0;bash\x07`);
+      await new Promise((resolve) => originalSetTimeout(resolve, 10));
+
+      service.sendInput(session.sessionId, "make build\r");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(1);
+      expect(fallbackTimerHandles).toHaveLength(0);
+    });
+
+    it("refreshes fallback timer on repeated newlines", async () => {
+      const session = await service.create({ workspaceId: "ws-1", cols: 80, rows: 24 });
+      service.sendInput(session.sessionId, "cmd1\r");
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(1);
+      expect(fallbackTimerHandles).toHaveLength(1);
+
+      const firstHandle = fallbackTimerHandles[0];
+      service.sendInput(session.sessionId, "cmd2\r");
+      expect(fallbackTimerHandles).toHaveLength(2);
+
+      const secondHandle = fallbackTimerHandles[1];
+      const clearTimeoutCalls = (globalThis.clearTimeout as Mock<typeof globalThis.clearTimeout>)
+        .mock.calls;
+      const clearedFirstHandle = clearTimeoutCalls.some(([handle]) => handle === firstHandle);
+      expect(clearedFirstHandle).toBe(true);
+
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(1);
+      fireFallbackTimer(secondHandle);
+      expect(service.getWorkspaceActivity("ws-1").activeCount).toBe(0);
+    });
   });
 });
 

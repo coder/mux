@@ -191,6 +191,8 @@ export interface WorkspaceSidebarState {
   loadedSkills: LoadedSkill[];
   skillLoadErrors: SkillLoadError[];
   agentStatus: { emoji: string; message: string; url?: string } | undefined;
+  terminalActiveCount: number;
+  terminalSessionCount: number;
 }
 
 /**
@@ -547,6 +549,13 @@ export class WorkspaceStore {
   // abort/error transitions (streaming=false without recency advance).
   private activityStreamingStartRecency = new Map<string, number>();
   private activityAbortController: AbortController | null = null;
+
+  // Per-workspace terminal activity aggregates (from terminal.activity.subscribe).
+  private workspaceTerminalActivity = new Map<
+    string,
+    { activeCount: number; totalSessions: number }
+  >();
+  private terminalActivityAbortController: AbortController | null = null;
 
   // Per-workspace ephemeral chat state (buffering, queued message, live bash output, etc.)
   private chatTransientState = new Map<string, WorkspaceChatTransientState>();
@@ -1108,6 +1117,7 @@ export class WorkspaceStore {
 
     if (client) {
       this.ensureActivitySubscription();
+      this.ensureTerminalActivitySubscription();
     }
 
     if (!client) {
@@ -1175,6 +1185,22 @@ export class WorkspaceStore {
     const controller = new AbortController();
     this.activityAbortController = controller;
     void this.runActivitySubscription(controller.signal);
+  }
+
+  private ensureTerminalActivitySubscription(): void {
+    if (this.terminalActivityAbortController) {
+      return;
+    }
+
+    const controller = new AbortController();
+    this.terminalActivityAbortController = controller;
+    void this.runTerminalActivitySubscription(controller);
+  }
+
+  private releaseTerminalActivityController(controller: AbortController): void {
+    if (this.terminalActivityAbortController === controller) {
+      this.terminalActivityAbortController = null;
+    }
   }
 
   private assertSingleActiveOnChatSubscription(): void {
@@ -1749,6 +1775,9 @@ export class WorkspaceStore {
   getWorkspaceSidebarState(workspaceId: string): WorkspaceSidebarState {
     const fullState = this.getWorkspaceState(workspaceId);
     const isStarting = fullState.pendingStreamStartTime !== null && !fullState.canInterrupt;
+    const terminalActivity = this.workspaceTerminalActivity.get(workspaceId);
+    const terminalActiveCount = terminalActivity?.activeCount ?? 0;
+    const terminalSessionCount = terminalActivity?.totalSessions ?? 0;
 
     const cached = this.sidebarStateCache.get(workspaceId);
     if (cached && this.sidebarStateSourceState.get(workspaceId) === fullState) {
@@ -1767,7 +1796,9 @@ export class WorkspaceStore {
       cached.recencyTimestamp === fullState.recencyTimestamp &&
       cached.loadedSkills === fullState.loadedSkills &&
       cached.skillLoadErrors === fullState.skillLoadErrors &&
-      cached.agentStatus === fullState.agentStatus
+      cached.agentStatus === fullState.agentStatus &&
+      cached.terminalActiveCount === terminalActiveCount &&
+      cached.terminalSessionCount === terminalSessionCount
     ) {
       // Even if we re-use the cached object, mark it as derived from the current
       // WorkspaceState so repeated getSnapshot() reads during this render are stable.
@@ -1785,6 +1816,8 @@ export class WorkspaceStore {
       loadedSkills: fullState.loadedSkills,
       skillLoadErrors: fullState.skillLoadErrors,
       agentStatus: fullState.agentStatus,
+      terminalActiveCount,
+      terminalSessionCount,
     };
     this.sidebarStateCache.set(workspaceId, newState);
     this.sidebarStateSourceState.set(workspaceId, fullState);
@@ -2507,6 +2540,168 @@ export class WorkspaceStore {
     }
   }
 
+  private applyTerminalActivity(
+    workspaceId: string,
+    next: { activeCount: number; totalSessions: number }
+  ): void {
+    const prev = this.workspaceTerminalActivity.get(workspaceId);
+    if (
+      prev &&
+      prev.activeCount === next.activeCount &&
+      prev.totalSessions === next.totalSessions
+    ) {
+      return;
+    }
+
+    if (next.totalSessions === 0) {
+      this.workspaceTerminalActivity.delete(workspaceId);
+    } else {
+      this.workspaceTerminalActivity.set(workspaceId, next);
+    }
+
+    // Bump sidebar snapshots so consumers see updated terminal activity counts.
+    if (this.aggregators.has(workspaceId)) {
+      this.states.bump(workspaceId);
+    }
+  }
+
+  /**
+   * Safely resolve terminal.activity.subscribe from a client that may be
+   * a partial mock or an older server that doesn't expose this endpoint.
+   * Returns null when the capability is absent — callers must treat this
+   * as "terminal activity unsupported" rather than an error.
+   */
+  private resolveTerminalActivitySubscribe(
+    client: RouterClient<AppRouter>
+  ): typeof client.terminal.activity.subscribe | null {
+    try {
+      const subscribe = client.terminal?.activity?.subscribe;
+      return typeof subscribe === "function" ? subscribe : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private clearAllTerminalActivitySnapshots(): void {
+    if (this.workspaceTerminalActivity.size === 0) {
+      return;
+    }
+
+    const workspaceIds = Array.from(this.workspaceTerminalActivity.keys());
+    this.workspaceTerminalActivity.clear();
+
+    for (const workspaceId of workspaceIds) {
+      if (this.aggregators.has(workspaceId)) {
+        this.states.bump(workspaceId);
+      }
+    }
+  }
+
+  private async runTerminalActivitySubscription(controller: AbortController): Promise<void> {
+    const signal = controller.signal;
+    let attempt = 0;
+
+    try {
+      while (!signal.aborted) {
+        const client = this.client ?? (await this.waitForClient(signal));
+        if (!client || signal.aborted) {
+          return;
+        }
+
+        const subscribe = this.resolveTerminalActivitySubscribe(client);
+        if (!subscribe) {
+          // Client doesn't support terminal activity — clear stale state and exit
+          // without entering the retry loop (this is not an error condition).
+          this.clearAllTerminalActivitySnapshots();
+          return;
+        }
+
+        const attemptController = new AbortController();
+        const onAbort = () => attemptController.abort();
+        signal.addEventListener("abort", onAbort);
+
+        const clientChangeSignal = this.clientChangeController.signal;
+        const onClientChange = () => attemptController.abort();
+        clientChangeSignal.addEventListener("abort", onClientChange, { once: true });
+
+        try {
+          const iterator = await subscribe(undefined, {
+            signal: attemptController.signal,
+          });
+
+          for await (const event of iterator) {
+            if (signal.aborted) {
+              return;
+            }
+
+            // Connection is alive again - don't carry old backoff into the next failure.
+            attempt = 0;
+
+            queueMicrotask(() => {
+              if (signal.aborted || attemptController.signal.aborted) {
+                return;
+              }
+
+              if (event.type === "snapshot") {
+                const seenWorkspaceIds = new Set<string>();
+                for (const [workspaceId, activity] of Object.entries(event.workspaces)) {
+                  seenWorkspaceIds.add(workspaceId);
+                  this.applyTerminalActivity(workspaceId, activity);
+                }
+
+                for (const workspaceId of Array.from(this.workspaceTerminalActivity.keys())) {
+                  if (seenWorkspaceIds.has(workspaceId)) {
+                    continue;
+                  }
+                  this.applyTerminalActivity(workspaceId, { activeCount: 0, totalSessions: 0 });
+                }
+
+                return;
+              }
+
+              this.applyTerminalActivity(event.workspaceId, event.activity);
+            });
+          }
+
+          if (signal.aborted) {
+            return;
+          }
+
+          if (!attemptController.signal.aborted) {
+            console.warn(
+              "[WorkspaceStore] terminal activity subscription ended unexpectedly; retrying..."
+            );
+          }
+        } catch (error) {
+          if (signal.aborted) {
+            return;
+          }
+
+          const abortError = isAbortError(error);
+          if (attemptController.signal.aborted) {
+            if (!abortError) {
+              console.warn("[WorkspaceStore] terminal activity subscription aborted; retrying...");
+            }
+          } else if (!abortError) {
+            console.warn("[WorkspaceStore] Error in terminal activity subscription:", error);
+          }
+        } finally {
+          signal.removeEventListener("abort", onAbort);
+          clientChangeSignal.removeEventListener("abort", onClientChange);
+        }
+
+        if (!signal.aborted && !attemptController.signal.aborted) {
+          const delayMs = calculateOnChatBackoffMs(attempt);
+          attempt++;
+
+          await this.sleepWithAbort(delayMs, signal);
+        }
+      }
+    } finally {
+      this.releaseTerminalActivityController(controller);
+    }
+  }
+
   private async runActivitySubscription(signal: AbortSignal): Promise<void> {
     let attempt = 0;
 
@@ -3096,6 +3291,7 @@ export class WorkspaceStore {
     this.chatTransientState.delete(workspaceId);
     this.workspaceMetadata.delete(workspaceId);
     this.workspaceActivity.delete(workspaceId);
+    this.workspaceTerminalActivity.delete(workspaceId);
     this.activityStreamingStartRecency.delete(workspaceId);
     this.recencyCache.delete(workspaceId);
     this.previousSidebarValues.delete(workspaceId);
@@ -3166,6 +3362,11 @@ export class WorkspaceStore {
       this.activityAbortController = null;
     }
 
+    if (this.terminalActivityAbortController) {
+      this.terminalActivityAbortController.abort();
+      this.terminalActivityAbortController = null;
+    }
+
     // Abort client-scoped subscriptions (providers.onConfigChanged, stats, etc.)
     // so async iterators/timers cannot mutate cleared state after disposal.
     this.clientChangeController.abort();
@@ -3181,6 +3382,7 @@ export class WorkspaceStore {
     this.chatTransientState.clear();
     this.workspaceMetadata.clear();
     this.workspaceActivity.clear();
+    this.workspaceTerminalActivity.clear();
     this.activityStreamingStartRecency.clear();
     this.workspaceStats.clear();
     this.statsStore.clear();

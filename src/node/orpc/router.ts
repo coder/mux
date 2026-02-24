@@ -3919,6 +3919,52 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.terminalService.openNative(input.workspaceId);
         }),
+      activity: {
+        subscribe: t
+          .input(schemas.terminal.activity.subscribe.input)
+          .output(schemas.terminal.activity.subscribe.output)
+          .handler(async function* ({ context, signal }) {
+            if (signal?.aborted) {
+              return;
+            }
+
+            const queue = createAsyncEventQueue<{
+              type: "update";
+              workspaceId: string;
+              activity: { activeCount: number; totalSessions: number };
+            }>();
+
+            const unsubscribe = context.terminalService.onActivityChange((workspaceId: string) => {
+              queue.push({
+                type: "update" as const,
+                workspaceId,
+                activity: context.terminalService.getWorkspaceActivity(workspaceId),
+              });
+            });
+
+            const onAbort = () => {
+              queue.end();
+            };
+
+            if (signal) {
+              signal.addEventListener("abort", onAbort, { once: true });
+            }
+
+            try {
+              // Yield initial snapshot (listener registered before snapshot, so no transition lost)
+              yield {
+                type: "snapshot" as const,
+                workspaces: context.terminalService.getAllWorkspaceActivity(),
+              };
+
+              yield* queue.iterate();
+            } finally {
+              signal?.removeEventListener("abort", onAbort);
+              queue.end();
+              unsubscribe();
+            }
+          }),
+      },
     },
     update: {
       check: t

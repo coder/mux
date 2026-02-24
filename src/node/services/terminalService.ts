@@ -18,6 +18,7 @@ import { log } from "@/node/services/log";
 import { isCommandAvailable, findAvailableCommand } from "@/node/utils/commandDiscovery";
 import { Terminal } from "@xterm/headless";
 import { SerializeAddon } from "@xterm/addon-serialize";
+import { NO_OSC_IDLE_FALLBACK_MS } from "@/constants/terminalActivity";
 import { getErrorMessage } from "@/common/utils/errors";
 
 /**
@@ -46,6 +47,17 @@ export class TerminalService {
   private readonly headlessTerminals = new Map<string, Terminal>();
   private readonly serializeAddons = new Map<string, SerializeAddon>();
   private readonly headlessOnDataDisposables = new Map<string, { dispose: () => void }>();
+  private readonly titleChangeDisposables = new Map<string, { dispose: () => void }>();
+
+  // Per-session activity tracking for sidebar indicator.
+  // Maps sessionId -> { workspaceId, isRunning (derived from terminal title) }.
+  private readonly sessionActivity = new Map<string, { workspaceId: string; isRunning: boolean }>();
+  // Tracks sessions that have received at least one OSC signal (0, 2, or 133).
+  // OSC-driven sessions rely on shell-provided idle/running signals and skip the fallback timer.
+  private readonly sessionsWithOscActivity = new Set<string>();
+  // Fallback timers for non-OSC sessions: auto-reset to idle after NO_OSC_IDLE_FALLBACK_MS.
+  private readonly noOscIdleFallbacks = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly activityChangeEmitter = new EventEmitter();
 
   constructor(config: Config, ptyService: PTYService) {
     this.config = config;
@@ -201,6 +213,46 @@ export class TerminalService {
       this.headlessTerminals.set(session.sessionId, headless);
       this.serializeAddons.set(session.sessionId, serializeAddon);
 
+      // Track session activity and subscribe to title changes for sidebar indicator.
+      // Subscribe BEFORE replaying buffered output so early title transitions are not missed.
+      this.sessionActivity.set(session.sessionId, {
+        workspaceId: params.workspaceId,
+        isRunning: false,
+      });
+      // Use parser.registerOscHandler instead of headless.onTitleChange because
+      // xterm v6's internal event forwarding chain (InputHandler.setTitle → onTitleChange)
+      // doesn't fire despite the parser correctly processing OSC 0/2 sequences.
+      const handleTitleOsc = (data: string): boolean => {
+        this.markSessionOscDriven(session.sessionId);
+        const isRunning = !this.isIdleTitle(data);
+        this.updateSessionActivity(session.sessionId, params.workspaceId, isRunning);
+        return false; // don't consume — let xterm's internal handler also process
+      };
+      const disposeOsc0 = headless.parser.registerOscHandler(0, handleTitleOsc);
+      const disposeOsc2 = headless.parser.registerOscHandler(2, handleTitleOsc);
+      // OSC 133 (FinalTerm semantic prompt protocol) — fish, zsh with plugins, etc.
+      // Marker A = prompt start (idle), C = command start (running).
+      const handlePromptOsc = (data: string): boolean => {
+        this.markSessionOscDriven(session.sessionId);
+        const marker = data.split(";", 1)[0]?.trim();
+        if (marker === "A") {
+          this.updateSessionActivity(session.sessionId, params.workspaceId, false);
+        } else if (marker === "C") {
+          this.updateSessionActivity(session.sessionId, params.workspaceId, true);
+        }
+        return false;
+      };
+      const disposeOsc133 = headless.parser.registerOscHandler(133, handlePromptOsc);
+      const disposeOnTitleChange = {
+        dispose: () => {
+          disposeOsc0.dispose();
+          disposeOsc2.dispose();
+          disposeOsc133.dispose();
+        },
+      };
+      this.titleChangeDisposables.set(session.sessionId, disposeOnTitleChange);
+      this.activityChangeEmitter.emit("change", params.workspaceId);
+
       // Replay local buffer that arrived during creation
       for (const data of localBuffer) {
         this.emitOutput(session.sessionId, data);
@@ -220,8 +272,7 @@ export class TerminalService {
 
   close(sessionId: string): void {
     try {
-      this.ptyService.closeSession(sessionId);
-      this.cleanup(sessionId);
+      this.terminateTrackedSessions([sessionId]);
     } catch (err) {
       log.error("Error closing terminal session:", err);
       throw err;
@@ -244,6 +295,19 @@ export class TerminalService {
   sendInput(sessionId: string, data: string): void {
     try {
       this.ptyService.sendInput(sessionId, data);
+
+      // Mark session as running when user submits a command (newline detected).
+      // OSC handlers will flip it back when the prompt returns.
+      if (data.includes("\r") || data.includes("\n")) {
+        const activity = this.sessionActivity.get(sessionId);
+        if (activity) {
+          this.updateSessionActivity(sessionId, activity.workspaceId, true);
+          // Guard against permanent running state in non-OSC shells.
+          if (!this.sessionsWithOscActivity.has(sessionId)) {
+            this.armNoOscIdleFallback(sessionId, activity.workspaceId);
+          }
+        }
+      }
     } catch (err) {
       log.error(`Error sending input to terminal ${sessionId}:`, err);
       throw err;
@@ -636,6 +700,117 @@ export class TerminalService {
   }
 
   /**
+   * Heuristic: classify whether a terminal title indicates an idle shell prompt.
+   * Shells typically set title to shell name, cwd, or user@host:path when idle.
+   */
+  private isIdleTitle(title: string): boolean {
+    const trimmed = title.trim();
+    if (trimmed.length === 0) return true;
+
+    if (trimmed.startsWith("/") || trimmed.startsWith("~")) return true;
+    if (/^[^\s@]+@[^\s:]+:/.test(trimmed)) return true;
+    if (/^(bash|zsh|fish|sh|pwsh|powershell)$/i.test(trimmed)) return true;
+
+    return false;
+  }
+
+  private markSessionOscDriven(sessionId: string): void {
+    this.sessionsWithOscActivity.add(sessionId);
+    const fallback = this.noOscIdleFallbacks.get(sessionId);
+    if (fallback != null) {
+      clearTimeout(fallback);
+      this.noOscIdleFallbacks.delete(sessionId);
+    }
+  }
+
+  private armNoOscIdleFallback(sessionId: string, workspaceId: string): void {
+    const existing = this.noOscIdleFallbacks.get(sessionId);
+    if (existing != null) {
+      clearTimeout(existing);
+    }
+
+    const timer = setTimeout(() => {
+      this.noOscIdleFallbacks.delete(sessionId);
+      // Only reset if session still exists and hasn't gained OSC capability.
+      if (this.sessionActivity.has(sessionId) && !this.sessionsWithOscActivity.has(sessionId)) {
+        this.updateSessionActivity(sessionId, workspaceId, false);
+      }
+    }, NO_OSC_IDLE_FALLBACK_MS);
+
+    this.noOscIdleFallbacks.set(sessionId, timer);
+  }
+
+  private computeWorkspaceAggregate(workspaceId: string): {
+    activeCount: number;
+    totalSessions: number;
+  } {
+    let activeCount = 0;
+    let totalSessions = 0;
+
+    for (const entry of this.sessionActivity.values()) {
+      if (entry.workspaceId === workspaceId) {
+        totalSessions++;
+        if (entry.isRunning) {
+          activeCount++;
+        }
+      }
+    }
+
+    return { activeCount, totalSessions };
+  }
+
+  private updateSessionActivity(sessionId: string, workspaceId: string, isRunning: boolean): void {
+    const previousActivity = this.sessionActivity.get(sessionId);
+    const previousRunningState = previousActivity?.isRunning ?? false;
+
+    this.sessionActivity.set(sessionId, { workspaceId, isRunning });
+
+    if (!previousActivity || previousRunningState !== isRunning) {
+      this.activityChangeEmitter.emit("change", workspaceId);
+    }
+  }
+
+  private removeSessionActivity(sessionId: string): void {
+    const activityEntry = this.sessionActivity.get(sessionId);
+    if (!activityEntry) {
+      return;
+    }
+
+    this.sessionActivity.delete(sessionId);
+    this.activityChangeEmitter.emit("change", activityEntry.workspaceId);
+  }
+
+  /** Get terminal activity aggregate for a workspace. */
+  getWorkspaceActivity(workspaceId: string): { activeCount: number; totalSessions: number } {
+    return this.computeWorkspaceAggregate(workspaceId);
+  }
+
+  /** Get all workspace activity aggregates (for initial snapshot). */
+  getAllWorkspaceActivity(): Record<string, { activeCount: number; totalSessions: number }> {
+    const workspaceActivity: Record<string, { activeCount: number; totalSessions: number }> = {};
+    const workspaceIds = new Set<string>();
+
+    for (const entry of this.sessionActivity.values()) {
+      workspaceIds.add(entry.workspaceId);
+    }
+
+    for (const workspaceId of workspaceIds) {
+      workspaceActivity[workspaceId] = this.computeWorkspaceAggregate(workspaceId);
+    }
+
+    return workspaceActivity;
+  }
+
+  /** Subscribe to workspace-level activity changes. Callback receives workspaceId. */
+  onActivityChange(callback: (workspaceId: string) => void): () => void {
+    this.activityChangeEmitter.on("change", callback);
+
+    return () => {
+      this.activityChangeEmitter.off("change", callback);
+    };
+  }
+
+  /**
    * Get serialized screen state for a session.
    * Called by frontend on reconnect to restore terminal view instantly (~4KB vs 512KB raw replay).
    * Returns VT escape sequences that reconstruct the current screen state.
@@ -667,14 +842,29 @@ export class TerminalService {
     return this.ptyService.getWorkspaceSessionIds(workspaceId);
   }
 
+  private getTrackedSessionIdsForWorkspace(workspaceId: string): string[] {
+    return Array.from(this.sessionActivity.entries())
+      .filter(([, entry]) => entry.workspaceId === workspaceId)
+      .map(([sessionId]) => sessionId);
+  }
+
+  private terminateTrackedSessions(sessionIds: string[]): void {
+    for (const sessionId of sessionIds) {
+      try {
+        this.ptyService.closeSession(sessionId);
+      } finally {
+        this.cleanup(sessionId);
+      }
+    }
+  }
+
   /**
    * Close all terminal sessions for a workspace.
    * Called when a workspace is removed to prevent resource leaks.
    */
   closeWorkspaceSessions(workspaceId: string): void {
-    const sessionIds = this.getWorkspaceSessionIds(workspaceId);
-    // Route bulk-close through TerminalService.close() so cleanup() runs for backend state.
-    sessionIds.forEach((sessionId) => this.close(sessionId));
+    const sessionIds = this.getTrackedSessionIdsForWorkspace(workspaceId);
+    this.terminateTrackedSessions(sessionIds);
   }
 
   /**
@@ -682,15 +872,27 @@ export class TerminalService {
    * Called during server shutdown to prevent orphan PTY processes.
    */
   closeAllSessions(): void {
-    const sessionIds = Array.from(this.ptyService.getSessions().keys());
-    // Route bulk-close through TerminalService.close() so cleanup() runs for backend state.
-    sessionIds.forEach((sessionId) => this.close(sessionId));
+    const sessionIds = Array.from(this.sessionActivity.keys());
+    this.terminateTrackedSessions(sessionIds);
   }
 
   private cleanup(sessionId: string) {
     const disposeHeadlessOnData = this.headlessOnDataDisposables.get(sessionId);
     disposeHeadlessOnData?.dispose();
     this.headlessOnDataDisposables.delete(sessionId);
+
+    // Clean up activity tracking
+    const disposeTitleChange = this.titleChangeDisposables.get(sessionId);
+    disposeTitleChange?.dispose();
+    this.titleChangeDisposables.delete(sessionId);
+    this.removeSessionActivity(sessionId);
+    this.sessionsWithOscActivity.delete(sessionId);
+    const fallback = this.noOscIdleFallbacks.get(sessionId);
+    if (fallback != null) {
+      clearTimeout(fallback);
+      this.noOscIdleFallbacks.delete(sessionId);
+    }
+
     this.outputEmitters.delete(sessionId);
     this.exitEmitters.delete(sessionId);
 

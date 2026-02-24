@@ -1424,6 +1424,18 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       },
     },
     terminal: {
+      activity: {
+        subscribe: async function* (_input?: void, opts?: { signal?: AbortSignal }) {
+          yield { type: "snapshot" as const, workspaces: {} };
+          await new Promise<void>((resolve) => {
+            if (opts?.signal?.aborted) {
+              resolve();
+              return;
+            }
+            opts?.signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+        },
+      },
       listSessions: (input: { workspaceId: string }) =>
         Promise.resolve(terminalSessionIdsByWorkspace.get(input.workspaceId) ?? []),
       create: (input: {

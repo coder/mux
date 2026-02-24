@@ -20,6 +20,7 @@ import { Trash2, Ellipsis, Loader2, Sparkles } from "lucide-react";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
+import { WorkspaceTerminalIcon } from "./icons/WorkspaceTerminalIcon";
 import { WORKSPACE_DRAG_TYPE, type WorkspaceDragItem } from "./WorkspaceSectionDropZone";
 import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
@@ -371,7 +372,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     }
   };
 
-  const { canInterrupt, awaitingUserQuestion, isStarting, agentStatus } =
+  const { canInterrupt, awaitingUserQuestion, isStarting, agentStatus, terminalActiveCount } =
     useWorkspaceSidebarState(workspaceId);
 
   const fallbackModel = useWorkspaceFallbackModel(workspaceId);
@@ -657,6 +658,20 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
 
             {!isInitializing && !isEditing && (
               <div className="flex items-center gap-1">
+                {terminalActiveCount > 0 && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="text-muted flex items-center gap-0.5">
+                        <WorkspaceTerminalIcon className="h-3 w-3" />
+                        <span className="text-[11px]">{terminalActiveCount}</span>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">
+                      {terminalActiveCount} terminal{terminalActiveCount !== 1 ? "s" : ""} running
+                      commands
+                    </TooltipContent>
+                  </Tooltip>
+                )}
                 <GitStatusIndicator
                   gitStatus={gitStatus}
                   workspaceId={workspaceId}

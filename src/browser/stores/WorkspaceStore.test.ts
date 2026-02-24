@@ -59,6 +59,25 @@ const mockActivitySubscribe = mock(async function* (
   });
 });
 
+type TerminalActivityEvent =
+  | {
+      type: "snapshot";
+      workspaces: Record<string, { activeCount: number; totalSessions: number }>;
+    }
+  | {
+      type: "update";
+      workspaceId: string;
+      activity: { activeCount: number; totalSessions: number };
+    };
+
+// eslint-disable-next-line require-yield
+const mockTerminalActivitySubscribe = mock(async function* (
+  _input?: void,
+  options?: { signal?: AbortSignal }
+): AsyncGenerator<TerminalActivityEvent, void, unknown> {
+  await waitForAbortSignal(options?.signal);
+});
+
 const mockSetAutoCompactionThreshold = mock(() =>
   Promise.resolve({ success: true, data: undefined })
 );
@@ -77,6 +96,11 @@ const mockClient = {
     },
     setAutoCompactionThreshold: mockSetAutoCompactionThreshold,
     getStartupAutoRetryModel: mockGetStartupAutoRetryModel,
+  },
+  terminal: {
+    activity: {
+      subscribe: mockTerminalActivitySubscribe,
+    },
   },
 };
 
@@ -174,6 +198,7 @@ describe("WorkspaceStore", () => {
     mockHistoryLoadMore.mockClear();
     mockActivityList.mockClear();
     mockActivitySubscribe.mockClear();
+    mockTerminalActivitySubscribe.mockClear();
     mockSetAutoCompactionThreshold.mockClear();
     mockGetStartupAutoRetryModel.mockClear();
     global.window.localStorage?.clear?.();
@@ -1574,7 +1599,7 @@ describe("WorkspaceStore", () => {
       });
 
       // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
-      store.setClient({ workspace: mockClient.workspace } as any);
+      store.setClient({ workspace: mockClient.workspace, terminal: mockClient.terminal } as any);
 
       const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
         const start = Date.now();
@@ -1640,7 +1665,7 @@ describe("WorkspaceStore", () => {
       };
 
       // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
-      store.setClient({ workspace: mockClient.workspace } as any);
+      store.setClient({ workspace: mockClient.workspace, terminal: mockClient.terminal } as any);
       createAndAddWorkspace(
         store,
         workspaceId,
@@ -1658,7 +1683,7 @@ describe("WorkspaceStore", () => {
 
       // Swap to a new client object to force activity subscription restart and a fresh list() call.
       // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
-      store.setClient({ workspace: mockClient.workspace } as any);
+      store.setClient({ workspace: mockClient.workspace, terminal: mockClient.terminal } as any);
 
       const sawRetryListCall = await waitUntil(() => listCallCount >= 2);
       expect(sawRetryListCall).toBe(true);
@@ -1668,6 +1693,202 @@ describe("WorkspaceStore", () => {
       expect(stateAfterEmptyList.canInterrupt).toBe(true);
       expect(stateAfterEmptyList.currentModel).toBe(snapshot.lastModel);
       expect(stateAfterEmptyList.currentThinkingLevel).toBe(snapshot.lastThinkingLevel);
+    });
+  });
+
+  describe("terminal activity", () => {
+    it("propagates terminal activity to sidebar state", async () => {
+      const workspaceId = "terminal-activity-workspace";
+      const events: TerminalActivityEvent[] = [
+        {
+          type: "snapshot",
+          workspaces: {
+            [workspaceId]: { activeCount: 2, totalSessions: 3 },
+          },
+        },
+      ];
+
+      const terminalSubscribeMock = mock(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<TerminalActivityEvent, void, unknown> {
+        for (const event of events) {
+          yield event;
+        }
+        await waitForAbortSignal(options?.signal);
+      });
+
+      const testClient = {
+        ...mockClient,
+        terminal: {
+          activity: {
+            subscribe: terminalSubscribeMock,
+          },
+        },
+      };
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      store.syncWorkspaces(
+        new Map([
+          [
+            workspaceId,
+            {
+              id: workspaceId,
+              name: "test-branch",
+              projectName: "test-project",
+              projectPath: "/test",
+              namedWorkspacePath: "/test/test-branch",
+              createdAt: "2024-01-01T00:00:00.000Z",
+              runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+            } satisfies FrontendWorkspaceMetadata,
+          ],
+        ])
+      );
+
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(testClient as any);
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const sidebarState = store.getWorkspaceSidebarState(workspaceId);
+      expect(sidebarState.terminalActiveCount).toBe(2);
+      expect(sidebarState.terminalSessionCount).toBe(3);
+    });
+
+    it("treats missing terminal.activity.subscribe as unsupported capability (no crash/retry)", async () => {
+      const workspaceId = "partial-client-workspace";
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+
+      store.syncWorkspaces(
+        new Map([
+          [
+            workspaceId,
+            {
+              id: workspaceId,
+              name: "partial-branch",
+              projectName: "test-project",
+              projectPath: "/test",
+              namedWorkspacePath: "/test/partial-branch",
+              createdAt: "2024-01-01T00:00:00.000Z",
+              runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+            } satisfies FrontendWorkspaceMetadata,
+          ],
+        ])
+      );
+
+      // Client with terminal namespace but no activity.subscribe — should not throw.
+      const partialClient = {
+        workspace: mockClient.workspace,
+        terminal: {},
+      };
+
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(partialClient as any);
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const sidebarState = store.getWorkspaceSidebarState(workspaceId);
+      expect(sidebarState.terminalActiveCount).toBe(0);
+      expect(sidebarState.terminalSessionCount).toBe(0);
+    });
+
+    it("re-arms terminal activity after unsupported client is replaced with supported client", async () => {
+      const workspaceId = "rearm-terminal-workspace";
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      store.syncWorkspaces(
+        new Map([
+          [
+            workspaceId,
+            {
+              id: workspaceId,
+              name: "rearm-branch",
+              projectName: "test-project",
+              projectPath: "/test",
+              namedWorkspacePath: "/test/rearm-branch",
+              createdAt: "2024-01-01T00:00:00.000Z",
+              runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+            } satisfies FrontendWorkspaceMetadata,
+          ],
+        ])
+      );
+
+      // First: set an unsupported client (no terminal.activity.subscribe)
+      const partialClient = {
+        workspace: mockClient.workspace,
+        terminal: {},
+      };
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(partialClient as any);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Confirm terminal counts are zero after unsupported client.
+      expect(store.getWorkspaceSidebarState(workspaceId).terminalActiveCount).toBe(0);
+      expect(store.getWorkspaceSidebarState(workspaceId).terminalSessionCount).toBe(0);
+
+      // Second: replace with a supported client that has terminal.activity.subscribe.
+      const terminalSubscribeMock = mock(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<TerminalActivityEvent, void, unknown> {
+        yield {
+          type: "snapshot",
+          workspaces: {
+            [workspaceId]: { activeCount: 1, totalSessions: 2 },
+          },
+        };
+        await waitForAbortSignal(options?.signal);
+      });
+
+      const fullClient = {
+        ...mockClient,
+        terminal: {
+          activity: {
+            subscribe: terminalSubscribeMock,
+          },
+        },
+      };
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(fullClient as any);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // The subscription should start after the supported client is set.
+      expect(terminalSubscribeMock).toHaveBeenCalled();
+      const sidebarState = store.getWorkspaceSidebarState(workspaceId);
+      expect(sidebarState.terminalActiveCount).toBe(1);
+      expect(sidebarState.terminalSessionCount).toBe(2);
+    });
+
+    it("defaults terminal counts to zero when no activity", () => {
+      const workspaceId = "no-terminal-workspace";
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+
+      store.syncWorkspaces(
+        new Map([
+          [
+            workspaceId,
+            {
+              id: workspaceId,
+              name: "empty-branch",
+              projectName: "test-project",
+              projectPath: "/test",
+              namedWorkspacePath: "/test/empty-branch",
+              createdAt: "2024-01-01T00:00:00.000Z",
+              runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+            } satisfies FrontendWorkspaceMetadata,
+          ],
+        ])
+      );
+
+      const sidebarState = store.getWorkspaceSidebarState(workspaceId);
+      expect(sidebarState.terminalActiveCount).toBe(0);
+      expect(sidebarState.terminalSessionCount).toBe(0);
     });
   });
 

@@ -1437,6 +1437,38 @@ export const terminal = {
     output: z.void(),
   },
   /**
+   * Subscribe to terminal activity changes across all workspaces.
+   * First event is a snapshot of all workspace aggregates.
+   * Subsequent events are per-workspace updates.
+   */
+  activity: {
+    subscribe: {
+      input: z.void(),
+      output: eventIterator(
+        z.discriminatedUnion("type", [
+          z.object({
+            type: z.literal("snapshot"),
+            workspaces: z.record(
+              z.string(),
+              z.object({
+                activeCount: z.number(),
+                totalSessions: z.number(),
+              })
+            ),
+          }),
+          z.object({
+            type: z.literal("update"),
+            workspaceId: z.string(),
+            activity: z.object({
+              activeCount: z.number(),
+              totalSessions: z.number(),
+            }),
+          }),
+        ])
+      ),
+    },
+  },
+  /**
    * List active terminal sessions for a workspace.
    * Used by frontend to discover existing sessions to reattach to after reload.
    */
