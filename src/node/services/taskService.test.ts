@@ -1905,12 +1905,12 @@ describe("TaskService", () => {
     expect(stopStream).toHaveBeenNthCalledWith(
       1,
       childTaskId,
-      expect.objectContaining({ abandonPartial: true })
+      expect.objectContaining({ abandonPartial: false })
     );
     expect(stopStream).toHaveBeenNthCalledWith(
       2,
       parentTaskId,
-      expect.objectContaining({ abandonPartial: true })
+      expect.objectContaining({ abandonPartial: false })
     );
     expect(callOrder).toEqual([
       `clear:${childTaskId}`,

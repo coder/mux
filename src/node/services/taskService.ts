@@ -1214,9 +1214,10 @@ export class TaskService {
           log.debug("terminateAllDescendantAgentTasks: clearQueue threw", { taskId: id, error });
         }
 
-        // Best-effort: stop any active stream immediately to avoid further token usage.
+        // Best-effort: stop any active stream immediately to avoid further token usage
+        // while preserving commit-worthy partial progress for inspection/resume.
         try {
-          const stopResult = await this.aiService.stopStream(id, { abandonPartial: true });
+          const stopResult = await this.aiService.stopStream(id, { abandonPartial: false });
           if (!stopResult.success) {
             log.debug("terminateAllDescendantAgentTasks: stopStream failed", { taskId: id });
           }
