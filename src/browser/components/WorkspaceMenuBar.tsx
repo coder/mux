@@ -30,11 +30,7 @@ import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
-import {
-  getTitlebarRightInset,
-  isDesktopMode,
-  DESKTOP_TITLEBAR_HEIGHT_CLASS,
-} from "@/browser/hooks/useDesktopTitlebar";
+import { isDesktopMode, DESKTOP_TITLEBAR_HEIGHT_CLASS } from "@/browser/hooks/useDesktopTitlebar";
 import { DebugLlmRequestModal } from "./DebugLlmRequestModal";
 import { WorkspaceLinks } from "./WorkspaceLinks";
 import { ShareTranscriptDialog } from "./ShareTranscriptDialog";
@@ -287,18 +283,15 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   // On Windows/Linux, the native window controls overlay the top-right of the app.
   // When the right sidebar is collapsed (20px), this header stretches underneath
   // those controls and the MCP/editor/terminal buttons become unclickable.
-  const titlebarRightInset = getTitlebarRightInset();
-  const headerRightPadding =
-    rightSidebarCollapsed && titlebarRightInset > 0 ? Math.max(0, titlebarRightInset - 20) : 0;
   const isDesktop = isDesktopMode();
 
   return (
     <div
-      style={headerRightPadding > 0 ? { paddingRight: headerRightPadding } : undefined}
       data-testid="workspace-menu-bar"
       className={cn(
         "bg-sidebar border-border-light flex items-center justify-between border-b px-2",
         isDesktop ? DESKTOP_TITLEBAR_HEIGHT_CLASS : "h-8",
+        rightSidebarCollapsed && "titlebar-safe-right-minus-sidebar",
         // In desktop mode, make header draggable for window movement
         isDesktop && "titlebar-drag",
         // Keep header visible when iOS keyboard opens and causes scroll

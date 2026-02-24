@@ -8,7 +8,6 @@ import { Plus } from "lucide-react";
 import type { TabType } from "@/browser/types/rightSidebar";
 import {
   isDesktopMode,
-  getTitlebarRightInset,
   DESKTOP_TITLEBAR_MIN_HEIGHT_CLASS,
 } from "@/browser/hooks/useDesktopTitlebar";
 
@@ -157,20 +156,18 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
 
   // In desktop mode, add right padding for Windows/Linux titlebar overlay buttons
   const isDesktop = isDesktopMode();
-  const rightInset = getTitlebarRightInset();
 
   return (
     <div
       ref={setNodeRef}
       className={cn(
-        "border-border-light flex min-w-0 items-center border-b px-2 py-1.5 transition-colors",
+        "border-border-light titlebar-safe-right flex min-w-0 items-center border-b px-2 py-1.5 transition-colors",
         isDesktop && DESKTOP_TITLEBAR_MIN_HEIGHT_CLASS,
         showDropHighlight && "bg-accent/30",
         isDraggingFromHere && "bg-accent/10",
         // In desktop mode, make header draggable for window movement
         isDesktop && "titlebar-drag"
       )}
-      style={rightInset > 0 ? { paddingRight: rightInset } : undefined}
       role="tablist"
       aria-label={ariaLabel}
     >

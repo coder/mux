@@ -150,12 +150,11 @@ export function TitleBar(props: TitleBarProps) {
   return (
     <div
       className={cn(
-        "bg-sidebar border-border-light font-primary text-muted flex shrink-0 items-center justify-between border-b px-4 text-[11px] select-none",
+        "bg-sidebar border-border-light font-primary text-muted titlebar-safe-left flex shrink-0 items-center justify-between border-b px-4 text-[11px] select-none",
         isDesktop ? DESKTOP_TITLEBAR_HEIGHT_CLASS : "h-8",
         // In desktop mode, make header draggable for window movement
         isDesktop && "titlebar-drag"
       )}
-      style={leftInset > 0 ? { paddingLeft: leftInset } : undefined}
     >
       <div
         // Desktop titlebar: this wrapper is `flex-1` (for version ellipsis) so it fills the gap.
