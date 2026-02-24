@@ -65,7 +65,7 @@
     --color-ask-mode-light: hsl(246 100% 85%);
     --color-ask-mode-alpha: hsla(246 100% 68% / 0.1);
 
-    --color-auto-mode: hsl(168 72% 43%);
+    --color-auto-mode: #A4E8F2;
 
     --color-exec-mode: hsl(268.56 94.04% 55.19%);
     --color-exec-mode-hover: hsl(268.56 94.04% 67%);

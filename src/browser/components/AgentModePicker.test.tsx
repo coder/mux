@@ -8,6 +8,15 @@ import { TooltipProvider } from "@/browser/components/ui/tooltip";
 import { AgentModePicker } from "./AgentModePicker";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 
+const AUTO_AGENT: AgentDefinitionDescriptor = {
+  id: "auto",
+  scope: "built-in",
+  name: "Auto",
+  uiSelectable: true,
+  subagentRunnable: false,
+  uiColor: "var(--color-auto-mode)",
+};
+
 const BUILT_INS: AgentDefinitionDescriptor[] = [
   {
     id: "exec",
@@ -95,104 +104,6 @@ describe("AgentModePicker", () => {
     expect(getByText("Explore")).toBeTruthy();
   });
 
-  // TODO: Fix flaky test - keyboard events don't reliably trigger state changes in happy-dom
-  test.skip("Escape closes the picker without changing selection", async () => {
-    function Harness() {
-      const [agentId, setAgentId] = React.useState("plan");
-      return (
-        <AgentProvider
-          value={{
-            agentId,
-            setAgentId,
-            agents: [...BUILT_INS, CUSTOM_AGENT],
-            loaded: true,
-            loadFailed: false,
-            refresh: () => Promise.resolve(),
-            refreshing: false,
-            ...defaultContextProps,
-          }}
-        >
-          <TooltipProvider>
-            <div>
-              <div data-testid="agentId">{agentId}</div>
-              <AgentModePicker />
-            </div>
-          </TooltipProvider>
-        </AgentProvider>
-      );
-    }
-
-    const { getByPlaceholderText, getByTestId, getByLabelText, queryByPlaceholderText } = render(
-      <Harness />
-    );
-
-    // Open the picker via click (more reliable than custom event in tests)
-    fireEvent.click(getByLabelText("Select agent"));
-
-    await waitFor(() => {
-      expect(getByPlaceholderText("Search agents…")).toBeTruthy();
-    });
-
-    fireEvent.keyDown(getByPlaceholderText("Search agents…"), { key: "Escape" });
-
-    // Escape should close the picker without changing the agent
-    await waitFor(
-      () => {
-        expect(queryByPlaceholderText("Search agents…")).toBeNull();
-      },
-      { timeout: 1000 }
-    );
-
-    expect(getByTestId("agentId").textContent).toBe("plan");
-  });
-
-  // TODO: Fix flaky test - ArrowUp behavior depends on highlight state timing
-  test.skip("ArrowUp closes the picker without selecting an agent", async () => {
-    function Harness() {
-      const [agentId, setAgentId] = React.useState("exec");
-      return (
-        <AgentProvider
-          value={{
-            agentId,
-            setAgentId,
-            agents: [...BUILT_INS, CUSTOM_AGENT],
-            loaded: true,
-            loadFailed: false,
-            refresh: () => Promise.resolve(),
-            refreshing: false,
-            ...defaultContextProps,
-          }}
-        >
-          <TooltipProvider>
-            <div>
-              <div data-testid="agentId">{agentId}</div>
-              <AgentModePicker />
-            </div>
-          </TooltipProvider>
-        </AgentProvider>
-      );
-    }
-
-    const { getByPlaceholderText, getByTestId, getByLabelText, queryByPlaceholderText } = render(
-      <Harness />
-    );
-
-    // Open the dropdown via the trigger button
-    fireEvent.click(getByLabelText("Select agent"));
-
-    await waitFor(() => {
-      expect(getByPlaceholderText("Search agents…")).toBeTruthy();
-    });
-
-    fireEvent.keyDown(getByPlaceholderText("Search agents…"), { key: "ArrowUp" });
-
-    await waitFor(() => {
-      expect(queryByPlaceholderText("Search agents…")).toBeNull();
-    });
-
-    expect(getByTestId("agentId").textContent).toBe("exec");
-  });
-
   test("shows a non-selectable active agent in the dropdown trigger", async () => {
     function Harness() {
       const [agentId, setAgentId] = React.useState("explore");
@@ -219,7 +130,7 @@ describe("AgentModePicker", () => {
       );
     }
 
-    const { getAllByText, getByLabelText, getByPlaceholderText } = render(<Harness />);
+    const { getAllByText, getByLabelText, getAllByTestId } = render(<Harness />);
 
     // The trigger button should show the current agent name "Explore"
     const triggerButton = getByLabelText("Select agent");
@@ -229,11 +140,10 @@ describe("AgentModePicker", () => {
     fireEvent.click(triggerButton);
 
     await waitFor(() => {
-      expect(getByPlaceholderText("Search agents…")).toBeTruthy();
+      expect(getAllByTestId("agent-option").length).toBeGreaterThan(0);
     });
 
     // Explore should not appear as a selectable option in the dropdown (only in trigger).
-    // The text "Explore" appears once in trigger, so if dropdown opened it should still be just one.
     expect(getAllByText("Explore").length).toBe(1);
   });
 
@@ -263,13 +173,13 @@ describe("AgentModePicker", () => {
       );
     }
 
-    const { getByPlaceholderText, getByTestId, getByText, getByLabelText } = render(<Harness />);
+    const { getByTestId, getByText, getByLabelText } = render(<Harness />);
 
     // Open picker via dropdown trigger
     fireEvent.click(getByLabelText("Select agent"));
 
     await waitFor(() => {
-      expect(getByPlaceholderText("Search agents…")).toBeTruthy();
+      expect(getByText("Review")).toBeTruthy();
     });
 
     // Pick the custom agent
@@ -277,6 +187,98 @@ describe("AgentModePicker", () => {
 
     await waitFor(() => {
       expect(getByTestId("agentId").textContent).toBe("review");
+    });
+  });
+
+  test("toggling auto-select switch on sets agentId to auto", async () => {
+    function Harness() {
+      const [agentId, setAgentId] = React.useState("exec");
+      return (
+        <AgentProvider
+          value={{
+            agentId,
+            setAgentId,
+            agents: [...BUILT_INS, AUTO_AGENT],
+            loaded: true,
+            loadFailed: false,
+            refresh: () => Promise.resolve(),
+            refreshing: false,
+            ...defaultContextProps,
+          }}
+        >
+          <TooltipProvider>
+            <div>
+              <div data-testid="agentId">{agentId}</div>
+              <AgentModePicker />
+            </div>
+          </TooltipProvider>
+        </AgentProvider>
+      );
+    }
+
+    const { getByTestId, getByLabelText, getByText } = render(<Harness />);
+
+    // Start with exec
+    expect(getByTestId("agentId").textContent).toBe("exec");
+
+    // Open picker
+    fireEvent.click(getByLabelText("Select agent"));
+
+    await waitFor(() => {
+      expect(getByText("Auto-select")).toBeTruthy();
+    });
+
+    // Click the auto-select toggle area
+    fireEvent.click(getByText("Auto-select"));
+
+    await waitFor(() => {
+      expect(getByTestId("agentId").textContent).toBe("auto");
+    });
+  });
+
+  test("toggling auto-select switch off defaults to exec", async () => {
+    function Harness() {
+      const [agentId, setAgentId] = React.useState("auto");
+      return (
+        <AgentProvider
+          value={{
+            agentId,
+            setAgentId,
+            agents: [...BUILT_INS, AUTO_AGENT],
+            loaded: true,
+            loadFailed: false,
+            refresh: () => Promise.resolve(),
+            refreshing: false,
+            ...defaultContextProps,
+          }}
+        >
+          <TooltipProvider>
+            <div>
+              <div data-testid="agentId">{agentId}</div>
+              <AgentModePicker />
+            </div>
+          </TooltipProvider>
+        </AgentProvider>
+      );
+    }
+
+    const { getByTestId, getByLabelText, getByText } = render(<Harness />);
+
+    // Start with auto
+    expect(getByTestId("agentId").textContent).toBe("auto");
+
+    // Open picker
+    fireEvent.click(getByLabelText("Select agent"));
+
+    await waitFor(() => {
+      expect(getByText("Auto-select")).toBeTruthy();
+    });
+
+    // Click the auto-select toggle area to turn it off
+    fireEvent.click(getByText("Auto-select"));
+
+    await waitFor(() => {
+      expect(getByTestId("agentId").textContent).toBe("exec");
     });
   });
 });
