@@ -1,4 +1,4 @@
-import { exec, execFileSync } from "child_process";
+import { exec, execFileSync, spawn } from "child_process";
 import type { ChildProcess } from "child_process";
 
 export function killProcessTree(pid: number): void {
@@ -201,6 +201,85 @@ export function execAsync(command: string, options?: ExecAsyncOptions): Disposab
         resolve({ stdout, stderr });
       } else {
         // Include stderr in error message for better debugging
+        const errorMsg =
+          stderr.trim() ||
+          (exitSignal
+            ? `Command killed by signal ${exitSignal}`
+            : `Command failed with exit code ${exitCode ?? "unknown"}`);
+        const error = new Error(errorMsg) as Error & {
+          code: number | null;
+          signal: string | null;
+          stdout: string;
+          stderr: string;
+        };
+        error.code = exitCode;
+        error.signal = exitSignal;
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
+      }
+    });
+
+    child.on("error", reject);
+  });
+
+  return new DisposableExec(promise, child);
+}
+
+/**
+ * Options for execFileAsync.
+ */
+export interface ExecFileAsyncOptions {
+  /** Extra environment variables for the child process. */
+  env?: Record<string, string | undefined>;
+  /** Optional callback for each stderr data chunk from the process. */
+  onStderrData?: (chunk: string) => void;
+}
+
+/**
+ * Execute a file with arguments and automatic cleanup via `using` declaration.
+ * Unlike execAsync, this does not use a shell—arguments are passed directly
+ * to the executable, avoiding shell-quoting issues across platforms.
+ * Uses `spawn` instead of `execFile` to avoid Node's default maxBuffer limit
+ * which would kill long-running processes like `git clone` on verbose repos.
+ *
+ * @example
+ * using proc = execFileAsync("git", ["clone", url, dest]);
+ * const { stdout } = await proc.result;
+ */
+export function execFileAsync(
+  file: string,
+  args: string[],
+  options?: ExecFileAsyncOptions
+): DisposableExec {
+  const child = spawn(file, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: options?.env ? { ...process.env, ...options.env } : undefined,
+  });
+  const promise = new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+    let exitCode: number | null = null;
+    let exitSignal: string | null = null;
+
+    child.stdout?.on("data", (data) => {
+      stdout += data;
+    });
+    child.stderr?.on("data", (data: Buffer) => {
+      const chunk = data.toString();
+      stderr += chunk;
+      options?.onStderrData?.(chunk);
+    });
+
+    child.on("exit", (code, signal) => {
+      exitCode = code;
+      exitSignal = signal;
+    });
+
+    child.on("close", () => {
+      if (exitCode === 0 && exitSignal === null) {
+        resolve({ stdout, stderr });
+      } else {
         const errorMsg =
           stderr.trim() ||
           (exitSignal
