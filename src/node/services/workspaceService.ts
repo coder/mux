@@ -2300,8 +2300,22 @@ export class WorkspaceService extends EventEmitter {
       if (!workspace) {
         return Err("Workspace not found");
       }
+      const { projectPath, workspacePath } = workspace;
 
-      await this.config.updateWorkspaceMetadata(workspaceId, { runtimeConfig });
+      // Use editConfig with path-fallback (same pattern as updateTitle) so
+      // legacy workspaces that don't yet have w.id in config are still found.
+      await this.config.editConfig((config) => {
+        const projectConfig = config.projects.get(projectPath);
+        if (projectConfig) {
+          const workspaceEntry =
+            projectConfig.workspaces.find((w) => w.id === workspaceId) ??
+            projectConfig.workspaces.find((w) => w.path === workspacePath);
+          if (workspaceEntry) {
+            workspaceEntry.runtimeConfig = runtimeConfig;
+          }
+        }
+        return config;
+      });
 
       // Emit updated metadata (same pattern as updateTitle)
       const allMetadata = await this.config.getAllWorkspaceMetadata();
