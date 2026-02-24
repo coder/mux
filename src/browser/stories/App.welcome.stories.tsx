@@ -348,10 +348,17 @@ export const DockerUnavailable: AppStory = {
     // Wait for workspace type buttons to appear
     await canvas.findByText("Workspace Type", {}, { timeout: 10000 });
 
-    // Wait for Docker button to become disabled (runtimeAvailability loads async)
+    // Wait for Docker option to become disabled (runtimeAvailability loads async).
     await waitFor(async () => {
-      const dockerButton = canvas.getByRole("button", { name: /Docker/i });
-      await expect(dockerButton).toBeDisabled();
+      const runtimeTrigger = canvas.getByLabelText("Workspace type");
+      await userEvent.click(runtimeTrigger);
+
+      const dockerOption = await within(document.body).findByRole("option", {
+        name: /^Docker/i,
+      });
+      await expect(dockerOption).toHaveAttribute("aria-disabled", "true");
+
+      await userEvent.keyboard("{Escape}");
     });
   },
 };
