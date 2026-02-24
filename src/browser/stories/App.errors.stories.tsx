@@ -527,6 +527,20 @@ export const ProjectRemovalDisabled: AppStory = {
     if (!projectRow) throw new Error("Project row not found");
     await userEvent.hover(projectRow);
 
+    // Hover the remove trigger after row hover so tooltip content appears.
+    await userEvent.hover(removeButton);
+
+    await waitFor(
+      () => {
+        const tooltip = document.querySelector('[role="tooltip"]');
+        if (!tooltip) throw new Error("Tooltip not visible");
+        if (!tooltip.textContent?.includes("Delete all 2 workspaces first")) {
+          throw new Error("Expected remove-tooltip blocker text");
+        }
+      },
+      { interval: 50 }
+    );
+
     // Verify the button is disabled (aria-disabled="true")
     await waitFor(
       () => {
