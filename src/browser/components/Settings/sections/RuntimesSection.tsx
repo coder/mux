@@ -25,6 +25,7 @@ import {
 import { cn } from "@/common/lib/utils";
 import { getLastRuntimeConfigKey } from "@/common/constants/storage";
 import type { CoderInfo } from "@/common/orpc/schemas/coder";
+import type { ProjectConfig } from "@/common/types/project";
 import { normalizeRuntimeEnablement, RUNTIME_MODE } from "@/common/types/runtime";
 import type {
   RuntimeAvailabilityStatus,
@@ -69,6 +70,61 @@ function getFallbackRuntime(enablement: RuntimeEnablement): RuntimeEnablementId 
   return RUNTIME_ROWS.find((runtime) => enablement[runtime.id])?.id ?? null;
 }
 
+function deriveProjectOverrideState(
+  selectedProjectPath: string | null,
+  projects: Map<string, ProjectConfig>,
+  enablement: RuntimeEnablement,
+  defaultRuntime: RuntimeEnablementId | null | undefined,
+  overrideCache: Map<string, RuntimeOverrideCacheEntry>
+): {
+  projectOverrideEnabled: boolean;
+  projectEnablement: RuntimeEnablement;
+  projectDefaultRuntime: RuntimeEnablementId | null;
+} {
+  if (!selectedProjectPath) {
+    return {
+      projectOverrideEnabled: false,
+      projectEnablement: enablement,
+      projectDefaultRuntime: defaultRuntime ?? null,
+    };
+  }
+
+  const cached = overrideCache.get(selectedProjectPath);
+  if (cached?.pending) {
+    // Keep pending override state stable until refreshProjects completes to avoid
+    // toggling the UI back on/off while backend config is still propagating.
+    return {
+      projectOverrideEnabled: cached.overridesEnabled === true,
+      projectEnablement: cached.enablement,
+      projectDefaultRuntime: cached.defaultRuntime ?? defaultRuntime ?? null,
+    };
+  }
+
+  const projectConfig = projects.get(selectedProjectPath);
+  const hasOverrides =
+    projectConfig?.runtimeOverridesEnabled === true ||
+    Boolean(projectConfig?.runtimeEnablement) ||
+    projectConfig?.defaultRuntime !== undefined;
+
+  if (hasOverrides) {
+    const resolvedEnablement = normalizeRuntimeEnablement(projectConfig?.runtimeEnablement);
+    // When overrides are active, the project's enablement is independent of global settings
+    // (all-true defaults + only the project's explicit `false` overrides). This matches
+    // the creation flow in ChatInput/index.tsx which uses normalizeRuntimeEnablement directly.
+    return {
+      projectOverrideEnabled: true,
+      projectEnablement: resolvedEnablement,
+      projectDefaultRuntime: projectConfig?.defaultRuntime ?? defaultRuntime ?? null,
+    };
+  }
+
+  return {
+    projectOverrideEnabled: false,
+    projectEnablement: enablement,
+    projectDefaultRuntime: defaultRuntime ?? null,
+  };
+}
+
 export function RuntimesSection() {
   const { api } = useAPI();
   const { projects, refreshProjects } = useProjectContext();
@@ -84,15 +140,10 @@ export function RuntimesSection() {
       ? runtimesProjectPath
       : ALL_SCOPE_VALUE;
   const [selectedScope, setSelectedScope] = useState(initialScope);
-  const [projectOverrideEnabled, setProjectOverrideEnabled] = useState(false);
-  const [projectEnablement, setProjectEnablement] = useState<RuntimeEnablement>(enablement);
-  const [projectDefaultRuntime, setProjectDefaultRuntime] = useState<RuntimeEnablementId | null>(
-    defaultRuntime
-  );
   const [runtimeAvailabilityState, setRuntimeAvailabilityState] =
     useState<RuntimeAvailabilityState>({ status: "idle" });
   const [coderInfo, setCoderInfo] = useState<CoderInfo | null>(null);
-  const [overrideCacheVersion, setOverrideCacheVersion] = useState(0);
+  const [, setOverrideCacheVersion] = useState(0);
   // Cache pending per-project overrides locally while config updates propagate.
   const overrideCacheRef = useRef<Map<string, RuntimeOverrideCacheEntry>>(new Map());
 
@@ -107,9 +158,13 @@ export function RuntimesSection() {
     setRuntimesProjectPath(null);
   }, [runtimesProjectPath, projects, setRuntimesProjectPath]);
 
-  const selectedProjectPath = selectedScope === ALL_SCOPE_VALUE ? null : selectedScope;
+  // Derive scope during render so stale selections self-heal without effect-driven state sync.
+  const effectiveScope =
+    selectedScope !== ALL_SCOPE_VALUE && projects.has(selectedScope)
+      ? selectedScope
+      : ALL_SCOPE_VALUE;
+  const selectedProjectPath = effectiveScope === ALL_SCOPE_VALUE ? null : effectiveScope;
   const isProjectScope = Boolean(selectedProjectPath);
-  const isProjectOverrideActive = isProjectScope && projectOverrideEnabled;
 
   // Per-project runtime option defaults (SSH host, Docker image, etc.).
   // Same localStorage keys the creation flow reads, so edits here are reflected immediately.
@@ -154,6 +209,8 @@ export function RuntimesSection() {
     }
   ) => {
     overrideCacheRef.current.set(projectPath, entry);
+    // Cache writes are mutable, so bump a lightweight counter to force render-time re-derivation.
+    setOverrideCacheVersion((prev) => prev + 1);
     const updatePromise = api?.config?.updateRuntimeEnablement(payload);
     if (!updatePromise) {
       overrideCacheRef.current.set(projectPath, { ...entry, pending: false });
@@ -175,63 +232,17 @@ export function RuntimesSection() {
       });
   };
 
-  useEffect(() => {
-    if (selectedScope === ALL_SCOPE_VALUE) {
-      return;
-    }
-
-    if (!projects.has(selectedScope)) {
-      setSelectedScope(ALL_SCOPE_VALUE);
-    }
-  }, [projects, selectedScope]);
-
-  useEffect(() => {
-    if (!selectedProjectPath) {
-      setProjectOverrideEnabled(false);
-      setProjectEnablement(enablement);
-      setProjectDefaultRuntime(defaultRuntime ?? null);
-      return;
-    }
-
-    const cached = overrideCacheRef.current.get(selectedProjectPath);
-    if (cached?.pending) {
-      // Keep the pending override state stable until refreshProjects completes to avoid
-      // toggling the UI back on/off while backend config is still propagating.
-      const overridesEnabled = cached.overridesEnabled === true;
-      setProjectOverrideEnabled(overridesEnabled);
-      setProjectEnablement(cached.enablement);
-      setProjectDefaultRuntime(cached.defaultRuntime ?? defaultRuntime ?? null);
-      return;
-    }
-
-    const projectConfig = projects.get(selectedProjectPath);
-    const hasOverrides =
-      projectConfig?.runtimeOverridesEnabled === true ||
-      Boolean(projectConfig?.runtimeEnablement) ||
-      projectConfig?.defaultRuntime !== undefined;
-
-    if (hasOverrides) {
-      const resolvedEnablement = normalizeRuntimeEnablement(projectConfig?.runtimeEnablement);
-      setProjectOverrideEnabled(true);
-      // When overrides are active, the project's enablement is independent of global settings
-      // (all-true defaults + only the project's explicit `false` overrides). This matches
-      // the creation flow in ChatInput/index.tsx which uses normalizeRuntimeEnablement directly.
-      setProjectEnablement(resolvedEnablement);
-      setProjectDefaultRuntime(projectConfig?.defaultRuntime ?? defaultRuntime ?? null);
-      overrideCacheRef.current.set(selectedProjectPath, {
-        enablement: resolvedEnablement,
-        defaultRuntime: projectConfig?.defaultRuntime ?? null,
-        pending: false,
-        overridesEnabled: true,
-      });
-      return;
-    }
-
-    overrideCacheRef.current.delete(selectedProjectPath);
-    setProjectOverrideEnabled(false);
-    setProjectEnablement(enablement);
-    setProjectDefaultRuntime(defaultRuntime ?? null);
-  }, [defaultRuntime, enablement, projects, selectedProjectPath, overrideCacheVersion]);
+  // Keep project override UI purely derived from project config + pending cache.
+  // This avoids duplicated derived state and effect-driven synchronization.
+  const { projectOverrideEnabled, projectEnablement, projectDefaultRuntime } =
+    deriveProjectOverrideState(
+      selectedProjectPath,
+      projects,
+      enablement,
+      defaultRuntime,
+      overrideCacheRef.current
+    );
+  const isProjectOverrideActive = isProjectScope && projectOverrideEnabled;
 
   useEffect(() => {
     if (!api || !selectedProjectPath) {
@@ -320,10 +331,6 @@ export function RuntimesSection() {
         pending: true,
         overridesEnabled: false,
       };
-      setProjectOverrideEnabled(false);
-      setProjectEnablement(enablement);
-      setProjectDefaultRuntime(defaultRuntime ?? null);
-
       queueProjectOverrideUpdate(selectedProjectPath, cacheEntry, {
         projectPath: selectedProjectPath,
         runtimeEnablement: null,
@@ -340,10 +347,6 @@ export function RuntimesSection() {
       pending: true,
       overridesEnabled: true,
     };
-    setProjectOverrideEnabled(true);
-    setProjectEnablement(nextEnablement);
-    setProjectDefaultRuntime(defaultRuntime ?? null);
-
     queueProjectOverrideUpdate(selectedProjectPath, cacheEntry, {
       projectPath: selectedProjectPath,
       runtimeEnablement: nextEnablement,
@@ -392,15 +395,10 @@ export function RuntimesSection() {
       return;
     }
 
-    setProjectEnablement(nextEnablement);
-
     const inheritedDefault = projectDefaultRuntime ?? defaultRuntime ?? null;
     let nextDefaultRuntime = inheritedDefault;
     if (nextDefaultRuntime && !nextEnablement[nextDefaultRuntime]) {
       nextDefaultRuntime = getFallbackRuntime(nextEnablement);
-    }
-    if (nextDefaultRuntime !== projectDefaultRuntime) {
-      setProjectDefaultRuntime(nextDefaultRuntime);
     }
     const cacheEntry: RuntimeOverrideCacheEntry = {
       enablement: nextEnablement,
@@ -439,7 +437,6 @@ export function RuntimesSection() {
       return;
     }
 
-    setProjectDefaultRuntime(runtimeId);
     const cacheEntry: RuntimeOverrideCacheEntry = {
       enablement: projectEnablement,
       defaultRuntime: runtimeId,
@@ -461,7 +458,7 @@ export function RuntimesSection() {
             <div className="text-foreground text-sm">Scope</div>
             <div className="text-muted text-xs">Manage runtimes globally or per project.</div>
           </div>
-          <Select value={selectedScope} onValueChange={setSelectedScope}>
+          <Select value={effectiveScope} onValueChange={setSelectedScope}>
             <SelectTrigger
               className="border-border-medium bg-background-secondary hover:bg-hover h-9 w-auto min-w-[160px] cursor-pointer rounded-md border px-3 text-sm transition-colors"
               aria-label="Scope"
