@@ -18,15 +18,26 @@ export function RuntimeConfigInput(props: {
   className?: string;
   labelClassName?: string;
   inputClassName?: string;
+  /** When true, render label above input instead of beside it. */
+  stacked?: boolean;
 }) {
   const autoId = useId();
   const inputId = props.id ?? autoId;
 
   return (
-    <div className={cn("flex items-center gap-2", props.className)}>
+    <div
+      className={cn(
+        props.stacked ? "flex flex-col gap-1.5" : "flex items-center gap-2",
+        props.className
+      )}
+    >
       <label
         htmlFor={inputId}
-        className={cn("text-muted-foreground text-xs", props.labelClassName)}
+        className={cn(
+          "text-muted-foreground text-xs",
+          props.stacked && "font-medium",
+          props.labelClassName
+        )}
       >
         {props.label}
       </label>

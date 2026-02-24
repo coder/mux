@@ -955,7 +955,7 @@ export function CreationControls(props: CreationControlsProps) {
 
       {/* Runtime and source branch controls */}
       <div className="flex flex-col gap-1.5" data-component="RuntimeTypeGroup">
-        <div className="flex flex-wrap items-end gap-3">
+        <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
           <div className="flex min-w-0 flex-col gap-1.5">
             <div className="flex items-center gap-1.5">
               <label className="text-muted-foreground text-xs font-medium">Workspace Type</label>
@@ -1089,10 +1089,8 @@ export function CreationControls(props: CreationControlsProps) {
               <Skeleton className="h-7 w-[140px] rounded" />
             )}
           </div>
-        </div>
 
-        <div className="flex flex-col gap-2">
-          {/* SSH Host Input - hidden when Coder runtime is selected */}
+          {/* SSH Host Input - shown in the same row when SSH (non-Coder) is selected */}
           {selectedRuntime.mode === "ssh" &&
             !isCoderSelected &&
             (props.allowSshHost ?? true) &&
@@ -1108,11 +1106,11 @@ export function CreationControls(props: CreationControlsProps) {
                 disabled={props.disabled}
                 hasError={props.runtimeFieldError === "ssh"}
                 inputClassName={INLINE_CONTROL_CLASSES}
+                stacked
               />
             )}
 
-          {/* Runtime-specific config inputs */}
-
+          {/* Docker Image Input - shown in the same row when Docker is selected */}
           {selectedRuntime.mode === "docker" && (
             <RuntimeConfigInput
               label={RUNTIME_OPTION_FIELDS.docker.label}
@@ -1130,6 +1128,7 @@ export function CreationControls(props: CreationControlsProps) {
               id="docker-image"
               ariaLabel="Docker image"
               inputClassName={INLINE_CONTROL_CLASSES}
+              stacked
             />
           )}
         </div>
