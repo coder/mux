@@ -498,7 +498,7 @@ export const ProjectRemovalDisabled: AppStory = {
         ];
 
         // Expand the project so workspaces are visible
-        expandProjects(["/mock/my-app"]);
+        expandProjects(["/home/user/projects/my-app"]);
 
         return createMockORPCClient({
           projects: groupWorkspacesByProject(workspaces),
@@ -516,18 +516,10 @@ export const ProjectRemovalDisabled: AppStory = {
       return button;
     });
 
-    const projectRow = await waitFor(() => {
-      const row = canvasElement.querySelector<HTMLElement>(
-        '[data-project-path="/mock/my-app"][aria-controls]'
-      );
-      if (row) return row;
-
-      const fallback = removeButton.closest<HTMLElement>('[data-project-path="/mock/my-app"]');
-      if (fallback) return fallback;
-
-      throw new Error("Project row not found");
-    });
-
+    // The remove button is a direct child of DraggableProjectItem — hover the
+    // project row so action icons become visible (hover-reveal invariant).
+    const projectRow = removeButton.closest<HTMLElement>("[data-project-path]");
+    if (!projectRow) throw new Error("Project row not found");
     await userEvent.hover(projectRow);
 
     // Verify the button is disabled (aria-disabled="true")
