@@ -7,7 +7,7 @@
 
 import type { ExecOptions, ExecStream, InitLogger } from "./Runtime";
 import { streamToString, shescape } from "./streamUtils";
-import { execAsync } from "@/node/utils/disposableExec";
+import { execFileAsync } from "@/node/utils/disposableExec";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 
@@ -27,7 +27,7 @@ export async function getOriginUrlForBundle(
 ): Promise<OriginUrlResult> {
   try {
     // Use git -C to avoid shell-specific `cd && ...` quoting.
-    using proc = execAsync(`git -C "${projectPath}" remote get-url origin`);
+    using proc = execFileAsync("git", ["-C", projectPath, "remote", "get-url", "origin"]);
     const { stdout } = await proc.result;
     const url = stdout.trim();
 
