@@ -54,7 +54,10 @@ export const WORKSPACE_DEFAULTS = {
   /** Default input text for new workspaces (empty) */
   input: "" as string,
 
-  /** Default diff base for code review (compare against origin/main) */
+  /**
+   * Fallback diff base for code review when trunk auto-detection is unavailable.
+   * Most flows will override this with origin/<detected-trunk>.
+   */
   reviewBase: "origin/main" as string,
 };
 

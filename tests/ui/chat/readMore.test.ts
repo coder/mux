@@ -140,7 +140,7 @@ async function withReviewPanel(
   const cleanupDom = installDom();
 
   // Tests in this file diff against HEAD (uncommitted changes).
-  // Set the workspace diff base to HEAD explicitly since the app default is origin/main.
+  // Set the workspace diff base to HEAD explicitly since the app default is origin/<trunk>.
   updatePersistedState(STORAGE_KEYS.reviewDiffBase(params.metadata.id), "HEAD");
 
   const view = renderReviewPanel({ apiClient: params.apiClient, metadata: params.metadata });

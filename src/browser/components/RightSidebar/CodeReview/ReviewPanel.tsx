@@ -33,7 +33,7 @@ import { ImmersiveReviewView } from "./ImmersiveReviewView";
 import { FileTree } from "./FileTree";
 import { UntrackedStatus } from "./UntrackedStatus";
 import { shellQuote } from "@/common/utils/shell";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { readPersistedString, usePersistedState } from "@/browser/hooks/usePersistedState";
 import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useReviewState } from "@/browser/hooks/useReviewState";
 import { useReviews } from "@/browser/hooks/useReviews";
@@ -65,6 +65,7 @@ import { applyFrontendFilters } from "@/browser/utils/review/filterHunks";
 import { findNextHunkId, findNextHunkIdAfterFileRemoval } from "@/browser/utils/review/navigation";
 import { cn } from "@/common/lib/utils";
 import { useAPI, type APIClient } from "@/browser/contexts/API";
+import { useWorkspaceMetadata } from "@/browser/contexts/WorkspaceContext";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import { invalidateGitStatus } from "@/browser/stores/GitStatusStore";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -178,6 +179,32 @@ function getOriginBranchForFetch(diffBase: string): string | null {
   return branch;
 }
 
+function toOriginDiffBase(trunkBranch: string | null | undefined): string | null {
+  if (typeof trunkBranch !== "string") {
+    return null;
+  }
+
+  const trimmed = trunkBranch.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  if (trimmed.startsWith("origin/")) {
+    return trimmed;
+  }
+
+  const refsHeadsPrefix = "refs/heads/";
+  const branchName = trimmed.startsWith(refsHeadsPrefix)
+    ? trimmed.slice(refsHeadsPrefix.length)
+    : trimmed;
+
+  if (branchName.length === 0) {
+    return null;
+  }
+
+  return `origin/${branchName}`;
+}
+
 interface OriginFetchState {
   key: string;
   promise: Promise<void>;
@@ -264,6 +291,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 }) => {
   const originFetchRef = useRef<OriginFetchState | null>(null);
   const { api } = useAPI();
+  const { workspaceMetadata } = useWorkspaceMetadata();
   const panelRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -314,21 +342,22 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     null
   );
 
-  // Per-project default base (shared across workspaces in the same project)
-  // Default is HEAD for compatibility; users can change per-project via UI
-  const [defaultBase] = usePersistedState<string>(
-    STORAGE_KEYS.reviewDefaultBase(projectPath),
+  const projectDefaultBaseKey = STORAGE_KEYS.reviewDefaultBase(projectPath);
+  const workspaceDiffBaseKey = STORAGE_KEYS.reviewDiffBase(workspaceId);
+
+  // Per-project default base (shared across workspaces in the same project).
+  // Falls back to a static value only if trunk detection fails.
+  const [defaultBase, setDefaultBase] = usePersistedState<string>(
+    projectDefaultBaseKey,
     WORKSPACE_DEFAULTS.reviewBase,
     { listener: true }
   );
 
   // Persist diff base per workspace (falls back to project default)
   // Uses listener: true to sync with GitStatusIndicator base selector
-  const [diffBase, setDiffBase] = usePersistedState(
-    STORAGE_KEYS.reviewDiffBase(workspaceId),
-    defaultBase,
-    { listener: true }
-  );
+  const [diffBase, setDiffBase] = usePersistedState(workspaceDiffBaseKey, defaultBase, {
+    listener: true,
+  });
 
   // Persist includeUncommitted flag globally
   const [includeUncommitted, setIncludeUncommitted] = usePersistedState(
@@ -344,6 +373,65 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     REVIEW_SORT_ORDER_KEY,
     "last-edit"
   );
+
+  // Auto-detect trunk for new review base keys so repos using master/develop
+  // don't start on the hard-coded fallback. Existing user selections are preserved.
+  useEffect(() => {
+    const projectBaseIsPersisted = readPersistedString(projectDefaultBaseKey) !== undefined;
+    if (projectBaseIsPersisted) {
+      return;
+    }
+
+    const workspaceBaseIsPersisted = readPersistedString(workspaceDiffBaseKey) !== undefined;
+
+    const metadataTrunkBase = toOriginDiffBase(workspaceMetadata.get(workspaceId)?.taskTrunkBranch);
+    if (metadataTrunkBase) {
+      if (readPersistedString(projectDefaultBaseKey) === undefined) {
+        setDefaultBase(metadataTrunkBase);
+      }
+      if (!workspaceBaseIsPersisted) {
+        setDiffBase(metadataTrunkBase);
+      }
+      return;
+    }
+
+    if (!api) {
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const branchResult = await api.projects.listBranches({ projectPath });
+        const detectedBase = toOriginDiffBase(branchResult.recommendedTrunk);
+        if (!detectedBase || cancelled) {
+          return;
+        }
+
+        if (readPersistedString(projectDefaultBaseKey) === undefined) {
+          setDefaultBase(detectedBase);
+        }
+        if (readPersistedString(workspaceDiffBaseKey) === undefined) {
+          setDiffBase(detectedBase);
+        }
+      } catch {
+        // Best effort only; keep WORKSPACE_DEFAULTS.reviewBase when detection fails.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    api,
+    projectDefaultBaseKey,
+    projectPath,
+    setDefaultBase,
+    setDiffBase,
+    workspaceDiffBaseKey,
+    workspaceId,
+    workspaceMetadata,
+  ]);
 
   // Initialize review state hook
   const { isRead, toggleRead, markAsRead, markAsUnread } = useReviewState(workspaceId);
