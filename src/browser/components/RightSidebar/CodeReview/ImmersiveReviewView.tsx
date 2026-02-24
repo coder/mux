@@ -1029,6 +1029,9 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       // still keep an external selection request active. Clear it to close the composer
       // and prevent accidental duplicate submissions on repeated Enter presses.
       setInlineComposerRequest(null);
+      // Clear the line selection so the next Shift+C targets the current keyboard
+      // cursor (activeLineIndex) rather than the stale range from this comment.
+      setSelectedLineRange(null);
       containerRef.current?.focus();
     },
     [onReviewNote]
@@ -1038,6 +1041,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     // Keep immersive parent state aligned with child composer teardown so canceled
     // keyboard-initiated requests do not linger or steal focus.
     setInlineComposerRequest(null);
+    setSelectedLineRange(null);
     containerRef.current?.focus();
   }, []);
 
