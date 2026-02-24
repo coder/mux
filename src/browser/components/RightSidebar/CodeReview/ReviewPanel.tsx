@@ -984,20 +984,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     isCreating,
   ]);
 
-  const hasSkippedInitialDiffBasePersistRef = useRef(false);
-
-  // Persist diffBase when it changes.
-  // Skip the first run so an unset workspace doesn't immediately persist the fallback
-  // base before async trunk detection resolves.
-  useEffect(() => {
-    if (!hasSkippedInitialDiffBasePersistRef.current) {
-      hasSkippedInitialDiffBasePersistRef.current = true;
-      return;
-    }
-
-    setDiffBase(filters.diffBase);
-  }, [filters.diffBase, setDiffBase]);
-
   // Persist includeUncommitted when it changes
   useEffect(() => {
     setIncludeUncommitted(filters.includeUncommitted);
