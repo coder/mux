@@ -443,6 +443,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
 
   const transcriptFindInputRef = useRef<HTMLInputElement>(null);
   const transcriptFindMatchesRef = useRef<TranscriptTextMatch[]>([]);
+  const transcriptFindFocusRequestedRef = useRef(false);
   const [transcriptFindOpen, setTranscriptFindOpen] = useState(false);
   const [transcriptFindQuery, setTranscriptFindQuery] = useState("");
   const [transcriptFindMatchCount, setTranscriptFindMatchCount] = useState(0);
@@ -458,6 +459,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   const closeTranscriptFind = useCallback(() => {
     setTranscriptFindOpen(false);
     setTranscriptFindActiveIndex(-1);
+    transcriptFindFocusRequestedRef.current = false;
 
     const transcriptRoot = contentRef.current;
     const selection = typeof window === "undefined" ? null : window.getSelection();
@@ -491,6 +493,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       return previousQuery;
     });
     setTranscriptFindActiveIndex(-1);
+    transcriptFindFocusRequestedRef.current = false;
     focusTranscriptFindInput();
   }, [contentRef, focusTranscriptFindInput]);
 
@@ -500,6 +503,9 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       return;
     }
 
+    // Keep query typing focused in the input and only shift transcript focus
+    // when navigation is explicit (Enter, Shift+Enter, or arrow buttons).
+    transcriptFindFocusRequestedRef.current = true;
     setTranscriptFindActiveIndex((currentIndex) => {
       if (currentIndex < 0) {
         return direction > 0 ? 0 : matches.length - 1;
@@ -513,6 +519,13 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     (event: React.KeyboardEvent<HTMLInputElement>) => {
       if (event.key === "Enter") {
         event.preventDefault();
+
+        if (transcriptFindQuery.trim().length === 0) {
+          closeTranscriptFind();
+          contentRef.current?.focus();
+          return;
+        }
+
         stepTranscriptFindMatch(event.shiftKey ? -1 : 1);
         return;
       }
@@ -524,7 +537,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
         contentRef.current?.focus();
       }
     },
-    [closeTranscriptFind, contentRef, stepTranscriptFindMatch]
+    [closeTranscriptFind, contentRef, stepTranscriptFindMatch, transcriptFindQuery]
   );
 
   useEffect(() => {
@@ -595,11 +608,17 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       return;
     }
 
-    const match = transcriptFindMatchesRef.current[transcriptFindActiveIndex];
-    if (!match) {
+    if (!transcriptFindFocusRequestedRef.current) {
       return;
     }
 
+    const match = transcriptFindMatchesRef.current[transcriptFindActiveIndex];
+    if (!match) {
+      transcriptFindFocusRequestedRef.current = false;
+      return;
+    }
+
+    transcriptFindFocusRequestedRef.current = false;
     setAutoScroll(false);
     focusTranscriptTextMatch(match);
   }, [setAutoScroll, transcriptFindActiveIndex, transcriptFindOpen]);
@@ -925,6 +944,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                   type="text"
                   value={transcriptFindQuery}
                   onChange={(event) => {
+                    transcriptFindFocusRequestedRef.current = false;
                     setTranscriptFindQuery(event.target.value);
                     setTranscriptFindActiveIndex(-1);
                   }}
