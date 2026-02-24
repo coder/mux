@@ -516,9 +516,14 @@ export const ProjectRemovalDisabled: AppStory = {
       return button;
     });
 
-    // The remove button is a direct child of DraggableProjectItem — hover the
-    // project row so action icons become visible (hover-reveal invariant).
-    const projectRow = removeButton.closest<HTMLElement>("[data-project-path]");
+    // Hover the project row (the element that owns hover:[&_button]:opacity-100)
+    // so action icons become visible. Avoid [data-project-path] here because the
+    // remove button itself also has that attribute.
+    const projectRow =
+      removeButton.closest<HTMLElement>("[aria-controls]") ??
+      canvasElement.querySelector<HTMLElement>(
+        '[role="button"][aria-label="Create workspace in my-app"]'
+      );
     if (!projectRow) throw new Error("Project row not found");
     await userEvent.hover(projectRow);
 
