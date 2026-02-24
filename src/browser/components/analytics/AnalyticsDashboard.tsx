@@ -162,11 +162,18 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
       <div
         data-testid="analytics-header"
         className={cn(
-          "bg-sidebar border-border-light titlebar-safe-right titlebar-safe-right-gutter-3 flex shrink-0 items-center gap-2 border-b px-3",
-          desktopMode ? `${DESKTOP_TITLEBAR_HEIGHT_CLASS} titlebar-drag` : "h-8"
+          "bg-sidebar border-border-light titlebar-safe-right titlebar-safe-right-gutter-3 flex shrink-0 flex-wrap items-center gap-2 border-b px-3",
+          desktopMode
+            ? `${DESKTOP_TITLEBAR_HEIGHT_CLASS} titlebar-drag`
+            : "py-2 md:h-8 md:flex-nowrap md:py-0"
         )}
       >
-        <div className={cn("flex min-w-0 items-center gap-2", desktopMode && "titlebar-no-drag")}>
+        <div
+          className={cn(
+            "flex min-w-0 w-full items-center gap-2 md:w-auto",
+            desktopMode && "titlebar-no-drag"
+          )}
+        >
           {props.leftSidebarCollapsed && (
             <Button
               variant="ghost"
@@ -193,8 +200,13 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
           <h1 className="text-foreground text-sm font-semibold">Analytics</h1>
         </div>
 
-        <div className={cn("ml-auto flex items-center gap-2", desktopMode && "titlebar-no-drag")}>
-          <label className="text-muted text-xs" htmlFor="analytics-project-filter">
+        <div
+          className={cn(
+            "flex w-full min-w-0 flex-wrap items-center gap-2 md:ml-auto md:w-auto md:min-w-fit md:flex-nowrap",
+            desktopMode && "titlebar-no-drag"
+          )}
+        >
+          <label className="text-muted hidden text-xs md:inline" htmlFor="analytics-project-filter">
             Project
           </label>
           <select
@@ -204,7 +216,7 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
               const nextValue = event.target.value;
               setProjectPath(nextValue === "__all" ? null : nextValue);
             }}
-            className="border-border-medium bg-separator text-foreground h-6 rounded border px-2 text-xs"
+            className="border-border-medium bg-separator text-foreground h-6 min-w-0 flex-1 rounded border px-2 text-xs md:max-w-56 md:flex-none"
           >
             <option value="__all">All projects</option>
             {projectRows.map((project) => (
@@ -214,7 +226,7 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
             ))}
           </select>
 
-          <div className="border-border-medium bg-background flex items-center gap-1 rounded-md border p-1">
+          <div className="border-border-medium bg-background ml-auto flex shrink-0 items-center gap-1 rounded-md border p-1">
             {(
               [
                 ["7d", "7D"],
