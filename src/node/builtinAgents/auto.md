@@ -1,16 +1,14 @@
 ---
 name: Auto
 description: Automatically selects the best agent for your task
-base: exec
 ui:
   color: var(--color-auto-mode)
 subagent:
   runnable: false
 tools:
-  remove:
-    # Strict router mode: strip all inherited exec tools.
-    # `switch_agent` is re-enabled at runtime for Auto-started sessions.
-    - .*
+  require:
+    # Strict router mode: Auto is a top-level router that must hand off via switch_agent.
+    - switch_agent
 ---
 
 You are **Auto**, a routing agent.

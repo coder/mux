@@ -21,12 +21,6 @@ export interface ResolveToolPolicyOptions {
   agents: readonly AgentLikeForPolicy[];
   isSubagent: boolean;
   disableTaskToolsForDepth: boolean;
-  enableAgentSwitchTool: boolean;
-  /**
-   * Force switch_agent as the only required tool for this turn.
-   * Used by Auto so routing always happens before prose output.
-   */
-  requireSwitchAgentTool?: boolean;
 }
 
 // Runtime restrictions that cannot be overridden by agent definitions.
@@ -41,6 +35,30 @@ const DEPTH_HARD_DENY: ToolPolicy = [
   { regex_match: "task_.*", action: "disable" },
 ];
 
+function matchesToolPattern(pattern: string, toolName: string): boolean {
+  try {
+    const regex = new RegExp(`^${pattern}$`);
+    return regex.test(toolName);
+  } catch {
+    return false;
+  }
+}
+
+function isExplicitSwitchAgentPattern(pattern: string): boolean {
+  const trimmed = pattern.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+
+  // Keep this explicit so broad wildcards (e.g. ".*" in exec) do not accidentally
+  // unlock switch_agent for every top-level agent.
+  if (trimmed === ".*") {
+    return false;
+  }
+
+  return matchesToolPattern(trimmed, "switch_agent");
+}
+
 /**
  * Resolves tool policy for an agent, including inherited tools from base agents.
  *
@@ -48,6 +66,7 @@ const DEPTH_HARD_DENY: ToolPolicy = [
  * 1. Inheritance chain processed base → child:
  *    - Each layer's `tools.add` patterns (enable)
  *    - Each layer's `tools.remove` patterns (disable)
+ *    - Each layer's `tools.require` patterns (require)
  * 2. Runtime restrictions (subagent limits, depth limits) applied last
  *
  * Example: ask (base: exec)
@@ -60,25 +79,14 @@ const DEPTH_HARD_DENY: ToolPolicy = [
  * - non-plan subagents: disable `propose_plan`, enable `agent_report`
  */
 export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): ToolPolicy {
-  const {
-    agents,
-    isSubagent,
-    disableTaskToolsForDepth,
-    enableAgentSwitchTool,
-    requireSwitchAgentTool = false,
-  } = options;
-
-  // Defensive normalization: requiring switch_agent is only valid when the tool can be enabled.
-  // Invalid combinations (e.g. stale subagent metadata pointing at Auto) degrade safely
-  // to the default disabled policy instead of throwing and bricking the workspace.
-  const shouldRequireSwitchAgentTool =
-    requireSwitchAgentTool && enableAgentSwitchTool && !isSubagent;
+  const { agents, isSubagent, disableTaskToolsForDepth } = options;
 
   // Start with deny-all baseline
   const agentPolicy: ToolPolicy = [{ regex_match: ".*", action: "disable" }];
 
   // Process inheritance chain: base → child
   const configs = collectToolConfigsFromResolvedChain(agents);
+  let switchAgentEnabledByConfig = false;
   for (const config of configs) {
     // Enable tools from add list (treated as regex patterns)
     if (config.add) {
@@ -86,6 +94,9 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
         const trimmed = pattern.trim();
         if (trimmed.length > 0) {
           agentPolicy.push({ regex_match: trimmed, action: "enable" });
+          if (isExplicitSwitchAgentPattern(trimmed)) {
+            switchAgentEnabledByConfig = true;
+          }
         }
       }
     }
@@ -96,6 +107,22 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
         const trimmed = pattern.trim();
         if (trimmed.length > 0) {
           agentPolicy.push({ regex_match: trimmed, action: "disable" });
+          if (isExplicitSwitchAgentPattern(trimmed)) {
+            switchAgentEnabledByConfig = false;
+          }
+        }
+      }
+    }
+
+    // Require tools from require list.
+    if (config.require) {
+      for (const pattern of config.require) {
+        const trimmed = pattern.trim();
+        if (trimmed.length > 0) {
+          agentPolicy.push({ regex_match: trimmed, action: "require" });
+          if (isExplicitSwitchAgentPattern(trimmed)) {
+            switchAgentEnabledByConfig = true;
+          }
         }
       }
     }
@@ -108,16 +135,11 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
     runtimePolicy.push(...DEPTH_HARD_DENY);
   }
 
-  // switch_agent is disabled by default and only enabled for Auto-started sessions.
-  // This must come before subagent hard-deny so subagents always resolve to disabled.
+  // switch_agent is disabled by default and only re-enabled when the resolved
+  // agent chain explicitly requests it (e.g. tools.require: ["switch_agent"]).
   runtimePolicy.push({ regex_match: "switch_agent", action: "disable" });
-  if (enableAgentSwitchTool && !isSubagent) {
+  if (!isSubagent && switchAgentEnabledByConfig) {
     runtimePolicy.push({ regex_match: "switch_agent", action: "enable" });
-
-    // Auto is a strict router: force a switch_agent tool call before producing prose.
-    if (shouldRequireSwitchAgentTool) {
-      runtimePolicy.push({ regex_match: "switch_agent", action: "require" });
-    }
   }
 
   if (isSubagent) {

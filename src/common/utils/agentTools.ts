@@ -3,6 +3,7 @@ import type { AgentId } from "@/common/types/agentDefinition";
 export interface ToolsConfig {
   add?: readonly string[];
   remove?: readonly string[];
+  require?: readonly string[];
 }
 
 export interface AgentToolsLike {
@@ -34,6 +35,7 @@ function toolMatchesPatterns(toolName: string, patterns: readonly string[]): boo
  * - Baseline is deny-all.
  * - If a tool matches any `add` pattern it becomes enabled.
  * - If a tool matches any `remove` pattern it becomes disabled (overrides earlier adds).
+ * - If a tool matches any `require` pattern it becomes enabled.
  */
 export function isToolEnabledByConfigs(toolName: string, configs: readonly ToolsConfig[]): boolean {
   let enabled = false;
@@ -45,6 +47,10 @@ export function isToolEnabledByConfigs(toolName: string, configs: readonly Tools
 
     if (config.remove && toolMatchesPatterns(toolName, config.remove)) {
       enabled = false;
+    }
+
+    if (config.require && toolMatchesPatterns(toolName, config.require)) {
+      enabled = true;
     }
   }
 

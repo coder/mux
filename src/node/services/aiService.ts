@@ -680,7 +680,6 @@ export class AIService extends EventEmitter {
         workspacePath,
         requestedAgentId: agentId,
         disableWorkspaceAgents: disableWorkspaceAgents ?? false,
-        enableAgentSwitchTool: metadata.agentSwitchingEnabled === true,
         modelString,
         callerToolPolicy: toolPolicy,
         cfg,

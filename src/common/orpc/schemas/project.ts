@@ -70,10 +70,6 @@ export const WorkspaceConfigSchema = z.object({
     description:
       'If set, selects an agent definition for this workspace (e.g., "explore" or "exec").',
   }),
-  agentSwitchingEnabled: z.boolean().optional().meta({
-    description:
-      "When true, switch_agent tool is enabled for this workspace (set when session starts from Auto agent).",
-  }),
   taskStatus: z
     .enum(["queued", "running", "awaiting_report", "interrupted", "reported"])
     .optional()

@@ -529,7 +529,7 @@ function deepMergeAgentFrontmatter(
   if (
     Array.isArray(base) &&
     Array.isArray(overlay) &&
-    (pathKey === "tools.add" || pathKey === "tools.remove")
+    (pathKey === "tools.add" || pathKey === "tools.remove" || pathKey === "tools.require")
   ) {
     // Tool layers are processed in order (base first, then child).
     return [...(base as unknown[]), ...(overlay as unknown[])];

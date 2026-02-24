@@ -28,7 +28,8 @@ describe("built-in agent definitions", () => {
 
     const auto = byId.get("auto");
     expect(auto).toBeTruthy();
-    expect(auto?.frontmatter.tools?.remove ?? []).toContain(".*");
+    expect(auto?.frontmatter.base).toBeUndefined();
+    expect(auto?.frontmatter.tools?.require ?? []).toContain("switch_agent");
     expect(auto?.body).toContain("Immediately call `switch_agent`");
   });
 

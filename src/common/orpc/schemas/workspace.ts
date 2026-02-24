@@ -78,10 +78,6 @@ export const WorkspaceMetadataSchema = z.object({
     description:
       "ISO 8601 timestamp when workspace was last unarchived. Used for recency calculation to bump restored workspaces to top.",
   }),
-  agentSwitchingEnabled: z.boolean().optional().meta({
-    description:
-      "When true, switch_agent tool is enabled for this workspace (set when session starts from Auto agent).",
-  }),
   sectionId: z.string().optional().meta({
     description: "ID of the section this workspace belongs to (optional, unsectioned if absent)",
   }),

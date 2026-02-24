@@ -74,7 +74,7 @@ import {
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import { MessageQueue } from "./messageQueue";
-import type { StreamEndEvent, StreamStartEvent } from "@/common/types/stream";
+import type { StreamEndEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
 import { RetryManager, type RetryFailureError, type RetryStatusEvent } from "./retryManager";
 import type { TelemetryService } from "./telemetryService";
@@ -275,12 +275,6 @@ export class AgentSession {
   private turnPhase: TurnPhase = TurnPhase.IDLE;
   // When true, stream-end skips auto-flushing queued messages so an edit can truncate first.
   private deferQueuedFlushUntilAfterEdit = false;
-  /**
-   * Tracks in-flight persistence for agentSwitchingEnabled that starts at stream-start.
-   * Stream-end awaits this before dispatching switch follow-ups to avoid metadata races.
-   */
-  private pendingAgentSwitchingSync?: Promise<void>;
-
   /** Guardrail against synthetic switch_agent ping-pong loops. */
   private consecutiveAgentSwitches = 0;
 
@@ -2656,61 +2650,6 @@ export class AgentSession {
     return Ok(undefined);
   }
 
-  private async syncAgentSwitchingForResolvedAgent(
-    requestedAgentId: string | undefined,
-    resolvedAgentId: string | undefined
-  ): Promise<void> {
-    assert(
-      typeof requestedAgentId === "string" || requestedAgentId === undefined,
-      "syncAgentSwitchingForResolvedAgent requestedAgentId must be string|undefined"
-    );
-    assert(
-      typeof resolvedAgentId === "string" || resolvedAgentId === undefined,
-      "syncAgentSwitchingForResolvedAgent resolvedAgentId must be string|undefined"
-    );
-
-    const normalizedRequestedAgentId = requestedAgentId?.trim().toLowerCase();
-    if (normalizedRequestedAgentId !== "auto") {
-      return;
-    }
-
-    const normalizedResolvedAgentId = resolvedAgentId?.trim().toLowerCase();
-    const shouldEnableAgentSwitching = normalizedResolvedAgentId === "auto";
-
-    // Guard for test mocks that may not implement getWorkspaceMetadata.
-    if (typeof this.aiService.getWorkspaceMetadata !== "function") {
-      return;
-    }
-
-    try {
-      const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
-      if (!metadataResult.success) {
-        log.warn("Failed to read workspace metadata while syncing agent switching", {
-          workspaceId: this.workspaceId,
-          requestedAgentId: normalizedRequestedAgentId,
-          resolvedAgentId: normalizedResolvedAgentId,
-          error: metadataResult.error,
-        });
-        return;
-      }
-
-      if (metadataResult.data.agentSwitchingEnabled === shouldEnableAgentSwitching) {
-        return;
-      }
-
-      await this.config.updateWorkspaceMetadata(this.workspaceId, {
-        agentSwitchingEnabled: shouldEnableAgentSwitching,
-      });
-    } catch (error) {
-      log.warn("Failed to persist agent switching metadata flag", {
-        workspaceId: this.workspaceId,
-        requestedAgentId: normalizedRequestedAgentId,
-        resolvedAgentId: normalizedResolvedAgentId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
   private async streamWithHistory(
     modelString: string,
     options?: SendMessageOptions,
@@ -3530,18 +3469,6 @@ export class AgentSession {
     forward("stream-start", (payload) => {
       this.setTurnPhase(TurnPhase.STREAMING);
       this.emitChatEvent(payload);
-
-      // Persist agent-switch enablement based on the resolved stream agent, not just the request.
-      // This avoids leaving switch_agent enabled when an "auto" request falls back to exec.
-      const streamStartPayload = payload as StreamStartEvent;
-      if (streamStartPayload.replay) {
-        return;
-      }
-
-      this.pendingAgentSwitchingSync = this.syncAgentSwitchingForResolvedAgent(
-        this.activeStreamContext?.options?.agentId,
-        streamStartPayload.agentId
-      );
     });
     forward("stream-delta", (payload) => {
       this.activeStreamHadAnyDelta = true;
@@ -3663,7 +3590,6 @@ export class AgentSession {
       if (hadCompactionRequest && !this.disposed) {
         this.clearQueue();
       }
-      this.pendingAgentSwitchingSync = undefined;
       const abortReason = "abortReason" in payload ? payload.abortReason : undefined;
       await this.handleStreamFailureForAutoRetry({
         type: "aborted",
@@ -3747,12 +3673,6 @@ export class AgentSession {
         if (handled) {
           // Dispatch follow-up AFTER reset so it can set its own stream state.
           await this.dispatchPendingFollowUp();
-        }
-
-        const pendingAgentSwitchingSync = this.pendingAgentSwitchingSync;
-        this.pendingAgentSwitchingSync = undefined;
-        if (pendingAgentSwitchingSync) {
-          await pendingAgentSwitchingSync;
         }
 
         const switchResult = this.extractSwitchAgentResult(streamEndPayload);

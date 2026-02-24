@@ -11,7 +11,6 @@ describe("resolveToolPolicyForAgent", () => {
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,
-      enableAgentSwitchTool: false,
     });
 
     expect(policy).toEqual([
@@ -20,13 +19,12 @@ describe("resolveToolPolicyForAgent", () => {
     ]);
   });
 
-  test("switch_agent is disabled by default when auto switch is off", () => {
+  test("switch_agent is disabled by default when not explicitly requested", () => {
     const agents: AgentLikeForPolicy[] = [{ tools: { add: ["file_read"] } }];
     const policy = resolveToolPolicyForAgent({
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,
-      enableAgentSwitchTool: false,
     });
 
     expect(policy).toEqual([
@@ -42,7 +40,6 @@ describe("resolveToolPolicyForAgent", () => {
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,
-      enableAgentSwitchTool: false,
     });
 
     expect(policy).toEqual([
@@ -59,7 +56,6 @@ describe("resolveToolPolicyForAgent", () => {
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,
-      enableAgentSwitchTool: false,
     });
 
     expect(policy).toEqual([
@@ -70,88 +66,65 @@ describe("resolveToolPolicyForAgent", () => {
     ]);
   });
 
-  test("enableAgentSwitchTool enables switch_agent for top-level workspaces", () => {
-    const agents: AgentLikeForPolicy[] = [{ tools: { add: ["file_read"] } }];
+  test("top-level agents can explicitly re-enable switch_agent via tools.add", () => {
+    const agents: AgentLikeForPolicy[] = [{ tools: { add: ["file_read", "switch_agent"] } }];
     const policy = resolveToolPolicyForAgent({
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,
-      enableAgentSwitchTool: true,
     });
 
     expect(policy).toEqual([
       { regex_match: ".*", action: "disable" },
       { regex_match: "file_read", action: "enable" },
+      { regex_match: "switch_agent", action: "enable" },
       { regex_match: "switch_agent", action: "disable" },
       { regex_match: "switch_agent", action: "enable" },
     ]);
   });
 
-  test("requireSwitchAgentTool forces switch_agent for strict auto routing", () => {
-    const agents: AgentLikeForPolicy[] = [{ tools: { add: ["file_read"] } }];
+  test("top-level agents can require switch_agent via tools.require", () => {
+    const agents: AgentLikeForPolicy[] = [{ tools: { require: ["switch_agent"] } }];
     const policy = resolveToolPolicyForAgent({
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,
-      enableAgentSwitchTool: true,
-      requireSwitchAgentTool: true,
     });
 
     expect(policy).toEqual([
       { regex_match: ".*", action: "disable" },
-      { regex_match: "file_read", action: "enable" },
-      { regex_match: "switch_agent", action: "disable" },
-      { regex_match: "switch_agent", action: "enable" },
       { regex_match: "switch_agent", action: "require" },
+      { regex_match: "switch_agent", action: "disable" },
+      { regex_match: "switch_agent", action: "enable" },
     ]);
   });
 
-  test("requireSwitchAgentTool degrades safely for invalid runtime combinations", () => {
-    const agents: AgentLikeForPolicy[] = [{ tools: { add: ["file_read"] } }];
-
-    const withoutSwitchEnablement = resolveToolPolicyForAgent({
+  test("broad wildcard add does not implicitly unlock switch_agent", () => {
+    const agents: AgentLikeForPolicy[] = [{ tools: { add: [".*"] } }];
+    const policy = resolveToolPolicyForAgent({
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,
-      enableAgentSwitchTool: false,
-      requireSwitchAgentTool: true,
-    });
-    expect(withoutSwitchEnablement).toEqual([
-      { regex_match: ".*", action: "disable" },
-      { regex_match: "file_read", action: "enable" },
-      { regex_match: "switch_agent", action: "disable" },
-    ]);
-
-    const subagentPolicy = resolveToolPolicyForAgent({
-      agents,
-      isSubagent: true,
-      disableTaskToolsForDepth: false,
-      enableAgentSwitchTool: true,
-      requireSwitchAgentTool: true,
-    });
-    expect(subagentPolicy).toEqual([
-      { regex_match: ".*", action: "disable" },
-      { regex_match: "file_read", action: "enable" },
-      { regex_match: "switch_agent", action: "disable" },
-      { regex_match: "ask_user_question", action: "disable" },
-      { regex_match: "switch_agent", action: "disable" },
-      { regex_match: "propose_plan", action: "disable" },
-      { regex_match: "agent_report", action: "enable" },
-    ]);
-  });
-
-  test("subagents still hard-deny switch_agent even when auto switch is enabled", () => {
-    const agents: AgentLikeForPolicy[] = [{ tools: { add: ["file_read"] } }];
-    const policy = resolveToolPolicyForAgent({
-      agents,
-      isSubagent: true,
-      disableTaskToolsForDepth: false,
-      enableAgentSwitchTool: true,
     });
 
     expect(policy).toEqual([
       { regex_match: ".*", action: "disable" },
-      { regex_match: "file_read", action: "enable" },
+      { regex_match: ".*", action: "enable" },
+      { regex_match: "switch_agent", action: "disable" },
+    ]);
+  });
+
+  test("subagents still hard-deny switch_agent even when explicitly requested", () => {
+    const agents: AgentLikeForPolicy[] = [{ tools: { require: ["switch_agent"] } }];
+    const policy = resolveToolPolicyForAgent({
+      agents,
+      isSubagent: true,
+      disableTaskToolsForDepth: false,
+    });
+
+    expect(policy).toEqual([
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "switch_agent", action: "require" },
       { regex_match: "switch_agent", action: "disable" },
       { regex_match: "ask_user_question", action: "disable" },
       { regex_match: "switch_agent", action: "disable" },
@@ -166,7 +139,6 @@ describe("resolveToolPolicyForAgent", () => {
       agents,
       isSubagent: true,
       disableTaskToolsForDepth: false,
-      enableAgentSwitchTool: false,
     });
 
     expect(policy).toEqual([
@@ -189,7 +161,6 @@ describe("resolveToolPolicyForAgent", () => {
       agents,
       isSubagent: true,
       disableTaskToolsForDepth: false,
-      enableAgentSwitchTool: false,
     });
 
     expect(policy).toEqual([
@@ -211,7 +182,6 @@ describe("resolveToolPolicyForAgent", () => {
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: true,
-      enableAgentSwitchTool: false,
     });
 
     expect(policy).toEqual([
@@ -230,7 +200,6 @@ describe("resolveToolPolicyForAgent", () => {
       agents,
       isSubagent: true,
       disableTaskToolsForDepth: true,
-      enableAgentSwitchTool: false,
     });
 
     expect(policy).toEqual([
@@ -253,7 +222,6 @@ describe("resolveToolPolicyForAgent", () => {
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,
-      enableAgentSwitchTool: false,
     });
 
     expect(policy).toEqual([
@@ -268,7 +236,6 @@ describe("resolveToolPolicyForAgent", () => {
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,
-      enableAgentSwitchTool: false,
     });
 
     expect(policy).toEqual([
@@ -287,7 +254,6 @@ describe("resolveToolPolicyForAgent", () => {
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,
-      enableAgentSwitchTool: false,
     });
 
     expect(policy).toEqual([
@@ -310,7 +276,6 @@ describe("resolveToolPolicyForAgent", () => {
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,
-      enableAgentSwitchTool: false,
     });
 
     // exec: deny-all → enable .* → disable propose_plan
@@ -335,7 +300,6 @@ describe("resolveToolPolicyForAgent", () => {
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,
-      enableAgentSwitchTool: false,
     });
 
     // base: deny-all → enable file_read → enable bash
@@ -362,7 +326,6 @@ describe("resolveToolPolicyForAgent", () => {
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,
-      enableAgentSwitchTool: false,
     });
 
     expect(policy).toEqual([
