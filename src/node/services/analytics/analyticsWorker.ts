@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import type { Dirent } from "node:fs";
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import { parentPort } from "node:worker_threads";
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
 import { getErrorMessage } from "@/common/utils/errors";
 import { shouldRunInitialBackfill } from "./backfillDecision";
-import { CHAT_FILE_NAME, clearWorkspaceAnalyticsState, ingestWorkspace, rebuildAll } from "./etl";
+import { clearWorkspaceAnalyticsState, ingestWorkspace, rebuildAll } from "./etl";
+import {
+  listArchivedSubagentWorkspaceIds,
+  listSessionWorkspaceIdsWithHistory,
+} from "./workspaceDiscovery";
 import { executeNamedQuery } from "./queries";
 
 interface WorkerTaskRequest {
@@ -210,50 +211,6 @@ function parseNonEmptyString(value: unknown): string | null {
   return value;
 }
 
-async function listSessionWorkspaceIdsWithHistory(sessionsDir: string): Promise<string[]> {
-  let entries: Dirent[];
-
-  try {
-    entries = await fs.readdir(sessionsDir, { withFileTypes: true });
-  } catch (error) {
-    if (isRecord(error) && error.code === "ENOENT") {
-      return [];
-    }
-
-    throw error;
-  }
-
-  const sessionWorkspaceIds: string[] = [];
-
-  for (const entry of entries) {
-    if (!entry.isDirectory()) {
-      continue;
-    }
-
-    const chatPath = path.join(sessionsDir, entry.name, CHAT_FILE_NAME);
-
-    try {
-      const chatStat = await fs.stat(chatPath);
-      if (chatStat.isFile()) {
-        const workspaceId = parseNonEmptyString(entry.name);
-        assert(
-          workspaceId !== null,
-          "needsBackfill expected session workspace directory names to be non-empty"
-        );
-        sessionWorkspaceIds.push(workspaceId);
-      }
-    } catch (error) {
-      if (isRecord(error) && error.code === "ENOENT") {
-        continue;
-      }
-
-      throw error;
-    }
-  }
-
-  return sessionWorkspaceIds;
-}
-
 async function listWatermarkWorkspaceIds(): Promise<Set<string>> {
   const result = await getConn().run("SELECT workspace_id FROM ingest_watermarks");
   const rows = await result.getRowObjectsJS();
@@ -298,7 +255,18 @@ async function handleNeedsBackfill(data: NeedsBackfillData): Promise<{ needsBack
 
   const sessionWorkspaceIds = await listSessionWorkspaceIdsWithHistory(data.sessionsDir);
   const sessionWorkspaceCount = sessionWorkspaceIds.length;
-  const sessionWorkspaceIdSet = new Set(sessionWorkspaceIds);
+
+  // Archived sub-agent transcripts are stored under the parent session directory
+  // and never appear as top-level session workspace IDs. Include them so
+  // sub-agent watermark rows do not trigger a rebuild loop on every startup.
+  const archivedSubagentWorkspaceIds = await listArchivedSubagentWorkspaceIds(
+    data.sessionsDir,
+    sessionWorkspaceIds
+  );
+  const knownWorkspaceIdSet = new Set(sessionWorkspaceIds);
+  for (const archivedWorkspaceId of archivedSubagentWorkspaceIds) {
+    knownWorkspaceIdSet.add(archivedWorkspaceId);
+  }
 
   const watermarkWorkspaceIds = await listWatermarkWorkspaceIds();
   assert(
@@ -310,7 +278,7 @@ async function handleNeedsBackfill(data: NeedsBackfillData): Promise<{ needsBack
     (workspaceId) => !watermarkWorkspaceIds.has(workspaceId)
   );
   const hasWatermarkMissingSessionWorkspace = [...watermarkWorkspaceIds].some(
-    (workspaceId) => !sessionWorkspaceIdSet.has(workspaceId)
+    (workspaceId) => !knownWorkspaceIdSet.has(workspaceId)
   );
 
   return {
