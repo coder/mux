@@ -813,9 +813,6 @@ export class WorkspaceStore {
   // Store workspace metadata for aggregator creation (ensures createdAt never lost)
   private workspaceCreatedAt = new Map<string, string>();
 
-  // Track previous sidebar state per workspace (to prevent unnecessary bumps)
-  private previousSidebarValues = new Map<string, WorkspaceSidebarState>();
-
   // Track model usage (optional integration point for model bookkeeping)
   private readonly onModelUsed?: (model: string) => void;
 
@@ -3219,7 +3216,6 @@ export class WorkspaceStore {
     this.workspaceTerminalActivity.delete(workspaceId);
     this.activityStreamingStartRecency.delete(workspaceId);
     this.recencyCache.delete(workspaceId);
-    this.previousSidebarValues.delete(workspaceId);
     this.sidebarStateCache.delete(workspaceId);
     this.sidebarStateSourceState.delete(workspaceId);
     this.workspaceCreatedAt.delete(workspaceId);
@@ -3316,7 +3312,6 @@ export class WorkspaceStore {
     this.preReplayUsageSnapshot.clear();
     this.sessionUsage.clear();
     this.recencyCache.clear();
-    this.previousSidebarValues.clear();
     this.sidebarStateCache.clear();
     this.workspaceCreatedAt.clear();
   }
