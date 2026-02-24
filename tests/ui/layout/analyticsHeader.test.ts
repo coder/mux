@@ -52,6 +52,7 @@ describe("Analytics header titlebar contract", () => {
     try {
       const header = await openAnalyticsAndGetHeader(app.view.container);
       expect(header.classList.contains("titlebar-safe-right")).toBe(true);
+      expect(header.classList.contains("titlebar-safe-right-gutter-3")).toBe(true);
       expect(header.classList.contains("h-8")).toBe(true);
       expect(header.classList.contains("titlebar-drag")).toBe(false);
     } finally {
@@ -68,6 +69,7 @@ describe("Analytics header titlebar contract", () => {
     try {
       const header = await openAnalyticsAndGetHeader(app.view.container);
       expect(header.classList.contains("titlebar-safe-right")).toBe(true);
+      expect(header.classList.contains("titlebar-safe-right-gutter-3")).toBe(true);
       expect(header.classList.contains("h-9")).toBe(true);
       expect(header.classList.contains("titlebar-drag")).toBe(true);
     } finally {
@@ -85,6 +87,7 @@ describe("Analytics header titlebar contract", () => {
     try {
       const header = await openAnalyticsAndGetHeader(app.view.container);
       expect(header.classList.contains("titlebar-safe-right")).toBe(true);
+      expect(header.classList.contains("titlebar-safe-right-gutter-3")).toBe(true);
       expect(header.classList.contains("h-9")).toBe(true);
       expect(header.classList.contains("titlebar-drag")).toBe(true);
     } finally {

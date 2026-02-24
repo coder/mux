@@ -162,7 +162,7 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
       <div
         data-testid="analytics-header"
         className={cn(
-          "bg-sidebar border-border-light titlebar-safe-right flex shrink-0 items-center gap-2 border-b px-3",
+          "bg-sidebar border-border-light titlebar-safe-right titlebar-safe-right-gutter-3 flex shrink-0 items-center gap-2 border-b px-3",
           desktopMode ? `${DESKTOP_TITLEBAR_HEIGHT_CLASS} titlebar-drag` : "h-8"
         )}
       >

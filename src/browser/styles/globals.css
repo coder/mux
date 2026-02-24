@@ -2110,20 +2110,35 @@ input[type="checkbox"] {
 
 /* Titlebar-safe inset classes — consume the CSS custom properties set by
  * initTitlebarInsets() so components declare layout intent without
- * reimplementing platform-specific pixel math. */
+ * reimplementing platform-specific pixel math.
+ *
+ * Each utility takes the max of the platform inset and the component's
+ * baseline gutter (set via a companion --titlebar-safe-*-gutter token),
+ * so existing px-* spacing is never regressed to 0px. */
 .titlebar-safe-left {
-  padding-left: var(--titlebar-left-inset, 0px);
+  padding-left: max(var(--titlebar-left-inset, 0px), var(--titlebar-safe-left-gutter, 0px));
 }
 
 .titlebar-safe-right {
-  padding-right: var(--titlebar-right-inset, 0px);
+  padding-right: max(var(--titlebar-right-inset, 0px), var(--titlebar-safe-right-gutter, 0px));
 }
 
 /* Right inset minus the 20px collapsed right-sidebar rail. Used by headers
  * that stretch under the overlay only when the sidebar is collapsed. */
 .titlebar-safe-right-minus-sidebar {
-  padding-right: max(0px, calc(var(--titlebar-right-inset, 0px) - 20px));
+  padding-right: max(
+    var(--titlebar-safe-right-gutter, 0px),
+    calc(var(--titlebar-right-inset, 0px) - 20px)
+  );
 }
+
+/* Baseline gutter tokens — pair with titlebar-safe-* classes to declare
+ * the component's built-in horizontal spacing as a CSS custom property.
+ * The titlebar-safe utilities read these to ensure padding never drops
+ * below the component's natural gutter. */
+.titlebar-safe-left-gutter-4 { --titlebar-safe-left-gutter: 1rem; }      /* px-4 */
+.titlebar-safe-right-gutter-3 { --titlebar-safe-right-gutter: 0.75rem; } /* px-3 */
+.titlebar-safe-right-gutter-2 { --titlebar-safe-right-gutter: 0.5rem; }  /* px-2 */
 
 
 
