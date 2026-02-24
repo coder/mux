@@ -3,6 +3,7 @@ import { Loader2, Trash2 } from "lucide-react";
 import type { Secret } from "@/common/types/secrets";
 import { useAPI } from "@/browser/contexts/API";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
+import { useSettings } from "@/browser/contexts/SettingsContext";
 import { Button } from "@/browser/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/browser/components/ui/toggle-group";
 import {
@@ -102,10 +103,16 @@ function secretsEqual(a: Secret[], b: Secret[]): boolean {
 export const SecretsSection: React.FC = () => {
   const { api } = useAPI();
   const { projects } = useProjectContext();
+  const { secretsProjectPath, setSecretsProjectPath } = useSettings();
   const projectList = Array.from(projects.keys());
 
-  const [scope, setScope] = useState<SecretsScope>("global");
-  const [selectedProject, setSelectedProject] = useState<string>("");
+  // Consume one-shot project scope hint from the sidebar secrets button.
+  const initialScope: SecretsScope =
+    secretsProjectPath && projects.has(secretsProjectPath) ? "project" : "global";
+  const initialProject = initialScope === "project" ? secretsProjectPath! : "";
+
+  const [scope, setScope] = useState<SecretsScope>(initialScope);
+  const [selectedProject, setSelectedProject] = useState<string>(initialProject);
 
   const [loadedSecrets, setLoadedSecrets] = useState<Secret[]>([]);
   const [secrets, setSecrets] = useState<Secret[]>([]);
@@ -118,6 +125,18 @@ export const SecretsSection: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const scopeLabel = scope === "global" ? "Global" : "Project";
+
+  // When re-opened with a new project hint (e.g., clicking the secrets button again
+  // for a different project), sync the scope and clear the one-shot hint.
+  // Only clear the hint once the project is actually found in the project list;
+  // projects load asynchronously, so we must keep the hint alive until then.
+  useEffect(() => {
+    if (!secretsProjectPath) return;
+    if (!projects.has(secretsProjectPath)) return;
+    setScope("project");
+    setSelectedProject(secretsProjectPath);
+    setSecretsProjectPath(null);
+  }, [secretsProjectPath, projects, setSecretsProjectPath]);
 
   // Default to the first project when switching into Project scope.
   useEffect(() => {

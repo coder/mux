@@ -54,8 +54,7 @@ import {
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { SidebarCollapseButton } from "./ui/SidebarCollapseButton";
 import { ConfirmationModal } from "./ConfirmationModal";
-import SecretsModal from "./SecretsModal";
-import type { Secret } from "@/common/types/secrets";
+import { useSettings } from "@/browser/contexts/SettingsContext";
 
 import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
@@ -454,14 +453,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const { navigateToProject } = useRouter();
   const { api } = useAPI();
   const { confirm: confirmDialog } = useConfirmDialog();
+  const settings = useSettings();
 
   // Get project state and operations from context
   const {
     projects,
     openProjectCreateModal: onAddProject,
     removeProject: onRemoveProject,
-    getSecrets: onGetSecrets,
-    updateSecrets: onUpdateSecrets,
     createSection,
     updateSection,
     removeSection,
@@ -630,12 +628,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   } | null>(null);
   const projectRemoveError = usePopoverError();
   const sectionRemoveError = usePopoverError();
-  const [secretsModalState, setSecretsModalState] = useState<{
-    isOpen: boolean;
-    projectPath: string;
-    projectName: string;
-    secrets: Secret[];
-  } | null>(null);
 
   const getProjectName = (path: string) => {
     if (!path || typeof path !== "string") {
@@ -848,24 +840,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     }
   };
 
-  const handleOpenSecrets = async (projectPath: string) => {
-    const secrets = await onGetSecrets(projectPath);
-    setSecretsModalState({
-      isOpen: true,
-      projectPath,
-      projectName: getProjectName(projectPath),
-      secrets,
-    });
-  };
-
-  const handleSaveSecrets = async (secrets: Secret[]) => {
-    if (secretsModalState) {
-      await onUpdateSecrets(secretsModalState.projectPath, secrets);
-    }
-  };
-
-  const handleCloseSecrets = () => {
-    setSecretsModalState(null);
+  const handleOpenSecrets = (projectPath: string) => {
+    // Navigate to Settings → Secrets with the project pre-selected.
+    settings.open("secrets", { secretsProjectPath: projectPath });
   };
 
   // UI preference: project order persists in localStorage
@@ -1101,7 +1078,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               <button
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  void handleOpenSecrets(projectPath);
+                                  handleOpenSecrets(projectPath);
                                 }}
                                 aria-label={`Manage secrets for ${projectName}`}
                                 data-project-path={projectPath}
@@ -1607,16 +1584,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             side="left"
             shortcut={formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)}
           />
-          {secretsModalState && (
-            <SecretsModal
-              isOpen={secretsModalState.isOpen}
-              projectPath={secretsModalState.projectPath}
-              projectName={secretsModalState.projectName}
-              initialSecrets={secretsModalState.secrets}
-              onClose={handleCloseSecrets}
-              onSave={handleSaveSecrets}
-            />
-          )}
           <ConfirmationModal
             isOpen={archiveConfirmation !== null}
             title={
