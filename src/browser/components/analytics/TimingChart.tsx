@@ -41,16 +41,41 @@ interface TimingChartProps {
   onMetricChange: (metric: TimingMetric) => void;
 }
 
+// Keep timing labels readable for long responses; raw millisecond counts become hard to parse.
+function formatDurationForChart(ms: number): string {
+  if (!Number.isFinite(ms)) {
+    return "0ms";
+  }
+
+  const normalizedMs = Math.max(0, ms);
+  if (normalizedMs < 1_000) {
+    return `${Math.round(normalizedMs)}ms`;
+  }
+
+  if (normalizedMs < 10_000) {
+    return `${(normalizedMs / 1_000).toFixed(1)}s`;
+  }
+
+  if (normalizedMs < 60_000) {
+    return `${Math.round(normalizedMs / 1_000)}s`;
+  }
+
+  if (normalizedMs < 3_600_000) {
+    const minutes = normalizedMs / 60_000;
+    return minutes < 10 ? `${minutes.toFixed(1)}m` : `${Math.round(minutes)}m`;
+  }
+
+  const hours = normalizedMs / 3_600_000;
+  return hours < 10 ? `${hours.toFixed(1)}h` : `${Math.round(hours)}h`;
+}
+
 function formatMetricValue(value: number, metric: TimingMetric): string {
-  if (!Number.isFinite(value)) {
-    return `0${METRIC_LABELS[metric].unitSuffix}`;
-  }
-
   if (metric === "tps") {
-    return `${value.toFixed(2)}${METRIC_LABELS[metric].unitSuffix}`;
+    const normalizedTps = Number.isFinite(value) ? Math.max(0, value) : 0;
+    return `${normalizedTps.toFixed(2)}${METRIC_LABELS[metric].unitSuffix}`;
   }
 
-  return `${Math.round(value)}${METRIC_LABELS[metric].unitSuffix}`;
+  return formatDurationForChart(value);
 }
 
 export function TimingChart(props: TimingChartProps) {
