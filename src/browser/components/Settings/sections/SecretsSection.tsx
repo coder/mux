@@ -376,6 +376,9 @@ export const SecretsSection: React.FC = () => {
         setGlobalSecretKeys(validSecrets.map((s) => s.key));
       }
       setVisibleSecrets(new Set());
+      // Save compacts rows (filters out empty entries), which shifts indices.
+      // Clear the cached literal values so stale entries can't be misattributed.
+      lastLiteralValuesRef.current = new Map();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save secrets");
     } finally {
