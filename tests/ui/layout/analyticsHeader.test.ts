@@ -46,14 +46,17 @@ describe("Analytics header titlebar contract", () => {
     await preloadTestModules();
   });
 
-  test("browser mode: header has h-8 and titlebar-safe-right, no desktop drag classes", async () => {
+  test("browser mode: header keeps titlebar-safe insets and mobile wrapping classes", async () => {
     const app = await createAppHarness({ branchPrefix: "analytics-hdr-browser" });
 
     try {
       const header = await openAnalyticsAndGetHeader(app.view.container);
       expect(header.classList.contains("titlebar-safe-right")).toBe(true);
       expect(header.classList.contains("titlebar-safe-right-gutter-3")).toBe(true);
-      expect(header.classList.contains("h-8")).toBe(true);
+      expect(header.classList.contains("flex-wrap")).toBe(true);
+      expect(header.classList.contains("py-2")).toBe(true);
+      expect(header.classList.contains("md:h-8")).toBe(true);
+      expect(header.classList.contains("md:flex-nowrap")).toBe(true);
       expect(header.classList.contains("titlebar-drag")).toBe(false);
     } finally {
       await app.dispose();
