@@ -44,19 +44,28 @@ function matchesToolPattern(pattern: string, toolName: string): boolean {
   }
 }
 
-function isExplicitSwitchAgentPattern(pattern: string): boolean {
+function matchesSwitchAgentPattern(pattern: string): boolean {
   const trimmed = pattern.trim();
   if (trimmed.length === 0) {
     return false;
   }
 
-  // Keep this explicit so broad wildcards (e.g. ".*" in exec) do not accidentally
-  // unlock switch_agent for every top-level agent.
+  return matchesToolPattern(trimmed, "switch_agent");
+}
+
+function isExplicitSwitchAgentEnablePattern(pattern: string): boolean {
+  const trimmed = pattern.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+
+  // Keep enable/require explicit so broad wildcards (e.g. ".*" in exec)
+  // do not accidentally unlock switch_agent for every top-level agent.
   if (trimmed === ".*") {
     return false;
   }
 
-  return matchesToolPattern(trimmed, "switch_agent");
+  return matchesSwitchAgentPattern(trimmed);
 }
 
 /**
@@ -94,7 +103,7 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
         const trimmed = pattern.trim();
         if (trimmed.length > 0) {
           agentPolicy.push({ regex_match: trimmed, action: "enable" });
-          if (isExplicitSwitchAgentPattern(trimmed)) {
+          if (isExplicitSwitchAgentEnablePattern(trimmed)) {
             switchAgentEnabledByConfig = true;
           }
         }
@@ -107,7 +116,7 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
         const trimmed = pattern.trim();
         if (trimmed.length > 0) {
           agentPolicy.push({ regex_match: trimmed, action: "disable" });
-          if (isExplicitSwitchAgentPattern(trimmed)) {
+          if (matchesSwitchAgentPattern(trimmed)) {
             switchAgentEnabledByConfig = false;
           }
         }
@@ -120,7 +129,7 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
         const trimmed = pattern.trim();
         if (trimmed.length > 0) {
           agentPolicy.push({ regex_match: trimmed, action: "require" });
-          if (isExplicitSwitchAgentPattern(trimmed)) {
+          if (isExplicitSwitchAgentEnablePattern(trimmed)) {
             switchAgentEnabledByConfig = true;
           }
         }

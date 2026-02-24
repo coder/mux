@@ -114,6 +114,26 @@ describe("resolveToolPolicyForAgent", () => {
     ]);
   });
 
+  test("wildcard remove clears switch_agent enablement from earlier explicit add", () => {
+    // Chain: child → base. Base explicitly enables switch_agent, then child strips all tools.
+    const agents: AgentLikeForPolicy[] = [
+      { tools: { remove: [".*"] } },
+      { tools: { add: ["switch_agent"] } },
+    ];
+    const policy = resolveToolPolicyForAgent({
+      agents,
+      isSubagent: false,
+      disableTaskToolsForDepth: false,
+    });
+
+    expect(policy).toEqual([
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "switch_agent", action: "enable" },
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "switch_agent", action: "disable" },
+    ]);
+  });
+
   test("subagents still hard-deny switch_agent even when explicitly requested", () => {
     const agents: AgentLikeForPolicy[] = [{ tools: { require: ["switch_agent"] } }];
     const policy = resolveToolPolicyForAgent({
