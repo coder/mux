@@ -58,6 +58,14 @@ interface SshRuntimeState {
   coderConfig: CoderWorkspaceConfig | null;
 }
 
+interface RememberedRuntimeValues {
+  ssh: SshRuntimeConfig;
+  dockerImage: string;
+  dockerShareCredentials: boolean;
+  devcontainerConfigPath: string;
+  devcontainerShareCredentials: boolean;
+}
+
 /** Stable fallback for Coder config to avoid new object on every render */
 const DEFAULT_CODER_CONFIG: CoderWorkspaceConfig = { existingWorkspace: false };
 function coerceAgentId(value: unknown): string {
@@ -100,6 +108,57 @@ const buildRuntimeForMode = (
     case RUNTIME_MODE.WORKTREE:
     default:
       return { mode: "worktree" };
+  }
+};
+
+const mergeRememberedRuntimeConfig = (
+  nextRuntime: ParsedRuntime,
+  previousMode: RuntimeMode,
+  remembered: RememberedRuntimeValues
+): ParsedRuntime => {
+  if (nextRuntime.mode === previousMode) {
+    return nextRuntime;
+  }
+
+  switch (nextRuntime.mode) {
+    case RUNTIME_MODE.SSH:
+      return {
+        ...nextRuntime,
+        host:
+          !nextRuntime.host.trim() && remembered.ssh.host.trim()
+            ? remembered.ssh.host
+            : nextRuntime.host,
+        coder:
+          nextRuntime.coder === undefined && remembered.ssh.coder != null
+            ? remembered.ssh.coder
+            : nextRuntime.coder,
+      };
+    case RUNTIME_MODE.DOCKER:
+      return {
+        ...nextRuntime,
+        image:
+          !nextRuntime.image.trim() && remembered.dockerImage.trim()
+            ? remembered.dockerImage
+            : nextRuntime.image,
+        shareCredentials:
+          nextRuntime.shareCredentials === undefined && remembered.dockerShareCredentials
+            ? remembered.dockerShareCredentials
+            : nextRuntime.shareCredentials,
+      };
+    case RUNTIME_MODE.DEVCONTAINER:
+      return {
+        ...nextRuntime,
+        configPath:
+          !nextRuntime.configPath.trim() && remembered.devcontainerConfigPath.trim()
+            ? remembered.devcontainerConfigPath
+            : nextRuntime.configPath,
+        shareCredentials:
+          nextRuntime.shareCredentials === undefined && remembered.devcontainerShareCredentials
+            ? remembered.devcontainerShareCredentials
+            : nextRuntime.shareCredentials,
+      };
+    default:
+      return nextRuntime;
   }
 };
 
@@ -348,9 +407,17 @@ export function useDraftWorkspaceSettings(
     [setLastRuntimeConfig]
   );
 
+  const seededProjectPathRef = useRef<string | null>(null);
+
   // If the default runtime string contains a host/image (e.g. older persisted values like "ssh devbox"),
   // prefer it as the initial remembered value.
+  // This initialization runs once per project mount instead of reacting to ongoing field edits.
   useEffect(() => {
+    if (seededProjectPathRef.current === projectPath) {
+      return;
+    }
+    seededProjectPathRef.current = projectPath;
+
     if (
       parsedDefault?.mode === RUNTIME_MODE.SSH &&
       !lastSsh.host.trim() &&
@@ -417,34 +484,26 @@ export function useDraftWorkspaceSettings(
   // Uses discriminated union: SSH has host, Docker has image
   const [selectedRuntime, setSelectedRuntimeState] = useState<ParsedRuntime>(() => defaultRuntime);
 
-  const prevProjectPathRef = useRef<string | null>(null);
-  // Track settingsDefaultRuntime (RuntimeChoice) instead of defaultRuntimeMode (RuntimeMode)
-  // so that switching between "coder" and "ssh" in Settings is detected as a change.
-  const prevSettingsDefaultRef = useRef<RuntimeChoice | null>(null);
-
-  // When switching projects or changing the persisted default mode, reset the selection.
-  // Importantly: do NOT reset selection when lastSsh.host/lastDockerImage changes while typing.
+  // Project changes remount ChatInput (key includes projectPath), so this effect only handles
+  // live Settings updates to the default runtime while staying on the same project.
+  const appliedDefaultRuntimeChoiceRef = useRef<RuntimeChoice>(settingsDefaultRuntime);
   useEffect(() => {
-    const projectChanged = prevProjectPathRef.current !== projectPath;
-    const defaultModeChanged = prevSettingsDefaultRef.current !== settingsDefaultRuntime;
-
-    if (projectChanged || defaultModeChanged) {
-      setSelectedRuntimeState(
-        buildRuntimeForMode(
-          defaultRuntimeMode,
-          { host: defaultSshHost, coder: defaultSshCoder },
-          defaultDockerImage,
-          lastShareCredentials,
-          defaultDevcontainerConfigPath,
-          lastDevcontainerShareCredentials
-        )
-      );
+    if (appliedDefaultRuntimeChoiceRef.current === settingsDefaultRuntime) {
+      return;
     }
 
-    prevProjectPathRef.current = projectPath;
-    prevSettingsDefaultRef.current = settingsDefaultRuntime;
+    appliedDefaultRuntimeChoiceRef.current = settingsDefaultRuntime;
+    setSelectedRuntimeState(
+      buildRuntimeForMode(
+        defaultRuntimeMode,
+        { host: defaultSshHost, coder: defaultSshCoder },
+        defaultDockerImage,
+        lastShareCredentials,
+        defaultDevcontainerConfigPath,
+        lastDevcontainerShareCredentials
+      )
+    );
   }, [
-    projectPath,
     settingsDefaultRuntime,
     defaultRuntimeMode,
     defaultSshHost,
@@ -455,64 +514,13 @@ export function useDraftWorkspaceSettings(
     lastDevcontainerShareCredentials,
   ]);
 
-  // When the user switches into SSH/Docker/Devcontainer mode, seed the field with the remembered config.
-  // This avoids clearing the last values when the UI switches modes with an empty field.
-  // Skip on initial mount (prevMode === null) since useState initializer handles that case.
-  const prevSelectedRuntimeModeRef = useRef<RuntimeMode | null>(null);
-  useEffect(() => {
-    const prevMode = prevSelectedRuntimeModeRef.current;
-    if (prevMode !== null && prevMode !== selectedRuntime.mode) {
-      if (selectedRuntime.mode === RUNTIME_MODE.SSH) {
-        const needsHostRestore = !selectedRuntime.host.trim() && lastSsh.host.trim();
-        const needsCoderRestore = selectedRuntime.coder === undefined && lastSsh.coder != null;
-        if (needsHostRestore || needsCoderRestore) {
-          setSelectedRuntimeState({
-            mode: RUNTIME_MODE.SSH,
-            host: needsHostRestore ? lastSsh.host : selectedRuntime.host,
-            coder: needsCoderRestore ? lastSsh.coder : selectedRuntime.coder,
-          });
-        }
-      }
-
-      if (selectedRuntime.mode === RUNTIME_MODE.DEVCONTAINER) {
-        const needsConfigRestore =
-          !selectedRuntime.configPath.trim() && lastDevcontainerConfigPath.trim();
-        const needsCredentialsRestore =
-          selectedRuntime.shareCredentials === undefined && lastDevcontainerShareCredentials;
-        if (needsConfigRestore || needsCredentialsRestore) {
-          setSelectedRuntimeState({
-            mode: RUNTIME_MODE.DEVCONTAINER,
-            configPath: needsConfigRestore
-              ? lastDevcontainerConfigPath
-              : selectedRuntime.configPath,
-            shareCredentials: lastDevcontainerShareCredentials,
-          });
-        }
-      }
-      if (selectedRuntime.mode === RUNTIME_MODE.DOCKER) {
-        const needsImageRestore = !selectedRuntime.image.trim() && lastDockerImage.trim();
-        const needsCredentialsRestore =
-          selectedRuntime.shareCredentials === undefined && lastShareCredentials;
-        if (needsImageRestore || needsCredentialsRestore) {
-          setSelectedRuntimeState({
-            mode: RUNTIME_MODE.DOCKER,
-            image: needsImageRestore ? lastDockerImage : selectedRuntime.image,
-            shareCredentials: lastShareCredentials,
-          });
-        }
-      }
-    }
-
-    prevSelectedRuntimeModeRef.current = selectedRuntime.mode;
-  }, [
-    selectedRuntime,
-    lastSsh.host,
-    lastDockerImage,
-    lastShareCredentials,
-    lastSsh.coder,
-    lastDevcontainerConfigPath,
-    lastDevcontainerShareCredentials,
-  ]);
+  const rememberedRuntimeValues: RememberedRuntimeValues = {
+    ssh: lastSsh,
+    dockerImage: lastDockerImage,
+    dockerShareCredentials: lastShareCredentials,
+    devcontainerConfigPath: lastDevcontainerConfigPath,
+    devcontainerShareCredentials: lastDevcontainerShareCredentials,
+  };
 
   // Initialize trunk branch from backend recommendation or first branch
   useEffect(() => {
@@ -524,29 +532,39 @@ export function useDraftWorkspaceSettings(
 
   // Setter for selected runtime (also persists host/image/coder for future mode switches)
   const setSelectedRuntime = (runtime: ParsedRuntime) => {
-    setSelectedRuntimeState(runtime);
+    const mergedRuntime = mergeRememberedRuntimeConfig(
+      runtime,
+      selectedRuntime.mode,
+      rememberedRuntimeValues
+    );
+
+    setSelectedRuntimeState(mergedRuntime);
 
     // Persist host/image/coder so they're remembered when switching modes.
     // Avoid wiping the remembered value when the UI switches modes with an empty field.
     // Avoid persisting the Coder placeholder as the remembered SSH host.
-    if (runtime.mode === RUNTIME_MODE.SSH) {
-      writeSshRuntimeConfig({ host: runtime.host, coder: runtime.coder });
-    } else if (runtime.mode === RUNTIME_MODE.DOCKER) {
-      if (runtime.image.trim()) {
-        setLastRuntimeConfig(RUNTIME_MODE.DOCKER, "image", runtime.image);
+    if (mergedRuntime.mode === RUNTIME_MODE.SSH) {
+      writeSshRuntimeConfig({ host: mergedRuntime.host, coder: mergedRuntime.coder });
+    } else if (mergedRuntime.mode === RUNTIME_MODE.DOCKER) {
+      if (mergedRuntime.image.trim()) {
+        setLastRuntimeConfig(RUNTIME_MODE.DOCKER, "image", mergedRuntime.image);
       }
-      if (runtime.shareCredentials !== undefined) {
-        setLastRuntimeConfig(RUNTIME_MODE.DOCKER, "shareCredentials", runtime.shareCredentials);
+      if (mergedRuntime.shareCredentials !== undefined) {
+        setLastRuntimeConfig(
+          RUNTIME_MODE.DOCKER,
+          "shareCredentials",
+          mergedRuntime.shareCredentials
+        );
       }
-    } else if (runtime.mode === RUNTIME_MODE.DEVCONTAINER) {
-      if (runtime.configPath.trim()) {
-        setLastRuntimeConfig(RUNTIME_MODE.DEVCONTAINER, "configPath", runtime.configPath);
+    } else if (mergedRuntime.mode === RUNTIME_MODE.DEVCONTAINER) {
+      if (mergedRuntime.configPath.trim()) {
+        setLastRuntimeConfig(RUNTIME_MODE.DEVCONTAINER, "configPath", mergedRuntime.configPath);
       }
-      if (runtime.shareCredentials !== undefined) {
+      if (mergedRuntime.shareCredentials !== undefined) {
         setLastRuntimeConfig(
           RUNTIME_MODE.DEVCONTAINER,
           "shareCredentials",
-          runtime.shareCredentials
+          mergedRuntime.shareCredentials
         );
       }
     }
