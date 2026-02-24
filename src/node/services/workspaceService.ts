@@ -2291,6 +2291,35 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  async updateRuntimeConfig(workspaceId: string, runtimeConfig: RuntimeConfig): Promise<Result<void>> {
+    try {
+      const workspace = this.config.findWorkspace(workspaceId);
+      if (!workspace) {
+        return Err("Workspace not found");
+      }
+
+      await this.config.updateWorkspaceMetadata(workspaceId, { runtimeConfig });
+
+      // Emit updated metadata (same pattern as updateTitle)
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const updatedMetadata = allMetadata.find((m) => m.id === workspaceId);
+      if (updatedMetadata) {
+        const enrichedMetadata = this.enrichFrontendMetadata(updatedMetadata);
+        const session = this.sessions.get(workspaceId);
+        if (session) {
+          session.emitMetadata(enrichedMetadata);
+        } else {
+          this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
+        }
+      }
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to update runtime config: ${message}`);
+    }
+  }
+
   /**
    * Regenerate the workspace title from chat history using AI.
    * Uses the first user message as the durable objective, plus a context block with
