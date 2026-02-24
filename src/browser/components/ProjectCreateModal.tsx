@@ -365,8 +365,9 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
     const [error, setError] = useState("");
     const [destinationExistsPath, setDestinationExistsPath] = useState<string | null>(null);
     const [isCreating, setIsCreating] = useState(false);
-    const [cloneOutput, setCloneOutput] = useState("");
+const [cloneOutput, setCloneOutput] = useState("");
     const rawOutputRef = useRef("");
+    const [isAddingProject, setIsAddingProject] = useState(false);
     const abortControllerRef = useRef<AbortController | null>(null);
     const progressEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -386,6 +387,7 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
 setCloneOutput("");
       rawOutputRef.current = "";
       setDestinationExistsPath(null);
+      setIsAddingProject(false);
     }, [props.defaultProjectDir]);
 
     const abortInFlightClone = useCallback(() => {
@@ -527,6 +529,8 @@ setError("");
         return;
       }
 
+      setIsAddingProject(true);
+
       try {
         const result = await api.projects.create({ projectPath: destinationExistsPath });
         if (!result.success) {
@@ -541,6 +545,8 @@ setError("");
         props.onClose?.();
       } catch {
         setError("Failed to add existing project");
+      } finally {
+        setIsAddingProject(false);
       }
     }, [api, destinationExistsPath, props, reset]);
 
@@ -661,10 +667,11 @@ setError("");
             {destinationExistsPath && (
               <button
                 type="button"
-                className="text-accent text-xs underline"
+                className="text-accent text-xs underline disabled:opacity-50"
                 onClick={() => void handleAddExistingProject()}
+                disabled={isAddingProject}
               >
-                Add this project instead
+                {isAddingProject ? "Adding project…" : "Add this project instead"}
               </button>
             )}
           </div>
