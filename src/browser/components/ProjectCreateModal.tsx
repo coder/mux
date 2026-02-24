@@ -551,7 +551,10 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
       addProjectAbortControllerRef.current = controller;
 
       try {
-        const result = await api.projects.create({ projectPath: destinationExistsPath });
+        const result = await api.projects.create(
+          { projectPath: destinationExistsPath },
+          { signal: controller.signal }
+        );
         if (controller.signal.aborted) {
           return;
         }
