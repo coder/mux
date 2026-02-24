@@ -1497,7 +1497,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
           <button
             onClick={() => navigateFile(-1)}
             disabled={fileCount <= 1}
-            className="text-muted hover:text-foreground disabled:text-dim hidden shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors disabled:cursor-default sm:flex"
+            className="text-muted hover:text-foreground disabled:text-dim flex shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors disabled:cursor-default"
             aria-label="Previous file"
           >
             <ChevronLeft className="h-4 w-4" />
@@ -1514,7 +1514,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
           <button
             onClick={() => navigateFile(1)}
             disabled={fileCount <= 1}
-            className="text-muted hover:text-foreground disabled:text-dim hidden shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors disabled:cursor-default sm:flex"
+            className="text-muted hover:text-foreground disabled:text-dim flex shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors disabled:cursor-default"
             aria-label="Next file"
           >
             <ChevronRight className="h-4 w-4" />
