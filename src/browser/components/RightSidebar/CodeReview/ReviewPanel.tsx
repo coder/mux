@@ -205,6 +205,25 @@ function toOriginDiffBase(trunkBranch: string | null | undefined): string | null
   return `origin/${branchName}`;
 }
 
+function toMetadataDiffBase(trunkBranch: string | null | undefined): string | null {
+  if (typeof trunkBranch !== "string") {
+    return null;
+  }
+
+  const trimmed = trunkBranch.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const refsHeadsPrefix = "refs/heads/";
+  if (trimmed.startsWith(refsHeadsPrefix)) {
+    const branchName = trimmed.slice(refsHeadsPrefix.length);
+    return branchName.length > 0 ? branchName : null;
+  }
+
+  return trimmed;
+}
+
 interface OriginFetchState {
   key: string;
   promise: Promise<void>;
@@ -385,7 +404,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     const workspaceBaseIsPersisted = readPersistedString(workspaceDiffBaseKey) !== undefined;
     const shouldInitializeWorkspaceBase = !workspaceBaseIsPersisted;
 
-    const metadataTrunkBase = toOriginDiffBase(workspaceMetadata.get(workspaceId)?.taskTrunkBranch);
+    const metadataTrunkBase = toMetadataDiffBase(
+      workspaceMetadata.get(workspaceId)?.taskTrunkBranch
+    );
     const initializedWorkspaceFromMetadata =
       shouldInitializeWorkspaceBase && metadataTrunkBase != null;
     if (initializedWorkspaceFromMetadata) {
