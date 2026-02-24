@@ -525,6 +525,18 @@ export const ProjectRemovalDisabled: AppStory = {
         '[role="button"][aria-label="Create workspace in my-app"]'
       );
     if (!projectRow) throw new Error("Project row not found");
+
+    // Make project action affordances deterministic in this story capture.
+    // Synthetic hover can be flaky for pure CSS :hover opacity transitions,
+    // so force key/remove visibility while still exercising hover behavior.
+    const secretsButton = canvasElement.querySelector<HTMLButtonElement>(
+      'button[aria-label="Manage secrets for my-app"]'
+    );
+    if (secretsButton) {
+      secretsButton.style.opacity = "1";
+    }
+    removeButton.style.opacity = "1";
+
     await userEvent.hover(projectRow);
 
     // Hover the remove trigger after row hover so tooltip content appears.
