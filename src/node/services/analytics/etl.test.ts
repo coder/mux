@@ -161,7 +161,7 @@ async function queryRows(
   conn: DuckDBConnection,
   sql: string,
   params: string[] = []
-): Promise<Record<string, unknown>[]> {
+): Promise<Array<Record<string, unknown>>> {
   const result = await conn.run(sql, params);
   return await result.getRowObjectsJS();
 }
