@@ -19,9 +19,6 @@ import { buildDevcontainerConfigInfo, scanDevcontainerConfigs } from "./devconta
 import { resolveCoderSSHHost } from "@/constants/coder";
 import { getErrorMessage } from "@/common/utils/errors";
 
-// Re-export for backward compatibility with existing imports
-export { isIncompatibleRuntimeConfig };
-
 // Global CoderService singleton - set during app init so all createRuntime calls can use it
 let globalCoderService: CoderService | undefined;
 
