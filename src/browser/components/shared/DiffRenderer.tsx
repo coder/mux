@@ -805,7 +805,7 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
 
     // Renders as a subgrid row with 3 cells to align with diff lines: gutter | indicator | input
     return (
-      <div className="col-span-3 grid grid-cols-subgrid">
+      <div className="col-span-3 grid min-w-0 grid-cols-subgrid [contain:inline-size]">
         {/* Gutter spacer to align with diff lines */}
         <span
           className="flex shrink-0 items-center gap-0.5 px-1 tabular-nums select-none"
@@ -915,7 +915,7 @@ const InlineReviewNoteRow: React.FC<InlineReviewNoteRowProps> = React.memo(
 
     return (
       <div
-        className="col-span-3 grid grid-cols-subgrid"
+        className="col-span-3 grid min-w-0 grid-cols-subgrid [contain:inline-size]"
         data-inline-review-note={true}
         data-review-id={review.id}
       >
