@@ -137,6 +137,8 @@ export function isExecLikeEditingCapableInResolvedChain(
 
   return (
     isToolEnabledInResolvedChain("file_edit_insert", agents, maxDepth) ||
-    isToolEnabledInResolvedChain("file_edit_replace_string", agents, maxDepth)
+    isToolEnabledInResolvedChain("file_edit_replace_string", agents, maxDepth) ||
+    // Orchestrator-like agents can still modify their workspace by applying child patches.
+    isToolEnabledInResolvedChain("task_apply_git_patch", agents, maxDepth)
   );
 }
