@@ -365,10 +365,11 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
     const [error, setError] = useState("");
     const [destinationExistsPath, setDestinationExistsPath] = useState<string | null>(null);
     const [isCreating, setIsCreating] = useState(false);
-const [cloneOutput, setCloneOutput] = useState("");
+    const [cloneOutput, setCloneOutput] = useState("");
     const rawOutputRef = useRef("");
     const [isAddingProject, setIsAddingProject] = useState(false);
     const abortControllerRef = useRef<AbortController | null>(null);
+    const addProjectAbortControllerRef = useRef<AbortController | null>(null);
     const progressEndRef = useRef<HTMLDivElement | null>(null);
 
     const setCreating = useCallback(
@@ -384,7 +385,7 @@ const [cloneOutput, setCloneOutput] = useState("");
       setCloneParentDir(props.defaultProjectDir);
       setHasEditedCloneParentDir(false);
       setError("");
-setCloneOutput("");
+      setCloneOutput("");
       rawOutputRef.current = "";
       setDestinationExistsPath(null);
       setIsAddingProject(false);
@@ -398,14 +399,29 @@ setCloneOutput("");
       abortControllerRef.current.abort();
     }, []);
 
+    const abortInFlightAddProject = useCallback(() => {
+      if (!addProjectAbortControllerRef.current) {
+        return;
+      }
+
+      addProjectAbortControllerRef.current.abort();
+    }, []);
+
     useEffect(() => {
       if (!props.isOpen) {
         abortInFlightClone();
+        abortInFlightAddProject();
         reset();
       }
-    }, [abortInFlightClone, props.isOpen, reset]);
+    }, [abortInFlightAddProject, abortInFlightClone, props.isOpen, reset]);
 
-    useEffect(() => abortInFlightClone, [abortInFlightClone]);
+    useEffect(
+      () => () => {
+        abortInFlightClone();
+        abortInFlightAddProject();
+      },
+      [abortInFlightAddProject, abortInFlightClone]
+    );
 
     useEffect(() => {
       if (!props.isOpen || hasEditedCloneParentDir) {
@@ -423,9 +439,10 @@ setCloneOutput("");
 
     const handleCancel = useCallback(() => {
       abortInFlightClone();
+      abortInFlightAddProject();
       reset();
       props.onClose?.();
-    }, [abortInFlightClone, props, reset]);
+    }, [abortInFlightAddProject, abortInFlightClone, props, reset]);
 
     const { canBrowse, browse, directoryPickerModal } = useDirectoryPicker({
       api,
@@ -457,7 +474,7 @@ setCloneOutput("");
         return false;
       }
 
-setError("");
+      setError("");
       setCloneOutput("");
       rawOutputRef.current = "";
       setDestinationExistsPath(null);
@@ -530,9 +547,15 @@ setError("");
       }
 
       setIsAddingProject(true);
+      const controller = new AbortController();
+      addProjectAbortControllerRef.current = controller;
 
       try {
         const result = await api.projects.create({ projectPath: destinationExistsPath });
+        if (controller.signal.aborted) {
+          return;
+        }
+
         if (!result.success) {
           const errorMessage =
             typeof result.error === "string" ? result.error : "Failed to add existing project";
@@ -544,9 +567,15 @@ setError("");
         reset();
         props.onClose?.();
       } catch {
+        if (controller.signal.aborted) {
+          return;
+        }
         setError("Failed to add existing project");
       } finally {
-        setIsAddingProject(false);
+        if (addProjectAbortControllerRef.current === controller) {
+          addProjectAbortControllerRef.current = null;
+          setIsAddingProject(false);
+        }
       }
     }, [api, destinationExistsPath, props, reset]);
 
