@@ -167,7 +167,7 @@ export const InlineReviewNote: React.FC<InlineReviewNoteProps> = ({
       style={{
         background: containerBg,
         borderColor,
-        maxWidth: "min(560px, calc(100vw - 4rem))",
+        maxWidth: "min(560px, calc(100vw - 8rem))",
       }}
     >
       {/* Left accent bar */}

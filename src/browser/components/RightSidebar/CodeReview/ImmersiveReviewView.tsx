@@ -1487,17 +1487,17 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
           aria-label="Exit immersive review"
         >
           <ArrowLeft className="h-4 w-4" />
-          <span>Back</span>
+          <span className="hidden sm:inline">Back</span>
         </button>
 
-        <div className="bg-border-light h-4 w-px shrink-0" />
+        <div className="bg-border-light hidden h-4 w-px shrink-0 sm:block" />
 
         {/* File navigation */}
         <div className="flex min-w-0 flex-1 items-center gap-1">
           <button
             onClick={() => navigateFile(-1)}
             disabled={fileCount <= 1}
-            className="text-muted hover:text-foreground disabled:text-dim flex shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors disabled:cursor-default"
+            className="text-muted hover:text-foreground disabled:text-dim hidden shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors disabled:cursor-default sm:flex"
             aria-label="Previous file"
           >
             <ChevronLeft className="h-4 w-4" />
@@ -1508,20 +1508,20 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
           >
             {activeFilePath ?? "No files"}
           </span>
-          <span className="text-dim shrink-0 text-[10px]">
+          <span className="text-dim hidden shrink-0 text-[10px] sm:inline">
             {fileIndex >= 0 ? `${fileIndex + 1}/${fileCount}` : ""}
           </span>
           <button
             onClick={() => navigateFile(1)}
             disabled={fileCount <= 1}
-            className="text-muted hover:text-foreground disabled:text-dim flex shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors disabled:cursor-default"
+            className="text-muted hover:text-foreground disabled:text-dim hidden shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors disabled:cursor-default sm:flex"
             aria-label="Next file"
           >
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="bg-border-light h-4 w-px shrink-0" />
+        <div className="bg-border-light hidden h-4 w-px shrink-0 sm:block" />
 
         {/* Hunk and line selection summary */}
         <div className="text-muted hidden items-center gap-1 text-[10px] sm:flex">

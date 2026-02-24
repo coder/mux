@@ -826,12 +826,12 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
         {/* Indicator spacer */}
         <span style={{ background: codeBg }} />
         {/* Input container with accent styling */}
-        <div className="min-w-0 py-1.5 pr-3" style={{ background: codeBg }}>
+        <div className="min-w-0 py-1.5 pr-3 [contain:inline-size]" style={{ background: codeBg }}>
           <div
             className="flex w-full overflow-hidden rounded border border-[var(--color-review-accent)]/30 shadow-sm"
             style={{
               background: "hsl(from var(--color-review-accent) h s l / 0.08)",
-              maxWidth: "min(560px, calc(100vw - 4rem))",
+              maxWidth: "min(560px, calc(100vw - 8rem))",
             }}
           >
             {/* Left accent bar */}
@@ -940,7 +940,7 @@ const InlineReviewNoteRow: React.FC<InlineReviewNoteRowProps> = React.memo(
         {/* Indicator spacer */}
         <span style={{ background: codeBg }} />
         {/* Inline note using shared component */}
-        <div className="min-w-0 py-0.5 pr-3" style={{ background: codeBg }}>
+        <div className="min-w-0 py-0.5 pr-3 [contain:inline-size]" style={{ background: codeBg }}>
           <InlineReviewNote
             review={review}
             showFilePath={false}
