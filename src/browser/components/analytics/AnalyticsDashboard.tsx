@@ -147,6 +147,9 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
       if (!matchesKeybind(e, KEYBINDS.CANCEL)) return;
       if (e.defaultPrevented) return;
       if (isEditableElement(e.target)) return;
+      // Native <select> doesn't set defaultPrevented on Escape, but the user
+      // may be dismissing its dropdown—don't close analytics in that case.
+      if (e.target instanceof HTMLSelectElement) return;
 
       e.preventDefault();
       e.stopPropagation();
