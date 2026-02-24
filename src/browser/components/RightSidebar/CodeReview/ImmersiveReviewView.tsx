@@ -1483,48 +1483,48 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         {/* Back button */}
         <button
           onClick={onExit}
-          className="text-muted hover:text-foreground flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 text-xs transition-colors"
+          className="text-muted hover:text-foreground flex shrink-0 cursor-pointer items-center gap-1 border-none bg-transparent p-0 text-xs transition-colors"
           aria-label="Exit immersive review"
         >
           <ArrowLeft className="h-4 w-4" />
           <span>Back</span>
         </button>
 
-        <div className="bg-border-light h-4 w-px" />
+        <div className="bg-border-light h-4 w-px shrink-0" />
 
         {/* File navigation */}
-        <div className="flex items-center gap-1">
+        <div className="flex min-w-0 items-center gap-1">
           <button
             onClick={() => navigateFile(-1)}
             disabled={fileCount <= 1}
-            className="text-muted hover:text-foreground disabled:text-dim flex cursor-pointer items-center border-none bg-transparent p-0 transition-colors disabled:cursor-default"
+            className="text-muted hover:text-foreground disabled:text-dim flex shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors disabled:cursor-default"
             aria-label="Previous file"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
           <span
-            className="text-foreground max-w-[400px] truncate font-mono text-xs"
+            className="text-foreground min-w-0 truncate font-mono text-xs"
             title={activeFilePath ?? undefined}
           >
             {activeFilePath ?? "No files"}
           </span>
-          <span className="text-dim text-[10px]">
+          <span className="text-dim shrink-0 text-[10px]">
             {fileIndex >= 0 ? `${fileIndex + 1}/${fileCount}` : ""}
           </span>
           <button
             onClick={() => navigateFile(1)}
             disabled={fileCount <= 1}
-            className="text-muted hover:text-foreground disabled:text-dim flex cursor-pointer items-center border-none bg-transparent p-0 transition-colors disabled:cursor-default"
+            className="text-muted hover:text-foreground disabled:text-dim flex shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors disabled:cursor-default"
             aria-label="Next file"
           >
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="bg-border-light h-4 w-px" />
+        <div className="bg-border-light h-4 w-px shrink-0" />
 
         {/* Hunk and line selection summary */}
-        <div className="text-muted flex items-center gap-1 text-[10px]">
+        <div className="text-muted hidden items-center gap-1 text-[10px] sm:flex">
           {selectedHunk && (
             <button
               type="button"
