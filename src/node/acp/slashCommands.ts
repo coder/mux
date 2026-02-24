@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import type { AvailableCommand } from "@agentclientprotocol/sdk";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
+import { SLASH_COMMAND_HINTS } from "@/common/constants/slashCommandHints";
 import {
   buildRuntimeConfig,
   parseRuntimeModeAndHost,
@@ -19,9 +20,9 @@ const COMPACT_COMMAND_NAME = "compact";
 const FORK_COMMAND_NAME = "fork";
 const NEW_COMMAND_NAME = "new";
 
-const TRUNCATE_USAGE = "/truncate <0-100>";
-const COMPACT_USAGE = "/compact [-t <tokens>] [-m <model>] [continue message]";
-const NEW_USAGE = "/new <name> [-t <trunk-branch>] [-r <runtime>] [start message]";
+const TRUNCATE_USAGE = `/truncate ${SLASH_COMMAND_HINTS.truncate}`;
+const COMPACT_USAGE = `/compact ${SLASH_COMMAND_HINTS.compact}`;
+const NEW_USAGE = `/new ${SLASH_COMMAND_HINTS.new}`;
 
 interface ServerCommandDefinition {
   name: string;
@@ -37,24 +38,24 @@ const SERVER_COMMAND_DEFINITIONS: readonly ServerCommandDefinition[] = [
   {
     name: TRUNCATE_COMMAND_NAME,
     description: "Truncate conversation history by percentage (0-100).",
-    inputHint: "<percentage>",
+    inputHint: SLASH_COMMAND_HINTS.truncate,
   },
   {
     name: COMPACT_COMMAND_NAME,
     description:
       "Compact conversation history using AI summarization. Supports -t <tokens>, -m <model>, and multiline continue messages.",
-    inputHint: "[-t <tokens>] [-m <model>] [continue message]",
+    inputHint: SLASH_COMMAND_HINTS.compact,
   },
   {
     name: FORK_COMMAND_NAME,
     description: "Fork the current workspace. Optionally include a start message.",
-    inputHint: "[start message]",
+    inputHint: SLASH_COMMAND_HINTS.fork,
   },
   {
     name: NEW_COMMAND_NAME,
     description:
       "Create a new workspace from the current project. Supports -t <trunk-branch>, -r <runtime>, and multiline start messages.",
-    inputHint: "<name> [-t <trunk-branch>] [-r <runtime>] [start message]",
+    inputHint: SLASH_COMMAND_HINTS.new,
   },
 ] as const;
 

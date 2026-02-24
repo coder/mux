@@ -10,6 +10,7 @@ import type {
 } from "./types";
 import minimist from "minimist";
 import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
+import { SLASH_COMMAND_HINTS } from "@/common/constants/slashCommandHints";
 import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
 
 /**
@@ -75,11 +76,12 @@ const clearCommandDefinition: SlashCommandDefinition = {
   },
 };
 
-const TRUNCATE_USAGE = "/truncate <0-100> (percentage to remove)";
+const TRUNCATE_USAGE = `/truncate ${SLASH_COMMAND_HINTS.truncate} (percentage to remove)`;
 
 const truncateCommandDefinition: SlashCommandDefinition = {
   key: "truncate",
   description: "Truncate conversation history by percentage (0-100)",
+  inputHint: SLASH_COMMAND_HINTS.truncate,
   handler: ({ cleanRemainingTokens }): ParsedCommand => {
     if (cleanRemainingTokens.length === 0) {
       return {
@@ -120,6 +122,7 @@ const compactCommandDefinition: SlashCommandDefinition = {
   key: "compact",
   description:
     "Compact conversation history using AI summarization. Use -t <tokens> to set max output tokens, -m <model> to set compaction model. Add continue message on lines after the command.",
+  inputHint: SLASH_COMMAND_HINTS.compact,
   handler: ({ rawInput }): ParsedCommand => {
     const {
       tokens: firstLineTokens,
@@ -202,6 +205,7 @@ const compactCommandDefinition: SlashCommandDefinition = {
 const modelCommandDefinition: SlashCommandDefinition = {
   key: "model",
   description: "Select AI model",
+  inputHint: SLASH_COMMAND_HINTS.model,
   handler: ({ cleanRemainingTokens }): ParsedCommand => {
     if (cleanRemainingTokens.length === 0) {
       return { type: "model-help" };
@@ -287,6 +291,7 @@ const planCommandDefinition: SlashCommandDefinition = {
 const forkCommandDefinition: SlashCommandDefinition = {
   key: "fork",
   description: "Fork workspace. Optionally include a start message.",
+  inputHint: SLASH_COMMAND_HINTS.fork,
   handler: ({ rawInput }): ParsedCommand => {
     const trimmed = rawInput.trim();
     if (trimmed.length === 0) {
@@ -306,6 +311,7 @@ const newCommandDefinition: SlashCommandDefinition = {
   key: "new",
   description:
     "Create new workspace with optional trunk branch and runtime. Use -t <branch> to specify trunk, -r <runtime> for remote execution (e.g., 'ssh hostname' or 'ssh user@host'). Add start message on lines after the command.",
+  inputHint: SLASH_COMMAND_HINTS.new,
   handler: ({ rawInput }): ParsedCommand => {
     const {
       tokens: firstLineTokens,
@@ -398,11 +404,12 @@ const newCommandDefinition: SlashCommandDefinition = {
   },
 };
 
-const IDLE_USAGE = "/idle <hours> or /idle off";
+const IDLE_USAGE = `/idle ${SLASH_COMMAND_HINTS.idle}`;
 
 const idleCommandDefinition: SlashCommandDefinition = {
   key: "idle",
-  description: "Configure idle compaction for this project. Usage: /idle <hours> or /idle off",
+  description: `Configure idle compaction for this project. Usage: ${IDLE_USAGE}`,
+  inputHint: SLASH_COMMAND_HINTS.idle,
   appendSpace: false,
   handler: ({ cleanRemainingTokens }): ParsedCommand => {
     if (cleanRemainingTokens.length === 0) {

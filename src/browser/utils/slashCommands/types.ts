@@ -57,6 +57,7 @@ export type SuggestionsHandler = (args: SuggestionsHandlerArgs) => SlashSuggesti
 export interface SlashCommandDefinition {
   key: string;
   description: string;
+  inputHint?: string;
   appendSpace?: boolean;
   handler?: SlashCommandHandler;
   children?: readonly SlashCommandDefinition[];
