@@ -2108,6 +2108,23 @@ input[type="checkbox"] {
   -webkit-app-region: no-drag;
 }
 
+/* Titlebar-safe inset classes — consume the CSS custom properties set by
+ * initTitlebarInsets() so components declare layout intent without
+ * reimplementing platform-specific pixel math. */
+.titlebar-safe-left {
+  padding-left: var(--titlebar-left-inset, 0px);
+}
+
+.titlebar-safe-right {
+  padding-right: var(--titlebar-right-inset, 0px);
+}
+
+/* Right inset minus the 20px collapsed right-sidebar rail. Used by headers
+ * that stretch under the overlay only when the sidebar is collapsed. */
+.titlebar-safe-right-minus-sidebar {
+  padding-right: max(0px, calc(var(--titlebar-right-inset, 0px) - 20px));
+}
+
 
 
 /* Titlebar inset for WorkspaceMenuBar when left sidebar is collapsed.
