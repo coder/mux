@@ -1,12 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
-  Check,
   ChevronDown,
-  CircleHelp,
-  Code,
-  Settings2,
+  MessageCircleQuestionMark,
+  Route,
   Sparkles,
+  SquareCode,
   Workflow,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -58,9 +57,9 @@ interface AgentOption {
 
 /** Maps well-known agent IDs to lucide icons for the dropdown */
 const AGENT_ICONS: Record<string, LucideIcon> = {
-  ask: CircleHelp,
-  plan: Settings2,
-  exec: Code,
+  ask: MessageCircleQuestionMark,
+  plan: Route,
+  exec: SquareCode,
   orchestrator: Workflow,
   auto: Sparkles,
 };
@@ -427,7 +426,6 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                         {keybindLabel}
                       </span>
                     )}
-                    {isSelected && <Check className="text-accent h-3.5 w-3.5 shrink-0" />}
                   </div>
                 );
               })
@@ -435,11 +433,11 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
           </div>
 
           {/* Divider + Auto-select toggle */}
-          <div className="border-border-light border-t px-2.5 py-2">
+          <div className="border-border-light border-t px-2.5 py-1.5">
             <div
               role="button"
               tabIndex={-1}
-              className="flex cursor-pointer items-center gap-2.5"
+              className="flex cursor-pointer items-center gap-2"
               onClick={() => {
                 if (isAuto) {
                   // Turn off auto → default to exec (first built-in)
@@ -462,10 +460,8 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                   aria-label="Auto-select agent"
                 />
               </span>
-              <div className="min-w-0">
-                <div className="text-foreground text-[11px] font-medium">Auto-select</div>
-                <div className="text-muted text-[10px]">Mux chooses the best agent</div>
-              </div>
+              <span className="text-foreground text-[11px] font-medium">Auto-select</span>
+              <span className="text-muted ml-0.5 text-[10px]">· Mux chooses the best agent</span>
             </div>
           </div>
         </div>
