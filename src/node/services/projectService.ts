@@ -28,11 +28,14 @@ import {
   type CloneErrorCode,
 } from "./sshCloneFailure";
 import type { BranchListResult } from "@/common/orpc/types";
+import { ProjectRemoveErrorSchema } from "@/common/orpc/schemas/errors";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import * as path from "path";
 import { getMuxProjectsDir } from "@/common/constants/paths";
 import { expandTilde } from "@/node/runtime/tildeExpansion";
 import { getErrorMessage } from "@/common/utils/errors";
+import { getProjectWorkspaceCounts } from "@/common/utils/projectRemoval";
+import type { z } from "zod";
 
 /**
  * List directory contents for the DirectoryPickerModal.
@@ -80,6 +83,8 @@ export type CloneEvent =
   | { type: "progress"; line: string }
   | { type: "success"; projectConfig: ProjectConfig; normalizedPath: string }
   | { type: "error"; code: CloneErrorCode; error: string };
+
+type ProjectRemoveError = z.infer<typeof ProjectRemoveErrorSchema>;
 
 function isTildePrefixedPath(value: string): boolean {
   return value === "~" || value.startsWith("~/") || value.startsWith("~\\");
@@ -747,19 +752,18 @@ export class ProjectService {
     return Err("Clone did not return a completion event");
   }
 
-  async remove(projectPath: string): Promise<Result<void>> {
+  async remove(projectPath: string): Promise<Result<void, ProjectRemoveError>> {
     try {
       const config = this.config.loadConfigOrDefault();
       const projectConfig = config.projects.get(projectPath);
 
       if (!projectConfig) {
-        return Err("Project not found");
+        return Err({ type: "project_not_found" as const });
       }
 
-      if (projectConfig.workspaces.length > 0) {
-        return Err(
-          `Cannot remove project with active workspaces. Please remove all ${projectConfig.workspaces.length} workspace(s) first.`
-        );
+      const counts = getProjectWorkspaceCounts(projectConfig.workspaces);
+      if (counts.activeCount + counts.archivedCount > 0) {
+        return Err({ type: "workspace_blockers" as const, ...counts });
       }
 
       config.projects.delete(projectPath);
@@ -774,7 +778,7 @@ export class ProjectService {
       return Ok(undefined);
     } catch (error) {
       const message = getErrorMessage(error);
-      return Err(`Failed to remove project: ${message}`);
+      return Err({ type: "unknown" as const, message: `Failed to remove project: ${message}` });
     }
   }
 
