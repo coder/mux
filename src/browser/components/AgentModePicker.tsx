@@ -30,6 +30,7 @@ import {
   matchNumberedKeybind,
 } from "@/browser/utils/ui/keybinds";
 import { sortAgentsStable } from "@/browser/utils/agents";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 
 interface AgentModePickerProps {
   className?: string;
@@ -285,6 +286,9 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
   const handleDropdownKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Escape") {
       e.preventDefault();
+      // Block capture-phase listeners (e.g. ImmersiveReviewView) from
+      // consuming Escape before the picker closes
+      stopKeyboardPropagation(e);
       closePicker();
       return;
     }
@@ -386,10 +390,17 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
           onKeyDown={handleDropdownKeyDown}
           className="bg-separator border-border-light absolute right-0 bottom-full z-[1020] mb-1 min-w-52 overflow-hidden rounded border shadow-[0_4px_12px_rgba(0,0,0,0.3)] outline-none"
         >
-          {/* Agent list — greyed out when auto is active */}
-          <div className={cn("py-1", isAuto && "pointer-events-none opacity-50")}>
+          {/* Agent list — greyed out when auto is active, scrollable for long lists */}
+          <div
+            className={cn(
+              "max-h-64 overflow-y-auto py-1",
+              isAuto && "pointer-events-none opacity-50"
+            )}
+          >
             {!loaded && selectableOptions.length === 0 ? (
               <div className="text-muted-light px-2.5 py-2 text-[11px]">Loading agents…</div>
+            ) : selectableOptions.length === 0 ? (
+              <div className="text-muted-light px-2.5 py-2 text-[11px]">No agents available</div>
             ) : (
               selectableOptions.map((opt, index) => {
                 const isHighlighted = index === highlightedIndex && !isAuto;
