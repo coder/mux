@@ -26,6 +26,20 @@ function toolMatchesPatterns(toolName: string, patterns: readonly string[]): boo
   return false;
 }
 
+export function normalizeLiteralRequiredToolPattern(pattern: string): string | undefined {
+  const trimmed = pattern.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  // Require must target a single concrete tool name, not a regex pattern.
+  if (!/^[A-Za-z0-9_:-]+$/.test(trimmed)) {
+    return undefined;
+  }
+
+  return trimmed;
+}
+
 /**
  * Apply add/remove semantics to a single tool name.
  *
@@ -53,8 +67,8 @@ export function isToolEnabledByConfigs(toolName: string, configs: readonly Tools
 
     if (config.require !== undefined) {
       const cleanedRequirePatterns = config.require
-        .map((pattern) => pattern.trim())
-        .filter((pattern) => pattern.length > 0);
+        .map((pattern) => normalizeLiteralRequiredToolPattern(pattern))
+        .filter((pattern): pattern is string => pattern !== undefined);
       effectiveRequirePattern = cleanedRequirePatterns.at(-1);
     }
   }

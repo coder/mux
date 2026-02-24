@@ -163,6 +163,20 @@ describe("resolveToolPolicyForAgent", () => {
     ]);
   });
 
+  test("regex-like tools.require entries are ignored", () => {
+    const agents: AgentLikeForPolicy[] = [{ tools: { require: ["task_.*"] } }];
+    const policy = resolveToolPolicyForAgent({
+      agents,
+      isSubagent: false,
+      disableTaskToolsForDepth: false,
+    });
+
+    expect(policy).toEqual([
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "switch_agent", action: "disable" },
+    ]);
+  });
+
   test("wildcard remove clears switch_agent enablement from earlier explicit add", () => {
     // Chain: child → base. Base explicitly enables switch_agent, then child strips all tools.
     const agents: AgentLikeForPolicy[] = [

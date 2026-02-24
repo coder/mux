@@ -1,6 +1,7 @@
 import {
   collectToolConfigsFromResolvedChain,
   isPlanLikeInResolvedChain,
+  normalizeLiteralRequiredToolPattern,
   type ToolsConfig,
 } from "@/common/utils/agentTools";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
@@ -131,8 +132,8 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
     // multiple required tools.
     if (config.require) {
       const cleanedPatterns = config.require
-        .map((pattern) => pattern.trim())
-        .filter((pattern) => pattern.length > 0);
+        .map((pattern) => normalizeLiteralRequiredToolPattern(pattern))
+        .filter((pattern): pattern is string => pattern !== undefined);
       effectiveRequirePattern = cleanedPatterns.at(-1);
     }
   }

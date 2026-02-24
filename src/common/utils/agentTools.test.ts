@@ -84,6 +84,12 @@ describe("isToolEnabledByConfigs", () => {
     expect(isToolEnabledByConfigs("agent_report", configs)).toBe(true);
   });
 
+  it("regex-like require entries are ignored", () => {
+    const configs: ToolsConfig[] = [{ add: ["file_read"], require: ["task_.*"] }];
+
+    expect(isToolEnabledByConfigs("file_read", configs)).toBe(true);
+  });
+
   it("base require remains effective when child omits tools.require", () => {
     const configs: ToolsConfig[] = [{ require: ["propose_plan"] }, { add: ["file_read"] }];
 
