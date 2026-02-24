@@ -20,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { GitBranch, Loader2, Wand2, X } from "lucide-react";
+import { Cog, GitBranch, Loader2, Wand2, X } from "lucide-react";
 import { PlatformPaths } from "@/common/utils/paths";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useSettings } from "@/browser/contexts/SettingsContext";
@@ -183,25 +183,74 @@ const RUNTIME_FALLBACK_ORDER: RuntimeChoice[] = [
   RUNTIME_MODE.DEVCONTAINER,
 ];
 
+const RUNTIME_CHOICE_ACCENTS: Record<
+  RuntimeChoice,
+  {
+    triggerClass: string;
+    iconClass: string;
+    accentColor: string;
+  }
+> = {
+  local: {
+    triggerClass:
+      "border-[var(--color-runtime-local)]/60 bg-[var(--color-runtime-local)]/15 text-foreground",
+    iconClass: "text-[var(--color-runtime-local)]",
+    accentColor: "var(--color-runtime-local)",
+  },
+  worktree: {
+    triggerClass:
+      "border-[var(--color-runtime-worktree)]/60 bg-[var(--color-runtime-worktree)]/15 text-[var(--color-runtime-worktree-text)]",
+    iconClass: "text-[var(--color-runtime-worktree-text)]",
+    accentColor: "var(--color-runtime-worktree)",
+  },
+  ssh: {
+    triggerClass:
+      "border-[var(--color-runtime-ssh)]/60 bg-[var(--color-runtime-ssh)]/15 text-[var(--color-runtime-ssh-text)]",
+    iconClass: "text-[var(--color-runtime-ssh-text)]",
+    accentColor: "var(--color-runtime-ssh)",
+  },
+  coder: {
+    triggerClass:
+      "border-[var(--color-runtime-ssh)]/60 bg-[var(--color-runtime-ssh)]/15 text-[var(--color-runtime-ssh-text)]",
+    iconClass: "text-[var(--color-runtime-ssh-text)]",
+    accentColor: "var(--color-runtime-ssh)",
+  },
+  docker: {
+    triggerClass:
+      "border-[var(--color-runtime-docker)]/60 bg-[var(--color-runtime-docker)]/15 text-[var(--color-runtime-docker-text)]",
+    iconClass: "text-[var(--color-runtime-docker-text)]",
+    accentColor: "var(--color-runtime-docker)",
+  },
+  devcontainer: {
+    triggerClass:
+      "border-[var(--color-runtime-devcontainer)]/60 bg-[var(--color-runtime-devcontainer)]/15 text-[var(--color-runtime-devcontainer-text)]",
+    iconClass: "text-[var(--color-runtime-devcontainer-text)]",
+    accentColor: "var(--color-runtime-devcontainer)",
+  },
+};
+
 const RUNTIME_CHOICE_OPTIONS: Array<{
   value: RuntimeChoice;
   label: string;
   description: string;
   docsPath: string;
   Icon: React.ComponentType<RuntimeIconProps>;
-  // Active state colors using CSS variables for theme support
-  activeClass: string;
-  idleClass: string;
+  triggerClass: string;
+  iconClass: string;
+  accentColor: string;
 }> = RUNTIME_CHOICE_ORDER.map((mode) => {
   const ui = RUNTIME_CHOICE_UI[mode];
+  const accent = RUNTIME_CHOICE_ACCENTS[mode];
+
   return {
     value: mode,
     label: ui.label,
     description: ui.description,
     docsPath: ui.docsPath,
     Icon: ui.Icon,
-    activeClass: ui.button.activeClass,
-    idleClass: ui.button.idleClass,
+    triggerClass: accent.triggerClass,
+    iconClass: accent.iconClass,
+    accentColor: accent.accentColor,
   };
 });
 
@@ -447,65 +496,128 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
     return true;
   });
 
+  const selectedOption =
+    runtimeOptions.find((option) => option.value === props.value) ?? runtimeOptions[0] ?? null;
+
+  const selectedOptionState = selectedOption
+    ? resolveRuntimeButtonState(
+        selectedOption.value,
+        availabilityMap,
+        props.defaultMode,
+        coderAvailability,
+        allowedModeSet,
+        allowSshHost,
+        allowSshCoder
+      )
+    : null;
+
+  const selectedOptionDisabledReason =
+    selectedOptionState &&
+    (selectedOptionState.isModeDisabled || selectedOptionState.isPolicyDisabled)
+      ? selectedOptionState.disabledReason
+      : undefined;
+
   return (
-    <div className="flex flex-wrap gap-1 " role="group" aria-label="Runtime type">
-      {runtimeOptions.map((option) => {
-        const isActive = props.value === option.value;
-        const {
-          isModeDisabled,
-          isPolicyDisabled,
-          disabledReason: resolvedDisabledReason,
-        } = resolveRuntimeButtonState(
-          option.value,
-          availabilityMap,
-          props.defaultMode,
-          coderAvailability,
-          allowedModeSet,
-          allowSshHost,
-          allowSshCoder
-        );
-        const disabledReason = resolvedDisabledReason;
-        const isDisabled = Boolean(props.disabled) || isModeDisabled || isPolicyDisabled;
-        const showDisabledReason = isModeDisabled || isPolicyDisabled;
-
-        const Icon = option.Icon;
-
-        return (
-          <Tooltip key={option.value}>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={() => props.onChange(option.value)}
-                disabled={isDisabled}
-                aria-pressed={isActive}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-all duration-150",
-                  "cursor-pointer",
-                  isActive ? option.activeClass : option.idleClass,
-                  isDisabled && "cursor-not-allowed opacity-50"
-                )}
-              >
-                <Icon size={12} />
-                {option.label}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent
-              align="center"
-              side="bottom"
-              className="pointer-events-auto whitespace-normal"
+    <div className="flex min-w-0 flex-col gap-1" role="group" aria-label="Runtime type">
+      <RadixSelect
+        value={selectedOption?.value}
+        onValueChange={(value) => {
+          const nextOption = runtimeOptions.find((option) => option.value === value);
+          if (!nextOption) {
+            return;
+          }
+          props.onChange(nextOption.value);
+        }}
+        disabled={Boolean(props.disabled) || runtimeOptions.length === 0}
+      >
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <SelectTrigger
+              aria-label="Workspace type"
+              className={cn(
+                "h-7 w-[168px] justify-between gap-2 rounded-md border px-2.5 text-xs font-medium shadow-none",
+                selectedOption?.triggerClass
+              )}
             >
-              <div className="flex items-baseline justify-between gap-3">
-                <span>{option.description}</span>
-                <DocsLink path={option.docsPath} />
+              {selectedOption ? (
+                <div className="flex min-w-0 flex-1 items-center gap-2">
+                  <selectedOption.Icon
+                    size={12}
+                    className={cn("shrink-0", selectedOption.iconClass)}
+                  />
+                  <span className="truncate">{selectedOption.label}</span>
+                </div>
+              ) : (
+                <SelectValue placeholder="Select workspace type" />
+              )}
+            </SelectTrigger>
+          </TooltipTrigger>
+          {selectedOption ? (
+            <TooltipContent align="start" className="max-w-56">
+              <div className="flex items-start justify-between gap-3">
+                <span className="block max-w-[170px] text-xs leading-snug whitespace-normal">
+                  {selectedOption.description}
+                </span>
+                <DocsLink path={selectedOption.docsPath} />
               </div>
-              {/* User request: remove default-runtime toggle from creation tooltip. */}
-              {showDisabledReason ? (
-                <p className="mt-1 text-yellow-500">{disabledReason ?? "Unavailable"}</p>
+              {selectedOptionDisabledReason ? (
+                <p className="mt-1 text-yellow-500">{selectedOptionDisabledReason}</p>
               ) : null}
             </TooltipContent>
-          </Tooltip>
-        );
-      })}
+          ) : null}
+        </Tooltip>
+        <SelectContent className="border-border-medium w-[232px]">
+          {runtimeOptions.map((option) => {
+            const {
+              isModeDisabled,
+              isPolicyDisabled,
+              disabledReason: resolvedDisabledReason,
+            } = resolveRuntimeButtonState(
+              option.value,
+              availabilityMap,
+              props.defaultMode,
+              coderAvailability,
+              allowedModeSet,
+              allowSshHost,
+              allowSshCoder
+            );
+
+            const disabledReason = resolvedDisabledReason;
+            const isDisabled = Boolean(props.disabled) || isModeDisabled || isPolicyDisabled;
+            const showDisabledReason = isModeDisabled || isPolicyDisabled;
+            const Icon = option.Icon;
+
+            return (
+              <SelectPrimitive.Item
+                key={option.value}
+                value={option.value}
+                disabled={isDisabled}
+                className={cn(
+                  "focus:bg-hover data-[state=checked]:bg-hover relative flex cursor-default select-none items-center rounded-sm py-1.5 pr-3 pl-3 text-xs outline-none",
+                  "data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                )}
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <Icon size={12} className={cn("shrink-0", option.iconClass)} />
+                  <div className="flex w-[164px] min-w-0 flex-col gap-0.5">
+                    <SelectPrimitive.ItemText>
+                      <span className="text-foreground text-xs font-medium">{option.label}</span>
+                    </SelectPrimitive.ItemText>
+                    <span className="text-muted line-clamp-2 text-[11px] leading-snug whitespace-normal">
+                      {option.description}
+                    </span>
+                    {showDisabledReason ? (
+                      <span className="line-clamp-2 text-[11px] leading-snug whitespace-normal text-yellow-500">
+                        {disabledReason ?? "Unavailable"}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              </SelectPrimitive.Item>
+            );
+          })}
+        </SelectContent>
+      </RadixSelect>
     </div>
   );
 }
@@ -841,108 +953,120 @@ export function CreationControls(props: CreationControlsProps) {
         )}
       </div>
 
-      {/* Runtime type - button group */}
+      {/* Runtime and source branch controls */}
       <div className="flex flex-col gap-1.5" data-component="RuntimeTypeGroup">
-        <div className="flex items-center gap-2">
-          <label className="text-muted-foreground text-xs font-medium">Workspace Type</label>
-          {/* Keep this subtle so it reads like a secondary action, while still signaling
-              unsaved differences when the current runtime differs from the project default. */}
-          <button
-            type="button"
-            onClick={() => settings.open("runtimes", { runtimesProjectPath: props.projectPath })}
-            className={cn(
-              "border-border-medium bg-background-secondary text-muted-foreground hover:bg-hover hover:text-foreground inline-flex h-6 cursor-pointer items-center rounded border px-2 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent",
-              runtimeChoice !== props.defaultRuntimeMode &&
-                "border-warning/40 bg-warning/10 text-warning hover:bg-warning/20"
-            )}
-          >
-            set defaults
-          </button>
-        </div>
-        <div className="flex flex-col gap-2">
-          <RuntimeButtonGroup
-            value={runtimeChoice}
-            onChange={(mode) => {
-              if (mode === "coder") {
-                if (!props.coderProps) {
-                  return;
-                }
-                // Switch to SSH mode with the last known Coder config so prior selections restore.
-                onSelectedRuntimeChange({
-                  mode: "ssh",
-                  host: CODER_RUNTIME_PLACEHOLDER,
-                  coder: props.coderConfigFallback,
-                });
-                return;
-              }
-              // Convert mode to ParsedRuntime with appropriate defaults
-              switch (mode) {
-                case RUNTIME_MODE.SSH: {
-                  const sshHost =
-                    selectedRuntime.mode === "ssh" &&
-                    selectedRuntime.host !== CODER_RUNTIME_PLACEHOLDER
-                      ? selectedRuntime.host
-                      : props.sshHostFallback;
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <div className="flex items-center gap-1.5">
+              <label className="text-muted-foreground text-xs font-medium">Workspace Type</label>
+              {/* Keep this compact while preserving quick access to project runtime defaults. */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      settings.open("runtimes", { runtimesProjectPath: props.projectPath })
+                    }
+                    className={cn(
+                      "text-muted-foreground hover:text-foreground inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm transition-colors",
+                      runtimeChoice !== props.defaultRuntimeMode &&
+                        "text-warning hover:text-warning"
+                    )}
+                    aria-label="Configure runtimes"
+                  >
+                    <Cog className="h-3 w-3" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent align="center">
+                  {runtimeChoice !== props.defaultRuntimeMode
+                    ? "Set project runtime defaults"
+                    : "Configure runtimes"}
+                </TooltipContent>
+              </Tooltip>
+            </div>
+            <RuntimeButtonGroup
+              value={runtimeChoice}
+              onChange={(mode) => {
+                if (mode === "coder") {
+                  if (!props.coderProps) {
+                    return;
+                  }
+                  // Switch to SSH mode with the last known Coder config so prior selections restore.
                   onSelectedRuntimeChange({
                     mode: "ssh",
-                    host: sshHost,
+                    host: CODER_RUNTIME_PLACEHOLDER,
+                    coder: props.coderConfigFallback,
                   });
-                  break;
+                  return;
                 }
-                case RUNTIME_MODE.DOCKER:
-                  onSelectedRuntimeChange({
-                    mode: "docker",
-                    image: selectedRuntime.mode === "docker" ? selectedRuntime.image : "",
-                  });
-                  break;
-                case RUNTIME_MODE.DEVCONTAINER: {
-                  // Use resolver to get initial config path (prefers first available config)
-                  const initialSelection = resolveDevcontainerSelection({
-                    selectedRuntime: { mode: "devcontainer", configPath: "" },
-                    availabilityState: runtimeAvailabilityState,
-                  });
-                  onSelectedRuntimeChange({
-                    mode: "devcontainer",
-                    configPath:
-                      selectedRuntime.mode === "devcontainer"
-                        ? selectedRuntime.configPath
-                        : initialSelection.configPath,
-                    shareCredentials:
-                      selectedRuntime.mode === "devcontainer"
-                        ? selectedRuntime.shareCredentials
-                        : false,
-                  });
-                  break;
+                // Convert mode to ParsedRuntime with appropriate defaults
+                switch (mode) {
+                  case RUNTIME_MODE.SSH: {
+                    const sshHost =
+                      selectedRuntime.mode === "ssh" &&
+                      selectedRuntime.host !== CODER_RUNTIME_PLACEHOLDER
+                        ? selectedRuntime.host
+                        : props.sshHostFallback;
+                    onSelectedRuntimeChange({
+                      mode: "ssh",
+                      host: sshHost,
+                    });
+                    break;
+                  }
+                  case RUNTIME_MODE.DOCKER:
+                    onSelectedRuntimeChange({
+                      mode: "docker",
+                      image: selectedRuntime.mode === "docker" ? selectedRuntime.image : "",
+                    });
+                    break;
+                  case RUNTIME_MODE.DEVCONTAINER: {
+                    // Use resolver to get initial config path (prefers first available config)
+                    const initialSelection = resolveDevcontainerSelection({
+                      selectedRuntime: { mode: "devcontainer", configPath: "" },
+                      availabilityState: runtimeAvailabilityState,
+                    });
+                    onSelectedRuntimeChange({
+                      mode: "devcontainer",
+                      configPath:
+                        selectedRuntime.mode === "devcontainer"
+                          ? selectedRuntime.configPath
+                          : initialSelection.configPath,
+                      shareCredentials:
+                        selectedRuntime.mode === "devcontainer"
+                          ? selectedRuntime.shareCredentials
+                          : false,
+                    });
+                    break;
+                  }
+                  case RUNTIME_MODE.LOCAL:
+                    onSelectedRuntimeChange({ mode: "local" });
+                    break;
+                  case RUNTIME_MODE.WORKTREE:
+                  default:
+                    onSelectedRuntimeChange({ mode: "worktree" });
+                    break;
                 }
-                case RUNTIME_MODE.LOCAL:
-                  onSelectedRuntimeChange({ mode: "local" });
-                  break;
-                case RUNTIME_MODE.WORKTREE:
-                default:
-                  onSelectedRuntimeChange({ mode: "worktree" });
-                  break;
-              }
-            }}
-            defaultMode={props.defaultRuntimeMode}
-            onSetDefault={props.onSetDefaultRuntime}
-            disabled={props.disabled}
-            runtimeAvailabilityState={runtimeAvailabilityState}
-            runtimeEnablement={props.runtimeEnablement}
-            coderInfo={coderInfo}
-            allowedRuntimeModes={props.allowedRuntimeModes}
-            allowSshHost={props.allowSshHost}
-            allowSshCoder={props.allowSshCoder}
-          />
+              }}
+              defaultMode={props.defaultRuntimeMode}
+              onSetDefault={props.onSetDefaultRuntime}
+              disabled={props.disabled}
+              runtimeAvailabilityState={runtimeAvailabilityState}
+              runtimeEnablement={props.runtimeEnablement}
+              coderInfo={coderInfo}
+              allowedRuntimeModes={props.allowedRuntimeModes}
+              allowSshHost={props.allowSshHost}
+              allowSshCoder={props.allowSshCoder}
+            />
+          </div>
 
-          {/* User request: restore the branch selector with a git icon label. */}
           <div
-            className="flex items-center gap-2"
+            className="flex min-w-0 flex-col gap-1.5"
             data-component="BranchSelector"
             data-tutorial="trunk-branch"
           >
-            <label className="text-muted-foreground flex items-center gap-1 text-xs">
+            <label className="text-muted-foreground flex items-center gap-1 text-xs font-medium">
               <GitBranch className="h-3.5 w-3.5" />
-              Branch
+              Source Branch
             </label>
             {props.branchesLoaded ? (
               <RadixSelect
@@ -950,8 +1074,8 @@ export function CreationControls(props: CreationControlsProps) {
                 onValueChange={props.onTrunkBranchChange}
                 disabled={isBranchSelectorDisabled}
               >
-                <SelectTrigger className={INLINE_CONTROL_CLASSES} aria-label="Select branch">
-                  <SelectValue placeholder="Select branch" />
+                <SelectTrigger className={INLINE_CONTROL_CLASSES} aria-label="Select source branch">
+                  <SelectValue placeholder="Select source branch" />
                 </SelectTrigger>
                 <SelectContent className="border-border-medium">
                   {branchOptions.map((branch) => (
@@ -965,7 +1089,9 @@ export function CreationControls(props: CreationControlsProps) {
               <Skeleton className="h-7 w-[140px] rounded" />
             )}
           </div>
+        </div>
 
+        <div className="flex flex-col gap-2">
           {/* SSH Host Input - hidden when Coder runtime is selected */}
           {selectedRuntime.mode === "ssh" &&
             !isCoderSelected &&
