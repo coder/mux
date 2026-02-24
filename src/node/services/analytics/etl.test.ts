@@ -81,13 +81,15 @@ function getSqlStatements(runMock: ReturnType<typeof mock>): string[] {
   });
 }
 
-function makeAssistantLine(opts: {
-  model?: string;
-  sequence?: number;
-  timestamp?: number;
-  inputTokens?: number;
-  outputTokens?: number;
-} = {}): string {
+function makeAssistantLine(
+  opts: {
+    model?: string;
+    sequence?: number;
+    timestamp?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+  } = {}
+): string {
   return JSON.stringify({
     role: "assistant",
     content: "response",
@@ -170,7 +172,9 @@ async function queryEventCount(conn: DuckDBConnection, workspaceId?: string): Pr
   const rows =
     workspaceId == null
       ? await queryRows(conn, "SELECT COUNT(*) AS cnt FROM events")
-      : await queryRows(conn, "SELECT COUNT(*) AS cnt FROM events WHERE workspace_id = ?", [workspaceId]);
+      : await queryRows(conn, "SELECT COUNT(*) AS cnt FROM events WHERE workspace_id = ?", [
+          workspaceId,
+        ]);
 
   assert(rows.length === 1, "queryEventCount expected exactly one row");
   return parseInteger(rows[0].cnt, "cnt");
@@ -318,7 +322,10 @@ describe("ingestArchivedSubagentTranscripts", () => {
       grandchildWorkspaceId
     );
     await fs.mkdir(grandchildSessionDir, { recursive: true });
-    await writeChatJsonl(grandchildSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
+    await writeChatJsonl(grandchildSessionDir, [
+      makeUserLine(),
+      makeAssistantLine({ sequence: 1 }),
+    ]);
     await writeMetadataJson(grandchildSessionDir, {
       parentWorkspaceId: childWorkspaceId,
       name: "grandchild-workspace",
@@ -343,7 +350,9 @@ describe("ingestArchivedSubagentTranscripts", () => {
     );
     expect(grandchildRows).toHaveLength(1);
     expect(grandchildRows[0].parent_workspace_id).toBe(childWorkspaceId);
-    expect(parseBooleanFromInteger(grandchildRows[0].is_sub_agent_int, "is_sub_agent_int")).toBe(true);
+    expect(parseBooleanFromInteger(grandchildRows[0].is_sub_agent_int, "is_sub_agent_int")).toBe(
+      true
+    );
   });
 
   test("watermark prevents double-counting on re-ingestion", async () => {
