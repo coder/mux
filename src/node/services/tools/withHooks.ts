@@ -37,6 +37,8 @@ export interface HookConfig {
   workspaceId: string;
   /** Additional environment variables to pass to hooks */
   env?: Record<string, string>;
+  /** When true, skip repo-level .mux hooks and use only user-level hooks */
+  skipRepoHooks?: boolean;
 }
 
 const HOOK_OUTPUT_MAX_CHARS = 64 * 1024;
@@ -84,9 +86,9 @@ export function withHooks<TParameters, TResult>(
   wrappedToolRecord.execute = async (args: TParameters, options: unknown) => {
     // Find hooks (checked per call - hooks can be added/removed dynamically)
     const [preHookPath, postHookPath, legacyHookPath] = await Promise.all([
-      getPreHookPath(config.runtime, config.cwd),
-      getPostHookPath(config.runtime, config.cwd),
-      getHookPath(config.runtime, config.cwd),
+      getPreHookPath(config.runtime, config.cwd, { skipRepoHooks: config.skipRepoHooks }),
+      getPostHookPath(config.runtime, config.cwd, { skipRepoHooks: config.skipRepoHooks }),
+      getHookPath(config.runtime, config.cwd, { skipRepoHooks: config.skipRepoHooks }),
     ]);
 
     // No hooks at all - execute tool directly

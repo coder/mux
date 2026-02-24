@@ -21,6 +21,7 @@ import { getToolsForModel } from "@/common/utils/tools/tools";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
+import { isProjectTrusted } from "@/node/utils/projectTrust";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { secretsToRecord } from "@/common/types/secrets";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
@@ -673,6 +674,7 @@ export class AIService extends EventEmitter {
 
       // Resolve agent definition, compute effective mode & tool policy.
       const cfg = this.config.loadConfigOrDefault();
+      const skipRepoResources = !isProjectTrusted(cfg, metadata.projectPath);
       const agentResult = await resolveAgentForStream({
         workspaceId,
         metadata,
@@ -722,7 +724,9 @@ export class AIService extends EventEmitter {
       // Pass overrides to filter out disabled servers
       const mcpServers =
         this.mcpServerManager && workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID
-          ? await this.mcpServerManager.listServers(metadata.projectPath, mcpOverrides)
+          ? await this.mcpServerManager.listServers(metadata.projectPath, mcpOverrides, {
+              skipRepoOverrides: skipRepoResources,
+            })
           : undefined;
 
       // Build plan-aware instructions and determine plan→exec transition content.
@@ -810,6 +814,7 @@ export class AIService extends EventEmitter {
             workspacePath,
             overrides: mcpOverrides,
             projectSecrets: secretsToRecord(projectSecrets),
+            skipRepoOverrides: skipRepoResources,
           });
 
           mcpTools = result.tools;
@@ -875,6 +880,7 @@ export class AIService extends EventEmitter {
           workspaceSessionDir: this.config.getSessionDir(workspaceId),
           planFilePath,
           workspaceId,
+          skipRepoHooks: skipRepoResources,
           // Only child workspaces (tasks) can report to a parent.
           enableAgentReport: Boolean(metadata.parentWorkspaceId),
           // External edit detection callback

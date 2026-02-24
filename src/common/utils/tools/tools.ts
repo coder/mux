@@ -75,6 +75,8 @@ export interface ToolConfiguration {
   workspaceSessionDir?: string;
   /** Workspace ID for tracking background processes and plan storage */
   workspaceId?: string;
+  /** When true, skip repo-level .mux hooks and use only user-level hooks/tool_env */
+  skipRepoHooks?: boolean;
   /** Callback to record file state for external edit detection (plan files) */
   recordFileState?: (filePath: string, state: FileState) => void;
   /** Task orchestration for sub-agent tasks */
@@ -218,6 +220,7 @@ function wrapToolsWithHooks(
     cwd: config.cwd,
     runtimeTempDir: config.runtimeTempDir,
     workspaceId: config.workspaceId,
+    skipRepoHooks: config.skipRepoHooks,
     // Match bash tool behavior: muxEnv is present and secrets override it.
     env: {
       ...(config.muxEnv ?? {}),
