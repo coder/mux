@@ -73,6 +73,11 @@ async function closeTranscriptFind(container: HTMLElement, input: HTMLInputEleme
   });
 }
 
+function getWindowSelectionText(): string {
+  const selection = window.getSelection();
+  return selection?.toString() ?? "";
+}
+
 describe("Transcript find UI", () => {
   beforeAll(async () => {
     await preloadTestModules();
@@ -118,33 +123,62 @@ describe("Transcript find UI", () => {
       });
       expect(document.activeElement).toBe(getMessageWindow(app.view.container));
 
-      // Enter/Shift+Enter navigate forward/backward through matches.
+      // First Enter should land on the first and only match (regression for skip-to-#2 bug).
       input = await openTranscriptFind(app.view.container);
       await user.clear(input);
-      await user.type(input, "needle-alpha");
+      await user.type(input, "Mock response: needle-alpha needle-alpha");
 
-      const firstMatch = await waitFor(() => {
+      await waitFor(() => {
         const parsed = parseMatchLabel(getTranscriptFindMatchLabel(input));
-        if (!parsed || parsed.total < 2) {
-          throw new Error("Expected at least two transcript matches");
-        }
-        return parsed;
+        expect(parsed).not.toBeNull();
+        expect(parsed?.total).toBe(1);
       });
 
       fireEvent.keyDown(input, { key: "Enter" });
       await waitFor(() => {
         const parsed = parseMatchLabel(getTranscriptFindMatchLabel(input));
         expect(parsed).not.toBeNull();
-        expect(parsed?.total).toBe(firstMatch.total);
-        expect(parsed?.current).toBe((firstMatch.current % firstMatch.total) + 1);
+        expect(parsed?.current).toBe(1);
+        expect(parsed?.total).toBe(1);
+        expect(getWindowSelectionText()).toBe("Mock response: needle-alpha needle-alpha");
+      });
+      await closeTranscriptFind(app.view.container, input);
+
+      // Enter/Shift+Enter navigate forward/backward through multi-match results.
+      input = await openTranscriptFind(app.view.container);
+      await user.clear(input);
+      await user.type(input, "needle-alpha");
+
+      await waitFor(() => {
+        const parsed = parseMatchLabel(getTranscriptFindMatchLabel(input));
+        if (!parsed || parsed.total < 2) {
+          throw new Error("Expected at least two transcript matches");
+        }
+      });
+
+      // First Enter should select match #1, not skip to #2.
+      fireEvent.keyDown(input, { key: "Enter" });
+      await waitFor(() => {
+        const parsed = parseMatchLabel(getTranscriptFindMatchLabel(input));
+        expect(parsed).not.toBeNull();
+        expect(parsed?.total).toBeGreaterThanOrEqual(2);
+        expect(parsed?.current).toBe(1);
+      });
+
+      fireEvent.keyDown(input, { key: "Enter" });
+      await waitFor(() => {
+        const parsed = parseMatchLabel(getTranscriptFindMatchLabel(input));
+        expect(parsed).not.toBeNull();
+        expect(parsed?.total).toBeGreaterThanOrEqual(2);
+        expect(parsed?.current).toBe(2);
       });
 
       fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
       await waitFor(() => {
         const parsed = parseMatchLabel(getTranscriptFindMatchLabel(input));
         expect(parsed).not.toBeNull();
-        expect(parsed?.total).toBe(firstMatch.total);
-        expect(parsed?.current).toBe(firstMatch.current);
+        expect(parsed?.total).toBeGreaterThanOrEqual(2);
+        expect(parsed?.current).toBe(1);
       });
       await closeTranscriptFind(app.view.container, input);
     } finally {

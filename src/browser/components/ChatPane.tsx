@@ -595,8 +595,11 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
         return -1;
       }
 
+      // Keep the initial index unset so the first Enter lands on match #1.
+      // If we eagerly set 0 here, first Enter skips to #2 and single-hit
+      // searches cannot trigger focus because the index never changes.
       if (currentIndex < 0) {
-        return 0;
+        return -1;
       }
 
       return Math.min(currentIndex, matches.length - 1);
