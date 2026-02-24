@@ -508,24 +508,27 @@ export const ProjectRemovalDisabled: AppStory = {
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    const projectRow = canvasElement.querySelector<HTMLElement>(
-      '[role="button"][data-project-path="/mock/my-app"]'
-    );
-    if (!projectRow) throw new Error("Project row not found");
-
-    await userEvent.hover(projectRow);
-
-    // Wait for the remove button to exist in DOM
-    await waitFor(() => {
-      const removeButton = canvasElement.querySelector(
+    const removeButton = await waitFor(() => {
+      const button = canvasElement.querySelector<HTMLButtonElement>(
         'button[aria-label="Remove project my-app"]'
       );
-      if (!removeButton) throw new Error("Remove button not found");
+      if (!button) throw new Error("Remove button not found");
+      return button;
     });
 
-    const removeButton = canvasElement.querySelector<HTMLButtonElement>(
-      'button[aria-label="Remove project my-app"]'
-    )!;
+    const projectRow = await waitFor(() => {
+      const row = canvasElement.querySelector<HTMLElement>(
+        '[data-project-path="/mock/my-app"][aria-controls]'
+      );
+      if (row) return row;
+
+      const fallback = removeButton.closest<HTMLElement>('[data-project-path="/mock/my-app"]');
+      if (fallback) return fallback;
+
+      throw new Error("Project row not found");
+    });
+
+    await userEvent.hover(projectRow);
 
     // Verify the button is disabled (aria-disabled="true")
     await waitFor(
