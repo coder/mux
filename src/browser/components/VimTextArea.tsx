@@ -32,6 +32,7 @@ export interface VimTextAreaProps extends Omit<
   isEditing?: boolean;
   suppressKeys?: string[]; // keys for which Vim should not interfere (e.g. ["Tab","ArrowUp","ArrowDown","Escape"]) when popovers are open
   trailingAction?: React.ReactNode;
+  ghostHint?: string | null;
   /** Called when Escape is pressed in normal mode (vim) - useful for cancel edit */
   onEscapeInNormalMode?: () => void;
   /** Focus border color (CSS color value). */
@@ -49,6 +50,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
       suppressKeys,
       onKeyDown,
       trailingAction,
+      ghostHint,
       onEscapeInNormalMode,
       focusBorderColor,
       ...rest
@@ -245,6 +247,16 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
       setTimeout(() => applyDomSelection(newState), 0);
     };
 
+    const textareaStyle: React.CSSProperties & { "--focus-border-color"?: string } = {
+      // Mirror textarea defaults in inline styles so ghost hint overlay can reuse exact metrics.
+      padding: "0.375rem 0.5rem",
+      fontSize: "13px",
+      ...(rest.style ?? {}),
+      ...(trailingAction ? { scrollbarGutter: "stable both-edges" } : {}),
+      // Focus border color from agent definition
+      "--focus-border-color": !isEditing ? focusBorderColor : undefined,
+    };
+
     // Screen-reader announcement for vim mode changes (visually hidden)
     const srModeLabel =
       vimEnabled && vimMode !== "insert"
@@ -276,14 +288,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
             // Optimize for iPadOS/iOS keyboard behavior
             enterKeyHint="send"
             {...rest}
-            style={
-              {
-                ...(rest.style ?? {}),
-                ...(trailingAction ? { scrollbarGutter: "stable both-edges" } : {}),
-                // Focus border color from agent definition
-                "--focus-border-color": !isEditing ? focusBorderColor : undefined,
-              } as React.CSSProperties
-            }
+            style={textareaStyle}
             className={cn(
               "w-full border text-light py-1.5 px-2 rounded text-[13px] resize-none min-h-8 max-h-[50vh] overflow-y-auto",
               vimEnabled ? "font-monospace" : "font-sans",
@@ -299,6 +304,26 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
               rest.className
             )}
           />
+          {ghostHint && (
+            <div
+              className={cn(
+                "pointer-events-none absolute top-0 left-0 right-0",
+                "overflow-hidden whitespace-pre text-[13px]",
+                vimEnabled ? "font-monospace" : "font-sans"
+              )}
+              // Match textarea padding/font metrics so the ghost hint starts exactly after input text.
+              style={{
+                padding: textareaStyle?.padding,
+                fontSize: textareaStyle?.fontSize,
+                lineHeight: textareaStyle?.lineHeight,
+                fontFamily: textareaStyle?.fontFamily,
+              }}
+            >
+              {/* Invisible spacer occupies the same width as the typed text. */}
+              <span style={{ visibility: "hidden" }}>{value}</span>
+              <span className="text-placeholder">{ghostHint}</span>
+            </div>
+          )}
           {trailingAction && (
             <div className="pointer-events-none absolute right-3.5 bottom-2.5 flex items-center">
               <div className="pointer-events-auto">{trailingAction}</div>

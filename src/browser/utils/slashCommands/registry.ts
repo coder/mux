@@ -465,3 +465,18 @@ export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
 export const SLASH_COMMAND_DEFINITION_MAP = new Map(
   SLASH_COMMAND_DEFINITIONS.map((definition) => [definition.key, definition])
 );
+
+const COMMAND_GHOST_HINT_PATTERN = /^\/(\S+)\s+$/;
+
+export function getCommandGhostHint(input: string, showCommandSuggestions: boolean): string | null {
+  if (showCommandSuggestions) {
+    return null;
+  }
+
+  const match = COMMAND_GHOST_HINT_PATTERN.exec(input);
+  if (!match) {
+    return null;
+  }
+
+  return SLASH_COMMAND_DEFINITION_MAP.get(match[1])?.inputHint ?? null;
+}

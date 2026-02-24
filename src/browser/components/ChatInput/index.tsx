@@ -59,6 +59,7 @@ import {
 import { Button } from "../ui/button";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { findAtMentionAtCursor } from "@/common/utils/atMentions";
+import { getCommandGhostHint } from "@/browser/utils/slashCommands/registry";
 import {
   getSlashCommandSuggestions,
   type SlashSuggestion,
@@ -1216,6 +1217,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     setShowCommandSuggestions(suggestions.length > 0);
   }, [input, agentSkillDescriptors, variant]);
 
+  // Derive ghost hint for slash-command argument syntax.
+  // Show only when suggestions are hidden and the input is exactly "/command " with no args yet.
+  const commandGhostHint = getCommandGhostHint(input, showCommandSuggestions);
+
   // Load agent skills for suggestions
   useEffect(() => {
     let isMounted = true;
@@ -2330,6 +2335,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   ref={inputRef}
                   data-escape-interrupts-stream="true"
                   value={input}
+                  ghostHint={commandGhostHint}
                   isEditing={!!editingMessage}
                   focusBorderColor={focusBorderColor}
                   onChange={handleInputChange}
