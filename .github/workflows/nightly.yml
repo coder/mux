@@ -62,11 +62,18 @@ jobs:
           BUILD_SHA: ${{ steps.compute.outputs.build_sha }}
         shell: bash
         run: |
+          RELEASE_VERSION="${RELEASE_TAG#v}"
           REQUIRED_ASSETS=(
             nightly.yml
             nightly-mac.yml
             nightly-linux.yml
             nightly-docker.txt
+            # Versioned Linux release assets ensure reruns don't skip partially
+            # published AppImage/checksum outputs.
+            "mux-${RELEASE_VERSION}-x86_64.AppImage"
+            "mux-${RELEASE_VERSION}-arm64.AppImage"
+            "mux-${RELEASE_VERSION}-x86_64.AppImage.sha256"
+            "mux-${RELEASE_VERSION}-arm64.AppImage.sha256"
           )
 
           # Re-runs with no new commits may find an existing nightly release.
