@@ -2,8 +2,7 @@
  * Service for interacting with the Coder CLI.
  * Used to create/manage Coder workspaces as SSH targets for Mux workspaces.
  */
-import { shescape } from "@/node/runtime/streamUtils";
-import { execAsync } from "@/node/utils/disposableExec";
+import { execAsync, execFileAsync } from "@/node/utils/disposableExec";
 import { getBashPath } from "@/node/utils/main/bashPath";
 import { log } from "@/node/services/log";
 import { spawn, type ChildProcess } from "child_process";
@@ -365,7 +364,7 @@ export class CoderService {
     const binaryPath = await this.resolveCoderBinaryPath();
 
     try {
-      using proc = execAsync("coder version --output=json");
+      using proc = execFileAsync("coder", ["version", "--output=json"]);
       const { stdout } = await proc.result;
 
       // Parse JSON output
@@ -481,9 +480,14 @@ export class CoderService {
    * Create a short-lived Coder API token for deployment endpoints.
    */
   private async createApiSession(tokenName: string): Promise<CoderApiSession> {
-    using tokenProc = execAsync(
-      `coder tokens create --lifetime 5m --name ${shescape.quote(tokenName)}`
-    );
+    using tokenProc = execFileAsync("coder", [
+      "tokens",
+      "create",
+      "--lifetime",
+      "5m",
+      "--name",
+      tokenName,
+    ]);
     const { stdout: token } = await tokenProc.result;
     const trimmed = token.trim();
 
@@ -491,7 +495,7 @@ export class CoderService {
       token: trimmed,
       dispose: async () => {
         try {
-          using deleteProc = execAsync(`coder tokens delete ${shescape.quote(tokenName)}`);
+          using deleteProc = execFileAsync("coder", ["tokens", "delete", tokenName]);
           await deleteProc.result;
         } catch {
           // Best-effort cleanup; token will expire in 5 minutes anyway.
@@ -581,7 +585,7 @@ export class CoderService {
       return this.cachedWhoami;
     }
 
-    using proc = execAsync("coder whoami --output=json");
+    using proc = execFileAsync("coder", ["whoami", "--output=json"]);
     const { stdout } = await proc.result;
 
     const data = JSON.parse(stdout) as Array<Partial<CoderWhoamiData>>;
@@ -613,7 +617,7 @@ export class CoderService {
    */
   private async getActiveTemplateVersionId(templateName: string, org?: string): Promise<string> {
     // Note: `coder templates list` doesn't support --org flag, so we filter client-side
-    using proc = execAsync("coder templates list --output=json");
+    using proc = execFileAsync("coder", ["templates", "list", "--output=json"]);
     const { stdout } = await proc.result;
 
     if (!stdout.trim()) {
@@ -650,10 +654,9 @@ export class CoderService {
     org?: string
   ): Promise<Set<string>> {
     try {
-      const orgFlag = org ? ` --org ${shescape.quote(org)}` : "";
-      using proc = execAsync(
-        `coder templates presets list ${shescape.quote(templateName)}${orgFlag} --output=json`
-      );
+      const args = ["templates", "presets", "list", templateName, "--output=json"];
+      if (org) args.push("--org", org);
+      using proc = execFileAsync("coder", args);
       const { stdout } = await proc.result;
 
       // Same non-JSON guard as listPresets (CLI prints info message for no presets)
@@ -834,7 +837,7 @@ export class CoderService {
    */
   async listTemplates(): Promise<CoderListTemplatesResult> {
     try {
-      using proc = execAsync("coder templates list --output=json");
+      using proc = execFileAsync("coder", ["templates", "list", "--output=json"]);
       const { stdout } = await proc.result;
 
       // Handle empty output (no templates)
@@ -874,10 +877,9 @@ export class CoderService {
    */
   async listPresets(templateName: string, org?: string): Promise<CoderListPresetsResult> {
     try {
-      const orgFlag = org ? ` --org ${shescape.quote(org)}` : "";
-      using proc = execAsync(
-        `coder templates presets list ${shescape.quote(templateName)}${orgFlag} --output=json`
-      );
+      const args = ["templates", "presets", "list", templateName, "--output=json"];
+      if (org) args.push("--org", org);
+      using proc = execFileAsync("coder", args);
       const { stdout } = await proc.result;
 
       // Handle empty output or non-JSON info messages (no presets).
@@ -922,9 +924,12 @@ export class CoderService {
    */
   async workspaceExists(workspaceName: string): Promise<boolean> {
     try {
-      using proc = execAsync(
-        `coder list --search ${shescape.quote(`name:${workspaceName}`)} --output=json`
-      );
+      using proc = execFileAsync("coder", [
+        "list",
+        "--search",
+        `name:${workspaceName}`,
+        "--output=json",
+      ]);
       const { stdout } = await proc.result;
 
       if (!stdout.trim()) {
@@ -949,7 +954,7 @@ export class CoderService {
     const KNOWN_STATUSES = new Set<string>(CoderWorkspaceStatusSchema.options);
 
     try {
-      using proc = execAsync("coder list --output=json");
+      using proc = execFileAsync("coder", ["list", "--output=json"]);
       const { stdout } = await proc.result;
 
       // Handle empty output (no workspaces)
@@ -1462,7 +1467,7 @@ export class CoderService {
    */
   async ensureSSHConfig(): Promise<void> {
     log.debug("Ensuring Coder SSH config");
-    using proc = execAsync("coder config-ssh --yes");
+    using proc = execFileAsync("coder", ["config-ssh", "--yes"]);
     await proc.result;
   }
 }
