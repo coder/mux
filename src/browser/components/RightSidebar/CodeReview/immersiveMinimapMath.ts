@@ -72,11 +72,10 @@ export const pointerYToLineIndex = (
     return 0;
   }
 
-  const lastLineIndex = Math.max(totalLines - 1, 0);
-  const ratio = clamp(pointerY / Math.max(trackHeight, 1), 0, 1);
-  const lineIndex = Math.round(ratio * lastLineIndex);
+  const bandHeight = trackHeight / totalLines;
+  const lineIndex = Math.floor(pointerY / Math.max(bandHeight, Number.MIN_VALUE));
 
-  return clamp(lineIndex, 0, lastLineIndex);
+  return clamp(lineIndex, 0, totalLines - 1);
 };
 
 export const scrollTopForLine = (

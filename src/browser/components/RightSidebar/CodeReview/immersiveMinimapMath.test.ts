@@ -80,7 +80,11 @@ describe("pointerYToLineIndex", () => {
   });
 
   it("maps halfway pointer to the middle line", () => {
-    expect(pointerYToLineIndex(60, 120, 11)).toBe(5);
+    expect(pointerYToLineIndex(150, 300, 100)).toBe(50);
+  });
+
+  it("keeps clicks in the lower portion of a band on the same line", () => {
+    expect(pointerYToLineIndex(2.9, 300, 100)).toBe(0);
   });
 
   it("clamps negative pointerY to the first line", () => {
