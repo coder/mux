@@ -294,7 +294,7 @@ function AppInner() {
   const openWorkspaceInTerminal = useOpenTerminal();
 
   const handleRemoveProject = useCallback(
-    async (path: string): Promise<{ success: boolean; error?: string }> => {
+    async (path: string) => {
       if (selectedWorkspace?.projectPath === path) {
         setSelectedWorkspace(null);
       }

@@ -118,6 +118,15 @@ export function getArchivedWorkspacesKey(projectPath: string): string {
 }
 
 /**
+ * Get the localStorage key for archived workspaces expand/collapse state.
+ * Format: "archivedWorkspacesExpanded:{projectPath}"
+ * Stores: boolean (true = expanded)
+ */
+export function getArchivedWorkspacesExpandedKey(projectPath: string): string {
+  return `archivedWorkspacesExpanded:${projectPath}`;
+}
+
+/**
  * Get the localStorage key for cached MCP servers per project
  * Format: "mcpServers:{projectPath}"
  * Stores: Record<serverName, MCPServerInfo> (optimistic cache)

@@ -29,6 +29,18 @@ export function PopoverError(props: PopoverErrorProps) {
       <div className="flex-1 leading-[1.4] break-words whitespace-pre-wrap">
         <span className="font-medium">{props.prefix}</span>
         <p className="text-light mt-1">{props.error.error}</p>
+        {props.error.action && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              props.error!.action!.onClick();
+              props.onDismiss?.();
+            }}
+            className="text-link hover:underline mt-1 cursor-pointer border-none bg-transparent p-0 text-xs"
+          >
+            {props.error.action.label}
+          </button>
+        )}
       </div>
       {props.onDismiss && (
         <button

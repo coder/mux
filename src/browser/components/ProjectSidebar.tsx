@@ -17,6 +17,7 @@ import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import {
   EXPANDED_PROJECTS_KEY,
   MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY,
+  getArchivedWorkspacesExpandedKey,
   getDraftScopeId,
   getInputKey,
   getWorkspaceNameStateKey,
@@ -77,6 +78,7 @@ import { SectionDragLayer } from "./SectionDragLayer";
 import { DraggableSection } from "./DraggableSection";
 import type { SectionConfig } from "@/common/types/project";
 import { getErrorMessage } from "@/common/utils/errors";
+import { getProjectWorkspaceCounts } from "@/common/utils/projectRemoval";
 
 // Re-export WorkspaceSelection for backwards compatibility
 export type { WorkspaceSelection } from "./WorkspaceListItem";
@@ -1019,6 +1021,24 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                       projectPath.replace(/[^a-zA-Z0-9_-]/g, "-") || "root";
                     const workspaceListId = `workspace-list-${sanitizedProjectId}`;
                     const isExpanded = expandedProjectsList.includes(projectPath);
+                    const counts = getProjectWorkspaceCounts(config.workspaces);
+                    const canDelete = counts.activeCount === 0 && counts.archivedCount === 0;
+                    let removeTooltip: string;
+                    if (canDelete) {
+                      removeTooltip = "Remove project";
+                    } else if (counts.archivedCount === 0) {
+                      removeTooltip =
+                        counts.activeCount === 1
+                          ? "Delete workspace first"
+                          : `Delete all ${counts.activeCount} workspaces first`;
+                    } else if (counts.activeCount === 0) {
+                      removeTooltip =
+                        counts.archivedCount === 1
+                          ? "Delete archived workspace first"
+                          : `Delete ${counts.archivedCount} archived workspaces first`;
+                    } else {
+                      removeTooltip = `Delete ${counts.activeCount} active + ${counts.archivedCount} archived workspaces first`;
+                    }
 
                     return (
                       <div key={projectPath} className="border-hover border-b">
@@ -1098,28 +1118,71 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               <button
                                 onClick={(event) => {
                                   event.stopPropagation();
+                                  if (!canDelete) return;
                                   const buttonElement = event.currentTarget;
                                   void (async () => {
                                     const result = await onRemoveProject(projectPath);
                                     if (!result.success) {
-                                      const error = result.error ?? "Failed to remove project";
+                                      const error = result.error;
+                                      let message: string;
+                                      if (error.type === "workspace_blockers") {
+                                        const parts: string[] = [];
+                                        if (error.activeCount > 0) {
+                                          parts.push(`${error.activeCount} active`);
+                                        }
+                                        if (error.archivedCount > 0) {
+                                          parts.push(`${error.archivedCount} archived`);
+                                        }
+                                        message = `Has ${parts.join(" and ")} workspace(s)`;
+                                      } else if (error.type === "project_not_found") {
+                                        message = "Project not found";
+                                      } else {
+                                        message = error.message;
+                                      }
+
                                       const rect = buttonElement.getBoundingClientRect();
                                       const anchor = {
                                         top: rect.top + window.scrollY,
                                         left: rect.right + 10,
                                       };
-                                      projectRemoveError.showError(projectPath, error, anchor);
+                                      const action =
+                                        error.type === "workspace_blockers" &&
+                                        error.archivedCount > 0
+                                          ? {
+                                              label: "View archived workspaces →",
+                                              onClick: () => {
+                                                updatePersistedState(
+                                                  getArchivedWorkspacesExpandedKey(projectPath),
+                                                  true
+                                                );
+                                                navigateToProject(projectPath);
+                                              },
+                                            }
+                                          : undefined;
+
+                                      projectRemoveError.showError(
+                                        projectPath,
+                                        message,
+                                        anchor,
+                                        action
+                                      );
                                     }
                                   })();
                                 }}
                                 aria-label={`Remove project ${projectName}`}
+                                aria-disabled={!canDelete}
                                 data-project-path={projectPath}
-                                className="text-muted-dark hover:text-danger-light hover:bg-danger-light/10 mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-base opacity-0 transition-all duration-200"
+                                className={cn(
+                                  "text-muted-dark mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-[3px] border-none bg-transparent text-base opacity-0 transition-all duration-200",
+                                  canDelete
+                                    ? "cursor-pointer hover:bg-danger-light/10 hover:text-danger-light"
+                                    : "cursor-not-allowed !opacity-40"
+                                )}
                               >
                                 ×
                               </button>
                             </TooltipTrigger>
-                            <TooltipContent align="end">Remove project</TooltipContent>
+                            <TooltipContent align="end">{removeTooltip}</TooltipContent>
                           </Tooltip>
                           <Tooltip>
                             <TooltipTrigger asChild>

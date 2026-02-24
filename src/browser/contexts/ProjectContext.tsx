@@ -11,6 +11,8 @@ import {
 import { useAPI } from "@/browser/contexts/API";
 import type { ProjectConfig, SectionConfig } from "@/common/types/project";
 import type { BranchListResult } from "@/common/orpc/types";
+import type { z } from "zod";
+import type { ProjectRemoveErrorSchema } from "@/common/orpc/schemas/errors";
 import type { Secret } from "@/common/types/secrets";
 import type { Result } from "@/common/types/result";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
@@ -31,13 +33,22 @@ interface WorkspaceModalState {
   isLoading: boolean;
 }
 
+type ProjectRemoveError = z.infer<typeof ProjectRemoveErrorSchema>;
+
+type ProjectRemoveResult =
+  | { success: true }
+  | {
+      success: false;
+      error: ProjectRemoveError;
+    };
+
 export interface ProjectContext {
   projects: Map<string, ProjectConfig>;
   /** True while initial project list is loading */
   loading: boolean;
   refreshProjects: () => Promise<void>;
   addProject: (normalizedPath: string, projectConfig: ProjectConfig) => void;
-  removeProject: (path: string) => Promise<{ success: boolean; error?: string }>;
+  removeProject: (path: string) => Promise<ProjectRemoveResult>;
 
   // Project creation modal
   isProjectCreateModalOpen: boolean;
@@ -82,15 +93,6 @@ function deriveProjectName(projectPath: string): string {
   }
   const segments = projectPath.split(/[\\/]/).filter(Boolean);
   return segments[segments.length - 1] ?? projectPath;
-}
-
-const PROJECT_REMOVE_ACTIVE_WORKSPACES_ERROR_PREFIX =
-  "Cannot remove project with active workspaces";
-
-function isExpectedProjectRemovalValidationError(error: string | undefined): boolean {
-  return (
-    typeof error === "string" && error.startsWith(PROJECT_REMOVE_ACTIVE_WORKSPACES_ERROR_PREFIX)
-  );
 }
 
 export function ProjectProvider(props: { children: ReactNode }) {
@@ -161,8 +163,13 @@ export function ProjectProvider(props: { children: ReactNode }) {
   }, []);
 
   const removeProject = useCallback(
-    async (path: string): Promise<{ success: boolean; error?: string }> => {
-      if (!api) return { success: false, error: "API not connected" };
+    async (path: string): Promise<ProjectRemoveResult> => {
+      if (!api) {
+        return {
+          success: false,
+          error: { type: "unknown", message: "API not connected" },
+        };
+      }
       try {
         const result = await api.projects.remove({ projectPath: path });
         if (result.success) {
@@ -201,20 +208,24 @@ export function ProjectProvider(props: { children: ReactNode }) {
           }
 
           return { success: true };
-        } else {
-          if (isExpectedProjectRemovalValidationError(result.error)) {
-            // Expected user-facing validation failures (for example, active workspaces still present)
-            // should surface in UI without polluting error-level console output.
-            console.warn("Failed to remove project:", result.error);
-          } else {
-            console.error("Failed to remove project:", result.error);
-          }
-          return { success: false, error: result.error };
         }
+
+        const error = result.error;
+        if (error.type === "workspace_blockers") {
+          // Expected user-facing validation failures should surface in UI without
+          // polluting error-level console output.
+          console.warn("Failed to remove project:", error);
+        } else {
+          console.error("Failed to remove project:", error);
+        }
+        return { success: false, error };
       } catch (error) {
         const errorMessage = getErrorMessage(error);
         console.error("Failed to remove project:", errorMessage);
-        return { success: false, error: errorMessage };
+        return {
+          success: false,
+          error: { type: "unknown" as const, message: errorMessage },
+        };
       }
     },
     [api]

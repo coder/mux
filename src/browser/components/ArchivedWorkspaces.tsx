@@ -4,6 +4,7 @@ import { cn } from "@/common/lib/utils";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { getArchivedWorkspacesExpandedKey } from "@/common/constants/storage";
 import { useAPI } from "@/browser/contexts/API";
 import { ChevronDown, ChevronRight, Loader2, Search, Trash2 } from "lucide-react";
 import { ArchiveIcon, ArchiveRestoreIcon } from "./icons/ArchiveIcon";
@@ -229,7 +230,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
   onWorkspacesChanged,
 }) => {
   const [isExpanded, setIsExpanded] = usePersistedState(
-    `archivedWorkspacesExpanded:${_projectPath}`,
+    getArchivedWorkspacesExpandedKey(_projectPath),
     false
   );
   const archivedRegionId = React.useId();

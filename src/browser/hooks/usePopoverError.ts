@@ -1,14 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+export interface PopoverErrorAction {
+  label: string;
+  onClick: () => void;
+}
+
 export interface PopoverErrorState {
   id: string;
   error: string;
   position: { top: number; left: number };
+  action?: PopoverErrorAction;
 }
 
 export interface UsePopoverErrorResult {
   error: PopoverErrorState | null;
-  showError: (id: string, error: string, anchor?: { top: number; left: number }) => void;
+  showError: (
+    id: string,
+    error: string,
+    anchor?: { top: number; left: number },
+    action?: PopoverErrorAction
+  ) => void;
   clearError: () => void;
 }
 
@@ -29,7 +40,12 @@ export function usePopoverError(autoDismissMs = 5000): UsePopoverErrorResult {
   }, []);
 
   const showError = useCallback(
-    (id: string, errorMsg: string, anchor?: { top: number; left: number }) => {
+    (
+      id: string,
+      errorMsg: string,
+      anchor?: { top: number; left: number },
+      action?: PopoverErrorAction
+    ) => {
       if (timeoutRef.current) {
         window.clearTimeout(timeoutRef.current);
       }
@@ -39,7 +55,7 @@ export function usePopoverError(autoDismissMs = 5000): UsePopoverErrorResult {
         left: Math.max(window.innerWidth - 420, 16),
       };
 
-      setError({ id, error: errorMsg, position });
+      setError({ id, error: errorMsg, position, action });
 
       timeoutRef.current = window.setTimeout(() => {
         setError(null);
