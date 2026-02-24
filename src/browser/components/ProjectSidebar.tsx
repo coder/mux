@@ -1155,7 +1155,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   "text-muted-dark mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-[3px] border-none bg-transparent text-base opacity-0 transition-all duration-200",
                                   canDelete
                                     ? "cursor-pointer hover:bg-danger-light/10 hover:text-danger-light"
-                                    : "cursor-not-allowed !opacity-40"
+                                    : "cursor-not-allowed"
                                 )}
                               >
                                 ×

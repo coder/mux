@@ -529,5 +529,11 @@ export const ProjectRemovalDisabled: AppStory = {
       },
       { timeout: 2000 }
     );
+
+    await waitFor(() => {
+      if (removeButton.className.includes("!opacity-40")) {
+        throw new Error("Disabled remove button should not force !opacity-40 visibility");
+      }
+    });
   },
 };

@@ -414,6 +414,59 @@ describe("WorkspaceContext", () => {
     expect(ctx().selectedWorkspace?.workspaceId).toBe(parentId);
   });
 
+  test("refreshes projects when metadata delete event is received", async () => {
+    const workspaceId = "ws-delete-refresh";
+
+    const workspaces: FrontendWorkspaceMetadata[] = [
+      createWorkspaceMetadata({
+        id: workspaceId,
+        projectPath: "/alpha",
+        projectName: "alpha",
+        name: "main",
+        namedWorkspacePath: "/alpha-main",
+      }),
+    ];
+
+    let emitDelete:
+      | ((event: { workspaceId: string; metadata: FrontendWorkspaceMetadata | null }) => void)
+      | null = null;
+
+    const { projects: projectsApi } = createMockAPI({
+      workspace: {
+        list: () => Promise.resolve(workspaces),
+        onMetadata: () =>
+          Promise.resolve(
+            (async function* () {
+              const event = await new Promise<{
+                workspaceId: string;
+                metadata: FrontendWorkspaceMetadata | null;
+              }>((resolve) => {
+                emitDelete = resolve;
+              });
+              yield event;
+            })() as unknown as Awaited<ReturnType<APIClient["workspace"]["onMetadata"]>>
+          ),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+    });
+
+    await setup();
+
+    await waitFor(() => expect(emitDelete).toBeTruthy());
+    await waitFor(() => expect(projectsApi.list).toHaveBeenCalled());
+    const callsBeforeDelete = projectsApi.list.mock.calls.length;
+
+    act(() => {
+      emitDelete?.({ workspaceId, metadata: null });
+    });
+
+    await waitFor(() => {
+      expect(projectsApi.list.mock.calls.length).toBeGreaterThan(callsBeforeDelete);
+    });
+  });
+
   test("seeds model + thinking localStorage from backend metadata", async () => {
     const initialWorkspaces: FrontendWorkspaceMetadata[] = [
       createWorkspaceMetadata({
