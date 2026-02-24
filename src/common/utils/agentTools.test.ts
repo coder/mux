@@ -77,6 +77,13 @@ describe("isToolEnabledByConfigs", () => {
     expect(isToolEnabledByConfigs("agent_report", configs)).toBe(true);
   });
 
+  it("tools.require uses the last entry within a single layer", () => {
+    const configs: ToolsConfig[] = [{ require: ["propose_plan", "agent_report"] }];
+
+    expect(isToolEnabledByConfigs("propose_plan", configs)).toBe(false);
+    expect(isToolEnabledByConfigs("agent_report", configs)).toBe(true);
+  });
+
   it("base require remains effective when child omits tools.require", () => {
     const configs: ToolsConfig[] = [{ require: ["propose_plan"] }, { add: ["file_read"] }];
 

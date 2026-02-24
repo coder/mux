@@ -35,12 +35,12 @@ function toolMatchesPatterns(toolName: string, patterns: readonly string[]): boo
  * - Baseline is deny-all.
  * - If a tool matches any `add` pattern it becomes enabled.
  * - If a tool matches any `remove` pattern it becomes disabled (overrides earlier adds).
- * - `require` uses last-layer-wins semantics: when present, the effective require list
- *   from the most-derived layer that defines it determines enabled status.
+ * - `require` uses last-layer-wins semantics: when present, the last non-empty
+ *   require pattern from the most-derived layer determines enabled status.
  */
 export function isToolEnabledByConfigs(toolName: string, configs: readonly ToolsConfig[]): boolean {
   let enabled = false;
-  let effectiveRequire: readonly string[] | undefined;
+  let effectiveRequirePattern: string | undefined;
 
   for (const config of configs) {
     if (config.add && toolMatchesPatterns(toolName, config.add)) {
@@ -52,12 +52,15 @@ export function isToolEnabledByConfigs(toolName: string, configs: readonly Tools
     }
 
     if (config.require !== undefined) {
-      effectiveRequire = config.require;
+      const cleanedRequirePatterns = config.require
+        .map((pattern) => pattern.trim())
+        .filter((pattern) => pattern.length > 0);
+      effectiveRequirePattern = cleanedRequirePatterns.at(-1);
     }
   }
 
-  if (effectiveRequire !== undefined) {
-    return toolMatchesPatterns(toolName, effectiveRequire);
+  if (effectiveRequirePattern !== undefined) {
+    return toolMatchesPatterns(toolName, [effectiveRequirePattern]);
   }
 
   return enabled;
