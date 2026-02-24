@@ -437,6 +437,9 @@ setCloneOutput("");
     });
 
     const handleClone = useCallback(async (): Promise<boolean> => {
+      setError("");
+      setDestinationExistsPath(null);
+
       const trimmedRepoUrl = repoUrl.trim();
       if (!trimmedRepoUrl) {
         setError("Please enter a repository URL");
@@ -452,8 +455,8 @@ setCloneOutput("");
         return false;
       }
 
-      setError("");
-setCloneOutput("");
+setError("");
+      setCloneOutput("");
       rawOutputRef.current = "";
       setDestinationExistsPath(null);
       setCreating(true);
