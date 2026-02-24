@@ -8,6 +8,7 @@ import { ToggleGroup, type ToggleOption } from "../ToggleGroup";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 import { computeTimingPercentages } from "@/browser/utils/timingPercentages";
 import { calculateAverageTPS } from "@/browser/utils/messages/StreamingTPSCalculator";
+import { formatDurationPrecise } from "@/browser/utils/ui/dateTime";
 
 // Colors for timing components (matching TOKEN_COMPONENT_COLORS style)
 const TIMING_COLORS = {
@@ -15,15 +16,6 @@ const TIMING_COLORS = {
   model: "#3b82f6", // blue - model inference
   tools: "#10b981", // green - tool execution
 } as const;
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  if (ms < 10000) return `${(ms / 1000).toFixed(1)}s`;
-  if (ms < 60000) return `${Math.round(ms / 1000)}s`;
-  const mins = Math.floor(ms / 60000);
-  const secs = Math.round((ms % 60000) / 1000);
-  return `${mins}m ${secs}s`;
-}
 
 function formatTokens(tokens: number): string {
   if (tokens < 1000) return String(tokens);
@@ -297,7 +289,7 @@ export function StatsTab(props: StatsTabProps) {
                   {isClearing ? "Clearing..." : "Clear stats"}
                 </button>
               )}
-              <span className="text-muted text-xs">{formatDuration(totalDuration)}</span>
+              <span className="text-muted text-xs">{formatDurationPrecise(totalDuration)}</span>
             </div>
           </div>
 
@@ -376,7 +368,9 @@ export function StatsTab(props: StatsTabProps) {
                   {component.waiting ? (
                     <span className="text-muted text-xs">waiting…</span>
                   ) : component.duration !== null ? (
-                    <span className="text-muted text-xs">{formatDuration(component.duration)}</span>
+                    <span className="text-muted text-xs">
+                      {formatDurationPrecise(component.duration)}
+                    </span>
                   ) : (
                     <span className="text-muted text-xs">—</span>
                   )}
@@ -428,7 +422,7 @@ export function StatsTab(props: StatsTabProps) {
                       {label}
                     </span>
                     <span className="text-muted shrink-0 text-xs">
-                      {formatDuration(entry.totalDurationMs)}
+                      {formatDurationPrecise(entry.totalDurationMs)}
                     </span>
                   </div>
                   <div className="text-muted-light mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px]">
@@ -436,7 +430,7 @@ export function StatsTab(props: StatsTabProps) {
                     {avgTtft !== null && (
                       <>
                         <span>·</span>
-                        <span>TTFT {formatDuration(avgTtft)}</span>
+                        <span>TTFT {formatDurationPrecise(avgTtft)}</span>
                       </>
                     )}
                     {entryAvgTPS !== null && entryAvgTPS > 0 && (
