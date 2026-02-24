@@ -905,7 +905,7 @@ export async function ingestWorkspace(
     await readWorkspaceMetaFromDisk(sessionDir),
     meta
   );
-  await ingestArchivedSubagentTranscripts(conn, sessionDir, mergedMetaForChildren);
+  await ingestArchivedSubagentTranscripts(conn, sessionDir, mergedMetaForChildren, workspaceId);
 }
 
 /**
@@ -917,15 +917,24 @@ export async function ingestWorkspace(
 async function ingestArchivedSubagentTranscripts(
   conn: DuckDBConnection,
   sessionDir: string,
-  parentMeta: WorkspaceMeta
+  parentMeta: WorkspaceMeta,
+  parentWorkspaceId: string
 ): Promise<number> {
   const transcriptsDir = path.join(sessionDir, SUBAGENT_TRANSCRIPTS_DIR_NAME);
 
   let entries: Dirent[];
   try {
     entries = await fs.readdir(transcriptsDir, { withFileTypes: true });
-  } catch {
-    // No archived transcripts directory — nothing to ingest.
+  } catch (error) {
+    if (isRecord(error) && error.code === "ENOENT") {
+      // No archived transcripts directory — nothing to ingest.
+      return 0;
+    }
+
+    log.warn("[analytics-etl] Failed to read archived sub-agent transcripts directory", {
+      transcriptsDir,
+      error: getErrorMessage(error),
+    });
     return 0;
   }
 
@@ -939,12 +948,23 @@ async function ingestArchivedSubagentTranscripts(
     const archivedSessionDir = path.join(transcriptsDir, childWorkspaceId);
 
     try {
-      // Pass parent's projectPath/projectName so the child inherits
-      // project-level attribution even if its own metadata.json is incomplete.
-      await ingestWorkspace(conn, childWorkspaceId, archivedSessionDir, {
+      const archivedWorkspaceMeta = await readWorkspaceMetaFromDisk(archivedSessionDir);
+      const overrideMeta: WorkspaceMeta = {
         projectPath: parentMeta.projectPath,
         projectName: parentMeta.projectName,
-      });
+      };
+
+      // Archived transcripts created before workspace metadata persisted
+      // parentWorkspaceId still represent sub-agent sessions. Only inject a
+      // parent fallback when metadata is missing so we do not clobber the
+      // correct parent for flattened descendants.
+      if (!archivedWorkspaceMeta.parentWorkspaceId) {
+        overrideMeta.parentWorkspaceId = parentWorkspaceId;
+      }
+
+      // Pass parent's projectPath/projectName so the child inherits
+      // project-level attribution even if its own metadata.json is incomplete.
+      await ingestWorkspace(conn, childWorkspaceId, archivedSessionDir, overrideMeta);
       ingested += 1;
     } catch (error) {
       log.warn("[analytics-etl] Failed to ingest archived sub-agent transcript", {
