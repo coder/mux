@@ -1,11 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 
 import {
   getThumbMetrics,
   parseDiffLines,
   pointerYToLineIndex,
   scrollTopForLine,
-  type LineCategory,
 } from "./immersiveMinimapMath";
 
 interface ImmersiveMinimapProps {
@@ -13,11 +12,14 @@ interface ImmersiveMinimapProps {
   scrollContainerRef: React.RefObject<HTMLDivElement>;
   activeLineIndex: number | null;
   onSelectLineIndex: (lineIndex: number) => void;
+  /** Diff line indices where review comments exist (drawn as yellow indicators) */
+  commentLineIndices: ReadonlySet<number>;
 }
 
 const DEFAULT_ADD_COLOR = "rgba(34, 197, 94, 0.85)";
 const DEFAULT_REMOVE_COLOR = "rgba(239, 68, 68, 0.85)";
 const DEFAULT_ACTIVE_LINE_COLOR = "rgba(255, 255, 255, 0.9)";
+const DEFAULT_COMMENT_COLOR = "rgba(234, 179, 8, 0.85)";
 const THUMB_FILL_COLOR = "rgba(255, 255, 255, 0.15)";
 const THUMB_BORDER_COLOR = "rgba(255, 255, 255, 0.3)";
 
@@ -32,13 +34,12 @@ const readThemeColor = (cssVariableName: string, fallback: string): string => {
 };
 
 export const ImmersiveMinimap: React.FC<ImmersiveMinimapProps> = (props) => {
-  const [lineCategories, setLineCategories] = useState<LineCategory[]>([]);
+  // Computed synchronously during render — React Compiler memoizes based on
+  // props.content. Avoids the useState+useEffect flash where the component
+  // briefly renders null before the parsed data arrives.
+  const lineCategories = parseDiffLines(props.content);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dragCleanupRef = useRef<(() => void) | null>(null);
-
-  useEffect(() => {
-    setLineCategories(parseDiffLines(props.content));
-  }, [props.content]);
 
   const stopThumbDrag = useCallback(() => {
     dragCleanupRef.current?.();
@@ -93,6 +94,18 @@ export const ImmersiveMinimap: React.FC<ImmersiveMinimapProps> = (props) => {
       context.fillRect(0, lineIndex * lineHeight, trackWidth, Math.max(1, Math.ceil(lineHeight)));
     }
 
+    // Draw yellow indicators for lines with review comments
+    if (props.commentLineIndices.size > 0) {
+      const commentColor = readThemeColor("--color-warning", DEFAULT_COMMENT_COLOR);
+      context.fillStyle = commentColor;
+      for (const commentIdx of props.commentLineIndices) {
+        if (commentIdx >= 0 && commentIdx < totalLines) {
+          const y = commentIdx * lineHeight;
+          context.fillRect(0, y, trackWidth, Math.max(2, Math.ceil(lineHeight)));
+        }
+      }
+    }
+
     const scrollContainer = props.scrollContainerRef.current;
     if (scrollContainer) {
       const { thumbTop, thumbHeight } = getThumbMetrics(
@@ -121,7 +134,7 @@ export const ImmersiveMinimap: React.FC<ImmersiveMinimapProps> = (props) => {
       context.fillStyle = activeLineColor;
       context.fillRect(0, Math.max(0, activeY - 1), trackWidth, 2);
     }
-  }, [lineCategories, props.activeLineIndex, props.scrollContainerRef]);
+  }, [lineCategories, props.activeLineIndex, props.commentLineIndices, props.scrollContainerRef]);
 
   useEffect(() => {
     redrawCanvas();
@@ -270,10 +283,7 @@ export const ImmersiveMinimap: React.FC<ImmersiveMinimapProps> = (props) => {
   }
 
   return (
-    <div
-      className="border-border-light w-12 shrink-0 border-l bg-[var(--color-bg-dark)]"
-      data-testid="immersive-minimap"
-    >
+    <div className="w-6 shrink-0 bg-[var(--color-bg-dark)]" data-testid="immersive-minimap">
       <canvas
         ref={canvasRef}
         className="h-full w-full cursor-pointer"

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 
 import * as immersiveMinimapMath from "./immersiveMinimapMath";
 import { ImmersiveMinimap } from "./ImmersiveMinimap";
@@ -83,7 +83,7 @@ describe("ImmersiveMinimap", () => {
     globalThis.getComputedStyle = originalGetComputedStyle;
   });
 
-  test("renders without crashing when content has diff lines", async () => {
+  test("renders without crashing when content has diff lines", () => {
     const scrollFixture = createScrollContainerFixture();
     const onSelectLineIndex = mock(() => undefined);
 
@@ -93,15 +93,15 @@ describe("ImmersiveMinimap", () => {
         scrollContainerRef={{ current: scrollFixture.element }}
         activeLineIndex={null}
         onSelectLineIndex={onSelectLineIndex}
+        commentLineIndices={new Set<number>()}
       />
     );
 
-    await waitFor(() => {
-      expect(view.getByTestId("immersive-minimap-canvas")).toBeTruthy();
-    });
+    // Synchronous render — no waitFor needed since parseDiffLines runs during render
+    expect(view.getByTestId("immersive-minimap-canvas")).toBeTruthy();
   });
 
-  test("calls parseDiffLines when content changes", async () => {
+  test("calls parseDiffLines when content changes", () => {
     const parseSpy = spyOn(immersiveMinimapMath, "parseDiffLines");
     const scrollFixture = createScrollContainerFixture();
     const onSelectLineIndex = mock(() => undefined);
@@ -114,12 +114,11 @@ describe("ImmersiveMinimap", () => {
         scrollContainerRef={{ current: scrollFixture.element }}
         activeLineIndex={null}
         onSelectLineIndex={onSelectLineIndex}
+        commentLineIndices={new Set<number>()}
       />
     );
 
-    await waitFor(() => {
-      expect(parseSpy).toHaveBeenCalledWith(initialContent);
-    });
+    expect(parseSpy).toHaveBeenCalledWith(initialContent);
 
     view.rerender(
       <ImmersiveMinimap
@@ -127,15 +126,14 @@ describe("ImmersiveMinimap", () => {
         scrollContainerRef={{ current: scrollFixture.element }}
         activeLineIndex={null}
         onSelectLineIndex={onSelectLineIndex}
+        commentLineIndices={new Set<number>()}
       />
     );
 
-    await waitFor(() => {
-      expect(parseSpy).toHaveBeenCalledWith(updatedContent);
-    });
+    expect(parseSpy).toHaveBeenCalledWith(updatedContent);
   });
 
-  test("clicking minimap dispatches the mapped line index", async () => {
+  test("clicking minimap dispatches the mapped line index", () => {
     const scrollFixture = createScrollContainerFixture();
     const onSelectLineIndex = mock(() => undefined);
     const content = [
@@ -160,12 +158,11 @@ describe("ImmersiveMinimap", () => {
         scrollContainerRef={{ current: scrollFixture.element }}
         activeLineIndex={null}
         onSelectLineIndex={onSelectLineIndex}
+        commentLineIndices={new Set<number>()}
       />
     );
 
-    const canvas = (await waitFor(() =>
-      view.getByTestId("immersive-minimap-canvas")
-    )) as HTMLCanvasElement;
+    const canvas = view.getByTestId("immersive-minimap-canvas") as HTMLCanvasElement;
 
     fireEvent.mouseDown(canvas, {
       clientY: clickY,
@@ -193,6 +190,7 @@ describe("ImmersiveMinimap", () => {
         scrollContainerRef={{ current: scrollFixture.element }}
         activeLineIndex={null}
         onSelectLineIndex={onSelectLineIndex}
+        commentLineIndices={new Set<number>()}
       />
     );
 

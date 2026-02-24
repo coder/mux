@@ -19,6 +19,7 @@ import {
 import { cn } from "@/common/lib/utils";
 import { SelectableDiffRenderer } from "../../shared/DiffRenderer";
 import { ImmersiveMinimap } from "./ImmersiveMinimap";
+import { buildNewLineNumberToIndexMap } from "./immersiveMinimapMath";
 import { KeycapGroup } from "@/browser/components/ui/Keycap";
 import { useAPI } from "@/browser/contexts/API";
 import { formatLineRangeCompact } from "@/browser/utils/review/lineRange";
@@ -593,6 +594,28 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         }),
     [props.reviewsByFilePath]
   );
+
+  // Map review line ranges → diff line indices for minimap comment indicators
+  const commentLineIndices: ReadonlySet<number> = (() => {
+    if (!activeFilePath || overlayData.content.length === 0) return new Set<number>();
+    const reviews = props.reviewsByFilePath.get(activeFilePath);
+    if (!reviews || reviews.length === 0) return new Set<number>();
+
+    const lineMap = buildNewLineNumberToIndexMap(overlayData.content);
+    const indices = new Set<number>();
+    for (const review of reviews) {
+      const parsed = parseReviewLineRange(review.data.lineRange);
+      if (!parsed) continue;
+      // Prefer new-side range (shows where the comment lands in the current code)
+      const range = parsed.new ?? parsed.old;
+      if (!range) continue;
+      for (let ln = range.start; ln <= range.end; ln++) {
+        const idx = lineMap.get(ln);
+        if (idx != null) indices.add(idx);
+      }
+    }
+    return indices;
+  })();
 
   const [inlineComposerRequest, setInlineComposerRequest] = useState<InlineComposerRequest | null>(
     null
@@ -1560,7 +1583,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
       {/* Unified whole-file diff with hunk overlays + notes sidebar */}
       <div className="flex min-h-0 flex-1">
-        <div ref={scrollContainerRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto p-3">
+        <div
+          ref={scrollContainerRef}
+          className="scrollbar-none min-h-0 min-w-0 flex-1 overflow-y-auto p-3"
+        >
           {props.isLoading && currentFileHunks.length === 0 ? (
             <div className="text-muted flex items-center justify-center py-12 text-sm">
               <span className="animate-pulse">Loading diff...</span>
@@ -1608,6 +1634,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
             scrollContainerRef={scrollContainerRef}
             activeLineIndex={activeLineIndex}
             onSelectLineIndex={handleMinimapSelectLine}
+            commentLineIndices={commentLineIndices}
           />
         )}
 
