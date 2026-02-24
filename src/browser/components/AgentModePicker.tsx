@@ -263,9 +263,9 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
       e.preventDefault();
       e.stopPropagation();
 
-      // Use options (not selectableOptions) for consistent keybinds
-      if (index < options.length) {
-        const picked = options[index];
+      // Use selectableOptions so keybinds match the visible dropdown items
+      if (index < selectableOptions.length) {
+        const picked = selectableOptions[index];
         if (picked) {
           handleSelectAgent(picked.id);
         }
@@ -275,7 +275,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     // Use capture phase to intercept before other handlers
     window.addEventListener("keydown", handleGlobalKeyDown, true);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown, true);
-  }, [isPickerOpen, options, handleSelectAgent]);
+  }, [isPickerOpen, selectableOptions, handleSelectAgent]);
 
   const handleDropdownKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Escape") {
@@ -390,9 +390,8 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                 const isHighlighted = index === highlightedIndex && !isAuto;
                 const isSelected = opt.id === normalizedAgentId;
                 const Icon = getAgentIcon(opt.id);
-                // Show keybind for first 9 items (based on position in full options list)
-                const optionIndex = options.findIndex((o) => o.id === opt.id);
-                const keybindLabel = formatNumberedKeybind(optionIndex);
+                // Keybind label matches the item's position in selectableOptions
+                const keybindLabel = formatNumberedKeybind(index);
 
                 return (
                   <div
@@ -451,18 +450,18 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                 closePicker();
               }}
             >
-              <Switch
-                checked={isAuto}
-                onCheckedChange={(checked) => {
-                  if (checked) {
-                    setAgentId("auto");
-                  } else {
-                    setAgentId("exec");
-                  }
-                  closePicker();
-                }}
-                aria-label="Auto-select agent"
-              />
+              {/* Wrapper stops propagation so the parent div's onClick
+                 doesn't double-fire when clicking the Switch directly */}
+              <span onClick={(e) => e.stopPropagation()}>
+                <Switch
+                  checked={isAuto}
+                  onCheckedChange={(checked) => {
+                    setAgentId(checked ? "auto" : "exec");
+                    closePicker();
+                  }}
+                  aria-label="Auto-select agent"
+                />
+              </span>
               <div className="min-w-0">
                 <div className="text-foreground text-[11px] font-medium">Auto-select</div>
                 <div className="text-muted text-[10px]">Mux chooses the best agent</div>
