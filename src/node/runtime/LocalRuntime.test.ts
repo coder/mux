@@ -117,6 +117,7 @@ describe("LocalRuntime", () => {
       await fs.writeFile(hookPath, "#!/usr/bin/env bash\n\necho ran > .init-marker\n");
       await fs.chmod(hookPath, 0o755);
 
+      // Init hook should run when trusted
       {
         const logger = createMockLogger();
         const result = await runtime.initWorkspace({
@@ -125,6 +126,7 @@ describe("LocalRuntime", () => {
           trunkBranch: "main",
           workspacePath: testDir,
           initLogger: logger,
+          trusted: true,
         });
         expect(result.success).toBe(true);
       }
