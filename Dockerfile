@@ -26,8 +26,12 @@ COPY package.json bun.lock bunfig.toml ./
 # Copy postinstall script (needed by bun install)
 COPY scripts/postinstall.sh scripts/
 
-# Install dependencies
-RUN bun install --frozen-lockfile
+# Install dependencies and create Makefile sentinel so build targets don't reinstall.
+RUN bun install --frozen-lockfile && \
+    touch node_modules/.installed
+
+# Copy build orchestration files used by Make targets.
+COPY Makefile fmt.mk ./
 
 # Copy source files needed for build
 COPY src/ src/
@@ -49,38 +53,10 @@ RUN git init && \
     git add -A && \
     git commit -m "docker build" --allow-empty || true
 
-# Generate version info and builtin content
-RUN ./scripts/generate-version.sh && \
-    ./scripts/generate-builtin-agents.sh && \
-    ./scripts/generate-builtin-skills.sh
-
-# Build main process (server + backend)
-# Use tsgo (native TypeScript) for consistency with local build
-RUN NODE_ENV=production bun run node_modules/@typescript/native-preview/bin/tsgo.js -p tsconfig.main.json && \
-    NODE_ENV=production bun x tsc-alias -p tsconfig.main.json
-
-# Build renderer (frontend)
-RUN bun x vite build
-
-# Bundle server with esbuild (reduces ~2GB node_modules to ~10MB bundle)
-# External: native modules that can't be bundled
-# - ssh2: contains optional native .node addons (cpu-features, sshcrypto) that esbuild can't handle
-# Alias: use ESM version of jsonc-parser to avoid UMD wrapper's require("./impl/...") issue
-RUN bun x esbuild dist/cli/server.js \
-    --bundle \
-    --platform=node \
-    --target=node22 \
-    --format=cjs \
-    --outfile=dist/server-bundle.js \
-    --external:@lydell/node-pty \
-    --external:node-pty \
-    --external:electron \
-    --external:ssh2 \
-    --alias:jsonc-parser=jsonc-parser/lib/esm/main.js \
-    --minify
-
-# Copy static assets
-RUN mkdir -p dist/static && cp -r static/* dist/static/ 2>/dev/null || true
+# Build Docker runtime artifacts through Makefile so local/CI/Docker share one pipeline.
+# This runs version generation, builtin content generation, main+renderer builds,
+# server bundle creation, worker bundle creation, and runtime artifact assertions.
+RUN make verify-docker-runtime-artifacts
 
 # ==============================================================================
 # Stage 2: Runtime
@@ -104,15 +80,7 @@ RUN apt-get update && \
     apt-get install -y git openssh-client && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy bundled server and frontend assets
-# Vite outputs JS/CSS/HTML directly to dist/ (assetsDir: ".")
-COPY --from=builder /app/dist/server-bundle.js ./dist/
-COPY --from=builder /app/dist/*.html ./dist/
-COPY --from=builder /app/dist/*.js ./dist/
-COPY --from=builder /app/dist/*.css ./dist/
-COPY --from=builder /app/dist/static ./dist/static
-
-# Copy runtime dependencies:
+# Copy runtime dependencies first so app-code changes don't invalidate these layers.
 # - @lydell/node-pty: native module for terminal support
 # - ssh2 + deps: externalized to avoid .node addon bundling issues
 COPY --from=builder /app/node_modules/@lydell ./node_modules/@lydell
@@ -121,6 +89,16 @@ COPY --from=builder /app/node_modules/asn1 ./node_modules/asn1
 COPY --from=builder /app/node_modules/safer-buffer ./node_modules/safer-buffer
 COPY --from=builder /app/node_modules/bcrypt-pbkdf ./node_modules/bcrypt-pbkdf
 COPY --from=builder /app/node_modules/tweetnacl ./node_modules/tweetnacl
+
+# Copy frontend/static assets from least to most volatile for better cache reuse.
+# Vite outputs JS/CSS/HTML directly to dist/ (assetsDir: ".").
+COPY --from=builder /app/dist/static ./dist/static
+COPY --from=builder /app/dist/*.html ./dist/
+COPY --from=builder /app/dist/*.css ./dist/
+COPY --from=builder /app/dist/*.js ./dist/
+
+# Copy runtime bundles last (most volatile layer during backend iteration).
+COPY --from=builder /app/dist/runtime ./dist/runtime
 
 # Create mux data directory
 RUN mkdir -p /root/.mux
@@ -139,5 +117,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 # Run bundled mux server
 # --host 0.0.0.0: bind to all interfaces (required for Docker networking)
 # --port 3000: default port (can be remapped via docker run -p)
-ENTRYPOINT ["node", "dist/server-bundle.js"]
+ENTRYPOINT ["node", "dist/runtime/server-bundle.js"]
 CMD ["--host", "0.0.0.0", "--port", "3000"]

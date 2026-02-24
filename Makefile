@@ -48,11 +48,19 @@ endif
 # Common esbuild flags for CLI API bundle (ESM format for trpc-cli)
 ESBUILD_CLI_FLAGS := --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:jsonc-parser --external:@trpc/server --external:ssh2 --external:cpu-features --banner:js="import{createRequire}from'module';globalThis.require=createRequire(import.meta.url);"
 
+# Common esbuild flags for server runtime Docker bundle.
+# Place runtime bundles under dist/runtime so frontend dist/*.js layers remain stable.
+# External native modules (node-pty, ssh2) and electron remain runtime dependencies.
+ESBUILD_SERVER_FLAGS := --bundle --platform=node --target=node22 --format=cjs --outfile=dist/runtime/server-bundle.js --external:@lydell/node-pty --external:node-pty --external:electron --external:ssh2 --alias:jsonc-parser=jsonc-parser/lib/esm/main.js --minify
+
+# Common esbuild flags for tokenizer worker bundle used by server-bundle runtime.
+ESBUILD_TOKENIZER_WORKER_FLAGS := --bundle --platform=node --target=node22 --format=cjs --outfile=dist/runtime/tokenizer.worker.js --minify
+
 # Include formatting rules
 include fmt.mk
 
 .PHONY: all build dev start clean help
-.PHONY: build-renderer version build-icons build-static
+.PHONY: build-renderer version build-icons build-static build-docker-runtime verify-docker-runtime-artifacts
 .PHONY: lint lint-fix typecheck typecheck-react-native static-check
 .PHONY: test test-unit test-integration test-watch test-coverage test-e2e test-e2e-perf smoke-test
 .PHONY: dist dist-mac dist-win dist-linux install-mac-arm64
@@ -254,6 +262,31 @@ build-static: ## Copy static assets to dist
 	          node_modules/typescript/lib/lib.es2023*.d.ts; do \
 		cp "$$f" "dist/typescript-lib/$$(basename $$f).txt"; \
 	done
+
+build-docker-runtime: build-main build-renderer build-static dist/runtime/server-bundle.js dist/runtime/tokenizer.worker.js dist/static/.copied ## Build Docker runtime artifacts
+
+verify-docker-runtime-artifacts: build-docker-runtime ## Verify required Docker runtime artifacts exist
+	@test -f dist/runtime/server-bundle.js
+	@test -f dist/runtime/tokenizer.worker.js
+	@test -f dist/static/splash.html
+
+# Bundle server runtime for Docker image to reduce runtime dependencies/image size.
+dist/runtime/server-bundle.js: dist/cli/server.js $(TS_SOURCES)
+	@echo "Bundling server runtime for Docker..."
+	@mkdir -p dist/runtime
+	@bun x esbuild dist/cli/server.js $(ESBUILD_SERVER_FLAGS)
+
+# Bundle tokenizer worker next to server-bundle.js so workerPool resolves it at runtime.
+dist/runtime/tokenizer.worker.js: dist/node/utils/main/tokenizer.worker.js
+	@echo "Bundling tokenizer worker for Docker..."
+	@mkdir -p dist/runtime
+	@bun x esbuild dist/node/utils/main/tokenizer.worker.js $(ESBUILD_TOKENIZER_WORKER_FLAGS)
+
+# Docker runtime keeps static assets under dist/static/ for compatibility with existing image layout.
+dist/static/.copied: static/splash.html
+	@mkdir -p dist/static
+	@cp -r static/* dist/static/
+	@touch dist/static/.copied
 
 # Always regenerate version file (marked as .PHONY above)
 version: ## Generate version file
