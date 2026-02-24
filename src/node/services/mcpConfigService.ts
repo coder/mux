@@ -217,12 +217,17 @@ export class MCPConfigService {
    * List configured servers.
    *
    * - When no projectPath is provided: returns global servers from <muxHome>/mcp.jsonc
-   * - When projectPath is provided: merges global + <projectPath>/.mux/mcp.jsonc (override wins)
+   * - When options.skipRepoOverrides is true: returns global servers only
+   * - When projectPath is provided and options.skipRepoOverrides is false/omitted:
+   *   merges global + <projectPath>/.mux/mcp.jsonc (override wins)
    */
-  async listServers(projectPath?: string): Promise<Record<string, MCPServerInfo>> {
+  async listServers(
+    projectPath?: string,
+    options?: { skipRepoOverrides?: boolean }
+  ): Promise<Record<string, MCPServerInfo>> {
     const globalCfg = await this.getGlobalConfig();
 
-    if (!projectPath) {
+    if (!projectPath || options?.skipRepoOverrides === true) {
       return globalCfg.servers;
     }
 

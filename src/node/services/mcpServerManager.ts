@@ -555,10 +555,13 @@ export class MCPServerManager {
    * Get all servers from config (both enabled and disabled) + inline servers.
    * Returns full MCPServerInfo to preserve disabled state.
    */
-  private async getAllServers(projectPath: string): Promise<Record<string, MCPServerInfo>> {
+  private async getAllServers(
+    projectPath: string,
+    options?: { skipRepoOverrides?: boolean }
+  ): Promise<Record<string, MCPServerInfo>> {
     const configServers = this.ignoreConfigFile
       ? {}
-      : await this.configService.listServers(projectPath);
+      : await this.configService.listServers(projectPath, options);
     // Inline servers override config file servers (always enabled)
     const inlineAsInfo: Record<string, MCPServerInfo> = {};
     for (const [name, command] of Object.entries(this.inlineServers)) {
@@ -579,8 +582,12 @@ export class MCPServerManager {
    * @param projectPath - Project path to get servers for
    * @param overrides - Optional workspace-level overrides
    */
-  async listServers(projectPath: string, overrides?: WorkspaceMCPOverrides): Promise<MCPServerMap> {
-    const allServers = await this.getAllServers(projectPath);
+  async listServers(
+    projectPath: string,
+    overrides?: WorkspaceMCPOverrides,
+    options?: { skipRepoOverrides?: boolean }
+  ): Promise<MCPServerMap> {
+    const allServers = await this.getAllServers(projectPath, options);
     const enabled = this.applyServerOverrides(allServers, overrides);
     return this.filterServersByPolicy(enabled);
   }
@@ -711,11 +718,21 @@ export class MCPServerManager {
     overrides?: WorkspaceMCPOverrides;
     /** Project secrets, used for resolving {secret: "KEY"} header references. */
     projectSecrets?: Record<string, string>;
+    /** Skip repo-level .mux/mcp.jsonc overrides and use global config only. */
+    skipRepoOverrides?: boolean;
   }): Promise<MCPToolsForWorkspaceResult> {
-    const { workspaceId, projectPath, runtime, workspacePath, overrides, projectSecrets } = options;
+    const {
+      workspaceId,
+      projectPath,
+      runtime,
+      workspacePath,
+      overrides,
+      projectSecrets,
+      skipRepoOverrides,
+    } = options;
 
     // Fetch full server info for project-level allowlists and server filtering
-    const fullServerInfo = await this.getAllServers(projectPath);
+    const fullServerInfo = await this.getAllServers(projectPath, { skipRepoOverrides });
 
     // Apply server-level overrides (enabled/disabled) before caching
     const enabledServers = this.filterServersByPolicy(
