@@ -128,7 +128,6 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
   const dropdownItemRefs = useRef<Array<HTMLDivElement | null>>([]);
 
   const normalizedAgentId = useMemo(() => normalizeAgentId(agentId), [agentId]);
-  const isAuto = normalizedAgentId === "auto";
 
   const options = useMemo(() => resolveAgentOptions(agents), [agents]);
 
@@ -137,6 +136,11 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
   // Auto is only available when the backend discovers it in the agent list
   const autoAvailable = useMemo(() => options.some((opt) => opt.id === "auto"), [options]);
+
+  // Only lock the list when auto is both selected AND available — if auto was
+  // persisted but later removed from the agent list, users must still be able
+  // to pick a different agent from the dropdown.
+  const isAuto = normalizedAgentId === "auto" && autoAvailable;
 
   const activeOption = useMemo(() => {
     if (!normalizedAgentId) {
