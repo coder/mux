@@ -1144,8 +1144,7 @@ export function CreationControls(props: CreationControlsProps) {
         {selectedRuntime.mode === "devcontainer" && devcontainerSelection.uiMode !== "hidden" && (
           <div className="border-border-medium flex w-fit flex-col gap-1.5 rounded-md border p-2">
             <div className="flex flex-col gap-1">
-              <label className="text-muted-foreground flex items-center gap-1 text-xs">
-                <RUNTIME_OPTION_FIELDS.devcontainer.Icon size={14} />
+              <label className="text-muted-foreground text-xs">
                 {RUNTIME_OPTION_FIELDS.devcontainer.label}
               </label>
               {devcontainerSelection.uiMode === "loading" ? (

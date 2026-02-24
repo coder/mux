@@ -3,18 +3,15 @@ import { useId } from "react";
 import { cn } from "@/common/lib/utils";
 import type { RuntimeOptionFieldSpec } from "@/browser/utils/runtimeUi";
 
-/** Size used for field-spec icons inside labels — matches lucide h-3.5 w-3.5 (14px). */
-const FIELD_ICON_SIZE = 14;
-
 /**
  * Shared runtime option input used by creation and settings screens.
  *
  * Accepts a `fieldSpec` from {@link RUNTIME_OPTION_FIELDS} which bundles the
- * label, placeholder, and icon together — ensuring both screens render
- * identically by construction.
+ * label and placeholder — ensuring both screens render identically by
+ * construction.
  */
 export function RuntimeConfigInput(props: {
-  /** Bundles label, placeholder, and icon. The single source of truth. */
+  /** Bundles label and placeholder. The single source of truth. */
   fieldSpec: RuntimeOptionFieldSpec;
   value: string;
   onChange: (value: string) => void;
@@ -30,7 +27,7 @@ export function RuntimeConfigInput(props: {
 }) {
   const autoId = useId();
   const inputId = props.id ?? autoId;
-  const { label, placeholder, Icon } = props.fieldSpec;
+  const { label, placeholder } = props.fieldSpec;
 
   return (
     <div
@@ -42,12 +39,11 @@ export function RuntimeConfigInput(props: {
       <label
         htmlFor={inputId}
         className={cn(
-          "text-muted-foreground flex items-center gap-1 text-xs",
+          "text-muted-foreground text-xs",
           props.stacked && "font-medium",
           props.labelClassName
         )}
       >
-        <Icon size={FIELD_ICON_SIZE} />
         {label}
       </label>
       <input
