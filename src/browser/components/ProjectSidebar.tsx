@@ -17,7 +17,6 @@ import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import {
   EXPANDED_PROJECTS_KEY,
   MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY,
-  getArchivedWorkspacesExpandedKey,
   getDraftScopeId,
   getInputKey,
   getWorkspaceNameStateKey,
@@ -1145,27 +1144,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                         top: rect.top + window.scrollY,
                                         left: rect.right + 10,
                                       };
-                                      const action =
-                                        error.type === "workspace_blockers" &&
-                                        error.archivedCount > 0
-                                          ? {
-                                              label: "View archived workspaces →",
-                                              onClick: () => {
-                                                updatePersistedState(
-                                                  getArchivedWorkspacesExpandedKey(projectPath),
-                                                  true
-                                                );
-                                                navigateToProject(projectPath);
-                                              },
-                                            }
-                                          : undefined;
-
-                                      projectRemoveError.showError(
-                                        projectPath,
-                                        message,
-                                        anchor,
-                                        action
-                                      );
+                                      projectRemoveError.showError(projectPath, message, anchor);
                                     }
                                   })();
                                 }}
