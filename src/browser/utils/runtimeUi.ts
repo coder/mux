@@ -79,7 +79,6 @@ export interface RuntimeUiSpec {
 }
 
 export type RuntimeChoice = RuntimeMode | "coder";
-export type RuntimeBadgeType = RuntimeChoice;
 
 export const RUNTIME_UI = {
   local: {
@@ -241,4 +240,4 @@ export const RUNTIME_BADGE_UI = {
     Icon: RUNTIME_UI.devcontainer.Icon,
     badge: RUNTIME_UI.devcontainer.badge,
   },
-} satisfies Record<RuntimeBadgeType, Pick<RuntimeUiSpec, "Icon" | "badge">>;
+} satisfies Record<RuntimeChoice, Pick<RuntimeUiSpec, "Icon" | "badge">>;
