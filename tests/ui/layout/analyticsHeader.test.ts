@@ -74,6 +74,7 @@ describe("Analytics header titlebar contract", () => {
       expect(header.classList.contains("titlebar-safe-right")).toBe(true);
       expect(header.classList.contains("titlebar-safe-right-gutter-3")).toBe(true);
       expect(header.classList.contains("h-9")).toBe(true);
+      expect(header.classList.contains("flex-nowrap")).toBe(true);
       expect(header.classList.contains("titlebar-drag")).toBe(true);
     } finally {
       clearDesktopApi();
@@ -92,6 +93,7 @@ describe("Analytics header titlebar contract", () => {
       expect(header.classList.contains("titlebar-safe-right")).toBe(true);
       expect(header.classList.contains("titlebar-safe-right-gutter-3")).toBe(true);
       expect(header.classList.contains("h-9")).toBe(true);
+      expect(header.classList.contains("flex-nowrap")).toBe(true);
       expect(header.classList.contains("titlebar-drag")).toBe(true);
     } finally {
       clearDesktopApi();

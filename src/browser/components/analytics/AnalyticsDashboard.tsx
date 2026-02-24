@@ -162,16 +162,16 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
       <div
         data-testid="analytics-header"
         className={cn(
-          "bg-sidebar border-border-light titlebar-safe-right titlebar-safe-right-gutter-3 flex shrink-0 flex-wrap items-center gap-2 border-b px-3",
+          "bg-sidebar border-border-light titlebar-safe-right titlebar-safe-right-gutter-3 flex shrink-0 items-center gap-2 border-b px-3",
           desktopMode
-            ? `${DESKTOP_TITLEBAR_HEIGHT_CLASS} titlebar-drag`
-            : "py-2 md:h-8 md:flex-nowrap md:py-0"
+            ? `${DESKTOP_TITLEBAR_HEIGHT_CLASS} titlebar-drag flex-nowrap`
+            : "flex-wrap py-2 md:h-8 md:flex-nowrap md:py-0"
         )}
       >
         <div
           className={cn(
-            "flex min-w-0 w-full items-center gap-2 md:w-auto",
-            desktopMode && "titlebar-no-drag"
+            "flex min-w-0 items-center gap-2",
+            desktopMode ? "w-auto titlebar-no-drag" : "w-full md:w-auto"
           )}
         >
           {props.leftSidebarCollapsed && (
@@ -202,8 +202,9 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
 
         <div
           className={cn(
-            "flex w-full min-w-0 flex-wrap items-center gap-2 md:ml-auto md:w-auto md:min-w-fit md:flex-nowrap",
-            desktopMode && "titlebar-no-drag"
+            desktopMode
+              ? "titlebar-no-drag ml-auto flex min-w-fit items-center gap-2"
+              : "flex w-full min-w-0 flex-wrap items-center gap-2 md:ml-auto md:w-auto md:min-w-fit md:flex-nowrap"
           )}
         >
           {/* Keep the project control labeled on mobile for screen readers while
