@@ -12,7 +12,7 @@ import { Ok, Err } from "@/common/types/result";
 import type { Secret } from "@/common/types/secrets";
 import type { Stats } from "fs";
 import * as fsPromises from "fs/promises";
-import { execAsync, killProcessTree } from "@/node/utils/disposableExec";
+import { execFileAsync, killProcessTree } from "@/node/utils/disposableExec";
 import {
   buildFileCompletionsIndex,
   EMPTY_FILE_COMPLETIONS_INDEX,
@@ -852,16 +852,25 @@ export class ProjectService {
         // Repo exists but is unborn - just create the initial commit
       } else {
         // Initialize git repository with main as default branch
-        using initProc = execAsync(`git -C "${normalizedPath}" init -b main`);
+        using initProc = execFileAsync("git", ["-C", normalizedPath, "init", "-b", "main"]);
         await initProc.result;
       }
 
       // Create an initial empty commit so the branch exists and worktree/SSH can work
       // Without a commit, the repo is "unborn" and has no branches
       // Use -c flags to set identity only for this commit (don't persist to repo config)
-      using commitProc = execAsync(
-        `git -C "${normalizedPath}" -c user.name="mux" -c user.email="mux@localhost" commit --allow-empty -m "Initial commit"`
-      );
+      using commitProc = execFileAsync("git", [
+        "-C",
+        normalizedPath,
+        "-c",
+        "user.name=mux",
+        "-c",
+        "user.email=mux@localhost",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "Initial commit",
+      ]);
       await commitProc.result;
 
       // Invalidate file completions cache since the repo state changed
@@ -911,7 +920,13 @@ export class ProjectService {
             return;
           }
 
-          using proc = execAsync(`git -C "${normalizedPath}" ls-files -co --exclude-standard`);
+          using proc = execFileAsync("git", [
+            "-C",
+            normalizedPath,
+            "ls-files",
+            "-co",
+            "--exclude-standard",
+          ]);
           const { stdout } = await proc.result;
 
           const files = stdout
