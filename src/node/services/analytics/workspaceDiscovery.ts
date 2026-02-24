@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import type { Dirent } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { getErrorMessage } from "@/common/utils/errors";
+import { log } from "@/node/services/log";
 import { CHAT_FILE_NAME } from "./etl";
 
 const SUBAGENT_TRANSCRIPTS_DIR_NAME = "subagent-transcripts";
@@ -103,7 +105,12 @@ export async function listArchivedSubagentWorkspaceIds(
         continue;
       }
 
-      throw error;
+      log.warn("[analytics-worker] Failed to read archived sub-agent transcript directory", {
+        transcriptsDir,
+        parentWorkspaceId: normalizedParentWorkspaceId,
+        error: getErrorMessage(error),
+      });
+      continue;
     }
 
     for (const entry of entries) {
@@ -129,7 +136,13 @@ export async function listArchivedSubagentWorkspaceIds(
           continue;
         }
 
-        throw error;
+        log.warn("[analytics-worker] Failed to stat archived sub-agent transcript chat file", {
+          chatPath,
+          archivedWorkspaceId: workspaceId,
+          parentWorkspaceId: normalizedParentWorkspaceId,
+          error: getErrorMessage(error),
+        });
+        continue;
       }
     }
   }
