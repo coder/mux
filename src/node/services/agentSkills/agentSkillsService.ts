@@ -205,7 +205,7 @@ async function readSkillDescriptorFromDir(
 export async function discoverAgentSkills(
   runtime: Runtime,
   workspacePath: string,
-  options?: { roots?: AgentSkillsRoots }
+  options?: { roots?: AgentSkillsRoots; skipProjectSkills?: boolean }
 ): Promise<AgentSkillDescriptor[]> {
   if (!workspacePath) {
     throw new Error("discoverAgentSkills: workspacePath is required");
@@ -215,11 +215,13 @@ export async function discoverAgentSkills(
 
   const byName = new Map<SkillName, AgentSkillDescriptor>();
 
-  // Project skills take precedence over global roots.
+  // Project skills take precedence over global roots when project scanning is enabled.
   const scans: Array<{ scope: AgentSkillScope; root: string }> = [
-    { scope: "project", root: roots.projectRoot },
     ...getGlobalSkillRoots(roots).map((root) => ({ scope: "global" as const, root })),
   ];
+  if (!options?.skipProjectSkills) {
+    scans.unshift({ scope: "project", root: roots.projectRoot });
+  }
 
   for (const scan of scans) {
     let resolvedRoot: string;
@@ -280,7 +282,7 @@ export interface DiscoverAgentSkillsDiagnosticsResult {
 export async function discoverAgentSkillsDiagnostics(
   runtime: Runtime,
   workspacePath: string,
-  options?: { roots?: AgentSkillsRoots }
+  options?: { roots?: AgentSkillsRoots; skipProjectSkills?: boolean }
 ): Promise<DiscoverAgentSkillsDiagnosticsResult> {
   if (!workspacePath) {
     throw new Error("discoverAgentSkillsDiagnostics: workspacePath is required");
@@ -291,11 +293,13 @@ export async function discoverAgentSkillsDiagnostics(
   const byName = new Map<SkillName, AgentSkillDescriptor>();
   const invalidSkills: AgentSkillIssue[] = [];
 
-  // Project skills take precedence over global roots.
+  // Project skills take precedence over global roots when project scanning is enabled.
   const scans: Array<{ scope: AgentSkillScope; root: string }> = [
-    { scope: "project", root: roots.projectRoot },
     ...getGlobalSkillRoots(roots).map((root) => ({ scope: "global" as const, root })),
   ];
+  if (!options?.skipProjectSkills) {
+    scans.unshift({ scope: "project", root: roots.projectRoot });
+  }
 
   for (const scan of scans) {
     let resolvedRoot: string;

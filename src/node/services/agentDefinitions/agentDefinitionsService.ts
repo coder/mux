@@ -226,7 +226,7 @@ async function readAgentDescriptorFromFileWithDisabled(
 export async function discoverAgentDefinitions(
   runtime: Runtime,
   workspacePath: string,
-  options?: { roots?: AgentDefinitionsRoots }
+  options?: { roots?: AgentDefinitionsRoots; skipProjectAgents?: boolean }
 ): Promise<AgentDefinitionDescriptor[]> {
   if (!workspacePath) {
     throw new Error("discoverAgentDefinitions: workspacePath is required");
@@ -262,8 +262,10 @@ export async function discoverAgentDefinitions(
 
   const scans: Array<{ scope: Exclude<AgentDefinitionScope, "built-in">; root: string }> = [
     { scope: "global", root: roots.globalRoot },
-    { scope: "project", root: roots.projectRoot },
   ];
+  if (!options?.skipProjectAgents) {
+    scans.push({ scope: "project", root: roots.projectRoot });
+  }
 
   for (const scan of scans) {
     let resolvedRoot: string;
