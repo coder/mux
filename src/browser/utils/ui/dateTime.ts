@@ -95,6 +95,7 @@ export function formatRelativeTimeCompact(timestamp: number): string {
  * Examples: "42ms", "3.2s", "15s", "2m 30s"
  */
 export function formatDurationPrecise(ms: number): string {
+  if (!Number.isFinite(ms)) return "—";
   if (ms < 1000) return `${Math.round(ms)}ms`;
   if (ms < 10000) return `${(ms / 1000).toFixed(1)}s`;
   if (ms < 60000) return `${Math.round(ms / 1000)}s`;
