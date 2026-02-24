@@ -433,6 +433,24 @@ describe("Config", () => {
       });
     });
 
+    it("uses last global duplicate to decide injectAll behavior", async () => {
+      await config.updateGlobalSecrets([
+        { key: "DUP", value: "first", injectAll: true },
+        { key: "DUP", value: "second", injectAll: false },
+      ]);
+
+      expect(secretsToRecord(config.getEffectiveSecrets("/fake/project"))).toEqual({});
+
+      await config.updateGlobalSecrets([
+        { key: "DUP", value: "first", injectAll: false },
+        { key: "DUP", value: "second", injectAll: true },
+      ]);
+
+      expect(secretsToRecord(config.getEffectiveSecrets("/fake/project"))).toEqual({
+        DUP: "second",
+      });
+    });
+
     it('resolves project secret aliases to global secrets via {secret:"KEY"}', async () => {
       await config.updateGlobalSecrets([{ key: "GLOBAL_TOKEN", value: "abc" }]);
 

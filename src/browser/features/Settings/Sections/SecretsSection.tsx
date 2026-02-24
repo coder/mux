@@ -630,7 +630,7 @@ export const SecretsSection: React.FC = () => {
           {showSourceColumn && <label>Source</label>}
           <label>Value</label>
           <div />
-          {scope === "global" ? <label className="text-center">Inject</label> : <div />}
+          {scope === "global" && <label className="text-center">Inject</label>}
           <div />
 
           {secrets.map((secret, index) => {

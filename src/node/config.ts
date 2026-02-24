@@ -1407,8 +1407,16 @@ ${jsonString}`;
     }
 
 
-    const injectedGlobalSecrets: Secret[] = [];
+    // Normalize duplicate global keys with last-writer semantics before evaluating injectAll.
+    // This keeps inject behavior aligned with value resolution when the same key appears
+    // multiple times in persisted data.
+    const finalGlobalSecretsByKey = new Map<string, Secret>();
     for (const secret of globalSecrets) {
+      finalGlobalSecretsByKey.set(secret.key, secret);
+    }
+
+    const injectedGlobalSecrets: Secret[] = [];
+    for (const secret of finalGlobalSecretsByKey.values()) {
       if (!secret.injectAll) {
         continue;
       }
