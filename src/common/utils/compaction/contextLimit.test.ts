@@ -40,6 +40,14 @@ describe("getEffectiveContextLimit", () => {
     expect(limit).toBe(mappedStats?.max_input_tokens ?? null);
   });
 
+  test("treats Opus 4.6 as 200k by default and 1M only when toggle is enabled", () => {
+    // Opus 4.6 requires an explicit Anthropic beta header for 1M context.
+    // Base metadata must remain 200k so compaction/context checks stay accurate
+    // when the 1M toggle is disabled.
+    expect(getEffectiveContextLimit(KNOWN_MODELS.OPUS.id, false)).toBe(200_000);
+    expect(getEffectiveContextLimit(KNOWN_MODELS.OPUS.id, true)).toBe(1_000_000);
+  });
+
   test("prefers custom context overrides over mapped model stats", () => {
     const config: ProvidersConfigMap = {
       ollama: {

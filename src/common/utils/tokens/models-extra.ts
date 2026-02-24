@@ -27,6 +27,26 @@ interface ModelData {
 }
 
 export const modelsExtra: Record<string, ModelData> = {
+  // KEEP: Upstream currently advertises 1M input for Opus 4.6, but Mux treats 1M as an
+  // explicit beta opt-in that is only enabled when we send the Anthropic 1M header.
+  // Without this override, the app assumes a 1M default context even when the toggle is
+  // off, which breaks compaction/context-limit behavior and can cause provider rejections.
+  "claude-opus-4-6": {
+    max_input_tokens: 200000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.000005, // $5 per million input tokens
+    output_cost_per_token: 0.000025, // $25 per million output tokens
+    cache_creation_input_token_cost: 0.00000625, // $6.25 per million tokens
+    cache_read_input_token_cost: 0.0000005, // $0.50 per million cached input tokens
+    litellm_provider: "anthropic",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_pdf_input: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+
   // Not present in LiteLLM upstream models.json as of 2026-02-23.
   "gpt-5.3-codex": {
     max_input_tokens: 272000,
