@@ -20,7 +20,8 @@ import { installDom } from "../dom";
 import { renderReviewPanel, type RenderedApp } from "../renderReviewPanel";
 import { cleanupView, setupWorkspaceView } from "../helpers";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 
 configureTestRetries(2);
 
@@ -130,6 +131,11 @@ describeIntegration("ReviewPanel base selector", () => {
   test("clicking a suggestion updates the displayed base value", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();
+
+      // Reset persisted review-base keys so this test validates trunk auto-detection
+      // rather than inheriting state from prior tests in the same browser storage.
+      updatePersistedState(STORAGE_KEYS.reviewDefaultBase(metadata.projectPath), null);
+      updatePersistedState(STORAGE_KEYS.reviewDiffBase(workspaceId), null);
 
       const view = renderReviewPanel({
         apiClient: env.orpc,
