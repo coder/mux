@@ -841,6 +841,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   };
 
   const handleOpenSecrets = (projectPath: string) => {
+    // Collapse the off-canvas sidebar on mobile before navigating so the
+    // settings page is immediately accessible without a backdrop blocking it.
+    if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
+      persistMobileSidebarScrollTop(mobileScrollTopRef.current);
+      onToggleCollapsed();
+    }
     // Navigate to Settings → Secrets with the project pre-selected.
     settings.open("secrets", { secretsProjectPath: projectPath });
   };
