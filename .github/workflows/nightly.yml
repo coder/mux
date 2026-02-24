@@ -127,6 +127,7 @@ jobs:
       # Tag as the nightly version (e.g., 0.18.1-nightly.42) — not :latest
       version: ${{ needs.compute-version.outputs.nightly_version }}
       is_latest: false
+      is_nightly: true
 
   # Upload a sentinel asset after Docker publish succeeds so the next rerun
   # (with no new commits) can detect whether Docker was published. Without this,
