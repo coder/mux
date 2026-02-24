@@ -67,3 +67,4 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ inputs.version }}
+            RELEASE_TAG=${{ startsWith(inputs.version, 'v') && inputs.version || format('v{0}', inputs.version) }}

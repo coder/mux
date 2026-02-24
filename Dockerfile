@@ -13,12 +13,15 @@ FROM node:22-slim AS builder
 
 WORKDIR /app
 
+# Optional release tag passed by CI to stamp src/version.ts in Docker builds.
+ARG RELEASE_TAG
+
 # Install bun (used for package management and build tooling)
 RUN npm install -g bun@1.2
 
 # Install git (needed for version generation) and build tools for native modules
 # bzip2 is required for lzma-native to extract its bundled xz source tarball
-RUN apt-get update && apt-get install -y git python3 make g++ bzip2 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends git python3 make g++ bzip2 && rm -rf /var/lib/apt/lists/*
 
 # Copy package files first for better layer caching
 COPY package.json bun.lock bunfig.toml ./
@@ -51,12 +54,13 @@ RUN git init && \
     git config user.email "docker@build" && \
     git config user.name "Docker Build" && \
     git add -A && \
-    git commit -m "docker build" --allow-empty || true
+    (git commit -m "docker build" --allow-empty || true)
 
 # Build Docker runtime artifacts through Makefile so local/CI/Docker share one pipeline.
 # This runs version generation, builtin content generation, main+renderer builds,
 # server bundle creation, worker bundle creation, and runtime artifact assertions.
-RUN make verify-docker-runtime-artifacts
+# Thread RELEASE_TAG through to scripts/generate-version.sh when CI provides it.
+RUN RELEASE_TAG="${RELEASE_TAG}" make verify-docker-runtime-artifacts
 
 # ==============================================================================
 # Stage 2: Runtime
@@ -77,7 +81,7 @@ WORKDIR /app
 # - git: required for workspace operations (clone, worktree, etc.)
 # - openssh-client: required for SSH runtime support
 RUN apt-get update && \
-    apt-get install -y git openssh-client && \
+    apt-get install -y --no-install-recommends git openssh-client && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy runtime dependencies first so app-code changes don't invalidate these layers.
