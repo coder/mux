@@ -1663,6 +1663,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
             <KeycapGroup keys={["↑", "↓"]} label="line" />
             <KeycapGroup keys={["Shift", "↑↓"]} label="select" />
             <KeycapGroup keys={["m"]} label="read" />
+            <KeycapGroup keys={["⇧M"]} label="file read" />
             <KeycapGroup keys={["⇧C"]} label="comment" />
             <KeycapGroup keys={["⇧L", "⇧D"]} label="like / dislike" />
             <KeycapGroup keys={["Enter"]} label="submit" />
