@@ -1531,12 +1531,12 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
         <div className="bg-border-light hidden h-4 w-px shrink-0 sm:block" />
 
-        {/* Hunk read toggle — always visible (including mobile/touch) */}
+        {/* Hunk read toggle — mobile only (desktop copy lives inside the summary div below) */}
         {selectedHunk && (
           <button
             type="button"
             className={cn(
-              "text-muted hover:text-read flex shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors duration-150",
+              "text-muted hover:text-read flex shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors duration-150 sm:hidden",
               props.isRead(selectedHunk.id) && "text-read"
             )}
             onClick={() => onToggleRead(selectedHunk.id)}
@@ -1549,8 +1549,27 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
             )}
           </button>
         )}
-        {/* Hunk and line summary text — hidden on mobile */}
+        {/* Hunk selection summary — hidden on mobile, includes toggle on desktop */}
         <div className="text-muted hidden items-center gap-1 text-[10px] sm:flex">
+          {selectedHunk && (
+            <button
+              type="button"
+              className={cn(
+                "text-muted hover:text-read flex cursor-pointer items-center border-none bg-transparent p-0 transition-colors duration-150",
+                props.isRead(selectedHunk.id) && "text-read"
+              )}
+              onClick={() => onToggleRead(selectedHunk.id)}
+              aria-label={
+                props.isRead(selectedHunk.id) ? "Mark hunk as unread" : "Mark hunk as read"
+              }
+            >
+              {props.isRead(selectedHunk.id) ? (
+                <Check aria-hidden="true" className="h-3 w-3" />
+              ) : (
+                <Circle aria-hidden="true" className="h-3 w-3" />
+              )}
+            </button>
+          )}
           <span>
             Hunk {currentHunkIdx >= 0 ? currentHunkIdx + 1 : "–"}/{currentFileHunks.length}
           </span>
