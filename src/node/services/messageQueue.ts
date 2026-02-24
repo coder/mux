@@ -42,7 +42,8 @@ function hasReviews(meta: unknown): meta is MetadataWithReviews {
   return Array.isArray(obj.reviews);
 }
 
-type QueueDispatchMode = "tool-end" | "turn-end";
+// Derive from the Zod schema (SendMessageOptions) to stay in sync automatically.
+type QueueDispatchMode = NonNullable<SendMessageOptions["queueDispatchMode"]>;
 
 /**
  * Queue for messages sent during active streaming.
