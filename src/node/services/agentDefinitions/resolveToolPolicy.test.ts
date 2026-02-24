@@ -133,6 +133,36 @@ describe("resolveToolPolicyForAgent", () => {
     ]);
   });
 
+  test("non-literal regex add that matches switch_agent does not unlock switch_agent", () => {
+    const agents: AgentLikeForPolicy[] = [{ tools: { add: [".+"] } }];
+    const policy = resolveToolPolicyForAgent({
+      agents,
+      isSubagent: false,
+      disableTaskToolsForDepth: false,
+    });
+
+    expect(policy).toEqual([
+      { regex_match: ".*", action: "disable" },
+      { regex_match: ".+", action: "enable" },
+      { regex_match: "switch_agent", action: "disable" },
+    ]);
+  });
+
+  test("tools.require uses only the last entry in a layer", () => {
+    const agents: AgentLikeForPolicy[] = [{ tools: { require: ["switch_agent", "agent_report"] } }];
+    const policy = resolveToolPolicyForAgent({
+      agents,
+      isSubagent: false,
+      disableTaskToolsForDepth: false,
+    });
+
+    expect(policy).toEqual([
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "agent_report", action: "require" },
+      { regex_match: "switch_agent", action: "disable" },
+    ]);
+  });
+
   test("wildcard remove clears switch_agent enablement from earlier explicit add", () => {
     // Chain: child → base. Base explicitly enables switch_agent, then child strips all tools.
     const agents: AgentLikeForPolicy[] = [

@@ -59,13 +59,9 @@ function isExplicitSwitchAgentEnablePattern(pattern: string): boolean {
     return false;
   }
 
-  // Keep enable/require explicit so broad wildcards (e.g. ".*" in exec)
-  // do not accidentally unlock switch_agent for every top-level agent.
-  if (trimmed === ".*") {
-    return false;
-  }
-
-  return matchesSwitchAgentPattern(trimmed);
+  // switch_agent opt-in must be explicit and literal; broad or alternate regexes
+  // should not implicitly unlock autonomous handoff behavior.
+  return trimmed === "switch_agent";
 }
 
 const SUBAGENT_HARD_DENIED_TOOLS = ["ask_user_question", "switch_agent"] as const;
@@ -81,7 +77,7 @@ function matchesSubagentHardDeniedTool(pattern: string): boolean {
  * 1. Inheritance chain processed base → child:
  *    - Each layer's `tools.add` patterns (enable)
  *    - Each layer's `tools.remove` patterns (disable)
- *    - Effective `tools.require` patterns (require), where child layers override base layers
+ *    - Effective `tools.require` pattern (require), where child layers override base layers
  * 2. Runtime restrictions (subagent limits, depth limits) applied last
  *
  * Example: ask (base: exec)
@@ -102,7 +98,7 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
   // Process inheritance chain: base → child
   const configs = collectToolConfigsFromResolvedChain(agents);
   let switchAgentEnabledByConfig = false;
-  let effectiveRequirePatterns: string[] = [];
+  let effectiveRequirePattern: string | undefined;
   for (const config of configs) {
     // Enable tools from add list (treated as regex patterns)
     if (config.add) {
@@ -130,25 +126,25 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
       }
     }
 
-    // Require tools from require list. Child layers override base layers to keep
-    // at most one effective required-tool configuration across inheritance.
+    // Require tools from require list. Child layers override base layers and
+    // the last entry in each list wins so policy construction can never emit
+    // multiple required tools.
     if (config.require) {
-      effectiveRequirePatterns = config.require
+      const cleanedPatterns = config.require
         .map((pattern) => pattern.trim())
         .filter((pattern) => pattern.length > 0);
+      effectiveRequirePattern = cleanedPatterns.at(-1);
     }
   }
 
-  for (const pattern of effectiveRequirePatterns) {
+  if (effectiveRequirePattern) {
     // Subagents must not require tools that are hard-denied at runtime: a disabled
     // required tool can collapse the entire toolset.
-    if (isSubagent && matchesSubagentHardDeniedTool(pattern)) {
-      continue;
-    }
-
-    agentPolicy.push({ regex_match: pattern, action: "require" });
-    if (!isSubagent && isExplicitSwitchAgentEnablePattern(pattern)) {
-      switchAgentEnabledByConfig = true;
+    if (!(isSubagent && matchesSubagentHardDeniedTool(effectiveRequirePattern))) {
+      agentPolicy.push({ regex_match: effectiveRequirePattern, action: "require" });
+      if (!isSubagent && isExplicitSwitchAgentEnablePattern(effectiveRequirePattern)) {
+        switchAgentEnabledByConfig = true;
+      }
     }
   }
 
