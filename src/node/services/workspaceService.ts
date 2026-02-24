@@ -120,6 +120,8 @@ import {
 } from "@/node/services/subagentTranscriptArtifacts";
 import { getErrorMessage } from "@/common/utils/errors";
 
+import { isProjectTrusted } from "@/node/utils/projectTrust";
+
 /** Maximum number of retry attempts when workspace name collides */
 const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
 
@@ -1773,6 +1775,7 @@ export class WorkspaceService extends EventEmitter {
 
       // Background init: run postCreateSetup (if present) then initWorkspace
       const secrets = secretsToRecord(this.config.getEffectiveSecrets(projectPath));
+      const skipInitHook = !isProjectTrusted(this.config.loadConfigOrDefault(), projectPath);
       // Background init: postCreateSetup (provisioning) + initWorkspace (sync/checkout/hook)
       //
       // If the user cancelled creation while create() was still in flight, avoid spawning
@@ -1788,6 +1791,7 @@ export class WorkspaceService extends EventEmitter {
             initLogger,
             env: secrets,
             abortSignal: initAbortController.signal,
+            skipInitHook,
           },
           workspaceId,
           log
@@ -3051,6 +3055,7 @@ export class WorkspaceService extends EventEmitter {
 
       // Run init for forked workspace (fire-and-forget like create())
       const secrets = secretsToRecord(this.config.getEffectiveSecrets(foundProjectPath));
+      const skipInitHook = !isProjectTrusted(this.config.loadConfigOrDefault(), foundProjectPath);
       runBackgroundInit(
         targetRuntime,
         {
@@ -3061,6 +3066,7 @@ export class WorkspaceService extends EventEmitter {
           initLogger,
           env: secrets,
           abortSignal: initAbortController.signal,
+          skipInitHook,
         },
         newWorkspaceId,
         log

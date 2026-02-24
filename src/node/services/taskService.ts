@@ -70,6 +70,8 @@ import {
 import { secretsToRecord } from "@/common/types/secrets";
 import { getErrorMessage } from "@/common/utils/errors";
 
+import { isProjectTrusted } from "@/node/utils/projectTrust";
+
 export type TaskKind = "agent";
 
 export type AgentTaskStatus = NonNullable<WorkspaceConfigEntry["taskStatus"]>;
@@ -821,13 +823,16 @@ export class TaskService {
     const parentWorkspacePath = isInPlace
       ? parentMeta.projectPath
       : runtime.getWorkspacePath(parentMeta.projectPath, parentMeta.name);
+    const skipRepoResources = !isProjectTrusted(cfg, parentMeta.projectPath);
 
     // Helper to build error hint with all available runnable agents.
     // NOTE: This resolves frontmatter inheritance so same-name overrides (e.g. project exec.md
     // with base: exec) still count as runnable.
     const getRunnableHint = async (): Promise<string> => {
       try {
-        const allAgents = await discoverAgentDefinitions(runtime, parentWorkspacePath);
+        const allAgents = await discoverAgentDefinitions(runtime, parentWorkspacePath, {
+          skipProjectAgents: skipRepoResources,
+        });
 
         const runnableIds = (
           await Promise.all(
@@ -863,7 +868,7 @@ export class TaskService {
       }
     };
 
-    let skipInitHook = false;
+    let skipInitHook = skipRepoResources;
     try {
       const frontmatter = await resolveAgentFrontmatter(runtime, parentWorkspacePath, agentId);
       if (frontmatter.subagent?.runnable !== true) {
@@ -881,7 +886,9 @@ export class TaskService {
         const hint = await getRunnableHint();
         return Err(`Task.create: agentId is disabled (${agentId}). ${hint}`);
       }
-      skipInitHook = frontmatter.subagent?.skip_init_hook === true;
+      if (!skipInitHook) {
+        skipInitHook = frontmatter.subagent?.skip_init_hook === true;
+      }
     } catch {
       const hint = await getRunnableHint();
       return Err(`Task.create: unknown agentId (${agentId}). ${hint}`);
@@ -2205,7 +2212,10 @@ export class TaskService {
           trunkBranch,
         });
         const secrets = secretsToRecord(this.config.getEffectiveSecrets(taskEntry.projectPath));
-        let skipInitHook = false;
+        let skipInitHook = !isProjectTrusted(
+          this.config.loadConfigOrDefault(),
+          taskEntry.projectPath
+        );
         const agentIdRaw = coerceNonEmptyString(task.agentId ?? task.agentType);
         if (agentIdRaw) {
           const parsedAgentId = AgentIdSchema.safeParse(agentIdRaw.trim().toLowerCase());
@@ -2223,7 +2233,9 @@ export class TaskService {
                 parentWorkspacePath,
                 parsedAgentId.data
               );
-              skipInitHook = frontmatter.subagent?.skip_init_hook === true;
+              if (!skipInitHook) {
+                skipInitHook = frontmatter.subagent?.skip_init_hook === true;
+              }
             } catch (error: unknown) {
               log.debug("Queued task: failed to read agent definition for skip_init_hook", {
                 taskId,

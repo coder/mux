@@ -35,6 +35,7 @@ import {
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import { discoverAgentSkills } from "@/node/services/agentSkills/agentSkillsService";
+import { isProjectTrusted } from "@/node/utils/projectTrust";
 import { buildSystemMessage } from "./systemMessage";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
@@ -271,6 +272,7 @@ export async function buildStreamSystemContext(
   } = opts;
 
   const workspaceLog = log.withFields({ workspaceId, workspaceName: metadata.name });
+  const skipRepoResources = !isProjectTrusted(cfg, metadata.projectPath);
 
   // Resolve the body with inheritance (prompt.append merges with base).
   // Use agentDefinition.id (may have fallen back to exec) instead of effectiveAgentId.
@@ -308,13 +310,16 @@ export async function buildStreamSystemContext(
       runtime,
       workspacePath: agentDiscoveryPath,
       cfg,
+      skipProjectAgents: skipRepoResources,
     });
   }
 
   // Discover available skills for tool description context
   let availableSkills: Awaited<ReturnType<typeof discoverAgentSkills>> | undefined;
   try {
-    availableSkills = await discoverAgentSkills(runtime, workspacePath);
+    availableSkills = await discoverAgentSkills(runtime, workspacePath, {
+      skipProjectSkills: skipRepoResources,
+    });
   } catch (error) {
     workspaceLog.warn("Failed to discover agent skills for tool description", { error });
   }
@@ -365,6 +370,7 @@ export async function discoverAvailableSubagentsForToolContext(args: {
   workspacePath: string;
   cfg: ProjectsConfig;
   roots?: AgentDefinitionsRoots;
+  skipProjectAgents?: boolean;
 }): Promise<Awaited<ReturnType<typeof discoverAgentDefinitions>>> {
   assert(args, "discoverAvailableSubagentsForToolContext: args is required");
   assert(args.runtime, "discoverAvailableSubagentsForToolContext: runtime is required");
@@ -376,6 +382,7 @@ export async function discoverAvailableSubagentsForToolContext(args: {
 
   const discovered = await discoverAgentDefinitions(args.runtime, args.workspacePath, {
     roots: args.roots,
+    skipProjectAgents: args.skipProjectAgents,
   });
 
   const resolved = await Promise.all(
