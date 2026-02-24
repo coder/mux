@@ -33,7 +33,7 @@ import { checkInitHookExists, getMuxEnv, runInitHookOnRuntime } from "./initHook
 import { getProjectName } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 import { syncProjectViaGitBundle } from "./gitBundleSync";
-import { GIT_NO_HOOKS_ENV } from "@/node/utils/gitNoHooksEnv";
+import { GIT_NO_HOOKS_ENV, gitNoHooksPrefix } from "@/node/utils/gitNoHooksEnv";
 import {
   getHostGitconfigPath,
   hasHostGitconfig,
@@ -719,8 +719,10 @@ export class DockerRuntime extends RemoteRuntime {
     initLogger.logStep("Files synced successfully");
 
     // 3. Checkout branch
+    // Disable git hooks for untrusted projects (prevents post-checkout execution)
+    const nhp = gitNoHooksPrefix(params.trusted);
     initLogger.logStep(`Checking out branch: ${branchName}`);
-    const checkoutCmd = `git checkout ${shescape.quote(branchName)} 2>/dev/null || git checkout -b ${shescape.quote(branchName)} ${shescape.quote(trunkBranch)}`;
+    const checkoutCmd = `${nhp}git checkout ${shescape.quote(branchName)} 2>/dev/null || ${nhp}git checkout -b ${shescape.quote(branchName)} ${shescape.quote(trunkBranch)}`;
 
     const checkoutStream = await this.exec(checkoutCmd, {
       cwd: workspacePath,
@@ -1115,10 +1117,12 @@ export class DockerRuntime extends RemoteRuntime {
       }
 
       // 9. Checkout destination branch
+      // Disable git hooks for untrusted projects (prevents post-checkout execution)
+      const forkNhp = gitNoHooksPrefix(params.trusted);
       initLogger.logStep(`Checking out branch: ${newWorkspaceName}`);
       const checkoutCmd =
-        `git checkout ${shescape.quote(newWorkspaceName)} 2>/dev/null || ` +
-        `git checkout -b ${shescape.quote(newWorkspaceName)} ${shescape.quote(sourceBranch)}`;
+        `${forkNhp}git checkout ${shescape.quote(newWorkspaceName)} 2>/dev/null || ` +
+        `${forkNhp}git checkout -b ${shescape.quote(newWorkspaceName)} ${shescape.quote(sourceBranch)}`;
       const checkoutResult = await runDockerCommand(
         `docker exec ${destContainerName} bash -c ${shescape.quote(`cd ${CONTAINER_SRC_DIR} && ${checkoutCmd}`)}`,
         120000
