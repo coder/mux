@@ -1652,6 +1652,81 @@ export const ContextMeterWithIdleCompaction: AppStory = {
 };
 
 /**
+ * Context meter hover summary tooltip.
+ *
+ * Captures the non-interactive one-line tooltip shown on hover so the quick
+ * compaction stats remain visible even after controls moved to click-to-open.
+ */
+export const ContextMeterHoverSummaryTooltip: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-context-meter-hover",
+          workspaceName: "feature/context-meter-hover",
+          projectName: "my-app",
+          idleCompactionHours: 4,
+          messages: [
+            createUserMessage("msg-1", "Can you keep an eye on context usage?", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 240000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "Sure — I’ll keep compaction settings tuned as usage grows.",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 230000,
+                contextUsage: { inputTokens: 128000, outputTokens: 2500 },
+              }
+            ),
+          ],
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    const contextButton = await waitFor(
+      () => canvas.getByRole("button", { name: /context usage/i }),
+      { interval: 50, timeout: 10000 }
+    );
+
+    await userEvent.hover(contextButton);
+
+    await waitFor(
+      () => {
+        const tooltip = document.querySelector('[role="tooltip"]');
+        if (!(tooltip instanceof HTMLElement)) {
+          throw new Error("Compaction hover summary tooltip not visible");
+        }
+
+        const text = tooltip.textContent ?? "";
+        if (!text.includes("Context ")) {
+          throw new Error("Expected context usage summary in tooltip");
+        }
+        if (!text.includes("Auto ")) {
+          throw new Error("Expected auto-compaction summary in tooltip");
+        }
+        if (!text.includes("Idle 4h")) {
+          throw new Error("Expected idle compaction summary in tooltip");
+        }
+      },
+      { interval: 50, timeout: 5000 }
+    );
+  },
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Captures the context usage hover summary tooltip with one-line stats for context, auto-compaction threshold, and idle timer.",
+      },
+    },
+  },
+};
+
+/**
  * Story showing a propose_plan tool call with Plan UI.
  * Tests the plan card rendering with icon action buttons at the bottom.
  */
