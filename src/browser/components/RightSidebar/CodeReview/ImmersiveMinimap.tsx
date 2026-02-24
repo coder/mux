@@ -171,6 +171,9 @@ export const ImmersiveMinimap: React.FC<ImmersiveMinimapProps> = (props) => {
     };
   }, [stopThumbDrag]);
 
+  const onSelectLineIndex = props.onSelectLineIndex;
+  const scrollContainerRef = props.scrollContainerRef;
+
   const handleCanvasMouseDown = useCallback(
     (event: React.MouseEvent<HTMLCanvasElement>) => {
       const canvas = canvasRef.current;
@@ -178,7 +181,7 @@ export const ImmersiveMinimap: React.FC<ImmersiveMinimapProps> = (props) => {
         return;
       }
 
-      const scrollContainer = props.scrollContainerRef.current;
+      const scrollContainer = scrollContainerRef.current;
       const bounds = canvas.getBoundingClientRect();
       const pointerY = event.clientY - bounds.top;
 
@@ -203,7 +206,7 @@ export const ImmersiveMinimap: React.FC<ImmersiveMinimapProps> = (props) => {
 
           const handleMouseMove = (moveEvent: MouseEvent) => {
             const latestCanvas = canvasRef.current;
-            const latestScrollContainer = props.scrollContainerRef.current;
+            const latestScrollContainer = scrollContainerRef.current;
             if (!latestCanvas || !latestScrollContainer) {
               return;
             }
@@ -246,7 +249,7 @@ export const ImmersiveMinimap: React.FC<ImmersiveMinimapProps> = (props) => {
       }
 
       const lineIndex = pointerYToLineIndex(pointerY, bounds.height, lineCategories.length);
-      props.onSelectLineIndex(lineIndex);
+      onSelectLineIndex(lineIndex);
 
       if (scrollContainer) {
         scrollContainer.scrollTop = scrollTopForLine(
@@ -259,13 +262,7 @@ export const ImmersiveMinimap: React.FC<ImmersiveMinimapProps> = (props) => {
 
       redrawCanvas();
     },
-    [
-      lineCategories.length,
-      props.onSelectLineIndex,
-      props.scrollContainerRef,
-      redrawCanvas,
-      stopThumbDrag,
-    ]
+    [lineCategories.length, onSelectLineIndex, scrollContainerRef, redrawCanvas, stopThumbDrag]
   );
 
   if (lineCategories.length === 0) {
@@ -274,7 +271,7 @@ export const ImmersiveMinimap: React.FC<ImmersiveMinimapProps> = (props) => {
 
   return (
     <div
-      className="border-border-light bg-[var(--color-bg-dark)] w-12 shrink-0 border-l"
+      className="border-border-light w-12 shrink-0 border-l bg-[var(--color-bg-dark)]"
       data-testid="immersive-minimap"
     >
       <canvas
