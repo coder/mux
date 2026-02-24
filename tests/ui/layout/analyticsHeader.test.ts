@@ -12,7 +12,7 @@ function enableDesktopApi(platform: NodeJS.Platform) {
   window.api = {
     platform,
     versions: {},
-    getIsRosetta: async () => false,
+    getIsRosetta: () => Promise.resolve(false),
   };
 }
 
