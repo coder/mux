@@ -1070,12 +1070,15 @@ export class StreamManager extends EventEmitter {
       // (propose_plan, agent_report) must NOT be forced — those agents need to
       // read files, run commands, etc. before calling the completion tool.
       // Sub-agents rely on taskService.ts post-stream recovery instead of forcing.
-      const requiredEntry = toolPolicy.find((filter) => filter.action === "require");
-      if (requiredEntry) {
-        const literalName = normalizeLiteralRequiredToolPattern(requiredEntry.regex_match);
-        if (literalName === "switch_agent" && literalName in finalTools) {
-          toolChoice = { type: "tool", toolName: literalName };
-        }
+      // Scan all require entries for switch_agent — it may not be the first
+      // required tool if the agent inherits other require rules.
+      const hasSwitchAgentRequire = toolPolicy.some(
+        (filter) =>
+          filter.action === "require" &&
+          normalizeLiteralRequiredToolPattern(filter.regex_match) === "switch_agent"
+      );
+      if (hasSwitchAgentRequire && "switch_agent" in finalTools) {
+        toolChoice = { type: "tool", toolName: "switch_agent" };
       }
     }
 
