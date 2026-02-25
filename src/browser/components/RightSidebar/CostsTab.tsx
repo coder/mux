@@ -83,7 +83,11 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   const effectiveCompactionModel =
     resolveCompactionModel(preferredCompactionModel) ?? contextDisplayModel;
 
-  const delegationInsights = useDelegationInsights(workspaceId, has1MContext(contextDisplayModel));
+  const delegationInsights = useDelegationInsights(
+    workspaceId,
+    has1MContext(contextDisplayModel),
+    contextDisplayModel
+  );
 
   // Auto-compaction settings: threshold per-model (100 = disabled)
   const { threshold: autoCompactThreshold, setThreshold: setAutoCompactThreshold } =

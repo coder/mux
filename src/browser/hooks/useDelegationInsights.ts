@@ -9,12 +9,17 @@ import type { DelegationInsights } from "@/common/orpc/schemas/chatStats";
  */
 export function useDelegationInsights(
   workspaceId: string,
-  use1MContext: boolean
+  use1MContext: boolean,
+  model: string | null
 ): DelegationInsights | null {
   assert(workspaceId.trim().length > 0, "useDelegationInsights: workspaceId must be non-empty");
   assert(
     typeof use1MContext === "boolean",
     "useDelegationInsights: use1MContext must be a boolean"
+  );
+  assert(
+    model === null || typeof model === "string",
+    "useDelegationInsights: model must be a string or null"
   );
 
   const { api } = useAPI();
@@ -22,6 +27,7 @@ export function useDelegationInsights(
   const latestWorkspaceIdRef = useRef(workspaceId);
   latestWorkspaceIdRef.current = workspaceId;
 
+  // `model` is intentionally only a refetch trigger; backend resolves the active model from workspace config.
   useEffect(() => {
     if (!api) {
       return;
@@ -52,7 +58,7 @@ export function useDelegationInsights(
     return () => {
       cancelled = true;
     };
-  }, [api, workspaceId, use1MContext]);
+  }, [api, workspaceId, use1MContext, model]);
 
   return insights;
 }
