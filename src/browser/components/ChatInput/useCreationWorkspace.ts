@@ -642,10 +642,21 @@ export function useCreationWorkspace({
           confirmLabel: "Trust and continue",
           cancelLabel: "Don't create",
           onConfirm: async () => {
-            await api.projects.setTrust({ projectPath, trusted: true });
-            await refreshProjects();
-            trustPrompt.resolve(true);
-            setTrustPrompt(null);
+            try {
+              await api.projects.setTrust({ projectPath, trusted: true });
+              await refreshProjects();
+              trustPrompt.resolve(true);
+              setTrustPrompt(null);
+            } catch {
+              // Trust API failed — abort creation and notify user
+              trustPrompt.resolve(false);
+              setTrustPrompt(null);
+              setToast({
+                id: Date.now().toString(),
+                type: "error",
+                message: "Failed to trust project. Please try again.",
+              });
+            }
           },
           onCancel: () => {
             trustPrompt.resolve(false);
