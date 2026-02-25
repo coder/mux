@@ -488,8 +488,12 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                     aria-label="Auto-select agent"
                   />
                 </span>
-                <span className="text-foreground text-[11px] font-medium">Auto</span>
-                <span className="text-muted text-[10px]">Mux chooses the best agent</span>
+                <div className="flex flex-col">
+                  <span className="text-foreground text-[11px] font-medium">Auto</span>
+                  <span className="text-muted text-[10px] leading-tight">
+                    Mux chooses the best agent
+                  </span>
+                </div>
               </div>
             </div>
           )}
