@@ -1102,7 +1102,17 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       }
 
       const currentIndex = activeLineIndexRef.current ?? selectedHunkRange?.startIndex ?? 0;
-      const nextIndex = Math.max(0, Math.min(lineCount - 1, currentIndex + delta));
+      let nextIndex = Math.max(0, Math.min(lineCount - 1, currentIndex + delta));
+
+      // When extending a selection (Shift+Arrow), clamp the cursor to the current
+      // hunk's boundaries. Crossing into a different hunk would trigger the
+      // hunk-change effect which clears the selection, causing it to vanish.
+      if (extendRange && selectedHunkRange) {
+        nextIndex = Math.max(
+          selectedHunkRange.startIndex,
+          Math.min(selectedHunkRange.endIndex, nextIndex)
+        );
+      }
 
       setActiveLineIndex(nextIndex);
 
@@ -1119,24 +1129,36 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         onSelectHunk(lineHunkId);
       }
     },
-    [overlayData.lineHunkIds, selectedHunkRange?.startIndex, onSelectHunk]
+    [overlayData.lineHunkIds, selectedHunkRange, onSelectHunk]
   );
 
   const handleLineIndexSelect = useCallback(
     (lineIndex: number, shiftKey: boolean) => {
-      const resolvedHunk = findHunkAtLine(lineIndex, overlayData, currentFileHunks);
+      // When extending a selection (Shift+Click), clamp to the current hunk boundary
+      // instead of switching hunks (which would clear the selection).
+      let effectiveLineIndex = lineIndex;
+      if (shiftKey && selectedHunkRange) {
+        effectiveLineIndex = Math.max(
+          selectedHunkRange.startIndex,
+          Math.min(selectedHunkRange.endIndex, lineIndex)
+        );
+      }
+
+      const resolvedHunk = findHunkAtLine(effectiveLineIndex, overlayData, currentFileHunks);
       if (resolvedHunk && selectedHunkIdRef.current !== resolvedHunk.hunk.id) {
         pendingJumpSelectAllHunkIdRef.current = null;
         onSelectHunk(resolvedHunk.hunk.id);
       }
 
       const anchorIndex = shiftKey
-        ? (selectedLineRangeRef.current?.startIndex ?? activeLineIndexRef.current ?? lineIndex)
-        : lineIndex;
-      setActiveLineIndex(lineIndex);
+        ? (selectedLineRangeRef.current?.startIndex ??
+          activeLineIndexRef.current ??
+          effectiveLineIndex)
+        : effectiveLineIndex;
+      setActiveLineIndex(effectiveLineIndex);
 
       if (shiftKey) {
-        setSelectedLineRange({ startIndex: anchorIndex, endIndex: lineIndex });
+        setSelectedLineRange({ startIndex: anchorIndex, endIndex: effectiveLineIndex });
       } else {
         setSelectedLineRange(null);
       }
@@ -1146,7 +1168,14 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         openComposer("", { startIndex: lineIndex, endIndex: lineIndex });
       }
     },
-    [overlayData, currentFileHunks, isTouchExperience, onSelectHunk, openComposer]
+    [
+      overlayData,
+      currentFileHunks,
+      selectedHunkRange,
+      isTouchExperience,
+      onSelectHunk,
+      openComposer,
+    ]
   );
 
   const handleMinimapSelectLine = useCallback(
