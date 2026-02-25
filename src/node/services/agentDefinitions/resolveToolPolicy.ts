@@ -24,12 +24,14 @@ export interface ResolveToolPolicyOptions {
   disableTaskToolsForDepth: boolean;
 }
 
-// Runtime restrictions that cannot be overridden by agent definitions.
-// Ask-for-input and agent-switch tools are never allowed in autonomous sub-agent flows.
-const SUBAGENT_HARD_DENY: ToolPolicy = [
-  { regex_match: "ask_user_question", action: "disable" },
-  { regex_match: "switch_agent", action: "disable" },
-];
+// Tools that are never allowed in autonomous sub-agent flows.
+// Single source of truth: SUBAGENT_HARD_DENY is derived from this list.
+const SUBAGENT_HARD_DENIED_TOOLS = ["ask_user_question", "switch_agent"] as const;
+
+const SUBAGENT_HARD_DENY: ToolPolicy = SUBAGENT_HARD_DENIED_TOOLS.map((tool) => ({
+  regex_match: tool,
+  action: "disable" as const,
+}));
 
 const DEPTH_HARD_DENY: ToolPolicy = [
   { regex_match: "task", action: "disable" },
@@ -64,8 +66,6 @@ function isExplicitSwitchAgentEnablePattern(pattern: string): boolean {
   // should not implicitly unlock autonomous handoff behavior.
   return trimmed === "switch_agent";
 }
-
-const SUBAGENT_HARD_DENIED_TOOLS = ["ask_user_question", "switch_agent"] as const;
 
 function matchesSubagentHardDeniedTool(pattern: string): boolean {
   return SUBAGENT_HARD_DENIED_TOOLS.some((toolName) => matchesToolPattern(pattern, toolName));
