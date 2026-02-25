@@ -7,18 +7,20 @@ import type { DelegationInsights } from "@/common/orpc/schemas/chatStats";
  * Fetch delegation insights for a workspace. The endpoint is inexpensive and
  * only used by the costs sidebar, so we keep this hook intentionally simple.
  */
-export function useDelegationInsights(workspaceId: string): DelegationInsights | null {
+export function useDelegationInsights(
+  workspaceId: string,
+  use1MContext: boolean
+): DelegationInsights | null {
   assert(workspaceId.trim().length > 0, "useDelegationInsights: workspaceId must be non-empty");
+  assert(
+    typeof use1MContext === "boolean",
+    "useDelegationInsights: use1MContext must be a boolean"
+  );
 
   const { api } = useAPI();
   const [insights, setInsights] = useState<DelegationInsights | null>(null);
-
-  // Keep state aligned with the active workspace immediately.
-  const previousWorkspaceIdRef = useRef(workspaceId);
-  if (previousWorkspaceIdRef.current !== workspaceId) {
-    previousWorkspaceIdRef.current = workspaceId;
-    setInsights(null);
-  }
+  const latestWorkspaceIdRef = useRef(workspaceId);
+  latestWorkspaceIdRef.current = workspaceId;
 
   useEffect(() => {
     if (!api) {
@@ -26,11 +28,18 @@ export function useDelegationInsights(workspaceId: string): DelegationInsights |
     }
 
     let cancelled = false;
+    const requestedWorkspaceId = workspaceId;
+
+    // Clear immediately when switching workspaces so stale rows do not flash in the next tab.
+    setInsights(null);
 
     const fetchInsights = async () => {
       try {
-        const result = await api.workspace.getDelegationInsights({ workspaceId });
-        if (!cancelled) {
+        const result = await api.workspace.getDelegationInsights({
+          workspaceId: requestedWorkspaceId,
+          use1MContext,
+        });
+        if (!cancelled && latestWorkspaceIdRef.current === requestedWorkspaceId) {
           setInsights(result);
         }
       } catch {
@@ -43,7 +52,7 @@ export function useDelegationInsights(workspaceId: string): DelegationInsights |
     return () => {
       cancelled = true;
     };
-  }, [api, workspaceId]);
+  }, [api, workspaceId, use1MContext]);
 
   return insights;
 }

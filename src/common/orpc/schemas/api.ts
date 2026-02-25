@@ -1241,7 +1241,12 @@ export const workspace = {
     output: SessionUsageFileSchema.optional(),
   },
   getDelegationInsights: {
-    input: z.object({ workspaceId: z.string() }),
+    input: z.object({
+      workspaceId: z.string(),
+      // 1M context is a per-model user setting (not a pure model capability); callers
+      // pass the active workspace toggle so compaction estimates use the true limit.
+      use1MContext: z.boolean().optional(),
+    }),
     output: DelegationInsightsSchema,
   },
   /** Batch fetch session usage for multiple workspaces (for archived workspaces cost display) */

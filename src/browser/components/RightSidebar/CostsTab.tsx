@@ -72,8 +72,6 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   // Post-compaction context state for UI display
   const postCompactionState = usePostCompactionState(workspaceId);
 
-  const delegationInsights = useDelegationInsights(workspaceId);
-
   // Get runtimeConfig for SSH-aware editor opening
   const workspaceContext = useOptionalWorkspaceContext();
   const runtimeConfig = workspaceContext?.workspaceMetadata.get(workspaceId)?.runtimeConfig;
@@ -84,6 +82,8 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   // Align warning with /compact model resolution so it matches actual compaction behavior.
   const effectiveCompactionModel =
     resolveCompactionModel(preferredCompactionModel) ?? contextDisplayModel;
+
+  const delegationInsights = useDelegationInsights(workspaceId, has1MContext(contextDisplayModel));
 
   // Auto-compaction settings: threshold per-model (100 = disabled)
   const { threshold: autoCompactThreshold, setThreshold: setAutoCompactThreshold } =

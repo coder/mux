@@ -42,11 +42,7 @@ import {
   normalizeLayoutPresetsConfig,
 } from "@/common/types/uiLayouts";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
-import {
-  isValidModelFormat,
-  normalizeGatewayModel,
-  supports1MContext,
-} from "@/common/utils/ai/models";
+import { isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
 import {
   DEFAULT_TASK_SETTINGS,
   normalizeSubagentAiDefaults,
@@ -3388,7 +3384,7 @@ export const router = (authToken?: string) => {
                 : null;
           const modelContextLimit =
             modelId != null
-              ? getEffectiveContextLimit(modelId, supports1MContext(modelId), null)
+              ? getEffectiveContextLimit(modelId, input.use1MContext === true, null)
               : null;
 
           return context.sessionUsageService.getDelegationInsights(
