@@ -97,8 +97,8 @@ export class ProviderService {
         apiKey?: string;
         baseUrl?: string;
         models?: unknown[];
-        serviceTier?: unknown;
-        wireFormat?: unknown;
+        serviceTier?: string;
+        wireFormat?: string;
         cacheTtl?: unknown;
         /** OpenAI-only: default auth precedence for Codex-OAuth-allowed models. */
         codexOauthDefaultAuth?: unknown;
