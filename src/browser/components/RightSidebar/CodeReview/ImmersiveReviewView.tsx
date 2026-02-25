@@ -72,10 +72,11 @@ interface InlineComposerRequest {
   requestId: number;
   prefill: string;
   hunkId: string;
-  startOffset: number;
-  endOffset: number;
-  /** Hunk-relative offset for composer placement (cursor position) */
-  cursorOffset: number;
+  /** Absolute overlay indices so composer placement stays locked to marked rows. */
+  startIndex: number;
+  endIndex: number;
+  /** Absolute overlay index for composer placement (cursor position). */
+  cursorIndex: number;
 }
 
 interface InlineReviewEditRequest {
@@ -989,83 +990,63 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
   const openComposer = useCallback(
     (prefill: string, selectionOverride?: SelectedLineRange) => {
+      const lineCount = overlayData.lineHunkIds.length;
+      if (lineCount === 0) {
+        return;
+      }
+
+      const clampToOverlay = (lineIndex: number): number =>
+        Math.max(0, Math.min(lineCount - 1, lineIndex));
+
       const selection = selectionOverride ??
         getCurrentLineSelection() ?? {
           startIndex: activeLineIndexRef.current ?? 0,
           endIndex: activeLineIndexRef.current ?? 0,
         };
+      const effectiveSelection: SelectedLineRange = {
+        startIndex: clampToOverlay(selection.startIndex),
+        endIndex: clampToOverlay(selection.endIndex),
+      };
+      // Keep a single cursor source of truth: the moving edge of the selection.
+      const cursorIndex = clampToOverlay(effectiveSelection.endIndex);
+
       pendingComposerHunkSwitchRef.current = null;
 
-      // Keep a single cursor source of truth: the moving edge of the selection.
-      const clampToRange = (lineIndex: number, range: HunkLineRange): number =>
-        Math.max(range.startIndex, Math.min(range.endIndex, lineIndex));
-
-      // Resolve which hunk to attach the composer to. If the cursor has moved
-      // into a different hunk (e.g. via arrow-key line navigation), look it up
-      // from the overlay's lineHunkIds rather than using the stale selectedHunk.
-      let targetHunk = selectedHunk;
-      let targetRange = selectedHunkRange;
-      let cursorIndex = selection.endIndex;
-
-      if (!targetRange || !isSelectionInsideRange(selection, targetRange)) {
-        const resolved =
-          findHunkAtLine(selection.endIndex, overlayData, currentFileHunks) ??
-          findHunkAtLine(selection.startIndex, overlayData, currentFileHunks);
-        if (resolved) {
-          targetHunk = resolved.hunk;
-          targetRange = resolved.range;
-          cursorIndex = clampToRange(selection.endIndex, resolved.range);
-          // Keep cursor state anchored to the intended target line before
-          // hunk-selection effects run; this avoids snapping to hunk start.
-          setActiveLineIndex(cursorIndex);
-
-          const currentSelectedHunkId = selectedHunkIdRef.current;
-          if (resolved.hunk.id !== currentSelectedHunkId) {
-            // Record the in-flight hunk switch so mismatch guards do not clear
-            // this composer request before onSelectHunk propagates.
-            pendingJumpSelectAllHunkIdRef.current = null;
-            pendingComposerHunkSwitchRef.current = {
-              fromHunkId: currentSelectedHunkId,
-              toHunkId: resolved.hunk.id,
-            };
-            onSelectHunk(resolved.hunk.id);
-          }
-        }
-      }
-
-      if (!targetHunk || !targetRange) {
+      const resolvedTarget =
+        findHunkAtLine(cursorIndex, overlayData, currentFileHunks) ??
+        findHunkAtLine(effectiveSelection.startIndex, overlayData, currentFileHunks);
+      const targetHunk = resolvedTarget?.hunk ?? selectedHunk;
+      if (!targetHunk) {
         return;
       }
 
-      const effectiveSelection: SelectedLineRange = {
-        startIndex: clampToRange(selection.startIndex, targetRange),
-        endIndex: clampToRange(selection.endIndex, targetRange),
-      };
-
-      const clampedCursor = clampToRange(cursorIndex, targetRange);
+      const currentSelectedHunkId = selectedHunkIdRef.current;
+      if (targetHunk.id !== currentSelectedHunkId) {
+        // Record the in-flight hunk switch so mismatch guards do not clear
+        // this composer request before onSelectHunk propagates.
+        pendingJumpSelectAllHunkIdRef.current = null;
+        pendingComposerHunkSwitchRef.current = {
+          fromHunkId: currentSelectedHunkId,
+          toHunkId: targetHunk.id,
+        };
+        onSelectHunk(targetHunk.id);
+      }
 
       // Keep the keyboard cursor on the last selected line so comment placement,
       // selection visuals, and subsequent actions all share the same anchor.
-      setActiveLineIndex(clampedCursor);
+      setActiveLineIndex(cursorIndex);
 
       nextComposerRequestIdRef.current += 1;
       setInlineComposerRequest({
         requestId: nextComposerRequestIdRef.current,
         prefill,
         hunkId: targetHunk.id,
-        startOffset: effectiveSelection.startIndex - targetRange.startIndex,
-        endOffset: effectiveSelection.endIndex - targetRange.startIndex,
-        cursorOffset: clampedCursor - targetRange.startIndex,
+        startIndex: effectiveSelection.startIndex,
+        endIndex: effectiveSelection.endIndex,
+        cursorIndex,
       });
     },
-    [
-      getCurrentLineSelection,
-      selectedHunk,
-      selectedHunkRange,
-      overlayData,
-      currentFileHunks,
-      onSelectHunk,
-    ]
+    [getCurrentLineSelection, selectedHunk, overlayData, currentFileHunks, onSelectHunk]
   );
 
   const handleReviewNoteSubmit = useCallback(
@@ -1497,7 +1478,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   }, [selectedLineSummary, selectedHunkRange]);
 
   const externalComposerSelectionRequest = useMemo(() => {
-    if (!inlineComposerRequest || !selectedHunk || !selectedHunkRange) {
+    if (!inlineComposerRequest || !selectedHunk) {
       return null;
     }
 
@@ -1505,21 +1486,23 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       return null;
     }
 
-    const clampToHunk = (lineIndex: number) =>
-      Math.max(selectedHunkRange.startIndex, Math.min(selectedHunkRange.endIndex, lineIndex));
+    const lineCount = overlayData.lineHunkIds.length;
+    if (lineCount === 0) {
+      return null;
+    }
+
+    const clampToOverlay = (lineIndex: number) => Math.max(0, Math.min(lineCount - 1, lineIndex));
 
     return {
       requestId: inlineComposerRequest.requestId,
       selection: {
-        startIndex: clampToHunk(selectedHunkRange.startIndex + inlineComposerRequest.startOffset),
-        endIndex: clampToHunk(selectedHunkRange.startIndex + inlineComposerRequest.endOffset),
+        startIndex: clampToOverlay(inlineComposerRequest.startIndex),
+        endIndex: clampToOverlay(inlineComposerRequest.endIndex),
       },
-      composerAfterIndex: clampToHunk(
-        selectedHunkRange.startIndex + inlineComposerRequest.cursorOffset
-      ),
+      composerAfterIndex: clampToOverlay(inlineComposerRequest.cursorIndex),
       initialNoteText: inlineComposerRequest.prefill,
     };
-  }, [inlineComposerRequest, selectedHunk, selectedHunkRange]);
+  }, [inlineComposerRequest, overlayData.lineHunkIds.length, selectedHunk]);
 
   const shouldEnableHighlighting = overlayData.lineHunkIds.length <= MAX_HIGHLIGHTED_DIFF_LINES;
 
