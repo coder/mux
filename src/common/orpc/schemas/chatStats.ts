@@ -90,30 +90,6 @@ export const RolledUpChildEntrySchema = z.object({
 });
 export type RolledUpChildEntry = z.infer<typeof RolledUpChildEntrySchema>;
 
-export const DelegationChildSummarySchema = z.object({
-  workspaceId: z.string(),
-  agentType: z.string().optional(),
-  model: z.string().optional(),
-  totalTokens: z.number(),
-  contextTokens: z.number().optional(),
-  totalCostUsd: z.number().optional(),
-});
-export type DelegationChildSummary = z.infer<typeof DelegationChildSummarySchema>;
-
-export const DelegationInsightsSchema = z.object({
-  children: z.array(DelegationChildSummarySchema),
-  totalChildTokens: z.number(),
-  totalChildCostUsd: z.number().optional(),
-  exploreTokensConsumed: z.number(),
-  exploreReportTokens: z.number(),
-  compressionRatio: z.number(),
-  actualCompactions: z.number(),
-  estimatedWithoutDelegation: z.number(),
-  compactionsAvoided: z.number(),
-  hasData: z.boolean(),
-});
-export type DelegationInsights = z.infer<typeof DelegationInsightsSchema>;
-
 /**
  * Cumulative session usage file format.
  * Stored in ~/.mux/sessions/{workspaceId}/session-usage.json

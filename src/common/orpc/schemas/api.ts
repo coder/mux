@@ -1,7 +1,7 @@
 import { eventIterator } from "@orpc/server";
 import { UIModeSchema } from "../../types/mode";
 import { z } from "zod";
-import { ChatStatsSchema, DelegationInsightsSchema, SessionUsageFileSchema } from "./chatStats";
+import { ChatStatsSchema, SessionUsageFileSchema } from "./chatStats";
 import {
   NameGenerationErrorSchema,
   ProjectRemoveErrorSchema,
@@ -1239,21 +1239,6 @@ export const workspace = {
   getSessionUsage: {
     input: z.object({ workspaceId: z.string() }),
     output: SessionUsageFileSchema.optional(),
-  },
-  getDelegationInsights: {
-    input: z.object({
-      workspaceId: z.string(),
-      // Active model from UI state. Optional for compatibility with older callers.
-      // The backend falls back to workspace metadata when this is omitted.
-      model: z.string().nullish(),
-      // 1M context is a per-model user setting (not a pure model capability); callers
-      // pass the active workspace toggle so compaction estimates use the true limit.
-      use1MContext: z.boolean().nullish(),
-      // Auto-compaction threshold as a decimal (e.g. 0.7 for 70%).
-      // Falls back to default when omitted.
-      autoCompactionThreshold: z.number().min(0).max(1).nullish(),
-    }),
-    output: DelegationInsightsSchema,
   },
   /** Batch fetch session usage for multiple workspaces (for archived workspaces cost display) */
   getSessionUsageBatch: {

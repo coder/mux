@@ -8,21 +8,11 @@ import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks"
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
-import { DEFAULT_AUTO_COMPACTION_THRESHOLD } from "@/common/constants/ui";
-import type {
-  DelegationChildSummary,
-  DelegationInsights,
-  RolledUpChildEntry,
-} from "@/common/orpc/schemas/chatStats";
+import type { RolledUpChildEntry } from "@/common/orpc/schemas/chatStats";
 import type { TokenConsumer } from "@/common/types/chatStats";
 import type { MuxMessage } from "@/common/types/message";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { log } from "./log";
-import {
-  CHARS_PER_TOKEN_ESTIMATE,
-  getSubagentReportArtifactPath,
-  readSubagentReportArtifactsFile,
-} from "./subagentReportArtifacts";
 
 export interface SessionUsageTokenStatsCacheV1 {
   /**
@@ -341,147 +331,6 @@ export class SessionUsageService {
         return undefined;
       }
     });
-  }
-
-  async getDelegationInsights(
-    workspaceId: string,
-    modelContextLimit: number | null,
-    autoCompactionThreshold: number | null = null
-  ): Promise<DelegationInsights> {
-    assert(workspaceId.trim().length > 0, "getDelegationInsights: workspaceId empty");
-    assert(
-      modelContextLimit == null || (Number.isFinite(modelContextLimit) && modelContextLimit > 0),
-      "getDelegationInsights: modelContextLimit must be null or > 0"
-    );
-    assert(
-      autoCompactionThreshold == null ||
-        (Number.isFinite(autoCompactionThreshold) &&
-          autoCompactionThreshold >= 0 &&
-          autoCompactionThreshold <= 1),
-      "getDelegationInsights: autoCompactionThreshold must be null or between 0 and 1"
-    );
-
-    const usage = await this.getSessionUsage(workspaceId);
-    const rolledUpFrom = usage?.rolledUpFrom ?? {};
-
-    const children: DelegationChildSummary[] = [];
-    for (const [childId, entry] of Object.entries(rolledUpFrom)) {
-      if (entry === true) {
-        continue;
-      }
-
-      children.push({
-        workspaceId: childId,
-        agentType: entry.agentType,
-        model: entry.model,
-        totalTokens: entry.totalTokens,
-        ...(entry.contextTokens != null ? { contextTokens: entry.contextTokens } : {}),
-        totalCostUsd: entry.totalCostUsd,
-      });
-    }
-
-    const totalChildTokens = children.reduce((sum, child) => sum + child.totalTokens, 0);
-    const totalChildContextTokens = children.reduce(
-      (sum, child) => sum + (child.contextTokens ?? child.totalTokens),
-      0
-    );
-    const hasCosts = children.some((child) => child.totalCostUsd != null);
-    const totalChildCostUsd = children.reduce((sum, child) => sum + (child.totalCostUsd ?? 0), 0);
-
-    const explores = children.filter((child) => child.agentType === "explore");
-    const exploreTokensConsumed = explores.reduce((sum, child) => sum + child.totalTokens, 0);
-
-    const exploreWorkspaceIds = new Set(explores.map((child) => child.workspaceId));
-    const sessionDir = this.config.getSessionDir(workspaceId);
-    const artifactsFile = await readSubagentReportArtifactsFile(sessionDir);
-    const childWorkspaceIds = new Set(children.map((c) => c.workspaceId));
-    let exploreReportTokens = 0;
-    let totalReportTokens = 0;
-    for (const artifact of Object.values(artifactsFile.artifactsByChildTaskId)) {
-      const isChild = childWorkspaceIds.has(artifact.childTaskId);
-      const isExplore = exploreWorkspaceIds.has(artifact.childTaskId);
-      if (!isChild) {
-        continue;
-      }
-
-      let tokenEstimate = artifact.reportTokenEstimate;
-
-      // Sanitize persisted value: must be a finite non-negative number.
-      // Corrupted/malformed local state should not crash the endpoint.
-      if (
-        typeof tokenEstimate !== "number" ||
-        !Number.isFinite(tokenEstimate) ||
-        tokenEstimate < 0
-      ) {
-        tokenEstimate = undefined;
-      }
-
-      if (tokenEstimate == null) {
-        // Legacy or corrupted artifacts: derive estimate from stored markdown.
-        try {
-          const reportPath = getSubagentReportArtifactPath(sessionDir, artifact.childTaskId);
-          const rawReport = await fs.readFile(reportPath, "utf-8");
-          const parsedReport = JSON.parse(rawReport) as { reportMarkdown?: unknown } | null;
-          const reportMarkdown =
-            parsedReport && typeof parsedReport === "object"
-              ? parsedReport.reportMarkdown
-              : undefined;
-          tokenEstimate =
-            typeof reportMarkdown === "string"
-              ? Math.ceil(reportMarkdown.length / CHARS_PER_TOKEN_ESTIMATE)
-              : 0;
-        } catch {
-          tokenEstimate = 0;
-        }
-      }
-
-      totalReportTokens += tokenEstimate;
-      if (isExplore) {
-        exploreReportTokens += tokenEstimate;
-      }
-    }
-
-    const compressionRatio =
-      exploreReportTokens > 0 ? exploreTokensConsumed / exploreReportTokens : 0;
-
-    const history = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
-    let actualCompactions = 0;
-    if (history.success) {
-      for (const message of history.data) {
-        const epoch = message.metadata?.compactionEpoch;
-        if (typeof epoch === "number" && epoch > actualCompactions) {
-          actualCompactions = epoch;
-        }
-      }
-    }
-
-    const threshold = autoCompactionThreshold ?? DEFAULT_AUTO_COMPACTION_THRESHOLD;
-    const compactionThreshold =
-      modelContextLimit != null ? Math.round(modelContextLimit * threshold) : null;
-    // threshold >= 1.0 means auto-compaction is disabled (same semantics as checkAutoCompaction).
-    const compactionDisabled = threshold >= 1;
-    // Net additional context-window tokens that would have existed without delegation:
-    // child context workload (input + cache buckets) minus already-delivered report tokens
-    // (which ARE in the parent context).
-    const netAdditionalTokens = Math.max(0, totalChildContextTokens - totalReportTokens);
-    const estimatedWithoutDelegation =
-      compactionThreshold != null && compactionThreshold > 0 && !compactionDisabled
-        ? actualCompactions + Math.floor(netAdditionalTokens / compactionThreshold)
-        : actualCompactions;
-    const compactionsAvoided = estimatedWithoutDelegation - actualCompactions;
-
-    return {
-      children,
-      totalChildTokens,
-      totalChildCostUsd: hasCosts ? totalChildCostUsd : undefined,
-      exploreTokensConsumed,
-      exploreReportTokens,
-      compressionRatio,
-      actualCompactions,
-      estimatedWithoutDelegation,
-      compactionsAvoided,
-      hasData: children.length > 0,
-    };
   }
 
   /**

@@ -35,7 +35,6 @@ import { hasNonEmptyPlanFile, readPlanFile } from "@/node/utils/runtime/helpers"
 import { secretsToRecord } from "@/common/types/secrets";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
-import { getEffectiveContextLimit } from "@/common/utils/compaction/contextLimit";
 import {
   DEFAULT_LAYOUT_PRESETS_CONFIG,
   isLayoutPresetsConfigEmpty,
@@ -3366,43 +3365,6 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.getSessionUsage.output)
         .handler(async ({ context, input }) => {
           return context.sessionUsageService.getSessionUsage(input.workspaceId);
-        }),
-      getDelegationInsights: t
-        .input(schemas.workspace.getDelegationInsights.input)
-        .output(schemas.workspace.getDelegationInsights.output)
-        .handler(async ({ context, input }) => {
-          const requestModel =
-            typeof input.model === "string" && input.model.trim().length > 0
-              ? input.model.trim()
-              : null;
-
-          const metadataResult =
-            requestModel == null
-              ? await context.aiService.getWorkspaceMetadata(input.workspaceId)
-              : null;
-
-          const modelId =
-            requestModel ??
-            (metadataResult?.success &&
-            typeof metadataResult.data.aiSettings?.model === "string" &&
-            metadataResult.data.aiSettings.model.trim().length > 0
-              ? metadataResult.data.aiSettings.model.trim()
-              : metadataResult?.success &&
-                  typeof metadataResult.data.taskModelString === "string" &&
-                  metadataResult.data.taskModelString.trim().length > 0
-                ? metadataResult.data.taskModelString.trim()
-                : null);
-          const providersConfig = context.aiService.getProvidersConfig();
-          const modelContextLimit =
-            modelId != null
-              ? getEffectiveContextLimit(modelId, input.use1MContext === true, providersConfig)
-              : null;
-
-          return await context.sessionUsageService.getDelegationInsights(
-            input.workspaceId,
-            modelContextLimit,
-            input.autoCompactionThreshold
-          );
         }),
       getSessionUsageBatch: t
         .input(schemas.workspace.getSessionUsageBatch.input)

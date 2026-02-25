@@ -1410,18 +1410,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       },
       getSessionUsage: (input: { workspaceId: string }) =>
         Promise.resolve(sessionUsage.get(input.workspaceId)),
-      getDelegationInsights: () =>
-        Promise.resolve({
-          children: [],
-          totalChildTokens: 0,
-          exploreTokensConsumed: 0,
-          exploreReportTokens: 0,
-          compressionRatio: 0,
-          actualCompactions: 0,
-          estimatedWithoutDelegation: 0,
-          compactionsAvoided: 0,
-          hasData: false,
-        }),
       getSessionUsageBatch: (input: { workspaceIds: string[] }) => {
         const result: Record<string, MockSessionUsage | undefined> = {};
         for (const id of input.workspaceIds) {
