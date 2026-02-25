@@ -376,6 +376,7 @@ export class SessionUsageService {
     }
 
     const totalChildTokens = children.reduce((sum, child) => sum + child.totalTokens, 0);
+    const hasCosts = children.some((child) => child.totalCostUsd != null);
     const totalChildCostUsd = children.reduce((sum, child) => sum + (child.totalCostUsd ?? 0), 0);
 
     const explores = children.filter((child) => child.agentType === "explore");
@@ -391,8 +392,15 @@ export class SessionUsageService {
       }
 
       let tokenEstimate = artifact.reportTokenEstimate;
+
+      // Sanitize persisted value: must be a finite non-negative number.
+      // Corrupted/malformed local state should not crash the endpoint.
+      if (typeof tokenEstimate !== "number" || !Number.isFinite(tokenEstimate) || tokenEstimate < 0) {
+        tokenEstimate = undefined;
+      }
+
       if (tokenEstimate == null) {
-        // Legacy artifacts predate reportTokenEstimate; derive an estimate from stored markdown.
+        // Legacy or corrupted artifacts: derive estimate from stored markdown.
         try {
           const reportPath = getSubagentReportArtifactPath(sessionDir, artifact.childTaskId);
           const rawReport = await fs.readFile(reportPath, "utf-8");
@@ -441,7 +449,7 @@ export class SessionUsageService {
     return {
       children,
       totalChildTokens,
-      totalChildCostUsd: totalChildCostUsd > 0 ? totalChildCostUsd : undefined,
+      totalChildCostUsd: hasCosts ? totalChildCostUsd : undefined,
       exploreTokensConsumed,
       exploreReportTokens,
       compressionRatio,
