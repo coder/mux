@@ -125,16 +125,36 @@ describe("Send dispatch modes (mock AI router)", () => {
     }
   }, 60_000);
 
-  test("pointer + keyboard send modes still control foreground bash behavior", async () => {
+  test("pointer menu and keyboard dispatch modes both remain available", async () => {
     const app = await createAppHarness({ branchPrefix: "send-mode-pointer" });
 
     let unregisterTurn: (() => void) | undefined;
     let unregisterStep: (() => void) | undefined;
 
     try {
-      const manager = getBackgroundProcessManager(app.env);
-
       await startStreamingTurn(app, "open send mode menu while streaming");
+
+      const pointerTurnMessage = "turn-end pointer test";
+      await app.chat.typeWithoutSending(pointerTurnMessage);
+      await openSendModeMenu(app.view.container);
+
+      const turnRow = await waitFor(
+        () => {
+          const rows = Array.from(app.view.container.querySelectorAll("button"));
+          const row = rows.find((button) => button.textContent?.includes("Send after turn"));
+          if (!row) {
+            throw new Error("Send after turn row not found");
+          }
+          return row;
+        },
+        { timeout: 30_000 }
+      );
+      fireEvent.click(turnRow);
+
+      await app.chat.expectTranscriptContains(`Mock response: ${pointerTurnMessage}`);
+      await app.chat.expectStreamComplete();
+
+      const manager = getBackgroundProcessManager(app.env);
 
       const turnToolCallId = "bash-foreground-send-after-turn";
       let turnBackgrounded = false;
@@ -154,22 +174,10 @@ describe("Send dispatch modes (mock AI router)", () => {
 
       await waitForForegroundToolCallId(app.env, app.workspaceId, turnToolCallId);
 
-      const turnEndMessage = "turn-end test";
+      const turnEndMessage = "turn-end keyboard test";
       await app.chat.typeWithoutSending(turnEndMessage);
-      await openSendModeMenu(app.view.container);
-
-      const turnRow = await waitFor(
-        () => {
-          const rows = Array.from(app.view.container.querySelectorAll("button"));
-          const row = rows.find((button) => button.textContent?.includes("Send after turn"));
-          if (!row) {
-            throw new Error("Send after turn row not found");
-          }
-          return row;
-        },
-        { timeout: 30_000 }
-      );
-      fireEvent.click(turnRow);
+      let textarea = await getActiveTextarea(app.view.container);
+      fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true });
 
       await app.chat.expectTranscriptContains(`Mock response: ${turnEndMessage}`);
       await app.chat.expectStreamComplete();
@@ -195,7 +203,7 @@ describe("Send dispatch modes (mock AI router)", () => {
 
       const stepEndMessage = "tool-end test";
       await app.chat.typeWithoutSending(stepEndMessage);
-      const textarea = await getActiveTextarea(app.view.container);
+      textarea = await getActiveTextarea(app.view.container);
       fireEvent.keyDown(textarea, { key: "Enter" });
 
       await app.chat.expectTranscriptContains(`Mock response: ${stepEndMessage}`);
