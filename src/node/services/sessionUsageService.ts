@@ -264,6 +264,7 @@ export class SessionUsageService {
       }
 
       let totalTokens = 0;
+      let contextTokens = 0;
       let totalCostUsd = 0;
       let hasCosts = false;
       for (const [, usage] of entries) {
@@ -273,6 +274,7 @@ export class SessionUsageService {
           usage.reasoning.tokens +
           usage.cached.tokens +
           usage.cacheCreate.tokens;
+        contextTokens += usage.input.tokens + usage.cached.tokens + usage.cacheCreate.tokens;
 
         for (const bucket of [
           usage.input,
@@ -289,12 +291,14 @@ export class SessionUsageService {
       }
 
       assert(totalTokens >= 0, "rollUpUsageIntoParent: totalTokens must be >= 0");
+      assert(contextTokens >= 0, "rollUpUsageIntoParent: contextTokens must be >= 0");
       assert(!hasCosts || totalCostUsd >= 0, "rollUpUsageIntoParent: totalCostUsd must be >= 0");
 
       current.rolledUpFrom = {
         ...(current.rolledUpFrom ?? {}),
         [childWorkspaceId]: {
           totalTokens,
+          contextTokens,
           totalCostUsd: hasCosts ? totalCostUsd : undefined,
           agentType: childMeta?.agentType,
           model: childMeta?.model,
@@ -371,11 +375,16 @@ export class SessionUsageService {
         agentType: entry.agentType,
         model: entry.model,
         totalTokens: entry.totalTokens,
+        ...(entry.contextTokens != null ? { contextTokens: entry.contextTokens } : {}),
         totalCostUsd: entry.totalCostUsd,
       });
     }
 
     const totalChildTokens = children.reduce((sum, child) => sum + child.totalTokens, 0);
+    const totalChildContextTokens = children.reduce(
+      (sum, child) => sum + (child.contextTokens ?? child.totalTokens),
+      0
+    );
     const hasCosts = children.some((child) => child.totalCostUsd != null);
     const totalChildCostUsd = children.reduce((sum, child) => sum + (child.totalCostUsd ?? 0), 0);
 
@@ -451,9 +460,10 @@ export class SessionUsageService {
       modelContextLimit != null ? Math.round(modelContextLimit * threshold) : null;
     // threshold >= 1.0 means auto-compaction is disabled (same semantics as checkAutoCompaction).
     const compactionDisabled = threshold >= 1;
-    // Net additional tokens that would have existed without delegation:
-    // child workload minus already-delivered report tokens (which ARE in the parent context).
-    const netAdditionalTokens = Math.max(0, totalChildTokens - totalReportTokens);
+    // Net additional context-window tokens that would have existed without delegation:
+    // child context workload (input + cache buckets) minus already-delivered report tokens
+    // (which ARE in the parent context).
+    const netAdditionalTokens = Math.max(0, totalChildContextTokens - totalReportTokens);
     const estimatedWithoutDelegation =
       compactionThreshold != null && compactionThreshold > 0 && !compactionDisabled
         ? actualCompactions + Math.floor(netAdditionalTokens / compactionThreshold)

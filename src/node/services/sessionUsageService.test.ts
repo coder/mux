@@ -131,6 +131,7 @@ describe("SessionUsageService", () => {
       }
 
       expect(entry.totalTokens).toBe(15);
+      expect(entry.contextTokens).toBe(10);
       expect(entry.agentType).toBe("explore");
       expect(entry.model).toBe(model);
       expect(entry.rolledUpAtMs).toBeGreaterThan(0);
@@ -181,6 +182,7 @@ describe("SessionUsageService", () => {
         throw new Error("Expected an enriched rolledUpFrom entry");
       }
       expect(entry.totalTokens).toBe(15);
+      expect(entry.contextTokens).toBe(10);
     });
 
     it("should include totalCostUsd in enriched entry when usage has costs", async () => {
@@ -213,6 +215,7 @@ describe("SessionUsageService", () => {
       }
 
       expect(entry.totalTokens).toBe(5);
+      expect(entry.contextTokens).toBe(3);
       expect(entry.totalCostUsd).toBe(0.75);
     });
 
@@ -246,6 +249,7 @@ describe("SessionUsageService", () => {
       }
 
       expect(entry.totalTokens).toBe(5);
+      expect(entry.contextTokens).toBe(3);
       expect(entry.totalCostUsd).toBeUndefined();
     });
 
@@ -298,6 +302,7 @@ describe("SessionUsageService", () => {
       }
 
       expect(newEntry.totalTokens).toBe(10);
+      expect(newEntry.contextTokens).toBe(4);
       expect(newEntry.agentType).toBe("explore");
       expect(newEntry.model).toBe(model);
     });
@@ -469,8 +474,8 @@ describe("SessionUsageService", () => {
 
       expect(insights.totalChildTokens).toBe(500_000);
       expect(insights.actualCompactions).toBe(2);
-      expect(insights.estimatedWithoutDelegation).toBe(5);
-      expect(insights.compactionsAvoided).toBe(3);
+      expect(insights.estimatedWithoutDelegation).toBe(4);
+      expect(insights.compactionsAvoided).toBe(2);
     });
 
     it("should use provided autoCompactionThreshold for compaction estimates", async () => {
@@ -513,9 +518,9 @@ describe("SessionUsageService", () => {
 
       expect(insights.totalChildTokens).toBe(500_000);
       expect(insights.actualCompactions).toBe(2);
-      // threshold=0.5 → compactionThreshold=100k → floor(500k/100k)=5 extra
-      expect(insights.estimatedWithoutDelegation).toBe(7);
-      expect(insights.compactionsAvoided).toBe(5);
+      // threshold=0.5 → compactionThreshold=100k → floor(400k/100k)=4 extra
+      expect(insights.estimatedWithoutDelegation).toBe(6);
+      expect(insights.compactionsAvoided).toBe(4);
     });
 
     it("should skip legacy true entries in rolledUpFrom", async () => {

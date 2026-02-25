@@ -82,6 +82,7 @@ export const SessionUsageTokenStatsCacheSchema = z.object({
 
 export const RolledUpChildEntrySchema = z.object({
   totalTokens: z.number(),
+  contextTokens: z.number().optional(), // input + cached + cacheCreate (for compaction estimates)
   totalCostUsd: z.number().optional(),
   agentType: z.string().optional(),
   model: z.string().optional(),
@@ -94,6 +95,7 @@ export const DelegationChildSummarySchema = z.object({
   agentType: z.string().optional(),
   model: z.string().optional(),
   totalTokens: z.number(),
+  contextTokens: z.number().optional(),
   totalCostUsd: z.number().optional(),
 });
 export type DelegationChildSummary = z.infer<typeof DelegationChildSummarySchema>;
