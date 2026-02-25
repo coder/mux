@@ -1669,6 +1669,17 @@ export const router = (authToken?: string) => {
             ? context.config.getProjectSecrets(projectPath)
             : context.config.getGlobalSecrets();
         }),
+      getInjectedGlobals: t
+        .input(schemas.secrets.getInjectedGlobals.input)
+        .output(schemas.secrets.getInjectedGlobals.output)
+        .handler(({ context, input }) => {
+          const projectPath = input.projectPath.trim();
+          if (!projectPath) {
+            return [];
+          }
+
+          return context.config.getInjectedGlobalSecrets(projectPath).map((secret) => secret.key);
+        }),
       update: t
         .input(schemas.secrets.update.input)
         .output(schemas.secrets.update.output)

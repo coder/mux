@@ -1482,6 +1482,19 @@ ${jsonString}`;
   }
 
   /**
+   * Get globally injected secrets visible to a project.
+   *
+   * This is a read-only view used by project settings to explain inherited environment.
+   * Project-defined keys are excluded because project secrets override injected globals.
+   */
+  getInjectedGlobalSecrets(projectPath: string): Secret[] {
+    const projectSecrets = this.getProjectSecrets(projectPath);
+    const projectKeys = new Set(projectSecrets.map((secret) => secret.key));
+
+    return this.getEffectiveSecrets(projectPath).filter((secret) => !projectKeys.has(secret.key));
+  }
+
+  /**
    * Get secrets for a specific project.
    *
    * Note: this is project-only (does not include global secrets).

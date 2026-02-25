@@ -420,6 +420,24 @@ describe("Config", () => {
       });
     });
 
+    it("returns only globally injected secrets for project settings visibility", async () => {
+      await config.updateGlobalSecrets([
+        { key: "GLOBAL_VISIBLE", value: "v", injectAll: true },
+        { key: "GLOBAL_HIDDEN", value: "h" },
+        { key: "SHARED", value: "global", injectAll: true },
+      ]);
+
+      const projectPath = "/fake/project";
+      await config.updateProjectSecrets(projectPath, [
+        { key: "LOCAL_ONLY", value: "local" },
+        { key: "SHARED", value: "project" },
+      ]);
+
+      expect(config.getInjectedGlobalSecrets(projectPath)).toEqual([
+        { key: "GLOBAL_VISIBLE", value: "v" },
+      ]);
+    });
+
     it("does not inject global secrets unless injectAll is true", async () => {
       await config.updateGlobalSecrets([
         { key: "A", value: "1", injectAll: false },
