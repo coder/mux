@@ -92,7 +92,7 @@ async function waitForSendModeMenuTrigger(container: HTMLElement): Promise<HTMLB
 
 async function openSendModeMenu(container: HTMLElement): Promise<void> {
   const trigger = await waitForSendModeMenuTrigger(container);
-  fireEvent.click(trigger);
+  fireEvent.contextMenu(trigger, { clientX: 12, clientY: 12 });
 
   await waitFor(
     () => {
@@ -125,13 +125,34 @@ describe("Send dispatch modes (mock AI router)", () => {
     }
   }, 60_000);
 
-  test("pointer menu and keyboard dispatch modes both remain available", async () => {
+  test("click sends tool-end by default while context menu + keybind dispatch modes remain", async () => {
     const app = await createAppHarness({ branchPrefix: "send-mode-pointer" });
 
     let unregisterTurn: (() => void) | undefined;
     let unregisterStep: (() => void) | undefined;
 
     try {
+      await startStreamingTurn(app, "click send while streaming");
+
+      const clickStepMessage = "tool-end click test";
+      await app.chat.typeWithoutSending(clickStepMessage);
+      const sendButton = await waitForSendModeMenuTrigger(app.view.container);
+      fireEvent.click(sendButton);
+
+      await waitFor(
+        () => {
+          const rows = Array.from(app.view.container.querySelectorAll("button"));
+          const row = rows.find((button) => button.textContent?.includes("Send after turn"));
+          if (row) {
+            throw new Error("Left-clicking Send should not open send mode menu");
+          }
+        },
+        { timeout: 5_000 }
+      );
+
+      await app.chat.expectTranscriptContains(`Mock response: ${clickStepMessage}`);
+      await app.chat.expectStreamComplete();
+
       await startStreamingTurn(app, "open send mode menu while streaming");
 
       const pointerTurnMessage = "turn-end pointer test";

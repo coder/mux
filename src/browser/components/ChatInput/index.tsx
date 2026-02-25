@@ -122,6 +122,7 @@ import { CodexOauthWarningBanner } from "./CodexOauthWarningBanner";
 import { useCreationWorkspace } from "./useCreationWorkspace";
 import { useCoderWorkspace } from "@/browser/hooks/useCoderWorkspace";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
+import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
 import { usePowerMode } from "@/browser/contexts/PowerModeContext";
 import { useVoiceInput } from "@/browser/hooks/useVoiceInput";
 import { VoiceInputButton } from "./VoiceInputButton";
@@ -252,9 +253,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // clear the "in flight" state until all sends complete.
   const [sendingCount, setSendingCount] = useState(0);
   const isSending = sendingCount > 0;
-  // Inline dispatch-mode menu state for the send button.
-  // UX: when streaming and the draft is sendable (canChooseDispatchMode), clicking Send opens this menu.
-  const [isSendModeMenuOpen, setIsSendModeMenuOpen] = useState(false);
   const sendModeMenuContainerRef = useRef<HTMLDivElement>(null);
   const [hideReviewsDuringSend, setHideReviewsDuringSend] = useState(false);
   const [showAtMentionSuggestions, setShowAtMentionSuggestions] = useState(false);
@@ -894,15 +892,28 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     !sendInFlightBlocksInput &&
     !coderPresetsLoading &&
     !policyBlocksCreateSend;
-  // Keep send-after-turn pointer-accessible without reintroducing a separate caret control.
+  // Send defaults to tool-end on click; advanced dispatch modes remain available via
+  // right-click and touch long-press while a stream is interruptible.
   const canChooseDispatchMode = variant === "workspace" && canInterrupt && canSend;
+  const sendModeMenu = useContextMenuPosition({
+    longPress: true,
+    canOpen: () => canChooseDispatchMode,
+  });
+  const {
+    isOpen: isSendModeMenuOpen,
+    onContextMenu: openSendModeMenuFromContext,
+    touchHandlers: sendModeMenuTouchHandlers,
+    suppressClickIfLongPress: suppressSendClickIfLongPress,
+    close: closeSendModeMenu,
+  } = sendModeMenu;
+
   useEffect(() => {
     if (canChooseDispatchMode) {
       return;
     }
 
-    setIsSendModeMenuOpen(false);
-  }, [canChooseDispatchMode]);
+    closeSendModeMenu();
+  }, [canChooseDispatchMode, closeSendModeMenu]);
 
   useEffect(() => {
     if (!isSendModeMenuOpen) {
@@ -913,7 +924,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       if (sendModeMenuContainerRef.current?.contains(event.target as Node)) {
         return;
       }
-      setIsSendModeMenuOpen(false);
+      closeSendModeMenu();
     };
 
     const handleEscape = (event: KeyboardEvent) => {
@@ -925,7 +936,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       // when users are only dismissing this inline send-mode menu.
       event.preventDefault();
       event.stopPropagation();
-      setIsSendModeMenuOpen(false);
+      closeSendModeMenu();
     };
 
     document.addEventListener("mousedown", handleClickOutside);
@@ -934,7 +945,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       document.removeEventListener("mousedown", handleClickOutside);
       document.removeEventListener("keydown", handleEscape);
     };
-  }, [isSendModeMenuOpen]);
+  }, [closeSendModeMenu, isSendModeMenuOpen]);
 
   // User request: this sync effect runs on mount and when defaults/config change.
   // Only treat *real* agent changes as explicit (origin "agent"); everything else is "sync".
@@ -1828,7 +1839,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return;
     }
 
-    setIsSendModeMenuOpen(false);
+    closeSendModeMenu();
 
     const messageText = input.trim();
     const skillDiscovery: SkillResolutionTarget | null =
@@ -2601,21 +2612,17 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       <Button
                         type="button"
                         onClick={() => {
-                          if (canChooseDispatchMode) {
-                            setIsSendModeMenuOpen((prev) => !prev);
+                          if (suppressSendClickIfLongPress()) {
                             return;
                           }
 
                           void handleSend();
                         }}
-                        onContextMenu={(event) => {
-                          if (!canChooseDispatchMode) {
-                            return;
-                          }
-
-                          event.preventDefault();
-                          setIsSendModeMenuOpen(true);
-                        }}
+                        onContextMenu={openSendModeMenuFromContext}
+                        onTouchStart={sendModeMenuTouchHandlers.onTouchStart}
+                        onTouchEnd={sendModeMenuTouchHandlers.onTouchEnd}
+                        onTouchMove={sendModeMenuTouchHandlers.onTouchMove}
+                        onTouchCancel={sendModeMenuTouchHandlers.onTouchEnd}
                         disabled={!canSend}
                         aria-label="Send message"
                         aria-expanded={canChooseDispatchMode ? isSendModeMenuOpen : undefined}
@@ -2640,7 +2647,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                         <>
                           <br />
                           <br />
-                          <strong>When streaming, Send opens these modes:</strong>
+                          <strong>
+                            When streaming, right-click or long-press for these modes:
+                          </strong>
                           {SEND_DISPATCH_MODES.map((entry) => (
                             <React.Fragment key={entry.mode}>
                               <br />
@@ -2660,7 +2669,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                           type="button"
                           className="hover:bg-hover focus-visible:bg-hover text-foreground flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-1 text-left text-xs"
                           onClick={() => {
-                            setIsSendModeMenuOpen(false);
+                            closeSendModeMenu();
                             void handleSend(
                               entry.mode === "tool-end"
                                 ? undefined
