@@ -186,6 +186,7 @@
               shfmt
               gh
               jq
+              duckdb
 
               # Documentation
               mdbook
