@@ -455,12 +455,14 @@ describe("SessionUsageService", () => {
         })
       );
 
-      const insights = await service.getDelegationInsights(parentWorkspaceId, 200_000, 1);
+      // Use 0.5 (50%) threshold — NOT 1.0 which is disabled
+      const insights = await service.getDelegationInsights(parentWorkspaceId, 200_000, 0.5);
 
       expect(insights.totalChildTokens).toBe(500_000);
       expect(insights.actualCompactions).toBe(2);
-      expect(insights.estimatedWithoutDelegation).toBe(4);
-      expect(insights.compactionsAvoided).toBe(2);
+      // threshold=0.5 → compactionThreshold=100k → floor(500k/100k)=5 extra
+      expect(insights.estimatedWithoutDelegation).toBe(7);
+      expect(insights.compactionsAvoided).toBe(5);
     });
 
     it("should skip legacy true entries in rolledUpFrom", async () => {

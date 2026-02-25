@@ -406,8 +406,10 @@ export class SessionUsageService {
     const threshold = autoCompactionThreshold ?? DEFAULT_AUTO_COMPACTION_THRESHOLD;
     const compactionThreshold =
       modelContextLimit != null ? Math.round(modelContextLimit * threshold) : null;
+    // threshold >= 1.0 means auto-compaction is disabled (same semantics as checkAutoCompaction).
+    const compactionDisabled = threshold >= 1;
     const estimatedWithoutDelegation =
-      compactionThreshold != null
+      compactionThreshold != null && compactionThreshold > 0 && !compactionDisabled
         ? actualCompactions + Math.floor(totalChildTokens / compactionThreshold)
         : actualCompactions;
     const compactionsAvoided = estimatedWithoutDelegation - actualCompactions;
