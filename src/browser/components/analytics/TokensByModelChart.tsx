@@ -69,12 +69,14 @@ function TokensByModelTooltipContent(props: {
         <span>Cached</span>
         <span className="text-foreground font-mono">{formatCompactNumber(row.cachedTokens)}</span>
       </div>
-      <div className="text-muted flex items-center justify-between gap-4">
-        <span>Cache write</span>
-        <span className="text-foreground font-mono">
-          {formatCompactNumber(row.cacheCreateTokens)}
-        </span>
-      </div>
+      {row.cacheCreateTokens > 0 ? (
+        <div className="text-muted flex items-center justify-between gap-4">
+          <span>Cache write</span>
+          <span className="text-foreground font-mono">
+            {formatCompactNumber(row.cacheCreateTokens)}
+          </span>
+        </div>
+      ) : null}
       <div className="text-muted flex items-center justify-between gap-4">
         <span>Output</span>
         <span className="text-foreground font-mono">{formatCompactNumber(row.outputTokens)}</span>
