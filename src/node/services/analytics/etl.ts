@@ -1013,6 +1013,7 @@ async function ingestDelegationRollups(
       workspaceId,
       error: getErrorMessage(error),
     });
+    await conn.run("DELETE FROM delegation_rollups WHERE parent_workspace_id = ?", [workspaceId]);
     return;
   }
 
