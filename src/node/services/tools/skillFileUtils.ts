@@ -123,3 +123,22 @@ export async function resolveContainedSkillFilePath(
     normalizedRelativePath,
   };
 }
+
+/** Canonical filename for the skill definition file. */
+export const SKILL_FILENAME = "SKILL.md";
+
+/** Case-insensitive check whether a normalized relative path refers to the root SKILL.md file. */
+export function isSkillMarkdownRootFile(relativePath: string): boolean {
+  return relativePath.toLowerCase() === SKILL_FILENAME.toLowerCase();
+}
+
+/**
+ * Rejects a skill directory that is itself a symbolic link.
+ * Returns an error message string if the directory is a symlink, or null if it's safe.
+ */
+export async function rejectSymlinkedSkillDirectory(skillDir: string): Promise<string | null> {
+  const stats = await lstatIfExists(skillDir);
+  return stats?.isSymbolicLink()
+    ? "Skill directory is a symbolic link and cannot be accessed."
+    : null;
+}

@@ -5,14 +5,12 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { getErrorMessage } from "@/common/utils/errors";
 import { SkillNameSchema } from "@/common/orpc/schemas";
-import {
-  readAgentSkill,
-  resolveAgentSkillFilePath,
-} from "@/node/services/agentSkills/agentSkillsService";
+import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
 import { MAX_FILE_SIZE, validateFileSize } from "@/node/services/tools/fileCommon";
 import { readBuiltInSkillFile } from "@/node/services/agentSkills/builtInSkillDefinitions";
 import { RuntimeError } from "@/node/runtime/Runtime";
 import { readFileString } from "@/node/utils/runtime/helpers";
+import { rejectSymlinkedSkillDirectory, resolveContainedSkillFilePath } from "./skillFileUtils";
 
 function readContentWithFileReadLimits(input: {
   fullContent: string;
@@ -138,11 +136,42 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
           });
         }
 
-        const targetPath = resolveAgentSkillFilePath(
-          config.runtime,
-          resolvedSkill.skillDir,
-          filePath
-        );
+        const symlinkError = await rejectSymlinkedSkillDirectory(resolvedSkill.skillDir);
+        if (symlinkError != null) {
+          return { success: false, error: symlinkError };
+        }
+
+        let targetPath: string;
+        try {
+          ({ resolvedPath: targetPath } = await resolveContainedSkillFilePath(
+            resolvedSkill.skillDir,
+            filePath
+          ));
+        } catch (error) {
+          const message = getErrorMessage(error);
+
+          if (error != null && typeof error === "object" && "code" in error) {
+            const code = (error as { code?: unknown }).code;
+            if (code === "ENOENT") {
+              return {
+                success: false,
+                error: `File not found in skill '${parsedName.data}': ${filePath}`,
+              };
+            }
+          }
+
+          if (/escape|outside/i.test(message)) {
+            return {
+              success: false,
+              error: `Resolved file path points outside the skill directory: ${filePath}`,
+            };
+          }
+
+          return {
+            success: false,
+            error: message,
+          };
+        }
 
         let stat;
         try {
