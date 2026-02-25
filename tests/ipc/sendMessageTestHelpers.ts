@@ -36,6 +36,7 @@ export async function createSharedRepo(): Promise<void> {
   await preloadTestModules();
   sharedEnv = await createTestEnvironment();
   sharedRepoPath = await createTempGitRepo();
+  await trustProject(sharedEnv, sharedRepoPath);
 }
 
 /**
