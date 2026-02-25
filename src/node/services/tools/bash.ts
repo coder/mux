@@ -22,6 +22,7 @@ import { toBashTaskId } from "./taskId";
 import { migrateToBackground } from "@/node/services/backgroundProcessExecutor";
 import { LocalBaseRuntime } from "@/node/runtime/LocalBaseRuntime";
 import { getToolEnvPath } from "@/node/services/hooks";
+import { GIT_NO_HOOKS_ENV } from "@/node/utils/gitNoHooksEnv";
 import { getErrorMessage } from "@/common/utils/errors";
 
 const CAT_FILE_READ_NOTICE =
@@ -875,6 +876,11 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
         config.trusted && config.runtime ? await getToolEnvPath(config.runtime, config.cwd) : null;
       const toolEnvPrelude = buildToolEnvPrelude(toolEnvPath);
 
+      // Neutralize git hooks for untrusted projects — prevent repository-controlled
+      // hooks from executing when the model runs git subcommands (for example,
+      // `git commit` or `git am`) through this bash tool.
+      const hooksEnv = config.trusted !== true ? GIT_NO_HOOKS_ENV : {};
+
       // On Windows, models sometimes emit cmd.exe-style `>nul` / `2>nul` redirections.
       // Since the bash tool runs via bash, `nul` becomes a real file in the workspace.
       // Only rewrite for local Windows runtimes so non-Windows scripts keep their semantics.
@@ -915,7 +921,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
           {
             cwd: config.cwd,
             // Match foreground bash behavior: muxEnv is present and secrets override it.
-            env: { ...(config.muxEnv ?? {}), ...(config.secrets ?? {}) },
+            env: { ...hooksEnv, ...(config.muxEnv ?? {}), ...(config.secrets ?? {}) },
             displayName: safeDisplayName,
             isForeground: false, // Explicit background
             timeoutSecs: timeout_secs, // Auto-terminate after this duration
@@ -990,7 +996,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
 ${scriptWithEnv}`;
       const execStream = await config.runtime.exec(scriptWithClosedStdin, {
         cwd: config.cwd,
-        env: { ...config.muxEnv, ...config.secrets, ...NON_INTERACTIVE_ENV_VARS },
+        env: { ...hooksEnv, ...config.muxEnv, ...config.secrets, ...NON_INTERACTIVE_ENV_VARS },
         timeout: effectiveTimeout,
         abortSignal: wrappedAbortController.signal,
       });
