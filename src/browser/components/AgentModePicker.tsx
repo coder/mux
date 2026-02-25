@@ -90,7 +90,7 @@ function normalizeAgentId(value: unknown): string {
   return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : "";
 }
 
-const AgentHelpTooltip: React.FC = () => (
+const AgentHelpTooltip: React.FC<{ isAuto: boolean }> = (props) => (
   <Tooltip>
     <TooltipTrigger asChild>
       <HelpIndicator>?</HelpIndicator>
@@ -101,8 +101,12 @@ const AgentHelpTooltip: React.FC = () => (
       <br />
       Open picker: {formatKeybind(KEYBINDS.TOGGLE_AGENT)}
       <br />
-      Cycle agents: {formatKeybind(KEYBINDS.CYCLE_AGENT)}
-      <br />
+      {!props.isAuto && (
+        <>
+          Cycle agents: {formatKeybind(KEYBINDS.CYCLE_AGENT)}
+          <br />
+        </>
+      )}
       Quick select: {formatNumberedKeybind(0).replace("1", "1-9")} (when open)
       <br />
       <br />
@@ -362,7 +366,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
             }}
             style={activeStyle}
             className={cn(
-              "text-foreground hover:bg-hover flex items-center gap-1.5 rounded-sm border-[0.5px] px-1.5 py-0.5 text-[11px] font-medium transition-all duration-150",
+              "text-foreground hover:bg-hover flex items-center gap-1.5 rounded-sm border-[0.5px] px-1.5 py-0.5 text-[11px] font-medium transition-[background-color] duration-150",
               activeClassName
             )}
           >
@@ -389,7 +393,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
       {/* Tooltip is hover-only; hide it on touch + narrow layouts to avoid overlap. */}
       <div className="hidden [@container(min-width:420px)]:[@media(hover:hover)_and_(pointer:fine)]:block">
-        <AgentHelpTooltip />
+        <AgentHelpTooltip isAuto={isAuto} />
       </div>
 
       {isPickerOpen && (
