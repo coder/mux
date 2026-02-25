@@ -9,6 +9,7 @@ import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import type { RolledUpChildEntry } from "@/common/orpc/schemas/chatStats";
 import type { TokenConsumer } from "@/common/types/chatStats";
 import type { MuxMessage } from "@/common/types/message";
 import { log } from "./log";
@@ -59,8 +60,10 @@ export interface SessionUsageFile {
    * When a child workspace is deleted, we merge its byModel usage into the parent.
    * This tracks which children have already been merged to prevent double-counting
    * if removal is retried.
+   *
+   * Legacy entries use `true`; newer entries include per-child totals and metadata.
    */
-  rolledUpFrom?: Record<string, true>;
+  rolledUpFrom?: Record<string, true | RolledUpChildEntry>;
 
   /** Cached token statistics (consumer/file breakdown) for Costs tab */
   tokenStatsCache?: SessionUsageTokenStatsCacheV1;
@@ -203,7 +206,8 @@ export class SessionUsageService {
   async rollUpUsageIntoParent(
     parentWorkspaceId: string,
     childWorkspaceId: string,
-    childUsageByModel: Record<string, ChatUsageDisplay>
+    childUsageByModel: Record<string, ChatUsageDisplay>,
+    childMeta?: { agentType?: string; model?: string }
   ): Promise<{ didRollUp: boolean }> {
     assert(parentWorkspaceId.trim().length > 0, "rollUpUsageIntoParent: parentWorkspaceId empty");
     assert(childWorkspaceId.trim().length > 0, "rollUpUsageIntoParent: childWorkspaceId empty");
@@ -249,7 +253,44 @@ export class SessionUsageService {
         current.byModel[model] = existing ? sumUsageHistory([existing, usage])! : usage;
       }
 
-      current.rolledUpFrom = { ...(current.rolledUpFrom ?? {}), [childWorkspaceId]: true };
+      let totalTokens = 0;
+      let totalCostUsd = 0;
+      let hasCosts = false;
+      for (const [, usage] of entries) {
+        totalTokens +=
+          usage.input.tokens +
+          usage.output.tokens +
+          usage.reasoning.tokens +
+          usage.cached.tokens +
+          usage.cacheCreate.tokens;
+
+        for (const bucket of [
+          usage.input,
+          usage.output,
+          usage.reasoning,
+          usage.cached,
+          usage.cacheCreate,
+        ]) {
+          if (bucket.cost_usd != null) {
+            totalCostUsd += bucket.cost_usd;
+            hasCosts = true;
+          }
+        }
+      }
+
+      assert(totalTokens >= 0, "rollUpUsageIntoParent: totalTokens must be >= 0");
+      assert(!hasCosts || totalCostUsd >= 0, "rollUpUsageIntoParent: totalCostUsd must be >= 0");
+
+      current.rolledUpFrom = {
+        ...(current.rolledUpFrom ?? {}),
+        [childWorkspaceId]: {
+          totalTokens,
+          totalCostUsd: hasCosts ? totalCostUsd : undefined,
+          agentType: childMeta?.agentType,
+          model: childMeta?.model,
+          rolledUpAtMs: Date.now(),
+        },
+      };
       await this.writeFile(parentWorkspaceId, current);
 
       return { didRollUp: true };

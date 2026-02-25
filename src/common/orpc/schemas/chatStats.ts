@@ -80,6 +80,15 @@ export const SessionUsageTokenStatsCacheSchema = z.object({
     .meta({ description: "Top 10 files by token count aggregated across all file tools" }),
 });
 
+export const RolledUpChildEntrySchema = z.object({
+  totalTokens: z.number(),
+  totalCostUsd: z.number().optional(),
+  agentType: z.string().optional(),
+  model: z.string().optional(),
+  rolledUpAtMs: z.number(),
+});
+export type RolledUpChildEntry = z.infer<typeof RolledUpChildEntrySchema>;
+
 /**
  * Cumulative session usage file format.
  * Stored in ~/.mux/sessions/{workspaceId}/session-usage.json
@@ -95,9 +104,11 @@ export const SessionUsageFileSchema = z.object({
     .optional(),
   /**
    * Idempotency ledger for rolled-up sub-agent usage.
-   * Key: child workspaceId, value: true.
+   * Key: child workspaceId, value: true (legacy) or enriched roll-up metadata.
    */
-  rolledUpFrom: z.record(z.string(), z.literal(true)).optional(),
+  rolledUpFrom: z
+    .record(z.string(), z.union([z.literal(true), RolledUpChildEntrySchema]))
+    .optional(),
   tokenStatsCache: SessionUsageTokenStatsCacheSchema.optional(),
   version: z.literal(1),
 });

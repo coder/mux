@@ -18,6 +18,20 @@ function createUsage(input: number, output: number): ChatUsageDisplay {
   };
 }
 
+function createUsageWithCosts(
+  inputTokens: number,
+  outputTokens: number,
+  inputCostUsd: number,
+  outputCostUsd: number
+): ChatUsageDisplay {
+  return {
+    input: { tokens: inputTokens, cost_usd: inputCostUsd },
+    output: { tokens: outputTokens, cost_usd: outputCostUsd },
+    cached: { tokens: 0 },
+    cacheCreate: { tokens: 0 },
+    reasoning: { tokens: 0 },
+  };
+}
 describe("SessionUsageService", () => {
   let service: SessionUsageService;
   let config: Config;
@@ -81,7 +95,43 @@ describe("SessionUsageService", () => {
       expect(after!.lastRequest).toEqual(beforeLastRequest);
     });
 
-    it("should be idempotent for the same child workspace", async () => {
+    it("should store enriched RolledUpChildEntry when childMeta is provided", async () => {
+      const projectPath = "/tmp/mux-session-usage-test-project";
+      const model = "claude-sonnet-4-20250514";
+      const parentWorkspaceId = "parent-workspace";
+      const childWorkspaceId = "child-workspace";
+
+      await config.addWorkspace(projectPath, {
+        id: parentWorkspaceId,
+        name: "parent-branch",
+        projectName: "test-project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+
+      const childUsageByModel = { [model]: createUsage(10, 5) };
+      await service.rollUpUsageIntoParent(parentWorkspaceId, childWorkspaceId, childUsageByModel, {
+        agentType: "explore",
+        model,
+      });
+
+      const result = await service.getSessionUsage(parentWorkspaceId);
+      expect(result).toBeDefined();
+
+      const entry = result!.rolledUpFrom?.[childWorkspaceId];
+      expect(entry).toBeDefined();
+      expect(entry).not.toBe(true);
+      if (!entry || entry === true) {
+        throw new Error("Expected an enriched rolledUpFrom entry");
+      }
+
+      expect(entry.totalTokens).toBe(15);
+      expect(entry.agentType).toBe("explore");
+      expect(entry.model).toBe(model);
+      expect(entry.rolledUpAtMs).toBeGreaterThan(0);
+    });
+
+    it("should still be idempotent with enriched entries", async () => {
       const projectPath = "/tmp/mux-session-usage-test-project";
       const model = "claude-sonnet-4-20250514";
 
@@ -101,14 +151,16 @@ describe("SessionUsageService", () => {
       const first = await service.rollUpUsageIntoParent(
         parentWorkspaceId,
         childWorkspaceId,
-        childUsageByModel
+        childUsageByModel,
+        { agentType: "explore", model }
       );
       expect(first.didRollUp).toBe(true);
 
       const second = await service.rollUpUsageIntoParent(
         parentWorkspaceId,
         childWorkspaceId,
-        childUsageByModel
+        childUsageByModel,
+        { agentType: "explore", model }
       );
       expect(second.didRollUp).toBe(false);
 
@@ -116,7 +168,133 @@ describe("SessionUsageService", () => {
       expect(result).toBeDefined();
       expect(result!.byModel[model].input.tokens).toBe(10);
       expect(result!.byModel[model].output.tokens).toBe(5);
-      expect(result!.rolledUpFrom?.[childWorkspaceId]).toBe(true);
+
+      const entry = result!.rolledUpFrom?.[childWorkspaceId];
+      expect(entry).toBeDefined();
+      expect(entry).not.toBe(true);
+      if (!entry || entry === true) {
+        throw new Error("Expected an enriched rolledUpFrom entry");
+      }
+      expect(entry.totalTokens).toBe(15);
+    });
+
+    it("should include totalCostUsd in enriched entry when usage has costs", async () => {
+      const projectPath = "/tmp/mux-session-usage-test-project";
+      const parentWorkspaceId = "parent-workspace";
+      const childWorkspaceId = "child-workspace";
+      const model = "claude-sonnet-4-20250514";
+
+      await config.addWorkspace(projectPath, {
+        id: parentWorkspaceId,
+        name: "parent-branch",
+        projectName: "test-project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+
+      await service.rollUpUsageIntoParent(
+        parentWorkspaceId,
+        childWorkspaceId,
+        { [model]: createUsageWithCosts(3, 2, 0.25, 0.5) },
+        { agentType: "explore", model }
+      );
+
+      const result = await service.getSessionUsage(parentWorkspaceId);
+      const entry = result?.rolledUpFrom?.[childWorkspaceId];
+      expect(entry).toBeDefined();
+      expect(entry).not.toBe(true);
+      if (!entry || entry === true) {
+        throw new Error("Expected an enriched rolledUpFrom entry");
+      }
+
+      expect(entry.totalTokens).toBe(5);
+      expect(entry.totalCostUsd).toBe(0.75);
+    });
+
+    it("should omit totalCostUsd when no usage buckets have costs", async () => {
+      const projectPath = "/tmp/mux-session-usage-test-project";
+      const parentWorkspaceId = "parent-workspace";
+      const childWorkspaceId = "child-workspace";
+      const model = "claude-sonnet-4-20250514";
+
+      await config.addWorkspace(projectPath, {
+        id: parentWorkspaceId,
+        name: "parent-branch",
+        projectName: "test-project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+
+      await service.rollUpUsageIntoParent(
+        parentWorkspaceId,
+        childWorkspaceId,
+        { [model]: createUsage(3, 2) },
+        { agentType: "explore", model }
+      );
+
+      const result = await service.getSessionUsage(parentWorkspaceId);
+      const entry = result?.rolledUpFrom?.[childWorkspaceId];
+      expect(entry).toBeDefined();
+      expect(entry).not.toBe(true);
+      if (!entry || entry === true) {
+        throw new Error("Expected an enriched rolledUpFrom entry");
+      }
+
+      expect(entry.totalTokens).toBe(5);
+      expect(entry.totalCostUsd).toBeUndefined();
+    });
+
+    it("should handle backward-compat: existing true entries coexist with enriched", async () => {
+      const projectPath = "/tmp/mux-session-usage-test-project";
+      const parentWorkspaceId = "parent-workspace";
+      const childWorkspaceId = "new-child-workspace";
+      const model = "claude-sonnet-4-20250514";
+      const legacyChildWorkspaceId = "legacy-child-workspace";
+
+      await config.addWorkspace(projectPath, {
+        id: parentWorkspaceId,
+        name: "parent-branch",
+        projectName: "test-project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+
+      const usagePath = path.join(config.getSessionDir(parentWorkspaceId), "session-usage.json");
+      await fs.mkdir(path.dirname(usagePath), { recursive: true });
+      await fs.writeFile(
+        usagePath,
+        JSON.stringify(
+          {
+            byModel: {},
+            rolledUpFrom: { [legacyChildWorkspaceId]: true },
+            version: 1,
+          },
+          null,
+          2
+        )
+      );
+
+      await service.rollUpUsageIntoParent(
+        parentWorkspaceId,
+        childWorkspaceId,
+        { [model]: createUsage(4, 6) },
+        { agentType: "explore", model }
+      );
+
+      const result = await service.getSessionUsage(parentWorkspaceId);
+      expect(result).toBeDefined();
+      expect(result!.rolledUpFrom?.[legacyChildWorkspaceId]).toBe(true);
+
+      const newEntry = result!.rolledUpFrom?.[childWorkspaceId];
+      expect(newEntry).toBeDefined();
+      expect(newEntry).not.toBe(true);
+      if (!newEntry || newEntry === true) {
+        throw new Error("Expected an enriched rolledUpFrom entry");
+      }
+
+      expect(newEntry.totalTokens).toBe(10);
+      expect(newEntry.agentType).toBe("explore");
+      expect(newEntry.model).toBe(model);
     });
   });
   describe("recordUsage", () => {
@@ -212,7 +390,7 @@ describe("SessionUsageService", () => {
       const result = await service.getSessionUsage(parentWorkspaceId);
       expect(result).toBeDefined();
       expect(result!.tokenStatsCache).toEqual(cache);
-      expect(result!.rolledUpFrom?.[childWorkspaceId]).toBe(true);
+      expect(result!.rolledUpFrom?.[childWorkspaceId]).toBeDefined();
 
       // Existing usage fields preserved
       expect(result!.byModel[model].input.tokens).toBe(107);

@@ -1982,7 +1982,11 @@ export class WorkspaceService extends EventEmitter {
               const rollup = await this.sessionUsageService.rollUpUsageIntoParent(
                 parentWorkspaceId,
                 workspaceId,
-                childUsage.byModel
+                childUsage.byModel,
+                {
+                  agentType: metadata.agentType,
+                  model: metadata.taskModelString,
+                }
               );
 
               if (rollup.didRollUp) {
