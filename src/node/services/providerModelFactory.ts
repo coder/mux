@@ -1,3 +1,4 @@
+import assert from "node:assert";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 import type { LanguageModel } from "ai";
@@ -32,6 +33,7 @@ import {
   normalizeGatewayGenerateResult,
 } from "@/node/utils/gatewayStreamNormalization";
 import { EnvHttpProxyAgent, type Dispatcher } from "undici";
+import packageJson from "../../../package.json";
 
 // ---------------------------------------------------------------------------
 // Undici agent with unlimited timeouts for AI streaming requests.
@@ -48,6 +50,46 @@ const unlimitedTimeoutAgent = new EnvHttpProxyAgent({
 // Extend RequestInit with undici-specific dispatcher property (Node.js only)
 type RequestInitWithDispatcher = RequestInit & { dispatcher?: Dispatcher };
 
+const muxVersionFromEnv = (() => {
+  const value = process.env.MUX_VERSION?.trim();
+  return value && value.length > 0 ? value : undefined;
+})();
+
+const muxVersionFromPackageJson = (() => {
+  if (typeof packageJson.version !== "string") {
+    return undefined;
+  }
+  const value = packageJson.version.trim();
+  return value.length > 0 ? value : undefined;
+})();
+
+// Stable default User-Agent for AI provider requests.
+// Prefer MUX_VERSION when provided by the runtime; otherwise fall back to package.json.
+// This keeps attribution consistent across all provider SDKs that use fetch.
+export const MUX_AI_PROVIDER_USER_AGENT = `mux/${
+  muxVersionFromEnv ?? muxVersionFromPackageJson ?? "dev"
+}`;
+
+assert(
+  MUX_AI_PROVIDER_USER_AGENT.length > "mux/".length,
+  "MUX_AI_PROVIDER_USER_AGENT must include a non-empty version"
+);
+
+/**
+ * Build request headers for provider fetch calls, ensuring a User-Agent is always present.
+ * Exported for testing.
+ */
+export function buildAIProviderRequestHeaders(existingHeaders: HeadersInit | undefined): Headers {
+  const headers = new Headers(existingHeaders);
+
+  // Respect user/provider overrides (header names are case-insensitive).
+  if (!headers.has("user-agent")) {
+    headers.set("User-Agent", MUX_AI_PROVIDER_USER_AGENT);
+  }
+
+  return headers;
+}
+
 /**
  * Default fetch function with unlimited timeouts for AI streaming.
  * Uses undici Agent to remove artificial timeout limits while still
@@ -63,9 +105,12 @@ const defaultFetchWithUnlimitedTimeout = (async (
   input: RequestInfo | URL,
   init?: RequestInit
 ): Promise<Response> => {
+  const headers = buildAIProviderRequestHeaders(init?.headers);
+
   // dispatcher is a Node.js undici-specific property for custom HTTP agents
   const requestInit: RequestInitWithDispatcher = {
     ...(init ?? {}),
+    headers,
     dispatcher: unlimitedTimeoutAgent,
   };
   return fetch(input, requestInit);

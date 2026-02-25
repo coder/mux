@@ -4,7 +4,12 @@ import * as os from "os";
 import * as path from "path";
 import { Config } from "@/node/config";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import { ProviderModelFactory, modelCostsIncluded } from "./providerModelFactory";
+import {
+  ProviderModelFactory,
+  buildAIProviderRequestHeaders,
+  modelCostsIncluded,
+  MUX_AI_PROVIDER_USER_AGENT,
+} from "./providerModelFactory";
 import { ProviderService } from "./providerService";
 
 async function withTempConfig(
@@ -184,5 +189,28 @@ describe("ProviderModelFactory.resolveGatewayModelString", () => {
         });
       }
     });
+  });
+});
+
+describe("buildAIProviderRequestHeaders", () => {
+  it("adds User-Agent when no headers exist", () => {
+    const result = buildAIProviderRequestHeaders(undefined);
+    expect(result.get("user-agent")).toBe(MUX_AI_PROVIDER_USER_AGENT);
+  });
+
+  it("does not overwrite an existing User-Agent", () => {
+    const result = buildAIProviderRequestHeaders({ "User-Agent": "custom-agent/1.0" });
+    expect(result.get("user-agent")).toBe("custom-agent/1.0");
+  });
+
+  it("preserves existing headers while injecting User-Agent", () => {
+    const existing = { "x-custom": "value" };
+    const existingSnapshot = { ...existing };
+
+    const result = buildAIProviderRequestHeaders(existing);
+
+    expect(result.get("x-custom")).toBe("value");
+    expect(result.get("user-agent")).toBe(MUX_AI_PROVIDER_USER_AGENT);
+    expect(existing).toEqual(existingSnapshot);
   });
 });
