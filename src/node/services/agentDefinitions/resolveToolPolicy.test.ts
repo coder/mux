@@ -79,7 +79,7 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: "file_read", action: "enable" },
       { regex_match: "switch_agent", action: "enable" },
       { regex_match: "switch_agent", action: "disable" },
-      { regex_match: "switch_agent", action: "enable" },
+      { regex_match: "switch_agent", action: "require" },
     ]);
   });
 
@@ -95,7 +95,7 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: ".*", action: "disable" },
       { regex_match: "switch_agent", action: "require" },
       { regex_match: "switch_agent", action: "disable" },
-      { regex_match: "switch_agent", action: "enable" },
+      { regex_match: "switch_agent", action: "require" },
     ]);
   });
 
@@ -211,7 +211,7 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: "ask_user_question", action: "disable" },
       { regex_match: "switch_agent", action: "disable" },
       { regex_match: "propose_plan", action: "disable" },
-      { regex_match: "agent_report", action: "enable" },
+      { regex_match: "agent_report", action: "require" },
     ]);
   });
 
@@ -229,7 +229,7 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: "ask_user_question", action: "disable" },
       { regex_match: "switch_agent", action: "disable" },
       { regex_match: "propose_plan", action: "disable" },
-      { regex_match: "agent_report", action: "enable" },
+      { regex_match: "agent_report", action: "require" },
     ]);
   });
 
@@ -249,7 +249,7 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: "ask_user_question", action: "disable" },
       { regex_match: "switch_agent", action: "disable" },
       { regex_match: "propose_plan", action: "disable" },
-      { regex_match: "agent_report", action: "enable" },
+      { regex_match: "agent_report", action: "require" },
     ]);
   });
 
@@ -271,7 +271,7 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: "switch_agent", action: "disable" },
       { regex_match: "ask_user_question", action: "disable" },
       { regex_match: "switch_agent", action: "disable" },
-      { regex_match: "propose_plan", action: "enable" },
+      { regex_match: "propose_plan", action: "require" },
       { regex_match: "agent_report", action: "disable" },
     ]);
   });
@@ -312,7 +312,7 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: "ask_user_question", action: "disable" },
       { regex_match: "switch_agent", action: "disable" },
       { regex_match: "propose_plan", action: "disable" },
-      { regex_match: "agent_report", action: "enable" },
+      { regex_match: "agent_report", action: "require" },
     ]);
   });
 

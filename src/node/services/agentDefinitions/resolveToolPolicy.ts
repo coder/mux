@@ -160,7 +160,7 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
   // agent chain explicitly requests it (e.g. tools.require: ["switch_agent"]).
   runtimePolicy.push({ regex_match: "switch_agent", action: "disable" });
   if (!isSubagent && switchAgentEnabledByConfig) {
-    runtimePolicy.push({ regex_match: "switch_agent", action: "enable" });
+    runtimePolicy.push({ regex_match: "switch_agent", action: "require" });
   }
 
   if (isSubagent) {
@@ -169,12 +169,12 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
     const isPlanLikeSubagent = isPlanLikeInResolvedChain(agents);
     if (isPlanLikeSubagent) {
       // Plan-mode subagents must finish by proposing a plan, not by reporting.
-      runtimePolicy.push({ regex_match: "propose_plan", action: "enable" });
+      runtimePolicy.push({ regex_match: "propose_plan", action: "require" });
       runtimePolicy.push({ regex_match: "agent_report", action: "disable" });
     } else {
       // Non-plan subagents should complete through agent_report.
       runtimePolicy.push({ regex_match: "propose_plan", action: "disable" });
-      runtimePolicy.push({ regex_match: "agent_report", action: "enable" });
+      runtimePolicy.push({ regex_match: "agent_report", action: "require" });
     }
   }
 
