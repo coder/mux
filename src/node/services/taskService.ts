@@ -2126,6 +2126,7 @@ export class TaskService {
           projectPath: taskEntry.projectPath,
         });
         taskQueueDebug("TaskService.maybeStartQueuedTasks skipped (untrusted)", { taskId });
+        await this.setTaskStatus(taskId, "reported");
         continue;
       }
 
