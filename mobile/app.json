@@ -5,9 +5,13 @@
     "version": "0.0.1",
     "scheme": "mux",
     "orientation": "portrait",
-    "platforms": ["ios", "android"],
+    "platforms": ["ios", "android", "web"],
     "newArchEnabled": true,
     "jsEngine": "hermes",
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
     "experiments": {
       "typedRoutes": true
     },

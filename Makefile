@@ -61,7 +61,7 @@ include fmt.mk
 
 .PHONY: all build dev start clean help
 .PHONY: build-renderer version build-icons build-static build-docker-runtime verify-docker-runtime-artifacts
-.PHONY: lint lint-fix typecheck typecheck-react-native static-check
+.PHONY: lint lint-fix typecheck typecheck-react-native mobile-web static-check
 .PHONY: test test-unit test-integration test-watch test-coverage test-e2e test-e2e-perf smoke-test
 .PHONY: dist dist-mac dist-win dist-linux install-mac-arm64
 .PHONY: vscode-ext vscode-ext-install
@@ -355,6 +355,9 @@ typecheck: node_modules/.installed src/version.ts $(BUILTIN_AGENTS_GENERATED) $(
 		"$(TSGO) --noEmit" \
 		"$(TSGO) --noEmit -p tsconfig.main.json"
 endif
+
+mobile-web: mobile/node_modules/.installed ## Start mobile app web dev server
+	cd mobile && bun run web
 
 typecheck-react-native: mobile/node_modules/.installed ## Run TypeScript type checking for React Native app
 	@echo "Type checking React Native app..."

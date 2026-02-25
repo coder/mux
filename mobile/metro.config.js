@@ -31,7 +31,7 @@ config.resolver.alias = {
 
 // Enhance resolver to properly handle aliases with TypeScript extensions
 config.resolver.resolverMainFields = ["react-native", "browser", "main"];
-config.resolver.platforms = ["ios", "android"];
+config.resolver.platforms = ["ios", "android", "web"];
 
 // Explicitly set source extensions order (TypeScript first)
 if (!config.resolver.sourceExts) {
