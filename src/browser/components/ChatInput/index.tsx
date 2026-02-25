@@ -252,6 +252,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // clear the "in flight" state until all sends complete.
   const [sendingCount, setSendingCount] = useState(0);
   const isSending = sendingCount > 0;
+  // Inline dispatch-mode menu state for the send button.
+  // UX: when streaming and the draft is sendable (canChooseDispatchMode), clicking Send opens this menu.
   const [isSendModeMenuOpen, setIsSendModeMenuOpen] = useState(false);
   const sendModeMenuContainerRef = useRef<HTMLDivElement>(null);
   const [hideReviewsDuringSend, setHideReviewsDuringSend] = useState(false);
