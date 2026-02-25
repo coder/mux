@@ -356,6 +356,32 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Attached reviews come from parent via props (persisted in pendingReviews state).
   // draftReviews takes precedence when restoring or editing message drafts.
   const attachedReviews = variant === "workspace" ? (props.attachedReviews ?? []) : [];
+  const withDraftReview = (
+    reviewId: string,
+    update: (reviews: ReviewNoteDataForDisplay[], reviewIndex: number) => ReviewNoteDataForDisplay[]
+  ) =>
+    setDraftReviews((prev) => {
+      if (prev === null) return prev;
+      const reviewIndex = Number.parseInt(reviewId.slice("draft-review-".length), 10);
+      return Number.isInteger(reviewIndex) && reviewIndex >= 0 && reviewIndex < prev.length
+        ? update(prev, reviewIndex)
+        : prev;
+    });
+
+  const removeDraftReview = (reviewId: string) =>
+    withDraftReview(reviewId, (prev, reviewIndex) =>
+      prev.filter((_, index) => index !== reviewIndex)
+    );
+
+  const updateDraftReviewNote = (reviewId: string, newNote: string) =>
+    withDraftReview(reviewId, (prev, reviewIndex) => {
+      const review = prev[reviewIndex];
+      if (!review || review.userNote === newNote) return prev;
+      const next = [...prev];
+      next[reviewIndex] = { ...review, userNote: newNote };
+      return next;
+    });
+
   // Creation sends can resolve after navigation; guard draft clears on unmounted inputs.
   const isMountedRef = useRef(true);
   useEffect(() => {
@@ -878,9 +904,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         createdAt: 0,
       }))
     : attachedReviews;
-  const hasReviews = reviewOverrideActive
-    ? draftReviewItems.length > 0
-    : attachedReviews.length > 0;
+  const hasReviews = reviewData !== undefined;
   // Disable send while Coder presets are loading (user could bypass preset validation)
   const policyBlocksCreateSend = variant === "creation" && creationRuntimePolicyError != null;
   const coderPresetsLoading =
@@ -2387,11 +2411,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           {variant === "workspace" && !hideReviewsDuringSend && (
             <AttachedReviewsPanel
               reviews={reviewPanelItems}
-              onDetachAll={reviewOverrideActive ? undefined : props.onDetachAllReviews}
-              onDetach={reviewOverrideActive ? undefined : props.onDetachReview}
-              onCheck={reviewOverrideActive ? undefined : props.onCheckReview}
-              onDelete={reviewOverrideActive ? undefined : props.onDeleteReview}
-              onUpdateNote={reviewOverrideActive ? undefined : props.onUpdateReviewNote}
+              onDetachAll={
+                reviewOverrideActive
+                  ? () =>
+                      setDraftReviews((prev) => (prev === null || prev.length === 0 ? prev : []))
+                  : props.onDetachAllReviews
+              }
+              onDetach={reviewOverrideActive ? removeDraftReview : props.onDetachReview}
+              onCheck={reviewOverrideActive ? removeDraftReview : props.onCheckReview}
+              onDelete={reviewOverrideActive ? removeDraftReview : props.onDeleteReview}
+              onUpdateNote={reviewOverrideActive ? updateDraftReviewNote : props.onUpdateReviewNote}
             />
           )}
 
