@@ -24,6 +24,7 @@ import { createMuxMessage } from "@/common/types/message";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { cn } from "@/common/lib/utils";
 import { useAPI } from "@/browser/contexts/API";
+import { useAgent } from "@/browser/contexts/AgentContext";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
@@ -168,6 +169,8 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const isContinuingInAutoRef = useRef(false);
   const isMountedRef = useRef(true);
   const { api } = useAPI();
+  const { agentId: currentAgentId } = useAgent();
+  const isAutoMode = currentAgentId === "auto";
   const openInEditor = useOpenInEditor();
   const workspaceContext = useOptionalWorkspaceContext();
   const editorError = usePopoverError();
@@ -646,41 +649,44 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     status === "completed" && !errorMessage && isLatest && !isEphemeralPreview && workspaceId
   );
 
-  const implementButton: ButtonConfig | null = shouldShowPrimaryActions
-    ? {
-        label: "Implement",
-        onClick: () => void handleImplement(),
-        disabled: !api || isImplementing || isStartingOrchestrator || isContinuingInAuto,
-        icon: <Play className="size-4" />,
-        tooltip: implementReplacesChatHistory
-          ? "Replace chat history with this plan, switch to Exec, and start implementing"
-          : "Switch to Exec and start implementing",
-      }
-    : null;
+  const implementButton: ButtonConfig | null =
+    shouldShowPrimaryActions && !isAutoMode
+      ? {
+          label: "Implement",
+          onClick: () => void handleImplement(),
+          disabled: !api || isImplementing || isStartingOrchestrator || isContinuingInAuto,
+          icon: <Play className="size-4" />,
+          tooltip: implementReplacesChatHistory
+            ? "Replace chat history with this plan, switch to Exec, and start implementing"
+            : "Switch to Exec and start implementing",
+        }
+      : null;
 
-  const orchestratorButton: ButtonConfig | null = shouldShowPrimaryActions
-    ? {
-        label: "Start Orchestrator",
-        onClick: () => void handleStartOrchestrator(),
-        disabled: !api || isStartingOrchestrator || isImplementing || isContinuingInAuto,
-        icon: <Workflow className="size-4" />,
-        tooltip: implementReplacesChatHistory
-          ? "Replace chat history with this plan, switch to Orchestrator, and start delegating"
-          : "Switch to Orchestrator and start delegating",
-      }
-    : null;
+  const orchestratorButton: ButtonConfig | null =
+    shouldShowPrimaryActions && !isAutoMode
+      ? {
+          label: "Start Orchestrator",
+          onClick: () => void handleStartOrchestrator(),
+          disabled: !api || isStartingOrchestrator || isImplementing || isContinuingInAuto,
+          icon: <Workflow className="size-4" />,
+          tooltip: implementReplacesChatHistory
+            ? "Replace chat history with this plan, switch to Orchestrator, and start delegating"
+            : "Switch to Orchestrator and start delegating",
+        }
+      : null;
 
-  const autoButton: ButtonConfig | null = shouldShowPrimaryActions
-    ? {
-        label: "Continue in Auto",
-        onClick: () => void handleContinueInAuto(),
-        disabled: !api || isContinuingInAuto || isImplementing || isStartingOrchestrator,
-        icon: <Sparkles className="size-4" />,
-        tooltip: implementReplacesChatHistory
-          ? "Replace chat history with this plan, switch to Auto, and let it decide the executor"
-          : "Switch to Auto and let it decide the executor",
-      }
-    : null;
+  const autoButton: ButtonConfig | null =
+    shouldShowPrimaryActions && isAutoMode
+      ? {
+          label: "Continue in Auto",
+          onClick: () => void handleContinueInAuto(),
+          disabled: !api || isContinuingInAuto || isImplementing || isStartingOrchestrator,
+          icon: <Sparkles className="size-4" />,
+          tooltip: implementReplacesChatHistory
+            ? "Replace chat history with this plan, switch to Auto, and let it decide the executor"
+            : "Switch to Auto and let it decide the executor",
+        }
+      : null;
 
   // Start Here button: only for tool calls, not ephemeral previews
   if (!isEphemeralPreview && workspaceId) {
