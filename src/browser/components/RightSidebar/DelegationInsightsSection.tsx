@@ -161,7 +161,7 @@ export const DelegationInsightsSection: React.FC<DelegationInsightsSectionProps>
                   </div>
                   <div className="bg-hover h-1.5 w-full overflow-hidden rounded">
                     <div
-                      className="h-full rounded transition-[width] duration-300"
+                      className="h-full rounded"
                       style={{
                         width: `${childPercentage}%`,
                         background: getChildColor(child),
