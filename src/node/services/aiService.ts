@@ -859,6 +859,7 @@ export class AIService extends EventEmitter {
             }
           ),
           runtimeTempDir,
+          openaiWireFormat: effectiveMuxProviderOptions?.openai?.wireFormat,
           backgroundProcessManager: this.backgroundProcessManager,
           // Plan agent configuration for plan file access.
           // - read: plan file is readable in all agents (useful context)

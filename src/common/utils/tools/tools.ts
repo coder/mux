@@ -58,6 +58,8 @@ export interface ToolConfiguration {
   muxEnv?: Record<string, string>;
   /** Temporary directory for tool outputs in runtime's context (local or remote) */
   runtimeTempDir: string;
+  /** OpenAI wire format — webSearch requires "responses" */
+  openaiWireFormat?: "responses" | "chatCompletions";
   /** Overflow policy for bash tool output (optional, not exposed to AI) */
   overflow_policy?: "truncate" | "tmpfile";
   /** Background process manager for bash tool (optional, AI-only) */
@@ -379,8 +381,10 @@ export async function getToolsForModel(
         // accepted by OpenAI's Structured Outputs implementation.
         const sanitizedMcpTools = mcpTools ? sanitizeMCPToolsForOpenAI(mcpTools) : {};
 
+        const useResponsesTools = config.openaiWireFormat !== "chatCompletions";
+
         // Only add web search for models that support it
-        if (modelId.includes("gpt-5") || modelId.includes("gpt-4")) {
+        if (useResponsesTools && (modelId.includes("gpt-5") || modelId.includes("gpt-4"))) {
           const { openai } = await import("@ai-sdk/openai");
           allTools = {
             ...baseTools,
