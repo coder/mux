@@ -18,7 +18,11 @@ import type { TokenConsumer } from "@/common/types/chatStats";
 import type { MuxMessage } from "@/common/types/message";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { log } from "./log";
-import { readSubagentReportArtifactsFile } from "./subagentReportArtifacts";
+import {
+  CHARS_PER_TOKEN_ESTIMATE,
+  getSubagentReportArtifactPath,
+  readSubagentReportArtifactsFile,
+} from "./subagentReportArtifacts";
 
 export interface SessionUsageTokenStatsCacheV1 {
   /**
@@ -386,7 +390,27 @@ export class SessionUsageService {
         continue;
       }
 
-      exploreReportTokens += artifact.reportTokenEstimate ?? 0;
+      let tokenEstimate = artifact.reportTokenEstimate;
+      if (tokenEstimate == null) {
+        // Legacy artifacts predate reportTokenEstimate; derive an estimate from stored markdown.
+        try {
+          const reportPath = getSubagentReportArtifactPath(sessionDir, artifact.childTaskId);
+          const rawReport = await fs.readFile(reportPath, "utf-8");
+          const parsedReport = JSON.parse(rawReport) as { reportMarkdown?: unknown } | null;
+          const reportMarkdown =
+            parsedReport && typeof parsedReport === "object"
+              ? parsedReport.reportMarkdown
+              : undefined;
+          tokenEstimate =
+            typeof reportMarkdown === "string"
+              ? Math.ceil(reportMarkdown.length / CHARS_PER_TOKEN_ESTIMATE)
+              : 0;
+        } catch {
+          tokenEstimate = 0;
+        }
+      }
+
+      exploreReportTokens += tokenEstimate;
     }
 
     const compressionRatio =

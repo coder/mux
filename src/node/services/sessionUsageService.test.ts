@@ -8,7 +8,10 @@ import { createTestHistoryService } from "./testHistoryService";
 import * as fs from "fs/promises";
 import * as path from "path";
 
-import { upsertSubagentReportArtifact } from "./subagentReportArtifacts";
+import {
+  getSubagentReportArtifactsFilePath,
+  upsertSubagentReportArtifact,
+} from "./subagentReportArtifacts";
 
 function createUsage(input: number, output: number): ChatUsageDisplay {
   return {
@@ -371,6 +374,56 @@ describe("SessionUsageService", () => {
       expect(insights.exploreReportTokens).toBe(150);
       expect(insights.compressionRatio).toBe(2);
       expect(insights.hasData).toBe(true);
+    });
+
+    it("should backfill explore report tokens for legacy artifacts missing reportTokenEstimate", async () => {
+      const projectPath = "/tmp/mux-session-usage-test-project";
+      const parentWorkspaceId = "parent-workspace";
+      const model = "claude-sonnet-4-20250514";
+      const childWorkspaceId = "child-explore-legacy";
+
+      await config.addWorkspace(projectPath, {
+        id: parentWorkspaceId,
+        name: "parent-branch",
+        projectName: "test-project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+
+      await service.rollUpUsageIntoParent(
+        parentWorkspaceId,
+        childWorkspaceId,
+        { [model]: createUsage(120, 80) },
+        { agentType: "explore", model }
+      );
+
+      const workspaceSessionDir = config.getSessionDir(parentWorkspaceId);
+      await upsertSubagentReportArtifact({
+        workspaceId: parentWorkspaceId,
+        workspaceSessionDir,
+        childTaskId: childWorkspaceId,
+        parentWorkspaceId,
+        ancestorWorkspaceIds: [parentWorkspaceId],
+        reportMarkdown: "L".repeat(200),
+      });
+
+      const artifactsPath = getSubagentReportArtifactsFilePath(workspaceSessionDir);
+      const rawArtifacts = await fs.readFile(artifactsPath, "utf-8");
+      const parsedArtifacts = JSON.parse(rawArtifacts) as {
+        artifactsByChildTaskId?: Record<string, { reportTokenEstimate?: number }>;
+      };
+      const legacyEntry = parsedArtifacts.artifactsByChildTaskId?.[childWorkspaceId];
+      if (!legacyEntry) {
+        throw new Error("Expected legacy artifact entry");
+      }
+      delete legacyEntry.reportTokenEstimate;
+      await fs.writeFile(artifactsPath, JSON.stringify(parsedArtifacts, null, 2));
+
+      const insights = await service.getDelegationInsights(parentWorkspaceId, null);
+
+      expect(insights.exploreTokensConsumed).toBe(200);
+      expect(insights.exploreReportTokens).toBe(50);
+      expect(insights.compressionRatio).toBe(4);
     });
 
     it("should estimate compactions avoided using threshold and child tokens", async () => {

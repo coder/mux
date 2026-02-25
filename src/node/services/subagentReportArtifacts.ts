@@ -39,7 +39,7 @@ const SUBAGENT_REPORT_ARTIFACTS_FILE_VERSION = 1 as const;
 const SUBAGENT_REPORT_ARTIFACTS_FILE_NAME = "subagent-reports.json";
 const SUBAGENT_REPORT_DIR_NAME = "subagent-reports";
 const SUBAGENT_REPORT_FILE_NAME = "report.json";
-const CHARS_PER_TOKEN_ESTIMATE = 4;
+export const CHARS_PER_TOKEN_ESTIMATE = 4;
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((v) => typeof v === "string");
