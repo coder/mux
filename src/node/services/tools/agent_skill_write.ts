@@ -12,7 +12,13 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import { parseSkillMarkdown } from "@/node/services/agentSkills/parseSkillMarkdown";
 import { generateDiff } from "@/node/services/tools/fileCommon";
 import { getMuxHomeFromWorkspaceSessionDir } from "@/node/services/tools/muxHome";
-import { hasErrorCode, lstatIfExists, resolveContainedSkillFilePath } from "./skillFileUtils";
+import {
+  hasErrorCode,
+  isSkillMarkdownRootFile,
+  lstatIfExists,
+  resolveContainedSkillFilePath,
+  SKILL_FILENAME,
+} from "./skillFileUtils";
 
 interface AgentSkillWriteToolArgs {
   name: string;
@@ -93,7 +99,7 @@ export const createAgentSkillWriteTool: ToolFactory = (config: ToolConfiguration
       }
 
       try {
-        const relativeFilePath = filePath ?? "SKILL.md";
+        const relativeFilePath = filePath ?? SKILL_FILENAME;
 
         const muxHome = getMuxHomeFromWorkspaceSessionDir(config, "agent_skill_write");
         await fsPromises.mkdir(muxHome, { recursive: true });
@@ -121,12 +127,22 @@ export const createAgentSkillWriteTool: ToolFactory = (config: ToolConfiguration
           };
         }
 
-        const contentToWrite =
-          resolvedTarget.normalizedRelativePath === "SKILL.md"
-            ? injectSkillNameIntoFrontmatter(content, parsedName.data)
-            : content;
+        // Canonicalize any casing variant of SKILL.md to the canonical path.
+        // Prevents shadow files on case-sensitive filesystems and ensures validation always runs.
+        if (isSkillMarkdownRootFile(resolvedTarget.normalizedRelativePath)) {
+          resolvedTarget = {
+            ...resolvedTarget,
+            resolvedPath: path.join(skillDir, SKILL_FILENAME),
+            normalizedRelativePath: SKILL_FILENAME,
+          };
+        }
 
-        if (resolvedTarget.normalizedRelativePath === "SKILL.md") {
+        const writesSkillMarkdown = isSkillMarkdownRootFile(resolvedTarget.normalizedRelativePath);
+        const contentToWrite = writesSkillMarkdown
+          ? injectSkillNameIntoFrontmatter(content, parsedName.data)
+          : content;
+
+        if (writesSkillMarkdown) {
           try {
             parseSkillMarkdown({
               content: contentToWrite,

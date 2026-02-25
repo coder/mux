@@ -8,6 +8,7 @@ import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { FILE_EDIT_DIFF_OMITTED_MESSAGE } from "@/common/types/tools";
 import type { AgentSkillWriteToolResult } from "@/common/types/tools";
 import { createAgentSkillWriteTool } from "./agent_skill_write";
+import { SKILL_FILENAME } from "./skillFileUtils";
 import { createTestToolConfig, TestTempDir } from "./testHelpers";
 
 const mockToolCallOptions: ToolExecutionOptions = {
@@ -133,6 +134,77 @@ describe("agent_skill_write", () => {
     if (!result.success) {
       expect(result.error).toMatch(/frontmatter/i);
     }
+  });
+
+  describe("SKILL.md casing canonicalization", () => {
+    it("validates SKILL.md content even with lowercase filePath", async () => {
+      using tempDir = new TestTempDir("test-agent-skill-write-lowercase-skillmd");
+
+      const tool = await createWriteTool(tempDir.path);
+
+      const result = (await tool.execute!(
+        {
+          name: "demo-skill",
+          filePath: "skill.md",
+          content: "not-frontmatter",
+        },
+        mockToolCallOptions
+      )) as AgentSkillWriteToolResult;
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toMatch(/frontmatter/i);
+      }
+    });
+
+    it("injects frontmatter name for case-variant filePath", async () => {
+      using tempDir = new TestTempDir("test-agent-skill-write-case-variant-name-injection");
+
+      const tool = await createWriteTool(tempDir.path);
+      const contentWithMismatchedName = skillMarkdown("wrong-name", {
+        description: "description for demo-skill",
+      });
+
+      const result = (await tool.execute!(
+        {
+          name: "demo-skill",
+          filePath: "Skill.md",
+          content: contentWithMismatchedName,
+        },
+        mockToolCallOptions
+      )) as AgentSkillWriteToolResult;
+
+      expect(result.success).toBe(true);
+
+      const stored = await fs.readFile(
+        path.join(tempDir.path, "skills", "demo-skill", SKILL_FILENAME),
+        "utf-8"
+      );
+      expect(stored).toContain("name: demo-skill");
+      expect(stored).not.toContain("name: wrong-name");
+    });
+
+    it("writes to canonical SKILL.md path regardless of input casing", async () => {
+      using tempDir = new TestTempDir("test-agent-skill-write-canonical-skillmd-path");
+
+      const tool = await createWriteTool(tempDir.path);
+      const content = skillMarkdown("demo-skill", { body: "Canonical body" });
+
+      const result = (await tool.execute!(
+        {
+          name: "demo-skill",
+          filePath: "SKILL.MD",
+          content,
+        },
+        mockToolCallOptions
+      )) as AgentSkillWriteToolResult;
+
+      expect(result.success).toBe(true);
+
+      const canonicalPath = path.join(tempDir.path, "skills", "demo-skill", SKILL_FILENAME);
+      const stored = await fs.readFile(canonicalPath, "utf-8");
+      expect(stored).toBe(content);
+    });
   });
 
   it("name-mismatch injection preserves all other formatting", async () => {
