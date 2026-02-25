@@ -475,12 +475,8 @@ export function useCreationWorkspace({
             setTrustPrompt({ resolve });
           });
           if (!userConfirmed) {
-            setToast({
-              id: Date.now().toString(),
-              type: "error",
-              message:
-                "This project must be trusted to create workspaces. Repository scripts (.mux/init, tool hooks, git hooks) require trust to execute.",
-            });
+            // User cancelled the trust dialog, or trust API call failed
+            // (which already showed its own error toast). Silently abort.
             setIsSending(false);
             return { success: false };
           }
