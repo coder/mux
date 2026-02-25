@@ -651,6 +651,7 @@ export function useCreationWorkspace({
         cancelLabel: "Don't create",
         onConfirm: async () => {
           try {
+            if (!api) throw new Error("API not available");
             await api.projects.setTrust({ projectPath, trusted: true });
             await refreshProjects();
             trustPrompt.resolve(true);
