@@ -11,6 +11,7 @@ import { getLanguageFromPath } from "@/common/utils/git/languageDetector";
 import { useOverflowDetection } from "@/browser/hooks/useOverflowDetection";
 import { MessageSquare } from "lucide-react";
 import { InlineReviewNote, type ReviewActionCallbacks } from "./InlineReviewNote";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { groupDiffLines } from "@/browser/utils/highlighting/diffChunking";
 import { useTheme, type ThemeMode } from "@/browser/contexts/ThemeContext";
 import {
@@ -1377,19 +1378,25 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                   }}
                   reviewButton={
                     onReviewNote && (
-                      <button
-                        type="button"
-                        className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:text-[var(--color-review-accent)] active:scale-90"
-                        style={{ position: "absolute", inset: 0 }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleCommentButtonClick(displayIndex, e.shiftKey);
-                        }}
-                        title="Add review comment (Shift-click or drag to select range)"
-                        aria-label="Add review comment"
-                      >
-                        <MessageSquare className="size-3" />
-                      </button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:text-[var(--color-review-accent)] active:scale-90"
+                            style={{ position: "absolute", inset: 0 }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCommentButtonClick(displayIndex, e.shiftKey);
+                            }}
+                            aria-label="Add review comment"
+                          >
+                            <MessageSquare className="size-3" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent align="start" side="top">
+                          Add review comment (Shift-click or drag to select range)
+                        </TooltipContent>
+                      </Tooltip>
                     )
                   }
                 />
