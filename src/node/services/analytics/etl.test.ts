@@ -287,10 +287,11 @@ describe("ingestArchivedSubagentTranscripts", () => {
 
     const childRows = await queryRows(
       conn,
-      "SELECT parent_workspace_id, CAST(is_sub_agent AS INTEGER) AS is_sub_agent_int FROM events WHERE workspace_id = ?",
+      "SELECT workspace_name, parent_workspace_id, CAST(is_sub_agent AS INTEGER) AS is_sub_agent_int FROM events WHERE workspace_id = ?",
       [childWorkspaceId]
     );
     expect(childRows).toHaveLength(1);
+    expect(childRows[0].workspace_name).toBe("child-workspace");
     expect(childRows[0].parent_workspace_id).toBe(parentWorkspaceId);
     expect(parseBooleanFromInteger(childRows[0].is_sub_agent_int, "is_sub_agent_int")).toBe(true);
   });

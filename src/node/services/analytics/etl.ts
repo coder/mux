@@ -952,6 +952,7 @@ async function ingestArchivedSubagentTranscripts(
       const overrideMeta: WorkspaceMeta = {
         projectPath: parentMeta.projectPath,
         projectName: parentMeta.projectName,
+        workspaceName: archivedWorkspaceMeta.workspaceName,
       };
 
       // Archived transcripts created before workspace metadata persisted

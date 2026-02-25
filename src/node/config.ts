@@ -726,16 +726,26 @@ export class Config {
 
   /**
    * Find a workspace path and project path by workspace ID
-   * @returns Object with workspace and project paths, or null if not found
+   * @returns Object with workspace/project paths and available workspace metadata, or null
    */
-  findWorkspace(workspaceId: string): { workspacePath: string; projectPath: string } | null {
+  findWorkspace(workspaceId: string): {
+    workspacePath: string;
+    projectPath: string;
+    workspaceName?: string;
+    parentWorkspaceId?: string;
+  } | null {
     const config = this.loadConfigOrDefault();
 
     for (const [projectPath, project] of config.projects) {
       for (const workspace of project.workspaces) {
         // NEW FORMAT: Check config first (primary source of truth after migration)
         if (workspace.id === workspaceId) {
-          return { workspacePath: workspace.path, projectPath };
+          return {
+            workspacePath: workspace.path,
+            projectPath,
+            workspaceName: workspace.name,
+            parentWorkspaceId: workspace.parentWorkspaceId,
+          };
         }
 
         // LEGACY FORMAT: Fall back to metadata.json and legacy ID for unmigrated workspaces
@@ -751,7 +761,12 @@ export class Config {
               const data = fs.readFileSync(metadataPath, "utf-8");
               const metadata = JSON.parse(data) as WorkspaceMetadata;
               if (metadata.id === workspaceId) {
-                return { workspacePath: workspace.path, projectPath };
+                return {
+                  workspacePath: workspace.path,
+                  projectPath,
+                  workspaceName: undefined,
+                  parentWorkspaceId: undefined,
+                };
               }
             } catch {
               // Ignore parse errors, try legacy ID
@@ -761,7 +776,12 @@ export class Config {
           // Try legacy ID format as last resort
           const legacyId = this.generateLegacyId(projectPath, workspace.path);
           if (legacyId === workspaceId) {
-            return { workspacePath: workspace.path, projectPath };
+            return {
+              workspacePath: workspace.path,
+              projectPath,
+              workspaceName: undefined,
+              parentWorkspaceId: undefined,
+            };
           }
         }
       }

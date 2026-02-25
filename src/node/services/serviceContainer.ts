@@ -261,11 +261,15 @@ export class ServiceContainer {
 
       const workspaceLookup = this.config.findWorkspace(data.workspaceId);
       const sessionDir = this.config.getSessionDir(data.workspaceId);
+      // Newly created sub-agent workspaces are ingested here before a full rebuild,
+      // so keep workspaceName + parentWorkspaceId to avoid NULL analytics attribution.
       this.analyticsService.ingestWorkspace(data.workspaceId, sessionDir, {
         projectPath: workspaceLookup?.projectPath,
         projectName: workspaceLookup?.projectPath
           ? path.basename(workspaceLookup.projectPath)
           : undefined,
+        workspaceName: workspaceLookup?.workspaceName,
+        parentWorkspaceId: workspaceLookup?.parentWorkspaceId,
       });
     });
     // WorkspaceService emits metadata:null after successful remove().

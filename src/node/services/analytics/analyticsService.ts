@@ -53,11 +53,22 @@ type AnalyticsQueryName =
   | "getCacheHitRatioByProvider";
 
 interface IngestWorkspaceMeta {
-  projectPath?: string;
-  projectName?: string;
-  workspaceName?: string;
-  parentWorkspaceId?: string;
+  projectPath: string | undefined;
+  projectName: string | undefined;
+  workspaceName: string | undefined;
+  parentWorkspaceId: string | undefined;
 }
+
+// stream-end ingestion is the first analytics write for newly spawned sub-agent
+// workspaces, so callers that have config access must explicitly thread every
+// metadata field (including intentional undefined values). This turns future
+// metadata additions into compile-time errors instead of silent NULL regressions.
+const EMPTY_INGEST_WORKSPACE_META: IngestWorkspaceMeta = {
+  projectPath: undefined,
+  projectName: undefined,
+  workspaceName: undefined,
+  parentWorkspaceId: undefined,
+};
 
 interface TimingDistributionRow {
   percentiles: TimingPercentilesRow;
@@ -654,7 +665,11 @@ export class AnalyticsService {
     runClear();
   }
 
-  ingestWorkspace(workspaceId: string, sessionDir: string, meta: IngestWorkspaceMeta = {}): void {
+  ingestWorkspace(
+    workspaceId: string,
+    sessionDir: string,
+    meta: IngestWorkspaceMeta = EMPTY_INGEST_WORKSPACE_META
+  ): void {
     if (workspaceId.trim().length === 0 || sessionDir.trim().length === 0) {
       log.warn("[AnalyticsService] Skipping ingest due to missing workspace information", {
         workspaceId,
