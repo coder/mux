@@ -361,4 +361,35 @@ describe("agent_skill_write", () => {
       expect(result.error).toMatch(/symlink/i);
     }
   });
+
+  it("rejects internal symlink alias pointing to existing file", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-write-internal-alias-symlink");
+
+    const tool = await createWriteTool(tempDir.path);
+
+    const skillDir = path.join(tempDir.path, "skills", "demo-skill");
+    await fs.mkdir(skillDir, { recursive: true });
+
+    const skillPath = path.join(skillDir, "SKILL.md");
+    const originalContent = skillMarkdown("demo-skill", { body: "Original body" });
+    await fs.writeFile(skillPath, originalContent, "utf-8");
+    await fs.symlink("SKILL.md", path.join(skillDir, "link.txt"));
+
+    const result = (await tool.execute!(
+      {
+        name: "demo-skill",
+        filePath: "link.txt",
+        content: "new alias content",
+      },
+      mockToolCallOptions
+    )) as AgentSkillWriteToolResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toMatch(/symlink/i);
+    }
+
+    const stored = await fs.readFile(skillPath, "utf-8");
+    expect(stored).toBe(originalContent);
+  });
 });

@@ -231,6 +231,36 @@ describe("agent_skill_delete", () => {
     expect(stat.isFile()).toBe(true);
   });
 
+  it("rejects internal symlink alias pointing to existing file", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-delete-internal-alias-symlink");
+
+    await writeSkillFixture(tempDir.path, "demo-skill");
+
+    const skillDir = path.join(tempDir.path, "skills", "demo-skill");
+    const skillPath = path.join(skillDir, "SKILL.md");
+    const originalContent = await fs.readFile(skillPath, "utf-8");
+    await fs.symlink("SKILL.md", path.join(skillDir, "link.txt"));
+
+    const tool = await createDeleteTool(tempDir.path);
+    const result = (await tool.execute!(
+      {
+        name: "demo-skill",
+        target: "file",
+        filePath: "link.txt",
+        confirm: true,
+      },
+      mockToolCallOptions
+    )) as AgentSkillDeleteToolResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toMatch(/symlink/i);
+    }
+
+    const stored = await fs.readFile(skillPath, "utf-8");
+    expect(stored).toBe(originalContent);
+  });
+
   it.each(["/etc/passwd", "../escape", "~/bad"])(
     "rejects invalid filePath %s",
     async (filePathValue) => {

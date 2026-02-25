@@ -96,7 +96,10 @@ export async function resolveContainedSkillFilePath(
   filePath: string,
   options?: { allowMissingLeaf?: boolean }
 ): Promise<{ resolvedPath: string; normalizedRelativePath: string }> {
-  const { resolvedPath, normalizedRelativePath } = resolveSkillFilePath(skillDir, filePath);
+  const { resolvedPath: requestedPath, normalizedRelativePath } = resolveSkillFilePath(
+    skillDir,
+    filePath
+  );
 
   const rootReal = options?.allowMissingLeaf
     ? await resolveRealPathAllowMissing(skillDir)
@@ -104,8 +107,8 @@ export async function resolveContainedSkillFilePath(
   const rootPrefix = rootReal.endsWith(path.sep) ? rootReal : `${rootReal}${path.sep}`;
 
   const targetReal = options?.allowMissingLeaf
-    ? await resolveRealPathAllowMissing(resolvedPath)
-    : await fsPromises.realpath(resolvedPath);
+    ? await resolveRealPathAllowMissing(requestedPath)
+    : await fsPromises.realpath(requestedPath);
 
   if (targetReal !== rootReal && !targetReal.startsWith(rootPrefix)) {
     throw new Error(
@@ -113,8 +116,10 @@ export async function resolveContainedSkillFilePath(
     );
   }
 
+  // Use the resolved real path only for containment checks; callers must mutate the lexical
+  // requested path so lstat-based leaf symlink rejection checks inspect the requested alias.
   return {
-    resolvedPath: targetReal,
+    resolvedPath: requestedPath,
     normalizedRelativePath,
   };
 }
