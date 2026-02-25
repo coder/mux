@@ -1,10 +1,7 @@
 import React from "react";
 import { FileIcon } from "@/browser/components/FileIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
-
-// Format token display - show k for thousands with 1 decimal
-const formatTokens = (tokens: number) =>
-  tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : tokens.toLocaleString();
+import { formatTokens } from "@/common/utils/tokens/tokenMeterUtils";
 
 // Strip "./" prefix from file paths for cleaner display
 const formatPath = (path: string) => (path.startsWith("./") ? path.slice(2) : path);

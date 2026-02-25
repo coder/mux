@@ -90,7 +90,7 @@ export const DelegationInsightsSection: React.FC<DelegationInsightsSectionProps>
               className="rounded px-1.5 py-0.5 text-[10px] font-semibold"
               style={{
                 background: "var(--color-task-mode)",
-                color: "var(--color-on-accent)",
+                color: "var(--color-on-success)",
               }}
             >
               {formatCompressionRatio(insights.compressionRatio)}

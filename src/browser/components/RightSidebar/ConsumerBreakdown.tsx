@@ -1,10 +1,7 @@
 import React from "react";
 import type { TokenConsumer } from "@/common/types/chatStats";
+import { formatTokens } from "@/common/utils/tokens/tokenMeterUtils";
 import { Tooltip, TooltipTrigger, TooltipContent, HelpIndicator } from "../ui/tooltip";
-
-// Format token display - show k for thousands with 1 decimal
-const formatTokens = (tokens: number) =>
-  tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : tokens.toLocaleString();
 
 interface ConsumerBreakdownProps {
   consumers: TokenConsumer[];
