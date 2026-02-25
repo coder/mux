@@ -132,6 +132,26 @@ describe("Send dispatch modes (mock AI router)", () => {
     let unregisterStep: (() => void) | undefined;
 
     try {
+      const idleTurnMessage = "turn-end idle context-menu test";
+      await app.chat.typeWithoutSending(idleTurnMessage);
+      await openSendModeMenu(app.view.container);
+
+      const idleTurnRow = await waitFor(
+        () => {
+          const rows = Array.from(app.view.container.querySelectorAll("button"));
+          const row = rows.find((button) => button.textContent?.includes("Send after turn"));
+          if (!row) {
+            throw new Error("Send after turn row not found for idle context menu");
+          }
+          return row;
+        },
+        { timeout: 30_000 }
+      );
+      fireEvent.click(idleTurnRow);
+
+      await app.chat.expectTranscriptContains(`Mock response: ${idleTurnMessage}`);
+      await app.chat.expectStreamComplete();
+
       await startStreamingTurn(app, "click send while streaming");
 
       const clickStepMessage = "tool-end click test";

@@ -188,7 +188,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const editingMessage = variant === "workspace" ? props.editingMessage : undefined;
   const isStreamStarting = variant === "workspace" ? (props.isStreamStarting ?? false) : false;
   const isCompacting = variant === "workspace" ? (props.isCompacting ?? false) : false;
-  const canInterrupt = variant === "workspace" ? (props.canInterrupt ?? false) : false;
   const [isMobileTouch, setIsMobileTouch] = useState(
     () =>
       typeof window !== "undefined" &&
@@ -893,8 +892,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     !coderPresetsLoading &&
     !policyBlocksCreateSend;
   // Send defaults to tool-end on click; advanced dispatch modes remain available via
-  // right-click and touch long-press while a stream is interruptible.
-  const canChooseDispatchMode = variant === "workspace" && canInterrupt && canSend;
+  // right-click and touch long-press whenever there's a sendable workspace draft.
+  const canChooseDispatchMode = variant === "workspace" && canSend;
   const sendModeMenu = useContextMenuPosition({
     longPress: true,
     canOpen: () => canChooseDispatchMode,
@@ -2647,9 +2646,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                         <>
                           <br />
                           <br />
-                          <strong>
-                            When streaming, right-click or long-press for these modes:
-                          </strong>
+                          <strong>Right-click or long-press for advanced send modes:</strong>
                           {SEND_DISPATCH_MODES.map((entry) => (
                             <React.Fragment key={entry.mode}>
                               <br />
