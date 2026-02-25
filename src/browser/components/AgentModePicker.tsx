@@ -362,7 +362,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
             }}
             style={activeStyle}
             className={cn(
-              "text-foreground hover:bg-hover flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[11px] font-medium transition-all duration-150",
+              "text-foreground hover:bg-hover flex items-center gap-1.5 rounded-sm border-[0.5px] px-1.5 py-0.5 text-[11px] font-medium transition-all duration-150",
               activeClassName
             )}
           >
@@ -458,9 +458,9 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
             )}
           </div>
 
-          {/* Divider + Auto-select toggle — only shown when auto agent is available */}
+          {/* Divider + Auto toggle — only shown when auto agent is available */}
           {autoAvailable && (
-            <div className="border-border-light border-t px-2.5 py-1.5">
+            <div className="border-border border-t px-2.5 py-1.5">
               <div
                 role="button"
                 tabIndex={-1}
@@ -480,6 +480,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                 <span onClick={(e) => e.stopPropagation()}>
                   <Switch
                     checked={isAuto}
+                    size="sm"
                     onCheckedChange={(checked) => {
                       setAgentId(checked ? "auto" : "exec");
                       closePicker();
@@ -487,8 +488,8 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                     aria-label="Auto-select agent"
                   />
                 </span>
-                <span className="text-foreground text-[11px] font-medium">Auto-select</span>
-                <span className="text-muted ml-0.5 text-[10px]">· Mux chooses the best agent</span>
+                <span className="text-foreground text-[11px] font-medium">Auto</span>
+                <span className="text-muted text-[10px]">Mux chooses the best agent</span>
               </div>
             </div>
           )}

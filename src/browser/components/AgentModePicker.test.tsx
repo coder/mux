@@ -225,11 +225,11 @@ describe("AgentModePicker", () => {
     fireEvent.click(getByLabelText("Select agent"));
 
     await waitFor(() => {
-      expect(getByText("Auto-select")).toBeTruthy();
+      expect(getByText("Auto")).toBeTruthy();
     });
 
-    // Click the auto-select toggle area
-    fireEvent.click(getByText("Auto-select"));
+    // Click the auto toggle area
+    fireEvent.click(getByText("Auto"));
 
     await waitFor(() => {
       expect(getByTestId("agentId").textContent).toBe("auto");
@@ -262,7 +262,7 @@ describe("AgentModePicker", () => {
       );
     }
 
-    const { getByTestId, getByLabelText, getByText } = render(<Harness />);
+    const { getByTestId, getByLabelText } = render(<Harness />);
 
     // Start with auto
     expect(getByTestId("agentId").textContent).toBe("auto");
@@ -270,12 +270,14 @@ describe("AgentModePicker", () => {
     // Open picker
     fireEvent.click(getByLabelText("Select agent"));
 
+    // The trigger also shows "Auto" so use the Switch's aria-label to
+    // uniquely target the toggle inside the dropdown.
     await waitFor(() => {
-      expect(getByText("Auto-select")).toBeTruthy();
+      expect(getByLabelText("Auto-select agent")).toBeTruthy();
     });
 
-    // Click the auto-select toggle area to turn it off
-    fireEvent.click(getByText("Auto-select"));
+    // Click the Switch to turn auto off
+    fireEvent.click(getByLabelText("Auto-select agent"));
 
     await waitFor(() => {
       expect(getByTestId("agentId").textContent).toBe("exec");

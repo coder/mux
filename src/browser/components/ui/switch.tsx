@@ -5,6 +5,8 @@ interface SwitchProps {
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
   disabled?: boolean;
+  /** "default" (h-6 w-11) or "sm" (h-4 w-7) */
+  size?: "default" | "sm";
   className?: string;
   title?: string;
   "aria-label"?: string;
@@ -16,9 +18,19 @@ interface SwitchProps {
  */
 const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(
   (
-    { checked, onCheckedChange, disabled = false, className, title, "aria-label": ariaLabel },
+    {
+      checked,
+      onCheckedChange,
+      disabled = false,
+      size = "default",
+      className,
+      title,
+      "aria-label": ariaLabel,
+    },
     ref
   ) => {
+    const isSmall = size === "sm";
+
     return (
       <button
         ref={ref}
@@ -38,14 +50,16 @@ const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(
       >
         <span
           className={cn(
-            "pointer-events-none inline-flex h-6 w-11 items-center rounded-full border-2 border-transparent transition-colors",
+            "pointer-events-none inline-flex items-center rounded-full border-2 border-transparent transition-colors",
+            isSmall ? "h-4 w-7" : "h-6 w-11",
             checked ? "bg-accent" : "bg-zinc-600"
           )}
         >
           <span
             className={cn(
-              "pointer-events-none block h-5 w-5 rounded-full bg-background shadow-lg ring-0 transition-transform",
-              checked ? "translate-x-5" : "translate-x-0"
+              "pointer-events-none block rounded-full bg-background shadow-lg ring-0 transition-transform",
+              isSmall ? "h-3 w-3" : "h-5 w-5",
+              checked ? (isSmall ? "translate-x-3" : "translate-x-5") : "translate-x-0"
             )}
           />
         </span>

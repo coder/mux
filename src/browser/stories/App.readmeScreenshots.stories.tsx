@@ -989,7 +989,7 @@ export const AutoModeAgentSwitching: AppStory = {
         const projectScopeId = getProjectScopeId(README_PROJECT_PATH);
 
         // Seed creation-mode controls so the screenshot shows the exact requested defaults.
-        window.localStorage.setItem(getAgentIdKey(projectScopeId), JSON.stringify("orchestrator"));
+        window.localStorage.setItem(getAgentIdKey(projectScopeId), JSON.stringify("auto"));
         window.localStorage.setItem(
           getModelKey(projectScopeId),
           JSON.stringify("anthropic:claude-opus-4-6")
@@ -1033,7 +1033,7 @@ export const AutoModeAgentSwitching: AppStory = {
               uiColor: "var(--color-ask-mode)",
             },
             {
-              id: "orchestrator",
+              id: "auto",
               scope: "built-in",
               name: "Auto",
               description: "Intelligently switch agent types to provide the best results.",
