@@ -3,6 +3,7 @@ import type { DuckDBConnection, DuckDBValue } from "@duckdb/node-api";
 import type { z } from "zod";
 import {
   AgentCostRowSchema,
+  DelegationSummaryRowSchema,
   HistogramBucketSchema,
   ProviderCacheHitModelRowSchema,
   SpendByModelRowSchema,
@@ -471,6 +472,42 @@ async function queryCacheHitRatioByProvider(
   );
 }
 
+async function queryDelegationSummary(
+  conn: DuckDBConnection,
+  params: { projectPath: string | null; from: string | null; to: string | null }
+): Promise<z.infer<typeof DelegationSummaryRowSchema>> {
+  return typedQueryOne(
+    conn,
+    `
+    SELECT
+      COALESCE(COUNT(*), 0) AS total_children,
+      COALESCE(SUM(total_tokens), 0) AS total_tokens_consumed,
+      COALESCE(SUM(report_token_estimate), 0) AS total_report_tokens,
+      COALESCE(
+        CASE
+          WHEN SUM(CASE WHEN report_token_estimate > 0 THEN report_token_estimate ELSE 0 END) = 0 THEN 0
+          ELSE SUM(CASE WHEN report_token_estimate > 0 THEN total_tokens ELSE 0 END)::DOUBLE
+               / SUM(CASE WHEN report_token_estimate > 0 THEN report_token_estimate ELSE 0 END)
+        END,
+        0
+      ) AS compression_ratio,
+      COALESCE(SUM(total_cost_usd), 0) AS total_cost_delegated,
+      COALESCE(SUM(CASE WHEN agent_type = 'explore' THEN 1 ELSE 0 END), 0) AS explore_count,
+      COALESCE(SUM(CASE WHEN agent_type = 'explore' THEN total_tokens ELSE 0 END), 0) AS explore_tokens,
+      COALESCE(SUM(CASE WHEN agent_type = 'exec' THEN 1 ELSE 0 END), 0) AS exec_count,
+      COALESCE(SUM(CASE WHEN agent_type = 'exec' THEN total_tokens ELSE 0 END), 0) AS exec_tokens,
+      COALESCE(SUM(CASE WHEN agent_type = 'plan' THEN 1 ELSE 0 END), 0) AS plan_count,
+      COALESCE(SUM(CASE WHEN agent_type = 'plan' THEN total_tokens ELSE 0 END), 0) AS plan_tokens
+    FROM delegation_rollups
+    WHERE (? IS NULL OR project_path = ?)
+      AND (? IS NULL OR date >= CAST(? AS DATE))
+      AND (? IS NULL OR date <= CAST(? AS DATE))
+    `,
+    [params.projectPath, params.projectPath, params.from, params.from, params.to, params.to],
+    DelegationSummaryRowSchema
+  );
+}
+
 export async function executeNamedQuery(
   conn: DuckDBConnection,
   queryName: string,
@@ -545,6 +582,14 @@ export async function executeNamedQuery(
         parseDateFilter(params.from),
         parseDateFilter(params.to)
       );
+    }
+
+    case "getDelegationSummary": {
+      return queryDelegationSummary(conn, {
+        projectPath: parseOptionalString(params.projectPath),
+        from: parseDateFilter(params.from),
+        to: parseDateFilter(params.to),
+      });
     }
 
     default:

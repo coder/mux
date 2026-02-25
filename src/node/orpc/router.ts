@@ -4202,6 +4202,16 @@ export const router = (authToken?: string) => {
             input.to ?? null
           );
         }),
+      getDelegationSummary: t
+        .input(schemas.analytics.getDelegationSummary.input)
+        .output(schemas.analytics.getDelegationSummary.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.getDelegationSummary(
+            input.projectPath ?? null,
+            input.from ?? null,
+            input.to ?? null
+          );
+        }),
       rebuildDatabase: t
         .input(schemas.analytics.rebuildDatabase.input)
         .output(schemas.analytics.rebuildDatabase.output)

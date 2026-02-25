@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { Worker } from "node:worker_threads";
 import type {
   AgentCostRow,
+  DelegationSummaryRow,
   HistogramBucket,
   ProviderCacheHitModelRow,
   SpendByModelRow,
@@ -52,7 +53,8 @@ type AnalyticsQueryName =
   | "getTokensByModel"
   | "getTimingDistribution"
   | "getAgentCostBreakdown"
-  | "getCacheHitRatioByProvider";
+  | "getCacheHitRatioByProvider"
+  | "getDelegationSummary";
 
 interface IngestWorkspaceMeta {
   projectPath: string | undefined;
@@ -608,6 +610,44 @@ export class AnalyticsService {
     });
 
     return aggregateProviderCacheHitRows(rows);
+  }
+
+  async getDelegationSummary(
+    projectPath: string | null,
+    from?: Date | null,
+    to?: Date | null
+  ): Promise<{
+    totalChildren: number;
+    totalTokensConsumed: number;
+    totalReportTokens: number;
+    compressionRatio: number;
+    totalCostDelegated: number;
+    exploreCount: number;
+    exploreTokens: number;
+    execCount: number;
+    execTokens: number;
+    planCount: number;
+    planTokens: number;
+  }> {
+    const row = await this.executeQuery<DelegationSummaryRow>("getDelegationSummary", {
+      projectPath,
+      from: toDateFilterString(from),
+      to: toDateFilterString(to),
+    });
+
+    return {
+      totalChildren: row.total_children,
+      totalTokensConsumed: row.total_tokens_consumed,
+      totalReportTokens: row.total_report_tokens,
+      compressionRatio: row.compression_ratio,
+      totalCostDelegated: row.total_cost_delegated,
+      exploreCount: row.explore_count,
+      exploreTokens: row.explore_tokens,
+      execCount: row.exec_count,
+      execTokens: row.exec_tokens,
+      planCount: row.plan_count,
+      planTokens: row.plan_tokens,
+    };
   }
 
   async rebuildAll(): Promise<{ success: boolean; workspacesIngested: number }> {
