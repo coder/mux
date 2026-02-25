@@ -12,6 +12,8 @@ import { log } from "@/node/services/log";
 export const CHAT_FILE_NAME = "chat.jsonl";
 const METADATA_FILE_NAME = "metadata.json";
 const SUBAGENT_TRANSCRIPTS_DIR_NAME = "subagent-transcripts";
+const SESSION_USAGE_FILE_NAME = "session-usage.json";
+const SUBAGENT_REPORTS_FILE_NAME = "subagent-reports.json";
 
 const INSERT_EVENT_SQL = `
 INSERT INTO events (
@@ -47,6 +49,14 @@ INSERT INTO events (
   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
   ?, ?, ?, ?, ?, ?, ?
 )
+`;
+
+const INSERT_DELEGATION_ROLLUP_SQL = `
+INSERT OR REPLACE INTO delegation_rollups (
+  parent_workspace_id, child_workspace_id, project_path, project_name,
+  agent_type, model, total_tokens, context_tokens, report_token_estimate,
+  total_cost_usd, rolled_up_at_ms, date
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 interface WorkspaceMeta {
@@ -906,6 +916,9 @@ export async function ingestWorkspace(
     meta
   );
   await ingestArchivedSubagentTranscripts(conn, sessionDir, mergedMetaForChildren, workspaceId);
+
+  // Ingest delegation rollup data from session-usage.json.
+  await ingestDelegationRollups(conn, workspaceId, sessionDir, workspaceMeta);
 }
 
 /**
@@ -978,6 +991,100 @@ async function ingestArchivedSubagentTranscripts(
 
   return ingested;
 }
+
+/** Read session-usage.json and subagent-reports.json, then insert delegation_rollups rows. */
+async function ingestDelegationRollups(
+  conn: DuckDBConnection,
+  workspaceId: string,
+  sessionDir: string,
+  workspaceMeta: WorkspaceMeta
+): Promise<void> {
+  const usagePath = path.join(sessionDir, SESSION_USAGE_FILE_NAME);
+  let usageRaw: string;
+  try {
+    usageRaw = await fs.readFile(usagePath, "utf-8");
+  } catch (error) {
+    if (isRecord(error) && error.code === "ENOENT") return;
+    log.warn("[analytics-etl] Failed to read session-usage.json for delegation rollups", {
+      workspaceId,
+      error: getErrorMessage(error),
+    });
+    return;
+  }
+
+  let usageData: unknown;
+  try {
+    usageData = JSON.parse(usageRaw);
+  } catch {
+    return;
+  }
+  if (!isRecord(usageData)) return;
+
+  const rolledUpFrom = usageData.rolledUpFrom;
+  if (!isRecord(rolledUpFrom)) return;
+
+  // Read subagent-reports.json for reportTokenEstimate lookup
+  const reportTokenByChildId = await readReportTokenEstimates(sessionDir);
+
+  await conn.run("BEGIN TRANSACTION");
+  try {
+    for (const [childId, entry] of Object.entries(rolledUpFrom)) {
+      // Skip legacy boolean entries
+      if (entry === true || !isRecord(entry)) continue;
+
+      const totalTokens = toFiniteInteger(entry.totalTokens) ?? 0;
+      const contextTokens = toFiniteInteger(entry.contextTokens) ?? 0;
+      const totalCostUsd = toFiniteNumber(entry.totalCostUsd) ?? 0;
+      const agentType = toOptionalString(entry.agentType) ?? null;
+      const model = toOptionalString(entry.model) ?? null;
+      const rolledUpAtMs = toFiniteNumber(entry.rolledUpAtMs) ?? null;
+      const reportTokenEstimate = reportTokenByChildId.get(childId) ?? 0;
+      const dateBucket = dateBucketFromTimestamp(rolledUpAtMs);
+
+      await conn.run(INSERT_DELEGATION_ROLLUP_SQL, [
+        workspaceId,
+        childId,
+        workspaceMeta.projectPath ?? null,
+        workspaceMeta.projectName ?? null,
+        agentType,
+        model,
+        totalTokens,
+        contextTokens,
+        reportTokenEstimate,
+        totalCostUsd,
+        rolledUpAtMs,
+        dateBucket,
+      ]);
+    }
+    await conn.run("COMMIT");
+  } catch (error) {
+    await conn.run("ROLLBACK");
+    throw error;
+  }
+}
+
+async function readReportTokenEstimates(sessionDir: string): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  const reportsPath = path.join(sessionDir, SUBAGENT_REPORTS_FILE_NAME);
+  try {
+    const raw = await fs.readFile(reportsPath, "utf-8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed)) return result;
+    const artifacts = parsed.artifactsByChildTaskId;
+    if (!isRecord(artifacts)) return result;
+    for (const [childId, artifact] of Object.entries(artifacts)) {
+      if (!isRecord(artifact)) continue;
+      const estimate = toFiniteInteger(artifact.reportTokenEstimate);
+      if (estimate != null && estimate > 0) {
+        result.set(childId, estimate);
+      }
+    }
+  } catch {
+    // Missing or invalid file — not an error, just no report data.
+  }
+  return result;
+}
+
 export async function rebuildAll(
   conn: DuckDBConnection,
   sessionsDir: string,

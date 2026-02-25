@@ -77,6 +77,21 @@ export const ProviderCacheHitModelRowSchema = z.object({
 });
 export type ProviderCacheHitModelRow = z.infer<typeof ProviderCacheHitModelRowSchema>;
 
+export const DelegationSummaryRowSchema = z.object({
+  total_children: z.number(),
+  total_tokens_consumed: z.number(),
+  total_report_tokens: z.number(),
+  compression_ratio: z.number(),
+  total_cost_delegated: z.number(),
+  explore_count: z.number(),
+  explore_tokens: z.number(),
+  exec_count: z.number(),
+  exec_tokens: z.number(),
+  plan_count: z.number(),
+  plan_tokens: z.number(),
+});
+export type DelegationSummaryRow = z.infer<typeof DelegationSummaryRowSchema>;
+
 /** ETL input validation — each row extracted from chat.jsonl is validated before insert */
 export const EventRowSchema = z.object({
   workspace_id: z.string(),
@@ -231,6 +246,26 @@ export const analytics = {
         responseCount: z.number(),
       })
     ),
+  },
+  getDelegationSummary: {
+    input: z.object({
+      projectPath: z.string().nullish(),
+      from: z.coerce.date().nullish(),
+      to: z.coerce.date().nullish(),
+    }),
+    output: z.object({
+      totalChildren: z.number(),
+      totalTokensConsumed: z.number(),
+      totalReportTokens: z.number(),
+      compressionRatio: z.number(),
+      totalCostDelegated: z.number(),
+      exploreCount: z.number(),
+      exploreTokens: z.number(),
+      execCount: z.number(),
+      execTokens: z.number(),
+      planCount: z.number(),
+      planTokens: z.number(),
+    }),
   },
   rebuildDatabase: {
     input: z.object({}),

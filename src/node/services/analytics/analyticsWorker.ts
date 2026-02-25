@@ -110,6 +110,24 @@ CREATE TABLE IF NOT EXISTS ingest_watermarks (
 )
 `;
 
+const CREATE_DELEGATION_ROLLUPS_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS delegation_rollups (
+  parent_workspace_id VARCHAR NOT NULL,
+  child_workspace_id VARCHAR NOT NULL,
+  project_path VARCHAR,
+  project_name VARCHAR,
+  agent_type VARCHAR,
+  model VARCHAR,
+  total_tokens INTEGER DEFAULT 0,
+  context_tokens INTEGER DEFAULT 0,
+  report_token_estimate INTEGER DEFAULT 0,
+  total_cost_usd DOUBLE DEFAULT 0,
+  rolled_up_at_ms BIGINT,
+  date DATE,
+  PRIMARY KEY (parent_workspace_id, child_workspace_id)
+)
+`;
+
 let instance: DuckDBInstance | null = null;
 let conn: DuckDBConnection | null = null;
 let isShuttingDown = false;
@@ -130,6 +148,7 @@ async function handleInit(data: InitData): Promise<void> {
   const activeConn = getConn();
   await activeConn.run(CREATE_EVENTS_TABLE_SQL);
   await activeConn.run(CREATE_WATERMARK_TABLE_SQL);
+  await activeConn.run(CREATE_DELEGATION_ROLLUPS_TABLE_SQL);
 }
 
 async function handleIngest(data: IngestData): Promise<void> {
