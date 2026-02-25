@@ -281,6 +281,61 @@ describe("agent_skill_write", () => {
     }
   );
 
+  it("rejects writes when skill directory is a symlink", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-write-symlinked-dir");
+
+    const tool = await createWriteTool(tempDir.path);
+
+    const externalDir = path.join(tempDir.path, "external-target");
+    await fs.mkdir(externalDir, { recursive: true });
+    await fs.mkdir(path.join(tempDir.path, "skills"), { recursive: true });
+    await fs.symlink(externalDir, path.join(tempDir.path, "skills", "demo-skill"));
+
+    const result = (await tool.execute!(
+      { name: "demo-skill", content: skillMarkdown("demo-skill") },
+      mockToolCallOptions
+    )) as AgentSkillWriteToolResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toMatch(/symlink/i);
+    }
+
+    const entries = await fs.readdir(externalDir);
+    expect(entries).toEqual([]);
+  });
+
+  it("rejects writes when intermediate subdir is a symlinked escape", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-write-intermediate-symlink");
+
+    const tool = await createWriteTool(tempDir.path);
+
+    const skillDir = path.join(tempDir.path, "skills", "demo-skill");
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.writeFile(path.join(skillDir, "SKILL.md"), skillMarkdown("demo-skill"), "utf-8");
+
+    const externalDir = path.join(tempDir.path, "external-escape");
+    await fs.mkdir(externalDir, { recursive: true });
+    await fs.symlink(externalDir, path.join(skillDir, "references"));
+
+    const result = (await tool.execute!(
+      {
+        name: "demo-skill",
+        filePath: "references/secret.txt",
+        content: "should not land here",
+      },
+      mockToolCallOptions
+    )) as AgentSkillWriteToolResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toMatch(/escape|symlink/i);
+    }
+
+    const entries = await fs.readdir(externalDir);
+    expect(entries).toEqual([]);
+  });
+
   it("rejects writes to symlink targets", async () => {
     using tempDir = new TestTempDir("test-agent-skill-write-symlink");
 

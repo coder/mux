@@ -12,7 +12,7 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import { parseSkillMarkdown } from "@/node/services/agentSkills/parseSkillMarkdown";
 import { generateDiff } from "@/node/services/tools/fileCommon";
 import { getMuxHomeFromWorkspaceSessionDir } from "@/node/services/tools/muxHome";
-import { hasErrorCode, resolveSkillFilePath } from "./skillFileUtils";
+import { hasErrorCode, lstatIfExists, resolveContainedSkillFilePath } from "./skillFileUtils";
 
 interface AgentSkillWriteToolArgs {
   name: string;
@@ -100,7 +100,27 @@ export const createAgentSkillWriteTool: ToolFactory = (config: ToolConfiguration
 
         const muxHomeReal = await fsPromises.realpath(muxHome);
         const skillDir = path.join(muxHomeReal, "skills", parsedName.data);
-        const resolvedTarget = resolveSkillFilePath(skillDir, relativeFilePath);
+
+        const skillDirStat = await lstatIfExists(skillDir);
+        if (skillDirStat?.isSymbolicLink()) {
+          return {
+            success: false,
+            error: "Refusing to write to a symlinked skill directory",
+          };
+        }
+
+        let resolvedTarget: Awaited<ReturnType<typeof resolveContainedSkillFilePath>>;
+        try {
+          resolvedTarget = await resolveContainedSkillFilePath(skillDir, relativeFilePath, {
+            allowMissingLeaf: true,
+          });
+        } catch (error) {
+          return {
+            success: false,
+            error: getErrorMessage(error),
+          };
+        }
+
         const contentToWrite =
           resolvedTarget.normalizedRelativePath === "SKILL.md"
             ? injectSkillNameIntoFrontmatter(content, parsedName.data)

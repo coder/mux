@@ -165,13 +165,70 @@ describe("agent_skill_delete", () => {
       mockToolCallOptions
     )) as AgentSkillDeleteToolResult;
 
-    expect(result).toMatchObject({
-      success: false,
-      error: "Refusing to delete a symlinked skill directory",
-    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toMatch(/symlink/i);
+    }
 
     const skillLinkStat = await fs.lstat(path.join(tempDir.path, "skills", "demo-skill"));
     expect(skillLinkStat.isSymbolicLink()).toBe(true);
+  });
+
+  it("refuses to delete a file when skill directory is a symlink", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-delete-symlinked-dir-file");
+
+    const externalDir = path.join(tempDir.path, "external-target");
+    await fs.mkdir(externalDir, { recursive: true });
+    await fs.writeFile(
+      path.join(externalDir, "SKILL.md"),
+      "---\nname: demo-skill\ndescription: fixture\n---\nBody\n",
+      "utf-8"
+    );
+
+    await fs.mkdir(path.join(tempDir.path, "skills"), { recursive: true });
+    await fs.symlink(externalDir, path.join(tempDir.path, "skills", "demo-skill"));
+
+    const tool = await createDeleteTool(tempDir.path);
+    const result = (await tool.execute!(
+      { name: "demo-skill", filePath: "SKILL.md", confirm: true },
+      mockToolCallOptions
+    )) as AgentSkillDeleteToolResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toMatch(/symlink/i);
+    }
+
+    const stat = await fs.stat(path.join(externalDir, "SKILL.md"));
+    expect(stat.isFile()).toBe(true);
+  });
+
+  it("refuses to delete a file via symlinked intermediate path", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-delete-intermediate-symlink");
+
+    await writeSkillFixture(tempDir.path, "demo-skill");
+
+    const externalDir = path.join(tempDir.path, "external-escape");
+    await fs.mkdir(externalDir, { recursive: true });
+    await fs.writeFile(path.join(externalDir, "secret.txt"), "important", "utf-8");
+
+    const skillDir = path.join(tempDir.path, "skills", "demo-skill");
+    await fs.rm(path.join(skillDir, "references"), { recursive: true });
+    await fs.symlink(externalDir, path.join(skillDir, "references"));
+
+    const tool = await createDeleteTool(tempDir.path);
+    const result = (await tool.execute!(
+      { name: "demo-skill", filePath: "references/secret.txt", confirm: true },
+      mockToolCallOptions
+    )) as AgentSkillDeleteToolResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toMatch(/escape|symlink/i);
+    }
+
+    const stat = await fs.stat(path.join(externalDir, "secret.txt"));
+    expect(stat.isFile()).toBe(true);
   });
 
   it.each(["/etc/passwd", "../escape", "~/bad"])(

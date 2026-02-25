@@ -9,7 +9,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { getMuxHomeFromWorkspaceSessionDir } from "@/node/services/tools/muxHome";
-import { hasErrorCode, resolveSkillFilePath } from "./skillFileUtils";
+import { hasErrorCode, lstatIfExists, resolveContainedSkillFilePath } from "./skillFileUtils";
 
 interface AgentSkillDeleteToolArgs {
   name: string;
@@ -71,17 +71,19 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
 
         const skillDir = path.join(muxHomeReal, "skills", parsedName.data);
 
-        let skillStat;
-        try {
-          skillStat = await fsPromises.stat(skillDir);
-        } catch (error) {
-          if (hasErrorCode(error, "ENOENT")) {
-            return {
-              success: false,
-              error: `Skill not found: ${parsedName.data}`,
-            };
-          }
-          throw error;
+        const skillStat = await lstatIfExists(skillDir);
+        if (!skillStat) {
+          return {
+            success: false,
+            error: `Skill not found: ${parsedName.data}`,
+          };
+        }
+
+        if (skillStat.isSymbolicLink()) {
+          return {
+            success: false,
+            error: "Refusing to operate on a symlinked skill directory",
+          };
         }
 
         if (!skillStat.isDirectory()) {
@@ -93,13 +95,6 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
 
         const targetMode = target ?? "file";
         if (targetMode === "skill") {
-          const skillDirLstat = await fsPromises.lstat(skillDir);
-          if (skillDirLstat.isSymbolicLink()) {
-            return {
-              success: false,
-              error: "Refusing to delete a symlinked skill directory",
-            };
-          }
           await fsPromises.rm(skillDir, { recursive: true });
           return {
             success: true,
@@ -114,7 +109,15 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
           };
         }
 
-        const { resolvedPath: targetPath } = resolveSkillFilePath(skillDir, filePath);
+        let targetPath: string;
+        try {
+          ({ resolvedPath: targetPath } = await resolveContainedSkillFilePath(skillDir, filePath));
+        } catch (error) {
+          return {
+            success: false,
+            error: getErrorMessage(error),
+          };
+        }
 
         let targetStat;
         try {

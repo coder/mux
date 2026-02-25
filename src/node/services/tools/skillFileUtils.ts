@@ -1,4 +1,6 @@
+import * as fsPromises from "fs/promises";
 import * as path from "path";
+import type { Stats } from "node:fs";
 
 export function hasErrorCode(error: unknown, code: string): boolean {
   return (
@@ -50,5 +52,69 @@ export function resolveSkillFilePath(
   return {
     resolvedPath,
     normalizedRelativePath: relativePath.replaceAll(path.sep, "/"),
+  };
+}
+
+export async function lstatIfExists(targetPath: string): Promise<Stats | null> {
+  try {
+    return await fsPromises.lstat(targetPath);
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+async function resolveRealPathAllowMissing(targetPath: string): Promise<string> {
+  const missingSegments: string[] = [];
+  let currentPath = targetPath;
+
+  while (true) {
+    try {
+      const realPath = await fsPromises.realpath(currentPath);
+      return missingSegments.length === 0 ? realPath : path.join(realPath, ...missingSegments);
+    } catch (error) {
+      if (!hasErrorCode(error, "ENOENT")) {
+        throw error;
+      }
+
+      const parentPath = path.dirname(currentPath);
+      if (parentPath === currentPath) {
+        throw error;
+      }
+
+      missingSegments.unshift(path.basename(currentPath));
+      currentPath = parentPath;
+    }
+  }
+}
+
+export async function resolveContainedSkillFilePath(
+  skillDir: string,
+  filePath: string,
+  options?: { allowMissingLeaf?: boolean }
+): Promise<{ resolvedPath: string; normalizedRelativePath: string }> {
+  const { resolvedPath, normalizedRelativePath } = resolveSkillFilePath(skillDir, filePath);
+
+  const rootReal = options?.allowMissingLeaf
+    ? await resolveRealPathAllowMissing(skillDir)
+    : await fsPromises.realpath(skillDir);
+  const rootPrefix = rootReal.endsWith(path.sep) ? rootReal : `${rootReal}${path.sep}`;
+
+  const targetReal = options?.allowMissingLeaf
+    ? await resolveRealPathAllowMissing(resolvedPath)
+    : await fsPromises.realpath(resolvedPath);
+
+  if (targetReal !== rootReal && !targetReal.startsWith(rootPrefix)) {
+    throw new Error(
+      `Invalid filePath (path escapes skill directory after symlink resolution): ${filePath}`
+    );
+  }
+
+  return {
+    resolvedPath: targetReal,
+    normalizedRelativePath,
   };
 }
