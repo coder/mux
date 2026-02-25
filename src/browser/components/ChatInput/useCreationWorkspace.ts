@@ -639,40 +639,39 @@ export function useCreationWorkspace({
     ]
   );
 
-  const trustDialog =
-    trustPrompt && api
-      ? createElement(ConfirmationModal, {
-          isOpen: true,
-          title: "Trust this project?",
-          description:
-            "Creating a workspace will execute repository scripts. Only trust projects from sources you trust.",
-          warning:
-            "This includes .mux/init, .mux/tool_env, .mux/tool_pre, .mux/tool_post, and git hooks.",
-          confirmLabel: "Trust and continue",
-          cancelLabel: "Don't create",
-          onConfirm: async () => {
-            try {
-              await api.projects.setTrust({ projectPath, trusted: true });
-              await refreshProjects();
-              trustPrompt.resolve(true);
-              setTrustPrompt(null);
-            } catch {
-              // Trust API failed — abort creation and notify user
-              trustPrompt.resolve(false);
-              setTrustPrompt(null);
-              setToast({
-                id: Date.now().toString(),
-                type: "error",
-                message: "Failed to trust project. Please try again.",
-              });
-            }
-          },
-          onCancel: () => {
+  const trustDialog = trustPrompt
+    ? createElement(ConfirmationModal, {
+        isOpen: true,
+        title: "Trust this project?",
+        description:
+          "Creating a workspace will execute repository scripts. Only trust projects from sources you trust.",
+        warning:
+          "This includes .mux/init, .mux/tool_env, .mux/tool_pre, .mux/tool_post, and git hooks.",
+        confirmLabel: "Trust and continue",
+        cancelLabel: "Don't create",
+        onConfirm: async () => {
+          try {
+            await api.projects.setTrust({ projectPath, trusted: true });
+            await refreshProjects();
+            trustPrompt.resolve(true);
+            setTrustPrompt(null);
+          } catch {
+            // Trust API failed — abort creation and notify user
             trustPrompt.resolve(false);
             setTrustPrompt(null);
-          },
-        })
-      : null;
+            setToast({
+              id: Date.now().toString(),
+              type: "error",
+              message: "Failed to trust project. Please try again.",
+            });
+          }
+        },
+        onCancel: () => {
+          trustPrompt.resolve(false);
+          setTrustPrompt(null);
+        },
+      })
+    : null;
 
   return {
     branches,
