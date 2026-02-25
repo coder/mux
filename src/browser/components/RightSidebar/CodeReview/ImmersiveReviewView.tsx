@@ -19,7 +19,7 @@ import {
 import { cn } from "@/common/lib/utils";
 import { SelectableDiffRenderer } from "../../shared/DiffRenderer";
 import { ImmersiveMinimap } from "./ImmersiveMinimap";
-import { buildNewLineNumberToIndexMap } from "./immersiveMinimapMath";
+import { buildNewLineNumberToIndexMap, buildOldLineNumberToIndexMap } from "./immersiveMinimapMath";
 import { KeycapGroup } from "@/browser/components/ui/Keycap";
 import { useAPI } from "@/browser/contexts/API";
 import { formatLineRangeCompact } from "@/browser/utils/review/lineRange";
@@ -608,14 +608,27 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     const reviews = props.reviewsByFilePath.get(activeFilePath);
     if (!reviews || reviews.length === 0) return new Set<number>();
 
-    const lineMap = buildNewLineNumberToIndexMap(overlayData.content);
+    const newLineMap = buildNewLineNumberToIndexMap(overlayData.content);
+    let oldLineMap: Map<number, number> | null = null;
     const indices = new Set<number>();
     for (const review of reviews) {
       const parsed = parseReviewLineRange(review.data.lineRange);
       if (!parsed) continue;
-      // Prefer new-side range (shows where the comment lands in the current code)
-      const range = parsed.new ?? parsed.old;
-      if (!range) continue;
+
+      let lineMap: Map<number, number>;
+      let range: { start: number; end: number } | undefined;
+
+      if (parsed.new) {
+        lineMap = newLineMap;
+        range = parsed.new;
+      } else if (parsed.old) {
+        oldLineMap ??= buildOldLineNumberToIndexMap(overlayData.content);
+        lineMap = oldLineMap;
+        range = parsed.old;
+      } else {
+        continue;
+      }
+
       for (let ln = range.start; ln <= range.end; ln++) {
         const idx = lineMap.get(ln);
         if (idx != null) indices.add(idx);
