@@ -10,7 +10,8 @@ import type { DelegationInsights } from "@/common/orpc/schemas/chatStats";
 export function useDelegationInsights(
   workspaceId: string,
   use1MContext: boolean,
-  model: string | null
+  model: string | null,
+  autoCompactionThreshold: number
 ): DelegationInsights | null {
   assert(workspaceId.trim().length > 0, "useDelegationInsights: workspaceId must be non-empty");
   assert(
@@ -20,6 +21,12 @@ export function useDelegationInsights(
   assert(
     model === null || typeof model === "string",
     "useDelegationInsights: model must be a string or null"
+  );
+  assert(
+    Number.isFinite(autoCompactionThreshold) &&
+      autoCompactionThreshold >= 0 &&
+      autoCompactionThreshold <= 1,
+    "useDelegationInsights: autoCompactionThreshold must be between 0 and 1"
   );
 
   const { api } = useAPI();
@@ -46,6 +53,7 @@ export function useDelegationInsights(
           workspaceId: requestedWorkspaceId,
           model,
           use1MContext,
+          autoCompactionThreshold,
         });
         if (!cancelled && latestWorkspaceIdRef.current === requestedWorkspaceId) {
           setInsights(result);
@@ -60,7 +68,7 @@ export function useDelegationInsights(
     return () => {
       cancelled = true;
     };
-  }, [api, workspaceId, use1MContext, model]);
+  }, [api, workspaceId, use1MContext, model, autoCompactionThreshold]);
 
   return insights;
 }

@@ -420,6 +420,49 @@ describe("SessionUsageService", () => {
       expect(insights.compactionsAvoided).toBe(3);
     });
 
+    it("should use provided autoCompactionThreshold for compaction estimates", async () => {
+      const projectPath = "/tmp/mux-session-usage-test-project";
+      const parentWorkspaceId = "parent-workspace";
+      const model = "claude-sonnet-4-20250514";
+
+      await config.addWorkspace(projectPath, {
+        id: parentWorkspaceId,
+        name: "parent-branch",
+        projectName: "test-project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+
+      await service.rollUpUsageIntoParent(
+        parentWorkspaceId,
+        "child-exec-a",
+        { [model]: createUsage(250_000, 50_000) },
+        { agentType: "exec", model }
+      );
+      await service.rollUpUsageIntoParent(
+        parentWorkspaceId,
+        "child-exec-b",
+        { [model]: createUsage(150_000, 50_000) },
+        { agentType: "exec", model }
+      );
+
+      await historyService.appendToHistory(
+        parentWorkspaceId,
+        createMuxMessage("summary", "assistant", "Compaction summary", {
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 2,
+        })
+      );
+
+      const insights = await service.getDelegationInsights(parentWorkspaceId, 200_000, 1);
+
+      expect(insights.totalChildTokens).toBe(500_000);
+      expect(insights.actualCompactions).toBe(2);
+      expect(insights.estimatedWithoutDelegation).toBe(4);
+      expect(insights.compactionsAvoided).toBe(2);
+    });
+
     it("should skip legacy true entries in rolledUpFrom", async () => {
       const workspaceId = "parent-workspace";
       const legacyChildWorkspaceId = "legacy-child";

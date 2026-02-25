@@ -61,6 +61,20 @@ describe("DelegationInsightsSection", () => {
     expect(view.getByTestId("delegation-compression").textContent).toContain("3.1k");
   });
 
+  test("shows sub-1 compression ratio without clamping", () => {
+    const view = render(
+      <DelegationInsightsSection
+        insights={createInsights({
+          compressionRatio: 0.5,
+          exploreTokensConsumed: 5_000,
+          exploreReportTokens: 10_000,
+        })}
+      />
+    );
+
+    expect(view.getByTestId("delegation-compression").textContent).toContain("0.5:1");
+  });
+
   test("hides compression card when compressionRatio is 0", () => {
     const view = render(
       <DelegationInsightsSection

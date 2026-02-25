@@ -14,8 +14,13 @@ function formatCompressionRatio(ratio: number): string {
     Number.isFinite(ratio) && ratio >= 0,
     "DelegationInsightsSection: compression ratio must be a finite non-negative number"
   );
-  const roundedRatio = Math.max(1, Math.round(ratio));
-  return `${roundedRatio}:1`;
+
+  if (ratio < 1) {
+    // Sub-1 ratio means delegation expanded tokens (report > consumed), so preserve precision.
+    return `${ratio.toFixed(1)}:1`;
+  }
+
+  return `${Math.round(ratio)}:1`;
 }
 
 function toPercent(numerator: number, denominator: number): number {

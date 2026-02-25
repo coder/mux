@@ -83,15 +83,16 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   const effectiveCompactionModel =
     resolveCompactionModel(preferredCompactionModel) ?? contextDisplayModel;
 
-  const delegationInsights = useDelegationInsights(
-    workspaceId,
-    has1MContext(contextDisplayModel),
-    contextDisplayModel
-  );
-
   // Auto-compaction settings: threshold per-model (100 = disabled)
   const { threshold: autoCompactThreshold, setThreshold: setAutoCompactThreshold } =
     useAutoCompactionSettings(workspaceId, contextDisplayModel);
+
+  const delegationInsights = useDelegationInsights(
+    workspaceId,
+    has1MContext(contextDisplayModel),
+    contextDisplayModel,
+    autoCompactThreshold / 100
+  );
 
   // Session usage for cost calculation
   // Uses sessionTotal (pre-computed) + liveCostUsage (cumulative during streaming)

@@ -337,12 +337,20 @@ export class SessionUsageService {
 
   async getDelegationInsights(
     workspaceId: string,
-    modelContextLimit: number | null
+    modelContextLimit: number | null,
+    autoCompactionThreshold: number | null = null
   ): Promise<DelegationInsights> {
     assert(workspaceId.trim().length > 0, "getDelegationInsights: workspaceId empty");
     assert(
       modelContextLimit == null || (Number.isFinite(modelContextLimit) && modelContextLimit > 0),
       "getDelegationInsights: modelContextLimit must be null or > 0"
+    );
+    assert(
+      autoCompactionThreshold == null ||
+        (Number.isFinite(autoCompactionThreshold) &&
+          autoCompactionThreshold >= 0 &&
+          autoCompactionThreshold <= 1),
+      "getDelegationInsights: autoCompactionThreshold must be null or between 0 and 1"
     );
 
     const usage = await this.getSessionUsage(workspaceId);
@@ -395,10 +403,9 @@ export class SessionUsageService {
       }
     }
 
+    const threshold = autoCompactionThreshold ?? DEFAULT_AUTO_COMPACTION_THRESHOLD;
     const compactionThreshold =
-      modelContextLimit != null
-        ? Math.round(modelContextLimit * DEFAULT_AUTO_COMPACTION_THRESHOLD)
-        : null;
+      modelContextLimit != null ? Math.round(modelContextLimit * threshold) : null;
     const estimatedWithoutDelegation =
       compactionThreshold != null
         ? actualCompactions + Math.floor(totalChildTokens / compactionThreshold)

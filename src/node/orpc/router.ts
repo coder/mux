@@ -3400,7 +3400,8 @@ export const router = (authToken?: string) => {
 
           return context.sessionUsageService.getDelegationInsights(
             input.workspaceId,
-            modelContextLimit
+            modelContextLimit,
+            input.autoCompactionThreshold
           );
         }),
       getSessionUsageBatch: t
