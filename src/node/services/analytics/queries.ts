@@ -297,10 +297,10 @@ async function queryTokensByModel(
       COALESCE(SUM(cache_create_tokens), 0) AS cache_create_tokens,
       COALESCE(SUM(output_tokens), 0) AS output_tokens,
       COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
-      COALESCE(
-        SUM(input_tokens + cached_tokens + cache_create_tokens + output_tokens + reasoning_tokens),
-        0
-      ) AS total_tokens,
+      COALESCE(SUM(
+        COALESCE(input_tokens, 0) + COALESCE(cached_tokens, 0) + COALESCE(cache_create_tokens, 0)
+        + COALESCE(output_tokens, 0) + COALESCE(reasoning_tokens, 0)
+      ), 0) AS total_tokens,
       COALESCE(COUNT(*), 0) AS request_count
     FROM events
     WHERE (? IS NULL OR project_path = ?)
