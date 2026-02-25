@@ -35,7 +35,7 @@ void mock.module("./ConfiguredProvidersBar", () => ({
 // Mock ProjectContext to provide trust data without requiring a full provider
 void mock.module("@/browser/contexts/ProjectContext", () => ({
   useProjectContext: () => ({
-    projects: new Map(),
+    getProjectConfig: () => undefined,
     refreshProjects: () => Promise.resolve(),
   }),
 }));

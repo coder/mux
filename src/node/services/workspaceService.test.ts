@@ -1386,6 +1386,7 @@ describe("WorkspaceService remove timing rollup", () => {
         getSessionDir: mock((id: string) => path.join(sessionRoot, id)),
         removeWorkspace: mock(() => Promise.resolve()),
         findWorkspace: mock(() => null),
+        loadConfigOrDefault: mock(() => ({ projects: new Map() })),
       };
 
       const timingService: Partial<SessionTimingService> = {
@@ -2754,6 +2755,7 @@ describe("WorkspaceService init cancellation", () => {
         getSessionDir: mock((id: string) => path.join(tempRoot, id)),
         removeWorkspace: mock(() => Promise.resolve()),
         findWorkspace: mock(() => ({ projectPath, workspacePath: "/tmp/proj/ws" })),
+        loadConfigOrDefault: mock(() => ({ projects: new Map() })),
       };
       const workspaceService = new WorkspaceService(
         mockConfig as Config,
@@ -2766,7 +2768,8 @@ describe("WorkspaceService init cancellation", () => {
 
       const result = await workspaceService.remove(workspaceId, true);
       expect(result.success).toBe(true);
-      expect(deleteWorkspaceMock).toHaveBeenCalledWith(projectPath, "ws", true);
+      // trusted defaults to false (no project config), so deleteWorkspace gets (path, name, force, undefined, false)
+      expect(deleteWorkspaceMock).toHaveBeenCalledWith(projectPath, "ws", true, undefined, false);
     } finally {
       createRuntimeSpy.mockRestore();
       await fsPromises.rm(tempRoot, { recursive: true, force: true });
