@@ -1031,7 +1031,7 @@ export class StreamManager extends EventEmitter {
     headers?: Record<string, string | undefined>,
     anthropicCacheTtlOverride?: AnthropicCacheTtl
   ): StreamRequestConfig {
-    const finalProviderOptions = providerOptions;
+    let finalProviderOptions = providerOptions;
 
     // Apply cache control for Anthropic models
     let finalMessages = messages;
@@ -1064,15 +1064,42 @@ export class StreamManager extends EventEmitter {
     const effectiveMaxOutputTokens = maxOutputTokens ?? runtimeModelStats?.max_output_tokens;
 
     let toolChoice: StreamRequestConfig["toolChoice"] | undefined;
-    if (forceToolChoice && toolPolicy) {
-      // For top-level agents, force the first required literal tool to ensure
-      // it is called (for example, switch_agent in auto routing).
-      // Sub-agents rely on taskService.ts post-stream recovery instead.
+    if (forceToolChoice && toolPolicy && finalTools) {
+      // Only force toolChoice for routing tools that need immediate execution
+      // (e.g., switch_agent in auto mode). Investigation-then-complete tools
+      // (propose_plan, agent_report) must NOT be forced — those agents need to
+      // read files, run commands, etc. before calling the completion tool.
+      // Sub-agents rely on taskService.ts post-stream recovery instead of forcing.
       const requiredEntry = toolPolicy.find((filter) => filter.action === "require");
       if (requiredEntry) {
         const literalName = normalizeLiteralRequiredToolPattern(requiredEntry.regex_match);
-        if (literalName && finalTools && literalName in finalTools) {
+        if (literalName === "switch_agent" && literalName in finalTools) {
           toolChoice = { type: "tool", toolName: literalName };
+        }
+      }
+    }
+
+    // Anthropic Extended Thinking is incompatible with forced tool choice.
+    // If a tool is forced, disable thinking for this request to avoid API errors.
+    if (toolChoice) {
+      const [provider] = normalizeGatewayModel(modelString).split(":", 2);
+      if (
+        provider === "anthropic" &&
+        providerOptions &&
+        typeof providerOptions === "object" &&
+        "anthropic" in providerOptions
+      ) {
+        const anthropicOptions = (providerOptions as { anthropic?: unknown }).anthropic;
+        if (
+          anthropicOptions &&
+          typeof anthropicOptions === "object" &&
+          "thinking" in anthropicOptions
+        ) {
+          const { thinking: _thinking, ...rest } = anthropicOptions as Record<string, unknown>;
+          finalProviderOptions = {
+            ...providerOptions,
+            anthropic: rest,
+          };
         }
       }
     }
