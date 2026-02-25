@@ -2638,7 +2638,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                         <>
                           <br />
                           <br />
-                          <strong>When streaming, click Send to choose:</strong>
+                          <strong>When streaming, Send opens these modes:</strong>
                           {SEND_DISPATCH_MODES.map((entry) => (
                             <React.Fragment key={entry.mode}>
                               <br />
