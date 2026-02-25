@@ -3,9 +3,9 @@ import { extractRootCommand } from "./slashCommandHelpers";
 
 describe("extractRootCommand", () => {
   it("returns null for non-string input", () => {
-    expect(extractRootCommand(null as any)).toBeNull();
-    expect(extractRootCommand(undefined as any)).toBeNull();
-    expect(extractRootCommand(123 as any)).toBeNull();
+    expect(extractRootCommand(null as unknown as string)).toBeNull();
+    expect(extractRootCommand(undefined as unknown as string)).toBeNull();
+    expect(extractRootCommand(123 as unknown as string)).toBeNull();
   });
 
   it("returns null for non-command string", () => {
