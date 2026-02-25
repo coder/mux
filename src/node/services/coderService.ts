@@ -16,29 +16,14 @@ import {
   type CoderListPresetsResult,
   type CoderListTemplatesResult,
   type CoderListWorkspacesResult,
-  type CoderTemplate,
-  type CoderPreset,
-  type CoderWorkspace,
   type CoderWorkspaceStatus,
 } from "@/common/orpc/schemas/coder";
 import { getErrorMessage } from "@/common/utils/errors";
-
-// Re-export types for consumers that import from this module
 
 export interface CoderApiSession {
   token: string;
   dispose: () => Promise<void>;
 }
-export type {
-  CoderInfo,
-  CoderListPresetsResult,
-  CoderListTemplatesResult,
-  CoderListWorkspacesResult,
-  CoderTemplate,
-  CoderPreset,
-  CoderWorkspace,
-  CoderWorkspaceStatus,
-};
 
 interface CoderWhoamiData {
   url: string;
