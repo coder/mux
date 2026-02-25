@@ -884,6 +884,26 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           },
         }),
     },
+    analytics: {
+      getDelegationSummary: (_input: {
+        projectPath?: string | null;
+        from?: Date | null;
+        to?: Date | null;
+      }) =>
+        Promise.resolve({
+          totalChildren: 142,
+          totalTokensConsumed: 1_900_000,
+          totalReportTokens: 210_000,
+          compressionRatio: 9.05,
+          totalCostDelegated: 37.42,
+          exploreCount: 48,
+          exploreTokens: 640_000,
+          execCount: 71,
+          execTokens: 1_010_000,
+          planCount: 23,
+          planTokens: 250_000,
+        }),
+    },
     general: {
       listDirectory: () => Promise.resolve({ entries: [], hasMore: false }),
       ping: (input: string) => Promise.resolve(`Pong: ${input}`),

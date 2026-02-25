@@ -8,6 +8,7 @@
 import type { APIClient } from "@/browser/contexts/API";
 import type {
   AgentCostItem,
+  DelegationSummary,
   ProviderCacheHitRatioItem,
   SpendByModelItem,
   SpendByProjectItem,
@@ -58,6 +59,11 @@ interface StoryAnalyticsNamespace {
     from?: Date | null;
     to?: Date | null;
   }) => Promise<ProviderCacheHitRatioItem[]>;
+  getDelegationSummary: (input: {
+    projectPath?: string | null;
+    from?: Date | null;
+    to?: Date | null;
+  }) => Promise<DelegationSummary>;
   rebuildDatabase: (_input: Record<string, never>) => Promise<{
     success: boolean;
     workspacesIngested: number;
@@ -436,6 +442,95 @@ const PROVIDER_CACHE_HIT_SCALING: Record<
   [PROJECT_PATHS.docs]: { ratioScale: 0.82, responseScale: 0.2 },
 };
 
+const DELEGATION_SUMMARY_BY_PROJECT = new Map<AnalyticsProjectPath | null, DelegationSummary>([
+  [
+    null,
+    {
+      totalChildren: 286,
+      totalTokensConsumed: 2_710_000,
+      totalReportTokens: 296_000,
+      compressionRatio: 9.2,
+      totalCostDelegated: 58.34,
+      exploreCount: 108,
+      exploreTokens: 870_000,
+      execCount: 136,
+      execTokens: 1_430_000,
+      planCount: 42,
+      planTokens: 410_000,
+    },
+  ],
+  [
+    PROJECT_PATHS.atlas,
+    {
+      totalChildren: 144,
+      totalTokensConsumed: 1_410_000,
+      totalReportTokens: 150_000,
+      compressionRatio: 9.4,
+      totalCostDelegated: 31.12,
+      exploreCount: 56,
+      exploreTokens: 440_000,
+      execCount: 69,
+      execTokens: 760_000,
+      planCount: 19,
+      planTokens: 210_000,
+    },
+  ],
+  [
+    PROJECT_PATHS.orbit,
+    {
+      totalChildren: 96,
+      totalTokensConsumed: 935_000,
+      totalReportTokens: 107_000,
+      compressionRatio: 8.7,
+      totalCostDelegated: 19.57,
+      exploreCount: 33,
+      exploreTokens: 300_000,
+      execCount: 48,
+      execTokens: 490_000,
+      planCount: 15,
+      planTokens: 145_000,
+    },
+  ],
+  [
+    PROJECT_PATHS.docs,
+    {
+      totalChildren: 46,
+      totalTokensConsumed: 365_000,
+      totalReportTokens: 39_000,
+      compressionRatio: 9.4,
+      totalCostDelegated: 7.65,
+      exploreCount: 19,
+      exploreTokens: 130_000,
+      execCount: 19,
+      execTokens: 180_000,
+      planCount: 8,
+      planTokens: 55_000,
+    },
+  ],
+]);
+
+for (const [projectPath, summary] of DELEGATION_SUMMARY_BY_PROJECT.entries()) {
+  const childCountByAgentType = summary.exploreCount + summary.execCount + summary.planCount;
+  assert(
+    childCountByAgentType === summary.totalChildren,
+    `Delegation fixture child counts must sum to totalChildren for ${projectPath ?? "all"}`
+  );
+
+  const tokenCountByAgentType = summary.exploreTokens + summary.execTokens + summary.planTokens;
+  assert(
+    tokenCountByAgentType === summary.totalTokensConsumed,
+    `Delegation fixture token counts must sum to totalTokensConsumed for ${projectPath ?? "all"}`
+  );
+
+  const expectedCompressionRatio = Number(
+    (summary.totalTokensConsumed / Math.max(1, summary.totalReportTokens)).toFixed(1)
+  );
+  assert(
+    Math.abs(summary.compressionRatio - expectedCompressionRatio) <= 0.1,
+    `Delegation fixture compressionRatio must match derived ratio for ${projectPath ?? "all"}`
+  );
+}
+
 function normalizeProjectPath(projectPath: string | null | undefined): AnalyticsProjectPath | null {
   if (projectPath == null) {
     return null;
@@ -668,6 +763,17 @@ function setupAnalyticsStory(): APIClient {
     getCacheHitRatioByProvider: (input) => {
       const projectPath = normalizeProjectPath(input.projectPath ?? null);
       return Promise.resolve(getProviderCacheHitRatios(projectPath));
+    },
+    getDelegationSummary: (input) => {
+      const projectPath = normalizeProjectPath(input.projectPath ?? null);
+      const summary = DELEGATION_SUMMARY_BY_PROJECT.get(projectPath);
+
+      assert(
+        summary != null,
+        `Missing delegation summary fixture for scope ${projectPath ?? "all"}`
+      );
+
+      return Promise.resolve(summary);
     },
     rebuildDatabase: () =>
       Promise.resolve({
