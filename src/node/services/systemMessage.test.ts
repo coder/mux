@@ -409,6 +409,20 @@ OpenAI-only instructions.
     }
   });
 
+  test("includes markdown guidance for reliable math delimiters", async () => {
+    const metadata: WorkspaceMetadata = {
+      id: "test-workspace",
+      name: "test-workspace",
+      projectName: "test-project",
+      projectPath: projectDir,
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    };
+
+    const systemMessage = await buildSystemMessage(metadata, runtime, workspaceDir);
+
+    expect(systemMessage).toContain("prefer `$$...$$` delimiters");
+  });
+
   // NOTE: Available sub-agents are now injected into the task tool description
   // (see tools.ts ToolConfiguration.availableSubagents) rather than the system prompt.
   // This change follows Anthropic's best practices for tool description placement.
