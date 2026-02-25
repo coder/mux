@@ -144,7 +144,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
 
     expect(result.current.models).toContain("openai:gpt-5.2-pro");
     expect(result.current.models).toContain("openai:gpt-5.2-codex");
-    expect(result.current.models).not.toContain("openai:gpt-5.3-codex");
+    expect(result.current.models).toContain("openai:gpt-5.3-codex");
     expect(result.current.models).not.toContain("openai:gpt-5.3-codex-spark");
   });
 
@@ -170,7 +170,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
 
     expect(result.current.models).toContain("openai:gpt-5.2-pro");
     expect(result.current.models).toContain("openai:gpt-5.2-codex");
-    expect(result.current.models).not.toContain("openai:gpt-5.3-codex");
+    expect(result.current.models).toContain("openai:gpt-5.3-codex");
     expect(result.current.models).not.toContain("openai:gpt-5.3-codex-spark");
   });
 
@@ -270,15 +270,14 @@ describe("useModelsFromSettings provider availability gating", () => {
 
     const { result } = renderHook(() => useModelsFromSettings());
 
-    // OAuth-required models (e.g. gpt-5.3-codex, gpt-5.3-codex-spark) should NOT appear in either list
-    // because selecting them from "Show all models…" would also fail at send time.
-    expect(result.current.models).not.toContain("openai:gpt-5.3-codex");
+    // OAuth-required models (currently only gpt-5.3-codex-spark) should NOT appear
+    // in either list because selecting them from "Show all models…" would fail at send time.
     expect(result.current.models).not.toContain("openai:gpt-5.3-codex-spark");
-    expect(result.current.hiddenModelsForSelector).not.toContain("openai:gpt-5.3-codex");
     expect(result.current.hiddenModelsForSelector).not.toContain("openai:gpt-5.3-codex-spark");
 
     // Non-OAuth-required OpenAI models should still be in the hidden bucket
     expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.GPT.id);
+    expect(result.current.hiddenModelsForSelector).toContain("openai:gpt-5.3-codex");
   });
 
   test("hides models from disabled providers", () => {

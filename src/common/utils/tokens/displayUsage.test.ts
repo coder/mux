@@ -215,6 +215,55 @@ describe("createDisplayUsage", () => {
       expect(result!.reasoning.cost_usd).toBe(0);
     });
 
+    test("gpt-5.3-codex routed through ChatGPT subscription is always zero-cost", () => {
+      const usage: LanguageModelV2Usage = {
+        inputTokens: 1500, // includes cached input tokens
+        outputTokens: 450,
+        reasoningTokens: 150,
+        totalTokens: 1950,
+        cachedInputTokens: 500,
+      };
+
+      const result = createDisplayUsage(usage, "openai:gpt-5.3-codex", {
+        mux: { costsIncluded: true },
+      });
+
+      expect(result).toBeDefined();
+      // Token accounting still happens for display/analytics.
+      expect(result!.input.tokens).toBe(1000);
+      expect(result!.cached.tokens).toBe(500);
+      expect(result!.output.tokens).toBe(300);
+      expect(result!.reasoning.tokens).toBe(150);
+
+      expect(result!.input.cost_usd).toBe(0);
+      expect(result!.cached.cost_usd).toBe(0);
+      expect(result!.cacheCreate.cost_usd).toBe(0);
+      expect(result!.output.cost_usd).toBe(0);
+      expect(result!.reasoning.cost_usd).toBe(0);
+    });
+
+    test("gpt-5.3-codex routed through API key never gets force-reset to $0", () => {
+      const usage: LanguageModelV2Usage = {
+        inputTokens: 1500, // includes cached input tokens
+        outputTokens: 450,
+        reasoningTokens: 150,
+        totalTokens: 1950,
+        cachedInputTokens: 500,
+      };
+
+      const result = createDisplayUsage(usage, "openai:gpt-5.3-codex", {
+        mux: { costsIncluded: false },
+      });
+
+      expect(result).toBeDefined();
+      expect(result!.costsIncluded).toBeUndefined();
+
+      expect(result!.input.cost_usd).toBeGreaterThan(0);
+      expect(result!.cached.cost_usd).toBeGreaterThan(0);
+      expect(result!.output.cost_usd).toBeGreaterThan(0);
+      expect(result!.reasoning.cost_usd).toBeGreaterThan(0);
+    });
+
     test("returns $0 costs even when model pricing is unknown", () => {
       const usage: LanguageModelV2Usage = {
         inputTokens: 100,

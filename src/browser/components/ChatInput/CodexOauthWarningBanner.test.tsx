@@ -15,19 +15,19 @@ describe("CodexOauthWarningBanner", () => {
     globalThis.document = undefined as unknown as Document;
   });
 
-  test("renders when GPT-5.3 Codex is selected and OAuth is not connected", () => {
+  test("renders when an OAuth-required model is selected and OAuth is not connected", () => {
     const onOpenProviders = mock(() => undefined);
 
     const view = render(
       <CodexOauthWarningBanner
-        activeModel="openai:gpt-5.3-codex"
+        activeModel="openai:gpt-5.3-codex-spark"
         codexOauthSet={false}
         onOpenProviders={onOpenProviders}
       />
     );
 
     expect(view.getByTestId("codex-oauth-warning-banner")).toBeTruthy();
-    expect(view.getByText("GPT-5.3 Codex OAuth is not connected.")).toBeTruthy();
+    expect(view.getByText("This model requires Codex OAuth.")).toBeTruthy();
     expect(view.getByText("Providers")).toBeTruthy();
 
     fireEvent.click(view.getByText("Providers"));
@@ -37,7 +37,7 @@ describe("CodexOauthWarningBanner", () => {
   test("does not render when Codex OAuth is connected", () => {
     const view = render(
       <CodexOauthWarningBanner
-        activeModel="openai:gpt-5.3-codex"
+        activeModel="openai:gpt-5.3-codex-spark"
         codexOauthSet={true}
         onOpenProviders={() => undefined}
       />
@@ -49,7 +49,7 @@ describe("CodexOauthWarningBanner", () => {
   test("does not render when Codex OAuth status is still unknown", () => {
     const view = render(
       <CodexOauthWarningBanner
-        activeModel="openai:gpt-5.3-codex"
+        activeModel="openai:gpt-5.3-codex-spark"
         codexOauthSet={null}
         onOpenProviders={() => undefined}
       />
@@ -61,7 +61,19 @@ describe("CodexOauthWarningBanner", () => {
   test("does not render for non-required models", () => {
     const view = render(
       <CodexOauthWarningBanner
-        activeModel="openai:gpt-5.2"
+        activeModel="openai:gpt-5.3-codex"
+        codexOauthSet={false}
+        onOpenProviders={() => undefined}
+      />
+    );
+
+    expect(view.queryByTestId("codex-oauth-warning-banner")).toBeNull();
+  });
+
+  test("does not render for non-OpenAI providers even with matching model id", () => {
+    const view = render(
+      <CodexOauthWarningBanner
+        activeModel="openrouter:gpt-5.3-codex-spark"
         codexOauthSet={false}
         onOpenProviders={() => undefined}
       />

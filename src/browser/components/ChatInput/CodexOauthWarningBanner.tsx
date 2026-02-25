@@ -1,6 +1,6 @@
 import { AlertTriangle } from "lucide-react";
 import { Button } from "@/browser/components/ui/button";
-import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { isCodexOauthRequiredModelId } from "@/common/constants/codexOAuth";
 
 interface Props {
   activeModel: string;
@@ -8,13 +8,13 @@ interface Props {
   onOpenProviders: () => void;
 }
 
-// GPT-5.3 Codex is the only model that currently requires ChatGPT OAuth.
-// Show this early warning before send so users don't hit confusing access errors.
-const CODEX_OAUTH_WARNING_MODEL = KNOWN_MODELS.GPT_53_CODEX.id;
-
+// Keep warning criteria coupled to the shared OAuth-required model set so UI
+// copy stays accurate when model gating changes.
 export function CodexOauthWarningBanner(props: Props) {
   const shouldShowWarning =
-    props.activeModel === CODEX_OAUTH_WARNING_MODEL && props.codexOauthSet === false;
+    props.activeModel.startsWith("openai:") &&
+    isCodexOauthRequiredModelId(props.activeModel) &&
+    props.codexOauthSet === false;
 
   if (!shouldShowWarning) {
     return null;
@@ -28,7 +28,7 @@ export function CodexOauthWarningBanner(props: Props) {
       <div className="flex min-w-0 items-start gap-2">
         <AlertTriangle aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         <p className="leading-relaxed">
-          <span className="font-medium">GPT-5.3 Codex OAuth is not connected.</span> Open Settings →
+          <span className="font-medium">This model requires Codex OAuth.</span> Open Settings →
           Providers to connect OpenAI before sending.
         </p>
       </div>

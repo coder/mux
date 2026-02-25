@@ -106,10 +106,7 @@ export const CODEX_OAUTH_ALLOWED_MODELS = new Set<string>([
  * otherwise we fall back to their API key and let OpenAI decide whether the
  * model is accessible.
  */
-export const CODEX_OAUTH_REQUIRED_MODELS = new Set<string>([
-  "gpt-5.3-codex",
-  "gpt-5.3-codex-spark",
-]);
+export const CODEX_OAUTH_REQUIRED_MODELS = new Set<string>(["gpt-5.3-codex-spark"]);
 
 function normalizeCodexOauthModelId(modelId: string): string {
   // Accept either provider:model or bare model ids and normalize to providerModelId.

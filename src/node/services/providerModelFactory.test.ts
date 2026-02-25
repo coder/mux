@@ -3,7 +3,8 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Config } from "@/node/config";
-import { ProviderModelFactory } from "./providerModelFactory";
+import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { ProviderModelFactory, modelCostsIncluded } from "./providerModelFactory";
 import { ProviderService } from "./providerService";
 
 async function withTempConfig(
@@ -86,6 +87,49 @@ describe("ProviderModelFactory.createModel", () => {
   });
 });
 
+describe("ProviderModelFactory modelCostsIncluded", () => {
+  it("marks gpt-5.3-codex as subscription-covered when routed through Codex OAuth", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          codexOauth: {
+            type: "oauth",
+            access: "test-access-token",
+            refresh: "test-refresh-token",
+            expires: Date.now() + 60_000,
+            accountId: "test-account-id",
+          },
+        },
+      });
+
+      const result = await factory.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      expect(modelCostsIncluded(result.data)).toBe(true);
+    });
+  });
+
+  it("does not mark gpt-5.3-codex as subscription-covered when routed through API key", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+        },
+      });
+
+      const result = await factory.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      expect(modelCostsIncluded(result.data)).toBe(false);
+    });
+  });
+});
 describe("ProviderModelFactory.resolveGatewayModelString", () => {
   it("routes through gateway when provider is disabled but gateway is configured and model is allowlisted", async () => {
     await withTempConfig(async (config, factory) => {
