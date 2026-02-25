@@ -61,6 +61,8 @@ description: Agent instructions for AI assistants working on the Mux codebase
 - In Orchestrator mode, delegate implementation/verification commands to `exec` or `explore` sub-agents and integrate their patches; do not bypass delegation with direct local edits.
 - In Orchestrator mode, route higher-complexity implementation tasks to `plan` sub-agents so they can research and produce a precise plan before auto-handoff to implementation.
 
+- **PR creation gate:** Do **not** open/create a pull request unless the user explicitly asks (e.g., "open a PR", "create PR", "submit this"). By default, complete local validation, commit/push branch updates as requested, and let the user review before deciding whether to open a PR.
+
 > PR readiness is mandatory. You MUST keep iterating until the PR is fully ready.
 > A PR is fully ready only when: (1) Codex confirms approval (thumbs-up reaction on the PR description or an approval comment like "Didn't find any major issues"), (2) all Codex review threads are resolved, and (3) all required CI checks pass.
 > You MUST NOT report success or stop the loop before these conditions are met.

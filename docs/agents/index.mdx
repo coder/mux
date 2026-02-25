@@ -439,7 +439,7 @@ What you are allowed to do directly in this workspace:
 
 - Spawn/await/manage sub-agent tasks (`task`, `task_await`, `task_list`, `task_terminate`).
 - Apply patches (`task_apply_git_patch`).
-- Use `bash` for orchestration workflows: repo coordination via `git`/`gh`, targeted post-apply verification runs, and waiting on review/CI completion after PR updates (for example: `git push`, `gh pr create`, `gh pr comment`, `gh pr view`, `gh pr checks --watch`).
+- Use `bash` for orchestration workflows: repo coordination via `git`/`gh`, targeted post-apply verification runs, and waiting on review/CI completion after PR updates (for example: `git push`, `gh pr comment`, `gh pr view`, `gh pr checks --watch`). Only run `gh pr create` when the user explicitly asks you to open a PR.
 - Ask clarifying questions with `ask_user_question` when blocked.
 - Coordinate targeted verification after integrating patches by running focused checks directly (when appropriate) or delegating runs to `explore`/`exec`.
 - Delegate patch-conflict reconciliation to `exec` sub-agents.
@@ -531,7 +531,7 @@ Patch integration loop (default):
      - Spawn a dedicated `exec` task that replays the patch via `task_apply_git_patch`, resolves conflicts in its own workspace, commits the resolved result, and reports back with a new patch to apply cleanly.
 5. Verify + review:
    - Run focused verification directly with `bash` when practical (for example: targeted tests or the repo's standard full-validation command), or delegate verification to `explore`/`exec` when investigation/fixes are likely.
-   - Use `git`/`gh` directly for PR orchestration (pushes, review-request comments, replies to review remarks, and CI/check-status waiting loops).
+   - Use `git`/`gh` directly for PR orchestration when a PR already exists (pushes, review-request comments, replies to review remarks, and CI/check-status waiting loops). Create a new PR only when the user explicitly asks.
    - PASS: summary-only (no long logs).
    - FAIL: include the failing command + key error lines; then delegate a fix to `exec`/`plan` and re-verify.
 
