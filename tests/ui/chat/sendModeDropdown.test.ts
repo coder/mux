@@ -138,6 +138,22 @@ describe("Send dispatch modes (mock AI router)", () => {
       await app.chat.typeWithoutSending(pointerTurnMessage);
       await openSendModeMenu(app.view.container);
 
+      fireEvent.keyDown(document, { key: "Escape" });
+
+      await waitFor(
+        () => {
+          const rows = Array.from(app.view.container.querySelectorAll("button"));
+          const row = rows.find((button) => button.textContent?.includes("Send after turn"));
+          if (row) {
+            throw new Error("Send mode menu should close on Escape");
+          }
+        },
+        { timeout: 30_000 }
+      );
+
+      // Re-open after Escape: if Escape interrupted the stream, this menu cannot open.
+      await openSendModeMenu(app.view.container);
+
       const turnRow = await waitFor(
         () => {
           const rows = Array.from(app.view.container.querySelectorAll("button"));

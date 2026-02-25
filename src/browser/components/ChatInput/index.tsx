@@ -919,6 +919,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         return;
       }
 
+      // Mark Escape as handled so global interrupt listeners do not cancel the stream
+      // when users are only dismissing this inline send-mode menu.
+      event.preventDefault();
+      event.stopPropagation();
       setIsSendModeMenuOpen(false);
     };
 
