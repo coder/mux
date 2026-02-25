@@ -153,20 +153,21 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
 
     async setMode(mode: ChatMode): Promise<void> {
       const normalizedMode = sanitizeMode(mode);
+      const agentId = normalizedMode.toLowerCase(); // "plan" | "exec"
 
-      // AgentModePicker is now a dropdown. Click the trigger to open, then select the mode.
+      // AgentModePicker trigger has aria-label="Select agent"
       const agentPickerTrigger = page.getByRole("button", { name: "Select agent" }).first();
       await expect(agentPickerTrigger).toBeVisible();
 
-      // If the dropdown doesn't show the requested mode in the trigger, we need to open it
+      // If the trigger already shows the requested mode, nothing to do
       const currentMode = await agentPickerTrigger.textContent();
       if (!currentMode?.includes(normalizedMode)) {
         await agentPickerTrigger.click();
 
-        // Wait for dropdown to open and click the mode option
-        const dropdown = page.locator('[role="button"]').filter({ hasText: normalizedMode });
-        await expect(dropdown.first()).toBeVisible();
-        await dropdown.first().click();
+        // Each agent row in the dropdown has data-agent-id="plan"|"exec"|etc.
+        const agentRow = page.locator(`[data-agent-id="${agentId}"]`);
+        await expect(agentRow).toBeVisible();
+        await agentRow.click();
       }
 
       // Verify the trigger now shows the selected mode
