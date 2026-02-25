@@ -445,6 +445,26 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     initialAgentDefinitions ??
     ([
       {
+        id: "auto",
+        scope: "built-in",
+        name: "Auto",
+        description: "Intelligently switch agent types to provide the best results.",
+        uiSelectable: true,
+        subagentRunnable: false,
+        base: "exec",
+        uiColor: "var(--color-auto-mode)",
+      },
+      {
+        id: "ask",
+        scope: "built-in",
+        name: "Ask",
+        description: "Delegate questions to Explore sub-agents and synthesize an answer.",
+        uiSelectable: true,
+        subagentRunnable: false,
+        base: "exec",
+        uiColor: "var(--color-ask-mode)",
+      },
+      {
         id: "plan",
         scope: "built-in",
         name: "Plan",
@@ -461,6 +481,16 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         description: "Implement changes in the repository",
         uiSelectable: true,
         subagentRunnable: true,
+        uiColor: "var(--color-exec-mode)",
+      },
+      {
+        id: "orchestrator",
+        scope: "built-in",
+        name: "Orchestrator",
+        description: "Coordinate multiple sub-agents to solve complex tasks in parallel.",
+        uiSelectable: true,
+        subagentRunnable: false,
+        base: "exec",
         uiColor: "var(--color-exec-mode)",
       },
       {
