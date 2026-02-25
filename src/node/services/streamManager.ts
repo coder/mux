@@ -1015,7 +1015,6 @@ export class StreamManager extends EventEmitter {
   private buildStreamRequestConfig(
     model: LanguageModel,
     modelString: string,
-    _metadataModel: string,
     messages: ModelMessage[],
     system: string,
     tools?: Record<string, Tool>,
@@ -1170,7 +1169,6 @@ export class StreamManager extends EventEmitter {
     const request = this.buildStreamRequestConfig(
       model,
       modelString,
-      metadataModel,
       messages,
       system,
       tools,
