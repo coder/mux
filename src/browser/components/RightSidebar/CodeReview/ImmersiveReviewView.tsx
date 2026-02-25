@@ -969,7 +969,9 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       let targetSelectionEnd = selection?.endIndex ?? null;
 
       if (selection && (!targetRange || !isSelectionInsideRange(selection, targetRange))) {
-        const resolved = findHunkAtLine(selection.endIndex, overlayData, currentFileHunks);
+        const resolved =
+          findHunkAtLine(selection.endIndex, overlayData, currentFileHunks) ??
+          findHunkAtLine(selection.startIndex, overlayData, currentFileHunks);
         if (resolved) {
           targetHunk = resolved.hunk;
           targetRange = resolved.range;
@@ -1004,13 +1006,24 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
           ? targetRange.startIndex
           : Math.max(targetRange.startIndex, Math.min(targetRange.endIndex, targetSelectionEnd));
 
-      const effectiveSelection =
-        selection && isSelectionInsideRange(selection, targetRange)
-          ? selection
-          : {
-              startIndex: fallbackLineIndex,
-              endIndex: fallbackLineIndex,
-            };
+      const effectiveSelection = (() => {
+        if (selection && isSelectionInsideRange(selection, targetRange)) {
+          return selection;
+        }
+        // Clamp the user's selection to the intersection with the target hunk range
+        // instead of collapsing to a single point.
+        if (selection) {
+          const selStart = Math.min(selection.startIndex, selection.endIndex);
+          const selEnd = Math.max(selection.startIndex, selection.endIndex);
+          const clampedStart = Math.max(selStart, targetRange.startIndex);
+          const clampedEnd = Math.min(selEnd, targetRange.endIndex);
+          if (clampedStart <= clampedEnd) {
+            return { startIndex: clampedStart, endIndex: clampedEnd };
+          }
+        }
+        // No overlap or no selection — fall back to the single-line fallback
+        return { startIndex: fallbackLineIndex, endIndex: fallbackLineIndex };
+      })();
 
       // Anchor cursor to the last line of the marked selection so subsequent
       // Shift+C / navigation starts from the correct position.
