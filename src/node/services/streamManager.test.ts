@@ -2,6 +2,7 @@ import { describe, test, expect, afterEach, beforeEach } from "bun:test";
 import * as fs from "node:fs/promises";
 
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { StreamManager, stripEncryptedContent } from "./streamManager";
 import { APICallError, RetryError, type ModelMessage } from "ai";
 import type { HistoryService } from "./historyService";
@@ -74,29 +75,11 @@ describe("StreamManager - createTempDirForStream", () => {
 describe("StreamManager - stopWhen configuration", () => {
   type StopWhenCondition = (options: { steps: unknown[] }) => boolean;
   type BuildStopWhenCondition = (request: {
-    toolChoice?: { type: "tool"; toolName: string } | "required";
     hasQueuedMessage?: () => boolean;
-    stopAfterSuccessfulProposePlan?: boolean;
-  }) => StopWhenCondition | StopWhenCondition[];
+    toolPolicy?: ToolPolicy;
+  }) => StopWhenCondition[];
 
-  test("uses single-step stopWhen when a tool is required", () => {
-    const streamManager = new StreamManager(historyService);
-    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
-      | BuildStopWhenCondition
-      | undefined;
-    expect(typeof buildStopWhen).toBe("function");
-
-    const stopWhen = buildStopWhen!({ toolChoice: { type: "tool", toolName: "bash" } });
-    if (typeof stopWhen !== "function") {
-      throw new Error("Expected required-tool stopWhen to be a single condition function");
-    }
-
-    expect(stopWhen({ steps: [] })).toBe(false);
-    expect(stopWhen({ steps: [{}] })).toBe(true);
-    expect(stopWhen({ steps: [{}, {}] })).toBe(false);
-  });
-
-  test("uses autonomous step cap and queued-message interrupt conditions", () => {
+  test("returns step-cap and queued-message conditions with no policy", () => {
     const streamManager = new StreamManager(historyService);
     const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
       | BuildStopWhenCondition
@@ -105,13 +88,9 @@ describe("StreamManager - stopWhen configuration", () => {
 
     let queued = false;
     const stopWhen = buildStopWhen!({ hasQueuedMessage: () => queued });
-    if (!Array.isArray(stopWhen)) {
-      throw new Error("Expected autonomous stopWhen to be an array of conditions");
-    }
-    expect(stopWhen).toHaveLength(4);
+    expect(stopWhen).toHaveLength(3);
 
-    const [maxStepCondition, queuedMessageCondition, agentReportCondition, switchAgentCondition] =
-      stopWhen;
+    const [maxStepCondition, queuedMessageCondition, requiredToolCondition] = stopWhen;
     expect(maxStepCondition({ steps: new Array(99999) })).toBe(false);
     expect(maxStepCondition({ steps: new Array(100000) })).toBe(true);
 
@@ -120,117 +99,75 @@ describe("StreamManager - stopWhen configuration", () => {
     expect(queuedMessageCondition({ steps: [] })).toBe(true);
 
     expect(
-      agentReportCondition({
+      requiredToolCondition({
         steps: [{ toolResults: [{ toolName: "agent_report", output: { success: true } }] }],
       })
-    ).toBe(true);
-
-    expect(
-      switchAgentCondition({
-        steps: [{ toolResults: [{ toolName: "switch_agent", output: { ok: true } }] }],
-      })
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  test("stops only after successful agent_report tool result in autonomous mode", () => {
+  test("stops on successful required tool result matching policy", () => {
     const streamManager = new StreamManager(historyService);
     const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
       | BuildStopWhenCondition
       | undefined;
     expect(typeof buildStopWhen).toBe("function");
 
-    const stopWhen = buildStopWhen!({ hasQueuedMessage: () => false });
-    if (!Array.isArray(stopWhen)) {
-      throw new Error("Expected autonomous stopWhen to be an array of conditions");
-    }
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      toolPolicy: [{ regex_match: "agent_report", action: "require" }],
+    });
 
-    const [, , reportStop] = stopWhen;
-    if (!reportStop) {
-      throw new Error("Expected autonomous stopWhen to include agent_report condition");
-    }
+    const [, , requiredToolCondition] = stopWhen;
 
-    // Returns true when step contains successful agent_report tool result.
     expect(
-      reportStop({
+      requiredToolCondition({
         steps: [{ toolResults: [{ toolName: "agent_report", output: { success: true } }] }],
       })
     ).toBe(true);
 
-    // Returns false when step contains failed agent_report output.
     expect(
-      reportStop({
+      requiredToolCondition({
         steps: [{ toolResults: [{ toolName: "agent_report", output: { success: false } }] }],
       })
     ).toBe(false);
 
-    // Returns false when step only contains agent_report tool call (no successful result yet).
     expect(
-      reportStop({
-        steps: [{ toolCalls: [{ toolName: "agent_report" }] }],
-      })
-    ).toBe(false);
-
-    // Returns false when step contains other tool results.
-    expect(
-      reportStop({
+      requiredToolCondition({
         steps: [{ toolResults: [{ toolName: "bash", output: { success: true } }] }],
       })
     ).toBe(false);
 
-    // Returns false when no steps.
-    expect(reportStop({ steps: [] })).toBe(false);
+    expect(requiredToolCondition({ steps: [] })).toBe(false);
   });
 
-  test("stops only after successful switch_agent tool result in autonomous mode", () => {
+  test("stops on successful switch_agent when required by policy", () => {
     const streamManager = new StreamManager(historyService);
     const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
       | BuildStopWhenCondition
       | undefined;
     expect(typeof buildStopWhen).toBe("function");
 
-    const stopWhen = buildStopWhen!({ hasQueuedMessage: () => false });
-    if (!Array.isArray(stopWhen)) {
-      throw new Error("Expected autonomous stopWhen to be an array of conditions");
-    }
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      toolPolicy: [{ regex_match: "switch_agent", action: "require" }],
+    });
 
-    const [, , , switchStop] = stopWhen;
-    if (!switchStop) {
-      throw new Error("Expected autonomous stopWhen to include switch_agent condition");
-    }
+    const [, , requiredToolCondition] = stopWhen;
 
-    // Returns true when step contains successful switch_agent tool result.
     expect(
-      switchStop({
+      requiredToolCondition({
         steps: [{ toolResults: [{ toolName: "switch_agent", output: { ok: true } }] }],
       })
     ).toBe(true);
 
-    // Returns false when step contains failed switch_agent output.
     expect(
-      switchStop({
+      requiredToolCondition({
         steps: [{ toolResults: [{ toolName: "switch_agent", output: { ok: false } }] }],
       })
     ).toBe(false);
-
-    // Returns false when step only contains switch_agent tool call (no successful result yet).
-    expect(
-      switchStop({
-        steps: [{ toolCalls: [{ toolName: "switch_agent" }] }],
-      })
-    ).toBe(false);
-
-    // Returns false when step contains other tool results.
-    expect(
-      switchStop({
-        steps: [{ toolResults: [{ toolName: "bash", output: { ok: true } }] }],
-      })
-    ).toBe(false);
-
-    // Returns false when no steps.
-    expect(switchStop({ steps: [] })).toBe(false);
   });
 
-  test("stops when propose_plan succeeds and flag is enabled", () => {
+  test("stops on successful propose_plan when required by policy", () => {
     const streamManager = new StreamManager(historyService);
     const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
       | BuildStopWhenCondition
@@ -239,34 +176,19 @@ describe("StreamManager - stopWhen configuration", () => {
 
     const stopWhen = buildStopWhen!({
       hasQueuedMessage: () => false,
-      stopAfterSuccessfulProposePlan: true,
+      toolPolicy: [{ regex_match: "propose_plan", action: "require" }],
     });
-    if (!Array.isArray(stopWhen)) {
-      throw new Error("Expected autonomous stopWhen to be an array of conditions");
-    }
-    expect(stopWhen).toHaveLength(5);
 
-    const proposePlanSuccessSteps = [
-      {
-        toolResults: [
-          {
-            toolName: "propose_plan",
-            output: { success: true, planPath: "/tmp/plan.md" },
-          },
-        ],
-      },
-    ];
+    const [, , requiredToolCondition] = stopWhen;
 
-    const proposePlanCondition = stopWhen[4];
-    if (!proposePlanCondition) {
-      throw new Error("Expected stopWhen to include propose_plan condition");
-    }
-
-    expect(proposePlanCondition({ steps: proposePlanSuccessSteps })).toBe(true);
-    expect(stopWhen.some((condition) => condition({ steps: proposePlanSuccessSteps }))).toBe(true);
+    expect(
+      requiredToolCondition({
+        steps: [{ toolResults: [{ toolName: "propose_plan", output: { success: true } }] }],
+      })
+    ).toBe(true);
   });
 
-  test("does not stop when propose_plan fails", () => {
+  test("does not stop on tool results when no tools are required", () => {
     const streamManager = new StreamManager(historyService);
     const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
       | BuildStopWhenCondition
@@ -275,80 +197,16 @@ describe("StreamManager - stopWhen configuration", () => {
 
     const stopWhen = buildStopWhen!({
       hasQueuedMessage: () => false,
-      stopAfterSuccessfulProposePlan: true,
+      toolPolicy: [{ regex_match: "bash", action: "enable" }],
     });
-    if (!Array.isArray(stopWhen)) {
-      throw new Error("Expected autonomous stopWhen to be an array of conditions");
-    }
 
-    const proposePlanFailedSteps = [
-      {
-        toolResults: [
-          {
-            toolName: "propose_plan",
-            output: { success: false },
-          },
-        ],
-      },
-    ];
+    const [, , requiredToolCondition] = stopWhen;
 
-    const proposePlanCondition = stopWhen[4];
-    if (!proposePlanCondition) {
-      throw new Error("Expected stopWhen to include propose_plan condition");
-    }
-
-    expect(proposePlanCondition({ steps: proposePlanFailedSteps })).toBe(false);
-    expect(stopWhen.some((condition) => condition({ steps: proposePlanFailedSteps }))).toBe(false);
-  });
-
-  test("does not stop for propose_plan when flag is false/absent", () => {
-    const streamManager = new StreamManager(historyService);
-    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
-      | BuildStopWhenCondition
-      | undefined;
-    expect(typeof buildStopWhen).toBe("function");
-
-    const proposePlanSuccessSteps = [
-      {
-        toolResults: [
-          {
-            toolName: "propose_plan",
-            output: { success: true, planPath: "/tmp/plan.md" },
-          },
-        ],
-      },
-    ];
-
-    const stopWhenWithoutProposePlanFlag = [
-      buildStopWhen!({ hasQueuedMessage: () => false, stopAfterSuccessfulProposePlan: false }),
-      buildStopWhen!({ hasQueuedMessage: () => false }),
-    ];
-
-    for (const stopWhen of stopWhenWithoutProposePlanFlag) {
-      if (!Array.isArray(stopWhen)) {
-        throw new Error("Expected autonomous stopWhen to be an array of conditions");
-      }
-      expect(stopWhen).toHaveLength(4);
-      expect(stopWhen.some((condition) => condition({ steps: proposePlanSuccessSteps }))).toBe(
-        false
-      );
-    }
-  });
-
-  test("treats missing queued-message callback as not queued", () => {
-    const streamManager = new StreamManager(historyService);
-    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
-      | BuildStopWhenCondition
-      | undefined;
-    expect(typeof buildStopWhen).toBe("function");
-
-    const stopWhen = buildStopWhen!({});
-    if (!Array.isArray(stopWhen)) {
-      throw new Error("Expected autonomous stopWhen to remain array-based without callback");
-    }
-
-    const [, queuedMessageCondition] = stopWhen;
-    expect(queuedMessageCondition({ steps: [] })).toBe(false);
+    expect(
+      requiredToolCondition({
+        steps: [{ toolResults: [{ toolName: "bash", output: { success: true } }] }],
+      })
+    ).toBe(false);
   });
 });
 

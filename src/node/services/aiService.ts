@@ -1000,9 +1000,6 @@ export class AIService extends EventEmitter {
       // This is the single injection site for provider-specific headers, handling
       // both direct and gateway-routed models identically.
       const requestHeaders = buildRequestHeaders(modelString, effectiveMuxProviderOptions);
-      const stopAfterSuccessfulProposePlan = Boolean(
-        metadata.parentWorkspaceId && effectiveMode === "plan"
-      );
 
       // Debug dump: Log the complete LLM request when MUX_DEBUG_LLM_REQUEST is set
       if (process.env.MUX_DEBUG_LLM_REQUEST === "1") {
@@ -1109,8 +1106,7 @@ export class AIService extends EventEmitter {
         metadata.name,
         effectiveThinkingLevel,
         requestHeaders,
-        effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
-        stopAfterSuccessfulProposePlan
+        effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined
       );
 
       if (!streamResult.success) {

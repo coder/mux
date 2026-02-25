@@ -59,7 +59,7 @@ import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { getErrorMessage } from "@/common/utils/errors";
 import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
 
-// Disable AI SDK warning logging (e.g., "setting `toolChoice` to `none` is not supported")
+// Disable noisy AI SDK warning logging.
 globalThis.AI_SDK_LOG_WARNINGS = false;
 
 // Type definitions for stream parts with extended properties
@@ -90,8 +90,6 @@ type StreamToken = string & { __brand: "StreamToken" };
 
 // Stream request config for start/retry
 
-type StreamToolChoice = { type: "tool"; toolName: string } | "required" | undefined;
-
 interface StepMessageTracker {
   latestMessages?: ModelMessage[];
 }
@@ -100,13 +98,12 @@ interface StreamRequestConfig {
   messages: ModelMessage[];
   system?: string;
   tools?: Record<string, Tool>;
-  toolChoice?: StreamToolChoice;
   providerOptions?: Record<string, unknown>;
   /** Per-request HTTP headers (e.g., anthropic-beta for 1M context). */
   headers?: Record<string, string | undefined>;
   maxOutputTokens?: number;
   hasQueuedMessage?: () => boolean;
-  stopAfterSuccessfulProposePlan?: boolean;
+  toolPolicy?: ToolPolicy;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1027,47 +1024,9 @@ export class StreamManager extends EventEmitter {
     toolPolicy?: ToolPolicy,
     hasQueuedMessage?: () => boolean,
     headers?: Record<string, string | undefined>,
-    anthropicCacheTtlOverride?: AnthropicCacheTtl,
-    stopAfterSuccessfulProposePlan?: boolean
+    anthropicCacheTtlOverride?: AnthropicCacheTtl
   ): StreamRequestConfig {
-    // Determine toolChoice based on toolPolicy.
-    //
-    // If a tool is required (tools object has exactly one tool after applyToolPolicy),
-    // force the model to use it using the AI SDK tool choice shape.
-    let toolChoice: StreamToolChoice;
-    if (tools && toolPolicy) {
-      const hasRequireAction = toolPolicy.some((filter) => filter.action === "require");
-      if (hasRequireAction && Object.keys(tools).length === 1) {
-        const requiredToolName = Object.keys(tools)[0];
-        toolChoice = { type: "tool", toolName: requiredToolName };
-        log.debug("Setting toolChoice to tool", { toolName: requiredToolName });
-      }
-    }
-
-    // Anthropic Extended Thinking is incompatible with forced tool choice.
-    // If a tool is forced, disable thinking for this request to avoid API errors.
-    let finalProviderOptions = providerOptions;
-    const [provider] = normalizeGatewayModel(modelString).split(":", 2);
-    if (
-      toolChoice &&
-      provider === "anthropic" &&
-      providerOptions &&
-      typeof providerOptions === "object" &&
-      "anthropic" in providerOptions
-    ) {
-      const anthropicOptions = (providerOptions as { anthropic?: unknown }).anthropic;
-      if (
-        anthropicOptions &&
-        typeof anthropicOptions === "object" &&
-        "thinking" in anthropicOptions
-      ) {
-        const { thinking: _thinking, ...rest } = anthropicOptions as Record<string, unknown>;
-        finalProviderOptions = {
-          ...providerOptions,
-          anthropic: rest,
-        };
-      }
-    }
+    const finalProviderOptions = providerOptions;
 
     // Apply cache control for Anthropic models
     let finalMessages = messages;
@@ -1104,93 +1063,48 @@ export class StreamManager extends EventEmitter {
       messages: finalMessages,
       system: finalSystem,
       tools: finalTools,
-      toolChoice,
       providerOptions: finalProviderOptions,
       headers,
       maxOutputTokens: effectiveMaxOutputTokens,
       hasQueuedMessage,
-      stopAfterSuccessfulProposePlan,
+      toolPolicy,
     };
   }
 
   private createStopWhenCondition(
-    request: Pick<
-      StreamRequestConfig,
-      "toolChoice" | "hasQueuedMessage" | "stopAfterSuccessfulProposePlan"
-    >
-  ): ReturnType<typeof stepCountIs> | Array<ReturnType<typeof stepCountIs>> {
-    if (request.toolChoice) {
-      // Required tool calls must stop after a single step to avoid recursive loops.
-      return stepCountIs(1);
-    }
-
-    // For autonomous loops: cap steps, check for queued messages, and stop after
-    // successful agent control tools so streams end naturally (preserving usage accounting)
-    // without executing unrelated tools after handoff/report completion.
-    const isSuccessfulAgentReportOutput = (value: unknown): boolean => {
-      return (
-        typeof value === "object" &&
-        value !== null &&
-        "success" in value &&
-        (value as { success?: unknown }).success === true
-      );
+    request: Pick<StreamRequestConfig, "hasQueuedMessage" | "toolPolicy">
+  ): Array<ReturnType<typeof stepCountIs>> {
+    const isSuccessfulOutput = (output: unknown): boolean => {
+      if (typeof output !== "object" || output === null) {
+        return false;
+      }
+      const parsedOutput = output as Record<string, unknown>;
+      return parsedOutput.success === true || parsedOutput.ok === true;
     };
 
-    const isOkSwitchAgentOutput = (value: unknown): boolean => {
-      return (
-        typeof value === "object" &&
-        value !== null &&
-        "ok" in value &&
-        (value as { ok?: unknown }).ok === true
-      );
-    };
+    const requiredPatterns = (request.toolPolicy ?? [])
+      .filter((filter) => filter.action === "require")
+      .map((filter) => new RegExp(`^${filter.regex_match}$`));
 
-    const hasSuccessfulAgentReportResult: ReturnType<typeof stepCountIs> = ({ steps }) => {
+    const hasSuccessfulRequiredToolResult: ReturnType<typeof stepCountIs> = ({ steps }) => {
+      if (requiredPatterns.length === 0) {
+        return false;
+      }
       const lastStep = steps[steps.length - 1];
       return (
         lastStep?.toolResults?.some(
           (toolResult) =>
-            toolResult.toolName === "agent_report" &&
-            isSuccessfulAgentReportOutput(toolResult.output)
+            requiredPatterns.some((pattern) => pattern.test(toolResult.toolName)) &&
+            isSuccessfulOutput(toolResult.output)
         ) ?? false
       );
     };
 
-    const hasSuccessfulSwitchAgentResult: ReturnType<typeof stepCountIs> = ({ steps }) => {
-      const lastStep = steps[steps.length - 1];
-      return (
-        lastStep?.toolResults?.some(
-          (toolResult) =>
-            toolResult.toolName === "switch_agent" && isOkSwitchAgentOutput(toolResult.output)
-        ) ?? false
-      );
-    };
-
-    const hasSuccessfulProposePlanResult: ReturnType<typeof stepCountIs> = ({ steps }) => {
-      const lastStep = steps[steps.length - 1];
-      return (
-        lastStep?.toolResults?.some(
-          (toolResult) =>
-            toolResult.toolName === "propose_plan" &&
-            typeof toolResult.output === "object" &&
-            toolResult.output !== null &&
-            (toolResult.output as { success?: unknown }).success === true
-        ) ?? false
-      );
-    };
-
-    const stopConditions: Array<ReturnType<typeof stepCountIs>> = [
+    return [
       stepCountIs(100000),
       () => request.hasQueuedMessage?.() ?? false,
-      hasSuccessfulAgentReportResult,
-      hasSuccessfulSwitchAgentResult,
+      hasSuccessfulRequiredToolResult,
     ];
-
-    if (request.stopAfterSuccessfulProposePlan) {
-      stopConditions.push(hasSuccessfulProposePlanResult);
-    }
-
-    return stopConditions;
   }
 
   private createStreamResult(
@@ -1215,10 +1129,6 @@ export class StreamManager extends EventEmitter {
         return { messages: rewritten };
       },
       tools: request.tools,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
-      toolChoice: request.toolChoice as any, // Force tool use when required by policy
-      // Explicit stopWhen configuration keeps continuation policy visible for both
-      // required-tool and autonomous tool-loop flows.
       stopWhen: this.createStopWhenCondition(request),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
       providerOptions: request.providerOptions as any, // Pass provider-specific options (thinking/reasoning config)
@@ -1251,8 +1161,7 @@ export class StreamManager extends EventEmitter {
     workspaceName?: string,
     thinkingLevel?: string,
     headers?: Record<string, string | undefined>,
-    anthropicCacheTtlOverride?: AnthropicCacheTtl,
-    stopAfterSuccessfulProposePlan?: boolean
+    anthropicCacheTtlOverride?: AnthropicCacheTtl
   ): WorkspaceStreamInfo {
     // abortController is created and linked to the caller-provided abortSignal in startStream().
 
@@ -1270,8 +1179,7 @@ export class StreamManager extends EventEmitter {
       toolPolicy,
       hasQueuedMessage,
       headers,
-      anthropicCacheTtlOverride,
-      stopAfterSuccessfulProposePlan
+      anthropicCacheTtlOverride
     );
 
     // Start streaming - this can throw immediately if API key is missing
@@ -2659,8 +2567,7 @@ export class StreamManager extends EventEmitter {
     workspaceName?: string,
     thinkingLevel?: string,
     headers?: Record<string, string | undefined>,
-    anthropicCacheTtlOverride?: AnthropicCacheTtl,
-    stopAfterSuccessfulProposePlan?: boolean
+    anthropicCacheTtlOverride?: AnthropicCacheTtl
   ): Promise<Result<StreamToken, SendMessageError>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
@@ -2737,8 +2644,7 @@ export class StreamManager extends EventEmitter {
           workspaceName,
           thinkingLevel,
           headers,
-          anthropicCacheTtlOverride,
-          stopAfterSuccessfulProposePlan
+          anthropicCacheTtlOverride
         );
 
         // Guard against a narrow race:
