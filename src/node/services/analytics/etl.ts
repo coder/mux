@@ -1020,6 +1020,7 @@ async function ingestDelegationRollups(
   try {
     usageData = JSON.parse(usageRaw);
   } catch {
+    await conn.run("DELETE FROM delegation_rollups WHERE parent_workspace_id = ?", [workspaceId]);
     return;
   }
   if (!isRecord(usageData)) {
