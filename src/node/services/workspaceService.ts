@@ -28,6 +28,7 @@ import {
 } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
+import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
 import { listLocalBranches } from "@/node/git";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
@@ -1622,7 +1623,9 @@ export class WorkspaceService extends EventEmitter {
     // Trust gate: block workspace creation for untrusted projects.
     // The frontend shows a confirmation dialog before reaching here,
     // but this guards secondary paths (slash commands, forking).
-    const projectConfig = this.config.loadConfigOrDefault().projects.get(projectPath);
+    const projectConfig = this.config
+      .loadConfigOrDefault()
+      .projects.get(stripTrailingSlashes(projectPath));
     if (!projectConfig?.trusted) {
       return Err(
         "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."
@@ -2981,7 +2984,9 @@ export class WorkspaceService extends EventEmitter {
       // Trust gate: block fork for untrusted projects.
       // Same defense-in-depth as create() — the frontend shows a dialog,
       // but forking is a secondary creation path that needs backend gating.
-      const projectConfig = this.config.loadConfigOrDefault().projects.get(foundProjectPath);
+      const projectConfig = this.config
+        .loadConfigOrDefault()
+        .projects.get(stripTrailingSlashes(foundProjectPath));
       if (!projectConfig?.trusted) {
         return Err(
           "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."

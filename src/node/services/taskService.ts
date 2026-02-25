@@ -28,6 +28,7 @@ import {
   findWorkspaceEntry,
 } from "@/node/services/taskUtils";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
+import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { Ok, Err, type Result } from "@/common/types/result";
 import {
   DEFAULT_TASK_SETTINGS,
@@ -759,7 +760,7 @@ export class TaskService {
     // Trust gate: block task creation for untrusted projects.
     // The frontend shows a confirmation dialog for primary workspace creation,
     // but task spawning bypasses the UI — enforce trust here as defense-in-depth.
-    const taskProjectConfig = cfg.projects.get(parentMeta.projectPath);
+    const taskProjectConfig = cfg.projects.get(stripTrailingSlashes(parentMeta.projectPath));
     if (!taskProjectConfig?.trusted) {
       return Err(
         "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."
@@ -2119,7 +2120,9 @@ export class TaskService {
 
       // Trust gate: skip dequeued tasks if the project lost trust since queuing.
       const dequeueCfg = this.config.loadConfigOrDefault();
-      const dequeueProjectConfig = dequeueCfg.projects.get(taskEntry.projectPath);
+      const dequeueProjectConfig = dequeueCfg.projects.get(
+        stripTrailingSlashes(taskEntry.projectPath)
+      );
       if (!dequeueProjectConfig?.trusted) {
         log.warn("Skipping queued task for untrusted project", {
           taskId,
