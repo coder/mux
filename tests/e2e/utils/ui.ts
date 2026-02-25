@@ -164,6 +164,19 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       if (!currentMode?.includes(normalizedMode)) {
         await agentPickerTrigger.click();
 
+        // When auto-select is active, the agent list has pointer-events-none.
+        // Disable auto first by clicking the switch, which closes the picker,
+        // then reopen and select the desired agent.
+        const autoSwitch = page.locator('[aria-label="Auto-select agent"]');
+        if (await autoSwitch.isVisible()) {
+          const isChecked = await autoSwitch.getAttribute("aria-checked");
+          if (isChecked === "true") {
+            await autoSwitch.click();
+            // Picker closes after toggle — reopen it
+            await agentPickerTrigger.click();
+          }
+        }
+
         // Each agent row in the dropdown has data-agent-id="plan"|"exec"|etc.
         const agentRow = page.locator(`[data-agent-id="${agentId}"]`);
         await expect(agentRow).toBeVisible();
