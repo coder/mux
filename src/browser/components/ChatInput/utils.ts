@@ -7,10 +7,6 @@ import { buildAgentSkillMetadata, type MuxMessageMetadata } from "@/common/types
 import type { FilePart } from "@/common/orpc/types";
 import type { ChatAttachment } from "../ChatAttachments";
 
-// -----------------------------------------------------------------------------
-// Skill Invocation Helpers
-// -----------------------------------------------------------------------------
-
 export type CreationRuntimeValidationError =
   | { mode: "docker"; kind: "missingImage" }
   | { mode: "ssh"; kind: "missingHost" }
@@ -129,10 +125,6 @@ export async function parseCommandWithSkillInvocation(options: {
   return { parsed: skillInvocation ? null : parsed, skillInvocation };
 }
 
-// -----------------------------------------------------------------------------
-// Runtime Validation
-// -----------------------------------------------------------------------------
-
 export function validateCreationRuntime(
   runtime: ParsedRuntime,
   coderPresetCount: number
@@ -167,10 +159,6 @@ export function validateCreationRuntime(
 
   return null;
 }
-
-// -----------------------------------------------------------------------------
-// Attachment Conversion Helpers
-// -----------------------------------------------------------------------------
 
 export function filePartsToChatAttachments(
   fileParts: FilePart[],

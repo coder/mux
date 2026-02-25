@@ -356,16 +356,24 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Attached reviews come from parent via props (persisted in pendingReviews state).
   // draftReviews takes precedence when restoring or editing message drafts.
   const attachedReviews = variant === "workspace" ? (props.attachedReviews ?? []) : [];
+  const draftReviewIdsByValueRef = useRef(new WeakMap<ReviewNoteDataForDisplay, string>());
+  const nextDraftReviewIdRef = useRef(0);
+  const getDraftReviewId = (review: ReviewNoteDataForDisplay): string => {
+    const existingId = draftReviewIdsByValueRef.current.get(review);
+    if (existingId) return existingId;
+    const newId = `draft-review-${nextDraftReviewIdRef.current++}`;
+    draftReviewIdsByValueRef.current.set(review, newId);
+    return newId;
+  };
+
   const withDraftReview = (
     reviewId: string,
     update: (reviews: ReviewNoteDataForDisplay[], reviewIndex: number) => ReviewNoteDataForDisplay[]
   ) =>
     setDraftReviews((prev) => {
       if (prev === null) return prev;
-      const reviewIndex = Number.parseInt(reviewId.slice("draft-review-".length), 10);
-      return Number.isInteger(reviewIndex) && reviewIndex >= 0 && reviewIndex < prev.length
-        ? update(prev, reviewIndex)
-        : prev;
+      const reviewIndex = prev.findIndex((review) => getDraftReviewId(review) === reviewId);
+      return reviewIndex === -1 ? prev : update(prev, reviewIndex);
     });
 
   const removeDraftReview = (reviewId: string) =>
@@ -378,7 +386,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const review = prev[reviewIndex];
       if (!review || review.userNote === newNote) return prev;
       const next = [...prev];
-      next[reviewIndex] = { ...review, userNote: newNote };
+      const updatedReview = { ...review, userNote: newNote };
+      draftReviewIdsByValueRef.current.set(updatedReview, reviewId);
+      next[reviewIndex] = updatedReview;
       return next;
     });
 
@@ -897,8 +907,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       : undefined;
   const reviewIdsForCheck = reviewOverrideActive ? [] : attachedReviews.map((review) => review.id);
   const reviewPanelItems: Review[] = reviewOverrideActive
-    ? draftReviewItems.map((data, index) => ({
-        id: `draft-review-${index}`,
+    ? draftReviewItems.map((data) => ({
+        id: getDraftReviewId(data),
         data,
         status: "attached",
         createdAt: 0,
