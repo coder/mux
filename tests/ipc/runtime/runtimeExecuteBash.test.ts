@@ -20,7 +20,6 @@ import {
   generateBranchName,
   createWorkspaceWithInit,
   sendMessageAndWait,
-  extractTextFromEvents,
   HAIKU_MODEL,
   STREAM_TIMEOUT_LOCAL_MS,
   STREAM_TIMEOUT_SSH_MS,
@@ -192,17 +191,12 @@ describeIntegration("Runtime Bash Execution", () => {
                 streamTimeoutMs
               );
 
-              // Extract response text
-              const responseText = extractTextFromEvents(events);
-
               // Verify the command output appears in the bash tool result.
               const bashOutput = collectToolOutputs(events, "bash");
               expect(bashOutput.toLowerCase()).toContain("hello world");
 
-              // responseText might be empty if the model doesn't comment on the output.
-              if (responseText) {
-                expect(responseText.toLowerCase()).toContain("hello world");
-              }
+              // Do not assert on free-form assistant narration here. Some runs only emit
+              // a preamble sentence while still executing the tool correctly.
 
               // Verify bash was called
               const toolCallStarts = events.filter(
@@ -338,19 +332,13 @@ describeIntegration("Runtime Bash Execution", () => {
               // Calculate actual tool execution duration
               const toolDuration = getToolDuration(events, "bash");
 
-              // Extract response text
-              const responseText = extractTextFromEvents(events);
-
               // Verify command completed successfully (not timeout)
               // We primarily check bashOutput to ensure the tool executed and didn't hang
               const bashOutput = collectToolOutputs(events, "bash");
               expect(bashOutput).toContain("testdata");
 
-              // responseText might be empty if the model decides not to comment on the output
-              // so we make this check optional or less strict if the tool output is correct
-              if (responseText) {
-                expect(responseText).toContain("test");
-              }
+              // Do not assert on free-form assistant narration here. Some runs only emit
+              // a preamble sentence while still executing the tool correctly.
 
               // Verify command completed quickly (not hanging until timeout)
               expect(toolDuration).toBeGreaterThan(0);
