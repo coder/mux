@@ -87,6 +87,8 @@ Set `advertise: false` in the frontmatter to exclude a skill from that index. Un
 - **Still appear** in Mux’s UI lists (for example `/` slash suggestions)
 - **Are useful for**: skills meant only for sub-agents, advanced users, or internal orchestration
 
+- **In Chat with Mux tooling**, `advertise` is authored directly in frontmatter content; there is no separate tool argument
+
 ### Example: `deep-review` skill
 
 The Mux repository includes an unadvertised `deep-review` skill that encourages aggressive use of sub-agents to produce excellent code reviews (correctness, tests, consistency, UX, performance). Invoke it with `/deep-review` when you want a thorough, parallelized review. This skill is defined in `.mux/skills/deep-review/SKILL.md`.

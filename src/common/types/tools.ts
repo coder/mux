@@ -4,6 +4,7 @@
  */
 
 import type { z } from "zod";
+import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type {
   AgentReportToolResultSchema,
   AgentSkillReadFileToolResultSchema,
@@ -47,6 +48,21 @@ export type AgentSkillReadFileToolArgs = z.infer<
   typeof TOOL_DEFINITIONS.agent_skill_read_file.schema
 >;
 export type AgentSkillReadFileToolResult = z.infer<typeof AgentSkillReadFileToolResultSchema>;
+
+// agent_skill_list result
+export type AgentSkillListToolResult =
+  | { success: true; skills: AgentSkillDescriptor[] }
+  | { success: false; error: string };
+
+// agent_skill_write result
+export type AgentSkillWriteToolResult =
+  | { success: true; diff: string; ui_only?: { file_edit?: { diff: string } } }
+  | { success: false; error: string };
+
+// agent_skill_delete result
+export type AgentSkillDeleteToolResult =
+  | { success: true; deleted: "file" | "skill" }
+  | { success: false; error: string };
 
 export interface AskUserQuestionUiOnlyPayload {
   questions: AskUserQuestionQuestion[];

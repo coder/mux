@@ -1,4 +1,4 @@
-import { TaskToolArgsSchema, TOOL_DEFINITIONS } from "./toolDefinitions";
+import { getAvailableTools, TaskToolArgsSchema, TOOL_DEFINITIONS } from "./toolDefinitions";
 
 describe("TOOL_DEFINITIONS", () => {
   it("accepts custom subagent_type IDs (deprecated alias)", () => {
@@ -194,8 +194,33 @@ describe("TOOL_DEFINITIONS", () => {
     expect(parsed.success).toBe(false);
   });
 
+  it("excludes global skill management tools unless explicitly enabled", () => {
+    const tools = getAvailableTools("openai:gpt-4o");
+
+    expect(tools).not.toContain("agent_skill_list");
+    expect(tools).not.toContain("agent_skill_write");
+    expect(tools).not.toContain("agent_skill_delete");
+  });
+
+  it("includes global skill management tools when explicitly enabled", () => {
+    const tools = getAvailableTools("openai:gpt-4o", { enableMuxGlobalAgentsTools: true });
+
+    expect(tools).toEqual(
+      expect.arrayContaining(["agent_skill_list", "agent_skill_write", "agent_skill_delete"])
+    );
+  });
+
   it("discourages repeating plan contents or plan file location after propose_plan", () => {
     expect(TOOL_DEFINITIONS.propose_plan.description).toContain("do not paste the plan contents");
     expect(TOOL_DEFINITIONS.propose_plan.description).toContain("plan file path");
+  });
+
+  it("agent_skill_write schema rejects an advertise tool argument (advertise is authored in content)", () => {
+    const parsed = TOOL_DEFINITIONS.agent_skill_write.schema.safeParse({
+      name: "demo-skill",
+      content: "---\nname: demo-skill\ndescription: demo\n---\n",
+      advertise: false,
+    });
+    expect(parsed.success).toBe(false);
   });
 });

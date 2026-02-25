@@ -62,6 +62,44 @@ describe("mux_global_agents_* tools", () => {
     }
   });
 
+  it("rejects reads outside Chat with Mux workspace", async () => {
+    using muxHome = new TestTempDir("mux-global-agents");
+
+    const config = createTestToolConfig(muxHome.path, {
+      workspaceId: "regular-workspace",
+    });
+
+    const tool = createMuxGlobalAgentsReadTool(config);
+    const result = (await tool.execute!({}, mockToolCallOptions)) as {
+      success: boolean;
+      error?: string;
+    };
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toMatch(/only available/i);
+    }
+  });
+
+  it("rejects writes outside Chat with Mux workspace", async () => {
+    using muxHome = new TestTempDir("mux-global-agents");
+
+    const config = createTestToolConfig(muxHome.path, {
+      workspaceId: "regular-workspace",
+    });
+
+    const tool = createMuxGlobalAgentsWriteTool(config);
+    const result = (await tool.execute!(
+      { newContent: "test", confirm: true },
+      mockToolCallOptions
+    )) as { success: boolean; error?: string };
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toMatch(/only available/i);
+    }
+  });
+
   it("refuses to write without explicit confirmation", async () => {
     using muxHome = new TestTempDir("mux-global-agents");
 

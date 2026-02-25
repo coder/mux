@@ -228,6 +228,27 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
+<summary>agent_skill_delete (4)</summary>
+
+| Env var                    | JSON path  | Type    | Description                                                                                                        |
+| -------------------------- | ---------- | ------- | ------------------------------------------------------------------------------------------------------------------ |
+| `MUX_TOOL_INPUT_CONFIRM`   | `confirm`  | boolean | Must be true to confirm deletion                                                                                   |
+| `MUX_TOOL_INPUT_FILE_PATH` | `filePath` | string  | Relative file path within the skill directory to delete. Required when target is 'file'                            |
+| `MUX_TOOL_INPUT_NAME`      | `name`     | string  | Skill name to delete                                                                                               |
+| `MUX_TOOL_INPUT_TARGET`    | `target`   | enum    | Deletion target: 'file' to delete a specific file, 'skill' to remove the entire skill directory (defaults to file) |
+
+</details>
+
+<details>
+<summary>agent_skill_list (1)</summary>
+
+| Env var                               | JSON path             | Type    | Description                                      |
+| ------------------------------------- | --------------------- | ------- | ------------------------------------------------ |
+| `MUX_TOOL_INPUT_INCLUDE_UNADVERTISED` | `includeUnadvertised` | boolean | When true, includes skills with advertise: false |
+
+</details>
+
+<details>
 <summary>agent_skill_read (1)</summary>
 
 | Env var               | JSON path | Type   | Description                                       |
@@ -245,6 +266,17 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 | `MUX_TOOL_INPUT_LIMIT`     | `limit`    | number | Number of lines to return from offset (optional, returns all if not specified) |
 | `MUX_TOOL_INPUT_NAME`      | `name`     | string | Skill name (directory name under the skills root)                              |
 | `MUX_TOOL_INPUT_OFFSET`    | `offset`   | number | 1-based starting line number (optional, defaults to 1)                         |
+
+</details>
+
+<details>
+<summary>agent_skill_write (3)</summary>
+
+| Env var                    | JSON path  | Type   | Description                                                |
+| -------------------------- | ---------- | ------ | ---------------------------------------------------------- |
+| `MUX_TOOL_INPUT_CONTENT`   | `content`  | string | File content to write                                      |
+| `MUX_TOOL_INPUT_FILE_PATH` | `filePath` | string | Relative path within skill directory. Defaults to SKILL.md |
+| `MUX_TOOL_INPUT_NAME`      | `name`     | string | Skill name (directory name under the global skills root)   |
 
 </details>
 

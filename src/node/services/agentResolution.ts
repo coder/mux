@@ -233,10 +233,13 @@ export async function resolveAgentForStream(
       ? [
           { regex_match: ".*", action: "disable" },
 
-          // Allow docs lookup via built-in skills (e.g. mux-docs), while keeping
-          // filesystem/binary execution locked down.
+          // Allow skill management (list/read/write/delete) and global agent
+          // config, while keeping filesystem/binary execution locked down.
           { regex_match: "agent_skill_read", action: "enable" },
           { regex_match: "agent_skill_read_file", action: "enable" },
+          { regex_match: "agent_skill_list", action: "enable" },
+          { regex_match: "agent_skill_write", action: "enable" },
+          { regex_match: "agent_skill_delete", action: "enable" },
 
           { regex_match: "mux_global_agents_read", action: "enable" },
           { regex_match: "mux_global_agents_write", action: "enable" },

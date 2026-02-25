@@ -1,6 +1,3 @@
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
-import { getBuiltInSkillByName } from "@/node/services/agentSkills/builtInSkillDefinitions";
-
 import { tool } from "ai";
 
 import type { AgentSkillReadToolResult } from "@/common/types/tools";
@@ -68,24 +65,6 @@ export const createAgentSkillReadTool: ToolFactory = (config: ToolConfiguration)
       }
 
       try {
-        // Chat with Mux intentionally has no generic filesystem access. Restrict skill reads to
-        // built-in skills (bundled in the app) so users can access help like `mux-docs` without
-        // granting access to project/global skills on disk.
-        if (config.workspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
-          const builtIn = getBuiltInSkillByName(parsedName.data);
-          if (!builtIn) {
-            return {
-              success: false,
-              error: `Only built-in skills are available in Chat with Mux (requested: ${parsedName.data}).`,
-            };
-          }
-
-          return {
-            success: true,
-            skill: builtIn,
-          };
-        }
-
         const resolved = await readAgentSkill(config.runtime, workspacePath, parsedName.data);
         return {
           success: true,

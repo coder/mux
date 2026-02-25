@@ -21,6 +21,9 @@ import { createTaskTerminateTool } from "@/node/services/tools/task_terminate";
 import { createTaskListTool } from "@/node/services/tools/task_list";
 import { createAgentSkillReadTool } from "@/node/services/tools/agent_skill_read";
 import { createAgentSkillReadFileTool } from "@/node/services/tools/agent_skill_read_file";
+import { createAgentSkillListTool } from "@/node/services/tools/agent_skill_list";
+import { createAgentSkillWriteTool } from "@/node/services/tools/agent_skill_write";
+import { createAgentSkillDeleteTool } from "@/node/services/tools/agent_skill_delete";
 import { createMuxGlobalAgentsReadTool } from "@/node/services/tools/mux_global_agents_read";
 import { createMuxGlobalAgentsWriteTool } from "@/node/services/tools/mux_global_agents_write";
 import { createAgentReportTool } from "@/node/services/tools/agent_report";
@@ -318,6 +321,9 @@ export async function getToolsForModel(
   const nonRuntimeTools: Record<string, Tool> = {
     mux_global_agents_read: createMuxGlobalAgentsReadTool(config),
     mux_global_agents_write: createMuxGlobalAgentsWriteTool(config),
+    agent_skill_list: createAgentSkillListTool(config),
+    agent_skill_write: createAgentSkillWriteTool(config),
+    agent_skill_delete: createAgentSkillDeleteTool(config),
     ask_user_question: createAskUserQuestionTool(config),
     propose_plan: createProposePlanTool(config),
     ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),
