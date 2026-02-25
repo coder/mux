@@ -36,6 +36,18 @@ export const SpendByModelRowSchema = z.object({
 });
 export type SpendByModelRow = z.infer<typeof SpendByModelRowSchema>;
 
+export const TokensByModelRowSchema = z.object({
+  model: z.string(),
+  input_tokens: z.number(),
+  cached_tokens: z.number(),
+  cache_create_tokens: z.number(),
+  output_tokens: z.number(),
+  reasoning_tokens: z.number(),
+  total_tokens: z.number(),
+  request_count: z.number(),
+});
+export type TokensByModelRow = z.infer<typeof TokensByModelRowSchema>;
+
 export const TimingPercentilesRowSchema = z.object({
   p50: z.number(),
   p90: z.number(),
@@ -155,6 +167,25 @@ export const analytics = {
         costUsd: z.number(),
         tokenCount: z.number(),
         responseCount: z.number(),
+      })
+    ),
+  },
+  getTokensByModel: {
+    input: z.object({
+      projectPath: z.string().nullish(),
+      from: z.coerce.date().nullish(),
+      to: z.coerce.date().nullish(),
+    }),
+    output: z.array(
+      z.object({
+        model: z.string(),
+        inputTokens: z.number(),
+        cachedTokens: z.number(),
+        cacheCreateTokens: z.number(),
+        outputTokens: z.number(),
+        reasoningTokens: z.number(),
+        totalTokens: z.number(),
+        requestCount: z.number(),
       })
     ),
   },

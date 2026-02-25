@@ -11,6 +11,7 @@ import type {
   SpendOverTimeRow,
   SummaryRow,
   TimingPercentilesRow,
+  TokensByModelRow,
 } from "@/common/orpc/schemas/analytics";
 import { getModelProvider } from "@/common/utils/ai/models";
 import type { Config } from "@/node/config";
@@ -48,6 +49,7 @@ type AnalyticsQueryName =
   | "getSpendOverTime"
   | "getSpendByProject"
   | "getSpendByModel"
+  | "getTokensByModel"
   | "getTimingDistribution"
   | "getAgentCostBreakdown"
   | "getCacheHitRatioByProvider";
@@ -496,6 +498,40 @@ export class AnalyticsService {
       costUsd: row.cost_usd,
       tokenCount: row.token_count,
       responseCount: row.response_count,
+    }));
+  }
+
+  async getTokensByModel(
+    projectPath: string | null,
+    from?: Date | null,
+    to?: Date | null
+  ): Promise<
+    Array<{
+      model: string;
+      inputTokens: number;
+      cachedTokens: number;
+      cacheCreateTokens: number;
+      outputTokens: number;
+      reasoningTokens: number;
+      totalTokens: number;
+      requestCount: number;
+    }>
+  > {
+    const rows = await this.executeQuery<TokensByModelRow[]>("getTokensByModel", {
+      projectPath,
+      from: toDateFilterString(from),
+      to: toDateFilterString(to),
+    });
+
+    return rows.map((row) => ({
+      model: row.model,
+      inputTokens: row.input_tokens,
+      cachedTokens: row.cached_tokens,
+      cacheCreateTokens: row.cache_create_tokens,
+      outputTokens: row.output_tokens,
+      reasoningTokens: row.reasoning_tokens,
+      totalTokens: row.total_tokens,
+      requestCount: row.request_count,
     }));
   }
 

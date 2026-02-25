@@ -10,6 +10,7 @@ import {
   SpendOverTimeRowSchema,
   SummaryRowSchema,
   TimingPercentilesRowSchema,
+  TokensByModelRowSchema,
   type AgentCostRow,
   type HistogramBucket,
   type ProviderCacheHitModelRow,
@@ -18,6 +19,7 @@ import {
   type SpendOverTimeRow,
   type SummaryRow,
   type TimingPercentilesRow,
+  type TokensByModelRow,
 } from "@/common/orpc/schemas/analytics";
 
 const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
@@ -279,6 +281,40 @@ async function querySpendByModel(
   );
 }
 
+async function queryTokensByModel(
+  conn: DuckDBConnection,
+  projectPath: string | null,
+  from: string | null,
+  to: string | null
+): Promise<TokensByModelRow[]> {
+  return typedQuery(
+    conn,
+    `
+    SELECT
+      COALESCE(model, 'unknown') AS model,
+      COALESCE(SUM(input_tokens), 0) AS input_tokens,
+      COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
+      COALESCE(SUM(cache_create_tokens), 0) AS cache_create_tokens,
+      COALESCE(SUM(output_tokens), 0) AS output_tokens,
+      COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+      COALESCE(
+        SUM(input_tokens + cached_tokens + cache_create_tokens + output_tokens + reasoning_tokens),
+        0
+      ) AS total_tokens,
+      COALESCE(COUNT(*), 0) AS request_count
+    FROM events
+    WHERE (? IS NULL OR project_path = ?)
+      AND (? IS NULL OR date >= CAST(? AS DATE))
+      AND (? IS NULL OR date <= CAST(? AS DATE))
+    GROUP BY 1
+    ORDER BY total_tokens DESC
+    LIMIT 10
+    `,
+    [projectPath, projectPath, from, from, to, to],
+    TokensByModelRowSchema
+  );
+}
+
 async function queryTimingDistribution(
   conn: DuckDBConnection,
   metric: TimingMetric,
@@ -467,6 +503,15 @@ export async function executeNamedQuery(
 
     case "getSpendByModel": {
       return querySpendByModel(
+        conn,
+        parseOptionalString(params.projectPath),
+        parseDateFilter(params.from),
+        parseDateFilter(params.to)
+      );
+    }
+
+    case "getTokensByModel": {
+      return queryTokensByModel(
         conn,
         parseOptionalString(params.projectPath),
         parseDateFilter(params.from),

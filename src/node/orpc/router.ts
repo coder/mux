@@ -4161,6 +4161,16 @@ export const router = (authToken?: string) => {
             input.to ?? null
           );
         }),
+      getTokensByModel: t
+        .input(schemas.analytics.getTokensByModel.input)
+        .output(schemas.analytics.getTokensByModel.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.getTokensByModel(
+            input.projectPath ?? null,
+            input.from ?? null,
+            input.to ?? null
+          );
+        }),
       getTimingDistribution: t
         .input(schemas.analytics.getTimingDistribution.input)
         .output(schemas.analytics.getTimingDistribution.output)
