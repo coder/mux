@@ -42,7 +42,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 
 export interface BuildSourcesParams {
   api: APIClient | null;
-  projects: Map<string, ProjectConfig>;
+  userProjects: Map<string, ProjectConfig>;
   /** Map of workspace ID to workspace metadata (keyed by metadata.id, not path) */
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
   /** In-app confirmation dialog (replaces window.confirm) */
@@ -940,7 +940,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
               label: "Select project",
               placeholder: "Search projects…",
               getOptions: (_values) =>
-                Array.from(p.projects.keys()).map((projectPath) => ({
+                Array.from(p.userProjects.keys()).map((projectPath) => ({
                   id: projectPath,
                   label: projectPath.split("/").pop() ?? projectPath,
                   keywords: [projectPath],
@@ -969,7 +969,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
               label: "Select project",
               placeholder: "Search projects…",
               getOptions: (_values) =>
-                Array.from(p.projects.keys()).map((projectPath) => ({
+                Array.from(p.userProjects.keys()).map((projectPath) => ({
                   id: projectPath,
                   label: projectPath.split("/").pop() ?? projectPath,
                   keywords: [projectPath],
@@ -994,7 +994,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       },
     ];
 
-    for (const [projectPath] of p.projects.entries()) {
+    for (const [projectPath] of p.userProjects.entries()) {
       const projectName = projectPath.split("/").pop() ?? projectPath;
       list.push({
         id: CommandIds.projectRemove(projectPath),

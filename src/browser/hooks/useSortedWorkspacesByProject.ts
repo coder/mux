@@ -5,14 +5,14 @@ import { useWorkspaceRecency } from "@/browser/stores/WorkspaceStore";
 import { useStableReference, compareMaps } from "@/browser/hooks/useStableReference";
 
 export function useSortedWorkspacesByProject() {
-  const { projects } = useProjectContext();
+  const { userProjects } = useProjectContext();
   const { workspaceMetadata } = useWorkspaceContext();
   const workspaceRecency = useWorkspaceRecency();
 
   return useStableReference(
     () => {
       const result = new Map<string, FrontendWorkspaceMetadata[]>();
-      for (const [projectPath, config] of projects) {
+      for (const [projectPath, config] of userProjects) {
         const metadataList = config.workspaces
           .map((ws) => (ws.id ? workspaceMetadata.get(ws.id) : undefined))
           .filter((meta): meta is FrontendWorkspaceMetadata => Boolean(meta));
@@ -40,6 +40,6 @@ export function useSortedWorkspacesByProject() {
           return metadata.id === other.id && metadata.name === other.name;
         });
       }),
-    [projects, workspaceMetadata, workspaceRecency]
+    [userProjects, workspaceMetadata, workspaceRecency]
   );
 }

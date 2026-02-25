@@ -419,9 +419,6 @@ interface ProjectSidebarProps {
   onToggleCollapsed: () => void;
   sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>;
   workspaceRecency: Record<string, number>;
-  /** Pre-computed from metadata in App.tsx so the sidebar doesn't subscribe to
-   *  the WorkspaceMetadataContext (which changes on every workspace op). */
-  muxChatProjectPath: string | null;
 }
 
 const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
@@ -429,7 +426,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   onToggleCollapsed,
   sortedWorkspacesByProject,
   workspaceRecency,
-  muxChatProjectPath,
 }) => {
   // Use the narrow actions context — does NOT subscribe to workspaceMetadata
   // changes, preventing the entire sidebar tree from re-rendering on every
@@ -457,7 +453,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   // Get project state and operations from context
   const {
-    projects,
+    userProjects,
+    systemProjectPath,
     openProjectCreateModal: onAddProject,
     removeProject: onRemoveProject,
     createSection,
@@ -812,7 +809,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   ) => {
     // removeSection unsections every workspace in the project (including archived),
     // so confirmation needs to count from the full project config.
-    const workspacesInSection = (projects.get(projectPath)?.workspaces ?? []).filter(
+    const workspacesInSection = (userProjects.get(projectPath)?.workspaces ?? []).filter(
       (workspace) => workspace.sectionId === sectionId
     );
 
@@ -857,19 +854,19 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   // Build a stable signature of the project keys so effects don't fire on Map identity churn
   const projectPathsSignature = React.useMemo(() => {
     // sort to avoid order-related churn
-    const keys = Array.from(projects.keys()).sort();
+    const keys = Array.from(userProjects.keys()).sort();
     return keys.join("\u0001"); // use non-printable separator
-  }, [projects]);
+  }, [userProjects]);
 
   // Normalize order when the set of projects changes (not on every parent render)
   useEffect(() => {
     // Skip normalization if projects haven't loaded yet (empty Map on initial render)
     // This prevents clearing projectOrder before projects load from backend
-    if (projects.size === 0) {
+    if (userProjects.size === 0) {
       return;
     }
 
-    const normalized = normalizeOrder(projectOrder, projects);
+    const normalized = normalizeOrder(projectOrder, userProjects);
     if (
       normalized.length !== projectOrder.length ||
       normalized.some((p, i) => p !== projectOrder[i])
@@ -883,30 +880,18 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   // Memoize sorted project PATHS (not entries) to avoid capturing stale config objects.
   // Sorting depends only on keys + order; we read configs from the live Map during render.
   const sortedProjectPaths = React.useMemo(
-    () => sortProjectsByOrder(projects, projectOrder).map(([p]) => p),
+    () => sortProjectsByOrder(userProjects, projectOrder).map(([p]) => p),
     // projectPathsSignature captures projects Map keys
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [projectPathsSignature, projectOrder]
   );
 
-  // Hide the built-in Chat with Mux system project from the normal projects list.
-  // We still render the mux-chat workspace as a dedicated pinned row above projects.
-  // muxChatProjectPath is pre-computed in App.tsx and passed as a prop so we don't
-  // need to subscribe to the WorkspaceMetadataContext here.
-  const visibleProjectPaths = React.useMemo(
-    () =>
-      muxChatProjectPath
-        ? sortedProjectPaths.filter((projectPath) => projectPath !== muxChatProjectPath)
-        : sortedProjectPaths,
-    [sortedProjectPaths, muxChatProjectPath]
-  );
-
   const handleReorder = useCallback(
     (draggedPath: string, targetPath: string) => {
-      const next = reorderProjects(projectOrder, projects, draggedPath, targetPath);
+      const next = reorderProjects(projectOrder, userProjects, draggedPath, targetPath);
       setProjectOrder(next);
     },
-    [projectOrder, projects, setProjectOrder]
+    [projectOrder, userProjects, setProjectOrder]
   );
 
   // Handle keyboard shortcuts
@@ -960,7 +945,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                   >
                     <MuxLogo className="h-5 w-[44px]" aria-hidden="true" />
                   </button>
-                  {muxChatProjectPath && (
+                  {systemProjectPath && (
                     <>
                       <MuxChatHelpButton
                         onClick={handleOpenMuxChat}
@@ -984,7 +969,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                 onScroll={handleProjectListScroll}
                 className="flex-1 overflow-x-hidden overflow-y-auto"
               >
-                {visibleProjectPaths.length === 0 ? (
+                {sortedProjectPaths.length === 0 ? (
                   <div className="px-4 py-8 text-center">
                     <p className="text-muted mb-4 text-[13px]">No projects</p>
                     <button
@@ -995,8 +980,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                     </button>
                   </div>
                 ) : (
-                  visibleProjectPaths.map((projectPath) => {
-                    const config = projects.get(projectPath);
+                  sortedProjectPaths.map((projectPath) => {
+                    const config = userProjects.get(projectPath);
                     if (!config) return null;
                     const projectName = getProjectName(projectPath);
                     const sanitizedProjectId =

@@ -57,8 +57,6 @@ import {
 } from "@/browser/utils/rightSidebarLayout";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { isWorkspaceArchived } from "@/common/utils/archive";
-import { getProjectRouteId } from "@/common/utils/projectRouteId";
-import { resolveProjectPathFromProjectQuery } from "@/common/utils/deepLink";
 import { shouldApplyWorkspaceAiSettingsFromBackend } from "@/browser/utils/workspaceAiSettingsSync";
 import { isAbortError } from "@/browser/utils/isAbortError";
 import { findAdjacentWorkspaceId } from "@/browser/utils/ui/workspaceDomNav";
@@ -334,20 +332,6 @@ function normalizeWorkspaceDraftsByProject(value: unknown): WorkspaceDraftsByPro
   return result;
 }
 
-function normalizeProjectPathForComparison(projectPath: string): string {
-  let normalized = projectPath.trim();
-
-  // Be forgiving: mux:// links may include trailing path separators.
-  normalized = normalized.replace(/[\\/]+$/, "");
-
-  // Paths are case-insensitive on Windows.
-  if (globalThis.window?.api?.platform === "win32") {
-    normalized = normalized.toLowerCase();
-  }
-
-  return normalized;
-}
-
 function createWorkspaceDraftId(): string {
   const maybeCrypto = globalThis.crypto;
   if (maybeCrypto && typeof maybeCrypto.randomUUID === "function") {
@@ -552,7 +536,13 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       });
   }, [api]);
   // Get project refresh function from ProjectContext
-  const { projects, refreshProjects, loading: projectsLoading } = useProjectContext();
+  const {
+    resolveProjectPath,
+    resolveNewChatProjectPath,
+    hasAnyProject,
+    refreshProjects,
+    loading: projectsLoading,
+  } = useProjectContext();
   // Get router navigation functions and current route state
   const {
     navigateToWorkspace,
@@ -625,66 +615,11 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         return;
       }
 
-      let resolvedProjectPath: string | null = null;
-
-      const projectPathFromPayload =
-        typeof payload.projectPath === "string" && payload.projectPath.trim().length > 0
-          ? payload.projectPath
-          : null;
-
-      if (projectPathFromPayload) {
-        const target = normalizeProjectPathForComparison(projectPathFromPayload);
-
-        for (const projectPath of projects.keys()) {
-          if (normalizeProjectPathForComparison(projectPath) === target) {
-            resolvedProjectPath = projectPath;
-            break;
-          }
-        }
-      }
-
-      const projectIdFromPayload =
-        resolvedProjectPath === null &&
-        typeof payload.projectId === "string" &&
-        payload.projectId.trim().length > 0
-          ? payload.projectId
-          : null;
-
-      if (projectIdFromPayload) {
-        for (const projectPath of projects.keys()) {
-          if (getProjectRouteId(projectPath) === projectIdFromPayload) {
-            resolvedProjectPath = projectPath;
-            break;
-          }
-        }
-      }
-
-      const projectQueryFromPayload =
-        resolvedProjectPath === null &&
-        typeof payload.project === "string" &&
-        payload.project.trim().length > 0
-          ? payload.project
-          : null;
-
-      // Back-compat/ergonomics: if a deep link passed a projectPath that doesn't match
-      // exactly (e.g., different machine), still try matching by its final path segment.
-      const inferredProjectQueryFromPath =
-        resolvedProjectPath === null && projectQueryFromPayload === null && projectPathFromPayload
-          ? projectPathFromPayload
-          : null;
-
-      const projectQuery = projectQueryFromPayload ?? inferredProjectQueryFromPath;
-      if (resolvedProjectPath === null && projectQuery) {
-        resolvedProjectPath = resolveProjectPathFromProjectQuery(projects.keys(), projectQuery);
-      }
-
-      // If no project is specified (or matching failed), default to the first project in the list.
-      if (resolvedProjectPath === null) {
-        const firstProjectPath = projects.keys().next().value;
-        if (typeof firstProjectPath === "string") {
-          resolvedProjectPath = firstProjectPath;
-        }
-      }
+      const resolvedProjectPath = resolveNewChatProjectPath({
+        projectPath: payload.projectPath,
+        projectId: payload.projectId,
+        project: payload.project,
+      });
 
       if (!resolvedProjectPath) {
         // Startup deep links can arrive before the projects list is populated.
@@ -692,7 +627,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         // NOTE: ProjectContext can set `projectsLoading=false` even when the API isn't
         // connected yet (refreshProjects() returns early but the effect still flips loading).
         // In that window, buffer unresolved links in-memory and retry once projects load.
-        const shouldBuffer = projectsLoading || !api || projects.size === 0;
+        const shouldBuffer = projectsLoading || !api || !hasAnyProject;
         if (shouldBuffer) {
           const queue = pendingDeepLinksRef.current;
           if (queue.length >= 10) {
@@ -741,7 +676,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
       navigateToProject(resolvedProjectPath, normalizedSectionId ?? undefined, draftId);
     },
-    [api, navigateToProject, projects, projectsLoading, setWorkspaceDraftsByProjectState]
+    [
+      api,
+      navigateToProject,
+      projectsLoading,
+      resolveNewChatProjectPath,
+      hasAnyProject,
+      setWorkspaceDraftsByProjectState,
+    ]
   );
 
   const deepLinkHandlerRef = useRef(handleDeepLink);
@@ -773,7 +715,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     for (const payload of queued) {
       deepLinkHandlerRef.current(payload);
     }
-  }, [projects, projectsLoading, deepLinkHandlerRef]);
+  }, [projectsLoading, resolveNewChatProjectPath, hasAnyProject, deepLinkHandlerRef]);
 
   // Clean up promotions that point at removed drafts or archived workspaces so
   // promoted entries never hide the real workspace list.
@@ -831,20 +773,11 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     if (currentProjectPathFromState) return currentProjectPathFromState;
     if (!currentProjectId) return null;
 
-    // Legacy: older deep links stored the full path under ?path=...
-    if (projects.has(currentProjectId)) {
-      return currentProjectId;
-    }
-
-    // Current: project ids are derived from the configured project path.
-    for (const projectPath of projects.keys()) {
-      if (getProjectRouteId(projectPath) === currentProjectId) {
-        return projectPath;
-      }
-    }
-
-    return null;
-  }, [currentProjectId, currentProjectPathFromState, projects]);
+    return (
+      resolveProjectPath({ type: "path", value: currentProjectId }) ??
+      resolveProjectPath({ type: "routeId", value: currentProjectId })
+    );
+  }, [currentProjectId, currentProjectPathFromState, resolveProjectPath]);
 
   // pendingNewWorkspaceProject is derived from current project in URL/state
   const pendingNewWorkspaceProject = currentProjectPath;

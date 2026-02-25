@@ -13,7 +13,6 @@ interface LeftSidebarProps {
   onStartResize?: (e: React.MouseEvent) => void;
   sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>;
   workspaceRecency: Record<string, number>;
-  muxChatProjectPath: string | null;
 }
 
 export function LeftSidebar(props: LeftSidebarProps) {

@@ -224,8 +224,8 @@ export function useDraftWorkspaceSettings(
   const [thinkingLevel] = useThinkingLevel();
 
   const projectScopeId = getProjectScopeId(projectPath);
-  const { projects } = useProjectContext();
-  const projectConfig = projects.get(projectPath);
+  const { userProjects } = useProjectContext();
+  const projectConfig = userProjects.get(projectPath);
 
   const [globalDefaultAgentId] = usePersistedState<string>(
     getAgentIdKey(GLOBAL_SCOPE_ID),

@@ -16,6 +16,7 @@ import {
 } from "@/common/constants/storage";
 import type { RecursivePartial } from "@/browser/testUtils";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
+import { getProjectRouteId } from "@/common/utils/projectRouteId";
 import type { RightSidebarLayoutState } from "@/browser/utils/rightSidebarLayout";
 
 import type { APIClient } from "@/browser/contexts/API";
@@ -872,6 +873,24 @@ describe("WorkspaceContext", () => {
     await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe("ws-restore"));
   });
 
+  test("resolves system project route IDs for pending workspace creation", async () => {
+    const systemProjectPath = "/system/chat-with-mux";
+    const systemProjectId = getProjectRouteId(systemProjectPath);
+
+    createMockAPI({
+      locationPath: `/project?project=${encodeURIComponent(systemProjectId)}`,
+      projects: {
+        list: () =>
+          Promise.resolve([[systemProjectPath, { workspaces: [], projectKind: "system" }]]),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    expect(ctx().pendingNewWorkspaceProject).toBe(systemProjectPath);
+  });
+
   test("launch project auto-selects workspace when no URL hash", async () => {
     // With the new router, URL takes precedence. When there's no URL hash,
     // and localStorage has no saved workspace, the launch project kicks in.
@@ -1056,6 +1075,22 @@ describe("WorkspaceContext", () => {
     const metadata = ctx().workspaceMetadata.get("ws-1");
     expect(metadata?.createdAt).toBe("2025-01-01T00:00:00.000Z");
   });
+  test("unscoped new_chat deep link resolves to system project when no user projects exist", async () => {
+    const systemPath = "/system/chat-with-mux";
+    createMockAPI({
+      projects: {
+        list: () => Promise.resolve([[systemPath, { workspaces: [], projectKind: "system" }]]),
+      },
+      pendingDeepLinks: [{ type: "new_chat" }],
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => {
+      const state = ctx();
+      expect(state.pendingNewWorkspaceProject).toBe(systemPath);
+    });
+  });
 });
 
 async function setup() {
@@ -1089,6 +1124,8 @@ interface MockAPIOptions {
   server?: RecursivePartial<APIClient["server"]>;
   localStorage?: Record<string, string>;
   locationHash?: string;
+  locationPath?: string;
+  pendingDeepLinks?: Array<{ type: string; [key: string]: unknown }>;
 }
 
 function createMockAPI(options: MockAPIOptions = {}) {
@@ -1104,10 +1141,22 @@ function createMockAPI(options: MockAPIOptions = {}) {
     }
   }
 
+  if (options.locationPath) {
+    happyWindow.location.href = `http://localhost${options.locationPath}`;
+  }
+
   // Set up location hash if provided
   if (options.locationHash) {
     happyWindow.location.hash = options.locationHash;
   }
+
+  // Set up deep link API on the window object for pending deep-link tests
+  (happyWindow as unknown as { api?: Record<string, unknown> }).api = {
+    ...(happyWindow as unknown as { api?: Record<string, unknown> }).api,
+    consumePendingDeepLinks: mock(() => options.pendingDeepLinks ?? []),
+    onDeepLink: mock(() => () => undefined),
+    platform: "darwin",
+  };
 
   // Create mocks
   const workspace = {

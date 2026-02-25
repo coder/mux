@@ -628,7 +628,7 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
  * Displays project name as header, workspace name with magic wand, and runtime/branch selectors.
  */
 export function CreationControls(props: CreationControlsProps) {
-  const { projects } = useProjectContext();
+  const { userProjects } = useProjectContext();
   const settings = useSettings();
   const { beginWorkspaceCreation } = useWorkspaceContext();
   const { nameState, runtimeAvailabilityState } = props;
@@ -840,7 +840,7 @@ export function CreationControls(props: CreationControlsProps) {
         className={cn("flex gap-y-2", nameState.error ? "items-start" : "items-center")}
         data-component="WorkspaceNameGroup"
       >
-        {projects.size > 1 ? (
+        {userProjects.size > 1 ? (
           <RadixSelect
             value={props.projectPath}
             onValueChange={(path) => beginWorkspaceCreation(path)}
@@ -858,7 +858,7 @@ export function CreationControls(props: CreationControlsProps) {
               <TooltipContent align="start">{props.projectPath}</TooltipContent>
             </Tooltip>
             <SelectContent>
-              {Array.from(projects.keys()).map((path) => (
+              {Array.from(userProjects.keys()).map((path) => (
                 <SelectItem key={path} value={path}>
                   {PlatformPaths.basename(path)}
                 </SelectItem>

@@ -143,4 +143,8 @@ export const ProjectConfigSchema = z.object({
   defaultRuntime: RuntimeEnablementIdSchema.optional().meta({
     description: "Default runtime override for new workspaces in this project",
   }),
+  projectKind: z.enum(["user", "system"]).optional().meta({
+    description:
+      "Project classification. System projects are hidden from user-facing project lists unless explicitly requested.",
+  }),
 });

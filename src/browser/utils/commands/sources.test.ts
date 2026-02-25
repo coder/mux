@@ -9,8 +9,8 @@ import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { APIClient } from "@/browser/contexts/API";
 
 const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
-  const projects = new Map<string, ProjectConfig>();
-  projects.set("/repo/a", {
+  const userProjects = new Map<string, ProjectConfig>();
+  userProjects.set("/repo/a", {
     workspaces: [{ path: "/repo/a/feat-x" }, { path: "/repo/a/feat-y" }],
   });
   const workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>();
@@ -31,7 +31,7 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
     runtimeConfig: DEFAULT_RUNTIME_CONFIG,
   });
   const params: Parameters<typeof buildCoreSources>[0] = {
-    projects,
+    userProjects,
     theme: "dark",
     workspaceMetadata,
     selectedWorkspace: {
@@ -188,6 +188,49 @@ test("archive merged workspaces prompt submits selected project", async () => {
 
   expect(onArchiveMergedWorkspacesInProject).toHaveBeenCalledTimes(1);
   expect(onArchiveMergedWorkspacesInProject).toHaveBeenCalledWith("/repo/a");
+});
+
+test("project commands exclude system projects from options", async () => {
+  const allProjects = new Map<string, ProjectConfig>([
+    [
+      "/repo/a",
+      {
+        workspaces: [{ path: "/repo/a/feat-x" }, { path: "/repo/a/feat-y" }],
+      },
+    ],
+    ["/repo/system", { workspaces: [], projectKind: "system" }],
+  ]);
+
+  const userProjects = new Map(
+    [...allProjects].filter(([, config]) => config.projectKind !== "system")
+  );
+
+  const sources = mk({ userProjects });
+  const actions = sources.flatMap((s) => s());
+
+  const createWorkspaceAction = actions.find((a) => a.title === "Create New Workspace in Project…");
+  expect(createWorkspaceAction).toBeDefined();
+  const createProjectField = createWorkspaceAction?.prompt?.fields[0];
+  expect(createProjectField?.type).toBe("select");
+  if (createProjectField?.type !== "select") {
+    throw new Error("Create workspace command is missing project select options");
+  }
+
+  const createOptions = await createProjectField.getOptions({});
+  expect(createOptions.map((option) => option.id)).toEqual(["/repo/a"]);
+  expect(createOptions.some((option) => option.id === "/repo/system")).toBe(false);
+
+  const archiveAction = actions.find((a) => a.title === "Archive Merged Workspaces in Project…");
+  expect(archiveAction).toBeDefined();
+  const archiveProjectField = archiveAction?.prompt?.fields[0];
+  expect(archiveProjectField?.type).toBe("select");
+  if (archiveProjectField?.type !== "select") {
+    throw new Error("Archive command is missing project select options");
+  }
+
+  const archiveOptions = await archiveProjectField.getOptions({});
+  expect(archiveOptions.map((option) => option.id)).toEqual(["/repo/a"]);
+  expect(archiveOptions.some((option) => option.id === "/repo/system")).toBe(false);
 });
 
 test("buildCoreSources includes rebuild analytics database action with discoverable keywords", () => {

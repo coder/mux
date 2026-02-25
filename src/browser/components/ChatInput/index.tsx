@@ -660,9 +660,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     modelSelectorRef.current?.open();
   }, []);
   // Section selection state for creation variant (must be before useCreationWorkspace)
-  const { projects } = useProjectContext();
+  const { userProjects } = useProjectContext();
   const pendingSectionId = variant === "creation" ? (props.pendingSectionId ?? null) : null;
-  const creationProject = variant === "creation" ? projects.get(props.projectPath) : undefined;
+  const creationProject = variant === "creation" ? userProjects.get(props.projectPath) : undefined;
   const hasCreationRuntimeOverrides =
     creationProject?.runtimeOverridesEnabled === true ||
     Boolean(creationProject?.runtimeEnablement) ||

@@ -102,13 +102,13 @@ function secretsEqual(a: Secret[], b: Secret[]): boolean {
 
 export const SecretsSection: React.FC = () => {
   const { api } = useAPI();
-  const { projects } = useProjectContext();
+  const { userProjects } = useProjectContext();
   const { secretsProjectPath, setSecretsProjectPath } = useSettings();
-  const projectList = Array.from(projects.keys());
+  const projectList = Array.from(userProjects.keys());
 
   // Consume one-shot project scope hint from the sidebar secrets button.
   const initialScope: SecretsScope =
-    secretsProjectPath && projects.has(secretsProjectPath) ? "project" : "global";
+    secretsProjectPath && userProjects.has(secretsProjectPath) ? "project" : "global";
   const initialProject = initialScope === "project" ? secretsProjectPath! : "";
 
   const [scope, setScope] = useState<SecretsScope>(initialScope);
@@ -136,11 +136,11 @@ export const SecretsSection: React.FC = () => {
   // projects load asynchronously, so we must keep the hint alive until then.
   useEffect(() => {
     if (!secretsProjectPath) return;
-    if (!projects.has(secretsProjectPath)) return;
+    if (!userProjects.has(secretsProjectPath)) return;
     setScope("project");
     setSelectedProject(secretsProjectPath);
     setSecretsProjectPath(null);
-  }, [secretsProjectPath, projects, setSecretsProjectPath]);
+  }, [secretsProjectPath, userProjects, setSecretsProjectPath]);
 
   // Default to the first project when switching into Project scope.
   useEffect(() => {

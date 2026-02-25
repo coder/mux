@@ -376,6 +376,9 @@ export class ServiceContainer {
         config.projects.set(projectPath, projectConfig);
       }
 
+      // Foundational invariant: built-in project is always marked system.
+      projectConfig.projectKind = "system";
+
       const existing = projectConfig.workspaces.find((w) => w.id === MUX_HELP_CHAT_WORKSPACE_ID);
 
       // Self-heal: enforce invariants for the system workspace and collapse duplicates

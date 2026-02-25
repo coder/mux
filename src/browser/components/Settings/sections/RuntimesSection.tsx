@@ -127,16 +127,16 @@ function deriveProjectOverrideState(
 
 export function RuntimesSection() {
   const { api } = useAPI();
-  const { projects, refreshProjects } = useProjectContext();
+  const { userProjects, refreshProjects } = useProjectContext();
   const { enablement, setRuntimeEnabled, defaultRuntime, setDefaultRuntime } =
     useRuntimeEnablement();
   const { runtimesProjectPath, setRuntimesProjectPath } = useSettings();
 
-  const projectList = Array.from(projects.keys());
+  const projectList = Array.from(userProjects.keys());
 
   // Consume one-shot project scope hint from "set defaults" button in creation controls.
   const initialScope =
-    runtimesProjectPath && projects.has(runtimesProjectPath)
+    runtimesProjectPath && userProjects.has(runtimesProjectPath)
       ? runtimesProjectPath
       : ALL_SCOPE_VALUE;
   const [selectedScope, setSelectedScope] = useState(initialScope);
@@ -153,14 +153,14 @@ export function RuntimesSection() {
   // projects load asynchronously, so we must keep the hint alive until then.
   useEffect(() => {
     if (!runtimesProjectPath) return;
-    if (!projects.has(runtimesProjectPath)) return;
+    if (!userProjects.has(runtimesProjectPath)) return;
     setSelectedScope(runtimesProjectPath);
     setRuntimesProjectPath(null);
-  }, [runtimesProjectPath, projects, setRuntimesProjectPath]);
+  }, [runtimesProjectPath, userProjects, setRuntimesProjectPath]);
 
   // Derive scope during render so stale selections self-heal without effect-driven state sync.
   const effectiveScope =
-    selectedScope !== ALL_SCOPE_VALUE && projects.has(selectedScope)
+    selectedScope !== ALL_SCOPE_VALUE && userProjects.has(selectedScope)
       ? selectedScope
       : ALL_SCOPE_VALUE;
   const selectedProjectPath = effectiveScope === ALL_SCOPE_VALUE ? null : effectiveScope;
@@ -237,7 +237,7 @@ export function RuntimesSection() {
   const { projectOverrideEnabled, projectEnablement, projectDefaultRuntime } =
     deriveProjectOverrideState(
       selectedProjectPath,
-      projects,
+      userProjects,
       enablement,
       defaultRuntime,
       overrideCacheRef.current

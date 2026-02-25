@@ -80,7 +80,7 @@ function computeDateRange(timeRange: TimeRange): {
 
 export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
   const { navigateFromAnalytics } = useRouter();
-  const { projects } = useProjectContext();
+  const { userProjects } = useProjectContext();
 
   const [projectPath, setProjectPath] = useState<string | null>(null);
   const [rawTimeRange, setTimeRange] = usePersistedState<TimeRange>(
@@ -130,7 +130,7 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
     to: dateRange.to,
   });
 
-  const projectRows = Array.from(projects.entries())
+  const projectRows = Array.from(userProjects.entries())
     .map(([path]) => ({
       path,
       label: formatProjectDisplayName(path),

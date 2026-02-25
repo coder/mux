@@ -124,7 +124,7 @@ function AppInner() {
   const { api, status, error, authenticate, retry } = useAPI();
 
   const {
-    projects,
+    userProjects,
     refreshProjects,
     removeProject,
     openProjectCreateModal,
@@ -174,7 +174,7 @@ function AppInner() {
   useEffect(() => {
     document.documentElement.dataset.leftSidebarCollapsed = String(sidebarCollapsed);
   }, [sidebarCollapsed]);
-  const defaultProjectPath = getFirstProjectPath(projects);
+  const defaultProjectPath = getFirstProjectPath(userProjects);
   const creationProjectPath =
     !selectedWorkspace && !currentWorkspaceId
       ? (pendingNewWorkspaceProject ?? defaultProjectPath)
@@ -184,7 +184,7 @@ function AppInner() {
   const navigate = useNavigate();
 
   const startWorkspaceCreation = useStartWorkspaceCreation({
-    projects,
+    projects: userProjects,
     beginWorkspaceCreation,
   });
 
@@ -312,7 +312,7 @@ function AppInner() {
   // Build sorted workspaces map including pending workspaces
   // Use stable reference to prevent sidebar re-renders when sort order hasn't changed
   const sortedWorkspacesByProject = useStableReference(
-    () => buildSortedWorkspacesByProject(projects, workspaceMetadata, workspaceRecency),
+    () => buildSortedWorkspacesByProject(userProjects, workspaceMetadata, workspaceRecency),
     (prev, next) =>
       compareMaps(prev, next, (a, b) => {
         if (a.length !== b.length) return false;
@@ -324,11 +324,8 @@ function AppInner() {
           return other && getWorkspaceSidebarKey(meta) === getWorkspaceSidebarKey(other);
         });
       }),
-    [projects, workspaceMetadata, workspaceRecency]
+    [userProjects, workspaceMetadata, workspaceRecency]
   );
-
-  // Pre-compute for the sidebar so it doesn't need WorkspaceMetadataContext
-  const muxChatProjectPath = workspaceMetadata.get(MUX_HELP_CHAT_WORKSPACE_ID)?.projectPath ?? null;
 
   const handleNavigateWorkspace = useCallback(
     (direction: "next" | "prev") => {
@@ -597,7 +594,7 @@ function AppInner() {
   );
 
   registerParamsRef.current = {
-    projects,
+    userProjects,
     workspaceMetadata,
     selectedWorkspace,
     theme,
@@ -809,7 +806,7 @@ function AppInner() {
       // IMPORTANT: don't early-return here. In practice this event can fire before
       // ProjectContext has finished loading (or before a refresh runs), and returning
       // would make the forked workspace appear "missing" until a later refresh.
-      const project = projects.get(workspaceInfo.projectPath);
+      const project = userProjects.get(workspaceInfo.projectPath);
       if (!project) {
         console.warn(
           `[Frontend] Project not found for forked workspace path: ${workspaceInfo.projectPath} (will refresh)`
@@ -843,7 +840,7 @@ function AppInner() {
         CUSTOM_EVENTS.WORKSPACE_FORK_SWITCH,
         handleForkSwitch as EventListener
       );
-  }, [projects, refreshProjects, setSelectedWorkspace, setWorkspaceMetadata]);
+  }, [userProjects, refreshProjects, setSelectedWorkspace, setWorkspaceMetadata]);
 
   // Set up navigation callback for notification clicks
   useEffect(() => {
@@ -971,7 +968,6 @@ function AppInner() {
           onStartResize={leftSidebar.startResize}
           sortedWorkspacesByProject={sortedWorkspacesByProject}
           workspaceRecency={workspaceRecency}
-          muxChatProjectPath={muxChatProjectPath}
         />
         <div className="mobile-main-content flex min-w-0 flex-1 flex-col overflow-hidden">
           <WindowsToolchainBanner />

@@ -201,7 +201,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     [effectivePolicy]
   );
   const { config: providersConfig, loading: providersLoading } = useProvidersConfig();
-  const { addProject, projects } = useProjectContext();
+  const { addProject, userProjects } = useProjectContext();
 
   const projectAddFormRef = useRef<ProjectAddFormHandle | null>(null);
   const [isProjectCreating, setIsProjectCreating] = useState(false);
@@ -770,11 +770,11 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
             from GitHub, then click Next.
           </p>
 
-          {projects.size > 0 ? (
+          {userProjects.size > 0 ? (
             <p className="mt-3 text-xs">
-              <span className="text-foreground font-medium">Configured:</span> {projects.size}{" "}
+              <span className="text-foreground font-medium">Configured:</span> {userProjects.size}{" "}
               project
-              {projects.size === 1 ? "" : "s"}
+              {userProjects.size === 1 ? "" : "s"}
             </p>
           ) : (
             <p className="mt-3 text-xs">No projects added yet.</p>
@@ -784,7 +784,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
             <ProjectAddForm
               ref={projectAddFormRef}
               isOpen
-              autoFocus={projects.size === 0}
+              autoFocus={userProjects.size === 0}
               hideFooter
               onIsCreatingChange={setIsProjectCreating}
               onSuccess={(normalizedPath, projectConfig) => {
@@ -797,7 +797,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
           </div>
 
           <p className="mt-2 text-xs">
-            {projects.size > 0
+            {userProjects.size > 0
               ? "Add another folder or repo, or leave this blank and click Next to continue."
               : "Click Next to add this project."}
           </p>
@@ -955,7 +955,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     muxGatewayLoginInProgress,
     muxGatewayLoginStatus,
     openProvidersSettings,
-    projects.size,
+    userProjects.size,
     providersConfig,
     refreshMuxGatewayAccountStatus,
     startMuxGatewayLogin,
@@ -1045,7 +1045,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
                   }
 
                   const trimmedInput = form.getTrimmedInput();
-                  if (!trimmedInput && projects.size > 0) {
+                  if (!trimmedInput && userProjects.size > 0) {
                     goForward();
                     return;
                   }
