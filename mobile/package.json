@@ -28,7 +28,7 @@
     "expo-secure-store": "~15.0.7",
     "expo-status-bar": "^3.0.8",
     "react": "19.1.0",
-    "react-dom": "^19.2.4",
+    "react-dom": "19.1.0",
     "react-native": "0.81.5",
     "react-native-markdown-display": "^7.0.2",
     "react-native-reanimated": "^4.1.3",
