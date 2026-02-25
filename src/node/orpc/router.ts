@@ -3398,7 +3398,7 @@ export const router = (authToken?: string) => {
               ? getEffectiveContextLimit(modelId, input.use1MContext === true, providersConfig)
               : null;
 
-          return context.sessionUsageService.getDelegationInsights(
+          return await context.sessionUsageService.getDelegationInsights(
             input.workspaceId,
             modelContextLimit,
             input.autoCompactionThreshold
