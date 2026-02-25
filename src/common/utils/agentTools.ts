@@ -46,7 +46,7 @@ export function normalizeLiteralRequiredToolPattern(pattern: string): string | u
  * - `require` uses last-layer-wins semantics: when present, the last non-empty
  *   require pattern from the most-derived layer determines enabled status.
  */
-function isToolEnabledByConfigs(toolName: string, configs: readonly ToolsConfig[]): boolean {
+export function isToolEnabledByConfigs(toolName: string, configs: readonly ToolsConfig[]): boolean {
   let enabled = false;
   let effectiveRequirePattern: string | undefined;
 
@@ -91,7 +91,7 @@ export function collectToolConfigsFromResolvedChain(
     .map((agent) => agent.tools);
 }
 
-function isToolEnabledInResolvedChain(
+export function isToolEnabledInResolvedChain(
   toolName: string,
   agents: readonly ToolsConfigCarrier[],
   maxDepth = 10
