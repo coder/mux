@@ -10,7 +10,12 @@ import {
   cleanupTestEnvironment,
   type TestEnvironment,
 } from "../../ipc/setup";
-import { cleanupTempGitRepo, createTempGitRepo, generateBranchName } from "../../ipc/helpers";
+import {
+  cleanupTempGitRepo,
+  createTempGitRepo,
+  generateBranchName,
+  trustProject,
+} from "../../ipc/helpers";
 import { detectDefaultTrunkBranch } from "@/node/git";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { UpdateStatus } from "@/common/orpc/types";
@@ -80,6 +85,7 @@ describe("About dialog (UI)", () => {
   beforeAll(async () => {
     env = await createTestEnvironment();
     repoPath = await createTempGitRepo();
+    await trustProject(env, repoPath);
 
     const trunkBranch = await detectDefaultTrunkBranch(repoPath);
     const branchName = generateBranchName("about-dialog");
