@@ -14,7 +14,7 @@ import { z } from "zod";
 import * as path from "path";
 import * as fs from "fs/promises";
 import * as fsSync from "fs";
-import { Config } from "../node/config";
+import { Config, type ProjectConfig } from "../node/config";
 import { DisposableTempDir } from "../node/services/tempDir";
 import { AgentSession, type AgentSessionChatEvent } from "../node/services/agentSession";
 import { CodexOauthService } from "../node/services/codexOauthService";
@@ -354,13 +354,29 @@ async function main(): Promise<number> {
     fsSync.writeFileSync(secretsFile, JSON.stringify(existingSecrets, null, 2));
   }
 
-  // Copy project config (trust state, etc.) so AIService can read trust flags.
-  // Without this, the ephemeral config has no project entries and treats all
-  // projects as untrusted — skipping .mux/tool_env and tool hooks even when
-  // the user has already trusted the project.
+  // Copy only project trust metadata so AIService can read trust flags.
+  // Avoid importing workspace/task metadata into ephemeral CLI config because
+  // stale queued/running records can incorrectly throttle sub-agent tasks.
   const existingConfig = realConfig.loadConfigOrDefault();
   if (existingConfig.projects.size > 0) {
-    await config.saveConfig(existingConfig);
+    const trustOnlyProjects = new Map<string, ProjectConfig>();
+    for (const [projectPath, projectConfig] of existingConfig.projects) {
+      if (projectConfig.trusted === undefined) {
+        continue;
+      }
+
+      trustOnlyProjects.set(projectPath, {
+        workspaces: [],
+        trusted: projectConfig.trusted,
+      });
+    }
+
+    if (trustOnlyProjects.size > 0) {
+      await config.saveConfig({
+        ...config.loadConfigOrDefault(),
+        projects: trustOnlyProjects,
+      });
+    }
   }
 
   const workspaceId = generateWorkspaceId();
