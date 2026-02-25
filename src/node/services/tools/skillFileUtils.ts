@@ -2,6 +2,14 @@ import * as fsPromises from "fs/promises";
 import * as path from "path";
 import type { Stats } from "node:fs";
 
+/**
+ * Local filesystem-only skill file utilities.
+ *
+ * These helpers use Node's `fs/promises` directly and must NOT be called from
+ * runtime-agnostic tool flows (where `skillDir` may be a remote path).
+ *
+ * For runtime-aware containment, use `runtimeSkillPathUtils.ts` instead.
+ */
 export function hasErrorCode(error: unknown, code: string): boolean {
   return (
     error != null &&
