@@ -1128,8 +1128,8 @@ export class StreamManager extends EventEmitter {
     // success/ok markers (agent_report, propose_plan, switch_agent).
     // When a marker is present, respect it — success:false means the tool
     // should be retried, so don't stop. When no marker is present (e.g.,
-    // MCP tools, arbitrary required tools), any non-null object result
-    // is treated as successful completion.
+    // MCP tools, arbitrary required tools), treat non-null object results
+    // as successful completion unless the result is error-shaped.
     const isSuccessfulOutput = (output: unknown): boolean => {
       if (typeof output !== "object" || output === null) {
         return false;
@@ -1140,6 +1140,9 @@ export class StreamManager extends EventEmitter {
       }
       if ("ok" in parsedOutput) {
         return parsedOutput.ok === true;
+      }
+      if (parsedOutput.error != null || parsedOutput.isError === true) {
+        return false;
       }
       return true;
     };

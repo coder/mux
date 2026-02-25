@@ -170,6 +170,54 @@ describe("StreamManager - stopWhen configuration", () => {
     ).toBe(true);
   });
 
+  test("does not stop when required tool returns error-shaped output", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      toolPolicy: [{ regex_match: "chrome_take_screenshot", action: "require" }],
+    });
+
+    const [, , requiredToolCondition] = stopWhen;
+
+    expect(
+      requiredToolCondition({
+        steps: [
+          {
+            toolResults: [
+              {
+                toolName: "chrome_take_screenshot",
+                output: { error: "connection refused" },
+              },
+            ],
+          },
+        ],
+      })
+    ).toBe(false);
+
+    expect(
+      requiredToolCondition({
+        steps: [
+          {
+            toolResults: [
+              {
+                toolName: "chrome_take_screenshot",
+                output: {
+                  isError: true,
+                  content: [{ type: "text", text: "failed" }],
+                },
+              },
+            ],
+          },
+        ],
+      })
+    ).toBe(false);
+  });
+
   test("does not stop when required tool explicitly returns success: false", () => {
     const streamManager = new StreamManager(historyService);
     const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
