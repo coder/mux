@@ -1615,7 +1615,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       <div className="flex min-h-0 flex-1">
         <div
           ref={scrollContainerRef}
-          className="scrollbar-none min-h-0 min-w-0 flex-1 overflow-y-auto p-3"
+          className="scrollbar-none min-h-0 min-w-0 flex-1 overflow-y-auto py-3"
         >
           {props.isLoading && currentFileHunks.length === 0 ? (
             <div className="text-muted flex items-center justify-center py-12 text-sm">
@@ -1626,7 +1626,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
               {activeFilePath ? "No hunks for this file" : "No files to review"}
             </div>
           ) : (
-            <div className="border-border-light bg-dark relative overflow-hidden rounded border">
+            <div className="bg-dark relative overflow-hidden">
               {shouldShowFileTransitionSplash && (
                 <div className="bg-dark/95 text-muted absolute inset-0 z-10 flex items-center justify-center text-sm">
                   <span className="animate-pulse">Loading file...</span>
