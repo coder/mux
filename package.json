@@ -295,7 +295,7 @@
     "linux": {
       "target": "AppImage",
       "category": "Development",
-      "icon": "build/icon.png",
+      "icon": "build/icons",
       "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
     "win": {

@@ -299,15 +299,19 @@ version: ## Generate version file
 
 src/version.ts: version
 
+build/icons/512x512.png: docs/img/logo-white.svg scripts/generate-icons.ts
+	@echo "Generating Linux icon set..."
+	@bun scripts/generate-icons.ts linux-icons
+
 # Platform-specific icon targets
 ifeq ($(shell uname), Darwin)
-build-icons: build/icon.icns build/icon.png ## Generate Electron app icons from logo (macOS builds both)
+build-icons: build/icon.icns build/icon.png build/icons/512x512.png ## Generate Electron app icons from logo (macOS builds both)
 
 build/icon.icns: docs/img/logo-white.svg scripts/generate-icons.ts
 	@echo "Generating macOS ICNS icon..."
 	@bun scripts/generate-icons.ts icns
 else
-build-icons: build/icon.png ## Generate Electron app icons from logo (Linux builds PNG only)
+build-icons: build/icon.png build/icons/512x512.png ## Generate Electron app icons from logo (Linux builds PNG only)
 endif
 
 build/icon.png: docs/img/logo-white.svg scripts/generate-icons.ts
