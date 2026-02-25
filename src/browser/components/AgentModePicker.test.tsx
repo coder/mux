@@ -283,4 +283,87 @@ describe("AgentModePicker", () => {
       expect(getByTestId("agentId").textContent).toBe("exec");
     });
   });
+
+  test("keeps trigger border and icon colors in sync", () => {
+    const customColor = "rgb(12, 34, 56)";
+
+    function Harness() {
+      const [agentId, setAgentId] = React.useState("exec");
+      return (
+        <AgentProvider
+          value={{
+            agentId,
+            setAgentId,
+            agents: [
+              {
+                ...BUILT_INS[0],
+                uiColor: customColor,
+              },
+            ],
+            loaded: true,
+            loadFailed: false,
+            refresh: () => Promise.resolve(),
+            refreshing: false,
+            ...defaultContextProps,
+          }}
+        >
+          <TooltipProvider>
+            <AgentModePicker />
+          </TooltipProvider>
+        </AgentProvider>
+      );
+    }
+
+    const { getByLabelText } = render(<Harness />);
+    const triggerButton = getByLabelText("Select agent");
+    const triggerIcon = triggerButton.querySelector("svg");
+
+    expect(triggerIcon).toBeTruthy();
+    expect(triggerButton.style.borderColor).toBe(customColor);
+    expect(triggerIcon?.style.color).toBe(customColor);
+  });
+
+  test("uses built-in accent colors before agent metadata loads", () => {
+    const expectedAccents: ReadonlyArray<[string, string]> = [
+      ["ask", "var(--color-ask-mode)"],
+      ["plan", "var(--color-plan-mode)"],
+      ["exec", "var(--color-exec-mode)"],
+      ["orchestrator", "var(--color-exec-mode)"],
+      ["auto", "var(--color-auto-mode)"],
+    ];
+
+    for (const [agentId, expectedAccent] of expectedAccents) {
+      function Harness() {
+        const [currentAgentId, setAgentId] = React.useState(agentId);
+        return (
+          <AgentProvider
+            value={{
+              agentId: currentAgentId,
+              setAgentId,
+              agents: [],
+              loaded: false,
+              loadFailed: false,
+              refresh: () => Promise.resolve(),
+              refreshing: false,
+              ...defaultContextProps,
+            }}
+          >
+            <TooltipProvider>
+              <AgentModePicker />
+            </TooltipProvider>
+          </AgentProvider>
+        );
+      }
+
+      const { getByLabelText, unmount } = render(<Harness />);
+      const triggerButton = getByLabelText("Select agent");
+      const triggerIcon = triggerButton.querySelector("svg");
+
+      expect(triggerIcon).toBeTruthy();
+      expect(triggerButton.style.borderColor).toBe(expectedAccent);
+      expect(triggerIcon?.style.color).toBe(expectedAccent);
+
+      unmount();
+    }
+  });
 });
