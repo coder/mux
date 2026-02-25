@@ -1,6 +1,7 @@
 import type { APIClient } from "@/browser/contexts/API";
 import { ProjectProvider } from "@/browser/contexts/ProjectContext";
 import type { DraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
+import type { ProjectConfig } from "@/common/types/project";
 import {
   GLOBAL_SCOPE_ID,
   getAgentIdKey,
@@ -150,6 +151,7 @@ const TEST_PROJECT_PATH = "/projects/demo";
 const FALLBACK_BRANCH = "main";
 const TEST_WORKSPACE_ID = "ws-created";
 type BranchListResult = Awaited<ReturnType<APIClient["projects"]["listBranches"]>>;
+type ProjectListResult = Awaited<ReturnType<APIClient["projects"]["list"]>>;
 type ListBranchesArgs = Parameters<APIClient["projects"]["listBranches"]>[0];
 type WorkspaceSendMessageArgs = Parameters<APIClient["workspace"]["sendMessage"]>[0];
 type WorkspaceSendMessageResult = Awaited<ReturnType<APIClient["workspace"]["sendMessage"]>>;
@@ -193,6 +195,7 @@ interface MockOrpcClient {
   nameGeneration: MockOrpcNameGenerationClient;
 }
 interface SetupWindowOptions {
+  listProjects?: ReturnType<typeof mock<() => Promise<ProjectListResult>>>;
   listBranches?: ReturnType<typeof mock<(args: ListBranchesArgs) => Promise<BranchListResult>>>;
   sendMessage?: ReturnType<
     typeof mock<(args: WorkspaceSendMessageArgs) => Promise<WorkspaceSendMessageResult>>
@@ -209,12 +212,23 @@ interface SetupWindowOptions {
 }
 
 const setupWindow = ({
+  listProjects,
   listBranches,
   sendMessage,
   create,
   updateAgentAISettings,
   nameGeneration,
 }: SetupWindowOptions = {}) => {
+  const listProjectsMock =
+    listProjects ??
+    mock<() => Promise<ProjectListResult>>(() => {
+      const trustedProjectConfig: ProjectConfig = {
+        workspaces: [],
+        trusted: true,
+      };
+      return Promise.resolve([[TEST_PROJECT_PATH, trustedProjectConfig]]);
+    });
+
   const listBranchesMock =
     listBranches ??
     mock<(args: ListBranchesArgs) => Promise<BranchListResult>>(({ projectPath }) => {
@@ -271,7 +285,7 @@ const setupWindow = ({
 
   currentORPCClient = {
     projects: {
-      list: () => Promise.resolve([]),
+      list: () => listProjectsMock(),
       listBranches: (input: ListBranchesArgs) => listBranchesMock(input),
       runtimeAvailability: () =>
         Promise.resolve({
@@ -581,6 +595,67 @@ describe("useCreationWorkspace", () => {
     // Thinking is workspace-scoped, but this test doesn't set a project-scoped thinking preference.
     expect(updatePersistedStateCalls).toContainEqual([pendingInputKey, ""]);
     expect(updatePersistedStateCalls).toContainEqual([pendingImagesKey, undefined]);
+  });
+
+  test("handleSend shows trust dialog for untrusted projects", async () => {
+    const listProjectsMock = mock<() => Promise<ProjectListResult>>(() => {
+      const untrustedProjectConfig: ProjectConfig = {
+        workspaces: [],
+        trusted: false,
+      };
+      return Promise.resolve([[TEST_PROJECT_PATH, untrustedProjectConfig]]);
+    });
+    const nameGenerationMock = mock(
+      (_args: NameGenerationArgs): Promise<NameGenerationResult> =>
+        Promise.resolve({
+          success: true,
+          data: { name: "generated-name", modelUsed: "anthropic:claude-haiku-4-5" },
+        } as NameGenerationResult)
+    );
+    const { workspaceApi, nameGenerationApi } = setupWindow({
+      listProjects: listProjectsMock,
+      nameGeneration: nameGenerationMock,
+    });
+
+    draftSettingsState = createDraftSettingsHarness({ trunkBranch: "main" });
+    const onWorkspaceCreated = mock((metadata: FrontendWorkspaceMetadata) => metadata);
+
+    const getHook = renderUseCreationWorkspace({
+      projectPath: TEST_PROJECT_PATH,
+      onWorkspaceCreated,
+      message: "trust check",
+    });
+
+    await waitFor(() => expect(getHook().branches).toEqual(["main"]));
+    await waitFor(() => expect(nameGenerationApi.generate.mock.calls.length).toBe(1));
+
+    let handleSendPromise: Promise<CreationSendResult> | null = null;
+    act(() => {
+      handleSendPromise = getHook().handleSend("trust check");
+    });
+
+    await waitFor(() => expect(getHook().trustDialog).not.toBeNull());
+    expect(workspaceApi.create.mock.calls.length).toBe(0);
+
+    const trustDialog = getHook().trustDialog;
+    if (!trustDialog || typeof trustDialog !== "object" || !("props" in trustDialog)) {
+      throw new Error("Expected trust dialog props");
+    }
+
+    const trustDialogProps = trustDialog.props as {
+      onCancel: () => void;
+    };
+
+    act(() => {
+      trustDialogProps.onCancel();
+    });
+
+    if (!handleSendPromise) {
+      throw new Error("Expected handleSend promise");
+    }
+    const handleSendResult = await handleSendPromise;
+    expect(handleSendResult).toEqual({ success: false });
+    expect(workspaceApi.create.mock.calls.length).toBe(0);
   });
 
   test("syncs global default agent to workspace when project agent is unset", async () => {
