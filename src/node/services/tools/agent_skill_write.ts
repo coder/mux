@@ -16,6 +16,7 @@ import {
   hasErrorCode,
   isSkillMarkdownRootFile,
   lstatIfExists,
+  rejectEscapedSkillDirectory,
   resolveContainedSkillFilePath,
   SKILL_FILENAME,
 } from "./skillFileUtils";
@@ -106,6 +107,14 @@ export const createAgentSkillWriteTool: ToolFactory = (config: ToolConfiguration
 
         const muxHomeReal = await fsPromises.realpath(muxHome);
         const skillDir = path.join(muxHomeReal, "skills", parsedName.data);
+
+        const escapedError = await rejectEscapedSkillDirectory(skillDir, muxHomeReal);
+        if (escapedError != null) {
+          return {
+            success: false,
+            error: escapedError,
+          };
+        }
 
         const skillDirStat = await lstatIfExists(skillDir);
         if (skillDirStat?.isSymbolicLink()) {

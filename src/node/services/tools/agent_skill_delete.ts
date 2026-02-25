@@ -9,7 +9,12 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { getMuxHomeFromWorkspaceSessionDir } from "@/node/services/tools/muxHome";
-import { hasErrorCode, lstatIfExists, resolveContainedSkillFilePath } from "./skillFileUtils";
+import {
+  hasErrorCode,
+  lstatIfExists,
+  rejectEscapedSkillDirectory,
+  resolveContainedSkillFilePath,
+} from "./skillFileUtils";
 
 interface AgentSkillDeleteToolArgs {
   name: string;
@@ -70,6 +75,14 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
         }
 
         const skillDir = path.join(muxHomeReal, "skills", parsedName.data);
+
+        const escapedError = await rejectEscapedSkillDirectory(skillDir, muxHomeReal);
+        if (escapedError != null) {
+          return {
+            success: false,
+            error: escapedError,
+          };
+        }
 
         const skillStat = await lstatIfExists(skillDir);
         if (!skillStat) {

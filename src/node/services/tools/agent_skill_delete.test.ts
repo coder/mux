@@ -20,6 +20,15 @@ async function createWorkspaceSessionDir(muxHome: string, workspaceId: string): 
   return workspaceSessionDir;
 }
 
+function restoreMuxRoot(previousMuxRoot: string | undefined): void {
+  if (previousMuxRoot === undefined) {
+    delete process.env.MUX_ROOT;
+    return;
+  }
+
+  process.env.MUX_ROOT = previousMuxRoot;
+}
+
 async function createDeleteTool(muxHome: string, workspaceId: string = MUX_HELP_CHAT_WORKSPACE_ID) {
   const workspaceSessionDir = await createWorkspaceSessionDir(muxHome, workspaceId);
   const config = createTestToolConfig(muxHome, {
@@ -145,6 +154,59 @@ describe("agent_skill_delete", () => {
       success: false,
       error: "filePath is required when target is 'file'",
     });
+  });
+
+  it("rejects deletes when skills root is a symlink", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-delete-symlinked-root");
+    const previousMuxRoot = process.env.MUX_ROOT;
+    process.env.MUX_ROOT = tempDir.path;
+
+    try {
+      const externalDir = path.join(tempDir.path, "external-skills-tree");
+      const externalSkillDir = path.join(externalDir, "evil-skill");
+      await fs.mkdir(externalSkillDir, { recursive: true });
+      await fs.writeFile(
+        path.join(externalSkillDir, "SKILL.md"),
+        "---\nname: evil-skill\ndescription: test\n---\nBody\n",
+        "utf-8"
+      );
+
+      const muxDir = path.join(tempDir.path, ".mux");
+      await fs.mkdir(muxDir, { recursive: true });
+      await fs.symlink(
+        externalDir,
+        path.join(muxDir, "skills"),
+        process.platform === "win32" ? "junction" : "dir"
+      );
+
+      const baseConfig = createTestToolConfig(tempDir.path, {
+        workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+        sessionsDir: path.join(muxDir, "sessions", MUX_HELP_CHAT_WORKSPACE_ID),
+      });
+
+      const tool = createAgentSkillDeleteTool(baseConfig);
+      const result = (await tool.execute!(
+        {
+          name: "evil-skill",
+          target: "skill",
+          confirm: true,
+        },
+        mockToolCallOptions
+      )) as AgentSkillDeleteToolResult;
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toMatch(/symbolic link/i);
+      }
+
+      const externalStillExists = await fs
+        .stat(externalSkillDir)
+        .then(() => true)
+        .catch(() => false);
+      expect(externalStillExists).toBe(true);
+    } finally {
+      restoreMuxRoot(previousMuxRoot);
+    }
   });
 
   it("refuses to delete a symlinked skill directory", async () => {

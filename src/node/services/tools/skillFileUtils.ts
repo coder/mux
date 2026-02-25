@@ -141,6 +141,39 @@ export function isSkillMarkdownRootFile(relativePath: string): boolean {
 }
 
 /**
+ * Rejects a skill directory whose real path escapes the expected mux home tree.
+ * Catches the case where an ancestor (for example, `~/.mux/skills`) is a symlink
+ * pointing outside mux home, causing `skillDir` to resolve to an external location.
+ */
+export async function rejectEscapedSkillDirectory(
+  skillDir: string,
+  muxHomeReal: string
+): Promise<string | null> {
+  const skillsRoot = path.join(muxHomeReal, "skills");
+  const skillsRootStat = await lstatIfExists(skillsRoot);
+  if (skillsRootStat?.isSymbolicLink()) {
+    return "Skills root directory (~/.mux/skills) is a symbolic link and cannot be used for skill operations.";
+  }
+
+  const skillDirStat = await lstatIfExists(skillDir);
+  if (skillDirStat != null) {
+    try {
+      const skillDirReal = await fsPromises.realpath(skillDir);
+      const muxHomePrefix = muxHomeReal.endsWith(path.sep)
+        ? muxHomeReal
+        : `${muxHomeReal}${path.sep}`;
+      if (!skillDirReal.startsWith(muxHomePrefix)) {
+        return "Skill directory resolves outside mux home after symlink resolution.";
+      }
+    } catch {
+      // Non-fatal: follow-up lstat-based checks still guard direct symlink targets.
+    }
+  }
+
+  return null;
+}
+
+/**
  * Rejects a skill directory that is itself a symbolic link.
  * Returns an error message string if the directory is a symlink, or null if it's safe.
  */

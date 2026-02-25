@@ -22,6 +22,15 @@ async function createWorkspaceSessionDir(muxHome: string, workspaceId: string): 
   return workspaceSessionDir;
 }
 
+function restoreMuxRoot(previousMuxRoot: string | undefined): void {
+  if (previousMuxRoot === undefined) {
+    delete process.env.MUX_ROOT;
+    return;
+  }
+
+  process.env.MUX_ROOT = previousMuxRoot;
+}
+
 function skillMarkdown(
   name: string,
   options?: { description?: string; advertise?: boolean; body?: string }
@@ -352,6 +361,49 @@ describe("agent_skill_write", () => {
       }
     }
   );
+
+  it("rejects writes when skills root is a symlink", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-write-symlinked-root");
+    const previousMuxRoot = process.env.MUX_ROOT;
+    process.env.MUX_ROOT = tempDir.path;
+
+    try {
+      const externalDir = path.join(tempDir.path, "external-skills-tree");
+      await fs.mkdir(externalDir, { recursive: true });
+
+      const muxDir = path.join(tempDir.path, ".mux");
+      await fs.mkdir(muxDir, { recursive: true });
+      await fs.symlink(
+        externalDir,
+        path.join(muxDir, "skills"),
+        process.platform === "win32" ? "junction" : "dir"
+      );
+
+      const baseConfig = createTestToolConfig(tempDir.path, {
+        workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+        sessionsDir: path.join(muxDir, "sessions", MUX_HELP_CHAT_WORKSPACE_ID),
+      });
+
+      const tool = createAgentSkillWriteTool(baseConfig);
+      const result = (await tool.execute!(
+        {
+          name: "evil-skill",
+          content: "---\nname: evil-skill\ndescription: test\n---\nBody\n",
+        },
+        mockToolCallOptions
+      )) as AgentSkillWriteToolResult;
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toMatch(/symbolic link/i);
+      }
+
+      const externalEntries = await fs.readdir(externalDir);
+      expect(externalEntries).toEqual([]);
+    } finally {
+      restoreMuxRoot(previousMuxRoot);
+    }
+  });
 
   it("rejects writes when skill directory is a symlink", async () => {
     using tempDir = new TestTempDir("test-agent-skill-write-symlinked-dir");
