@@ -1063,6 +1063,12 @@ body {
   display: none;
 }
 
+/* Keep `.scrollbar-none` fully hidden even with global Firefox scrollbar theming. */
+.scrollbar-none {
+  scrollbar-width: none;
+  scrollbar-color: auto;
+}
+
 /* Root container */
 html,
 body,
