@@ -5,7 +5,12 @@ import {
   cleanupTestEnvironment,
   type TestEnvironment,
 } from "../../ipc/setup";
-import { cleanupTempGitRepo, createTempGitRepo, generateBranchName } from "../../ipc/helpers";
+import {
+  cleanupTempGitRepo,
+  createTempGitRepo,
+  generateBranchName,
+  trustProject,
+} from "../../ipc/helpers";
 import { detectDefaultTrunkBranch } from "@/node/git";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -62,6 +67,9 @@ export async function createAppHarness(options?: {
   try {
     const trunkBranch = await detectDefaultTrunkBranch(repoPath);
     const branchName = generateBranchName(options?.branchPrefix ?? "ui");
+
+    // Trust test repos so workspace creation can run hooks/scripts behind the trust gate.
+    await trustProject(env, repoPath);
 
     const createResult = await env.orpc.workspace.create({
       projectPath: repoPath,

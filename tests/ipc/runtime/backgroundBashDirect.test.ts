@@ -19,7 +19,12 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import { createTestEnvironment, cleanupTestEnvironment, type TestEnvironment } from "../setup";
-import { createTempGitRepo, cleanupTempGitRepo, generateBranchName } from "../helpers";
+import {
+  createTempGitRepo,
+  cleanupTempGitRepo,
+  generateBranchName,
+  trustProject,
+} from "../helpers";
 import { detectDefaultTrunkBranch } from "../../../src/node/git";
 import { LocalRuntime } from "../../../src/node/runtime/LocalRuntime";
 import { BackgroundProcessManager } from "../../../src/node/services/backgroundProcessManager";
@@ -59,6 +64,7 @@ describe("Background Bash Direct Integration", () => {
 
     const branchName = generateBranchName("bg-direct-test");
     const trunkBranch = await detectDefaultTrunkBranch(tempGitRepo);
+    await trustProject(env, tempGitRepo);
     const result = await env.orpc.workspace.create({
       projectPath: tempGitRepo,
       branchName,
@@ -252,6 +258,7 @@ describe("Background Bash Output Capture", () => {
 
     const branchName = generateBranchName("bg-output-test");
     const trunkBranch = await detectDefaultTrunkBranch(tempGitRepo);
+    await trustProject(env, tempGitRepo);
     const result = await env.orpc.workspace.create({
       projectPath: tempGitRepo,
       branchName,
@@ -368,6 +375,7 @@ describe("Foreground to Background Migration", () => {
 
     const branchName = generateBranchName("fg-to-bg-test");
     const trunkBranch = await detectDefaultTrunkBranch(tempGitRepo);
+    await trustProject(env, tempGitRepo);
     const result = await env.orpc.workspace.create({
       projectPath: tempGitRepo,
       branchName,

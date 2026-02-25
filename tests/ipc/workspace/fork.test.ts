@@ -17,6 +17,7 @@ import {
   resolveOrpcClient,
   createWorkspaceWithInit,
   TEST_TIMEOUT_SSH_MS,
+  trustProject,
 } from "../helpers";
 import {
   isDockerAvailable,
@@ -611,6 +612,7 @@ describeIntegration("Workspace fork", () => {
         const localRuntimeConfig = { type: "local" as const };
 
         const client = resolveOrpcClient(env);
+        await trustProject(env, tempGitRepo);
         const createResult = await client.workspace.create({
           projectPath: tempGitRepo,
           branchName: "local-source",
@@ -672,6 +674,7 @@ describeIntegration("Workspace fork", () => {
         const localRuntimeConfig = { type: "local" as const };
 
         const client = resolveOrpcClient(env);
+        await trustProject(env, tempGitRepo);
         const createResult = await client.workspace.create({
           projectPath: tempGitRepo,
           branchName: "local-source-history",
@@ -748,6 +751,7 @@ describeIntegration("Workspace fork", () => {
         const localRuntimeConfig = { type: "local" as const };
 
         const client = resolveOrpcClient(env);
+        await trustProject(env, tempGitRepo);
         const createResult = await client.workspace.create({
           projectPath: tempGitRepo,
           branchName: "local-persist-test",
