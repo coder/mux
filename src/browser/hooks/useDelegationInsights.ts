@@ -27,7 +27,8 @@ export function useDelegationInsights(
   const latestWorkspaceIdRef = useRef(workspaceId);
   latestWorkspaceIdRef.current = workspaceId;
 
-  // `model` is intentionally only a refetch trigger; backend resolves the active model from workspace config.
+  // Include `model` in the request so rapid model switches use the live UI selection,
+  // not potentially stale persisted workspace metadata.
   useEffect(() => {
     if (!api) {
       return;
@@ -43,6 +44,7 @@ export function useDelegationInsights(
       try {
         const result = await api.workspace.getDelegationInsights({
           workspaceId: requestedWorkspaceId,
+          model,
           use1MContext,
         });
         if (!cancelled && latestWorkspaceIdRef.current === requestedWorkspaceId) {

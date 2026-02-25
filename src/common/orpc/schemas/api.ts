@@ -1243,6 +1243,9 @@ export const workspace = {
   getDelegationInsights: {
     input: z.object({
       workspaceId: z.string(),
+      // Active model from UI state. Optional for compatibility with older callers.
+      // The backend falls back to workspace metadata when this is omitted.
+      model: z.string().nullish(),
       // 1M context is a per-model user setting (not a pure model capability); callers
       // pass the active workspace toggle so compaction estimates use the true limit.
       use1MContext: z.boolean().optional(),

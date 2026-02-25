@@ -3371,20 +3371,31 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.getDelegationInsights.input)
         .output(schemas.workspace.getDelegationInsights.output)
         .handler(async ({ context, input }) => {
-          const metadataResult = await context.aiService.getWorkspaceMetadata(input.workspaceId);
+          const requestModel =
+            typeof input.model === "string" && input.model.trim().length > 0
+              ? input.model.trim()
+              : null;
+
+          const metadataResult =
+            requestModel == null
+              ? await context.aiService.getWorkspaceMetadata(input.workspaceId)
+              : null;
+
           const modelId =
-            metadataResult.success &&
+            requestModel ??
+            (metadataResult?.success &&
             typeof metadataResult.data.aiSettings?.model === "string" &&
             metadataResult.data.aiSettings.model.trim().length > 0
               ? metadataResult.data.aiSettings.model.trim()
-              : metadataResult.success &&
+              : metadataResult?.success &&
                   typeof metadataResult.data.taskModelString === "string" &&
                   metadataResult.data.taskModelString.trim().length > 0
                 ? metadataResult.data.taskModelString.trim()
-                : null;
+                : null);
+          const providersConfig = context.aiService.getProvidersConfig();
           const modelContextLimit =
             modelId != null
-              ? getEffectiveContextLimit(modelId, input.use1MContext === true, null)
+              ? getEffectiveContextLimit(modelId, input.use1MContext === true, providersConfig)
               : null;
 
           return context.sessionUsageService.getDelegationInsights(
