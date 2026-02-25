@@ -14,6 +14,7 @@ import type {
   SpendOverTimeItem,
   Summary,
   TimingDistribution,
+  TokensByModelItem,
 } from "@/browser/hooks/useAnalytics";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import assert from "@/common/utils/assert";
@@ -46,6 +47,7 @@ interface StoryAnalyticsNamespace {
   }) => Promise<SpendOverTimeItem[]>;
   getSpendByProject: (_input: Record<string, never>) => Promise<SpendByProjectItem[]>;
   getSpendByModel: (input: { projectPath?: string | null }) => Promise<SpendByModelItem[]>;
+  getTokensByModel: (input: { projectPath?: string | null }) => Promise<TokensByModelItem[]>;
   getTimingDistribution: (input: {
     metric: TimingMetric;
     projectPath?: string | null;
@@ -212,6 +214,63 @@ const SPEND_BY_MODEL_ROWS: ScopedSpendByModelRow[] = [
     responseCount: 83,
   },
 ];
+
+const TOKENS_BY_MODEL: TokensByModelItem[] = [
+  {
+    model: "openai:gpt-5-mini",
+    inputTokens: 1_320_000,
+    cachedTokens: 740_000,
+    cacheCreateTokens: 220_000,
+    outputTokens: 660_000,
+    reasoningTokens: 260_000,
+    totalTokens: 3_200_000,
+    requestCount: 530,
+  },
+  {
+    model: "anthropic:claude-sonnet-4-20250514",
+    inputTokens: 1_020_000,
+    cachedTokens: 620_000,
+    cacheCreateTokens: 180_000,
+    outputTokens: 520_000,
+    reasoningTokens: 360_000,
+    totalTokens: 2_700_000,
+    requestCount: 395,
+  },
+  {
+    model: "openai:gpt-4.1",
+    inputTokens: 670_000,
+    cachedTokens: 280_000,
+    cacheCreateTokens: 90_000,
+    outputTokens: 330_000,
+    reasoningTokens: 130_000,
+    totalTokens: 1_500_000,
+    requestCount: 201,
+  },
+  {
+    model: "xai:grok-4-fast",
+    inputTokens: 430_000,
+    cachedTokens: 210_000,
+    cacheCreateTokens: 70_000,
+    outputTokens: 220_000,
+    reasoningTokens: 90_000,
+    totalTokens: 1_020_000,
+    requestCount: 160,
+  },
+];
+
+for (const row of TOKENS_BY_MODEL) {
+  const summedTokens =
+    row.inputTokens +
+    row.cachedTokens +
+    row.cacheCreateTokens +
+    row.outputTokens +
+    row.reasoningTokens;
+
+  assert(
+    summedTokens === row.totalTokens,
+    `Token breakdown fixture must sum to totalTokens for ${row.model}`
+  );
+}
 
 const SPEND_OVER_TIME_ROWS: ScopedSpendOverTimeRow[] = [
   {
@@ -593,6 +652,10 @@ function setupAnalyticsStory(): APIClient {
     getSpendByModel: (input) => {
       const projectPath = normalizeProjectPath(input.projectPath ?? null);
       return Promise.resolve(getSpendByModelRows(projectPath));
+    },
+    getTokensByModel: (input) => {
+      normalizeProjectPath(input.projectPath ?? null);
+      return Promise.resolve(TOKENS_BY_MODEL);
     },
     getTimingDistribution: (input) => {
       const projectPath = normalizeProjectPath(input.projectPath ?? null);
