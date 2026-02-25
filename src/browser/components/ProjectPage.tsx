@@ -16,8 +16,6 @@ import { ConfigureProvidersPrompt } from "./ConfigureProvidersPrompt";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { AgentsInitBanner } from "./AgentsInitBanner";
-import { ProjectTrustBanner } from "./ProjectTrustBanner";
-import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import {
   usePersistedState,
   updatePersistedState,
@@ -94,8 +92,6 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
   );
   const { config: providersConfig, loading: providersLoading } = useProvidersConfig();
   const hasProviders = hasConfiguredProvider(providersConfig);
-  const { getProjectConfig, refreshProjects } = useProjectContext();
-  const isProjectTrusted = getProjectConfig(projectPath)?.trusted === true;
   const shouldShowAgentsInitBanner = !providersLoading && hasProviders && showAgentsInitNudge;
 
   // Git repository state for the banner
@@ -296,15 +292,6 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
             {/* Main content - vertically centered with reduced gaps */}
             <div className="flex min-h-[50vh] flex-col items-center justify-center px-4 py-6">
               <div className="flex w-full max-w-3xl flex-col gap-4">
-                {/* Trust banner - shown when project hooks/scripts are not yet trusted */}
-                {!isProjectTrusted && (
-                  <ProjectTrustBanner
-                    projectPath={projectPath}
-                    onTrusted={() => {
-                      void refreshProjects();
-                    }}
-                  />
-                )}
                 {/* Git init banner - shown above ChatInput when not a git repo */}
                 {isNonGitRepo && (
                   <GitInitBanner projectPath={projectPath} onSuccess={handleGitInitSuccess} />
