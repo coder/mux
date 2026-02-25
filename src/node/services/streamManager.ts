@@ -58,6 +58,7 @@ import { getModelStats } from "@/common/utils/tokens/modelStats";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { getErrorMessage } from "@/common/utils/errors";
 import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
+import { normalizeLiteralRequiredToolPattern } from "@/common/utils/agentTools";
 
 // Disable noisy AI SDK warning logging.
 globalThis.AI_SDK_LOG_WARNINGS = false;
@@ -104,6 +105,10 @@ interface StreamRequestConfig {
   maxOutputTokens?: number;
   hasQueuedMessage?: () => boolean;
   toolPolicy?: ToolPolicy;
+  // Belt-and-suspenders for top-level agents: force the model to call the
+  // required tool immediately (for example, switch_agent in auto mode).
+  // Sub-agents rely on taskService.ts post-stream recovery instead.
+  toolChoice?: { type: "tool"; toolName: string };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1021,6 +1026,7 @@ export class StreamManager extends EventEmitter {
     providerOptions?: Record<string, unknown>,
     maxOutputTokens?: number,
     toolPolicy?: ToolPolicy,
+    forceToolChoice?: boolean,
     hasQueuedMessage?: () => boolean,
     headers?: Record<string, string | undefined>,
     anthropicCacheTtlOverride?: AnthropicCacheTtl
@@ -1057,6 +1063,20 @@ export class StreamManager extends EventEmitter {
     const runtimeModelStats = getModelStats(modelString);
     const effectiveMaxOutputTokens = maxOutputTokens ?? runtimeModelStats?.max_output_tokens;
 
+    let toolChoice: StreamRequestConfig["toolChoice"] | undefined;
+    if (forceToolChoice && toolPolicy) {
+      // For top-level agents, force the first required literal tool to ensure
+      // it is called (for example, switch_agent in auto routing).
+      // Sub-agents rely on taskService.ts post-stream recovery instead.
+      const requiredEntry = toolPolicy.find((filter) => filter.action === "require");
+      if (requiredEntry) {
+        const literalName = normalizeLiteralRequiredToolPattern(requiredEntry.regex_match);
+        if (literalName && finalTools && literalName in finalTools) {
+          toolChoice = { type: "tool", toolName: literalName };
+        }
+      }
+    }
+
     return {
       model,
       messages: finalMessages,
@@ -1067,12 +1087,18 @@ export class StreamManager extends EventEmitter {
       maxOutputTokens: effectiveMaxOutputTokens,
       hasQueuedMessage,
       toolPolicy,
+      toolChoice,
     };
   }
 
   private createStopWhenCondition(
     request: Pick<StreamRequestConfig, "hasQueuedMessage" | "toolPolicy">
   ): Array<ReturnType<typeof stepCountIs>> {
+    // Completion-tool stop check: the "success" / "ok" markers are a convention
+    // used by completion/routing tools such as agent_report, propose_plan, and
+    // switch_agent. Arbitrary tools (for example bash/file_read) do not emit
+    // these fields, so requiring them does not trigger this stop condition.
+    // That is acceptable today because require is only used for completion/routing tools.
     const isSuccessfulOutput = (output: unknown): boolean => {
       if (typeof output !== "object" || output === null) {
         return false;
@@ -1128,6 +1154,9 @@ export class StreamManager extends EventEmitter {
         return { messages: rewritten };
       },
       tools: request.tools,
+      // When set (top-level agents), force the model to call the required tool.
+      // stopWhen still runs and ends the stream once a successful result appears.
+      toolChoice: request.toolChoice,
       stopWhen: this.createStopWhenCondition(request),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
       providerOptions: request.providerOptions as any, // Pass provider-specific options (thinking/reasoning config)
@@ -1156,6 +1185,7 @@ export class StreamManager extends EventEmitter {
     providerOptions?: Record<string, unknown>,
     maxOutputTokens?: number,
     toolPolicy?: ToolPolicy,
+    forceToolChoice?: boolean,
     hasQueuedMessage?: () => boolean,
     workspaceName?: string,
     thinkingLevel?: string,
@@ -1175,6 +1205,7 @@ export class StreamManager extends EventEmitter {
       providerOptions,
       maxOutputTokens,
       toolPolicy,
+      forceToolChoice,
       hasQueuedMessage,
       headers,
       anthropicCacheTtlOverride
@@ -2565,7 +2596,8 @@ export class StreamManager extends EventEmitter {
     workspaceName?: string,
     thinkingLevel?: string,
     headers?: Record<string, string | undefined>,
-    anthropicCacheTtlOverride?: AnthropicCacheTtl
+    anthropicCacheTtlOverride?: AnthropicCacheTtl,
+    forceToolChoice?: boolean
   ): Promise<Result<StreamToken, SendMessageError>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
@@ -2638,6 +2670,7 @@ export class StreamManager extends EventEmitter {
           providerOptions,
           maxOutputTokens,
           toolPolicy,
+          forceToolChoice,
           hasQueuedMessage,
           workspaceName,
           thinkingLevel,

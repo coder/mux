@@ -167,6 +167,51 @@ describe("StreamManager - stopWhen configuration", () => {
     ).toBe(false);
   });
 
+  test("sets toolChoice for required literal tool when forced and still uses stopWhen", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildRequestConfig = Reflect.get(streamManager, "buildStreamRequestConfig") as
+      | ((...args: unknown[]) => {
+          toolChoice?: { type: "tool"; toolName: string };
+          hasQueuedMessage?: () => boolean;
+          toolPolicy?: ToolPolicy;
+        })
+      | undefined;
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildRequestConfig).toBe("function");
+    expect(typeof buildStopWhen).toBe("function");
+
+    const model = createAnthropic({ apiKey: "test" })("claude-sonnet-4-5");
+    const request = buildRequestConfig!(
+      model,
+      "claude-sonnet-4-5",
+      [{ role: "user", content: "route this" }],
+      "system",
+      { switch_agent: {} },
+      undefined,
+      undefined,
+      [{ regex_match: "switch_agent", action: "require" }],
+      true,
+      () => false,
+      undefined,
+      undefined
+    );
+
+    expect(request.toolChoice).toEqual({ type: "tool", toolName: "switch_agent" });
+
+    const [, , requiredToolCondition] = buildStopWhen!({
+      hasQueuedMessage: request.hasQueuedMessage,
+      toolPolicy: request.toolPolicy,
+    });
+
+    expect(
+      requiredToolCondition({
+        steps: [{ toolResults: [{ toolName: "switch_agent", output: { ok: true } }] }],
+      })
+    ).toBe(true);
+  });
+
   test("stops on successful propose_plan when required by policy", () => {
     const streamManager = new StreamManager(historyService);
     const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as

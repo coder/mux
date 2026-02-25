@@ -1077,6 +1077,10 @@ export class AIService extends EventEmitter {
               sessionUsageService: this.sessionUsageService,
             })
           : tools;
+      // Top-level agents need a belt-and-suspenders toolChoice safety net for
+      // required routing/completion tools. Sub-agents rely on taskService.ts
+      // post-stream recovery when a required tool is skipped.
+      const forceToolChoice = !isSubagentWorkspace;
 
       const streamResult = await this.streamManager.startStream(
         workspaceId,
@@ -1106,7 +1110,8 @@ export class AIService extends EventEmitter {
         metadata.name,
         effectiveThinkingLevel,
         requestHeaders,
-        effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined
+        effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
+        forceToolChoice
       );
 
       if (!streamResult.success) {
