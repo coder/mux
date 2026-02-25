@@ -1074,7 +1074,9 @@ export class TaskService {
         env: secrets,
         skipInitHook,
         trusted:
-          this.config.loadConfigOrDefault().projects.get(parentMeta.projectPath)?.trusted ?? false,
+          this.config
+            .loadConfigOrDefault()
+            .projects.get(stripTrailingSlashes(parentMeta.projectPath))?.trusted ?? false,
       },
       taskId
     );

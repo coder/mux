@@ -1609,9 +1609,6 @@ export class WorkspaceService extends EventEmitter {
     runtimeConfig?: RuntimeConfig,
     sectionId?: string
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata }>> {
-    // Canonicalize project path once — trust was stored under normalized keys by setTrust
-    projectPath = stripTrailingSlashes(projectPath);
-
     // Chat with Mux is a built-in system workspace; it cannot host additional workspaces.
     if (projectPath === getMuxHelpChatProjectPath(this.config.rootDir)) {
       return Err("Cannot create workspaces in the Chat with Mux system project");
@@ -1626,7 +1623,9 @@ export class WorkspaceService extends EventEmitter {
     // Trust gate: block workspace creation for untrusted projects.
     // The frontend shows a confirmation dialog before reaching here,
     // but this guards secondary paths (slash commands, forking).
-    const projectConfig = this.config.loadConfigOrDefault().projects.get(projectPath);
+    const projectConfig = this.config
+      .loadConfigOrDefault()
+      .projects.get(stripTrailingSlashes(projectPath));
     if (!projectConfig?.trusted) {
       return Err(
         "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."
