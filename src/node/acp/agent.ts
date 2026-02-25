@@ -309,10 +309,6 @@ export class MuxAgent implements Agent {
         trunkBranch = branchInfo.recommendedTrunk ?? DEFAULT_TRUNK_BRANCH;
       }
 
-      // ACP sessions are user-initiated from their editor — auto-trust the project
-      // so workspace creation succeeds (the backend trust gate blocks untrusted projects).
-      await this.server.client.projects.setTrust({ projectPath, trusted: true });
-
       const createResult = await this.server.client.workspace.create({
         projectPath,
         branchName: meta.branchName ?? generateDefaultBranchName(),
@@ -911,13 +907,6 @@ export class MuxAgent implements Agent {
           });
           trunkBranch = branchInfo.recommendedTrunk ?? DEFAULT_TRUNK_BRANCH;
         }
-
-        // ACP sessions are user-initiated from their editor — auto-trust the project
-        // so workspace creation succeeds (the backend trust gate blocks untrusted projects).
-        await this.server.client.projects.setTrust({
-          projectPath: workspaceInfo.projectPath,
-          trusted: true,
-        });
 
         const createResult = await this.server.client.workspace.create({
           projectPath: workspaceInfo.projectPath,
