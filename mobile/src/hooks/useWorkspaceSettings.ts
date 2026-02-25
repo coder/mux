@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import * as SecureStore from "expo-secure-store";
+import * as Storage from "../lib/storage";
 import type { ThinkingLevel, WorkspaceMode } from "../types/settings";
 import { DEFAULT_MODEL_ID, assertKnownModelId, isKnownModelId } from "../utils/modelCatalog";
 
@@ -57,7 +57,7 @@ async function readSetting<T>(
   try {
     // Tier 1: Try workspace-specific setting first
     const workspaceKey = getWorkspaceSettingKey(workspaceId, setting);
-    const workspaceValue = await SecureStore.getItemAsync(workspaceKey);
+    const workspaceValue = await Storage.getItem(workspaceKey);
 
     if (workspaceValue !== null) {
       if (validator) {
@@ -72,7 +72,7 @@ async function readSetting<T>(
 
     // Tier 2: Fallback to global default
     const defaultKey = getDefaultSettingKey(setting);
-    const defaultValue = await SecureStore.getItemAsync(defaultKey);
+    const defaultValue = await Storage.getItem(defaultKey);
     if (defaultValue !== null) {
       if (validator) {
         const validated = validator(defaultValue);
@@ -100,7 +100,7 @@ async function readSetting<T>(
 async function writeSetting(workspaceId: string, setting: string, value: string): Promise<void> {
   try {
     const key = getWorkspaceSettingKey(workspaceId, setting);
-    await SecureStore.setItemAsync(key, value);
+    await Storage.setItem(key, value);
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
       console.warn(`Failed to write setting ${setting}:`, error);
@@ -114,7 +114,7 @@ async function writeSetting(workspaceId: string, setting: string, value: string)
 async function deleteSetting(workspaceId: string, setting: string): Promise<void> {
   try {
     const key = getWorkspaceSettingKey(workspaceId, setting);
-    await SecureStore.deleteItemAsync(key);
+    await Storage.deleteItem(key);
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
       console.warn(`Failed to delete setting ${setting}:`, error);

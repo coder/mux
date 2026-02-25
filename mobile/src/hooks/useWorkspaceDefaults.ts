@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import * as SecureStore from "expo-secure-store";
+import * as Storage from "../lib/storage";
 import type { ThinkingLevel, WorkspaceMode } from "../types/settings";
 import { DEFAULT_MODEL_ID, assertKnownModelId, isKnownModelId } from "../utils/modelCatalog";
 
@@ -23,7 +23,7 @@ const DEFAULT_1M_CONTEXT = false;
 
 async function readGlobalMode(): Promise<WorkspaceMode> {
   try {
-    const value = await SecureStore.getItemAsync(STORAGE_KEY_MODE);
+    const value = await Storage.getItem(STORAGE_KEY_MODE);
     if (value === "plan" || value === "exec") {
       return value;
     }
@@ -38,7 +38,7 @@ async function readGlobalMode(): Promise<WorkspaceMode> {
 
 async function writeGlobalMode(mode: WorkspaceMode): Promise<void> {
   try {
-    await SecureStore.setItemAsync(STORAGE_KEY_MODE, mode);
+    await Storage.setItem(STORAGE_KEY_MODE, mode);
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
       console.warn("Failed to persist global default mode", error);
@@ -48,7 +48,7 @@ async function writeGlobalMode(mode: WorkspaceMode): Promise<void> {
 
 async function readGlobalReasoning(): Promise<ThinkingLevel> {
   try {
-    const value = await SecureStore.getItemAsync(STORAGE_KEY_REASONING);
+    const value = await Storage.getItem(STORAGE_KEY_REASONING);
     if (
       value === "off" ||
       value === "low" ||
@@ -69,7 +69,7 @@ async function readGlobalReasoning(): Promise<ThinkingLevel> {
 
 async function writeGlobalReasoning(level: ThinkingLevel): Promise<void> {
   try {
-    await SecureStore.setItemAsync(STORAGE_KEY_REASONING, level);
+    await Storage.setItem(STORAGE_KEY_REASONING, level);
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
       console.warn("Failed to persist global default reasoning level", error);
@@ -79,7 +79,7 @@ async function writeGlobalReasoning(level: ThinkingLevel): Promise<void> {
 
 async function readGlobalModel(): Promise<string> {
   try {
-    const value = await SecureStore.getItemAsync(STORAGE_KEY_MODEL);
+    const value = await Storage.getItem(STORAGE_KEY_MODEL);
     if (value && isKnownModelId(value)) {
       return value;
     }
@@ -95,7 +95,7 @@ async function readGlobalModel(): Promise<string> {
 async function writeGlobalModel(model: string): Promise<void> {
   try {
     assertKnownModelId(model);
-    await SecureStore.setItemAsync(STORAGE_KEY_MODEL, model);
+    await Storage.setItem(STORAGE_KEY_MODEL, model);
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
       console.warn("Failed to persist global default model", error);
@@ -105,7 +105,7 @@ async function writeGlobalModel(model: string): Promise<void> {
 
 async function readGlobal1MContext(): Promise<boolean> {
   try {
-    const value = await SecureStore.getItemAsync(STORAGE_KEY_1M_CONTEXT);
+    const value = await Storage.getItem(STORAGE_KEY_1M_CONTEXT);
     if (value !== null) {
       return value === "true";
     }
@@ -120,7 +120,7 @@ async function readGlobal1MContext(): Promise<boolean> {
 
 async function writeGlobal1MContext(enabled: boolean): Promise<void> {
   try {
-    await SecureStore.setItemAsync(STORAGE_KEY_1M_CONTEXT, enabled ? "true" : "false");
+    await Storage.setItem(STORAGE_KEY_1M_CONTEXT, enabled ? "true" : "false");
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
       console.warn("Failed to persist global default 1M context setting", error);

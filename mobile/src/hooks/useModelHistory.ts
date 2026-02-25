@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import * as SecureStore from "expo-secure-store";
+import * as Storage from "../lib/storage";
 import { DEFAULT_MODEL_ID, assertKnownModelId, sanitizeModelSequence } from "../utils/modelCatalog";
 
 const STORAGE_KEY = "mux.models.recent";
@@ -8,7 +8,7 @@ const FALLBACK_RECENTS = [DEFAULT_MODEL_ID];
 
 async function readStoredModels(): Promise<string[]> {
   try {
-    const stored = await SecureStore.getItemAsync(STORAGE_KEY);
+    const stored = await Storage.getItem(STORAGE_KEY);
     if (!stored) {
       return FALLBACK_RECENTS.slice();
     }
@@ -27,7 +27,7 @@ async function readStoredModels(): Promise<string[]> {
 
 async function persistModels(models: string[]): Promise<void> {
   try {
-    await SecureStore.setItemAsync(STORAGE_KEY, JSON.stringify(models.slice(0, MAX_RECENT_MODELS)));
+    await Storage.setItem(STORAGE_KEY, JSON.stringify(models.slice(0, MAX_RECENT_MODELS)));
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
       console.warn("Failed to persist model history", error);
