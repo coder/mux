@@ -5,7 +5,7 @@ import { preloadTestModules, type TestEnvironment } from "../../ipc/setup";
 
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 
-import { createAppHarness } from "../harness";
+import { createAppHarness, type AppHarness } from "../harness";
 
 interface ServiceContainerPrivates {
   backgroundProcessManager: BackgroundProcessManager;
@@ -65,6 +65,48 @@ async function getActiveTextarea(container: HTMLElement): Promise<HTMLTextAreaEl
   );
 }
 
+async function startStreamingTurn(app: AppHarness, label: string): Promise<void> {
+  // Keep stream alive so queued-send mode chooser can be used.
+  const longStreamingTail = " keep-streaming".repeat(600);
+  await app.chat.send(`[mock:wait-start] ${label}${longStreamingTail}`);
+  app.env.services.aiService.releaseMockStreamStartGate(app.workspaceId);
+}
+
+async function waitForSendModeMenuTrigger(container: HTMLElement): Promise<HTMLButtonElement> {
+  return waitFor(
+    () => {
+      const buttons = Array.from(
+        container.querySelectorAll('button[aria-label="Send message"]')
+      ) as HTMLButtonElement[];
+      const trigger = [...buttons]
+        .reverse()
+        .find((button) => button.getAttribute("aria-haspopup") === "menu" && !button.disabled);
+      if (!trigger) {
+        throw new Error("Send mode menu trigger not ready");
+      }
+      return trigger;
+    },
+    { timeout: 30_000 }
+  );
+}
+
+async function openSendModeMenu(container: HTMLElement): Promise<void> {
+  const trigger = await waitForSendModeMenuTrigger(container);
+  fireEvent.click(trigger);
+
+  await waitFor(
+    () => {
+      const row = Array.from(container.querySelectorAll("button")).find((button) =>
+        button.textContent?.includes("Send after turn")
+      );
+      if (!row) {
+        throw new Error("Send mode menu did not open");
+      }
+    },
+    { timeout: 30_000 }
+  );
+}
+
 describe("Send dispatch modes (mock AI router)", () => {
   beforeAll(async () => {
     await preloadTestModules();
@@ -83,14 +125,16 @@ describe("Send dispatch modes (mock AI router)", () => {
     }
   }, 60_000);
 
-  test("keyboard send modes still control foreground bash behavior", async () => {
-    const app = await createAppHarness({ branchPrefix: "send-mode-keybinds" });
+  test("pointer + keyboard send modes still control foreground bash behavior", async () => {
+    const app = await createAppHarness({ branchPrefix: "send-mode-pointer" });
 
     let unregisterTurn: (() => void) | undefined;
     let unregisterStep: (() => void) | undefined;
 
     try {
       const manager = getBackgroundProcessManager(app.env);
+
+      await startStreamingTurn(app, "open send mode menu while streaming");
 
       const turnToolCallId = "bash-foreground-send-after-turn";
       let turnBackgrounded = false;
@@ -112,8 +156,20 @@ describe("Send dispatch modes (mock AI router)", () => {
 
       const turnEndMessage = "turn-end test";
       await app.chat.typeWithoutSending(turnEndMessage);
-      let textarea = await getActiveTextarea(app.view.container);
-      fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true });
+      await openSendModeMenu(app.view.container);
+
+      const turnRow = await waitFor(
+        () => {
+          const rows = Array.from(app.view.container.querySelectorAll("button"));
+          const row = rows.find((button) => button.textContent?.includes("Send after turn"));
+          if (!row) {
+            throw new Error("Send after turn row not found");
+          }
+          return row;
+        },
+        { timeout: 30_000 }
+      );
+      fireEvent.click(turnRow);
 
       await app.chat.expectTranscriptContains(`Mock response: ${turnEndMessage}`);
       await app.chat.expectStreamComplete();
@@ -139,7 +195,7 @@ describe("Send dispatch modes (mock AI router)", () => {
 
       const stepEndMessage = "tool-end test";
       await app.chat.typeWithoutSending(stepEndMessage);
-      textarea = await getActiveTextarea(app.view.container);
+      const textarea = await getActiveTextarea(app.view.container);
       fireEvent.keyDown(textarea, { key: "Enter" });
 
       await app.chat.expectTranscriptContains(`Mock response: ${stepEndMessage}`);

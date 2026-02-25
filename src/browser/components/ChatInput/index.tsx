@@ -187,6 +187,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const editingMessage = variant === "workspace" ? props.editingMessage : undefined;
   const isStreamStarting = variant === "workspace" ? (props.isStreamStarting ?? false) : false;
   const isCompacting = variant === "workspace" ? (props.isCompacting ?? false) : false;
+  const canInterrupt = variant === "workspace" ? (props.canInterrupt ?? false) : false;
   const [isMobileTouch, setIsMobileTouch] = useState(
     () =>
       typeof window !== "undefined" &&
@@ -251,6 +252,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // clear the "in flight" state until all sends complete.
   const [sendingCount, setSendingCount] = useState(0);
   const isSending = sendingCount > 0;
+  const [isSendModeMenuOpen, setIsSendModeMenuOpen] = useState(false);
+  const sendModeMenuContainerRef = useRef<HTMLDivElement>(null);
   const [hideReviewsDuringSend, setHideReviewsDuringSend] = useState(false);
   const [showAtMentionSuggestions, setShowAtMentionSuggestions] = useState(false);
   const [atMentionSuggestions, setAtMentionSuggestions] = useState<SlashSuggestion[]>([]);
@@ -889,6 +892,44 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     !sendInFlightBlocksInput &&
     !coderPresetsLoading &&
     !policyBlocksCreateSend;
+  // Keep send-after-turn pointer-accessible without reintroducing a separate caret control.
+  const canChooseDispatchMode = variant === "workspace" && canInterrupt && canSend;
+  useEffect(() => {
+    if (canChooseDispatchMode) {
+      return;
+    }
+
+    setIsSendModeMenuOpen(false);
+  }, [canChooseDispatchMode]);
+
+  useEffect(() => {
+    if (!isSendModeMenuOpen) {
+      return;
+    }
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (sendModeMenuContainerRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      setIsSendModeMenuOpen(false);
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      setIsSendModeMenuOpen(false);
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [isSendModeMenuOpen]);
+
   // User request: this sync effect runs on mount and when defaults/config change.
   // Only treat *real* agent changes as explicit (origin "agent"); everything else is "sync".
   const prevCreationAgentIdRef = useRef<string | null>(null);
@@ -1781,6 +1822,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return;
     }
 
+    setIsSendModeMenuOpen(false);
+
     const messageText = input.trim();
     const skillDiscovery: SkillResolutionTarget | null =
       variant === "creation"
@@ -2546,44 +2589,88 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   />
                 </div>
 
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      onClick={() => void handleSend()}
-                      disabled={!canSend}
-                      aria-label="Send message"
-                      size="xs"
-                      variant="ghost"
-                      className={cn(
-                        "text-muted hover:text-foreground hover:bg-hover inline-flex items-center justify-center rounded-sm px-1.5 py-0.5 font-medium transition-colors duration-200 disabled:opacity-50",
-                        // Touch: wider tap target, keep icon centered.
-                        "[@media(hover:none)_and_(pointer:coarse)]:h-9 [@media(hover:none)_and_(pointer:coarse)]:w-11 [@media(hover:none)_and_(pointer:coarse)]:px-0 [@media(hover:none)_and_(pointer:coarse)]:py-0 [@media(hover:none)_and_(pointer:coarse)]:text-sm"
+                <div ref={sendModeMenuContainerRef} className="relative">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        onClick={() => {
+                          if (canChooseDispatchMode) {
+                            setIsSendModeMenuOpen((prev) => !prev);
+                            return;
+                          }
+
+                          void handleSend();
+                        }}
+                        onContextMenu={(event) => {
+                          if (!canChooseDispatchMode) {
+                            return;
+                          }
+
+                          event.preventDefault();
+                          setIsSendModeMenuOpen(true);
+                        }}
+                        disabled={!canSend}
+                        aria-label="Send message"
+                        aria-expanded={canChooseDispatchMode ? isSendModeMenuOpen : undefined}
+                        aria-haspopup={canChooseDispatchMode ? "menu" : undefined}
+                        size="xs"
+                        variant="ghost"
+                        className={cn(
+                          "text-muted hover:text-foreground hover:bg-hover inline-flex items-center justify-center rounded-sm px-1.5 py-0.5 font-medium transition-colors duration-200 disabled:opacity-50",
+                          // Touch: wider tap target, keep icon centered.
+                          "[@media(hover:none)_and_(pointer:coarse)]:h-9 [@media(hover:none)_and_(pointer:coarse)]:w-11 [@media(hover:none)_and_(pointer:coarse)]:px-0 [@media(hover:none)_and_(pointer:coarse)]:py-0 [@media(hover:none)_and_(pointer:coarse)]:text-sm"
+                        )}
+                      >
+                        <SendHorizontal
+                          className="h-3.5 w-3.5 [@media(hover:none)_and_(pointer:coarse)]:h-4 [@media(hover:none)_and_(pointer:coarse)]:w-4"
+                          strokeWidth={2.5}
+                        />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent align="start" className="max-w-80 whitespace-normal">
+                      <strong>Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})</strong>
+                      {variant === "workspace" && (
+                        <>
+                          <br />
+                          <br />
+                          <strong>When streaming, click Send to choose:</strong>
+                          {SEND_DISPATCH_MODES.map((entry) => (
+                            <React.Fragment key={entry.mode}>
+                              <br />
+                              {entry.label}: <kbd>{formatKeybind(entry.keybind)}</kbd>
+                            </React.Fragment>
+                          ))}
+                        </>
                       )}
-                    >
-                      <SendHorizontal
-                        className="h-3.5 w-3.5 [@media(hover:none)_and_(pointer:coarse)]:h-4 [@media(hover:none)_and_(pointer:coarse)]:w-4"
-                        strokeWidth={2.5}
-                      />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent align="start" className="max-w-80 whitespace-normal">
-                    <strong>Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})</strong>
-                    {variant === "workspace" && (
-                      <>
-                        <br />
-                        <br />
-                        <strong>Queue while streaming:</strong>
-                        {SEND_DISPATCH_MODES.map((entry) => (
-                          <React.Fragment key={entry.mode}>
-                            <br />
-                            {entry.label}: <kbd>{formatKeybind(entry.keybind)}</kbd>
-                          </React.Fragment>
-                        ))}
-                      </>
-                    )}
-                  </TooltipContent>
-                </Tooltip>
+                    </TooltipContent>
+                  </Tooltip>
+
+                  {canChooseDispatchMode && isSendModeMenuOpen && (
+                    <div className="bg-separator border-border-light absolute right-0 bottom-full z-[1020] mb-1 min-w-[12.5rem] rounded-md border p-1.5 shadow-md">
+                      {SEND_DISPATCH_MODES.map((entry) => (
+                        <button
+                          key={entry.mode}
+                          type="button"
+                          className="hover:bg-hover focus-visible:bg-hover text-foreground flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-1 text-left text-xs"
+                          onClick={() => {
+                            setIsSendModeMenuOpen(false);
+                            void handleSend(
+                              entry.mode === "tool-end"
+                                ? undefined
+                                : { queueDispatchMode: entry.mode }
+                            );
+                          }}
+                        >
+                          <span className="whitespace-nowrap">{entry.label}</span>
+                          <kbd className="bg-background-secondary text-foreground border-border-medium rounded border px-1.5 py-px font-mono text-[10px] whitespace-nowrap">
+                            {formatKeybind(entry.keybind)}
+                          </kbd>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
