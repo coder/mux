@@ -47,6 +47,24 @@ CREATE TABLE IF NOT EXISTS ingest_watermarks (
 )
 `;
 
+const CREATE_DELEGATION_ROLLUPS_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS delegation_rollups (
+  parent_workspace_id VARCHAR NOT NULL,
+  child_workspace_id VARCHAR NOT NULL,
+  project_path VARCHAR,
+  project_name VARCHAR,
+  agent_type VARCHAR,
+  model VARCHAR,
+  total_tokens INTEGER DEFAULT 0,
+  context_tokens INTEGER DEFAULT 0,
+  report_token_estimate INTEGER DEFAULT 0,
+  total_cost_usd DOUBLE DEFAULT 0,
+  rolled_up_at_ms BIGINT,
+  date DATE,
+  PRIMARY KEY (parent_workspace_id, child_workspace_id)
+)
+`;
+
 const SUBAGENT_TRANSCRIPTS_DIR_NAME = "subagent-transcripts";
 
 const tempDirsToClean: string[] = [];
@@ -147,6 +165,7 @@ async function createTestConn(): Promise<DuckDBConnection> {
 
   await conn.run(CREATE_EVENTS_TABLE_SQL);
   await conn.run(CREATE_WATERMARK_TABLE_SQL);
+  await conn.run(CREATE_DELEGATION_ROLLUPS_TABLE_SQL);
 
   return conn;
 }
@@ -218,6 +237,7 @@ describe("rebuildAll", () => {
       "BEGIN TRANSACTION",
       "DELETE FROM events",
       "DELETE FROM ingest_watermarks",
+      "DELETE FROM delegation_rollups",
       "COMMIT",
     ]);
   });
