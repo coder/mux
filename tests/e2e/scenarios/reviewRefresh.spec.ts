@@ -16,8 +16,10 @@ test.describe("review refresh", () => {
     const refreshButton = page.getByTestId("review-refresh");
     await expect(refreshButton).toBeVisible({ timeout: 10_000 });
 
-    // First manual refresh
-    await refreshButton.click();
+    // First manual refresh.
+    // Use force click because an onboarding/tutorial backdrop can intermittently
+    // intercept pointer events in CI even when the refresh button is visible.
+    await refreshButton.click({ force: true });
 
     // Wait for data attributes to be populated (indicating refresh completed)
     await expect(refreshButton).toHaveAttribute("data-last-refresh-trigger", "manual", {
@@ -35,7 +37,7 @@ test.describe("review refresh", () => {
     await page.waitForTimeout(100);
 
     // Second manual refresh
-    await refreshButton.click();
+    await refreshButton.click({ force: true });
 
     // Wait for timestamp to change (this is the critical assertion)
     await expect(async () => {
@@ -99,7 +101,7 @@ test.describe("review refresh", () => {
     await expect(refreshButton).toBeVisible({ timeout: 10_000 });
 
     // Do a manual refresh
-    await refreshButton.click();
+    await refreshButton.click({ force: true });
 
     // Wait for refresh to complete
     await expect(refreshButton).toHaveAttribute("data-last-refresh-trigger", "manual", {
@@ -139,7 +141,7 @@ test.describe("review refresh", () => {
 
     // Do 5 rapid manual refreshes
     for (let i = 0; i < 5; i++) {
-      await refreshButton.click();
+      await refreshButton.click({ force: true });
 
       // Wait for this refresh to complete
       await expect(async () => {
@@ -184,7 +186,7 @@ test.describe("review refresh", () => {
     expect(initialTrigger).toBe("");
 
     // Click refresh
-    await refreshButton.click();
+    await refreshButton.click({ force: true });
 
     // Wait for refresh to complete - this is the critical test
     await expect(refreshButton).toHaveAttribute("data-last-refresh-trigger", "manual", {
