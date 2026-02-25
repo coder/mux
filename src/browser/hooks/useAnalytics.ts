@@ -16,6 +16,7 @@ export type AgentCostItem = z.infer<typeof analytics.getAgentCostBreakdown.outpu
 export type ProviderCacheHitRatioItem = z.infer<
   typeof analytics.getCacheHitRatioByProvider.output
 >[number];
+export type DelegationSummary = z.infer<typeof analytics.getDelegationSummary.output>;
 
 export interface AsyncState<T> {
   data: T | null;
@@ -31,6 +32,7 @@ type TokensByModelInput = z.input<typeof analytics.getTokensByModel.input>;
 type TimingDistributionInput = z.input<typeof analytics.getTimingDistribution.input>;
 type AgentCostBreakdownInput = z.input<typeof analytics.getAgentCostBreakdown.input>;
 type ProviderCacheHitRatioInput = z.input<typeof analytics.getCacheHitRatioByProvider.input>;
+type DelegationSummaryInput = z.input<typeof analytics.getDelegationSummary.input>;
 
 interface DateFilterParams {
   from?: Date | null;
@@ -48,6 +50,7 @@ interface AnalyticsNamespace {
   getCacheHitRatioByProvider: (
     input: ProviderCacheHitRatioInput
   ) => Promise<ProviderCacheHitRatioItem[]>;
+  getDelegationSummary: (input: DelegationSummaryInput) => Promise<DelegationSummary>;
 }
 
 const ANALYTICS_UNAVAILABLE_MESSAGE = "Analytics backend is not available in this build.";
@@ -70,7 +73,8 @@ function getAnalyticsNamespace(api: APIClient): AnalyticsNamespace | null {
     typeof maybeNamespace.getTokensByModel !== "function" ||
     typeof maybeNamespace.getTimingDistribution !== "function" ||
     typeof maybeNamespace.getAgentCostBreakdown !== "function" ||
-    typeof maybeNamespace.getCacheHitRatioByProvider !== "function"
+    typeof maybeNamespace.getCacheHitRatioByProvider !== "function" ||
+    typeof maybeNamespace.getDelegationSummary !== "function"
   ) {
     return null;
   }
@@ -611,6 +615,73 @@ export function useAnalyticsAgentCostBreakdown(
 
     void analyticsApi
       .getAgentCostBreakdown({ projectPath: projectPath ?? null, from: fromDate, to: toDate })
+      .then((data) => {
+        if (ignore) {
+          return;
+        }
+        setState({ data, loading: false, error: null });
+      })
+      .catch((error: unknown) => {
+        if (ignore) {
+          return;
+        }
+        setState((previousState) => ({
+          data: previousState.data,
+          loading: false,
+          error: getErrorMessage(error),
+        }));
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [api, projectPath, fromMs, toMs]);
+
+  return state;
+}
+
+export function useAnalyticsDelegationSummary(
+  projectPath?: string | null,
+  dateFilters?: DateFilterParams
+): AsyncState<DelegationSummary> {
+  const fromMs = dateFilters?.from?.getTime() ?? null;
+  const toMs = dateFilters?.to?.getTime() ?? null;
+
+  const { api } = useAPI();
+  const [state, setState] = useState<AsyncState<DelegationSummary>>({
+    data: null,
+    loading: true,
+    error: null,
+  });
+
+  useEffect(() => {
+    if (!api) {
+      setState((previousState) => ({
+        data: previousState.data,
+        loading: true,
+        error: null,
+      }));
+      return;
+    }
+
+    const analyticsApi = getAnalyticsNamespace(api);
+    if (!analyticsApi) {
+      setState({ data: null, loading: false, error: ANALYTICS_UNAVAILABLE_MESSAGE });
+      return;
+    }
+
+    let ignore = false;
+    setState((previousState) => ({
+      data: previousState.data,
+      loading: true,
+      error: null,
+    }));
+
+    const fromDate = fromMs == null ? null : new Date(fromMs);
+    const toDate = toMs == null ? null : new Date(toMs);
+
+    void analyticsApi
+      .getDelegationSummary({ projectPath: projectPath ?? null, from: fromDate, to: toDate })
       .then((data) => {
         if (ignore) {
           return;

@@ -4,6 +4,7 @@ import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useRouter } from "@/browser/contexts/RouterContext";
 import {
   useAnalyticsAgentCostBreakdown,
+  useAnalyticsDelegationSummary,
   useAnalyticsProviderCacheHitRatio,
   useAnalyticsSpendByModel,
   useAnalyticsSpendByProject,
@@ -18,6 +19,7 @@ import { isEditableElement, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/
 import { Button } from "@/browser/components/ui/button";
 import { cn } from "@/common/lib/utils";
 import { AgentCostChart } from "./AgentCostChart";
+import { DelegationChart } from "./DelegationChart";
 import { ProviderCacheHitChart } from "./ProviderCacheHitChart";
 import { ModelBreakdown } from "./ModelBreakdown";
 import { SpendChart } from "./SpendChart";
@@ -132,6 +134,10 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
     to: dateRange.to,
   });
   const agentCosts = useAnalyticsAgentCostBreakdown(projectPath, {
+    from: dateRange.from,
+    to: dateRange.to,
+  });
+  const delegationSummary = useAnalyticsDelegationSummary(projectPath, {
     from: dateRange.from,
     to: dateRange.to,
   });
@@ -291,6 +297,11 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
             data={agentCosts.data}
             loading={agentCosts.loading}
             error={agentCosts.error}
+          />
+          <DelegationChart
+            data={delegationSummary.data}
+            loading={delegationSummary.loading}
+            error={delegationSummary.error}
           />
         </div>
       </div>
