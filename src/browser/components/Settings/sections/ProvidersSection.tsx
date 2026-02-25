@@ -1721,6 +1721,55 @@ export function ProvidersSection() {
                         </SelectContent>
                       </Select>
                     </div>
+
+                    <div className="border-border-light border-t pt-3">
+                      <div className="mb-1 flex items-center gap-1">
+                        <label className="text-muted block text-xs">Wire format</label>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <HelpIndicator aria-label="OpenAI wire format help">?</HelpIndicator>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <div className="max-w-[260px]">
+                                <div className="font-semibold">OpenAI wire format</div>
+                                <div className="mt-1">
+                                  <span className="font-semibold">responses</span>: modern API with
+                                  persistence and built-in tools (default).
+                                </div>
+                                <div>
+                                  <span className="font-semibold">chat completions</span>: legacy
+                                  /chat/completions endpoint. Use if your provider doesn't support
+                                  the Responses API (e.g. Azure Gov).
+                                </div>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                      <Select
+                        value={config?.openai?.wireFormat ?? "responses"}
+                        onValueChange={(next) => {
+                          if (!api) return;
+                          if (next !== "responses" && next !== "chatCompletions") return;
+
+                          updateOptimistically("openai", { wireFormat: next });
+                          void api.providers.setProviderConfig({
+                            provider: "openai",
+                            keyPath: ["wireFormat"],
+                            value: next,
+                          });
+                        }}
+                      >
+                        <SelectTrigger className="w-40">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="responses">responses</SelectItem>
+                          <SelectItem value="chatCompletions">chat completions</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 )}
                 {/* Gateway toggles - only for mux-gateway when configured */}
