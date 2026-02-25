@@ -354,6 +354,15 @@ async function main(): Promise<number> {
     fsSync.writeFileSync(secretsFile, JSON.stringify(existingSecrets, null, 2));
   }
 
+  // Copy project config (trust state, etc.) so AIService can read trust flags.
+  // Without this, the ephemeral config has no project entries and treats all
+  // projects as untrusted — skipping .mux/tool_env and tool hooks even when
+  // the user has already trusted the project.
+  const existingConfig = realConfig.loadConfigOrDefault();
+  if (existingConfig.projects.size > 0) {
+    await config.saveConfig(existingConfig);
+  }
+
   const workspaceId = generateWorkspaceId();
   const projectDir = path.resolve(opts.dir);
   await ensureDirectory(projectDir);

@@ -4468,6 +4468,9 @@ export class WorkspaceService extends EventEmitter {
 
       const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
 
+      // Read trust state so tool_env is sourced for trusted projects
+      const projectConfig = this.config.loadConfigOrDefault().projects.get(metadata.projectPath);
+
       // Create bash tool
       const bashTool = createBashTool({
         cwd: workspacePath,
@@ -4475,6 +4478,7 @@ export class WorkspaceService extends EventEmitter {
         secrets: secretsToRecord(projectSecrets),
         runtimeTempDir: tempDir.path,
         overflow_policy: "truncate",
+        trusted: projectConfig?.trusted ?? false,
       });
 
       // Execute the script
