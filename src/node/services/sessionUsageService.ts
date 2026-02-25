@@ -440,9 +440,12 @@ export class SessionUsageService {
       modelContextLimit != null ? Math.round(modelContextLimit * threshold) : null;
     // threshold >= 1.0 means auto-compaction is disabled (same semantics as checkAutoCompaction).
     const compactionDisabled = threshold >= 1;
+    // Net additional tokens that would have existed without delegation:
+    // child workload minus already-delivered report tokens (which ARE in the parent context).
+    const netAdditionalTokens = Math.max(0, totalChildTokens - exploreReportTokens);
     const estimatedWithoutDelegation =
       compactionThreshold != null && compactionThreshold > 0 && !compactionDisabled
-        ? actualCompactions + Math.floor(totalChildTokens / compactionThreshold)
+        ? actualCompactions + Math.floor(netAdditionalTokens / compactionThreshold)
         : actualCompactions;
     const compactionsAvoided = estimatedWithoutDelegation - actualCompactions;
 

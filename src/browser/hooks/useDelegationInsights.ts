@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import assert from "@/common/utils/assert";
+import { DEFAULT_AUTO_COMPACTION_THRESHOLD } from "@/common/constants/ui";
 import type { DelegationInsights } from "@/common/orpc/schemas/chatStats";
 
 /**
@@ -22,12 +23,12 @@ export function useDelegationInsights(
     model === null || typeof model === "string",
     "useDelegationInsights: model must be a string or null"
   );
-  assert(
-    Number.isFinite(autoCompactionThreshold) &&
-      autoCompactionThreshold >= 0 &&
-      autoCompactionThreshold <= 1,
-    "useDelegationInsights: autoCompactionThreshold must be between 0 and 1"
-  );
+  // Sanitize persisted threshold: clamp to valid range instead of throwing,
+  // since this value comes from localStorage and can be corrupted.
+  const safeThreshold =
+    Number.isFinite(autoCompactionThreshold)
+      ? Math.max(0, Math.min(1, autoCompactionThreshold))
+      : DEFAULT_AUTO_COMPACTION_THRESHOLD;
 
   const { api } = useAPI();
   const [insights, setInsights] = useState<DelegationInsights | null>(null);
@@ -49,7 +50,7 @@ export function useDelegationInsights(
         workspaceId,
         model,
         use1MContext,
-        autoCompactionThreshold,
+        autoCompactionThreshold: safeThreshold,
       })
       .then((result) => {
         // Only apply if this is still the latest request.
@@ -60,7 +61,7 @@ export function useDelegationInsights(
       .catch(() => {
         // Delegation insights are optional UI data; keep the tab usable on failure.
       });
-  }, [api, workspaceId, use1MContext, model, autoCompactionThreshold]);
+  }, [api, workspaceId, use1MContext, model, safeThreshold]);
 
   return insights;
 }
