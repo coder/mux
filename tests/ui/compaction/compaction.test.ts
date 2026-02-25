@@ -16,6 +16,9 @@ import { BackgroundProcessManager } from "@/node/services/backgroundProcessManag
 import { fireEvent } from "@testing-library/react";
 import { createAppHarness } from "../harness";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
 
 interface ServiceContainerPrivates {
   backgroundProcessManager: BackgroundProcessManager;
@@ -24,6 +27,10 @@ interface ServiceContainerPrivates {
 function getBackgroundProcessManager(env: TestEnvironment): BackgroundProcessManager {
   return (env.services as unknown as ServiceContainerPrivates).backgroundProcessManager;
 }
+
+// Keep compaction UI tests deterministic even when the default workspace model changes.
+// Sonnet has a smaller context window than Opus, so auto-compaction still has a higher-context fallback.
+const COMPACTION_TEST_MODEL = KNOWN_MODELS.SONNET.id;
 
 async function waitForForegroundToolCallId(
   env: TestEnvironment,
@@ -119,7 +126,13 @@ describe("Compaction UI (mock AI router)", () => {
   }, 60_000);
 
   test("auto-compacts after context_exceeded and resumes", async () => {
-    const app = await createAppHarness({ branchPrefix: "compaction-ui" });
+    const app = await createAppHarness({
+      branchPrefix: "compaction-ui",
+      // Keep auto-compaction deterministic even when default model context windows change.
+      beforeRender: () => {
+        updatePersistedState(PREFERRED_COMPACTION_MODEL_KEY, COMPACTION_TEST_MODEL);
+      },
+    });
 
     try {
       const triggerMessage = "Trigger context error";
@@ -127,7 +140,7 @@ describe("Compaction UI (mock AI router)", () => {
 
       await app.chat.send(triggerMessage);
 
-      // User starts typing while auto-compaction is in progress
+      // User starts typing while auto-compaction is in progress.
       await app.chat.typeWithoutSending(userDraft);
 
       await app.chat.expectTranscriptContains("Mock compaction summary:", 60_000);
@@ -153,7 +166,7 @@ describe("Compaction UI (mock AI router)", () => {
       const seedResult = await app.env.orpc.workspace.sendMessage({
         workspaceId: app.workspaceId,
         message: seedMessage,
-        options: { model: WORKSPACE_DEFAULTS.model, agentId: WORKSPACE_DEFAULTS.agentId },
+        options: { model: COMPACTION_TEST_MODEL, agentId: WORKSPACE_DEFAULTS.agentId },
       });
       expect(seedResult.success).toBe(true);
       await app.chat.expectTranscriptContains(`Mock response: ${seedMessage}`);
@@ -161,7 +174,7 @@ describe("Compaction UI (mock AI router)", () => {
       const triggerResult = await app.env.orpc.workspace.sendMessage({
         workspaceId: app.workspaceId,
         message: triggerMessage,
-        options: { model: WORKSPACE_DEFAULTS.model, agentId: WORKSPACE_DEFAULTS.agentId },
+        options: { model: COMPACTION_TEST_MODEL, agentId: WORKSPACE_DEFAULTS.agentId },
       });
       expect(triggerResult.success).toBe(true);
 
@@ -217,7 +230,7 @@ describe("Compaction UI (mock AI router)", () => {
       const seedResult = await app.env.orpc.workspace.sendMessage({
         workspaceId: app.workspaceId,
         message: seedMessage,
-        options: { model: WORKSPACE_DEFAULTS.model, agentId: WORKSPACE_DEFAULTS.agentId },
+        options: { model: COMPACTION_TEST_MODEL, agentId: WORKSPACE_DEFAULTS.agentId },
       });
       expect(seedResult.success).toBe(true);
       await app.chat.expectTranscriptContains(`Mock response: ${seedMessage}`);
@@ -324,7 +337,7 @@ describe("Compaction UI (mock AI router)", () => {
       const seedResult = await app.env.orpc.workspace.sendMessage({
         workspaceId: app.workspaceId,
         message: seedMessage,
-        options: { model: WORKSPACE_DEFAULTS.model, agentId: WORKSPACE_DEFAULTS.agentId },
+        options: { model: COMPACTION_TEST_MODEL, agentId: WORKSPACE_DEFAULTS.agentId },
       });
       expect(seedResult.success).toBe(true);
       await app.chat.expectTranscriptContains(`Mock response: ${seedMessage}`);
