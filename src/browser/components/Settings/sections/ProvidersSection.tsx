@@ -1739,7 +1739,7 @@ export function ProvidersSection() {
                                 </div>
                                 <div>
                                   <span className="font-semibold">chat completions</span>: legacy
-                                  /chat/completions endpoint. Use if your provider doesn't support
+                                  /chat/completions endpoint. Use if your provider doesn&apos;t support
                                   the Responses API (e.g. Azure Gov).
                                 </div>
                               </div>
