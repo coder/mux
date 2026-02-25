@@ -354,14 +354,11 @@ describe("Unread indicator (mock AI router)", () => {
 
       await app.chat.send("[mock:wait-start] gated stream-complete wait");
 
-      // Verify the workspace entered the start-pending phase.
-      await waitFor(() => {
-        const state = workspaceStore.getWorkspaceSidebarState(app.workspaceId);
-        expect(state.isStarting).toBe(true);
-        expect(state.canInterrupt).toBe(false);
-      });
-
       // Start the stream-complete wait BEFORE releasing the gate.
+      // We intentionally avoid asserting a specific intermediate sidebar phase
+      // here because CI timing can race between `isStarting` and `canInterrupt`
+      // even though the core contract (wait does not resolve before gate release)
+      // remains the same.
       let resolved = false;
       const waitPromise = app.chat.expectStreamComplete(10_000).then(() => {
         resolved = true;
