@@ -29,7 +29,12 @@ import type {
 } from "./Runtime";
 import { RuntimeError } from "./Runtime";
 import { RemoteRuntime, type SpawnResult } from "./RemoteRuntime";
-import { checkInitHookExists, getMuxEnv, runInitHookOnRuntime } from "./initHook";
+import {
+  checkInitHookExists,
+  getMuxEnv,
+  runInitHookOnRuntime,
+  shouldSkipInitHook,
+} from "./initHook";
 import { getProjectName } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 import { syncProjectViaGitBundle } from "./gitBundleSync";
@@ -513,8 +518,7 @@ export class DockerRuntime extends RemoteRuntime {
    * is handled by postCreateSetup().
    */
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, workspacePath, initLogger, abortSignal, env, skipInitHook } =
-      params;
+    const { projectPath, branchName, workspacePath, initLogger, abortSignal, env } = params;
 
     try {
       if (!this.containerName) {
@@ -524,14 +528,7 @@ export class DockerRuntime extends RemoteRuntime {
         };
       }
 
-      // Skip init hook when explicitly disabled or when project is untrusted
-      // (init hook is repo-controlled code that must not run without user consent)
-      if (skipInitHook || !params.trusted) {
-        initLogger.logStep(
-          skipInitHook
-            ? "Skipping .mux/init hook (disabled for this task)"
-            : "Skipping .mux/init hook (project not trusted)"
-        );
+      if (shouldSkipInitHook(params, initLogger)) {
         initLogger.logComplete(0);
         return { success: true };
       }

@@ -3119,13 +3119,14 @@ export class WorkspaceService extends EventEmitter {
           );
         }
       } catch (copyError) {
-        // trusted flag already retrieved at fork start — reuse via closure
+        const forkTrusted =
+          this.config.loadConfigOrDefault().projects.get(foundProjectPath)?.trusted ?? false;
         await targetRuntime.deleteWorkspace(
           foundProjectPath,
           resolvedName,
           true,
           undefined,
-          trusted
+          forkTrusted
         );
         try {
           await fsPromises.rm(newSessionDir, { recursive: true, force: true });

@@ -14,6 +14,29 @@ import {
 import type { ThinkingLevel } from "@/common/types/thinking";
 
 /**
+ * Check whether the init hook should be skipped and log the reason.
+ * Returns true if the hook should be skipped (caller should return early).
+ *
+ * Centralized here so all runtimes share the same gating logic:
+ * - skipInitHook: explicitly disabled (e.g., fork operations)
+ * - !trusted: project not trusted (repo-controlled code must not run)
+ */
+export function shouldSkipInitHook(
+  params: { skipInitHook?: boolean; trusted?: boolean },
+  initLogger: InitLogger
+): boolean {
+  if (params.skipInitHook) {
+    initLogger.logStep("Skipping .mux/init hook (disabled for this task)");
+    return true;
+  }
+  if (!params.trusted) {
+    initLogger.logStep("Skipping .mux/init hook (project not trusted)");
+    return true;
+  }
+  return false;
+}
+
+/**
  * Check if .mux/init hook exists and is executable
  * @param projectPath - Path to the project root
  * @returns true if hook exists and is executable, false otherwise

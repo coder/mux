@@ -7,6 +7,7 @@ describe("GIT_NO_HOOKS_ENV", () => {
       GIT_CONFIG_COUNT: "1",
       GIT_CONFIG_KEY_0: "core.hooksPath",
       GIT_CONFIG_VALUE_0: "/dev/null",
+      GIT_CONFIG_PARAMETERS: "",
     });
   });
 
@@ -27,6 +28,7 @@ describe("gitNoHooksPrefix", () => {
     expect(prefix).toContain("GIT_CONFIG_COUNT=1");
     expect(prefix).toContain("core.hooksPath");
     expect(prefix).toContain("/dev/null");
+    expect(prefix).toContain("GIT_CONFIG_PARAMETERS=");
     expect(prefix).toEndWith(" ");
   });
 

@@ -32,7 +32,12 @@ import type {
 import { WORKSPACE_REPO_MISSING_ERROR } from "./Runtime";
 import { RemoteRuntime, type SpawnResult } from "./RemoteRuntime";
 import { log } from "@/node/services/log";
-import { checkInitHookExists, getMuxEnv, runInitHookOnRuntime } from "./initHook";
+import {
+  checkInitHookExists,
+  getMuxEnv,
+  runInitHookOnRuntime,
+  shouldSkipInitHook,
+} from "./initHook";
 import { expandTildeForSSH as expandHookPath } from "./tildeExpansion";
 
 import { expandTildeForSSH, cdCommandForSSH } from "./tildeExpansion";
@@ -799,16 +804,8 @@ export class SSHRuntime extends RemoteRuntime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const {
-      projectPath,
-      branchName,
-      trunkBranch,
-      workspacePath,
-      initLogger,
-      abortSignal,
-      env,
-      skipInitHook,
-    } = params;
+    const { projectPath, branchName, trunkBranch, workspacePath, initLogger, abortSignal, env } =
+      params;
 
     // Disable git hooks for untrusted projects (prevents post-checkout execution)
     const nhp = gitNoHooksPrefix(params.trusted);
@@ -969,14 +966,7 @@ export class SSHRuntime extends RemoteRuntime {
 
       // 3. Run .mux/init hook if it exists
       // Note: runInitHookOnRuntime calls logComplete() internally
-      // Skip init hook when explicitly disabled or when project is untrusted
-      // (init hook is repo-controlled code that must not run without user consent)
-      if (skipInitHook || !params.trusted) {
-        initLogger.logStep(
-          skipInitHook
-            ? "Skipping .mux/init hook (disabled for this task)"
-            : "Skipping .mux/init hook (project not trusted)"
-        );
+      if (shouldSkipInitHook(params, initLogger)) {
         initLogger.logComplete(0);
       } else {
         const hookExists = await checkInitHookExists(projectPath);

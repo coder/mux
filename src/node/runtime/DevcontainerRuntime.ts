@@ -26,8 +26,12 @@ import {
   resolveSshAgentForwarding,
 } from "./credentialForwarding";
 import { devcontainerUp, devcontainerDown } from "./devcontainerCli";
-import { checkInitHookExists, getMuxEnv } from "./initHook";
-import { runInitHookOnRuntime } from "./initHook";
+import {
+  checkInitHookExists,
+  getMuxEnv,
+  runInitHookOnRuntime,
+  shouldSkipInitHook,
+} from "./initHook";
 import { DisposableProcess, killProcessTree } from "@/node/utils/disposableExec";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
@@ -471,10 +475,7 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     const { projectPath, branchName, workspacePath, initLogger, env } = params;
 
     try {
-      // Skip init hook when project is untrusted
-      // (init hook is repo-controlled code that must not run without user consent)
-      if (!params.trusted) {
-        initLogger.logStep("Skipping .mux/init hook (project not trusted)");
+      if (shouldSkipInitHook(params, initLogger)) {
         initLogger.logComplete(0);
         return { success: true };
       }
