@@ -35,13 +35,18 @@ import { hasNonEmptyPlanFile, readPlanFile } from "@/node/utils/runtime/helpers"
 import { secretsToRecord } from "@/common/types/secrets";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
+import { getEffectiveContextLimit } from "@/common/utils/compaction/contextLimit";
 import {
   DEFAULT_LAYOUT_PRESETS_CONFIG,
   isLayoutPresetsConfigEmpty,
   normalizeLayoutPresetsConfig,
 } from "@/common/types/uiLayouts";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
-import { isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
+import {
+  isValidModelFormat,
+  normalizeGatewayModel,
+  supports1MContext,
+} from "@/common/utils/ai/models";
 import {
   DEFAULT_TASK_SETTINGS,
   normalizeSubagentAiDefaults,
@@ -3365,6 +3370,31 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.getSessionUsage.output)
         .handler(async ({ context, input }) => {
           return context.sessionUsageService.getSessionUsage(input.workspaceId);
+        }),
+      getDelegationInsights: t
+        .input(schemas.workspace.getDelegationInsights.input)
+        .output(schemas.workspace.getDelegationInsights.output)
+        .handler(async ({ context, input }) => {
+          const metadataResult = await context.aiService.getWorkspaceMetadata(input.workspaceId);
+          const modelId =
+            metadataResult.success &&
+            typeof metadataResult.data.aiSettings?.model === "string" &&
+            metadataResult.data.aiSettings.model.trim().length > 0
+              ? metadataResult.data.aiSettings.model.trim()
+              : metadataResult.success &&
+                  typeof metadataResult.data.taskModelString === "string" &&
+                  metadataResult.data.taskModelString.trim().length > 0
+                ? metadataResult.data.taskModelString.trim()
+                : null;
+          const modelContextLimit =
+            modelId != null
+              ? getEffectiveContextLimit(modelId, supports1MContext(modelId), null)
+              : null;
+
+          return context.sessionUsageService.getDelegationInsights(
+            input.workspaceId,
+            modelContextLimit
+          );
         }),
       getSessionUsageBatch: t
         .input(schemas.workspace.getSessionUsageBatch.input)

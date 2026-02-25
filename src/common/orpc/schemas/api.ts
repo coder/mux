@@ -1,7 +1,7 @@
 import { eventIterator } from "@orpc/server";
 import { UIModeSchema } from "../../types/mode";
 import { z } from "zod";
-import { ChatStatsSchema, SessionUsageFileSchema } from "./chatStats";
+import { ChatStatsSchema, DelegationInsightsSchema, SessionUsageFileSchema } from "./chatStats";
 import {
   NameGenerationErrorSchema,
   ProjectRemoveErrorSchema,
@@ -1239,6 +1239,10 @@ export const workspace = {
   getSessionUsage: {
     input: z.object({ workspaceId: z.string() }),
     output: SessionUsageFileSchema.optional(),
+  },
+  getDelegationInsights: {
+    input: z.object({ workspaceId: z.string() }),
+    output: DelegationInsightsSchema,
   },
   /** Batch fetch session usage for multiple workspaces (for archived workspaces cost display) */
   getSessionUsageBatch: {

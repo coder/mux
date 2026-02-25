@@ -8,6 +8,8 @@ import { createTestHistoryService } from "./testHistoryService";
 import * as fs from "fs/promises";
 import * as path from "path";
 
+import { upsertSubagentReportArtifact } from "./subagentReportArtifacts";
+
 function createUsage(input: number, output: number): ChatUsageDisplay {
   return {
     input: { tokens: input },
@@ -297,6 +299,200 @@ describe("SessionUsageService", () => {
       expect(newEntry.model).toBe(model);
     });
   });
+  describe("getDelegationInsights", () => {
+    it("should return hasData: false when no children rolled up", async () => {
+      const insights = await service.getDelegationInsights("parent-workspace", 200_000);
+
+      expect(insights).toEqual({
+        children: [],
+        totalChildTokens: 0,
+        totalChildCostUsd: undefined,
+        exploreTokensConsumed: 0,
+        exploreReportTokens: 0,
+        compressionRatio: 0,
+        actualCompactions: 0,
+        estimatedWithoutDelegation: 0,
+        compactionsAvoided: 0,
+        hasData: false,
+      });
+    });
+
+    it("should compute compression ratio from explore children + report artifacts", async () => {
+      const projectPath = "/tmp/mux-session-usage-test-project";
+      const parentWorkspaceId = "parent-workspace";
+      const model = "claude-sonnet-4-20250514";
+      const childWorkspaceA = "child-explore-a";
+      const childWorkspaceB = "child-explore-b";
+
+      await config.addWorkspace(projectPath, {
+        id: parentWorkspaceId,
+        name: "parent-branch",
+        projectName: "test-project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+
+      await service.rollUpUsageIntoParent(
+        parentWorkspaceId,
+        childWorkspaceA,
+        { [model]: createUsage(120, 80) },
+        { agentType: "explore", model }
+      );
+      await service.rollUpUsageIntoParent(
+        parentWorkspaceId,
+        childWorkspaceB,
+        { [model]: createUsage(40, 60) },
+        { agentType: "explore", model }
+      );
+
+      const workspaceSessionDir = config.getSessionDir(parentWorkspaceId);
+      await upsertSubagentReportArtifact({
+        workspaceId: parentWorkspaceId,
+        workspaceSessionDir,
+        childTaskId: childWorkspaceA,
+        parentWorkspaceId,
+        ancestorWorkspaceIds: [parentWorkspaceId],
+        reportMarkdown: "A".repeat(200),
+      });
+      await upsertSubagentReportArtifact({
+        workspaceId: parentWorkspaceId,
+        workspaceSessionDir,
+        childTaskId: childWorkspaceB,
+        parentWorkspaceId,
+        ancestorWorkspaceIds: [parentWorkspaceId],
+        reportMarkdown: "B".repeat(400),
+      });
+
+      const insights = await service.getDelegationInsights(parentWorkspaceId, null);
+
+      expect(insights.children).toHaveLength(2);
+      expect(insights.totalChildTokens).toBe(300);
+      expect(insights.exploreTokensConsumed).toBe(300);
+      expect(insights.exploreReportTokens).toBe(150);
+      expect(insights.compressionRatio).toBe(2);
+      expect(insights.hasData).toBe(true);
+    });
+
+    it("should estimate compactions avoided using threshold and child tokens", async () => {
+      const projectPath = "/tmp/mux-session-usage-test-project";
+      const parentWorkspaceId = "parent-workspace";
+      const model = "claude-sonnet-4-20250514";
+
+      await config.addWorkspace(projectPath, {
+        id: parentWorkspaceId,
+        name: "parent-branch",
+        projectName: "test-project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+
+      await service.rollUpUsageIntoParent(
+        parentWorkspaceId,
+        "child-exec-a",
+        { [model]: createUsage(250_000, 50_000) },
+        { agentType: "exec", model }
+      );
+      await service.rollUpUsageIntoParent(
+        parentWorkspaceId,
+        "child-exec-b",
+        { [model]: createUsage(150_000, 50_000) },
+        { agentType: "exec", model }
+      );
+
+      await historyService.appendToHistory(
+        parentWorkspaceId,
+        createMuxMessage("summary", "assistant", "Compaction summary", {
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 2,
+        })
+      );
+      await historyService.appendToHistory(
+        parentWorkspaceId,
+        createMuxMessage("post-summary-user", "user", "Continue")
+      );
+
+      const insights = await service.getDelegationInsights(parentWorkspaceId, 200_000);
+
+      expect(insights.totalChildTokens).toBe(500_000);
+      expect(insights.actualCompactions).toBe(2);
+      expect(insights.estimatedWithoutDelegation).toBe(5);
+      expect(insights.compactionsAvoided).toBe(3);
+    });
+
+    it("should skip legacy true entries in rolledUpFrom", async () => {
+      const workspaceId = "parent-workspace";
+      const legacyChildWorkspaceId = "legacy-child";
+      const enrichedChildWorkspaceId = "enriched-child";
+      const usagePath = path.join(config.getSessionDir(workspaceId), "session-usage.json");
+
+      await fs.mkdir(path.dirname(usagePath), { recursive: true });
+      await fs.writeFile(
+        usagePath,
+        JSON.stringify(
+          {
+            byModel: {},
+            rolledUpFrom: {
+              [legacyChildWorkspaceId]: true,
+              [enrichedChildWorkspaceId]: {
+                totalTokens: 123,
+                totalCostUsd: 0.5,
+                agentType: "exec",
+                model: "openai:gpt-4o",
+                rolledUpAtMs: 1,
+              },
+            },
+            version: 1,
+          },
+          null,
+          2
+        )
+      );
+
+      const insights = await service.getDelegationInsights(workspaceId, 200_000);
+
+      expect(insights.children).toHaveLength(1);
+      expect(insights.children[0]).toEqual({
+        workspaceId: enrichedChildWorkspaceId,
+        totalTokens: 123,
+        totalCostUsd: 0.5,
+        agentType: "exec",
+        model: "openai:gpt-4o",
+      });
+      expect(insights.children.some((child) => child.workspaceId === legacyChildWorkspaceId)).toBe(
+        false
+      );
+      expect(insights.totalChildTokens).toBe(123);
+    });
+
+    it("should return compactionsAvoided: 0 when modelContextLimit is null", async () => {
+      const projectPath = "/tmp/mux-session-usage-test-project";
+      const parentWorkspaceId = "parent-workspace";
+      const model = "claude-sonnet-4-20250514";
+
+      await config.addWorkspace(projectPath, {
+        id: parentWorkspaceId,
+        name: "parent-branch",
+        projectName: "test-project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+
+      await service.rollUpUsageIntoParent(
+        parentWorkspaceId,
+        "child-exec-a",
+        { [model]: createUsage(100_000, 25_000) },
+        { agentType: "exec", model }
+      );
+
+      const insights = await service.getDelegationInsights(parentWorkspaceId, null);
+
+      expect(insights.hasData).toBe(true);
+      expect(insights.compactionsAvoided).toBe(0);
+      expect(insights.estimatedWithoutDelegation).toBe(insights.actualCompactions);
+    });
+  });
+
   describe("recordUsage", () => {
     it("should accumulate usage for same model (not overwrite)", async () => {
       const workspaceId = "test-workspace";

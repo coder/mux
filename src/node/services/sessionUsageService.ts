@@ -8,11 +8,17 @@ import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks"
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
-import { normalizeGatewayModel } from "@/common/utils/ai/models";
-import type { RolledUpChildEntry } from "@/common/orpc/schemas/chatStats";
+import { DEFAULT_AUTO_COMPACTION_THRESHOLD } from "@/common/constants/ui";
+import type {
+  DelegationChildSummary,
+  DelegationInsights,
+  RolledUpChildEntry,
+} from "@/common/orpc/schemas/chatStats";
 import type { TokenConsumer } from "@/common/types/chatStats";
 import type { MuxMessage } from "@/common/types/message";
+import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { log } from "./log";
+import { readSubagentReportArtifactsFile } from "./subagentReportArtifacts";
 
 export interface SessionUsageTokenStatsCacheV1 {
   /**
@@ -327,6 +333,90 @@ export class SessionUsageService {
         return undefined;
       }
     });
+  }
+
+  async getDelegationInsights(
+    workspaceId: string,
+    modelContextLimit: number | null
+  ): Promise<DelegationInsights> {
+    assert(workspaceId.trim().length > 0, "getDelegationInsights: workspaceId empty");
+    assert(
+      modelContextLimit == null || (Number.isFinite(modelContextLimit) && modelContextLimit > 0),
+      "getDelegationInsights: modelContextLimit must be null or > 0"
+    );
+
+    const usage = await this.getSessionUsage(workspaceId);
+    const rolledUpFrom = usage?.rolledUpFrom ?? {};
+
+    const children: DelegationChildSummary[] = [];
+    for (const [childId, entry] of Object.entries(rolledUpFrom)) {
+      if (entry === true) {
+        continue;
+      }
+
+      children.push({
+        workspaceId: childId,
+        agentType: entry.agentType,
+        model: entry.model,
+        totalTokens: entry.totalTokens,
+        totalCostUsd: entry.totalCostUsd,
+      });
+    }
+
+    const totalChildTokens = children.reduce((sum, child) => sum + child.totalTokens, 0);
+    const totalChildCostUsd = children.reduce((sum, child) => sum + (child.totalCostUsd ?? 0), 0);
+
+    const explores = children.filter((child) => child.agentType === "explore");
+    const exploreTokensConsumed = explores.reduce((sum, child) => sum + child.totalTokens, 0);
+
+    const exploreWorkspaceIds = new Set(explores.map((child) => child.workspaceId));
+    const sessionDir = this.config.getSessionDir(workspaceId);
+    const artifactsFile = await readSubagentReportArtifactsFile(sessionDir);
+    let exploreReportTokens = 0;
+    for (const artifact of Object.values(artifactsFile.artifactsByChildTaskId)) {
+      if (!exploreWorkspaceIds.has(artifact.childTaskId)) {
+        continue;
+      }
+
+      exploreReportTokens += artifact.reportTokenEstimate ?? 0;
+    }
+
+    const compressionRatio =
+      exploreReportTokens > 0 ? exploreTokensConsumed / exploreReportTokens : 0;
+
+    const history = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+    let actualCompactions = 0;
+    if (history.success) {
+      for (const message of history.data) {
+        const epoch = message.metadata?.compactionEpoch;
+        if (typeof epoch === "number" && epoch > actualCompactions) {
+          actualCompactions = epoch;
+        }
+      }
+    }
+
+    const compactionThreshold =
+      modelContextLimit != null
+        ? Math.round(modelContextLimit * DEFAULT_AUTO_COMPACTION_THRESHOLD)
+        : null;
+    const estimatedWithoutDelegation =
+      compactionThreshold != null
+        ? actualCompactions + Math.floor(totalChildTokens / compactionThreshold)
+        : actualCompactions;
+    const compactionsAvoided = estimatedWithoutDelegation - actualCompactions;
+
+    return {
+      children,
+      totalChildTokens,
+      totalChildCostUsd: totalChildCostUsd > 0 ? totalChildCostUsd : undefined,
+      exploreTokensConsumed,
+      exploreReportTokens,
+      compressionRatio,
+      actualCompactions,
+      estimatedWithoutDelegation,
+      compactionsAvoided,
+      hasData: children.length > 0,
+    };
   }
 
   /**
