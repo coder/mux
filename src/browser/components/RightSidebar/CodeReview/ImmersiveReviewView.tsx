@@ -951,21 +951,28 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   }, [props.reviewActions]);
 
   const getCurrentLineSelection = useCallback((): SelectedLineRange | null => {
+    if (selectedLineRange) {
+      return selectedLineRange;
+    }
+
     if (activeLineIndex === null) {
       return null;
     }
 
-    if (!selectedLineRange) {
-      return { startIndex: activeLineIndex, endIndex: activeLineIndex };
+    return { startIndex: activeLineIndex, endIndex: activeLineIndex };
+  }, [activeLineIndex, selectedLineRange]);
+
+  const selectedLineSummary = useMemo(() => {
+    const selection = getCurrentLineSelection();
+    if (!selection) {
+      return null;
     }
 
     return {
-      startIndex: Math.min(selectedLineRange.startIndex, selectedLineRange.endIndex),
-      endIndex: Math.max(selectedLineRange.startIndex, selectedLineRange.endIndex),
+      startIndex: Math.min(selection.startIndex, selection.endIndex),
+      endIndex: Math.max(selection.startIndex, selection.endIndex),
     };
-  }, [activeLineIndex, selectedLineRange]);
-
-  const selectedLineSummary = getCurrentLineSelection();
+  }, [getCurrentLineSelection]);
 
   const openComposer = useCallback(
     (prefill: string, selectionOverride?: SelectedLineRange) => {
@@ -976,27 +983,28 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         };
       pendingComposerHunkSwitchRef.current = null;
 
+      // Keep a single cursor source of truth: the moving edge of the selection.
+      const clampToRange = (lineIndex: number, range: HunkLineRange): number =>
+        Math.max(range.startIndex, Math.min(range.endIndex, lineIndex));
+
       // Resolve which hunk to attach the composer to. If the cursor has moved
       // into a different hunk (e.g. via arrow-key line navigation), look it up
       // from the overlay's lineHunkIds rather than using the stale selectedHunk.
       let targetHunk = selectedHunk;
       let targetRange = selectedHunkRange;
-      let targetSelectionEnd = selection?.endIndex ?? null;
+      let cursorIndex = selection.endIndex;
 
-      if (selection && (!targetRange || !isSelectionInsideRange(selection, targetRange))) {
+      if (!targetRange || !isSelectionInsideRange(selection, targetRange)) {
         const resolved =
           findHunkAtLine(selection.endIndex, overlayData, currentFileHunks) ??
           findHunkAtLine(selection.startIndex, overlayData, currentFileHunks);
         if (resolved) {
           targetHunk = resolved.hunk;
           targetRange = resolved.range;
-          targetSelectionEnd = Math.max(
-            resolved.range.startIndex,
-            Math.min(resolved.range.endIndex, selection.endIndex)
-          );
+          cursorIndex = clampToRange(selection.endIndex, resolved.range);
           // Keep cursor state anchored to the intended target line before
           // hunk-selection effects run; this avoids snapping to hunk start.
-          setActiveLineIndex(targetSelectionEnd);
+          setActiveLineIndex(cursorIndex);
 
           const currentSelectedHunkId = selectedHunkIdRef.current;
           if (resolved.hunk.id !== currentSelectedHunkId) {
@@ -1016,40 +1024,16 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         return;
       }
 
-      const fallbackLineIndex =
-        targetSelectionEnd === null
-          ? targetRange.startIndex
-          : Math.max(targetRange.startIndex, Math.min(targetRange.endIndex, targetSelectionEnd));
+      const effectiveSelection: SelectedLineRange = {
+        startIndex: clampToRange(selection.startIndex, targetRange),
+        endIndex: clampToRange(selection.endIndex, targetRange),
+      };
 
-      const effectiveSelection = (() => {
-        if (selection && isSelectionInsideRange(selection, targetRange)) {
-          return selection;
-        }
-        // Clamp the user's selection to the intersection with the target hunk range
-        // instead of collapsing to a single point.
-        if (selection) {
-          const selStart = Math.min(selection.startIndex, selection.endIndex);
-          const selEnd = Math.max(selection.startIndex, selection.endIndex);
-          const clampedStart = Math.max(selStart, targetRange.startIndex);
-          const clampedEnd = Math.min(selEnd, targetRange.endIndex);
-          if (clampedStart <= clampedEnd) {
-            return { startIndex: clampedStart, endIndex: clampedEnd };
-          }
-        }
-        // No overlap or no selection — fall back to the single-line fallback
-        return { startIndex: fallbackLineIndex, endIndex: fallbackLineIndex };
-      })();
+      const clampedCursor = clampToRange(cursorIndex, targetRange);
 
-      // Anchor cursor to the last line of the marked selection so subsequent
-      // Shift+C / navigation starts from the correct position.
-      setActiveLineIndex(effectiveSelection.endIndex);
-
-      // Place the composer at the user's actual cursor, not always at the selection bottom.
-      const cursorIndex = activeLineIndexRef.current ?? effectiveSelection.endIndex;
-      const clampedCursor = Math.max(
-        targetRange.startIndex,
-        Math.min(targetRange.endIndex, cursorIndex)
-      );
+      // Keep the keyboard cursor on the last selected line so comment placement,
+      // selection visuals, and subsequent actions all share the same anchor.
+      setActiveLineIndex(clampedCursor);
 
       nextComposerRequestIdRef.current += 1;
       setInlineComposerRequest({
@@ -1165,7 +1149,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
       if (isTouchExperience && !shiftKey && resolvedHunk) {
         // Mobile row tap should only open a composer for lines backed by a diff hunk.
-        openComposer("", { startIndex: lineIndex, endIndex: lineIndex });
+        openComposer("", { startIndex: effectiveLineIndex, endIndex: effectiveLineIndex });
       }
     },
     [
@@ -1459,29 +1443,9 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       return;
     }
 
-    const normalizedSelectedLineRange = selectedLineRange
-      ? {
-          startIndex: Math.min(selectedLineRange.startIndex, selectedLineRange.endIndex),
-          endIndex: Math.max(selectedLineRange.startIndex, selectedLineRange.endIndex),
-        }
-      : null;
-    const hasMultiLineSelection = Boolean(
-      normalizedSelectedLineRange &&
-      normalizedSelectedLineRange.endIndex > normalizedSelectedLineRange.startIndex
-    );
-    const isActiveLineInsideSelection = Boolean(
-      normalizedSelectedLineRange &&
-      activeLineIndex !== null &&
-      activeLineIndex >= normalizedSelectedLineRange.startIndex &&
-      activeLineIndex <= normalizedSelectedLineRange.endIndex
-    );
     const shouldRenderActiveLineOutline =
-      activeLineIndex !== null &&
-      lineIndexForScroll === activeLineIndex &&
-      !(hasMultiLineSelection && isActiveLineInsideSelection);
+      activeLineIndex !== null && lineIndexForScroll === activeLineIndex;
 
-    // For full-hunk keyboard selections (J/K), suppress the separate active-line
-    // ring so the range highlight reads as one unified selection.
     if (shouldRenderActiveLineOutline) {
       lineElement.style.outline = ACTIVE_LINE_OUTLINE;
       lineElement.style.outlineOffset = "-1px";
@@ -1515,7 +1479,6 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     overlayData.content,
     revealTargetLineIndex,
     scrollNonce,
-    selectedLineRange,
   ]);
 
   useEffect(() => {
