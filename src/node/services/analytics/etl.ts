@@ -497,6 +497,7 @@ export async function clearWorkspaceAnalyticsState(
   try {
     await conn.run("DELETE FROM events WHERE workspace_id = ?", [workspaceId]);
     await conn.run("DELETE FROM ingest_watermarks WHERE workspace_id = ?", [workspaceId]);
+    await conn.run("DELETE FROM delegation_rollups WHERE parent_workspace_id = ?", [workspaceId]);
     await conn.run("COMMIT");
   } catch (error) {
     await conn.run("ROLLBACK");
@@ -807,12 +808,15 @@ export async function ingestWorkspace(
   }
 
   const watermark = await readWatermark(conn, workspaceId);
+  const persistedMeta = await readWorkspaceMetaFromDisk(sessionDir);
+  const workspaceMeta = mergeWorkspaceMeta(persistedMeta, meta);
+
+  // Keep delegation rollups fresh even when chat.jsonl is unchanged.
+  await ingestDelegationRollups(conn, workspaceId, sessionDir, workspaceMeta);
+
   if (stat.mtimeMs <= watermark.lastModified) {
     return;
   }
-
-  const persistedMeta = await readWorkspaceMetaFromDisk(sessionDir);
-  const workspaceMeta = mergeWorkspaceMeta(persistedMeta, meta);
 
   const chatContents = await fs.readFile(chatPath, "utf-8");
   const lines = chatContents.split("\n").filter((line) => line.trim().length > 0);
@@ -916,9 +920,6 @@ export async function ingestWorkspace(
     meta
   );
   await ingestArchivedSubagentTranscripts(conn, sessionDir, mergedMetaForChildren, workspaceId);
-
-  // Ingest delegation rollup data from session-usage.json.
-  await ingestDelegationRollups(conn, workspaceId, sessionDir, workspaceMeta);
 }
 
 /**
@@ -1098,10 +1099,11 @@ export async function rebuildAll(
 
   await conn.run("BEGIN TRANSACTION");
   try {
-    // Reset both tables atomically so a crash cannot leave empty events with
-    // stale watermarks that would incorrectly suppress initial backfill.
+    // Reset analytics tables atomically so a crash cannot leave empty events with
+    // stale watermarks or stale delegation rollups that suppress rebuild accuracy.
     await conn.run("DELETE FROM events");
     await conn.run("DELETE FROM ingest_watermarks");
+    await conn.run("DELETE FROM delegation_rollups");
     await conn.run("COMMIT");
   } catch (error) {
     await conn.run("ROLLBACK");
