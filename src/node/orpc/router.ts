@@ -7,6 +7,7 @@ import {
 } from "@/common/constants/muxGatewayOAuth";
 import { Err, Ok } from "@/common/types/result";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
+import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
 import type {
   UpdateStatus,
@@ -2017,12 +2018,13 @@ export const router = (authToken?: string) => {
         .output(schemas.projects.setTrust.output)
         .handler(async ({ context, input }) => {
           await context.config.editConfig((config) => {
-            let project = config.projects.get(input.projectPath);
+            const normalizedPath = stripTrailingSlashes(input.projectPath);
+            let project = config.projects.get(normalizedPath);
             if (!project) {
               // Create a minimal project entry so trust can be set before
               // the first workspace.create (which normally adds the project)
               project = { workspaces: [] };
-              config.projects.set(input.projectPath, project);
+              config.projects.set(normalizedPath, project);
             }
             project.trusted = input.trusted;
             return config;
