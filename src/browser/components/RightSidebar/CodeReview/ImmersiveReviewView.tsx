@@ -74,6 +74,8 @@ interface InlineComposerRequest {
   hunkId: string;
   startOffset: number;
   endOffset: number;
+  /** Hunk-relative offset for composer placement (cursor position) */
+  cursorOffset: number;
 }
 
 interface InlineReviewEditRequest {
@@ -1042,6 +1044,13 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       // Shift+C / navigation starts from the correct position.
       setActiveLineIndex(effectiveSelection.endIndex);
 
+      // Place the composer at the user's actual cursor, not always at the selection bottom.
+      const cursorIndex = activeLineIndexRef.current ?? effectiveSelection.endIndex;
+      const clampedCursor = Math.max(
+        targetRange.startIndex,
+        Math.min(targetRange.endIndex, cursorIndex)
+      );
+
       nextComposerRequestIdRef.current += 1;
       setInlineComposerRequest({
         requestId: nextComposerRequestIdRef.current,
@@ -1049,6 +1058,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         hunkId: targetHunk.id,
         startOffset: effectiveSelection.startIndex - targetRange.startIndex,
         endOffset: effectiveSelection.endIndex - targetRange.startIndex,
+        cursorOffset: clampedCursor - targetRange.startIndex,
       });
     },
     [
@@ -1528,6 +1538,9 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         startIndex: clampToHunk(selectedHunkRange.startIndex + inlineComposerRequest.startOffset),
         endIndex: clampToHunk(selectedHunkRange.startIndex + inlineComposerRequest.endOffset),
       },
+      composerAfterIndex: clampToHunk(
+        selectedHunkRange.startIndex + inlineComposerRequest.cursorOffset
+      ),
       initialNoteText: inlineComposerRequest.prefill,
     };
   }, [inlineComposerRequest, selectedHunk, selectedHunkRange]);

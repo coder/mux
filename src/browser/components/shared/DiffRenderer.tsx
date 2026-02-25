@@ -653,6 +653,8 @@ interface SelectableDiffRendererProps extends Omit<DiffRendererProps, "filePath"
     requestId: number;
     selection: LineSelection;
     initialNoteText?: string;
+    /** Which display line to render the composer after (defaults to selection bottom) */
+    composerAfterIndex?: number;
   } | null;
   /** External request to open an existing inline review note in edit mode */
   externalEditRequest?: {
@@ -1044,6 +1046,10 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
 
     const renderSelection: LineSelection | null =
       pendingExternalSelectionRequest?.selection ?? selection;
+    // Where to render the composer: cursor position if provided, else selection bottom
+    const composerAfterIndex: number | undefined = (
+      pendingExternalSelectionRequest ?? externalSelectionRequest
+    )?.composerAfterIndex;
     const renderNoteText = pendingExternalSelectionRequest
       ? (pendingExternalSelectionRequest.initialNoteText ?? "")
       : selectionInitialNoteText;
@@ -1405,10 +1411,12 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                 />
               </div>
 
-              {/* Show textarea after the last selected line */}
+              {/* Show textarea after the cursor line (or last selected line as fallback) */}
               {isComposerSelected &&
                 renderSelection &&
-                displayIndex === Math.max(renderSelection.startIndex, renderSelection.endIndex) && (
+                displayIndex ===
+                  (composerAfterIndex ??
+                    Math.max(renderSelection.startIndex, renderSelection.endIndex)) && (
                   <ReviewNoteInput
                     selection={renderSelection}
                     lineData={lineData}
