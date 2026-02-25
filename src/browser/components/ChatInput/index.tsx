@@ -446,7 +446,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { open } = useSettings();
   const { selectedWorkspace, beginWorkspaceCreation, updateWorkspaceDraftSection } =
     useWorkspaceContext();
-  const { agentId, currentAgent } = useAgent();
+  const { agentId, currentAgent, agents } = useAgent();
+
+  // Keep auto-mode checks aligned with AgentModePicker behavior.
+  const normalizedAgentId =
+    typeof agentId === "string" && agentId.trim().length > 0
+      ? agentId.trim().toLowerCase()
+      : WORKSPACE_DEFAULTS.agentId;
+  const autoAvailable = agents.some((entry) => entry.uiSelectable && entry.id === "auto");
+  const isAutoAgent = normalizedAgentId === "auto" && autoAvailable;
 
   // Use current agent's uiColor, or neutral border until agents load
   const focusBorderColor = currentAgent?.uiColor ?? "var(--color-border-light)";
@@ -2430,10 +2438,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_MODEL)}</span>
                       <span> - change model</span>
                     </span>
-                    <span>
-                      <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_AGENT)}</span>
-                      <span> - change agent</span>
-                    </span>
+                    {!isAutoAgent && (
+                      <span>
+                        <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_AGENT)}</span>
+                        <span> - change agent</span>
+                      </span>
+                    )}
                   </div>
                 )}
 
