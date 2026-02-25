@@ -764,6 +764,10 @@ function createWindow() {
     // User can press Alt to toggle it
     autoHideMenuBar: process.platform === "linux",
     show: false, // Don't show until ready-to-show event
+    // On Linux, explicitly set the window icon so the taskbar/window-switcher
+    // shows the app icon even without desktop integration (e.g. AppImageLauncher).
+    // macOS uses the .icns from the app bundle; Windows uses the .exe icon resource.
+    ...(process.platform === "linux" ? { icon: path.join(__dirname, "../icon.png") } : {}),
     // VSCode-like integrated titlebar (hidden native titlebar with native window controls)
     ...getTitleBarOptions(),
   });
