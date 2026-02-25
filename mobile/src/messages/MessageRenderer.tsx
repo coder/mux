@@ -270,7 +270,7 @@ function AssistantMessageCard({
         {renderContent()}
       </MessageBubble>
 
-      {Platform.OS === "android" && (
+      {Platform.OS !== "ios" && (
         <Modal
           visible={menuVisible}
           transparent
@@ -480,7 +480,7 @@ function UserMessageCard({
         </View>
       </MessageBubble>
 
-      {Platform.OS === "android" && (
+      {Platform.OS !== "ios" && (
         <Modal
           visible={menuVisible}
           transparent
