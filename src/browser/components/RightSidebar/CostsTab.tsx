@@ -28,7 +28,9 @@ import { getEffectiveContextLimit } from "@/common/utils/compaction/contextLimit
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { PostCompactionSection } from "./PostCompactionSection";
 import { usePostCompactionState } from "@/browser/hooks/usePostCompactionState";
+import { useDelegationInsights } from "@/browser/hooks/useDelegationInsights";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { DelegationInsightsSection } from "./DelegationInsightsSection";
 
 /**
  * Calculate cost with elevated pricing for 1M context (200k-1M tokens)
@@ -69,6 +71,8 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
 
   // Post-compaction context state for UI display
   const postCompactionState = usePostCompactionState(workspaceId);
+
+  const delegationInsights = useDelegationInsights(workspaceId);
 
   // Get runtimeConfig for SSH-aware editor opening
   const workspaceContext = useOptionalWorkspaceContext();
@@ -469,6 +473,15 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
         (!consumers.topFilePaths || consumers.topFilePaths.length === 0) && (
           <div className="text-dim py-2 text-xs italic">No consumer data available</div>
         )}
+
+      {delegationInsights?.hasData && (
+        <div className="mb-4">
+          <h3 className="text-subtle m-0 mb-2 text-xs font-semibold tracking-wide uppercase">
+            Delegation Insights
+          </h3>
+          <DelegationInsightsSection insights={delegationInsights} />
+        </div>
+      )}
     </div>
   );
 };
