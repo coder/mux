@@ -95,6 +95,7 @@ interface HunkLineRange {
   startIndex: number;
   endIndex: number;
   firstModifiedIndex: number | null;
+  lastModifiedIndex: number | null;
 }
 
 interface ImmersiveOverlayData {
@@ -203,6 +204,7 @@ function buildOverlayFromFileContent(
 
     const hunkStartIndex = lineHunkIds.length;
     let firstModifiedIndex: number | null = null;
+    let lastModifiedIndex: number | null = null;
 
     for (const line of splitDiffLines(hunk.content)) {
       const prefix = line[0] ?? " ";
@@ -210,8 +212,9 @@ function buildOverlayFromFileContent(
         continue;
       }
 
-      if (firstModifiedIndex === null && (prefix === "+" || prefix === "-")) {
-        firstModifiedIndex = lineHunkIds.length;
+      if (prefix === "+" || prefix === "-") {
+        firstModifiedIndex ??= lineHunkIds.length;
+        lastModifiedIndex = lineHunkIds.length;
       }
 
       pushDisplayLine(`${prefix}${line.slice(1)}`, hunk.id);
@@ -225,6 +228,7 @@ function buildOverlayFromFileContent(
         startIndex: hunkStartIndex,
         endIndex: lineHunkIds.length - 1,
         firstModifiedIndex,
+        lastModifiedIndex,
       });
     }
   }
@@ -266,6 +270,7 @@ function buildOverlayFromHunks(sortedHunks: DiffHunk[]): ImmersiveOverlayData {
 
     const hunkStartIndex = lineHunkIds.length;
     let firstModifiedIndex: number | null = null;
+    let lastModifiedIndex: number | null = null;
 
     for (const line of splitDiffLines(hunk.content)) {
       const prefix = line[0] ?? " ";
@@ -273,8 +278,9 @@ function buildOverlayFromHunks(sortedHunks: DiffHunk[]): ImmersiveOverlayData {
         continue;
       }
 
-      if (firstModifiedIndex === null && (prefix === "+" || prefix === "-")) {
-        firstModifiedIndex = lineHunkIds.length;
+      if (prefix === "+" || prefix === "-") {
+        firstModifiedIndex ??= lineHunkIds.length;
+        lastModifiedIndex = lineHunkIds.length;
       }
 
       pushDisplayLine(`${prefix}${line.slice(1)}`, hunk.id);
@@ -285,6 +291,7 @@ function buildOverlayFromHunks(sortedHunks: DiffHunk[]): ImmersiveOverlayData {
         startIndex: hunkStartIndex,
         endIndex: lineHunkIds.length - 1,
         firstModifiedIndex,
+        lastModifiedIndex,
       });
     }
   });
@@ -783,11 +790,13 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     const shouldSelectEntireHunk = pendingJumpSelectAllHunkIdRef.current === resolvedSelectedHunkId;
     if (shouldSelectEntireHunk) {
       pendingJumpSelectAllHunkIdRef.current = null;
-      const hunkAnchorLine = selectedHunkRange.firstModifiedIndex ?? selectedHunkRange.startIndex;
-      setActiveLineIndex(hunkAnchorLine);
+      // Use actual modified boundaries (without context padding) for the highlight
+      const modifiedStart = selectedHunkRange.firstModifiedIndex ?? selectedHunkRange.startIndex;
+      const modifiedEnd = selectedHunkRange.lastModifiedIndex ?? selectedHunkRange.endIndex;
+      setActiveLineIndex(modifiedEnd);
       setSelectedLineRange({
-        startIndex: selectedHunkRange.startIndex,
-        endIndex: selectedHunkRange.endIndex,
+        startIndex: modifiedStart,
+        endIndex: modifiedEnd,
       });
       return;
     }
@@ -1002,6 +1011,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
               startIndex: fallbackLineIndex,
               endIndex: fallbackLineIndex,
             };
+
+      // Anchor cursor to the last line of the marked selection so subsequent
+      // Shift+C / navigation starts from the correct position.
+      setActiveLineIndex(effectiveSelection.endIndex);
 
       nextComposerRequestIdRef.current += 1;
       setInlineComposerRequest({
