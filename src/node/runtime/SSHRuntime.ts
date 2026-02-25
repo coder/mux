@@ -888,7 +888,8 @@ export class SSHRuntime extends RemoteRuntime {
           baseRepoPath,
           trunkBranch,
           initLogger,
-          abortSignal
+          abortSignal,
+          nhp
         );
 
         // Resolve the bundle's staging ref to use as the local fallback start
@@ -947,7 +948,8 @@ export class SSHRuntime extends RemoteRuntime {
           workspacePath,
           trunkBranch,
           initLogger,
-          abortSignal
+          abortSignal,
+          nhp
         );
         const shouldUseOrigin =
           fetchedOrigin &&
@@ -960,7 +962,7 @@ export class SSHRuntime extends RemoteRuntime {
           ));
 
         if (shouldUseOrigin) {
-          await this.fastForwardToOrigin(workspacePath, trunkBranch, initLogger, abortSignal);
+          await this.fastForwardToOrigin(workspacePath, trunkBranch, initLogger, abortSignal, nhp);
         }
       }
 
@@ -1009,12 +1011,13 @@ export class SSHRuntime extends RemoteRuntime {
     workspacePath: string,
     trunkBranch: string,
     initLogger: InitLogger,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    nhp = ""
   ): Promise<boolean> {
     try {
       initLogger.logStep(`Fetching latest from origin/${trunkBranch}...`);
 
-      const fetchCmd = `git fetch origin ${shescape.quote(trunkBranch)}`;
+      const fetchCmd = `${nhp}git fetch origin ${shescape.quote(trunkBranch)}`;
       const fetchStream = await this.exec(fetchCmd, {
         cwd: workspacePath,
         timeout: 120, // 2 minutes for network operation
@@ -1095,12 +1098,13 @@ export class SSHRuntime extends RemoteRuntime {
     workspacePath: string,
     trunkBranch: string,
     initLogger: InitLogger,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    nhp = ""
   ): Promise<void> {
     try {
       initLogger.logStep("Fast-forward merging...");
 
-      const mergeCmd = `git merge --ff-only origin/${shescape.quote(trunkBranch)}`;
+      const mergeCmd = `${nhp}git merge --ff-only origin/${shescape.quote(trunkBranch)}`;
       const mergeStream = await this.exec(mergeCmd, {
         cwd: workspacePath,
         timeout: 60, // 1 minute for fast-forward merge
