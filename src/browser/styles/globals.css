@@ -1052,6 +1052,17 @@ body {
   scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
 }
 
+/*
+ * Override for Tailwind's scrollbar-none utility.
+ * The global ::-webkit-scrollbar rules above opt Chromium/Electron into
+ * WebKit custom scrollbar rendering, which ignores the standard
+ * scrollbar-width: none that scrollbar-none generates. This explicit
+ * pseudo-element override restores the hidden behavior.
+ */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
 /* Root container */
 html,
 body,
