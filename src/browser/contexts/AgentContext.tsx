@@ -61,6 +61,38 @@ function coerceAgentId(value: unknown): string {
     : WORKSPACE_DEFAULTS.agentId;
 }
 
+type AgentDiscoveryCacheMode = "enabled" | "disabled";
+
+function getAgentDiscoveryCacheMode(disableWorkspaceAgents: boolean): AgentDiscoveryCacheMode {
+  return disableWorkspaceAgents ? "disabled" : "enabled";
+}
+
+function getWorkspaceDiscoveryCacheKey(
+  workspaceId: string | undefined,
+  projectPath: string | undefined,
+  mode: AgentDiscoveryCacheMode
+): string | undefined {
+  if (!workspaceId) {
+    return undefined;
+  }
+
+  return projectPath ? `${projectPath}:${workspaceId}:${mode}` : `${workspaceId}:${mode}`;
+}
+
+function getProjectDiscoveryCacheKey(
+  projectPath: string | undefined,
+  mode: AgentDiscoveryCacheMode
+): string | undefined {
+  return projectPath ? `${projectPath}:${mode}` : undefined;
+}
+
+type ProjectDiscoveryCacheSource = "project" | "workspace";
+
+interface ProjectDiscoveryCacheEntry {
+  agents: AgentDefinitionDescriptor[];
+  source: ProjectDiscoveryCacheSource;
+}
+
 export function AgentProvider(props: AgentProviderProps) {
   if ("value" in props) {
     return <AgentContext.Provider value={props.value}>{props.children}</AgentContext.Provider>;
@@ -128,6 +160,10 @@ function AgentProviderWithState(props: {
   const [loadFailed, setLoadFailed] = useState(false);
 
   const isMountedRef = useRef(true);
+  // Keep recently-discovered agents in memory so workspace switches can render
+  // immediately while the backend refresh completes.
+  const workspaceDiscoveryCacheRef = useRef(new Map<string, AgentDefinitionDescriptor[]>());
+  const projectDiscoveryCacheRef = useRef(new Map<string, ProjectDiscoveryCacheEntry>());
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -150,6 +186,10 @@ function AgentProviderWithState(props: {
       workspaceId: string | undefined,
       workspaceAgentsDisabled: boolean
     ) => {
+      const cacheMode = getAgentDiscoveryCacheMode(workspaceAgentsDisabled);
+      const workspaceCacheKey = getWorkspaceDiscoveryCacheKey(workspaceId, projectPath, cacheMode);
+      const projectCacheKey = getProjectDiscoveryCacheKey(projectPath, cacheMode);
+
       fetchParamsRef.current = {
         projectPath,
         workspaceId,
@@ -178,6 +218,15 @@ function AgentProviderWithState(props: {
           current.disableWorkspaceAgents === workspaceAgentsDisabled &&
           isMountedRef.current
         ) {
+          if (workspaceCacheKey) {
+            workspaceDiscoveryCacheRef.current.set(workspaceCacheKey, result);
+          }
+          if (projectCacheKey) {
+            projectDiscoveryCacheRef.current.set(projectCacheKey, {
+              agents: result,
+              source: workspaceId ? "workspace" : "project",
+            });
+          }
           setAgents(result);
           setLoadFailed(false);
           setLoaded(true);
@@ -200,8 +249,50 @@ function AgentProviderWithState(props: {
   );
 
   useEffect(() => {
-    setAgents([]);
-    setLoaded(false);
+    const cacheMode = getAgentDiscoveryCacheMode(disableWorkspaceAgents);
+    const workspaceCacheKey = getWorkspaceDiscoveryCacheKey(
+      props.workspaceId,
+      props.projectPath,
+      cacheMode
+    );
+    const projectCacheKey = getProjectDiscoveryCacheKey(props.projectPath, cacheMode);
+    const workspaceCachedAgents = workspaceCacheKey
+      ? workspaceDiscoveryCacheRef.current.get(workspaceCacheKey)
+      : undefined;
+    const projectCacheEntry = projectCacheKey
+      ? projectDiscoveryCacheRef.current.get(projectCacheKey)
+      : undefined;
+    // Avoid hydrating project-scoped providers from workspace-sourced cache
+    // entries; those can include workspace-only agent definitions.
+    const projectCachedAgents =
+      projectCacheEntry == null
+        ? undefined
+        : props.workspaceId == null && projectCacheEntry.source === "workspace"
+          ? undefined
+          : projectCacheEntry.agents;
+    const optimisticAgents = workspaceCachedAgents ?? projectCachedAgents;
+
+    if (optimisticAgents !== undefined) {
+      const usingWorkspaceSourcedProjectFallbackForWorkspace =
+        workspaceCachedAgents === undefined &&
+        projectCachedAgents !== undefined &&
+        props.workspaceId !== undefined &&
+        projectCacheEntry?.source === "workspace";
+      // Workspace-sourced project fallback is display-only until workspace
+      // discovery resolves, so users can't persist cross-workspace agent IDs.
+      setAgents(
+        usingWorkspaceSourcedProjectFallbackForWorkspace
+          ? optimisticAgents.map((agent) => ({
+              ...agent,
+              uiSelectable: false,
+            }))
+          : optimisticAgents
+      );
+      setLoaded(true);
+    } else {
+      setAgents([]);
+      setLoaded(false);
+    }
     setLoadFailed(false);
     void fetchAgents(props.projectPath, props.workspaceId, disableWorkspaceAgents);
   }, [fetchAgents, props.projectPath, props.workspaceId, disableWorkspaceAgents]);
@@ -220,34 +311,26 @@ function AgentProviderWithState(props: {
     }
   }, [fetchAgents, props.projectPath, props.workspaceId, disableWorkspaceAgents]);
 
-  const selectableAgents = useMemo(
-    () => sortAgentsStable(agents.filter((a) => a.uiSelectable)),
+  const cycleableAgents = useMemo(
+    // Keep keyboard cycling aligned with numbered quick-select behavior: auto is
+    // selectable via explicit toggle only, not via cycle-next shortcuts.
+    () => sortAgentsStable(agents.filter((agent) => agent.uiSelectable && agent.id !== "auto")),
     [agents]
   );
 
   const cycleToNextAgent = useCallback(() => {
-    if (selectableAgents.length < 2) return;
+    if (cycleableAgents.length === 0) return;
 
     const activeAgentId = coerceAgentId(
       isProjectScope ? (scopedAgentId ?? globalDefaultAgentId) : scopedAgentId
     );
-
-    // Auto mode: ignore the cycle shortcut when auto is a live agent
-    // (stale persisted "auto" not in list → allow cycling to recover)
-    const autoAvailable = selectableAgents.some((a) => a.id === "auto");
-    if (activeAgentId === "auto" && autoAvailable) return;
-
-    // Never cycle into "auto" — it's toggled explicitly via the picker switch
-    const cyclableAgents = selectableAgents.filter((a) => a.id !== "auto");
-    if (cyclableAgents.length < 2) return;
-
-    const currentIndex = cyclableAgents.findIndex((a) => a.id === activeAgentId);
-    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % cyclableAgents.length;
-    const nextAgent = cyclableAgents[nextIndex];
+    const currentIndex = cycleableAgents.findIndex((agent) => agent.id === activeAgentId);
+    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % cycleableAgents.length;
+    const nextAgent = cycleableAgents[nextIndex];
     if (nextAgent) {
       setAgentId(nextAgent.id);
     }
-  }, [globalDefaultAgentId, isProjectScope, scopedAgentId, selectableAgents, setAgentId]);
+  }, [globalDefaultAgentId, isProjectScope, scopedAgentId, cycleableAgents, setAgentId]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

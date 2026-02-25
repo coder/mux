@@ -29,7 +29,7 @@ import {
   KEYBINDS,
   matchNumberedKeybind,
 } from "@/browser/utils/ui/keybinds";
-import { sortAgentsStable } from "@/browser/utils/agents";
+import { resolveAgentAccentColor, sortAgentsStable } from "@/browser/utils/agents";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 
 interface AgentModePickerProps {
@@ -56,7 +56,7 @@ interface AgentOption {
   subagentRunnable: boolean;
 }
 
-/** Maps well-known agent IDs to lucide icons for the dropdown */
+/** Maps well-known agent IDs to lucide icons for the expanded dropdown list. */
 const AGENT_ICONS: Record<string, LucideIcon> = {
   ask: MessageCircleQuestionMark,
   plan: Route,
@@ -338,13 +338,13 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     }
   };
 
-  // Resolve display properties for the trigger pill
-  const activeDisplayName = activeOption?.name ?? formatAgentIdLabel(normalizedAgentId);
-  const activeStyle: React.CSSProperties | undefined = activeOption?.uiColor
-    ? { borderColor: activeOption.uiColor }
-    : undefined;
-  const activeClassName = activeOption?.uiColor ? "" : "border-exec-mode";
+  // Resolve display properties for the trigger pill.
   const TriggerIcon = getAgentIcon(normalizedAgentId);
+  const activeDisplayName = activeOption?.name ?? formatAgentIdLabel(normalizedAgentId);
+  // Keep icon + border colors on the same source value so they can't desync while
+  // agent metadata is loading.
+  const activeAccentColor = resolveAgentAccentColor(normalizedAgentId, activeOption?.uiColor);
+  const activeStyle: React.CSSProperties = { borderColor: activeAccentColor };
 
   return (
     <div ref={containerRef} className={cn("relative flex items-center gap-1.5", props.className)}>
@@ -366,13 +366,12 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
             }}
             style={activeStyle}
             className={cn(
-              "text-foreground hover:bg-hover flex items-center gap-1.5 rounded-sm border-[0.5px] px-1.5 py-0.5 text-[11px] font-medium transition-[background-color] duration-150",
-              activeClassName
+              "text-foreground hover:bg-hover flex items-center gap-1.5 rounded-sm border-[0.5px] px-1.5 py-0.5 text-[11px] font-medium transition-colors duration-150"
             )}
           >
             <TriggerIcon
-              className="h-3 w-3 shrink-0"
-              style={activeOption?.uiColor ? { color: activeOption.uiColor } : undefined}
+              className="h-2 w-2 shrink-0 transition-colors duration-150"
+              style={{ color: activeAccentColor }}
             />
             <span className="max-w-[clamp(4.5rem,30vw,130px)] truncate">{activeDisplayName}</span>
             <ChevronDown

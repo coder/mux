@@ -80,6 +80,7 @@ import {
   isEditableElement,
 } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
+import { resolveAgentAccentColor } from "@/browser/utils/agents";
 import { ModelSelector, type ModelSelectorRef } from "../ModelSelector";
 import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { SendHorizontal } from "lucide-react";
@@ -456,8 +457,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const autoAvailable = agents.some((entry) => entry.uiSelectable && entry.id === "auto");
   const isAutoAgent = normalizedAgentId === "auto" && autoAvailable;
 
-  // Use current agent's uiColor, or neutral border until agents load
-  const focusBorderColor = currentAgent?.uiColor ?? "var(--color-border-light)";
+  // Resolve border accent from discovered metadata, with built-in fallback while
+  // agent descriptors are still loading during workspace switches.
+  const focusBorderColor = resolveAgentAccentColor(agentId, currentAgent?.uiColor);
   const {
     models,
     hiddenModelsForSelector,
