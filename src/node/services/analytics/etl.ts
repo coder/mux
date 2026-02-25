@@ -1005,7 +1005,10 @@ async function ingestDelegationRollups(
   try {
     usageRaw = await fs.readFile(usagePath, "utf-8");
   } catch (error) {
-    if (isRecord(error) && error.code === "ENOENT") return;
+    if (isRecord(error) && error.code === "ENOENT") {
+      await conn.run("DELETE FROM delegation_rollups WHERE parent_workspace_id = ?", [workspaceId]);
+      return;
+    }
     log.warn("[analytics-etl] Failed to read session-usage.json for delegation rollups", {
       workspaceId,
       error: getErrorMessage(error),
@@ -1019,16 +1022,24 @@ async function ingestDelegationRollups(
   } catch {
     return;
   }
-  if (!isRecord(usageData)) return;
+  if (!isRecord(usageData)) {
+    await conn.run("DELETE FROM delegation_rollups WHERE parent_workspace_id = ?", [workspaceId]);
+    return;
+  }
 
   const rolledUpFrom = usageData.rolledUpFrom;
-  if (!isRecord(rolledUpFrom)) return;
+  if (!isRecord(rolledUpFrom) || Object.keys(rolledUpFrom).length === 0) {
+    await conn.run("DELETE FROM delegation_rollups WHERE parent_workspace_id = ?", [workspaceId]);
+    return;
+  }
 
   // Read subagent-reports.json for reportTokenEstimate lookup
   const reportTokenByChildId = await readReportTokenEstimates(sessionDir);
 
   await conn.run("BEGIN TRANSACTION");
   try {
+    await conn.run("DELETE FROM delegation_rollups WHERE parent_workspace_id = ?", [workspaceId]);
+
     for (const [childId, entry] of Object.entries(rolledUpFrom)) {
       // Skip legacy boolean entries
       if (entry === true || !isRecord(entry)) continue;
