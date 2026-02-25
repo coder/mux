@@ -311,6 +311,12 @@ function isSelectionInsideRange(selection: SelectedLineRange, range: HunkLineRan
   return start >= range.startIndex && end <= range.endIndex;
 }
 
+function isLineInsideSelection(lineIndex: number, selection: SelectedLineRange): boolean {
+  const start = Math.min(selection.startIndex, selection.endIndex);
+  const end = Math.max(selection.startIndex, selection.endIndex);
+  return lineIndex >= start && lineIndex <= end;
+}
+
 /** Resolve the hunk that contains a given overlay line index using the lineHunkIds lookup. */
 function findHunkAtLine(
   lineIndex: number,
@@ -836,6 +842,13 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         return previousSelection;
       }
 
+      const cursorLineIndex = activeLineIndexRef.current;
+      if (cursorLineIndex !== null && isLineInsideSelection(cursorLineIndex, previousSelection)) {
+        // Keep cross-hunk Shift selections alive while the moving cursor edge
+        // tracks into the next hunk.
+        return previousSelection;
+      }
+
       return null;
     });
   }, [
@@ -1086,17 +1099,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       }
 
       const currentIndex = activeLineIndexRef.current ?? selectedHunkRange?.startIndex ?? 0;
-      let nextIndex = Math.max(0, Math.min(lineCount - 1, currentIndex + delta));
-
-      // When extending a selection (Shift+Arrow), clamp the cursor to the current
-      // hunk's boundaries. Crossing into a different hunk would trigger the
-      // hunk-change effect which clears the selection, causing it to vanish.
-      if (extendRange && selectedHunkRange) {
-        nextIndex = Math.max(
-          selectedHunkRange.startIndex,
-          Math.min(selectedHunkRange.endIndex, nextIndex)
-        );
-      }
+      const nextIndex = Math.max(0, Math.min(lineCount - 1, currentIndex + delta));
 
       setActiveLineIndex(nextIndex);
 
@@ -1118,48 +1121,29 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
   const handleLineIndexSelect = useCallback(
     (lineIndex: number, shiftKey: boolean) => {
-      // When extending a selection (Shift+Click), clamp to the current hunk boundary
-      // instead of switching hunks (which would clear the selection).
-      let effectiveLineIndex = lineIndex;
-      if (shiftKey && selectedHunkRange) {
-        effectiveLineIndex = Math.max(
-          selectedHunkRange.startIndex,
-          Math.min(selectedHunkRange.endIndex, lineIndex)
-        );
-      }
-
-      const resolvedHunk = findHunkAtLine(effectiveLineIndex, overlayData, currentFileHunks);
+      const resolvedHunk = findHunkAtLine(lineIndex, overlayData, currentFileHunks);
       if (resolvedHunk && selectedHunkIdRef.current !== resolvedHunk.hunk.id) {
         pendingJumpSelectAllHunkIdRef.current = null;
         onSelectHunk(resolvedHunk.hunk.id);
       }
 
       const anchorIndex = shiftKey
-        ? (selectedLineRangeRef.current?.startIndex ??
-          activeLineIndexRef.current ??
-          effectiveLineIndex)
-        : effectiveLineIndex;
-      setActiveLineIndex(effectiveLineIndex);
+        ? (selectedLineRangeRef.current?.startIndex ?? activeLineIndexRef.current ?? lineIndex)
+        : lineIndex;
+      setActiveLineIndex(lineIndex);
 
       if (shiftKey) {
-        setSelectedLineRange({ startIndex: anchorIndex, endIndex: effectiveLineIndex });
+        setSelectedLineRange({ startIndex: anchorIndex, endIndex: lineIndex });
       } else {
         setSelectedLineRange(null);
       }
 
       if (isTouchExperience && !shiftKey && resolvedHunk) {
         // Mobile row tap should only open a composer for lines backed by a diff hunk.
-        openComposer("", { startIndex: effectiveLineIndex, endIndex: effectiveLineIndex });
+        openComposer("", { startIndex: lineIndex, endIndex: lineIndex });
       }
     },
-    [
-      overlayData,
-      currentFileHunks,
-      selectedHunkRange,
-      isTouchExperience,
-      onSelectHunk,
-      openComposer,
-    ]
+    [overlayData, currentFileHunks, isTouchExperience, onSelectHunk, openComposer]
   );
 
   const handleMinimapSelectLine = useCallback(

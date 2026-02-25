@@ -1283,13 +1283,37 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     const firstLineType = highlightedLineData[0]?.type;
     const lastLineType = highlightedLineData[highlightedLineData.length - 1]?.type;
 
-    const cursorLikeOutline = "1px solid hsl(from var(--color-review-accent) h s l / 0.45)";
+    const cursorLikeOutlineColor = "hsl(from var(--color-review-accent) h s l / 0.45)";
     const normalizedSelectedLineRange = selectedLineRange
       ? {
           startIndex: Math.min(selectedLineRange.startIndex, selectedLineRange.endIndex),
           endIndex: Math.max(selectedLineRange.startIndex, selectedLineRange.endIndex),
         }
       : null;
+
+    const isCursorHighlightedLine = (index: number): boolean =>
+      index === activeLineIndex ||
+      isLineInSelection(index, renderSelection) ||
+      isLineInSelection(index, normalizedSelectedLineRange);
+
+    const getCursorLikeOutlineStyle = (index: number): React.CSSProperties | undefined => {
+      if (!isCursorHighlightedLine(index)) {
+        return undefined;
+      }
+
+      const hasPrevHighlightedLine = index > 0 && isCursorHighlightedLine(index - 1);
+      const hasNextHighlightedLine =
+        index < highlightedLineData.length - 1 && isCursorHighlightedLine(index + 1);
+
+      const edgeShadows = [
+        `inset 1px 0 0 ${cursorLikeOutlineColor}`,
+        `inset -1px 0 0 ${cursorLikeOutlineColor}`,
+        hasPrevHighlightedLine ? null : `inset 0 1px 0 ${cursorLikeOutlineColor}`,
+        hasNextHighlightedLine ? null : `inset 0 -1px 0 ${cursorLikeOutlineColor}`,
+      ].filter((shadow): shadow is string => Boolean(shadow));
+
+      return { boxShadow: edgeShadows.join(", ") };
+    };
 
     return (
       <DiffContainer
@@ -1302,8 +1326,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
         {highlightedLineData.map((lineInfo, displayIndex) => {
           const isComposerSelected = isLineInSelection(displayIndex, renderSelection);
           const isRangeSelected = isLineInSelection(displayIndex, normalizedSelectedLineRange);
-          const isActiveLine = activeLineIndex === displayIndex;
-          const shouldRenderLineOutline = isComposerSelected || isRangeSelected || isActiveLine;
+          const lineOutlineStyle = getCursorLikeOutlineStyle(displayIndex);
           const isInReviewRange = reviewRangeByLineIndex[displayIndex] ?? false;
           const baseCodeBg = getDiffLineBackground(lineInfo.type);
           const codeBg = applyReviewRangeOverlay(baseCodeBg, isInReviewRange);
@@ -1323,14 +1346,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                   "group relative col-span-3 grid grid-cols-subgrid",
                   onLineIndexSelect ? "cursor-pointer" : "cursor-text"
                 )}
-                style={
-                  shouldRenderLineOutline
-                    ? {
-                        outline: cursorLikeOutline,
-                        outlineOffset: "-1px",
-                      }
-                    : undefined
-                }
+                style={lineOutlineStyle}
                 data-line-index={displayIndex}
                 data-selected={isComposerSelected || isRangeSelected ? "true" : "false"}
                 onClick={(e) => {
