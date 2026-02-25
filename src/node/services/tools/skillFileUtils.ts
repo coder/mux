@@ -132,54 +132,61 @@ export async function resolveContainedSkillFilePath(
   };
 }
 
+/**
+ * Unified directory-scope validation for local skill operations (write / delete).
+ *
+ * Checks (in order):
+ * 1. Skills root (muxHomeReal/skills) is not a symlink.
+ * 2. Skill directory is not a symlink.
+ * 3. If skill directory exists, its realpath stays under muxHomeReal.
+ *
+ * Returns the lstat result of skillDir (null when it doesn't exist yet).
+ * Throws a descriptive error string on any violation.
+ */
+export async function validateLocalSkillDirectory(
+  skillDir: string,
+  muxHomeReal: string
+): Promise<{ skillDirStat: Stats | null }> {
+  // 1) Reject symlinked ~/.mux/skills
+  const skillsRoot = path.dirname(skillDir);
+  const skillsRootStat = await lstatIfExists(skillsRoot);
+  if (skillsRootStat?.isSymbolicLink()) {
+    throw new Error(
+      "Skills root directory (~/.mux/skills) is a symbolic link and cannot be used for skill operations."
+    );
+  }
+
+  // 2) Reject symlinked skill directory
+  const skillDirStat = await lstatIfExists(skillDir);
+  if (skillDirStat?.isSymbolicLink()) {
+    throw new Error("Skill directory is a symlink (symbolic link) and cannot be modified.");
+  }
+
+  // 3) If exists, verify realpath stays under muxHomeReal
+  if (skillDirStat != null) {
+    const muxHomePrefix = muxHomeReal.endsWith(path.sep)
+      ? muxHomeReal
+      : `${muxHomeReal}${path.sep}`;
+    try {
+      const skillDirReal = await fsPromises.realpath(skillDir);
+      if (!skillDirReal.startsWith(muxHomePrefix)) {
+        throw new Error("Skill directory resolves outside mux home after symlink resolution.");
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("resolves outside")) {
+        throw error;
+      }
+      // realpath failure for other reasons is non-fatal; symlink check above is primary guard
+    }
+  }
+
+  return { skillDirStat };
+}
+
 /** Canonical filename for the skill definition file. */
 export const SKILL_FILENAME = "SKILL.md";
 
 /** Case-insensitive check whether a normalized relative path refers to the root SKILL.md file. */
 export function isSkillMarkdownRootFile(relativePath: string): boolean {
   return relativePath.toLowerCase() === SKILL_FILENAME.toLowerCase();
-}
-
-/**
- * Rejects a skill directory whose real path escapes the expected mux home tree.
- * Catches the case where an ancestor (for example, `~/.mux/skills`) is a symlink
- * pointing outside mux home, causing `skillDir` to resolve to an external location.
- */
-export async function rejectEscapedSkillDirectory(
-  skillDir: string,
-  muxHomeReal: string
-): Promise<string | null> {
-  const skillsRoot = path.join(muxHomeReal, "skills");
-  const skillsRootStat = await lstatIfExists(skillsRoot);
-  if (skillsRootStat?.isSymbolicLink()) {
-    return "Skills root directory (~/.mux/skills) is a symbolic link and cannot be used for skill operations.";
-  }
-
-  const skillDirStat = await lstatIfExists(skillDir);
-  if (skillDirStat != null) {
-    try {
-      const skillDirReal = await fsPromises.realpath(skillDir);
-      const muxHomePrefix = muxHomeReal.endsWith(path.sep)
-        ? muxHomeReal
-        : `${muxHomeReal}${path.sep}`;
-      if (!skillDirReal.startsWith(muxHomePrefix)) {
-        return "Skill directory resolves outside mux home after symlink resolution.";
-      }
-    } catch {
-      // Non-fatal: follow-up lstat-based checks still guard direct symlink targets.
-    }
-  }
-
-  return null;
-}
-
-/**
- * Rejects a skill directory that is itself a symbolic link.
- * Returns an error message string if the directory is a symlink, or null if it's safe.
- */
-export async function rejectSymlinkedSkillDirectory(skillDir: string): Promise<string | null> {
-  const stats = await lstatIfExists(skillDir);
-  return stats?.isSymbolicLink()
-    ? "Skill directory is a symbolic link and cannot be accessed."
-    : null;
 }

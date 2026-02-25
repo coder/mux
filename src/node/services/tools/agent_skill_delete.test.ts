@@ -361,4 +361,25 @@ describe("agent_skill_delete", () => {
       expect(result.error).toBe("Skill not found: missing-skill");
     }
   });
+
+  it("returns explicit not-found when deleting a file that does not exist within an existing skill", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-delete-missing-file");
+
+    await writeSkillFixture(tempDir.path, "demo-skill");
+
+    const tool = await createDeleteTool(tempDir.path);
+    const result = (await tool.execute!(
+      {
+        name: "demo-skill",
+        filePath: "nonexistent.txt",
+        confirm: true,
+      },
+      mockToolCallOptions
+    )) as AgentSkillDeleteToolResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toBe("File not found in skill 'demo-skill': nonexistent.txt");
+    }
+  });
 });

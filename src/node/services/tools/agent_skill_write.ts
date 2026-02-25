@@ -15,10 +15,9 @@ import { getMuxHomeFromWorkspaceSessionDir } from "@/node/services/tools/muxHome
 import {
   hasErrorCode,
   isSkillMarkdownRootFile,
-  lstatIfExists,
-  rejectEscapedSkillDirectory,
   resolveContainedSkillFilePath,
   SKILL_FILENAME,
+  validateLocalSkillDirectory,
 } from "./skillFileUtils";
 
 interface AgentSkillWriteToolArgs {
@@ -108,19 +107,12 @@ export const createAgentSkillWriteTool: ToolFactory = (config: ToolConfiguration
         const muxHomeReal = await fsPromises.realpath(muxHome);
         const skillDir = path.join(muxHomeReal, "skills", parsedName.data);
 
-        const escapedError = await rejectEscapedSkillDirectory(skillDir, muxHomeReal);
-        if (escapedError != null) {
+        try {
+          await validateLocalSkillDirectory(skillDir, muxHomeReal);
+        } catch (error) {
           return {
             success: false,
-            error: escapedError,
-          };
-        }
-
-        const skillDirStat = await lstatIfExists(skillDir);
-        if (skillDirStat?.isSymbolicLink()) {
-          return {
-            success: false,
-            error: "Refusing to write to a symlinked skill directory",
+            error: getErrorMessage(error),
           };
         }
 

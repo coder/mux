@@ -11,9 +11,8 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import { getMuxHomeFromWorkspaceSessionDir } from "@/node/services/tools/muxHome";
 import {
   hasErrorCode,
-  lstatIfExists,
-  rejectEscapedSkillDirectory,
   resolveContainedSkillFilePath,
+  validateLocalSkillDirectory,
 } from "./skillFileUtils";
 
 interface AgentSkillDeleteToolArgs {
@@ -76,30 +75,24 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
 
         const skillDir = path.join(muxHomeReal, "skills", parsedName.data);
 
-        const escapedError = await rejectEscapedSkillDirectory(skillDir, muxHomeReal);
-        if (escapedError != null) {
+        let skillDirStat;
+        try {
+          ({ skillDirStat } = await validateLocalSkillDirectory(skillDir, muxHomeReal));
+        } catch (error) {
           return {
             success: false,
-            error: escapedError,
+            error: getErrorMessage(error),
           };
         }
 
-        const skillStat = await lstatIfExists(skillDir);
-        if (!skillStat) {
+        if (!skillDirStat) {
           return {
             success: false,
             error: `Skill not found: ${parsedName.data}`,
           };
         }
 
-        if (skillStat.isSymbolicLink()) {
-          return {
-            success: false,
-            error: "Refusing to operate on a symlinked skill directory",
-          };
-        }
-
-        if (!skillStat.isDirectory()) {
+        if (!skillDirStat.isDirectory()) {
           return {
             success: false,
             error: `Skill path is not a directory: ${parsedName.data}`,
@@ -124,7 +117,9 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
 
         let targetPath: string;
         try {
-          ({ resolvedPath: targetPath } = await resolveContainedSkillFilePath(skillDir, filePath));
+          ({ resolvedPath: targetPath } = await resolveContainedSkillFilePath(skillDir, filePath, {
+            allowMissingLeaf: true,
+          }));
         } catch (error) {
           return {
             success: false,
