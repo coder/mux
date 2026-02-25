@@ -309,7 +309,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
     delete process.env.OPENAI_API_KEY;
     try {
       const service = createService(muxHome.path);
-      const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
+      const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX_SPARK.id);
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -330,7 +330,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
     });
 
     const service = createService(muxHome.path);
-    const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
+    const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX_SPARK.id);
 
     // Should succeed — falls back to API key instead of erroring with oauth_not_connected
     expect(result.success).toBe(true);
