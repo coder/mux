@@ -48,7 +48,7 @@ import {
   resolveCoderAvailability,
   type CoderAvailabilityState,
   type CoderControlsProps,
-} from "./CoderControls";
+} from "../runtime/CoderControls";
 
 /**
  * Shared styling for inline form controls in the creation UI.

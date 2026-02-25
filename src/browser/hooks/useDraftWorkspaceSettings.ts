@@ -13,6 +13,12 @@ import {
 } from "@/common/types/runtime";
 import type { RuntimeChoice } from "@/browser/utils/runtimeUi";
 import {
+  readOptionField,
+  readSshOptionDefaults,
+  type RuntimeOptionDefaults,
+  writeSshOptionDefaults,
+} from "@/browser/utils/runtimeOptionDefaults";
+import {
   DEFAULT_MODEL_KEY,
   DEFAULT_RUNTIME_KEY,
   getAgentIdKey,
@@ -292,7 +298,7 @@ export function useDraftWorkspaceSettings(
     { listener: true }
   );
 
-  type LastRuntimeConfigs = Partial<Record<RuntimeMode, unknown>>;
+  type LastRuntimeConfigs = RuntimeOptionDefaults;
 
   // Project-scoped last runtime config (persisted per provider, stored as an object)
   const [lastRuntimeConfigs, setLastRuntimeConfigs] = usePersistedState<LastRuntimeConfigs>(
@@ -301,47 +307,23 @@ export function useDraftWorkspaceSettings(
     { listener: true }
   );
 
-  const readRuntimeConfigFrom = <T>(
+  const readRuntimeConfigFlag = (
     configs: LastRuntimeConfigs,
     mode: RuntimeMode,
-    field: string,
-    defaultValue: T
-  ): T => {
+    field: string
+  ): boolean => {
     const modeConfig = configs[mode];
     if (!modeConfig || typeof modeConfig !== "object" || Array.isArray(modeConfig)) {
-      return defaultValue;
+      return false;
     }
-    const fieldValue = (modeConfig as Record<string, unknown>)[field];
-    // Type-specific validation based on default value type
-    if (typeof defaultValue === "string") {
-      return (typeof fieldValue === "string" ? fieldValue : defaultValue) as T;
-    }
-    if (typeof defaultValue === "boolean") {
-      return (fieldValue === true) as unknown as T;
-    }
-    // Object type (null default means optional object)
-    if (fieldValue && typeof fieldValue === "object" && !Array.isArray(fieldValue)) {
-      return fieldValue as T;
-    }
-    return defaultValue;
-  };
 
-  // Generic reader for lastRuntimeConfigs fields
-  const readRuntimeConfig = <T>(mode: RuntimeMode, field: string, defaultValue: T): T => {
-    return readRuntimeConfigFrom(lastRuntimeConfigs, mode, field, defaultValue);
+    return (modeConfig as Record<string, unknown>)[field] === true;
   };
 
   // Hide Coder-specific persistence fields behind helpers so callsites stay clean.
-  const readSshRuntimeState = (configs: LastRuntimeConfigs): SshRuntimeState => ({
-    host: readRuntimeConfigFrom(configs, RUNTIME_MODE.SSH, "host", ""),
-    coderEnabled: readRuntimeConfigFrom(configs, RUNTIME_MODE.SSH, "coderEnabled", false),
-    coderConfig: readRuntimeConfigFrom<CoderWorkspaceConfig | null>(
-      configs,
-      RUNTIME_MODE.SSH,
-      "coderConfig",
-      null
-    ),
-  });
+  const readSshRuntimeState = (configs: LastRuntimeConfigs): SshRuntimeState => {
+    return readSshOptionDefaults(configs, "");
+  };
 
   const readSshRuntimeConfig = (configs: LastRuntimeConfigs): SshRuntimeConfig => {
     const sshState = readSshRuntimeState(configs);
@@ -360,13 +342,22 @@ export function useDraftWorkspaceSettings(
   // Restore prior Coder selections when switching back into Coder mode.
   const coderConfigFallback = lastSshState.coderConfig ?? DEFAULT_CODER_CONFIG;
   const lastSsh = readSshRuntimeConfig(lastRuntimeConfigs);
-  const lastDockerImage = readRuntimeConfig(RUNTIME_MODE.DOCKER, "image", "");
-  const lastShareCredentials = readRuntimeConfig(RUNTIME_MODE.DOCKER, "shareCredentials", false);
-  const lastDevcontainerConfigPath = readRuntimeConfig(RUNTIME_MODE.DEVCONTAINER, "configPath", "");
-  const lastDevcontainerShareCredentials = readRuntimeConfig(
+  const lastDockerImage = readOptionField(lastRuntimeConfigs, RUNTIME_MODE.DOCKER, "image", "");
+  const lastShareCredentials = readRuntimeConfigFlag(
+    lastRuntimeConfigs,
+    RUNTIME_MODE.DOCKER,
+    "shareCredentials"
+  );
+  const lastDevcontainerConfigPath = readOptionField(
+    lastRuntimeConfigs,
     RUNTIME_MODE.DEVCONTAINER,
-    "shareCredentials",
-    false
+    "configPath",
+    ""
+  );
+  const lastDevcontainerShareCredentials = readRuntimeConfigFlag(
+    lastRuntimeConfigs,
+    RUNTIME_MODE.DEVCONTAINER,
+    "shareCredentials"
   );
 
   const coderDefaultFromString =
@@ -395,16 +386,15 @@ export function useDraftWorkspaceSettings(
   // Persist SSH config while keeping the legacy field shape hidden from callsites.
   const writeSshRuntimeConfig = useCallback(
     (config: SshRuntimeConfig) => {
-      if (config.host.trim() && config.host !== CODER_RUNTIME_PLACEHOLDER) {
-        setLastRuntimeConfig(RUNTIME_MODE.SSH, "host", config.host);
-      }
-      const coderEnabled = config.coder !== undefined;
-      setLastRuntimeConfig(RUNTIME_MODE.SSH, "coderEnabled", coderEnabled);
-      if (config.coder) {
-        setLastRuntimeConfig(RUNTIME_MODE.SSH, "coderConfig", config.coder);
-      }
+      setLastRuntimeConfigs((prev) =>
+        writeSshOptionDefaults(prev, {
+          host: config.host,
+          coderEnabled: config.coder !== undefined,
+          coderConfig: config.coder ?? null,
+        })
+      );
     },
-    [setLastRuntimeConfig]
+    [setLastRuntimeConfigs]
   );
 
   const seededProjectPathRef = useRef<string | null>(null);

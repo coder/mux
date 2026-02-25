@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Loader2 } from "lucide-react";
 
-import { resolveCoderAvailability } from "@/browser/components/ChatInput/CoderControls";
+import {
+  CoderWorkspaceForm,
+  resolveCoderAvailability,
+} from "@/browser/components/runtime/CoderControls";
 import { RuntimeConfigInput } from "@/browser/components/RuntimeConfigInput";
 import {
   Select,
@@ -15,16 +18,22 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui
 import { useAPI } from "@/browser/contexts/API";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useSettings } from "@/browser/contexts/SettingsContext";
+import { useCoderWorkspace } from "@/browser/hooks/useCoderWorkspace";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useRuntimeEnablement } from "@/browser/hooks/useRuntimeEnablement";
+import {
+  readSshOptionDefaults,
+  type RuntimeOptionDefaults,
+  writeSshCoderDefaultsPreservingMode,
+} from "@/browser/utils/runtimeOptionDefaults";
 import {
   RUNTIME_CHOICE_UI,
   getRuntimeOptionField,
   type RuntimeUiSpec,
 } from "@/browser/utils/runtimeUi";
+import type { CoderWorkspaceConfig } from "@/common/orpc/schemas/coder";
 import { cn } from "@/common/lib/utils";
 import { getLastRuntimeConfigKey } from "@/common/constants/storage";
-import type { CoderInfo } from "@/common/orpc/schemas/coder";
 import type { ProjectConfig } from "@/common/types/project";
 import { normalizeRuntimeEnablement, RUNTIME_MODE } from "@/common/types/runtime";
 import type {
@@ -142,7 +151,6 @@ export function RuntimesSection() {
   const [selectedScope, setSelectedScope] = useState(initialScope);
   const [runtimeAvailabilityState, setRuntimeAvailabilityState] =
     useState<RuntimeAvailabilityState>({ status: "idle" });
-  const [coderInfo, setCoderInfo] = useState<CoderInfo | null>(null);
   const [, setOverrideCacheVersion] = useState(0);
   // Cache pending per-project overrides locally while config updates propagate.
   const overrideCacheRef = useRef<Map<string, RuntimeOverrideCacheEntry>>(new Map());
@@ -171,25 +179,40 @@ export function RuntimesSection() {
   const runtimeConfigKey = selectedProjectPath
     ? getLastRuntimeConfigKey(selectedProjectPath)
     : "__no_project_defaults__";
-  type RuntimeOptionConfigs = Partial<Record<string, Record<string, unknown>>>;
-  const [runtimeOptionConfigs, setRuntimeOptionConfigs] = usePersistedState<RuntimeOptionConfigs>(
+  const [runtimeOptionConfigs, setRuntimeOptionConfigs] = usePersistedState<RuntimeOptionDefaults>(
     runtimeConfigKey,
     {},
     { listener: true }
   );
+  const sshOptionDefaults = readSshOptionDefaults(runtimeOptionConfigs, "");
+
+  // Settings-local Coder draft: absorbs hook auto-selection without persisting.
+  // Only written to localStorage after explicit user interaction.
+  const [coderDraftConfig, setCoderDraftConfig] = useState<CoderWorkspaceConfig | null>(null);
+  const hasCoderUserInteractionRef = useRef(false);
+  const selectedProjectPathRef = useRef(selectedProjectPath);
+  selectedProjectPathRef.current = selectedProjectPath;
+
+  useEffect(() => {
+    setCoderDraftConfig(null);
+    hasCoderUserInteractionRef.current = false;
+  }, [selectedProjectPath]);
 
   const readOptionField = (runtimeMode: string, field: string): string => {
-    const modeConfig = runtimeOptionConfigs[runtimeMode];
+    const modeConfig = runtimeOptionConfigs[runtimeMode as RuntimeMode];
     if (!modeConfig || typeof modeConfig !== "object") return "";
-    const val = modeConfig[field];
+    const val = (modeConfig as Record<string, unknown>)[field];
     return typeof val === "string" ? val : "";
   };
 
   const setOptionField = (runtimeMode: string, field: string, value: string) => {
     setRuntimeOptionConfigs((prev) => {
-      const existing = prev[runtimeMode];
+      const existing = prev[runtimeMode as RuntimeMode];
       const existingObj = existing && typeof existing === "object" ? existing : {};
-      return { ...prev, [runtimeMode]: { ...existingObj, [field]: value } };
+      return {
+        ...prev,
+        [runtimeMode]: { ...(existingObj as Record<string, unknown>), [field]: value },
+      };
     });
   };
 
@@ -244,6 +267,42 @@ export function RuntimesSection() {
     );
   const isProjectOverrideActive = isProjectScope && projectOverrideEnabled;
 
+  const effectiveEnablement = isProjectOverrideActive ? projectEnablement : enablement;
+  const effectiveDefaultRuntime = isProjectOverrideActive ? projectDefaultRuntime : defaultRuntime;
+  // Coder config precedence: draft (in-session auto-selection) → persisted → seed.
+  // Draft-first ensures auto-selected templates/presets from useCoderWorkspace are
+  // immediately reflected in the form, even when persisted config is already non-null.
+  const coderConfigForHook =
+    selectedProjectPath && effectiveEnablement.coder
+      ? (coderDraftConfig ?? sshOptionDefaults.coderConfig ?? { existingWorkspace: false })
+      : null;
+
+  const coderWorkspace = useCoderWorkspace({
+    coderConfig: coderConfigForHook,
+    // Settings only refreshes auth on mount — no need for focus-based re-checks.
+    coderInfoRefreshPolicy: "mount-only",
+    onCoderConfigChange: (nextConfig) => {
+      // Guard against stale scope: async template/preset fetches from
+      // useCoderWorkspace can complete after a project switch. If the
+      // captured selectedProjectPath no longer matches, discard the update.
+      if (!selectedProjectPath || selectedProjectPath !== selectedProjectPathRef.current) {
+        return;
+      }
+
+      // Always update local draft for UI responsiveness.
+      setCoderDraftConfig(nextConfig);
+
+      // Only persist to localStorage after explicit user interaction.
+      if (!hasCoderUserInteractionRef.current) {
+        return;
+      }
+
+      // Settings edits own Coder defaults, not mode selection memory.
+      // writeSshCoderDefaultsPreservingMode preserves coderEnabled from storage.
+      setRuntimeOptionConfigs((prev) => writeSshCoderDefaultsPreservingMode(prev, nextConfig));
+    },
+  });
+
   useEffect(() => {
     if (!api || !selectedProjectPath) {
       setRuntimeAvailabilityState({ status: "idle" });
@@ -271,41 +330,9 @@ export function RuntimesSection() {
     };
   }, [api, selectedProjectPath]);
 
-  useEffect(() => {
-    if (!api) {
-      setCoderInfo(null);
-      return;
-    }
-
-    let active = true;
-
-    api.coder
-      .getInfo()
-      .then((info) => {
-        if (active) {
-          setCoderInfo(info);
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setCoderInfo({
-            state: "unavailable",
-            reason: { kind: "error", message: "Failed to fetch" },
-          });
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [api]);
-
-  const coderAvailability = resolveCoderAvailability(coderInfo);
+  const coderAvailability = resolveCoderAvailability(coderWorkspace.coderInfo);
   const availabilityMap =
     runtimeAvailabilityState.status === "loaded" ? runtimeAvailabilityState.data : null;
-
-  const effectiveEnablement = isProjectOverrideActive ? projectEnablement : enablement;
-  const effectiveDefaultRuntime = isProjectOverrideActive ? projectDefaultRuntime : defaultRuntime;
 
   const enabledRuntimeOptions = RUNTIME_ROWS.filter((runtime) => effectiveEnablement[runtime.id]);
   const enabledRuntimeCount = enabledRuntimeOptions.length;
@@ -551,7 +578,8 @@ export function RuntimesSection() {
             const isLastEnabled = effectiveEnablement[runtime.id] && enabledRuntimeCount <= 1;
             const switchDisabled = rowDisabled || isLastEnabled;
             const optionSpec = getRuntimeOptionField(runtime.id);
-            const optionRuntimeMode = runtime.id === "coder" ? "ssh" : runtime.id;
+            const optionRuntimeMode: RuntimeMode =
+              runtime.id === "coder" ? RUNTIME_MODE.SSH : runtime.id;
             const switchControl = (
               <Switch
                 checked={effectiveEnablement[runtime.id]}
@@ -621,6 +649,39 @@ export function RuntimesSection() {
                         stacked
                       />
                     )}
+                    {isCoder &&
+                    selectedProjectPath &&
+                    effectiveEnablement.coder &&
+                    coderAvailability.state === "available" ? (
+                      <CoderWorkspaceForm
+                        className="mt-3"
+                        coderConfig={coderWorkspace.coderConfig}
+                        onCoderConfigChange={(config) => {
+                          hasCoderUserInteractionRef.current = true;
+                          coderWorkspace.setCoderConfig(config);
+                        }}
+                        templates={coderWorkspace.templates}
+                        templatesError={coderWorkspace.templatesError}
+                        presets={coderWorkspace.presets}
+                        presetsError={coderWorkspace.presetsError}
+                        existingWorkspaces={coderWorkspace.existingWorkspaces}
+                        workspacesError={coderWorkspace.workspacesError}
+                        loadingTemplates={coderWorkspace.loadingTemplates}
+                        loadingPresets={coderWorkspace.loadingPresets}
+                        loadingWorkspaces={coderWorkspace.loadingWorkspaces}
+                        username={
+                          coderWorkspace.coderInfo?.state === "available"
+                            ? coderWorkspace.coderInfo.username
+                            : undefined
+                        }
+                        deploymentUrl={
+                          coderWorkspace.coderInfo?.state === "available"
+                            ? coderWorkspace.coderInfo.url
+                            : undefined
+                        }
+                        disabled={rowDisabled || coderAvailability.state !== "available"}
+                      />
+                    ) : null}
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
