@@ -1124,17 +1124,24 @@ export class StreamManager extends EventEmitter {
   private createStopWhenCondition(
     request: Pick<StreamRequestConfig, "hasQueuedMessage" | "toolPolicy">
   ): Array<ReturnType<typeof stepCountIs>> {
-    // Completion-tool stop check: the "success" / "ok" markers are a convention
-    // used by completion/routing tools such as agent_report, propose_plan, and
-    // switch_agent. Arbitrary tools (for example bash/file_read) do not emit
-    // these fields, so requiring them does not trigger this stop condition.
-    // That is acceptable today because require is only used for completion/routing tools.
+    // Completion-tool stop check: completion/routing tools use explicit
+    // success/ok markers (agent_report, propose_plan, switch_agent).
+    // When a marker is present, respect it — success:false means the tool
+    // should be retried, so don't stop. When no marker is present (e.g.,
+    // MCP tools, arbitrary required tools), any non-null object result
+    // is treated as successful completion.
     const isSuccessfulOutput = (output: unknown): boolean => {
       if (typeof output !== "object" || output === null) {
         return false;
       }
       const parsedOutput = output as Record<string, unknown>;
-      return parsedOutput.success === true || parsedOutput.ok === true;
+      if ("success" in parsedOutput) {
+        return parsedOutput.success === true;
+      }
+      if ("ok" in parsedOutput) {
+        return parsedOutput.ok === true;
+      }
+      return true;
     };
 
     const requiredPatterns = (request.toolPolicy ?? [])

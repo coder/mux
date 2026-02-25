@@ -140,6 +140,66 @@ describe("StreamManager - stopWhen configuration", () => {
     expect(requiredToolCondition({ steps: [] })).toBe(false);
   });
 
+  test("stops on required tool result without success/ok markers (e.g. MCP tools)", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      toolPolicy: [{ regex_match: "chrome_take_screenshot", action: "require" }],
+    });
+
+    const [, , requiredToolCondition] = stopWhen;
+
+    expect(
+      requiredToolCondition({
+        steps: [
+          {
+            toolResults: [
+              {
+                toolName: "chrome_take_screenshot",
+                output: { content: [{ type: "image", data: "..." }] },
+              },
+            ],
+          },
+        ],
+      })
+    ).toBe(true);
+  });
+
+  test("does not stop when required tool explicitly returns success: false", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      toolPolicy: [{ regex_match: "propose_plan", action: "require" }],
+    });
+
+    const [, , requiredToolCondition] = stopWhen;
+
+    expect(
+      requiredToolCondition({
+        steps: [
+          {
+            toolResults: [
+              {
+                toolName: "propose_plan",
+                output: { success: false, error: "plan file missing" },
+              },
+            ],
+          },
+        ],
+      })
+    ).toBe(false);
+  });
+
   test("handles pre-anchored require patterns from recovery paths", () => {
     const streamManager = new StreamManager(historyService);
     const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
