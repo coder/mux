@@ -140,6 +140,27 @@ describe("StreamManager - stopWhen configuration", () => {
     expect(requiredToolCondition({ steps: [] })).toBe(false);
   });
 
+  test("handles pre-anchored require patterns from recovery paths", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
+    });
+
+    const [, , requiredToolCondition] = stopWhen;
+
+    expect(
+      requiredToolCondition({
+        steps: [{ toolResults: [{ toolName: "agent_report", output: { success: true } }] }],
+      })
+    ).toBe(true);
+  });
+
   test("stops on successful switch_agent when required by policy", () => {
     const streamManager = new StreamManager(historyService);
     const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as

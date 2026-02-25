@@ -1136,7 +1136,12 @@ export class StreamManager extends EventEmitter {
 
     const requiredPatterns = (request.toolPolicy ?? [])
       .filter((filter) => filter.action === "require")
-      .map((filter) => new RegExp(`^${filter.regex_match}$`));
+      .map((filter) => {
+        // Strip existing anchors to avoid double-anchoring recovery policies
+        // (e.g. "^agent_report$" would otherwise become "^^agent_report$$").
+        const rawPattern = filter.regex_match.replace(/^\^/, "").replace(/\$$/, "");
+        return new RegExp(`^${rawPattern}$`);
+      });
 
     const hasSuccessfulRequiredToolResult: ReturnType<typeof stepCountIs> = ({ steps }) => {
       if (requiredPatterns.length === 0) {
