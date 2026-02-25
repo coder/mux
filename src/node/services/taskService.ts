@@ -760,7 +760,7 @@ export class TaskService {
     // The frontend shows a confirmation dialog for primary workspace creation,
     // but task spawning bypasses the UI — enforce trust here as defense-in-depth.
     const taskProjectConfig = cfg.projects.get(parentMeta.projectPath);
-    if (taskProjectConfig?.trusted === false) {
+    if (!taskProjectConfig?.trusted) {
       return Err(
         "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."
       );
@@ -2120,7 +2120,7 @@ export class TaskService {
       // Trust gate: skip dequeued tasks if the project lost trust since queuing.
       const dequeueCfg = this.config.loadConfigOrDefault();
       const dequeueProjectConfig = dequeueCfg.projects.get(taskEntry.projectPath);
-      if (dequeueProjectConfig?.trusted === false) {
+      if (!dequeueProjectConfig?.trusted) {
         log.warn("Skipping queued task for untrusted project", {
           taskId,
           projectPath: taskEntry.projectPath,
