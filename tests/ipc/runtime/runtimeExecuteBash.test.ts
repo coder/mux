@@ -262,17 +262,12 @@ describeIntegration("Runtime Bash Execution", () => {
                 streamTimeoutMs
               );
 
-              // Extract response text
-              const responseText = extractTextFromEvents(events);
-
               // Verify the env var value appears in the bash tool output.
               const bashOutput = collectToolOutputs(events, "bash");
               expect(bashOutput).toContain("test123");
 
-              // responseText might be empty if the model doesn't comment on the output.
-              if (responseText) {
-                expect(responseText).toContain("test123");
-              }
+              // Do not assert on free-form assistant narration here. Some runs only emit
+              // a preamble sentence while still executing the tool correctly.
 
               // Verify bash was called
               const toolCallStarts = events.filter(
