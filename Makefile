@@ -384,6 +384,9 @@ test-unit: node_modules/.installed build-main ## Run unit tests
 
 test: test-unit ## Alias for test-unit
 
+test-mobile: ## Run mobile app tests
+	@cd mobile && bun test
+
 test-watch: ## Run tests in watch mode
 	@./scripts/test.sh --watch
 

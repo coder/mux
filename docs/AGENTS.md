@@ -86,6 +86,14 @@ HistoryService is pure local disk I/O with a single dependency (`getSessionDir`)
 - For call tracking: `spyOn(historyService, "method")` without `mockImplementation` — real impl runs, calls are recorded
 - For assertions: read history back with `getHistoryFromLatestBoundary()` or `getLastMessages()` instead of checking mock calls
 
+## Mobile Testing
+
+Mobile app tests live in `mobile/src/**/*.test.ts` and use Bun's built-in test runner (`bun test`).
+
+- Run mobile tests: `make test-mobile` or `bun run test:mobile`.
+- The environment currently lacks native mobile testing tools (ADB, iOS Simulator), so focus on unit and integration tests that can run in a Node/Bun environment.
+- Mobile components do not yet have automated UI tests.
+
 ## Refactoring & Runtime Etiquette
 
 - Use `git mv` to retain history when moving files.

@@ -29,6 +29,7 @@
     "fmt:check": "make fmt-check",
     "test": "make test",
     "test:watch": "make test-watch",
+    "test:mobile": "cd mobile && bun test",
     "test:coverage": "make test-coverage",
     "test:integration": "make test-integration",
     "test:e2e": "make test-e2e",

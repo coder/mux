@@ -1,4 +1,4 @@
-import { buildContinueMessage, type MuxFrontendMetadata } from "@/common/types/message";
+import { buildContinueMessage, type MuxMessageMetadata } from "@/common/types/message";
 import type { ParsedCommand, SlashSuggestion } from "@/browser/utils/slashCommands/types";
 import type { InferClientInputs } from "@orpc/client";
 import type { ORPCClient } from "../orpc/client";
@@ -23,7 +23,7 @@ export function extractRootCommand(replacement: string): string | null {
     return null;
   }
   const [firstToken] = trimmed.slice(1).split(/\s+/);
-  return firstToken ?? null;
+  return firstToken || null;
 }
 
 export function filterSuggestionsForMobile(
@@ -38,7 +38,7 @@ export function filterSuggestionsForMobile(
 
 export interface MobileCompactionPayload {
   messageText: string;
-  metadata: MuxFrontendMetadata;
+  metadata: MuxMessageMetadata;
   sendOptions: SendMessageOptions;
 }
 
@@ -56,19 +56,19 @@ export function buildMobileCompactionPayload(
     messageText += `\n\nThe user wants to continue with: ${parsed.continueMessage}`;
   }
 
-  const metadata: MuxFrontendMetadata = {
+  const metadata: MuxMessageMetadata = {
     type: "compaction-request",
     rawCommand: formatCompactionCommand(parsed),
     parsed: {
       model: parsed.model,
       maxOutputTokens: parsed.maxOutputTokens,
-      continueMessage: parsed.continueMessage
-        ? buildContinueMessage({
+      followUpContent: parsed.continueMessage
+        ? {
             text: parsed.continueMessage,
             fileParts: [],
             model: baseOptions.model,
             agentId: baseOptions.agentId ?? "exec",
-          })
+          }
         : undefined,
     },
   };
