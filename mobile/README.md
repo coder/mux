@@ -40,6 +40,33 @@ bunx expo run:android
 
 This creates a custom development build with all necessary native modules baked in.
 
+### Web Development (Agent Testing)
+
+Use Expo web as a local testing surface for AI agents.
+
+```bash
+make mobile-web
+# or
+cd mobile && bun run web
+```
+
+Agents can interact with the UI via Chrome MCP using mobile viewport emulation:
+
+```text
+chrome_navigate_page → http://localhost:8081
+chrome_emulate → viewport: 390x844, deviceScaleFactor: 3, isMobile: true, hasTouch: true
+chrome_take_snapshot → verify UI elements
+```
+
+Known web limitations:
+
+- Secure storage is not encrypted on web (uses `localStorage`)
+- Native haptics/vibration are unavailable
+- `ActionSheetIOS` falls back to `Modal` on web
+- SSE streaming uses the browser global `fetch` instead of `expo/fetch`
+
+This is a development/testing workflow for AI agent interaction, not a production web app.
+
 ## Configuration
 
 Edit `app.json` to set your server URL and auth token:
