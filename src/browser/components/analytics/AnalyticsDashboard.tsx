@@ -10,6 +10,7 @@ import {
   useAnalyticsSpendOverTime,
   useAnalyticsSummary,
   useAnalyticsTimingDistribution,
+  useAnalyticsTokensByModel,
 } from "@/browser/hooks/useAnalytics";
 import { DESKTOP_TITLEBAR_HEIGHT_CLASS, isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
@@ -22,6 +23,7 @@ import { ModelBreakdown } from "./ModelBreakdown";
 import { SpendChart } from "./SpendChart";
 import { SummaryCards } from "./SummaryCards";
 import { TimingChart } from "./TimingChart";
+import { TokensByModelChart } from "./TokensByModelChart";
 import { formatProjectDisplayName } from "./analyticsUtils";
 
 interface AnalyticsDashboardProps {
@@ -114,6 +116,10 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
     to: dateRange.to,
   });
   const spendByModel = useAnalyticsSpendByModel(projectPath, {
+    from: dateRange.from,
+    to: dateRange.to,
+  });
+  const tokensByModel = useAnalyticsTokensByModel(projectPath, {
     from: dateRange.from,
     to: dateRange.to,
   });
@@ -264,6 +270,11 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
             error={spendOverTime.error}
           />
           <ModelBreakdown spendByProject={spendByProject} spendByModel={spendByModel} />
+          <TokensByModelChart
+            data={tokensByModel.data}
+            loading={tokensByModel.loading}
+            error={tokensByModel.error}
+          />
           <TimingChart
             data={timingDistribution.data}
             loading={timingDistribution.loading}

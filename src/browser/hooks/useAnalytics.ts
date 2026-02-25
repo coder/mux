@@ -10,6 +10,7 @@ export type Summary = z.infer<typeof analytics.getSummary.output>;
 export type SpendOverTimeItem = z.infer<typeof analytics.getSpendOverTime.output>[number];
 export type SpendByProjectItem = z.infer<typeof analytics.getSpendByProject.output>[number];
 export type SpendByModelItem = z.infer<typeof analytics.getSpendByModel.output>[number];
+export type TokensByModelItem = z.infer<typeof analytics.getTokensByModel.output>[number];
 export type TimingDistribution = z.infer<typeof analytics.getTimingDistribution.output>;
 export type AgentCostItem = z.infer<typeof analytics.getAgentCostBreakdown.output>[number];
 export type ProviderCacheHitRatioItem = z.infer<
@@ -26,6 +27,7 @@ type SummaryInput = z.input<typeof analytics.getSummary.input>;
 type SpendOverTimeInput = z.input<typeof analytics.getSpendOverTime.input>;
 type SpendByProjectInput = z.input<typeof analytics.getSpendByProject.input>;
 type SpendByModelInput = z.input<typeof analytics.getSpendByModel.input>;
+type TokensByModelInput = z.input<typeof analytics.getTokensByModel.input>;
 type TimingDistributionInput = z.input<typeof analytics.getTimingDistribution.input>;
 type AgentCostBreakdownInput = z.input<typeof analytics.getAgentCostBreakdown.input>;
 type ProviderCacheHitRatioInput = z.input<typeof analytics.getCacheHitRatioByProvider.input>;
@@ -40,6 +42,7 @@ interface AnalyticsNamespace {
   getSpendOverTime: (input: SpendOverTimeInput) => Promise<SpendOverTimeItem[]>;
   getSpendByProject: (input: SpendByProjectInput) => Promise<SpendByProjectItem[]>;
   getSpendByModel: (input: SpendByModelInput) => Promise<SpendByModelItem[]>;
+  getTokensByModel: (input: TokensByModelInput) => Promise<TokensByModelItem[]>;
   getTimingDistribution: (input: TimingDistributionInput) => Promise<TimingDistribution>;
   getAgentCostBreakdown: (input: AgentCostBreakdownInput) => Promise<AgentCostItem[]>;
   getCacheHitRatioByProvider: (
@@ -64,6 +67,7 @@ function getAnalyticsNamespace(api: APIClient): AnalyticsNamespace | null {
     typeof maybeNamespace.getSpendOverTime !== "function" ||
     typeof maybeNamespace.getSpendByProject !== "function" ||
     typeof maybeNamespace.getSpendByModel !== "function" ||
+    typeof maybeNamespace.getTokensByModel !== "function" ||
     typeof maybeNamespace.getTimingDistribution !== "function" ||
     typeof maybeNamespace.getAgentCostBreakdown !== "function" ||
     typeof maybeNamespace.getCacheHitRatioByProvider !== "function"
@@ -328,6 +332,73 @@ export function useAnalyticsSpendByModel(
 
     void analyticsApi
       .getSpendByModel({ projectPath: projectPath ?? null, from: fromDate, to: toDate })
+      .then((data) => {
+        if (ignore) {
+          return;
+        }
+        setState({ data, loading: false, error: null });
+      })
+      .catch((error: unknown) => {
+        if (ignore) {
+          return;
+        }
+        setState((previousState) => ({
+          data: previousState.data,
+          loading: false,
+          error: getErrorMessage(error),
+        }));
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [api, projectPath, fromMs, toMs]);
+
+  return state;
+}
+
+export function useAnalyticsTokensByModel(
+  projectPath?: string | null,
+  dateFilters?: DateFilterParams
+): AsyncState<TokensByModelItem[]> {
+  const fromMs = dateFilters?.from?.getTime() ?? null;
+  const toMs = dateFilters?.to?.getTime() ?? null;
+
+  const { api } = useAPI();
+  const [state, setState] = useState<AsyncState<TokensByModelItem[]>>({
+    data: null,
+    loading: true,
+    error: null,
+  });
+
+  useEffect(() => {
+    if (!api) {
+      setState((previousState) => ({
+        data: previousState.data,
+        loading: true,
+        error: null,
+      }));
+      return;
+    }
+
+    const analyticsApi = getAnalyticsNamespace(api);
+    if (!analyticsApi) {
+      setState({ data: null, loading: false, error: ANALYTICS_UNAVAILABLE_MESSAGE });
+      return;
+    }
+
+    let ignore = false;
+    setState((previousState) => ({
+      data: previousState.data,
+      loading: true,
+      error: null,
+    }));
+
+    const fromDate = fromMs == null ? null : new Date(fromMs);
+    const toDate = toMs == null ? null : new Date(toMs);
+
+    void analyticsApi
+      .getTokensByModel({ projectPath: projectPath ?? null, from: fromDate, to: toDate })
       .then((data) => {
         if (ignore) {
           return;
