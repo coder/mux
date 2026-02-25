@@ -25,10 +25,9 @@ export function useDelegationInsights(
   );
   // Sanitize persisted threshold: clamp to valid range instead of throwing,
   // since this value comes from localStorage and can be corrupted.
-  const safeThreshold =
-    Number.isFinite(autoCompactionThreshold)
-      ? Math.max(0, Math.min(1, autoCompactionThreshold))
-      : DEFAULT_AUTO_COMPACTION_THRESHOLD;
+  const safeThreshold = Number.isFinite(autoCompactionThreshold)
+    ? Math.max(0, Math.min(1, autoCompactionThreshold))
+    : DEFAULT_AUTO_COMPACTION_THRESHOLD;
 
   const { api } = useAPI();
   const [insights, setInsights] = useState<DelegationInsights | null>(null);

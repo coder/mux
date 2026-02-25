@@ -399,7 +399,11 @@ export class SessionUsageService {
 
       // Sanitize persisted value: must be a finite non-negative number.
       // Corrupted/malformed local state should not crash the endpoint.
-      if (typeof tokenEstimate !== "number" || !Number.isFinite(tokenEstimate) || tokenEstimate < 0) {
+      if (
+        typeof tokenEstimate !== "number" ||
+        !Number.isFinite(tokenEstimate) ||
+        tokenEstimate < 0
+      ) {
         tokenEstimate = undefined;
       }
 
