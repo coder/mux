@@ -12,8 +12,9 @@ describe("shouldShowModelInSettings", () => {
   });
 
   test("does not gate non-OpenAI models that share the same model id", () => {
-    expect(shouldShowModelInSettings("openrouter:gpt-5.3-codex", false)).toBe(true);
+    expect(shouldShowModelInSettings("openrouter:gpt-5.3-codex-spark", false)).toBe(true);
   });
+
   test("keeps gpt-5.3-codex visible without OAuth", () => {
     expect(shouldShowModelInSettings(KNOWN_MODELS.GPT_53_CODEX.id, false)).toBe(true);
   });

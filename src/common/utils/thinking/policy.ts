@@ -30,7 +30,8 @@ export type ThinkingPolicy = readonly ThinkingLevel[];
  * Rules:
  * - openai:gpt-5.1-codex-max → ["off", "low", "medium", "high", "xhigh"] (5 levels including xhigh)
  * - openai:gpt-5.2-codex → ["off", "low", "medium", "high", "xhigh"] (5 levels including xhigh)
- * - openai:gpt-5.3-codex / openai:gpt-5.3-codex-spark → ["off", "low", "medium", "high", "xhigh"] (5 levels including xhigh)
+ * - openai:gpt-5.3-codex / Spark variants →
+ *   ["off", "low", "medium", "high", "xhigh"] (5 levels including xhigh)
  * - openai:gpt-5.2 → ["off", "low", "medium", "high", "xhigh"] (5 levels including xhigh)
  * - openai:gpt-5.2-pro → ["medium", "high", "xhigh"] (3 levels)
  * - openai:gpt-5-pro → ["high"] (only supported level, legacy)
@@ -65,7 +66,7 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
     return ["off", "low", "medium", "high", "xhigh"];
   }
 
-  // GPT-5.2/5.3 Codex models (including Spark) support 5 reasoning levels
+  // GPT-5.2/5.3 Codex models (including Spark) support 5 reasoning levels.
   if (/^gpt-5\.[23]-codex(?:-spark)?(?!-[a-z])/.test(withoutProviderNamespace)) {
     return ["off", "low", "medium", "high", "xhigh"];
   }

@@ -69,23 +69,33 @@ export function formatModelDisplayName(modelName: string): string {
     const parts = lower.split("-");
 
     if (parts.length >= 2) {
-      // Codex Spark models: "gpt-5.3-codex-spark" -> "Spark 5.3"
-      if (parts.includes("codex") && parts.includes("spark")) {
-        const version = parts[1]; // e.g., "5.3"
-        return `Spark ${version}`;
-      }
-
-      // Codex models: "gpt-5.3-codex" -> "Codex 5.3", "gpt-5.1-codex-mini" -> "Codex Mini 5.1"
-      // Keep all suffixes as qualifiers but strip trailing date stamps (YYYYMMDD or
-      // YYYY-MM-DD split across segments). A trailing date is detected as a 4-digit
+      // Codex models can appear as either:
+      // - "gpt-5.3-codex" / "gpt-5.3-codex-spark"
+      // - "gpt-5.1-codex-max" / "gpt-5.1-codex-mini"
+      // Keep suffixes as qualifiers but strip trailing date stamps (YYYYMMDD or
+      // YYYY-MM-DD split across segments). A trailing date is detected as a 4+ digit
       // year followed by any remaining segments, e.g. "-2025-12-01" or "-20251201".
       const codexIdx = parts.indexOf("codex");
-      if (codexIdx >= 2) {
-        const version = parts[1]; // e.g., "5.3"
+      if (codexIdx >= 0) {
+        const versionBeforeCodex = parts[codexIdx - 1];
+        const versionAfterCodex = parts[codexIdx + 1];
+        const version =
+          (versionBeforeCodex &&
+            /^\d+(?:\.\d+)?$/.test(versionBeforeCodex) &&
+            versionBeforeCodex) ||
+          (versionAfterCodex && /^\d+(?:\.\d+)?$/.test(versionAfterCodex) && versionAfterCodex) ||
+          parts[1];
+
+        if (parts.includes("spark")) {
+          return `Spark ${version}`;
+        }
+
         const afterCodex = parts.slice(codexIdx + 1);
-        // Find where a trailing date stamp begins (4-digit year segment like "2025")
-        const dateStart = afterCodex.findIndex((p) => /^\d{4,}$/.test(p));
-        const qualifierParts = dateStart >= 0 ? afterCodex.slice(0, dateStart) : afterCodex;
+        const qualifierSource = afterCodex[0] === version ? afterCodex.slice(1) : afterCodex;
+        // Find where a trailing date stamp begins (4+ digit year segment like "2025")
+        const dateStart = qualifierSource.findIndex((p) => /^\d{4,}$/.test(p));
+        const qualifierParts =
+          dateStart >= 0 ? qualifierSource.slice(0, dateStart) : qualifierSource;
         const qualifiers = qualifierParts.map(capitalize).join(" ");
         return qualifiers ? `Codex ${qualifiers} ${version}` : `Codex ${version}`;
       }

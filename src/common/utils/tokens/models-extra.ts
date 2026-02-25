@@ -140,7 +140,7 @@ export const modelsExtra: Record<string, ModelData> = {
     knowledge_cutoff: "2025-01",
   },
 
-  // GPT-5.3-Codex - same pricing as gpt-5.2-codex
+  // GPT-5.3-Codex (released API id) - same pricing as gpt-5.2-codex
   "gpt-5.3-codex": {
     max_input_tokens: 272000,
     max_output_tokens: 128000,
@@ -154,8 +154,7 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_reasoning: true,
     supports_response_schema: true,
   },
-
-  // GPT-5.3 Codex Spark - research preview (text-only) and currently available as 128k-context model
+  // GPT-5.3-Codex Spark - research preview (text-only) and currently available as 128k-context model.
   // Pricing is not published separately; reuse GPT-5.3-Codex pricing until confirmed.
   "gpt-5.3-codex-spark": {
     max_input_tokens: 128000,
@@ -170,7 +169,6 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_reasoning: true,
     supports_response_schema: true,
   },
-
   // GPT-5.2 Pro - Released December 11, 2025
   // $21/M input, $168/M output
   // Supports medium, high, xhigh reasoning levels

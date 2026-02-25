@@ -270,14 +270,15 @@ describe("useModelsFromSettings provider availability gating", () => {
 
     const { result } = renderHook(() => useModelsFromSettings());
 
-    // OAuth-required models (currently only gpt-5.3-codex-spark) should NOT appear
-    // in either list because selecting them from "Show all models…" would fail at send time.
+    // OAuth-required models (currently Spark) should NOT appear in either list
+    // because selecting them from "Show all models…" would fail at send time.
     expect(result.current.models).not.toContain("openai:gpt-5.3-codex-spark");
     expect(result.current.hiddenModelsForSelector).not.toContain("openai:gpt-5.3-codex-spark");
 
     // Non-OAuth-required OpenAI models should still be in the hidden bucket
-    expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.GPT.id);
+    // when the provider is unconfigured.
     expect(result.current.hiddenModelsForSelector).toContain("openai:gpt-5.3-codex");
+    expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.GPT.id);
   });
 
   test("hides models from disabled providers", () => {

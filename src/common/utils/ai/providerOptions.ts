@@ -47,7 +47,7 @@ type ProviderOptions =
   | Record<string, never>; // Empty object for unsupported providers
 
 const OPENAI_REASONING_SUMMARY_UNSUPPORTED_MODELS = new Set<string>([
-  // gpt-5.3-codex-spark rejects reasoning.summary with:
+  // Codex Spark rejects reasoning.summary with:
   // "Unsupported parameter: 'reasoning.summary' ...".
   "gpt-5.3-codex-spark",
 ]);
