@@ -211,7 +211,7 @@ function wrapToolsWithHooks(
   config: ToolConfiguration
 ): Record<string, Tool> {
   // Skip hooks for untrusted projects — repo-controlled scripts must not run
-  if (!config.trusted) {
+  if (config.trusted !== true) {
     return tools;
   }
 
