@@ -76,6 +76,24 @@ assert(
 );
 
 /**
+ * Resolve the header source for provider fetch calls.
+ *
+ * When fetch is called with a Request object, that Request may already carry
+ * auth/content headers. Preserve those unless init.headers is explicitly provided,
+ * matching fetch override semantics.
+ */
+export function resolveAIProviderHeaderSource(
+  input: RequestInfo | URL,
+  init?: RequestInit
+): HeadersInit | undefined {
+  if (init?.headers != null) {
+    return init.headers;
+  }
+
+  return input instanceof Request ? input.headers : undefined;
+}
+
+/**
  * Build request headers for provider fetch calls, ensuring a User-Agent is always present.
  * Exported for testing.
  */
@@ -105,7 +123,8 @@ const defaultFetchWithUnlimitedTimeout = (async (
   input: RequestInfo | URL,
   init?: RequestInit
 ): Promise<Response> => {
-  const headers = buildAIProviderRequestHeaders(init?.headers);
+  const headerSource = resolveAIProviderHeaderSource(input, init);
+  const headers = buildAIProviderRequestHeaders(headerSource);
 
   // dispatcher is a Node.js undici-specific property for custom HTTP agents
   const requestInit: RequestInitWithDispatcher = {

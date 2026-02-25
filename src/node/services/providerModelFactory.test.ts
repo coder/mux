@@ -9,6 +9,7 @@ import {
   buildAIProviderRequestHeaders,
   modelCostsIncluded,
   MUX_AI_PROVIDER_USER_AGENT,
+  resolveAIProviderHeaderSource,
 } from "./providerModelFactory";
 import { ProviderService } from "./providerService";
 
@@ -189,6 +190,44 @@ describe("ProviderModelFactory.resolveGatewayModelString", () => {
         });
       }
     });
+  });
+});
+
+describe("resolveAIProviderHeaderSource", () => {
+  it("uses Request headers when init.headers is not provided", () => {
+    const input = new Request("https://example.com", {
+      headers: {
+        Authorization: "Bearer test-token",
+      },
+    });
+
+    const result = resolveAIProviderHeaderSource(input, undefined);
+    const headers = new Headers(result);
+
+    expect(headers.get("authorization")).toBe("Bearer test-token");
+  });
+
+  it("prefers init.headers over Request headers", () => {
+    const input = new Request("https://example.com", {
+      headers: {
+        Authorization: "Bearer test-token",
+      },
+    });
+
+    const result = resolveAIProviderHeaderSource(input, {
+      headers: {
+        "x-custom": "value",
+      },
+    });
+    const headers = new Headers(result);
+
+    expect(headers.get("x-custom")).toBe("value");
+    expect(headers.get("authorization")).toBeNull();
+  });
+
+  it("returns undefined for non-Request inputs without init headers", () => {
+    const result = resolveAIProviderHeaderSource("https://example.com", undefined);
+    expect(result).toBeUndefined();
   });
 });
 
