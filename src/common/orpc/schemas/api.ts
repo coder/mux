@@ -155,6 +155,7 @@ export const ProviderConfigInfoSchema = z.object({
   models: z.array(ProviderModelEntrySchema).optional(),
   /** OpenAI-specific fields */
   serviceTier: z.enum(["auto", "default", "flex", "priority"]).optional(),
+  wireFormat: z.enum(["responses", "chatCompletions"]).optional(),
   /** Anthropic-specific fields */
   cacheTtl: z.enum(["5m", "1h"]).optional(),
   /** OpenAI-only: whether Codex OAuth tokens are present in providers.jsonc */

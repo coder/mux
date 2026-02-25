@@ -708,6 +708,14 @@ export class ProviderModelFactory {
           };
         }
 
+        const configWireFormat = providerConfig.wireFormat as string | undefined;
+        if (configWireFormat && muxProviderOptions) {
+          muxProviderOptions.openai = {
+            ...muxProviderOptions.openai,
+            wireFormat: configWireFormat as "responses" | "chatCompletions",
+          };
+        }
+
         const baseFetch = getProviderFetch(providerConfig);
         const codexOauthService = this.codexOauthService;
 
@@ -904,9 +912,10 @@ export class ProviderModelFactory {
           // The preconnect method is optional in our implementation but required by the SDK type.
           fetch: fetchWithOpenAITruncation as typeof fetch,
         });
-        // Use Responses API for persistence and built-in tools
         // OpenAI manages reasoning state via previousResponseId - no middleware needed
-        const model = provider.responses(modelId);
+        const wireFormat = muxProviderOptions?.openai?.wireFormat ?? "responses";
+        const model =
+          wireFormat === "chatCompletions" ? provider.chat(modelId) : provider.responses(modelId);
         if (shouldRouteThroughCodexOauth) {
           markModelCostsIncluded(model);
 

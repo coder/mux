@@ -333,6 +333,87 @@ describe("buildProviderOptions - OpenAI", () => {
       expect(openai!.previousResponseId).toBe("resp_123");
     });
   });
+  describe("wireFormat gating", () => {
+    test("includes Responses-only fields by default when wireFormat is unset", () => {
+      const result = buildProviderOptions(
+        "openai:gpt-5.2",
+        "off",
+        undefined,
+        undefined,
+        undefined,
+        "workspace-default"
+      );
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.truncation).toBe("disabled");
+      expect(openai!.promptCacheKey).toBe("mux-v1-workspace-default");
+    });
+
+    test("includes Responses-only fields when wireFormat is responses", () => {
+      const result = buildProviderOptions(
+        "openai:gpt-5.2",
+        "off",
+        undefined,
+        undefined,
+        {
+          openai: { wireFormat: "responses" },
+        },
+        "workspace-responses"
+      );
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.truncation).toBe("disabled");
+      expect(openai!.promptCacheKey).toBe("mux-v1-workspace-responses");
+    });
+
+    test("omits Responses-only truncation and promptCacheKey when wireFormat is chatCompletions", () => {
+      const result = buildProviderOptions(
+        "openai:gpt-5.2",
+        "off",
+        undefined,
+        undefined,
+        {
+          openai: { wireFormat: "chatCompletions" },
+        },
+        "workspace-chat"
+      );
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.truncation).toBeUndefined();
+      expect(openai!.promptCacheKey).toBeUndefined();
+    });
+
+    test("omits previousResponseId when wireFormat is chatCompletions", () => {
+      const messages = [
+        createMuxMessage("assistant-1", "assistant", "", {
+          model: "openai:gpt-5.2",
+          providerMetadata: { openai: { responseId: "resp_chat_123" } },
+        }),
+      ];
+      const result = buildProviderOptions("openai:gpt-5.2", "medium", messages, undefined, {
+        openai: { wireFormat: "chatCompletions" },
+      });
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.previousResponseId).toBeUndefined();
+    });
+
+    test("omits Responses-only reasoning fields but keeps reasoningEffort when wireFormat is chatCompletions", () => {
+      const result = buildProviderOptions("openai:gpt-5.2", "medium", undefined, undefined, {
+        openai: { wireFormat: "chatCompletions" },
+      });
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.reasoningEffort).toBe("medium");
+      expect(openai!.reasoningSummary).toBeUndefined();
+      expect(openai!.include).toBeUndefined();
+    });
+  });
 });
 
 describe("buildRequestHeaders", () => {

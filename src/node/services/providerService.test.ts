@@ -55,6 +55,38 @@ describe("ProviderService.getConfig", () => {
     });
   });
 
+  it("surfaces valid OpenAI wireFormat", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          wireFormat: "chatCompletions",
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg.openai.wireFormat).toBe("chatCompletions");
+      expect(Object.prototype.hasOwnProperty.call(cfg.openai, "wireFormat")).toBe(true);
+    });
+  });
+
+  it("omits invalid OpenAI wireFormat", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          wireFormat: "graphql",
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg.openai.wireFormat).toBeUndefined();
+      expect(Object.prototype.hasOwnProperty.call(cfg.openai, "wireFormat")).toBe(false);
+    });
+  });
+
   it("marks providers disabled when enabled is false", () => {
     withTempConfig((config, service) => {
       config.saveProvidersConfig({
