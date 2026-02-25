@@ -385,9 +385,13 @@ export class SessionUsageService {
     const exploreWorkspaceIds = new Set(explores.map((child) => child.workspaceId));
     const sessionDir = this.config.getSessionDir(workspaceId);
     const artifactsFile = await readSubagentReportArtifactsFile(sessionDir);
+    const childWorkspaceIds = new Set(children.map((c) => c.workspaceId));
     let exploreReportTokens = 0;
+    let totalReportTokens = 0;
     for (const artifact of Object.values(artifactsFile.artifactsByChildTaskId)) {
-      if (!exploreWorkspaceIds.has(artifact.childTaskId)) {
+      const isChild = childWorkspaceIds.has(artifact.childTaskId);
+      const isExplore = exploreWorkspaceIds.has(artifact.childTaskId);
+      if (!isChild) {
         continue;
       }
 
@@ -418,7 +422,10 @@ export class SessionUsageService {
         }
       }
 
-      exploreReportTokens += tokenEstimate;
+      totalReportTokens += tokenEstimate;
+      if (isExplore) {
+        exploreReportTokens += tokenEstimate;
+      }
     }
 
     const compressionRatio =
@@ -442,7 +449,7 @@ export class SessionUsageService {
     const compactionDisabled = threshold >= 1;
     // Net additional tokens that would have existed without delegation:
     // child workload minus already-delivered report tokens (which ARE in the parent context).
-    const netAdditionalTokens = Math.max(0, totalChildTokens - exploreReportTokens);
+    const netAdditionalTokens = Math.max(0, totalChildTokens - totalReportTokens);
     const estimatedWithoutDelegation =
       compactionThreshold != null && compactionThreshold > 0 && !compactionDisabled
         ? actualCompactions + Math.floor(netAdditionalTokens / compactionThreshold)
