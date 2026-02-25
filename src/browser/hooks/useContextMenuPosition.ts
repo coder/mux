@@ -53,6 +53,14 @@ export function useContextMenuPosition(
   // then flip open in a layout effect. This avoids a one-frame "flash" at an
   // incorrect fallback anchor before Popover finishes resolving the new anchor.
   const pendingPositionOpenRef = useRef(false);
+  // Keep canOpen guard fresh so delayed callbacks (like long-press timers)
+  // use the latest availability instead of stale render-time closures.
+  const canOpenRef = useRef(options?.canOpen);
+  canOpenRef.current = options?.canOpen;
+  const canOpenMenu = useCallback(() => {
+    const guard = canOpenRef.current;
+    return guard ? guard() : true;
+  }, []);
 
   // Clean up timer on unmount
   useEffect(() => {
@@ -77,12 +85,12 @@ export function useContextMenuPosition(
 
   const onContextMenu = useCallback(
     (e: React.MouseEvent) => {
-      if (options?.canOpen && !options.canOpen()) return;
+      if (!canOpenMenu()) return;
       e.preventDefault();
       e.stopPropagation();
       openAtPosition({ x: e.clientX, y: e.clientY });
     },
-    [openAtPosition, options]
+    [canOpenMenu, openAtPosition]
   );
 
   const onOpenChange = useCallback((open: boolean) => {
@@ -110,18 +118,24 @@ export function useContextMenuPosition(
   const onTouchStart = useCallback(
     (e: React.TouchEvent) => {
       if (!options?.longPress) return;
-      if (options.canOpen && !options.canOpen()) return;
+      if (!canOpenMenu()) return;
       const touch = e.touches[0];
       const touchPosition = { x: touch.clientX, y: touch.clientY };
       touchStartPosRef.current = touchPosition;
       longPressTriggeredRef.current = false;
       longPressTimerRef.current = setTimeout(() => {
+        // Guard again at fire time: long-press can outlive the render where it started.
+        if (!canOpenMenu()) {
+          longPressTimerRef.current = null;
+          return;
+        }
+
         longPressTriggeredRef.current = true;
         openAtPosition(touchPosition);
         longPressTimerRef.current = null;
       }, 500);
     },
-    [openAtPosition, options]
+    [canOpenMenu, openAtPosition, options?.longPress]
   );
 
   const onTouchEnd = useCallback(() => {
