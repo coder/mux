@@ -64,7 +64,7 @@ import {
   getSlashCommandSuggestions,
   type SlashSuggestion,
 } from "@/browser/utils/slashCommands/suggestions";
-import { Tooltip, TooltipTrigger, TooltipContent, HelpIndicator } from "../ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { AgentModePicker } from "../AgentModePicker";
 import { ContextUsageIndicatorButton } from "../ContextUsageIndicatorButton";
 import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
@@ -117,7 +117,7 @@ import { CreationCenterContent } from "./CreationCenterContent";
 import { cn } from "@/common/lib/utils";
 import type { ChatInputProps, ChatInputAPI, QueueDispatchMode } from "./types";
 import { CreationControls } from "./CreationControls";
-import { SendModeDropdown } from "./SendModeDropdown";
+import { SEND_DISPATCH_MODES } from "./sendDispatchModes";
 import { CodexOauthWarningBanner } from "./CodexOauthWarningBanner";
 import { useCreationWorkspace } from "./useCreationWorkspace";
 import { useCoderWorkspace } from "@/browser/hooks/useCoderWorkspace";
@@ -187,7 +187,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const editingMessage = variant === "workspace" ? props.editingMessage : undefined;
   const isStreamStarting = variant === "workspace" ? (props.isStreamStarting ?? false) : false;
   const isCompacting = variant === "workspace" ? (props.isCompacting ?? false) : false;
-  const canInterrupt = variant === "workspace" ? (props.canInterrupt ?? false) : false;
   const [isMobileTouch, setIsMobileTouch] = useState(
     () =>
       typeof window !== "undefined" &&
@@ -890,10 +889,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     !sendInFlightBlocksInput &&
     !coderPresetsLoading &&
     !policyBlocksCreateSend;
-  // Dispatch-mode choice (send-after-step vs send-after-turn) should track actual
-  // sendability — not just typed text. canSend already covers text, attachments, and reviews.
-  const canChooseDispatchMode = canInterrupt && canSend;
-
   // User request: this sync effect runs on mount and when defaults/config change.
   // Only treat *real* agent changes as explicit (origin "agent"); everything else is "sync".
   const prevCreationAgentIdRef = useRef<string | null>(null);
@@ -2496,13 +2491,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     hiddenModels={hiddenModelsForSelector}
                     onOpenSettings={() => open("models")}
                     className="w-[clamp(5.5rem,28vw,8rem)] min-w-0"
-                  />
-                  <div className="hidden [@container(min-width:500px)]:[@media(hover:hover)_and_(pointer:fine)]:block">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <HelpIndicator>?</HelpIndicator>
-                      </TooltipTrigger>
-                      <TooltipContent align="start" className="max-w-80 whitespace-normal">
+                    tooltipExtraContent={
+                      <>
                         <strong>Click to edit</strong>
                         <br />
                         <strong>{formatKeybind(KEYBINDS.CYCLE_MODEL)}</strong> to cycle models
@@ -2521,9 +2511,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                         <code>/model provider:model-name</code>
                         <br />
                         (e.g., <code>/model anthropic:claude-sonnet-4-5</code>)
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
+                      </>
+                    }
+                  />
                 </div>
 
                 {/* On narrow layouts, hide the thinking paddles to prevent control overlap. */}
@@ -2556,45 +2546,44 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   />
                 </div>
 
-                <div className="inline-flex items-center gap-0">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        onClick={() => void handleSend()}
-                        disabled={!canSend}
-                        aria-label="Send message"
-                        size="xs"
-                        variant="ghost"
-                        className={cn(
-                          "text-muted hover:text-foreground hover:bg-hover inline-flex items-center justify-center rounded-sm px-1.5 py-0.5 font-medium transition-colors duration-200 disabled:opacity-50",
-                          // Touch: wider tap target, keep icon centered.
-                          "[@media(hover:none)_and_(pointer:coarse)]:h-9 [@media(hover:none)_and_(pointer:coarse)]:w-11 [@media(hover:none)_and_(pointer:coarse)]:px-0 [@media(hover:none)_and_(pointer:coarse)]:py-0 [@media(hover:none)_and_(pointer:coarse)]:text-sm"
-                        )}
-                      >
-                        <SendHorizontal
-                          className="h-3.5 w-3.5 [@media(hover:none)_and_(pointer:coarse)]:h-4 [@media(hover:none)_and_(pointer:coarse)]:w-4"
-                          strokeWidth={2.5}
-                        />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent align="center">
-                      <span>Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})</span>
-                    </TooltipContent>
-                  </Tooltip>
-
-                  {variant === "workspace" && (
-                    <SendModeDropdown
-                      disabled={!canChooseDispatchMode}
-                      triggerClassName="-ml-1 px-0"
-                      onSelect={(mode) => {
-                        void handleSend(
-                          mode === "tool-end" ? undefined : { queueDispatchMode: mode }
-                        );
-                      }}
-                    />
-                  )}
-                </div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      onClick={() => void handleSend()}
+                      disabled={!canSend}
+                      aria-label="Send message"
+                      size="xs"
+                      variant="ghost"
+                      className={cn(
+                        "text-muted hover:text-foreground hover:bg-hover inline-flex items-center justify-center rounded-sm px-1.5 py-0.5 font-medium transition-colors duration-200 disabled:opacity-50",
+                        // Touch: wider tap target, keep icon centered.
+                        "[@media(hover:none)_and_(pointer:coarse)]:h-9 [@media(hover:none)_and_(pointer:coarse)]:w-11 [@media(hover:none)_and_(pointer:coarse)]:px-0 [@media(hover:none)_and_(pointer:coarse)]:py-0 [@media(hover:none)_and_(pointer:coarse)]:text-sm"
+                      )}
+                    >
+                      <SendHorizontal
+                        className="h-3.5 w-3.5 [@media(hover:none)_and_(pointer:coarse)]:h-4 [@media(hover:none)_and_(pointer:coarse)]:w-4"
+                        strokeWidth={2.5}
+                      />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent align="start" className="max-w-80 whitespace-normal">
+                    <strong>Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})</strong>
+                    {variant === "workspace" && (
+                      <>
+                        <br />
+                        <br />
+                        <strong>Queue while streaming:</strong>
+                        {SEND_DISPATCH_MODES.map((entry) => (
+                          <React.Fragment key={entry.mode}>
+                            <br />
+                            {entry.label}: <kbd>{formatKeybind(entry.keybind)}</kbd>
+                          </React.Fragment>
+                        ))}
+                      </>
+                    )}
+                  </TooltipContent>
+                </Tooltip>
               </div>
             </div>
           </div>

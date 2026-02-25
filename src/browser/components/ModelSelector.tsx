@@ -41,6 +41,7 @@ interface ModelSelectorProps {
   onOpenSettings?: () => void;
   variant?: "default" | "box";
   className?: string;
+  tooltipExtraContent?: React.ReactNode;
 }
 
 export interface ModelSelectorRef {
@@ -64,6 +65,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       onOpenSettings,
       variant = "default",
       className,
+      tooltipExtraContent,
     },
     ref
   ) => {
@@ -287,7 +289,19 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
               <ChevronDown className="text-muted h-3 w-3 shrink-0" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent align="center">{value}</TooltipContent>
+          <TooltipContent
+            align={tooltipExtraContent ? "start" : "center"}
+            className={cn(tooltipExtraContent && "max-w-80 whitespace-normal")}
+          >
+            {value}
+            {tooltipExtraContent ? (
+              <>
+                <br />
+                <br />
+                {tooltipExtraContent}
+              </>
+            ) : null}
+          </TooltipContent>
         </Tooltip>
 
         {/* Dropdown content - rendered inline for testability */}

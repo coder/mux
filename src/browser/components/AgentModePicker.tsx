@@ -15,12 +15,7 @@ import { CUSTOM_EVENTS } from "@/common/constants/events";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import { cn } from "@/common/lib/utils";
 import { DocsLink } from "@/browser/components/DocsLink";
-import {
-  HelpIndicator,
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/browser/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
 import { Button } from "@/browser/components/ui/button";
 import { Switch } from "@/browser/components/ui/switch";
 import {
@@ -89,31 +84,6 @@ export function formatAgentIdLabel(agentId: string): string {
 function normalizeAgentId(value: unknown): string {
   return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : "";
 }
-
-const AgentHelpTooltip: React.FC<{ isAuto: boolean }> = (props) => (
-  <Tooltip>
-    <TooltipTrigger asChild>
-      <HelpIndicator>?</HelpIndicator>
-    </TooltipTrigger>
-    <TooltipContent align="center" className="max-w-80 whitespace-normal">
-      Selects an agent definition (system prompt + tool policy).
-      <br />
-      <br />
-      Open picker: {formatKeybind(KEYBINDS.TOGGLE_AGENT)}
-      <br />
-      {!props.isAuto && (
-        <>
-          Cycle agents: {formatKeybind(KEYBINDS.CYCLE_AGENT)}
-          <br />
-        </>
-      )}
-      Quick select: {formatNumberedKeybind(0).replace("1", "1-9")} (when open)
-      <br />
-      <br />
-      <DocsLink path="/agents">Learn more about agents</DocsLink>
-    </TooltipContent>
-  </Tooltip>
-);
 
 function resolveAgentOptions(agents: AgentDefinitionDescriptor[]): AgentOption[] {
   return sortAgentsStable(agents.filter((entry) => entry.uiSelectable));
@@ -383,18 +353,20 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
             />
           </Button>
         </TooltipTrigger>
-        <TooltipContent align="center">
-          Select agent{" "}
-          <span className="mobile-hide-shortcut-hints">
-            ({formatKeybind(KEYBINDS.TOGGLE_AGENT)})
-          </span>
+        <TooltipContent align="start" className="max-w-80 whitespace-normal">
+          Selects an agent definition (system prompt + tool policy).
+          <br />
+          <br />
+          Open picker: {formatKeybind(KEYBINDS.TOGGLE_AGENT)}
+          <br />
+          Cycle agents: {formatKeybind(KEYBINDS.CYCLE_AGENT)}
+          <br />
+          Quick select: {formatNumberedKeybind(0).replace("1", "1-9")} (when open)
+          <br />
+          <br />
+          <DocsLink path="/agents">Learn more about agents</DocsLink>
         </TooltipContent>
       </Tooltip>
-
-      {/* Tooltip is hover-only; hide it on touch + narrow layouts to avoid overlap. */}
-      <div className="hidden [@container(min-width:420px)]:[@media(hover:hover)_and_(pointer:fine)]:block">
-        <AgentHelpTooltip isAuto={isAuto} />
-      </div>
 
       {isPickerOpen && (
         <div
