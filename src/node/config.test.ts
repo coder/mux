@@ -75,6 +75,34 @@ describe("Config", () => {
     });
   });
 
+  describe("projectKind normalization", () => {
+    it("normalizes unknown projectKind to user semantics on load", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [["/repo", { workspaces: [], projectKind: "experimental" }]],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.get("/repo")?.projectKind).toBeUndefined();
+    });
+
+    it("preserves valid projectKind 'system' on load", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [["/repo", { workspaces: [], projectKind: "system" }]],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.get("/repo")?.projectKind).toBe("system");
+    });
+  });
+
   describe("update channel preference", () => {
     it("defaults to stable when no channel is configured", () => {
       expect(config.getUpdateChannel()).toBe("stable");

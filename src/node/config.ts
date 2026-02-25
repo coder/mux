@@ -176,6 +176,14 @@ function normalizeRuntimeEnablementOverrides(
   return Object.keys(overrides).length > 0 ? overrides : undefined;
 }
 
+function normalizeProjectKind(value: unknown): "user" | "system" | undefined {
+  if (value === "user" || value === "system") {
+    return value;
+  }
+
+  return undefined;
+}
+
 function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectConfig {
   // Per-project runtime overrides are optional; keep config.json sparse by persisting only explicit
   // overrides (false enablement + explicit default runtime selections).
@@ -187,6 +195,7 @@ function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectC
     runtimeEnablement?: unknown;
     defaultRuntime?: unknown;
     runtimeOverridesEnabled?: unknown;
+    projectKind?: unknown;
   };
   const runtimeEnablement = normalizeRuntimeEnablementOverrides(record.runtimeEnablement);
   const defaultRuntime = normalizeRuntimeEnablementId(record.defaultRuntime);
@@ -209,6 +218,13 @@ function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectC
     next.defaultRuntime = defaultRuntime;
   } else {
     delete next.defaultRuntime;
+  }
+
+  const projectKind = normalizeProjectKind(record.projectKind);
+  if (projectKind !== undefined) {
+    next.projectKind = projectKind;
+  } else {
+    delete next.projectKind;
   }
 
   return next;
