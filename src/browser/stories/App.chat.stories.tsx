@@ -24,7 +24,7 @@ import {
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
-import { getModelKey } from "@/common/constants/storage";
+import { AGENT_AI_DEFAULTS_KEY, getModelKey } from "@/common/constants/storage";
 import { waitForChatMessagesLoaded } from "./storyPlayHelpers.js";
 import { setupSimpleChatStory, setupStreamingChatStory, setWorkspaceInput } from "./storyHelpers";
 import { within, userEvent, waitFor } from "@storybook/test";
@@ -839,7 +839,7 @@ export const StreamingCompactionWithConfigureHint: AppStory = {
     <AppWithMocks
       setup={() => {
         // Ensure no compaction model is set so the "configure" hint appears
-        localStorage.removeItem("preferredCompactionModel");
+        updatePersistedState(AGENT_AI_DEFAULTS_KEY, undefined);
 
         return setupStreamingChatStory({
           workspaceId: "ws-compaction-hint",

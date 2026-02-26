@@ -242,11 +242,13 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
       }),
     } as unknown as BackgroundProcessManager;
 
-    const preferredCompactionModel = "openai:gpt-4o-mini";
+    const compactionModel = "openai:gpt-4o-mini";
     const config = {
       srcDir: "/tmp",
       getSessionDir: (_workspaceId: string) => "/tmp",
-      loadConfigOrDefault: () => ({ preferredCompactionModel }),
+      loadConfigOrDefault: () => ({
+        agentAiDefaults: { compact: { modelString: compactionModel } },
+      }),
     } as unknown as Config;
 
     const session = new AgentSession({
@@ -285,9 +287,7 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
       (message) => message.metadata?.muxMetadata?.type === "compaction-request"
     );
 
-    expect(compactionRequestMessage?.metadata?.muxMetadata?.requestedModel).toBe(
-      preferredCompactionModel
-    );
+    expect(compactionRequestMessage?.metadata?.muxMetadata?.requestedModel).toBe(compactionModel);
 
     session.dispose();
   });

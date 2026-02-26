@@ -19,7 +19,7 @@ import { renderApp } from "../renderReviewPanel";
 import { cleanupView, setupWorkspaceView } from "../helpers";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import type { APIClient } from "@/browser/contexts/API";
-import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
+import { AGENT_AI_DEFAULTS_KEY } from "@/common/constants/storage";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { setupProviders } from "../../ipc/setup";
 
@@ -92,7 +92,9 @@ describeIntegration("Context exceeded compaction suggestion (UI)", () => {
       const cleanupDom = installDom();
 
       await setupProviders(env, { anthropic: { apiKey: "dummy" }, xai: { apiKey: "dummy" } });
-      updatePersistedState(PREFERRED_COMPACTION_MODEL_KEY, KNOWN_MODELS.HAIKU.id);
+      updatePersistedState(AGENT_AI_DEFAULTS_KEY, {
+        compact: { modelString: KNOWN_MODELS.HAIKU.id },
+      });
 
       const expectedCompactionCommand = `/compact -m ${KNOWN_MODELS.HAIKU.id}`;
 

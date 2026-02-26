@@ -19,7 +19,7 @@ import {
   RIGHT_SIDEBAR_TAB_KEY,
   RIGHT_SIDEBAR_WIDTH_KEY,
   getRightSidebarLayoutKey,
-  PREFERRED_COMPACTION_MODEL_KEY,
+  AGENT_AI_DEFAULTS_KEY,
   getAutoCompactionThresholdKey,
 } from "@/common/constants/storage";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
@@ -1265,7 +1265,9 @@ export const CostsTabCompactionModelWarning: AppStory = {
         localStorage.removeItem(getRightSidebarLayoutKey("ws-compact-warning"));
 
         // Set preferred compaction model to gpt-4o (128k context)
-        updatePersistedState(PREFERRED_COMPACTION_MODEL_KEY, "openai:gpt-4o");
+        updatePersistedState(AGENT_AI_DEFAULTS_KEY, {
+          compact: { modelString: "openai:gpt-4o" },
+        });
 
         // Set auto-compact threshold to 80% for anthropic:claude-opus-4-1
         // 80% of 200k = 160k, which exceeds gpt-4o's 128k context
