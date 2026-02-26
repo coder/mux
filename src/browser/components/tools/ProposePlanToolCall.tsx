@@ -772,14 +772,6 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
             <IconActionButton key={index} button={button} />
           ))}
 
-          {isNarrowScreen && (implementButton ?? orchestratorButton ?? autoButton) && (
-            <>
-              {implementButton && <IconActionButton button={implementButton} />}
-              {orchestratorButton && <IconActionButton button={orchestratorButton} />}
-              {autoButton && <IconActionButton button={autoButton} />}
-            </>
-          )}
-
           {/* Edit button rendered with ref for error popover positioning */}
           {editButton && (
             <div ref={editButtonRef}>
@@ -787,6 +779,15 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
             </div>
           )}
         </div>
+
+        {/* Mobile: icon-only plan actions, right-aligned, white */}
+        {isNarrowScreen && (implementButton ?? orchestratorButton ?? autoButton) && (
+          <div className="[&_button]:text-foreground ml-auto flex items-center gap-0.5">
+            {implementButton && <IconActionButton button={implementButton} />}
+            {orchestratorButton && <IconActionButton button={orchestratorButton} />}
+            {autoButton && <IconActionButton button={autoButton} />}
+          </div>
+        )}
 
         {!isNarrowScreen && (implementButton ?? orchestratorButton ?? autoButton) && (
           <div className="ml-auto flex items-center gap-1">
