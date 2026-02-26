@@ -25,6 +25,7 @@ import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import * as runtimeFactory from "@/node/runtime/runtimeFactory";
 import * as forkOrchestratorModule from "@/node/services/utils/forkOrchestrator";
 import * as workspaceTitleGenerator from "./workspaceTitleGenerator";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 
 // Helper to access private renamingWorkspaces set
 function addToRenamingWorkspaces(service: WorkspaceService, workspaceId: string): void {
@@ -810,6 +811,70 @@ describe("WorkspaceService idle compaction dispatch", () => {
     }
     expect(executionError.message).toContain("idle-only send was skipped");
   });
+  test("prefers global compact thinking default over exec and activity fallbacks", async () => {
+    const projectPath = "/tmp/project";
+    const workspacePath = "/tmp/project/ws";
+
+    type ThinkingLevel = Parameters<typeof enforceThinkingPolicy>[1];
+
+    interface WorkspaceServiceIdleCompactionAccess {
+      buildIdleCompactionSendOptions: (workspaceId: string) => Promise<{
+        model: string;
+        thinkingLevel: ThinkingLevel;
+      }>;
+      config: {
+        findWorkspace: (
+          workspaceId: string
+        ) => { projectPath: string; workspacePath: string } | null;
+        loadConfigOrDefault: () => {
+          projects: Map<string, { workspaces: Array<Record<string, unknown>> }>;
+          agentAiDefaults?: {
+            compact?: {
+              thinkingLevel?: ThinkingLevel;
+            };
+          };
+        };
+      };
+      extensionMetadata: ExtensionMetadataService;
+    }
+
+    const svc = workspaceService as unknown as WorkspaceServiceIdleCompactionAccess;
+
+    svc.config.findWorkspace = mock((workspaceId: string) =>
+      workspaceId === "ws" ? { projectPath, workspacePath } : null
+    );
+    svc.config.loadConfigOrDefault = mock(() => ({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                id: "ws",
+                path: workspacePath,
+                name: "ws",
+                aiSettingsByAgent: {
+                  exec: { model: "openai:gpt-4o-mini", thinkingLevel: "low" },
+                },
+              },
+            ],
+          },
+        ],
+      ]),
+      agentAiDefaults: {
+        compact: { thinkingLevel: "high" as ThinkingLevel },
+      },
+    }));
+
+    svc.extensionMetadata = {
+      getMetadata: mock(() => Promise.resolve({ lastThinkingLevel: "off" })),
+    } as unknown as ExtensionMetadataService;
+
+    const options = await svc.buildIdleCompactionSendOptions("ws");
+
+    expect(options.thinkingLevel).toBe(enforceThinkingPolicy(options.model, "high"));
+  });
+
   test("does not tag streaming=true snapshots as idle compaction", async () => {
     const workspaceId = "idle-streaming-true-no-tag";
     const snapshot = {
