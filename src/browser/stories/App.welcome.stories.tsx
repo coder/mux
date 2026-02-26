@@ -524,6 +524,62 @@ export const SingleProviderConfigured: AppStory = {
 };
 
 /**
+ * Creation view with project sections configured.
+ * Verifies the section selector renders on its own row below the
+ * project-name / workspace-name header (not crammed into the same line).
+ */
+export const CreateWorkspaceWithSections: AppStory = {
+  parameters: {
+    chromatic: {
+      modes: {
+        dark: { theme: "dark" },
+        light: { theme: "light" },
+        "dark-mobile": { theme: "dark", viewport: "mobile1", hasTouch: true },
+        "light-mobile": { theme: "light", viewport: "mobile1", hasTouch: true },
+      },
+    },
+  },
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        expandProjects(["/Users/dev/my-project"]);
+        return createMockORPCClient({
+          projects: new Map([
+            [
+              "/Users/dev/my-project",
+              {
+                workspaces: [],
+                sections: [
+                  { id: "sec_0001", name: "Frontend", color: "#4f8cf7", nextId: "sec_0002" },
+                  { id: "sec_0002", name: "Backend", color: "#f76b4f", nextId: "sec_0003" },
+                  { id: "sec_0003", name: "Infra", color: "#8b5cf6", nextId: null },
+                ],
+              },
+            ],
+          ]),
+          workspaces: [],
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await openFirstProjectCreationView(storyRoot);
+    const canvas = within(storyRoot);
+
+    // Wait for the section selector to appear on its own row
+    await waitFor(
+      () => {
+        if (!canvas.queryByTestId("section-selector")) {
+          throw new Error("Section selector not visible");
+        }
+      },
+      { timeout: 10000 }
+    );
+  },
+};
+
+/**
  * Multiple providers configured - shows the provider bar with multiple icons.
  */
 export const MultipleProvidersConfigured: AppStory = {
