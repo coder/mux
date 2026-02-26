@@ -37,17 +37,14 @@ import packageJson from "../../../package.json";
 
 // ---------------------------------------------------------------------------
 // Copilot Responses API routing.
-// GPT-5+ models (except gpt-5-mini) require the Responses API on the Copilot
-// endpoint — the /chat/completions endpoint returns "model not supported".
+// Copilot currently serves Codex-family models on /responses, while GPT models
+// such as gpt-5.2 can be enabled in product UI but still return
+// `model_not_supported` on /responses. Route Codex variants to Responses API
+// and keep non-Codex models on /chat/completions.
 // ---------------------------------------------------------------------------
 
-function isGpt5OrLater(modelId: string): boolean {
-  const match = /^gpt-(\d+)/.exec(modelId);
-  return match != null && Number(match[1]) >= 5;
-}
-
-function shouldUseCopilotResponsesApi(modelId: string): boolean {
-  return isGpt5OrLater(modelId) && !modelId.startsWith("gpt-5-mini");
+export function shouldUseCopilotResponsesApi(modelId: string): boolean {
+  return modelId.includes("-codex");
 }
 
 type CopilotInitiator = "user" | "agent";
@@ -1338,10 +1335,9 @@ export class ProviderModelFactory {
 
         const baseURL = providerConfig.baseURL ?? "https://api.githubcopilot.com";
 
-        // GPT-5+ models need the Responses API; the Copilot /chat/completions
-        // endpoint returns "model not supported" for these models.
-        // The Copilot API also rejects requests that include `max_output_tokens`,
-        // so we strip it from the body before sending.
+        // Codex-family models use the Copilot Responses API.
+        // The Copilot API rejects requests that include `max_output_tokens`,
+        // so strip it from the body before sending to /responses.
         if (shouldUseCopilotResponsesApi(modelId)) {
           const copilotResponsesFetchFn = async (
             input: Parameters<typeof fetch>[0],

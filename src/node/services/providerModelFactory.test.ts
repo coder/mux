@@ -11,6 +11,7 @@ import {
   MUX_AI_PROVIDER_USER_AGENT,
   resolveAIProviderHeaderSource,
   resolveCopilotInitiatorFromRequestBody,
+  shouldUseCopilotResponsesApi,
 } from "./providerModelFactory";
 import { ProviderService } from "./providerService";
 
@@ -191,6 +192,18 @@ describe("ProviderModelFactory.resolveGatewayModelString", () => {
         });
       }
     });
+  });
+});
+
+describe("shouldUseCopilotResponsesApi", () => {
+  it("uses Responses API for Codex-family models", () => {
+    expect(shouldUseCopilotResponsesApi("gpt-5.1-codex-max")).toBe(true);
+    expect(shouldUseCopilotResponsesApi("gpt-5.3-codex")).toBe(true);
+  });
+
+  it("uses Chat Completions for non-Codex GPT models", () => {
+    expect(shouldUseCopilotResponsesApi("gpt-5.2")).toBe(false);
+    expect(shouldUseCopilotResponsesApi("gpt-5")).toBe(false);
   });
 });
 
