@@ -905,15 +905,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                     }}
                   />
                 )}
-                {workspaceState?.queuedMessage && (
-                  <QueuedMessage
-                    message={workspaceState.queuedMessage}
-                    onEdit={() => void handleEditQueuedMessage()}
-                    onSendImmediately={
-                      workspaceState.canInterrupt ? handleSendQueuedImmediately : undefined
-                    }
-                  />
-                )}
                 <ConcurrentLocalWarning
                   workspaceId={workspaceId}
                   projectPath={projectPath}
@@ -973,6 +964,11 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
             onCancelEdit={handleCancelEdit}
             onEditLastUserMessage={handleEditLastUserMessageClick}
             onChatInputReady={handleChatInputReady}
+            queuedMessage={workspaceState?.queuedMessage ?? null}
+            onEditQueuedMessage={handleEditQueuedMessage}
+            onSendQueuedImmediately={
+              workspaceState?.canInterrupt ? handleSendQueuedImmediately : undefined
+            }
             reviews={reviews}
             onCheckReviews={handleCheckReviews}
           />
@@ -1003,6 +999,9 @@ interface ChatInputPaneProps {
   onCancelEdit: () => void;
   onEditLastUserMessage: () => void;
   onChatInputReady: (api: ChatInputAPI) => void;
+  queuedMessage: QueuedMessageData | null;
+  onEditQueuedMessage: () => void;
+  onSendQueuedImmediately: (() => Promise<void>) | undefined;
   reviews: ReviewsState;
   onCheckReviews: (ids: string[]) => void;
 }
@@ -1028,6 +1027,13 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
       )}
       <BackgroundProcessesBanner workspaceId={props.workspaceId} />
       <ReviewsBanner workspaceId={props.workspaceId} />
+      {props.queuedMessage && (
+        <QueuedMessage
+          message={props.queuedMessage}
+          onEdit={() => void props.onEditQueuedMessage()}
+          onSendImmediately={props.onSendQueuedImmediately}
+        />
+      )}
       {props.isQueuedAgentTask && (
         <div className="border-border-medium bg-background-secondary text-muted mb-2 rounded-md border px-3 py-2 text-xs">
           This agent task is queued and will start automatically when a parallel slot is available.
