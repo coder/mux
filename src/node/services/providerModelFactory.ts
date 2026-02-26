@@ -965,16 +965,10 @@ export class ProviderModelFactory {
           effectiveWireFormat === "chatCompletions"
             ? provider.chat(modelId)
             : provider.responses(modelId);
-        // Skip Codex OAuth routing for chatCompletions — the Codex endpoint
-        // only accepts Responses API format, so chat-completions requests would fail.
-        if (shouldRouteThroughCodexOauth && effectiveWireFormat !== "chatCompletions") {
-          markModelCostsIncluded(model);
+        const injectModelOpenAIStore = (storeValue: unknown, mode: "default" | "force"): void => {
+          assert(typeof storeValue === "boolean", "OpenAI store override must be boolean");
+          const store = storeValue;
 
-          // Wrap model to inject store=false into providerOptions so the SDK
-          // sends full inline content instead of item_reference lookups.
-          // The Codex endpoint requires store=false; without this, the SDK
-          // defaults to store=true and sends bare { type: "item_reference" }
-          // items that can't be resolved.
           const injectStoreFlag = (
             options: Parameters<typeof model.doStream>[0]
           ): Parameters<typeof model.doStream>[0] => {
@@ -984,10 +978,7 @@ export class ProviderModelFactory {
               ...options,
               providerOptions: {
                 ...options.providerOptions,
-                openai: {
-                  ...openaiOpts,
-                  store: false,
-                },
+                openai: mode === "force" ? { ...openaiOpts, store } : { store, ...openaiOpts },
               },
             };
           };
@@ -996,6 +987,23 @@ export class ProviderModelFactory {
           const originalDoGenerate = model.doGenerate.bind(model);
           model.doStream = (options) => originalDoStream(injectStoreFlag(options));
           model.doGenerate = (options) => originalDoGenerate(injectStoreFlag(options));
+        };
+
+        const configuredOpenAIStore = muxProviderOptions?.openai?.store;
+        if (typeof configuredOpenAIStore === "boolean") {
+          // Inject configured OpenAI store as a request-level default so callers
+          // that omit providerOptions still honor global ZDR settings.
+          injectModelOpenAIStore(configuredOpenAIStore, "default");
+        }
+
+        // Skip Codex OAuth routing for chatCompletions — the Codex endpoint
+        // only accepts Responses API format, so chat-completions requests would fail.
+        if (shouldRouteThroughCodexOauth && effectiveWireFormat !== "chatCompletions") {
+          markModelCostsIncluded(model);
+
+          // Codex OAuth requires store=false and must override any request-level
+          // setting to avoid unresolved item_reference lookups.
+          injectModelOpenAIStore(false, "force");
         }
         return Ok(model);
       }
@@ -1249,6 +1257,33 @@ export class ProviderModelFactory {
           const result = await originalDoGenerate(options);
           return normalizeGatewayGenerateResult(result);
         };
+
+        const configuredOpenAIStore = muxProviderOptions?.openai?.store;
+        if (modelId.startsWith("openai/") && typeof configuredOpenAIStore === "boolean") {
+          // Inject configured OpenAI store as a request-level default for
+          // gateway-routed OpenAI models when callers omit providerOptions.
+          const injectStoreFlag = (
+            options: Parameters<typeof model.doStream>[0]
+          ): Parameters<typeof model.doStream>[0] => {
+            const openaiOpts =
+              (options.providerOptions?.openai as Record<string, unknown> | undefined) ?? {};
+            return {
+              ...options,
+              providerOptions: {
+                ...options.providerOptions,
+                openai: {
+                  store: configuredOpenAIStore,
+                  ...openaiOpts,
+                },
+              },
+            };
+          };
+
+          const originalDoStream = model.doStream.bind(model);
+          const originalDoGenerate = model.doGenerate.bind(model);
+          model.doStream = (options) => originalDoStream(injectStoreFlag(options));
+          model.doGenerate = (options) => originalDoGenerate(injectStoreFlag(options));
+        }
 
         return Ok(model);
       }
