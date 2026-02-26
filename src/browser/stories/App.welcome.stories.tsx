@@ -597,35 +597,38 @@ export const CreateWorkspaceWithSections: AppStory = {
       }
     }
 
-    const canvas = within(storyRoot);
+    try {
+      const canvas = within(storyRoot);
 
-    // Wait for the section selector and assert it renders on its own row
-    // (below the workspace-name header, not crammed into the same line).
-    await waitFor(
-      () => {
-        const sectionSelector = canvas.queryByTestId("section-selector");
-        if (!sectionSelector) {
-          throw new Error("Section selector not visible");
-        }
-        const headerRow = storyRoot.querySelector("[data-component='WorkspaceNameGroup']");
-        if (!headerRow) {
-          throw new Error("Workspace name header row not found");
-        }
-        const headerBottom = headerRow.getBoundingClientRect().bottom;
-        const sectionTop = sectionSelector.getBoundingClientRect().top;
-        if (sectionTop < headerBottom) {
-          throw new Error(
-            `Section selector overlaps header row (section top=${sectionTop}, header bottom=${headerBottom})`
-          );
-        }
-      },
-      { timeout: 10000 }
-    );
-
-    // Clean up: the sidebar collapse above writes to localStorage.
-    // Remove the key so subsequent stories start with the default
-    // (expanded on desktop-width viewports).
-    localStorage.removeItem(LEFT_SIDEBAR_COLLAPSED_KEY);
+      // Wait for the section selector and assert it renders on its own row
+      // (below the workspace-name header, not crammed into the same line).
+      await waitFor(
+        () => {
+          const sectionSelector = canvas.queryByTestId("section-selector");
+          if (!sectionSelector) {
+            throw new Error("Section selector not visible");
+          }
+          const headerRow = storyRoot.querySelector("[data-component='WorkspaceNameGroup']");
+          if (!headerRow) {
+            throw new Error("Workspace name header row not found");
+          }
+          const headerBottom = headerRow.getBoundingClientRect().bottom;
+          const sectionTop = sectionSelector.getBoundingClientRect().top;
+          if (sectionTop < headerBottom) {
+            throw new Error(
+              `Section selector overlaps header row (section top=${sectionTop}, header bottom=${headerBottom})`
+            );
+          }
+        },
+        { timeout: 10000 }
+      );
+    } finally {
+      // The sidebar collapse above writes to localStorage. Remove the key
+      // so subsequent stories start with the default (expanded on desktop-
+      // width viewports). Using finally ensures cleanup even on assertion
+      // failure, preventing misleading cascading failures in later stories.
+      localStorage.removeItem(LEFT_SIDEBAR_COLLAPSED_KEY);
+    }
   },
 };
 
