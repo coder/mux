@@ -712,10 +712,10 @@ export class ProviderModelFactory {
               serviceTier: configServiceTier as "auto" | "default" | "flex" | "priority",
             };
           }
-          if (configWireFormat) {
+          if (configWireFormat === "responses" || configWireFormat === "chatCompletions") {
             muxProviderOptions.openai = {
               ...muxProviderOptions.openai,
-              wireFormat: configWireFormat as "responses" | "chatCompletions",
+              wireFormat: configWireFormat,
             };
           }
         }
@@ -871,7 +871,11 @@ export class ProviderModelFactory {
                 }
               }
 
-              if (shouldRouteThroughCodexOauth && (isOpenAIResponses || isOpenAIChatCompletions)) {
+              if (
+                shouldRouteThroughCodexOauth &&
+                configWireFormat !== "chatCompletions" &&
+                (isOpenAIResponses || isOpenAIChatCompletions)
+              ) {
                 if (!codexOauthService) {
                   throw new Error("Codex OAuth service not initialized");
                 }
