@@ -212,34 +212,45 @@ export async function generateWorkspaceIdentity(
       //
       // streamText (not generateText): the Codex OAuth endpoint requires
       // stream:true in the request body; streamText sets it automatically.
+      //
+      // No toolChoice — forced tool choice (toolChoice: "required" / "any" /
+      // { type: "tool" }) is incompatible with extended thinking models.
+      // Instead, the prompt instructs the model to call the tool, and the
+      // name_workspace builtin agent declares tools.require: [propose_name]
+      // which the StreamManager enforces via stopWhen for full agent sessions.
+      // For this direct streamText path, the candidate retry loop handles the
+      // (rare) case where the model ignores the instruction.
       const currentStream = streamText({
         model: modelResult.data,
         prompt: buildWorkspaceIdentityPrompt(message, conversationContext, latestUserMessage),
         tools: {
+          // Defined inline (not via createProposeNameTool factory) so that
+          // TypeScript preserves full schema inference on toolResult.output.
+          // The factory exists for the tools system / agent sessions; here we
+          // need strict typing for the direct streamText consumer path.
           propose_name: tool({
             description: TOOL_DEFINITIONS.propose_name.description,
             inputSchema: ProposeNameToolArgsSchema,
-            // eslint-disable-next-line @typescript-eslint/require-await -- AI SDK tool execute must be async
+            // eslint-disable-next-line @typescript-eslint/require-await -- AI SDK Tool.execute must return a Promise
             execute: async (args) => ({ success: true as const, ...args }),
           }),
         },
-        // Use "required" instead of { type: "tool", toolName: "propose_name" }
-        // because forced tool choice (by name) isn't supported by all providers.
-        // With only one tool available, "required" is equivalent but more widely
-        // compatible. Models that don't support tool choice at all will throw,
-        // caught below, and the retry loop tries the next candidate.
-        toolChoice: "required",
       });
 
-      // Wait for the tool call result. toolChoice "required" forces the model
-      // to call a tool; with only one tool available, it will be propose_name.
+      // Wait for the tool call result. The prompt strongly instructs the model
+      // to call propose_name; most models comply on the first attempt.
+      // Search all results (not just the first) in case the model emits
+      // multiple tool calls — e.g., an initial invalid-args attempt followed
+      // by a corrected one.
       const results = await currentStream.toolResults;
-      const toolResult = results[0];
+      // find() narrows to StaticToolResult with toolName "propose_name",
+      // so toolResult.output is fully typed after the null check.
+      // Safety: toolResults only contains entries whose args passed Zod
+      // validation AND whose execute() returned successfully — schema-invalid
+      // tool calls never appear here.
+      const toolResult = results.find((r) => r.dynamic !== true && r.toolName === "propose_name");
 
-      // Narrow TypedToolResult (= StaticToolResult | DynamicToolResult).
-      // StaticToolResult has `dynamic?: false | undefined` with typed output;
-      // DynamicToolResult has `dynamic: true` with `output: unknown`.
-      if (!toolResult || toolResult.dynamic === true || toolResult.toolName !== "propose_name") {
+      if (!toolResult) {
         lastError = { type: "unknown", raw: "Model did not call propose_name tool" };
         log.warn("Name generation: model did not call propose_name", { modelString });
         continue;
