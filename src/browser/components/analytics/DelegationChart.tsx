@@ -151,9 +151,11 @@ export function DelegationChart(props: DelegationChartProps) {
       row.reasoningTokens +
       row.cachedTokens +
       row.cacheCreateTokens;
-    if (categorySum === 0 && row.totalTokens > 0) {
-      // Legacy rollups may have uncategorized totals without per-category token columns.
-      row.inputTokens = row.totalTokens;
+    if (categorySum < row.totalTokens) {
+      // Legacy data: assign uncategorized tokens to inputTokens as fallback.
+      // This handles both fully-legacy rows (all categories 0) and mixed
+      // legacy/new rows where GROUP BY aggregates old (0s) + new (populated) rows.
+      row.inputTokens += row.totalTokens - categorySum;
     }
 
     return row;
