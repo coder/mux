@@ -27,7 +27,8 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = ({
   ]
     .filter((item): item is string => item !== null)
     .join(" · ");
-  const previewText = message.content || (hasAuxiliaryContent ? auxiliaryPreview : "");
+  const previewText =
+    message.content || (hasAuxiliaryContent ? auxiliaryPreview : "Queued message ready");
 
   const handleSendImmediately = async () => {
     if (isSending || !onSendImmediately) return;
@@ -40,52 +41,64 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = ({
   };
 
   return (
-    <div className={cn("border-border bg-dark border-t px-[15px]", className)}>
-      <div className="mx-auto flex w-full max-w-4xl items-center gap-2 py-1.5">
-        <span className="text-muted shrink-0 text-xs font-medium">Queued</span>
-        <span className="text-secondary min-w-0 flex-1 truncate text-xs">{previewText}</span>
-
-        {fileCount > 0 && (
-          <span className="text-muted flex shrink-0 items-center gap-1 text-xs">
-            <Paperclip className="size-3" />
-            <span>
-              {fileCount} file{fileCount === 1 ? "" : "s"}
+    <div
+      className={cn("border-border bg-dark border-t px-[15px]", className)}
+      data-component="QueuedMessageBanner"
+    >
+      <div className="mx-auto w-full max-w-4xl py-1.5">
+        <div
+          className="border-border-medium bg-background-secondary/80 rounded-md border px-2.5 py-2"
+          data-component="QueuedMessageCard"
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-muted shrink-0 text-[11px] font-semibold uppercase tracking-wide">
+              Queued message
             </span>
-          </span>
-        )}
+            <span className="text-secondary min-w-0 flex-1 truncate text-xs">{previewText}</span>
+          </div>
 
-        {reviewCount > 0 && (
-          <span className="text-muted flex shrink-0 items-center gap-1 text-xs">
-            <MessageSquare className="size-3" />
-            <span>
-              {reviewCount} review{reviewCount === 1 ? "" : "s"}
-            </span>
-          </span>
-        )}
+          <div className="mt-2 flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+            {fileCount > 0 && (
+              <span className="text-muted flex shrink-0 items-center gap-1 text-xs">
+                <Paperclip className="size-3" />
+                <span>
+                  {fileCount} file{fileCount === 1 ? "" : "s"}
+                </span>
+              </span>
+            )}
 
-        <div className="ml-auto flex items-center gap-2">
-          {onEdit && (
-            <button
-              type="button"
-              onClick={onEdit}
-              className="text-muted hover:text-secondary flex items-center gap-1 text-xs transition-colors"
-            >
-              <Pencil className="size-3" />
-              Edit
-            </button>
-          )}
+            {reviewCount > 0 && (
+              <span className="text-muted flex shrink-0 items-center gap-1 text-xs">
+                <MessageSquare className="size-3" />
+                <span>
+                  {reviewCount} review{reviewCount === 1 ? "" : "s"}
+                </span>
+              </span>
+            )}
 
-          {onSendImmediately && (
-            <button
-              type="button"
-              onClick={() => void handleSendImmediately()}
-              disabled={isSending}
-              className="flex cursor-pointer items-center gap-1 text-xs font-medium text-[var(--color-user-border)] transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Send className="size-3" />
-              {isSending ? "Sending…" : "Send now"}
-            </button>
-          )}
+            {onEdit && (
+              <button
+                type="button"
+                onClick={onEdit}
+                className="text-muted hover:text-secondary flex items-center gap-1 text-xs transition-colors"
+              >
+                <Pencil className="size-3" />
+                Edit
+              </button>
+            )}
+
+            {onSendImmediately && (
+              <button
+                type="button"
+                onClick={() => void handleSendImmediately()}
+                disabled={isSending}
+                className="flex cursor-pointer items-center gap-1 text-xs font-medium text-[var(--color-user-border)] transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Send className="size-3" />
+                {isSending ? "Sending…" : "Send now"}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

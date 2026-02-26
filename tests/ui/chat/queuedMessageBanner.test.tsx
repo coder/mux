@@ -31,8 +31,18 @@ describe("QueuedMessage banner", () => {
   test("renders queued preview text and label", () => {
     const view = render(<QueuedMessage message={createQueuedMessage()} />);
 
-    expect(view.getByText("Queued")).toBeTruthy();
+    expect(view.getByText("Queued message")).toBeTruthy();
     expect(view.getByText("Review this change before sending")).toBeTruthy();
+  });
+
+  test("renders an inner queued bubble inside the banner", () => {
+    const view = render(<QueuedMessage message={createQueuedMessage()} />);
+
+    const banner = view.container.querySelector('[data-component="QueuedMessageBanner"]');
+    const bubble = view.container.querySelector('[data-component="QueuedMessageCard"]');
+
+    expect(banner).toBeTruthy();
+    expect(bubble).toBeTruthy();
   });
 
   test("shows Edit and Send now buttons when handlers are provided", () => {
