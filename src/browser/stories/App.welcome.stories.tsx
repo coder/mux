@@ -37,6 +37,16 @@ function createSessionUsage(cost: number): MockSessionUsage {
 async function openFirstProjectCreationView(storyRoot: HTMLElement): Promise<void> {
   // App now boots into the built-in mux-chat workspace.
   // Navigate to the first project's creation page so creation/banner UI is visible.
+
+  // Guard: a previous story's play-function may have collapsed the sidebar
+  // (e.g. via a mobile-viewport interaction). If so, expand it first so the
+  // project rows become visible and clickable.
+  const sidebar = storyRoot.querySelector<HTMLElement>("[data-testid='left-sidebar']");
+  if (sidebar && sidebar.getBoundingClientRect().width <= 40) {
+    const expandBtn = storyRoot.querySelector<HTMLElement>("[aria-label='Expand sidebar']");
+    if (expandBtn) await userEvent.click(expandBtn);
+  }
+
   const projectRow = await waitFor(
     () => {
       const el = storyRoot.querySelector("[data-project-path][aria-controls]");
