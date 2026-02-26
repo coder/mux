@@ -47,19 +47,19 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = ({
     >
       <div className="mx-auto w-full max-w-4xl py-1.5">
         <div
-          className="border-border-medium bg-background-secondary/80 rounded-md border px-2.5 py-2"
+          className="border-border-medium bg-background-secondary/80 rounded-md border px-2.5 py-1.5"
           data-component="QueuedMessageCard"
         >
           <div>
             <span className="text-muted shrink-0 text-[11px] font-semibold uppercase tracking-wide">
               Queued
             </span>
-            <div className="text-secondary mt-1 whitespace-pre-wrap break-words text-xs">
+            <div className="text-secondary mt-0.5 whitespace-pre-wrap break-words text-xs">
               {previewText}
             </div>
           </div>
 
-          <div className="mt-2 flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+          <div className="mt-1 flex flex-wrap items-center justify-end gap-x-2 gap-y-0.5">
             {fileCount > 0 && (
               <span className="text-muted flex shrink-0 items-center gap-1 text-xs">
                 <Paperclip className="size-3" />
@@ -94,7 +94,7 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = ({
                 type="button"
                 onClick={() => void handleSendImmediately()}
                 disabled={isSending}
-                className="flex cursor-pointer items-center gap-1 text-xs font-medium text-[var(--color-user-border)] transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                className="text-muted hover:text-secondary flex items-center gap-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Send className="size-3" />
                 {isSending ? "Sending…" : "Send now"}
